@@ -19,6 +19,8 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { cn } from "../../lib/utils";
+import { LegendList } from "@legendapp/list/react";
 
 import { useRef, useState } from "react";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
@@ -34,6 +36,8 @@ export function ArchivedThreadsPanel() {
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const pendingActionsRef = useRef(new Set<string>());
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [groupsElement, setGroupsElement] = useState<HTMLElement | null>(null);
+  const scrollElement = groupsElement?.closest<HTMLElement>("[data-settings-page-scroll]") ?? null;
   const {
     snapshots: archivedSnapshots,
     error: archiveError,
@@ -216,59 +220,74 @@ export function ArchivedThreadsPanel() {
           />
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ key, project, title, threads: projectThreads }, index) => (
-          <SettingsSection
-            key={key}
-            id={index === 0 ? searchableSetting("archive").id : undefined}
-            title={title}
-            icon={<ProjectFavicon project={project} />}
-          >
-            {projectThreads.map((thread) => {
-              const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-              return (
-                <SettingsRow
-                  key={`${thread.environmentId}:${thread.id}`}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    void handleContextMenu(thread, { x: event.clientX, y: event.clientY });
-                  }}
-                  title={thread.title}
-                  description={
-                    <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
-                      {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
-                      Archived <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
-                      {" \u00b7 Created "}
-                      <RelativeTime timestamp={thread.createdAt} />
-                    </span>
-                  }
-                  control={
-                    <div className="flex shrink-0 items-center gap-2">
-                      {ARCHIVE_ACTIONS.map(({ action, label, Icon }) => (
-                        <Tooltip key={action}>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                type="button"
-                                variant={action === "delete" ? "destructive-outline" : "outline"}
-                                size="icon-sm"
-                                aria-label={`${label} ${thread.title}`}
-                                disabled={pendingKeys.has(threadKey)}
-                                onClick={() => void handleThreadAction(action, thread)}
-                              />
-                            }
-                          >
-                            <Icon className="size-3.5" />
-                          </TooltipTrigger>
-                          <TooltipPopup>{label}</TooltipPopup>
-                        </Tooltip>
-                      ))}
-                    </div>
-                  }
-                />
-              );
-            })}
-          </SettingsSection>
-        ))
+        <div className="contents" ref={setGroupsElement}>
+          {archivedGroups.map(({ key, project, title, threads: projectThreads }, index) => (
+            <SettingsSection
+              key={key}
+              id={index === 0 ? searchableSetting("archive").id : undefined}
+              title={title}
+              icon={<ProjectFavicon project={project} />}
+            >
+              {/* Archives reach hundreds of threads; only rows near the page viewport mount. */}
+              <LegendList<ArchivedThread>
+                data={projectThreads}
+                keyExtractor={(thread) => `${thread.environmentId}:${thread.id}`}
+                extraData={{ pendingKeys, hasMultipleEnvironments }}
+                scrollElement={scrollElement}
+                estimatedItemSize={67}
+                renderItem={({ item: thread, index: rowIndex }) => {
+                  const threadKey = scopedThreadKey(
+                    scopeThreadRef(thread.environmentId, thread.id),
+                  );
+                  return (
+                    <SettingsRow
+                      className={cn("rounded-none", rowIndex > 0 && "border-t border-border/50")}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        void handleContextMenu(thread, { x: event.clientX, y: event.clientY });
+                      }}
+                      title={thread.title}
+                      description={
+                        <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
+                          {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
+                          Archived{" "}
+                          <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
+                          {" \u00b7 Created "}
+                          <RelativeTime timestamp={thread.createdAt} />
+                        </span>
+                      }
+                      control={
+                        <div className="flex shrink-0 items-center gap-2">
+                          {ARCHIVE_ACTIONS.map(({ action, label, Icon }) => (
+                            <Tooltip key={action}>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    type="button"
+                                    variant={
+                                      action === "delete" ? "destructive-outline" : "outline"
+                                    }
+                                    size="icon-sm"
+                                    aria-label={`${label} ${thread.title}`}
+                                    disabled={pendingKeys.has(threadKey)}
+                                    onClick={() => void handleThreadAction(action, thread)}
+                                  />
+                                }
+                              >
+                                <Icon className="size-3.5" />
+                              </TooltipTrigger>
+                              <TooltipPopup>{label}</TooltipPopup>
+                            </Tooltip>
+                          ))}
+                        </div>
+                      }
+                    />
+                  );
+                }}
+              />
+            </SettingsSection>
+          ))}
+        </div>
       )}
     </SettingsPageContainer>
   );
