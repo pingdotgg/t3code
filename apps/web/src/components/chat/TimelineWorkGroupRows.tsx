@@ -179,6 +179,7 @@ function WorkingTimer({ createdAt, clock = false }: { createdAt: string; clock?:
 }
 
 const compactWorkEntryHeight = 24;
+const expandedWorkEntryHeight = 28;
 
 function ExpandedWorkGroupEntries({
   anchorKey,
@@ -276,7 +277,9 @@ function ExpandedWorkGroupEntries({
   }, [updateScrollFades]);
 
   const renderEntry = ({ item }: { item: TimelineWorkEntry }) => (
-    <SimpleWorkEntryRow key={item.id} workEntry={item} workspaceRoot={workspaceRoot} />
+    <div className="min-h-7">
+      <SimpleWorkEntryRow key={item.id} workEntry={item} workspaceRoot={workspaceRoot} />
+    </div>
   );
 
   const updateExpandedContentHeight = () => {
@@ -286,7 +289,7 @@ function ExpandedWorkGroupEntries({
       if (state?.indexByKey(entryId) === undefined) continue;
       height += Math.max(
         0,
-        (state.sizes.get(entryId) ?? compactWorkEntryHeight) - compactWorkEntryHeight,
+        (state.sizes.get(entryId) ?? expandedWorkEntryHeight) - expandedWorkEntryHeight,
       );
     }
     setExpandedContentHeight(height);
@@ -304,7 +307,7 @@ function ExpandedWorkGroupEntries({
           extraData={workspaceRoot}
           keyExtractor={workEntryKey}
           renderItem={renderEntry}
-          estimatedItemSize={compactWorkEntryHeight}
+          estimatedItemSize={expandedWorkEntryHeight}
           drawDistance={240}
           recycleItems
           {...(initialScrollIndex ? { initialScrollIndex } : {})}
@@ -720,20 +723,22 @@ function WorkGroupHeader(props: {
   onToggle: () => void;
 }) {
   return (
-    <WorkLogButton
-      aria-label={props.failed ? `${props.label}, tool call failed` : props.label}
-      aria-expanded={props.expanded}
-      onClick={props.onToggle}
-      icon={
-        <ToolActivityIconView
-          icon={props.toolIcon}
-          fallbackName={props.iconName}
-          className="size-3.5 shrink-0 stroke-2 text-muted-foreground"
-          muted
-        />
-      }
-      label={<span className="block truncate text-secondary-label">{props.label}</span>}
-    />
+    <div className="pb-2">
+      <WorkLogButton
+        aria-label={props.failed ? `${props.label}, tool call failed` : props.label}
+        aria-expanded={props.expanded}
+        onClick={props.onToggle}
+        icon={
+          <ToolActivityIconView
+            icon={props.toolIcon}
+            fallbackName={props.iconName}
+            className="size-3.5 shrink-0 stroke-2 text-muted-foreground"
+            muted
+          />
+        }
+        label={<span className="block truncate text-secondary-label">{props.label}</span>}
+      />
+    </div>
   );
 }
 
@@ -847,7 +852,7 @@ function WorkingWindowText({
   const textRef = useCarriedTextFade(item.message.id);
   if (text.trim().length === 0) return null;
   return (
-    <div ref={textRef} className="min-w-0 py-2">
+    <div ref={textRef} className="min-w-0 px-1 py-2">
       <AssistantCitationSource
         messageId={item.message.id}
         {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
