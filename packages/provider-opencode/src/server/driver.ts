@@ -130,7 +130,8 @@ function selectOpenCodeRuntimeAdapter(input: {
         turns: {
           ...capabilities.turns,
           supportsNativeGoals:
-            probed?.generation === "v2" && compareSemverVersions(probed.version, "2.2.5") >= 0,
+            capabilities.turns.supportsNativeGoals ??
+            (probed?.generation === "v2" && compareSemverVersions(probed.version, "2.2.5") >= 0),
         },
       };
     }),

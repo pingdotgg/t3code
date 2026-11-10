@@ -293,6 +293,7 @@ interface ThreadState {
   publishedBackgroundWork?: boolean;
   goalRevision: number;
   goalFresh: boolean;
+  goalRefreshing: boolean;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
   model: ModelRef | undefined;
@@ -687,6 +688,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const crypto = yield* Digest.Digest;
   const driver = OPENCODE_PROVIDER;
+  let nativeGoalSupport: boolean | undefined;
   const mcpServerNameFor = (threadId: string) =>
     t3McpServerName(threadId).pipe(Effect.provideService(Digest.Digest, crypto));
 
@@ -715,8 +717,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   ) {
     let connection = initial.connection;
     const supportsNativeGoals = () => compareSemverVersions(connection.version, "2.2.5") >= 0;
-    const hasActiveGoal = (state: ThreadState) =>
-      supportsNativeGoals() && state.goalFresh && state.providerThread.goal?.status === "active";
+    nativeGoalSupport = supportsNativeGoals();
+    const goalHoldsTurn = (state: ThreadState) =>
+      supportsNativeGoals() &&
+      (state.goalRefreshing || (state.goalFresh && state.providerThread.goal?.status === "active"));
     let client = connection.client;
     const sessionScope = yield* Effect.scope;
     // Project config changes model limits; key by directory because this runtime serves all instance threads.
@@ -779,6 +783,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       providerThread,
       goalRevision: 0,
       goalFresh: false,
+      goalRefreshing: false,
       providerTurns: new Map(),
       active: undefined,
       model: undefined,
@@ -877,6 +882,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       state.goalRevision += 1;
       state.goalFresh = true;
+      state.goalRefreshing = false;
       state.providerThread = {
         ...state.providerThread,
         goal:
@@ -2348,7 +2354,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn: ActiveTurn,
       end: TurnTerminal,
     ) {
-      if (end.status === "completed" && (turn.steers.size > 0 || hasActiveGoal(state))) {
+      if (end.status === "completed" && (turn.steers.size > 0 || goalHoldsTurn(state))) {
         turn.heldEnd = end;
         return;
       }
@@ -2356,7 +2362,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const endIfSettled = (state: ThreadState, turn: ActiveTurn) =>
-      turn.heldEnd !== undefined && turn.steers.size === 0 && !hasActiveGoal(state)
+      turn.heldEnd !== undefined && turn.steers.size === 0 && !goalHoldsTurn(state)
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
 
@@ -2484,7 +2490,35 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (event.type === "rpc.opencode.goal.changed") {
         if (!supportsNativeGoals()) return;
         const goal = yield* decodeGoal(event.data["goal"]).pipe(Effect.result);
-        if (goal._tag === "Failure") return;
+        if (goal._tag === "Failure") {
+          state.goalFresh = false;
+          state.goalRefreshing = true;
+          state.goalRevision += 1;
+          const revision = state.goalRevision;
+          yield* Effect.logWarning(
+            "Could not decode an OpenCode goal update; refreshing its state.",
+          );
+          yield* Effect.forkIn(
+            readGoal(state).pipe(
+              Effect.timeout(INVENTORY_TIMEOUT),
+              Effect.catch(() =>
+                Effect.logWarning(
+                  "Could not refresh OpenCode goal state after an unreadable update.",
+                ),
+              ),
+              Effect.ensuring(
+                lock.withPermit(
+                  Effect.gen(function* () {
+                    if (state.goalRevision === revision) state.goalRefreshing = false;
+                    if (state.active !== undefined) yield* endIfSettled(state, state.active);
+                  }),
+                ),
+              ),
+            ),
+            sessionScope,
+          );
+          return;
+        }
         yield* updateGoal(state, goal.success);
         if (state.active !== undefined) yield* endIfSettled(state, state.active);
         return;
@@ -2761,6 +2795,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const previous = currentScope;
       connection = next;
       client = next.client;
+      nativeGoalSupport = supportsNativeGoals();
       session = {
         ...session,
         capabilities: {
@@ -2774,6 +2809,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       for (const state of threads.values()) {
         state.mcp = undefined;
         state.goalFresh = false;
+        state.goalRefreshing = false;
         state.goalRevision += 1;
       }
       if (supportsNativeGoals()) {
@@ -4251,7 +4287,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     instanceId,
     driver,
     getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
-      return Effect.succeed(OpenCode2ProviderCapabilities);
+      return Effect.succeed({
+        ...OpenCode2ProviderCapabilities,
+        turns: {
+          ...OpenCode2ProviderCapabilities.turns,
+          ...(nativeGoalSupport === undefined ? {} : { supportsNativeGoals: nativeGoalSupport }),
+        },
+      });
     }),
     planSelectionTransition: Effect.fn("OpencodeAdapter.planSelectionTransition")(function () {
       return Effect.succeed(turnScopedSelectionTransition());

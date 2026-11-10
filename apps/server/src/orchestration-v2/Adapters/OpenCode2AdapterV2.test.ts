@@ -5399,6 +5399,72 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect.each([
+    { initial: "active", recovered: "paused" },
+    { initial: "paused", recovered: "active" },
+    { initial: "active", recovered: "unreadable" },
+  ] as const)(
+    "recovers unreadable native goal updates when cached goal is $initial and RPC returns $recovered",
+    ({ initial, recovered }) =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+            promptAccepted,
+            event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal(initial) }),
+            event("rpc.opencode.goal.changed", {
+              sessionID: SESSION,
+              goal: { ...nativeGoal(initial), status: "unknown" },
+            }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            out("rpc.call", "<any>"),
+            reply("rpc.call", { output: recovered === "unreadable" ? {} : nativeGoal(recovered) }),
+            ...(recovered === "active"
+              ? [
+                  event("session.execution.started", { sessionID: SESSION }),
+                  event("session.text.ended", {
+                    sessionID: SESSION,
+                    assistantMessageID: "msg_recovered_goal",
+                    ordinal: 0,
+                    text: "Continued work",
+                  }),
+                  event("rpc.opencode.goal.changed", {
+                    sessionID: SESSION,
+                    goal: nativeGoal("complete"),
+                  }),
+                  event("session.execution.succeeded", { sessionID: SESSION }),
+                ]
+              : []),
+          ],
+          { version: "2.2.5" },
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        const collected = yield* Fiber.join(events);
+        const updated = collected.findLast((e) => e.type === "provider_thread.updated");
+        assert.equal(
+          updated?.type === "provider_thread.updated"
+            ? updated.providerThread.goal?.status
+            : undefined,
+          recovered === "active" ? "complete" : recovered === "paused" ? "paused" : "active",
+        );
+        if (recovered === "active")
+          assert.isTrue(
+            collected.some(
+              (e) =>
+                e.type === "turn_item.updated" &&
+                e.turnItem.type === "assistant_message" &&
+                e.turnItem.text === "Continued work",
+            ),
+          );
+        assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      }).pipe(Effect.scoped),
+  );
+
   it.effect.each(["show", "pause", "clear"] as const)(
     "a delayed /goal %s response cannot finish its replacement turn",
     (control) =>
