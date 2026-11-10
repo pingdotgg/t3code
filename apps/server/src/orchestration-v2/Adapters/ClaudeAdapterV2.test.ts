@@ -77,6 +77,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
@@ -10170,6 +10171,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 event.providerThread.pendingBackgroundTasks?.[0]?.parentTaskId === "agent-1",
             ),
           );
+          // The helper ends its turn while its shell runs; the shell still holds the thread.
+          yield* harness.offerAndWait(
+            makeSubagentNotificationFrame({
+              taskId: "agent-1",
+              toolUseId: "toolu_agent_1",
+              summary: "Agent is waiting on its own background work.",
+              uuid: "00000000-0000-4000-8000-000000000204",
+            }),
+          );
+          const helperShell =
+            providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+              .pendingBackgroundTasks ?? [];
+          assert.deepStrictEqual(
+            helperShell.map((task) => task.taskId),
+            ["subagent-shell"],
+          );
+          assert.isTrue(backgroundWorkHoldsCompletion(helperShell));
 
           yield* Queue.offer(harness.sdkMessages, emptyRoster);
           yield* harness.until(() =>
