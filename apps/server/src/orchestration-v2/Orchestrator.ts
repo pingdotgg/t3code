@@ -13628,7 +13628,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // those stamped by the same cascade, so ones archived on their own stay archived.
         const rootArchivedAt = (yield* projectionStore
           .getThread(command.threadId)
-          .pipe(mapDispatchError(command))).archivedAt;
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          )).archivedAt;
         const at = yield* DateTime.now;
         yield* dispatchThreadMutation(command, events, effects, at);
         for (const threadId of cascadeThreadIds) {
@@ -13636,11 +13640,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .getThread(threadId)
             .pipe(mapDispatchError(command));
           if (
-            deletedAt !== null || command.type === "thread.archive"
+            deletedAt !== null ||
+            (command.type === "thread.archive"
               ? archivedAt !== null
               : archivedAt === null ||
                 rootArchivedAt === null ||
-                !DateTime.Equivalence(archivedAt, rootArchivedAt)
+                !DateTime.Equivalence(archivedAt, rootArchivedAt))
           )
             continue;
           yield* dispatchThreadMutation(
