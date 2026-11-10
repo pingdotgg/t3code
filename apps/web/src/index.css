@@ -4149,13 +4149,18 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --tree-row-selected-rim: var(--sidebar-row-selected-rim) !important;
 }
 
-/* Flat groups and floating surfaces use the same fill ladder as controls. */
+/* Flat groups and floating surfaces use the same fill ladder as controls.
+   Standalone cards and floating surfaces also keep main's single hairline, so
+   a card reads as one object on the page and a menu reads over a card. Groups
+   nested inside a card, the composer and controls stay edge-free. */
 :root[data-surface-style="flat"] > body,
 [data-surface-preview="flat"],
 :root.black-chrome[data-surface-style="flat"] [data-chrome-scope] {
-  --popover-top: var(--flat-middle) !important;
-  --popover-bottom: var(--flat-middle) !important;
-  --popover-rim: var(--tray-fill) !important;
+  --flat-hairline: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --flat-edge: linear-gradient(var(--flat-hairline), var(--flat-hairline));
+  --popover-top: var(--flat-high) !important;
+  --popover-bottom: var(--flat-high) !important;
+  --popover-rim: var(--flat-edge) !important;
   --popover-shadow: none !important;
   --tooltip-shadow: none !important;
   --palette-shadow: none !important;
@@ -4164,8 +4169,11 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --app-panel-stroke: transparent;
   --app-panel-shadow: none;
   --card-rim: var(--ss-none) !important;
-  --card-fill: var(--tray-fill) !important;
-  --card-settings-fill: var(--tray-fill) !important;
+  /* The hairline rides the fill's border-box layer, under the card's transparent border. */
+  --card-fill: var(--tray-fill) padding-box, var(--flat-edge) border-box !important;
+  /* Settings cards sit a step off their panel, as main's cards do, so rows are not bare on it. */
+  --card-settings-fill:
+    linear-gradient(var(--flat-banner), var(--flat-banner)) padding-box, var(--flat-edge) border-box !important;
   --kbd-fill: linear-gradient(var(--flat-banner), var(--flat-banner)) !important;
   --kbd-popover-fill: var(--kbd-fill) !important;
   --kbd-shadow: none !important;
@@ -4185,7 +4193,11 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --well-fill: var(--raised-fill) !important;
   --well-rim: var(--ss-none) !important;
   --well-shadow: 0 0 #0000 !important;
-  --well-switch-fill: var(--raised-fill) !important;
+  /* An off switch sits on cards the same fill as controls, so its track steps further. */
+  --well-switch-fill: linear-gradient(
+    color-mix(in srgb, var(--flat-high) 86%, var(--foreground)),
+    color-mix(in srgb, var(--flat-high) 86%, var(--foreground))
+  ) !important;
   --well-switch-rim: var(--ss-none) !important;
   --gloss-on-fill: var(--lit-fill) !important;
   --gloss-on-highlight: 0 0 #0000 !important;
@@ -5298,6 +5310,18 @@ body {
 
 .chat-markdown-table-container :is(th, td):not(:last-child) {
   border-inline-end: 1px solid var(--hairline);
+}
+
+/* Flat tables follow main: one outlined block, a header fill and row rules, no column rules. */
+:root[data-surface-style="flat"] .chat-markdown-table-container {
+  --well-fill: linear-gradient(var(--flat-middle), var(--flat-middle));
+  --well-rim: var(--flat-edge);
+  --table-header-fill: var(--flat-banner);
+  --hairline: var(--flat-hairline);
+
+  & :is(th, td):not(:last-child) {
+    border-inline-end-color: transparent;
+  }
 }
 
 /* Formula cells keep their natural width and scroll with the table. */
