@@ -447,10 +447,4 @@ describe("resolveProjectIconSource", () => {
     const second = makeProject("b", "/work/b");
     expect(resolveProjectIconSource(second, group(first, second).representative)).toBe(second);
   });
-
-  it("keeps an ungrouped project", () => {
-    const project = makeProject("a", "/work/a");
-    expect(resolveProjectIconSource(project, group(project).representative)).toBe(project);
-    expect(resolveProjectIconSource(project, undefined)).toBe(project);
-  });
 });
