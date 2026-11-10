@@ -466,7 +466,7 @@ export function getMobileThemeVariables(
 ): MobileThemeVariables {
   const colors = getMobileThemeColors(themeId, appearance);
   const groupedCard =
-    themeId === DEFAULT_MOBILE_THEME_ID
+    themeId === DEFAULT_MOBILE_THEME_ID || themeId === "t3-code-classic"
       ? appearance === "light"
         ? colors.toolbarControlHover
         : colors.sidebarRowActive

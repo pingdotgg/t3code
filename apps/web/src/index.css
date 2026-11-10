@@ -2431,10 +2431,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     color-mix(in srgb, var(--ring) 66.667%, transparent),
     color-mix(in srgb, var(--ring) 20%, transparent)
   );
-  --subagent-avatar-1: #ffffff;
-  --subagent-avatar-2: #ffffff;
-  --subagent-avatar-3: #ffffff;
-  --subagent-avatar-ring: #f7f7f7;
   --code-gutter: #7f7f7f;
   --settings-effective-fill: #0000000c;
   --settings-active-rim: #000000b3;
@@ -2568,10 +2564,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --model-picker-label: #bdbdbd;
   --model-picker-selected: #ffffff0d;
   --diff-comment-rim: linear-gradient(180deg, #6e8cffaa, #6e8cff33);
-  --subagent-avatar-1: #2d2d2d;
-  --subagent-avatar-2: #2a2a2a;
-  --subagent-avatar-3: #292929;
-  --subagent-avatar-ring: #181818;
   --code-gutter: #5f5f5f;
   --settings-effective-fill: #ffffff14;
   --settings-active-rim: #ffffffb3;
@@ -2850,10 +2842,6 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --code-gutter: var(--dim-foreground);
   --search-line-number: var(--dim-foreground);
   --kbd-lit-foreground: color-mix(in oklab, var(--primary-foreground) 55%, var(--primary));
-  --subagent-avatar-1: color-mix(in srgb, var(--card), white 10%);
-  --subagent-avatar-2: color-mix(in srgb, var(--card), white 8%);
-  --subagent-avatar-3: color-mix(in srgb, var(--card), white 6%);
-  --subagent-avatar-ring: var(--card);
   --sidebar-settled-title: color-mix(in oklab, var(--sidebar-muted-foreground) 85%, var(--sidebar));
   --sidebar-settled-label: color-mix(in oklab, var(--sidebar-muted-foreground) 75%, var(--sidebar));
   --sidebar-settled-meta: color-mix(in oklab, var(--sidebar-muted-foreground) 65%, var(--sidebar));
@@ -3110,6 +3098,179 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   @variant dark {
     border-color: var(--contrast-sidebar-border);
   }
+}
+
+/* Classic keeps main's status colors and border weight on the redesign's extra surfaces.
+   Main paints the sidebar and the content the same color; here the pane is an
+   inset shape, so the chrome steps a little toward the text color to keep it visible. */
+html:root[data-theme-id="t3-code-classic"] {
+  --app-chrome-background: color-mix(in srgb, var(--app-theme-sidebar) 94%, var(--foreground));
+  --info: var(--color-blue-500);
+  --info-foreground: var(--color-blue-700);
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-700);
+  --success-tint: color-mix(in srgb, var(--success) 12%, transparent);
+  --info-tint: color-mix(in srgb, var(--info) 12%, transparent);
+  --info-alert-fill: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--info) 15%, transparent),
+    color-mix(in srgb, var(--info) 7%, transparent)
+  );
+  --info-alert-rim: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--info) 40%, transparent),
+    color-mix(in srgb, var(--info) 10%, transparent)
+  );
+  --tool-error-icon: var(--error);
+  --destructive-fill-foreground: #ffffff;
+  --raised-fill: linear-gradient(var(--popover), var(--popover));
+  --raised-hover-fill: linear-gradient(var(--accent), var(--accent));
+  --raised-rim: linear-gradient(var(--border), var(--border));
+  --raised-hover-rim: var(--raised-rim);
+  --popover-rim: var(--raised-rim);
+  --card-settings-fill: linear-gradient(
+    color-mix(in srgb, var(--card) 60%, transparent),
+    color-mix(in srgb, var(--card) 60%, transparent)
+  );
+  /* Solid, so the timeline never shows through the composer or its tray. */
+  --tray-fill: linear-gradient(
+    color-mix(in srgb, var(--card) 80%, var(--background)),
+    color-mix(in srgb, var(--card) 80%, var(--background))
+  );
+  --composer-fill: linear-gradient(var(--card), var(--card));
+  --tray-stroke: var(--border);
+  --hairline: var(--border);
+  --divider: var(--border);
+  --table-row-rule: var(--border);
+  --sidebar-row-selected-fill: linear-gradient(
+    var(--sidebar-row-selected),
+    var(--sidebar-row-selected)
+  );
+  --sidebar-row-selected-rim: var(--sidebar-border);
+
+  @variant dark {
+    --info-foreground: var(--color-blue-400);
+    --success-foreground: var(--color-emerald-400);
+    --tool-error-icon: #fca5a5;
+  }
+}
+
+html:root[data-theme-id="t3-code-classic"],
+html:root[data-theme-id="t3-code-classic"] [data-app-sidebar],
+html:root[data-theme-id="t3-code-classic"].black-chrome [data-chrome-scope] {
+  --strong-foreground: var(--foreground);
+  --dim-foreground: var(--muted-foreground);
+  --sidebar-settled-title: var(--sidebar-muted-foreground);
+  --sidebar-settled-label: var(--sidebar-muted-foreground);
+  --sidebar-settled-meta: var(--sidebar-muted-foreground);
+  --sidebar-settled-pr: var(--sidebar-muted-foreground);
+  --code-gutter: var(--muted-foreground);
+  --search-line-number: var(--muted-foreground);
+}
+
+html:root[data-theme-id="t3-code-classic"] [data-app-sidebar] {
+  --foreground: var(--app-theme-sidebar-foreground);
+  --muted-foreground: var(--app-theme-sidebar-muted-foreground);
+  --sidebar-thread-title-foreground: var(--foreground);
+  --sidebar-shelf-foreground: var(--muted-foreground);
+  border-color: var(--sidebar-border);
+  color: var(--foreground);
+}
+
+html:root[data-theme-id="t3-code-classic"] > body {
+  color: var(--foreground);
+}
+
+html:root[data-theme-id="t3-code-classic"] [data-app-modal] {
+  --app-panel-fill: var(--background);
+}
+
+html:root[data-theme-id="t3-code-classic"] .surface-card-settings-rim {
+  background: var(--card-settings-fill) padding-box;
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+html:root[data-theme-id="t3-code-classic"] .surface-dialog {
+  background: color-mix(in srgb, var(--background) 80%, transparent);
+  border-color: var(--border);
+  backdrop-filter: blur(12px) saturate(1.14);
+
+  @variant dark {
+    backdrop-filter: blur(16px) saturate(1.08);
+  }
+}
+
+html:root[data-theme-id="t3-code-classic"] :is(.surface-popover, .surface-palette) {
+  background: color-mix(in srgb, var(--popover) 83.6%, transparent);
+  border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
+  backdrop-filter: blur(12px) saturate(1.14);
+
+  @variant dark {
+    backdrop-filter: blur(16px) saturate(1.08);
+  }
+}
+
+/* Main's blue is the lightest stop that keeps white button labels at AA contrast. */
+html:root[data-theme-id="t3-code-classic"][data-surface-style="soft-gradient"] > body,
+html:root[data-theme-id="t3-code-classic"][data-surface-style="soft-gradient"].black-chrome
+  [data-chrome-scope],
+html:root[data-theme-id="t3-code-classic"] [data-surface-preview="soft-gradient"] {
+  --lit-fill: linear-gradient(
+    var(--primary),
+    color-mix(in srgb, var(--primary) 90%, black)
+  ) !important;
+  --lit-hover-fill: var(--lit-fill) !important;
+}
+
+html:root[data-theme-id="t3-code-classic"]:is(
+    [data-surface-style="aqua-gloss-full"],
+    [data-surface-style="aqua-blue"]
+  )
+  > body,
+html:root[data-theme-id="t3-code-classic"].black-chrome:is(
+    [data-surface-style="aqua-gloss-full"],
+    [data-surface-style="aqua-blue"]
+  )
+  [data-chrome-scope],
+html:root[data-theme-id="t3-code-classic"]
+  :is([data-surface-preview="aqua-gloss-full"], [data-surface-preview="aqua-blue"]) {
+  --lit-fill: linear-gradient(
+    var(--primary),
+    color-mix(in srgb, var(--primary) 92%, black) 50%,
+    color-mix(in srgb, var(--primary) 84%, black) 50%,
+    color-mix(in srgb, var(--primary) 95%, black)
+  ) !important;
+  --lit-hover-fill: var(--lit-fill) !important;
+}
+
+html:root[data-theme-id="t3-code-classic"] [data-settings-nav] {
+  --sidebar: light-dark(var(--app-theme-sidebar), var(--card));
+}
+
+html:root[data-theme-id="t3-code-classic"].black-chrome [data-chrome-scope],
+html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
+  --background: #000000;
+  --foreground: #f1f3f7;
+  --muted-foreground: #a3a3a3;
+  --placeholder: #a3a3a3;
+  --card: color-mix(in srgb, var(--color-neutral-950) 97%, white);
+  --popover: var(--card);
+  --primary: oklch(0.571 0.21 264);
+  --primary-foreground: #ffffff;
+  --secondary: rgb(255 255 255 / 3%);
+  --muted: var(--secondary);
+  --accent: rgb(255 255 255 / 4%);
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 18%);
+  --sidebar-control-surface: #0a0a0a;
+  --sidebar-row-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--foreground) 11%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --sidebar-border: var(--border);
+  --raised-fill: linear-gradient(var(--card), var(--card));
+  --raised-hover-fill: linear-gradient(var(--accent), var(--accent));
+  --raised-rim: linear-gradient(var(--border), var(--border));
+  --raised-hover-rim: var(--raised-rim);
 }
 
 /* Surface styles: Settings > Appearance > Style sets html[data-surface-style]
