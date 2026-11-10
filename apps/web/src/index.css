@@ -4365,6 +4365,18 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root[data-surface-style="aqua-gloss-full"] > body,
 [data-surface-preview="aqua-gloss-full"],
 :root.black-chrome[data-surface-style="aqua-gloss-full"] [data-chrome-scope] {
+  --tint-overlay: linear-gradient(
+    180deg,
+    #ffffff18 0%,
+    #ffffff08 clamp(0%, 120px - 250%, 50%),
+    #00000000 clamp(50%, 350% - 120px, 100%),
+    #00000008 100%
+  );
+  --gloss-thumb-fill:
+    var(--tint-overlay), linear-gradient(var(--primary-foreground), var(--primary-foreground)) !important;
+  --gloss-off-thumb-fill: var(--tint-overlay), var(--ss-default-gloss-off-thumb-fill) !important;
+  --slider-thumb-fill: var(--gloss-off-thumb-fill);
+  --kbd-on-destructive-foreground: #fff !important;
   --popover-top: oklch(from var(--popover-bottom) calc(l + 0.035) c h) !important;
   --popover-rim: linear-gradient(
     180deg,
