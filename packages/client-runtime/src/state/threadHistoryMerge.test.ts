@@ -108,13 +108,13 @@ describe("threadHistoryMerge", () => {
     ]);
   });
 
-  it.each([false, true])(
-    "prepends older rows and dedupes by source identity with pinned consent %s",
-    (pinned) => {
-      const consent = {
-        ...row(0),
+  it.each([0, 1, 2])(
+    "prepends older rows and dedupes by source identity with %s pinned consent rows",
+    (pinnedCount) => {
+      const consents = [0, 1].map((index) => ({
+        ...row(index),
         item: {
-          ...row(0).item,
+          ...row(index).item,
           type: "delegation_approval" as const,
           runId: null,
           nodeId: null,
@@ -129,28 +129,33 @@ describe("threadHistoryMerge", () => {
           proposed: { ...v2Projection.thread.modelSelection, model: "gpt-5.5" },
           approvalStatus: "pending" as const,
         },
-      };
-      const recent = [...(pinned ? [consent] : []), row(2), row(3)];
+      }));
+      const recent = [...consents.slice(0, pinnedCount), row(3), row(4)];
       const projection = {
         ...v2Projection,
         turnItems: recent.map((entry) => entry.item),
         visibleTurnItems: recent.map((entry, position) => ({ ...entry, position })),
       };
-      const older = [...(pinned ? [] : [row(0)]), row(1), row(2)];
+      const older = [row(0), row(1), row(2), row(3)].slice(pinnedCount);
       const merged = mergeOlderHistoryIntoProjection(projection, older);
       expect(merged.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
         "item-0",
         "item-1",
         "item-2",
         "item-3",
+        "item-4",
       ]);
-      expect(merged.visibleTurnItems.map((entry) => entry.position)).toEqual([0, 1, 2, 3]);
+      expect(merged.visibleTurnItems.map((entry) => entry.position)).toEqual([0, 1, 2, 3, 4]);
       expect(merged.turnItems.map((item) => item.id)).toEqual(
-        pinned
-          ? ["item-0", "item-2", "item-3", "item-1"]
-          : ["item-2", "item-3", "item-0", "item-1"],
+        [
+          ["item-3", "item-4", "item-0", "item-1", "item-2"],
+          ["item-0", "item-3", "item-4", "item-1", "item-2"],
+          ["item-0", "item-1", "item-3", "item-4", "item-2"],
+        ][pinnedCount],
       );
-      expect(mergeOlderHistoryIntoProjection(merged, [pinned ? consent : row(0)])).toBe(merged);
+      expect(
+        mergeOlderHistoryIntoProjection(merged, [pinnedCount > 0 ? consents[0]! : row(0)]),
+      ).toBe(merged);
     },
   );
 
