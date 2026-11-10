@@ -83,9 +83,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        # Credentials stay: removing them runs `git submodule foreach`, which fails on
+        # the vendored repositories' gitlinks under .repos (they have no .gitmodules entry).
         with:
           ref: ${{ inputs.ref || github.sha }}
-          persist-credentials: false
 
       - name: Prepare build directories
         run: |
@@ -167,7 +168,8 @@ jobs:
           echo "### android dev client: \`$(jq -r '.source' <<<"$result")\` for fingerprint \`$(jq -r '.fingerprint' <<<"$result")\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cache statistics
-        if: always()
+        if: success() || failure()
+        continue-on-error: true
         run: |
           {
             echo '```'
@@ -192,9 +194,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        # Credentials stay: removing them runs `git submodule foreach`, which fails on
+        # the vendored repositories' gitlinks under .repos (they have no .gitmodules entry).
         with:
           ref: ${{ inputs.ref || github.sha }}
-          persist-credentials: false
 
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
