@@ -6,6 +6,7 @@ import {
   type PullRequestDiffResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -234,4 +235,35 @@ it("never requests the diff of a selected commit the pull request no longer has"
     .element(screen.getByRole("button", { name: "Diff scope: All commits" }))
     .toBeVisible();
   expect(mocks.diffCommits).not.toContain("gone");
+});
+
+it("keeps an open comment on its line when the comment key is pressed again", async () => {
+  setup({ paged: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={detail}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+      onAddToAgentSelection={() => {}}
+    />,
+    { container },
+  );
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  const panel = container.querySelector<HTMLElement>("[data-diff-panel]")!;
+  panel.focus();
+  await userEvent.keyboard("ic");
+  const draft = screen.getByRole("textbox");
+  await expect.element(draft).toBeVisible();
+  const line = draft.element().getAttribute("aria-label");
+
+  panel.focus();
+  await userEvent.keyboard("jjjc");
+
+  await expect.element(screen.getByRole("textbox")).toHaveAccessibleName(line!);
 });

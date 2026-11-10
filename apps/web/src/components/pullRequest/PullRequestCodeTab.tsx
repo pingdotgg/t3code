@@ -847,7 +847,7 @@ function PullRequestCodeTab({
 
   const beginComment = useStableCallback(
     (range: SelectedLineRange | null, context: { item: CodeViewItem<ReviewAnnotationGroup> }) => {
-      if (!range || !canSelectLines) return;
+      if (!range || !canSelectLines || draft !== null) return;
       const item = context.item;
       if (item.type !== "diff") return;
       const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);

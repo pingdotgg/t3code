@@ -84,6 +84,7 @@ function SelectableCodeView(props: {
   files: ReturnType<typeof file>[];
   codeViewKey: string;
   pendingFiles: FileDiffMetadata[];
+  onDraftClose?: () => void;
 }) {
   const [selectedLines, setSelectedLines] = useState<CodeViewLineSelection | null>(null);
   return (
@@ -106,10 +107,16 @@ function view(
   files: ReturnType<typeof file>[],
   codeViewKey = "initial",
   pendingFiles: FileDiffMetadata[] = [],
+  onDraftClose?: () => void,
 ) {
   return (
     <StrictMode>
-      <SelectableCodeView codeViewKey={codeViewKey} files={files} pendingFiles={pendingFiles} />
+      <SelectableCodeView
+        codeViewKey={codeViewKey}
+        files={files}
+        pendingFiles={pendingFiles}
+        {...(onDraftClose ? { onDraftClose } : {})}
+      />
     </StrictMode>
   );
 }
@@ -175,5 +182,24 @@ describe("diff comment drafts", () => {
       }),
     ]);
     expect(container.querySelector("p")?.textContent).toBe("Keep this draft");
+  });
+
+  it("hands focus back when a refresh drops a draft's file, unless focus moved on", async () => {
+    using _drafts = setup();
+    const onDraftClose = vi.fn();
+    const shown = file("shown.ts");
+    await using screen = await render(view([shown], "initial", [], onDraftClose), { container });
+    await click("Comment on shown.ts");
+    editor().focus();
+    await screen.rerender(view([], "dropped", [], onDraftClose));
+    expect(onDraftClose).toHaveBeenCalledOnce();
+
+    await screen.rerender(view([shown], "back", [], onDraftClose));
+    await click("Comment on shown.ts");
+    const elsewhere = document.createElement("input");
+    container.append(elsewhere);
+    elsewhere.focus();
+    await screen.rerender(view([], "moved", [], onDraftClose));
+    expect(onDraftClose).toHaveBeenCalledOnce();
   });
 });

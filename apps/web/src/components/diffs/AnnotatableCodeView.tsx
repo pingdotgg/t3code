@@ -9,7 +9,14 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
-import { useImperativeHandle, useState, type ReactNode, type Ref } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useImperativeHandle,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -148,6 +155,14 @@ export function AnnotatableCodeView({
     annotation: DiffCommentLineAnnotation;
   } | null>(null);
   const [draftText, setDraftText] = useState("");
+  const [droppedDraftCount, setDroppedDraftCount] = useState(0);
+  const draftDropped = useEffectEvent(() => {
+    if (document.activeElement === document.body) onDraftClose?.();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a refresh that drops the draft's file unmounts its focused textarea, and focus must not fall to the page
+  useEffect(() => {
+    if (droppedDraftCount > 0) draftDropped();
+  }, [droppedDraftCount]);
 
   const filesByKey = new Map(files.map((file) => [file.fileKey, file]));
   if (
@@ -162,6 +177,7 @@ export function AnnotatableCodeView({
   ) {
     setDraft(null);
     setDraftText("");
+    setDroppedDraftCount((count) => count + 1);
   }
   const items: CodeViewDiffItem<DiffCommentAnnotationGroup>[] = files.map(
     ({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
