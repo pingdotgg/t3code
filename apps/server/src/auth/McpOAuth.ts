@@ -206,7 +206,8 @@ export class McpOAuth extends Context.Service<
       readonly urls: McpOAuthUrls;
       readonly request: AuthMcpAuthorizationRequest;
     }) => Effect.Effect<AuthorizationRequest, McpOAuthPageError | McpOAuthRedirectError>;
-    readonly approvingBrowserSession: (
+    /** A browser cookie session, or a T3 Connect session from the hosted app, that may approve. */
+    readonly approvingSession: (
       request: HttpServerRequest.HttpServerRequest,
       authorization: AuthorizationRequest,
     ) => Effect.Effect<
@@ -406,11 +407,8 @@ const make = Effect.gen(function* () {
     } satisfies AuthorizationRequest;
   });
 
-  const approvingBrowserSession: McpOAuth["Service"]["approvingBrowserSession"] = (
-    request,
-    authorization,
-  ) =>
-    environmentAuth.authenticateBrowserSession(request).pipe(
+  const approvingSession: McpOAuth["Service"]["approvingSession"] = (request, authorization) =>
+    environmentAuth.authenticateHttpRequest(request).pipe(
       Effect.flatMap((session) =>
         // Approving manages access, and a session may only hand out scopes it holds.
         session.scopes.includes(AuthAccessWriteScope) &&
@@ -470,7 +468,7 @@ const make = Effect.gen(function* () {
         ),
       );
     } else {
-      const session = yield* approvingBrowserSession(input.request, input.authorization);
+      const session = yield* approvingSession(input.request, input.authorization);
       if (
         session === undefined ||
         !timingSafeEqualBase64Url(decision.csrfToken, session.csrfToken) ||
@@ -574,7 +572,7 @@ const make = Effect.gen(function* () {
         : { organization: managedPolicy.organization, maxRuntimeMode },
     register,
     validateAuthorization,
-    approvingBrowserSession,
+    approvingSession,
     approve,
     deny,
     exchangeCode,
