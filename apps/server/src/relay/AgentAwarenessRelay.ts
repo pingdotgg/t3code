@@ -940,10 +940,28 @@ export const make = Effect.gen(function* () {
           if (!shouldPublishAgentAwarenessEvent(event)) {
             return Effect.void;
           }
-          return Effect.logDebug("agent activity publishing queued thread publish", {
-            eventType: event.type,
-            threadId,
-          }).pipe(Effect.andThen(enqueueThreadPublish(threadId)));
+          // Awareness snapshots omit deleted threads; remember the side-chat parent
+          // from the deletion payload so a catch-up or reset that never saw the
+          // child still republishes the rolled-up parent.
+          const deletedSideChatParentId =
+            event.type === "thread.deleted" && event.payload.lineage.sideChat === true
+              ? event.payload.lineage.parentThreadId
+              : null;
+          const rememberDeletedSideChatParent =
+            deletedSideChatParentId !== null && deletedSideChatParentId !== threadId
+              ? Ref.update(childParentByThreadRef, (parents) =>
+                  new Map(parents).set(threadId, deletedSideChatParentId),
+                )
+              : Effect.void;
+          return rememberDeletedSideChatParent.pipe(
+            Effect.andThen(
+              Effect.logDebug("agent activity publishing queued thread publish", {
+                eventType: event.type,
+                threadId,
+              }),
+            ),
+            Effect.andThen(enqueueThreadPublish(threadId)),
+          );
         }),
       );
     },

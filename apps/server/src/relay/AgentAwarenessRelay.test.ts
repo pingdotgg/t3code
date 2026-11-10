@@ -654,6 +654,72 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect(
+    "republishes the parent from a side-chat deletion event without a prior map entry",
+    () =>
+      Effect.gen(function* () {
+        const sideChatId = ThreadId.make("relay-side-chat-untracked");
+        const parentWithAttention = {
+          ...shell({ status: "completed" }),
+          descendantPendingRequest: "user_input" as const,
+        };
+        const parentClear = shell({ status: "completed" });
+        const sideChat = shell({
+          id: sideChatId,
+          status: "waiting",
+          activityRunStatus: "waiting",
+          creationSource: "web",
+          lineage: {
+            rootThreadId: THREAD_ID,
+            parentThreadId: THREAD_ID,
+            relationshipToParent: "fork",
+            sideChat: true,
+          },
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request:input-untracked"),
+            kind: "user_input",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        });
+        const byId = yield* Ref.make(
+          new Map<ThreadId, ReturnType<typeof shell> | typeof parentWithAttention>([
+            [THREAD_ID, parentWithAttention],
+          ]),
+        );
+        const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const pulls = yield* Queue.unbounded<void>();
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: (threadId) =>
+            Ref.get(byId).pipe(Effect.map((map) => map.get(threadId) ?? null)),
+          domainEvents: Stream.fromEffectRepeat(
+            Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+          ),
+        });
+        yield* relay.start();
+        yield* Queue.take(pulls);
+        // Catch-up / reset path: parent already shows rolled-up attention without
+        // the side chat ever being published through this relay instance.
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications.length, 1);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_input");
+
+        yield* Ref.set(byId, new Map([[THREAD_ID, parentClear]]));
+        const now = yield* DateTime.now;
+        yield* Queue.offer(events, {
+          id: EventId.make("event:side-chat-deleted"),
+          type: "thread.deleted",
+          threadId: sideChatId,
+          occurredAt: now,
+          payload: { ...sideChat, deletedAt: now },
+        });
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+        assert.equal(publications.length, 2);
+        assert.equal(publications[1]?.state?.phase, "completed");
+        assert.equal(publications[1]?.state?.threadId, THREAD_ID);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("republishes unchanged state with fresh credentials after relinking", () =>
     Effect.gen(function* () {
       const { relay, secrets, publications } = yield* makeTestRelay();
