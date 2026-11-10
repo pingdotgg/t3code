@@ -90,8 +90,14 @@ it("enables the chosen provider only after a successful setup and keeps its gran
           const destination = screen.getByRole("combobox", { name: "Transcribe with" });
           await expect.element(destination).toHaveTextContent("Laptop");
           await destination.click();
-          await page.getByRole("option", { name: "OpenAI via Laptop" }).click();
+          await page.getByRole("option", { name: "Deepgram via Laptop" }).click();
           const dialog = page.getByRole("dialog");
+          await expect
+            .element(dialog.getByText("Update Laptop to use Deepgram dictation."))
+            .toBeVisible();
+          await dialog.getByRole("button", { name: "Cancel" }).click();
+          await destination.click();
+          await page.getByRole("option", { name: "OpenAI via Laptop" }).click();
           await dialog.getByRole("button", { name: "Cancel" }).click();
           await expect.element(destination).toHaveTextContent("Laptop");
           expect(writes).toEqual([]);
