@@ -443,6 +443,21 @@ describe("prepareTurnAttachments", () => {
     });
   });
 
+  it("reports upload progress as a fraction when iOS counts bytes as bigints", async () => {
+    mocks.upload.mockImplementation(async (_uri: unknown, _url: unknown, options: unknown) => {
+      const { onProgress } = options as {
+        onProgress: (event: { bytesSent: unknown; totalBytes: unknown }) => void;
+      };
+      onProgress({ bytesSent: 21n, totalBytes: 42n });
+      return { status: 204, body: "", headers: {} };
+    });
+    const onUploadProgress = vi.fn();
+
+    await prepareTurnAttachments({ environmentId, attachments: [file], onUploadProgress });
+
+    expect(onUploadProgress).toHaveBeenCalledWith(file.id, 0.5);
+  });
+
   it("uses the current connection when an environment reconnects during URL creation", async () => {
     mocks.readAtom
       .mockReturnValueOnce(Option.some({ httpBaseUrl: "https://old-environment.example/" }))
