@@ -147,6 +147,16 @@ describe("thread links", () => {
       relabelThreadLinks("[Kept label](<t3-thread://v2/local/t1>)", local, () => undefined),
     ).toBe("Kept label");
     expect(threadLinkRefs("[a](<t3-thread://v2/there/t2>)", local)).toEqual([ref("there", "t2")]);
+    for (const threadId of ["mcp:launch:qa(1)", "mcp:launch:qa)"]) {
+      const thread = ref("there", threadId);
+      const link = formatThreadLink(thread, "Original");
+      expect(link).toBe(`[Original](<t3-thread://v2/there/${threadId}>)`);
+      expect(threadLinkRefs(link, local)).toEqual([thread]);
+      expect(relabelThreadLinks(link, local, () => "Renamed")).toBe(
+        `[Renamed](<t3-thread://v2/there/${threadId}>)`,
+      );
+      expect(relabelThreadLinks(link, local, () => undefined)).toBe("Original");
+    }
   });
 
   it("turns a v2 link it cannot resolve into plain text, never the raw link", () => {
@@ -309,6 +319,7 @@ describe("hosted thread links", () => {
         [
           "See https://app.t3.codes/threads/there/t1.",
           "[old](https://app.t3.codes/threads/there/t1)",
+          '[`old`](https://app.t3.codes/threads/there/t1 "title")',
           "<https://app.t3.codes/threads/there/t1>",
           "`https://app.t3.codes/threads/there/t1`",
           "https://app.t3.codes/threads/there/t1?prompt=go",
@@ -320,6 +331,7 @@ describe("hosted thread links", () => {
       [
         "See [There](t3-thread://v2/there/t1).",
         "[There](t3-thread://v2/there/t1)",
+        '[`old`](https://app.t3.codes/threads/there/t1 "title")',
         "[There](t3-thread://v2/there/t1)",
         "`https://app.t3.codes/threads/there/t1`",
         "https://app.t3.codes/threads/there/t1?prompt=go",
@@ -333,12 +345,14 @@ describe("hosted thread links", () => {
     ]);
   });
 
-  it("leaves a hosted URL inside another URL or another link's label as written", () => {
+  it("leaves a hosted URL inside another URL, another link, or a code span as written", () => {
     const nested = [
       "https://example.com/?next=https://app.t3.codes/threads/one/same",
       "[Example](https://example.com/?next=https://app.t3.codes/threads/one/same)",
       "[Example](<https://example.com/?next=https://app.t3.codes/threads/one/same>)",
       "[ https://app.t3.codes/threads/one/same ](https://example.com)",
+      '[Example](https://example.com "https://app.t3.codes/threads/one/same")',
+      "[a `code](https://example.com) https://app.t3.codes/threads/one/same`",
     ].join("\n");
     expect(relabelThreadLinks(nested, local, () => "Title")).toBe(nested);
     expect(threadLinkRefs(nested, local)).toEqual([]);

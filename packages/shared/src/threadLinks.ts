@@ -16,7 +16,7 @@ const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${H
 // Every inline link is taken whole, so a hosted URL in another link's label or href stays as written.
 // Labels and destinations stop at the next `[`, while titles may contain literal brackets.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`\[(?<label>[^[\]\n]*)\]\(<?(?<href>[^\s)[<>]*)>?(?<title>\s+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\))[ \t]*)?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`\[(?<label>[^[\]\n]*)\]\((?:<(?<angleHref>[^\s<>[]*)>|(?<href>[^\s<>)[]*))(?<title>\s+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\))[ \t]*)?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+~-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
   "g",
 );
 
@@ -177,7 +177,9 @@ const linkLabel = (label: string | undefined) =>
 /** Without a label, an autolink: clients show the thread's current title. */
 export function formatThreadLink(ref: ThreadLink, label?: string): string {
   const cleaned = linkLabel(label);
-  return cleaned ? `[${cleaned}](${threadLinkHref(ref)})` : `<${threadLinkHref(ref)}>`;
+  const href = threadLinkHref(ref);
+  const destination = /[()]/.test(href) ? `<${href}>` : href;
+  return cleaned ? `[${cleaned}](${destination})` : `<${href}>`;
 }
 
 /** What a person copies out of T3 Code: a Markdown link that opens the thread anywhere. */
@@ -202,7 +204,7 @@ export function prepareThreadLinks(markdown: string) {
   for (const match of threadLinkMatches(markdown)) {
     const groups = match.groups!;
     if (groups.title !== undefined) continue;
-    const href = groups.href ?? groups.autolink ?? groups.bare;
+    const href = groups.angleHref ?? groups.href ?? groups.autolink ?? groups.bare;
     const link = href === undefined ? null : parseThreadLinkHref(href);
     if (link !== null) {
       matches.push({
