@@ -86,7 +86,12 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       const { operation, prompt, modelSelection } = input;
 
       const apiKey = yield* resolveCursorApiKey(operation);
-      const { Agent } = yield* Effect.try(sdk.load);
+      const sdkFailure = (detail: string) => (cause: unknown) =>
+        new TextGenerationError({ operation, detail, cause });
+      const { Agent } = yield* Effect.try({
+        try: sdk.load,
+        catch: sdkFailure("Cursor SDK could not be loaded."),
+      });
       // sandbox.json expands writable paths independently of settingSources; the public API cannot override it.
       if (yield* fs.exists(`${yield* HostProcess.HomeDirectory}/.cursor/sandbox.json`)) {
         return yield* new TextGenerationError({
@@ -99,10 +104,15 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       // Only store disposal releases SDK SQLite handles; keep state outside the empty workspace.
       const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-text-state-" });
       const store = yield* Effect.acquireRelease(
-        Effect.tryPromise(() =>
-          sdk.loadSqlite().SqliteLocalAgentStore.open({ workspaceRef: cwd, stateRoot }),
-        ),
-        (store) => Effect.tryPromise(() => store.dispose()).pipe(Effect.ignore({ log: true })),
+        Effect.tryPromise({
+          try: () => sdk.loadSqlite().SqliteLocalAgentStore.open({ workspaceRef: cwd, stateRoot }),
+          catch: sdkFailure("Cursor SDK agent store could not be opened."),
+        }),
+        (store) =>
+          Effect.tryPromise({
+            try: () => store.dispose(),
+            catch: sdkFailure("Cursor SDK agent store could not be disposed."),
+          }).pipe(Effect.ignore({ log: true })),
       );
       const agentOptions = {
         apiKey,
@@ -118,22 +128,24 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         },
       } satisfies AgentOptions;
       const createCursorAgent = (sandboxEnabled: boolean) =>
-        Effect.tryPromise((signal) =>
-          Agent.create(
-            sandboxEnabled
-              ? agentOptions
-              : {
-                  ...agentOptions,
-                  local: {
-                    ...agentOptions.local,
-                    sandboxOptions: { enabled: false },
+        Effect.tryPromise({
+          try: (signal) =>
+            Agent.create(
+              sandboxEnabled
+                ? agentOptions
+                : {
+                    ...agentOptions,
+                    local: {
+                      ...agentOptions.local,
+                      sandboxOptions: { enabled: false },
+                    },
                   },
-                },
-          ).then((agent) => {
-            if (signal.aborted) agent.close();
-            return agent;
-          }),
-        );
+            ).then((agent) => {
+              if (signal.aborted) agent.close();
+              return agent;
+            }),
+          catch: sdkFailure("Cursor SDK agent could not be created."),
+        });
 
       const request = Effect.gen(function* () {
         // Empty cwd and setting sources isolate the run from user projects even if sandboxing fails.
@@ -142,27 +154,32 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
             Effect.catchIf(cursorSandboxUnsupported, () => createCursorAgent(false)),
           ),
           (agent) =>
-            Effect.tryPromise(() => agent[Symbol.asyncDispose]()).pipe(
-              Effect.timeout("5 seconds"),
-              Effect.ignore({ log: true }),
-            ),
+            Effect.tryPromise({
+              try: () => agent[Symbol.asyncDispose](),
+              catch: sdkFailure("Cursor SDK agent could not be disposed."),
+            }).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
           { interruptible: true },
         );
-        const run = yield* Effect.tryPromise((signal) =>
-          agent.send(prompt).then((run) => {
-            if (signal.aborted) void run.cancel().catch(() => undefined);
-            return run;
-          }),
-        );
+        const run = yield* Effect.tryPromise({
+          try: (signal) =>
+            agent.send(prompt).then((run) => {
+              if (signal.aborted) void run.cancel().catch(() => undefined);
+              return run;
+            }),
+          catch: sdkFailure("Cursor SDK request could not be sent."),
+        });
         yield* Effect.addFinalizer(() =>
           run.status === "running"
-            ? Effect.tryPromise(() => run.cancel()).pipe(
-                Effect.timeout("5 seconds"),
-                Effect.ignore({ log: true }),
-              )
+            ? Effect.tryPromise({
+                try: () => run.cancel(),
+                catch: sdkFailure("Cursor SDK run could not be cancelled."),
+              }).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }))
             : Effect.void,
         );
-        return yield* Effect.tryPromise(() => run.wait());
+        return yield* Effect.tryPromise({
+          try: () => run.wait(),
+          catch: sdkFailure("Cursor SDK run failed."),
+        });
       }).pipe(Effect.scoped);
       const promptResult = yield* request.pipe(
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
