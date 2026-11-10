@@ -1025,6 +1025,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--surface-fill) border-box;
   box-shadow: var(--surface-shadow);
 }
+:where([data-slot="checkbox"], [data-slot="radio"])[data-unchecked]:not([aria-invalid="true"]) {
+  --surface-rim: linear-gradient(var(--muted-foreground), var(--muted-foreground));
+}
+
+:root[data-surface-style="flat"]
+  :where([data-slot="checkbox"], [data-slot="radio"])[data-unchecked]:not([aria-invalid="true"]) {
+  --surface-fill: linear-gradient(var(--muted-foreground), var(--muted-foreground));
+  --surface-rim: var(--surface-fill);
+}
+
 /* Ghost fields: a search field on chrome among ghost icon buttons. No fill,
    rim or shadow at rest. Hover (surface-ghost-hover) and focus take the
    style's --ghost-hover-fill, the fill its ghost buttons hover with, so each
