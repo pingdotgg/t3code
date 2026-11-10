@@ -1900,6 +1900,41 @@ it.effect.each(["completed", "failed", "cancelled"] as const)(
     }),
 );
 
+it.effect("reports deferred usage when ingestion ends before native settlement", () =>
+  Effect.gen(function* () {
+    const reports: ProviderUsageAnalytics.RunSettledReport[] = [];
+    yield* runBackgroundItemScenario(
+      "native-usage-unsettled",
+      (ids) => [
+        {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: {
+            id: ids.rootProviderTurnId,
+            providerThreadId: ids.providerThreadId,
+            runAttemptId: ids.attemptId,
+            status: "completed",
+            usagePending: true,
+          },
+        } as ProviderAdapter.ProviderAdapterV2Event,
+        rootTerminalEvent(ids, "completed"),
+      ],
+      {
+        analytics: {
+          runStarted: () => Effect.void,
+          turnCompleted: () => Effect.void,
+          runSettled: (report) =>
+            Effect.sync(() => {
+              reports.push(report);
+            }),
+        },
+      },
+    );
+    assert.lengthOf(reports, 1);
+    assert.equal(reports[0]?.status, "completed");
+  }),
+);
+
 it.effect("keeps ingesting until queued background work clears after the probe goes idle", () =>
   Effect.gen(function* () {
     // The adapter's probe runs ahead of its event queue, so only the queued update may release.

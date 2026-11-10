@@ -1858,6 +1858,14 @@ export const layer: Layer.Layer<
                   );
                 }),
             ),
+            // Ingestion can end before the provider settles deferred usage; report what we have.
+            Effect.ensuring(
+              Ref.getAndSet(pendingUsageSettlement, null).pipe(
+                Effect.flatMap((report) =>
+                  report === null ? Effect.void : turnAnalytics.runSettled(report),
+                ),
+              ),
+            ),
             Effect.ensuring(endPreviewActivity),
             Effect.ensuring(eventSubscription.close),
             Effect.forkDetach,
