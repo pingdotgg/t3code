@@ -1,3 +1,4 @@
+import * as Git from "@alchemy.run/git";
 /**
  * Who may call what. Native `HttpApiMiddleware` on the application's API,
  * git's and ours: REST, the wire, the raw reads, and the GitHub facade.
@@ -5,16 +6,15 @@
  * public one.
  */
 import { RuntimeContext } from "alchemy";
-import * as Git from "alchemy/Git";
 import * as Effect from "effect/Effect";
-import * as Redacted from "effect/Redacted";
-import * as Layer from "effect/Layer";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
+import * as HttpApiSecurity from "effect/http-api/HttpApiSecurity";
 import * as HttpRouter from "effect/http/HttpRouter";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
-import * as HttpApiSecurity from "effect/http-api/HttpApiSecurity";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import { Auth, Session, Unauthorized } from "./auth.ts";
 
 /** A 401 that makes `git` ask for credentials. */
@@ -40,9 +40,7 @@ export class Authentication extends HttpApiMiddleware.Service<
       const registry = yield* Git.RegistryStore;
 
       const resolve = Effect.gen(function* () {
-        const { password } = yield* HttpApiBuilder.securityDecode(
-          HttpApiSecurity.basic,
-        );
+        const { password } = yield* HttpApiBuilder.securityDecode(HttpApiSecurity.basic);
         const key = Redacted.value(password);
         if (key !== "") {
           const verified = yield* auth.api
@@ -52,18 +50,12 @@ export class Authentication extends HttpApiMiddleware.Service<
                 Effect.succeed({ valid: false as const, key: null }),
               ),
             );
-          return verified.valid && verified.key
-            ? { id: verified.key.referenceId }
-            : undefined;
+          return verified.valid && verified.key ? { id: verified.key.referenceId } : undefined;
         }
         const session = yield* auth
           .getSession()
-          .pipe(
-            Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)),
-          );
-        return session
-          ? { id: session.user.id, name: session.user.name }
-          : undefined;
+          .pipe(Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)));
+        return session ? { id: session.user.id, name: session.user.name } : undefined;
       });
 
       /**
@@ -85,9 +77,7 @@ export class Authentication extends HttpApiMiddleware.Service<
         Effect.gen(function* () {
           const user = yield* resolve;
           const { owner } = yield* HttpRouter.params;
-          const own =
-            owner === undefined ||
-            owner.toLowerCase() === user?.id.toLowerCase();
+          const own = owner === undefined || owner.toLowerCase() === user?.id.toLowerCase();
           if (user !== undefined && own) {
             return yield* Effect.provideService(httpEffect, Session, { user });
           }

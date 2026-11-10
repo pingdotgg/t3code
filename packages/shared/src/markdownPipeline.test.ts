@@ -3,7 +3,120 @@ import { unified } from "unified";
 import rehypeRaw from "rehype-raw";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
-import { CHAT_MARKDOWN_REHYPE_PLUGINS, CHAT_MARKDOWN_REMARK_PLUGINS } from "./markdownPipeline.ts";
+import type { Root, RootContent } from "mdast";
+import {
+  CHAT_MARKDOWN_REHYPE_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+} from "./markdownPipeline.ts";
+
+it.each([
+  ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
+  ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+] as const)("preserves trailing underscores and tildes in bare URLs (%s)", (_, plugins) => {
+  const processor = unified().use(remarkParse).use(plugins);
+  const shape = (node: Root | RootContent): string => {
+    if (node.type === "text") return node.value;
+    if (node.type === "inlineCode") return `\`${node.value}\``;
+    if (node.type === "code") return `\`\`\`${node.value}\`\`\``;
+    const children = "children" in node ? node.children.map(shape).join("") : "";
+    if (node.type === "link") return `[${children}](${node.url})`;
+    if (node.type === "linkReference") return `[${children}][${node.identifier}]`;
+    if (node.type === "emphasis") return `*${children}*`;
+    if (node.type === "strong") return `**${children}**`;
+    if (node.type === "delete") return `~~${children}~~`;
+    return children;
+  };
+  const link = (url: string) => `[${url}](${/^www\./i.test(url) ? `http://${url}` : url})`;
+  for (const url of [
+    "https://x.com/dimasike_",
+    "http://example.com/name__",
+    "HTTPS://example.com/name_",
+    "https://example.com/a_(b)_",
+    "https://example.com/?name=value_",
+    "https://example.com/#section_",
+    "https://example.com/a_?name=value_#section_",
+    "https://example.com/name~",
+    "https://example.com/name~~",
+    "https://example.com/name_~",
+    "https://example.com/name~_",
+    "https://example.com/name__~~_",
+    "https://example.com/?name=value~",
+    "https://example.com/#section~",
+    "www.example.com/name_",
+    "www.example.com/name~_",
+    "WWW.example.com/name~~",
+    "https://example.com/name-",
+    "https://example.com/name/",
+    "https://example.com/name%5F",
+    "https://example.com/name%7E",
+  ]) {
+    for (const punctuation of ["", ".", ",", "!", "?", ":", ";", ")", "]", '"']) {
+      const markdown = `See ${url}${punctuation} next`;
+      expect(shape(processor.runSync(processor.parse(markdown), markdown) as Root), markdown).toBe(
+        `See ${link(url)}${punctuation} next`,
+      );
+    }
+  }
+  for (const [markdown, expected] of [
+    ["*https://x.com/dimasike_*", `*${link("https://x.com/dimasike_")}*`],
+    ["**https://x.com/dimasike_**", `**${link("https://x.com/dimasike_")}**`],
+    ["_https://x.com/dimasike_", `*${link("https://x.com/dimasike")}*`],
+    ["__https://x.com/dimasike__", `**${link("https://x.com/dimasike")}**`],
+    ["~~https://example.com/name_~~", `~~${link("https://example.com/name_")}~~`],
+    ["~~https://example.com/name~~", `~~${link("https://example.com/name")}~~`],
+    ["~https://example.com/name~", `~~${link("https://example.com/name")}~~`],
+    ["*https://example.com/name~*", `*${link("https://example.com/name~")}*`],
+    ["_https://example.com/name~_", `*${link("https://example.com/name~")}*`],
+    ["[test](https://example.com/name~)", "[test](https://example.com/name~)"],
+    ["[https://x.com/a](https://x.com/a)~_", `${link("https://x.com/a")}~_`],
+    ["<https://x.com/a>~_", `${link("https://x.com/a")}~_`],
+    ["[test][ref]~_\n\n[ref]: https://x.com/a~_", "[test][ref]~_"],
+    ["`https://example.com/name~_`", "`https://example.com/name~_`"],
+    ["```\nhttps://example.com/name~_\n```", "```https://example.com/name~_```"],
+    ["https\\://example.com/name~_", link("https://example.com/name~_")],
+    ["https://example.com/name. _~", `${link("https://example.com/name")}. _~`],
+    ["Mail person@example.com_", "Mail person@example.com_"],
+    ["Mail person@example.com ~_", "Mail [person@example.com](mailto:person@example.com) ~_"],
+    ["[test](https://x.com/dimasike_)", "[test](https://x.com/dimasike_)"],
+    ["[https://x.com/a](https://x.com/a)_", `${link("https://x.com/a")}_`],
+    ["<https://x.com/a>_", `${link("https://x.com/a")}_`],
+    ["[test][ref]_\n\n[ref]: https://x.com/a_", "[test][ref]_"],
+    ["`https://x.com/dimasike_`", "`https://x.com/dimasike_`"],
+    ["```\nhttps://x.com/dimasike_\n```", "```https://x.com/dimasike_```"],
+    ["https://x.com/a. _", `${link("https://x.com/a")}. _`],
+    ["https\\://x.com/dimasike_", link("https://x.com/dimasike_")],
+    ["https://x.com/a\\_", link("https://x.com/a\\_")],
+    ["https://x.com/a&#95;", `${link("https://x.com/a&#95")};`],
+    [
+      "https://x.com/a_ https://x.com/b_",
+      `${link("https://x.com/a_")} ${link("https://x.com/b_")}`,
+    ],
+  ] as const) {
+    expect(shape(processor.runSync(processor.parse(markdown), markdown) as Root), markdown).toBe(
+      expected,
+    );
+  }
+  for (const url of ["https://x.com/dimasike_", "www.example.com/name~_"]) {
+    const markdown = `${url}, next`;
+    const boundary = { line: 1, column: url.length + 1, offset: url.length };
+    expect(processor.runSync(processor.parse(markdown), markdown)).toMatchObject({
+      children: [
+        {
+          children: [
+            {
+              type: "link",
+              url: /^www\./i.test(url) ? `http://${url}` : url,
+              position: { end: boundary },
+              children: [{ type: "text", value: url, position: { end: boundary } }],
+            },
+            { type: "text", value: ", next", position: { start: boundary } },
+          ],
+        },
+      ],
+    });
+  }
+});
 
 it("preserves in-app thread links through the shared Markdown sanitizer", () => {
   const processor = unified()
@@ -89,6 +202,62 @@ it("builds the tree rehype-raw builds for markdown without HTML", () => {
   ]) {
     expect(tree(CHAT_MARKDOWN_REHYPE_PLUGINS, markdown)).toEqual(tree(withRaw, markdown));
   }
+});
+
+it("keeps local editor file links but not other schemes through the shared Markdown sanitizer", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "[cursor](cursor://file/Users/me/repo/file.md:3)",
+        "[code](vscode://file/Users/me/repo/file.md:3:7)",
+        "[insiders](vscode-insiders://file/Users/me/repo/file.md)",
+        "[unknown](foo://file/Users/me/repo/file.md)",
+        "[zed](zed://file/Users/me/repo/file.md)",
+      ].join(" "),
+    ),
+  );
+  type Node = { tagName?: string; properties?: { href?: string }; children?: Node[] };
+  const hrefs = ((tree.children[0] as Node).children ?? [])
+    .filter((node) => node.tagName === "a")
+    .map((node) => node.properties?.href);
+  expect(hrefs).toEqual([
+    "cursor://file/Users/me/repo/file.md:3",
+    "vscode://file/Users/me/repo/file.md:3:7",
+    "vscode-insiders://file/Users/me/repo/file.md",
+    undefined,
+    undefined,
+  ]);
+});
+
+it("keeps mixed-case local editor file links by lowercasing the scheme before sanitizing", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "[upper](VSCODE://file/Users/me/repo/file.md:3:7)",
+        "[mixed](Cursor://file/Users/me/repo/file.md:3)",
+        "[other](FOO://file/Users/me/repo/file.md)",
+      ].join(" "),
+    ),
+  );
+  type Node = { tagName?: string; properties?: { href?: string }; children?: Node[] };
+  const hrefs = ((tree.children[0] as Node).children ?? [])
+    .filter((node) => node.tagName === "a")
+    .map((node) => node.properties?.href);
+  expect(hrefs).toEqual([
+    "vscode://file/Users/me/repo/file.md:3:7",
+    "cursor://file/Users/me/repo/file.md:3",
+    undefined,
+  ]);
 });
 
 it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {

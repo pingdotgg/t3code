@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -15,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeOS from "node:os";
 import { vi } from "vite-plus/test";
 
@@ -54,6 +56,22 @@ function makeProcess(output: string, exitCode = 0): ChildProcessSpawner.ChildPro
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+}
+
+function makeHungProcess(): ChildProcessSpawner.ChildProcessHandle {
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(124),
+    stdout: Stream.never,
+    stderr: Stream.never,
+    all: Stream.never,
+    exitCode: Effect.never,
+    isRunning: Effect.succeed(true),
+    kill: () => Effect.never,
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
@@ -431,10 +449,13 @@ describe("DesktopShellEnvironment", () => {
       const env: NodeJS.ProcessEnv = { SHELL: "/bin/failing", PATH: "/usr/bin" };
       const commands: string[] = [];
 
-      yield* runShellEnvironment({
+      const discovery = (service: DesktopShellEnvironment.DesktopShellEnvironment["Service"]) =>
+        Effect.all([service.awaitDiscovery, service.awaitUserShellDiscovery]);
+      const answered = yield* runShellEnvironment({
         env,
         platform: "linux",
         userShell: "/usr/local/bin/fish",
+        use: (service) => discovery(service).pipe(Effect.map(([, fromUserShell]) => fromUserShell)),
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
           commands.push(command.command);
@@ -446,6 +467,23 @@ describe("DesktopShellEnvironment", () => {
 
       assert.deepEqual(commands, ["/bin/failing", "/usr/local/bin/fish"]);
       assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
+      // The account's own login shell answered.
+      assert.isTrue(answered);
+
+      // Only the platform fallback answered: its PATH can miss folders the user's shell adds.
+      const fallbackOnly = yield* runShellEnvironment({
+        env: { SHELL: "/usr/bin/fish", PATH: "/usr/bin" },
+        platform: "linux",
+        use: (service) =>
+          discovery(service).pipe(
+            Effect.map(([prepared, fromUserShell]) => prepared && !fromUserShell),
+          ),
+        handler: (command) =>
+          command._tag === "StandardCommand" && command.command === "/usr/bin/fish"
+            ? { output: "", exitCode: 7 }
+            : envOutput({ PATH: "/usr/bin" }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      assert.isTrue(fallbackOnly);
     }),
   );
 
@@ -676,6 +714,36 @@ describe("DesktopShellEnvironment", () => {
         assert.include(env.PATH, "C:\\Working");
         assert.include(env.PATH, "C:\\Windows\\System32");
       }),
+  );
+
+  it.effect("gives up on a Windows shell that survives the kill", () =>
+    Effect.gen(function* () {
+      const commands: Array<string> = [];
+      // Both PowerShell probes spawn pwsh, time out, then spawn powershell. Each probe's timeout
+      // is armed before its spawn runs, so waiting for the spawns keeps the clock in step.
+      const spawned = yield* Effect.forEach([0, 1, 2, 3], () => Deferred.make<void>());
+      const fiber = yield* runShellEnvironment({
+        env: { PATH: "C:\\Windows", APPDATA: "C:\\Roaming" },
+        platform: "win32",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          const spawn = spawned[commands.length];
+          commands.push(command._tag === "StandardCommand" ? command.command : "");
+          return (spawn ? Deferred.succeed(spawn, undefined) : Effect.void).pipe(
+            Effect.andThen(
+              Effect.acquireRelease(Effect.succeed(makeHungProcess()), () => Effect.never),
+            ),
+          );
+        }),
+      }).pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Effect.forEach(spawned.slice(0, 2), Deferred.await);
+      yield* TestClock.adjust("5 seconds");
+      yield* Effect.forEach(spawned.slice(2), Deferred.await);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(fiber);
+      assert.deepEqual([...new Set(commands)], ["pwsh.exe", "powershell.exe"]);
+    }),
   );
 
   it.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
