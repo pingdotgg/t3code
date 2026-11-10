@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -28,9 +28,7 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
       // in `api.hello.ts`).
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
-        const key = new URL(request.url, "http://backend").searchParams.get(
-          "key",
-        );
+        const key = new URL(request.url, "http://backend").searchParams.get("key");
         if (!key) {
           return HttpServerResponse.text("Missing 'key' query parameter", {
             status: 400,
@@ -55,9 +53,7 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
         return HttpServerResponse.text("Method not allowed", { status: 405 });
       }).pipe(
         Effect.catchTag("R2Error", (error) =>
-          Effect.succeed(
-            HttpServerResponse.text(error.message, { status: 500 }),
-          ),
+          Effect.succeed(HttpServerResponse.text(error.message, { status: 500 })),
         ),
       ),
     };

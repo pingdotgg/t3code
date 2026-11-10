@@ -1,0 +1,39 @@
+import type * as ds from "@distilled.cloud/aws/directory-service";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Directory } from "./Directory.ts";
+
+/**
+ * Runtime binding for the `GetSnapshotLimits` operation (IAM action
+ * `ds:GetSnapshotLimits`), scoped to one {@link Directory}.
+ *
+ * Reads the bound directory's manual snapshot limits — how many manual
+ * snapshots exist versus the allowed maximum — so a backup function can
+ * prune before taking a new snapshot. The directory id is injected from the
+ * binding. Provide the implementation with
+ * `Effect.provide(AWS.DirectoryService.GetSnapshotLimitsHttp)`.
+ * ### Managing Snapshots
+ * **Example:** Check the Manual Snapshot Quota
+ * ```typescript
+ * // init — bind the operation to the directory
+ * const getSnapshotLimits = yield* AWS.DirectoryService.GetSnapshotLimits(directory);
+ *
+ * // runtime
+ * const { SnapshotLimits } = yield* getSnapshotLimits();
+ * if (SnapshotLimits?.ManualSnapshotsLimitReached) {
+ *   yield* Effect.logWarning("manual snapshot limit reached");
+ * }
+ * ```
+ *
+ * @binding
+ */
+export interface GetSnapshotLimits extends Binding.Service<
+  GetSnapshotLimits,
+  "AWS.DirectoryService.GetSnapshotLimits",
+  (
+    directory: Directory,
+  ) => Effect.Effect<() => Effect.Effect<ds.GetSnapshotLimitsResult, ds.GetSnapshotLimitsError>>
+> {}
+export const GetSnapshotLimits = Binding.Service<GetSnapshotLimits>(
+  "AWS.DirectoryService.GetSnapshotLimits",
+);
