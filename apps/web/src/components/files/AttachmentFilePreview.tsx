@@ -403,18 +403,6 @@ export function AttachmentFilePreview(props: {
             <WrapTextIcon className="size-3.5" />
           </FileSurfaceAction>
         ) : null}
-        {renderedMode ? (
-          <FileSurfaceAction
-            label={renderedToggleLabel(renderedMode, rendered)}
-            pressed={rendered}
-            onPress={() => setRendered((value) => !value)}
-          >
-            <MorphIcon
-              className="size-3.5"
-              icon={rendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
-            />
-          </FileSurfaceAction>
-        ) : null}
         {content || streamsText ? (
           <FileSurfaceAction
             label={isCopied ? "Copied" : content?.truncated ? "Copy preview" : "Copy contents"}
@@ -444,6 +432,18 @@ export function AttachmentFilePreview(props: {
             }}
           >
             <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+          </FileSurfaceAction>
+        ) : null}
+        {renderedMode ? (
+          <FileSurfaceAction
+            label={renderedToggleLabel(renderedMode, rendered)}
+            pressed={rendered}
+            onPress={() => setRendered((value) => !value)}
+          >
+            <MorphIcon
+              className="size-3.5"
+              icon={rendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
+            />
           </FileSurfaceAction>
         ) : null}
         {url ? (
