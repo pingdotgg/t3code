@@ -114,6 +114,7 @@ describe("LiveActivities", () => {
         kind: "live_activity_update",
         aggregate,
         hiddenEnvironmentIds: ["hidden-env"],
+        environmentRevealedAt: { "shown-env": 10_000 },
         deliveredAt: "2026-05-25T00:00:10.000Z",
       });
 
@@ -128,6 +129,7 @@ describe("LiveActivities", () => {
         expect.objectContaining({
           endedAt: relayLiveActivities.endedAt,
           lastHiddenEnvironmentIds: ["hidden-env"],
+          environmentRevealedAt: { "shown-env": 10_000 },
           lastLiveActivityDeliveryAt: "2026-05-25T00:00:10.000Z",
         }),
       );

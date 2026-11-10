@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type * as Cloudflare from "@alchemy.run/cloudflare";
 import * as FcmDeliveryQueueConsumer from "./FcmDeliveryQueueConsumer.ts";
 
@@ -62,6 +63,7 @@ const target: LiveActivities.TargetRow = {
   ended_at: null,
   last_aggregate_json: null,
   last_hidden_environment_ids: null,
+  environment_revealed_at: null,
   last_live_activity_delivery_at: null,
 };
 const config = {
@@ -127,6 +129,8 @@ function harness() {
           marked.push(input);
           current.target.last_aggregate_json = input.aggregate ? encodeJson(input.aggregate) : null;
           current.target.last_hidden_environment_ids = input.hiddenEnvironmentIds;
+          current.target.environment_revealed_at =
+            input.environmentRevealedAt ?? current.target.environment_revealed_at;
         }),
 
       invalidateDeliveryToken: () => Effect.void,
@@ -408,43 +412,80 @@ describe("Android delivery routing", () => {
       });
       yield* delivery.process(otherJob);
       expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      yield* TestClock.adjust("1 second");
       h.current.otherStates = [{ ...other, phase: "completed" }];
-      yield* delivery.process({ ...otherJob, state: h.current.otherStates[0]! });
+      yield* delivery.process({ ...otherJob, state: h.current.otherStates[0]!, queuedAt: 1_000 });
       expect(h.sent.filter((message) => message.alert)).toHaveLength(2);
     }).pipe(Effect.provide(h.layer));
   });
 
   it.effect.each([
-    { name: "with activity cards off", liveActivitiesEnabled: false, notificationOnly: false },
     {
-      name: "for a notification-only environment",
+      name: "with activity cards off, queued while hidden",
+      liveActivitiesEnabled: false,
+      notificationOnly: false,
+      queuedBeforeDisable: false,
+    },
+    {
+      name: "for a notification-only environment, queued while hidden",
       liveActivitiesEnabled: true,
       notificationOnly: true,
+      queuedBeforeDisable: false,
+    },
+    {
+      name: "with activity cards off, queued before disable",
+      liveActivitiesEnabled: false,
+      notificationOnly: false,
+      queuedBeforeDisable: true,
+    },
+    {
+      name: "for a notification-only environment, queued before disable",
+      liveActivitiesEnabled: true,
+      notificationOnly: true,
+      queuedBeforeDisable: true,
     },
   ])("re-enabling stays silent $name when the replay is consumed first", (config) => {
     const h = harness();
     const other = { ...secondState, environmentId: EnvironmentId.make("other-env") };
-    if (config.notificationOnly) h.current.notificationOnlyEnvironments = [other.environmentId];
+    const pending = {
+      ...secondState,
+      environmentId: EnvironmentId.make("pending-env"),
+      phase: "waiting_for_approval",
+    } as const;
+    h.current.notificationOnlyEnvironments = [
+      pending.environmentId,
+      ...(config.notificationOnly ? [other.environmentId] : []),
+    ];
     const visible = { ...preferences, liveActivitiesEnabled: config.liveActivitiesEnabled };
-    h.current.target.preferences_json = encodeJson({
-      ...visible,
-      disabledEnvironmentIds: [other.environmentId],
-    });
     return Effect.gen(function* () {
       const delivery = yield* FcmDeliveries.FcmDeliveries;
+      h.current.otherStates = [{ ...other, phase: "waiting_for_approval" }, pending];
+      h.current.target.preferences_json = encodeJson(visible);
+      if (config.queuedBeforeDisable) {
+        yield* delivery.enqueue({ target: h.current.target, state: h.current.otherStates[0]! });
+      }
+      h.current.target.preferences_json = encodeJson({
+        ...visible,
+        disabledEnvironmentIds: [other.environmentId],
+      });
       yield* delivery.process({ ...h.job, state: null, replay: true });
-      h.current.otherStates = [{ ...other, phase: "waiting_for_approval" }];
-      yield* delivery.enqueue({ target: h.current.target, state: h.current.otherStates[0]! });
+      if (!config.queuedBeforeDisable) {
+        yield* delivery.enqueue({ target: h.current.target, state: h.current.otherStates[0]! });
+      }
       h.current.target.preferences_json = encodeJson(visible);
       yield* delivery.enqueue({ target: h.current.target, state: null, replay: true });
       yield* delivery.process(h.queued[1]);
       yield* delivery.process(h.queued[0]);
       expect(h.sent.filter((message) => message.alert)).toHaveLength(0);
+      // An environment that stayed enabled keeps its equally old pending alert.
+      yield* delivery.process({ ...h.job, state: pending });
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
 
+      yield* TestClock.adjust("1 second");
       h.current.otherStates = [{ ...other, phase: "completed" }];
       yield* delivery.enqueue({ target: h.current.target, state: h.current.otherStates[0]! });
       yield* delivery.process(h.queued[2]);
-      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(2);
     }).pipe(Effect.provide(h.layer));
   });
 

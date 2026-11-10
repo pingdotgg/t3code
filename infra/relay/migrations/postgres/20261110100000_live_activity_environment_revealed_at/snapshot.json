@@ -1,0 +1,37 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "ce1bceab-71bd-463a-8d49-36d71f94a31a",
+  "prevIds": ["00f3e7a6-0f16-4178-bb0e-fbda26828ae0"],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_live_activities", "environment_revealed_at"],
+      "writes": [
+        "s|col|public.relay_live_activities.environment_revealed_at",
+        "n|col|public.relay_live_activities.environment_revealed_at",
+        "e|col|public.relay_live_activities.environment_revealed_at"
+      ],
+      "reads": ["n|tbl|public.relay_live_activities", "n|sch|public"]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_live_activities",
+        "name": "environment_revealed_at",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

@@ -274,6 +274,7 @@ describe("MobileRegistrations", () => {
               ended_at: null,
               last_aggregate_json: null,
               last_hidden_environment_ids: null,
+              environment_revealed_at: null,
               last_live_activity_delivery_at: null,
             },
           ]),
@@ -318,6 +319,7 @@ describe("MobileRegistrations", () => {
       ended_at: null,
       last_aggregate_json: null,
       last_hidden_environment_ids: null,
+      environment_revealed_at: null,
       last_live_activity_delivery_at: null,
     };
     const layer = (queuedJobs: Array<SignedApnsDeliveryJob>) =>

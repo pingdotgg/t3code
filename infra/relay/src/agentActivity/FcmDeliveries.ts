@@ -28,7 +28,6 @@ import { isExpiredAgentActivityState, notificationForActivity } from "./agentAct
 import {
   alertForActivityRows,
   attentionTransitionRows,
-  environmentEnabledOnDevice,
   hiddenEnvironmentIds,
   sameEnvironmentIds,
   terminalTransitionRows,
@@ -42,11 +41,10 @@ export const FcmDeliveryJob = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
   replay: Schema.optional(Schema.Boolean),
-  // Re-enabling clears the device's hidden list, so a queued job keeps its own.
-  environmentHidden: Schema.optional(Schema.Boolean),
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
+const JOB_TTL_MS = 5 * 60_000;
 const decodePreferences = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentAwarenessPreferences),
 );
@@ -168,12 +166,6 @@ const make = Effect.gen(function* () {
         };
       }
       const now = yield* DateTime.now;
-      const environmentHidden =
-        input.state !== null &&
-        !environmentEnabledOnDevice(
-          Option.getOrNull(decodePreferences(input.target.preferences_json)),
-          input.state.environmentId,
-        );
       yield* sender
         .send({
           userId: input.target.user_id,
@@ -181,7 +173,6 @@ const make = Effect.gen(function* () {
           token: input.target.push_token,
           state: input.state,
           ...(input.replay ? { replay: true } : {}),
-          ...(environmentHidden ? { environmentHidden: true } : {}),
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -200,7 +191,7 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => new FcmDeliveryError({ operation: "decode-job", cause })),
       );
       const now = yield* DateTime.now;
-      if (now.epochMilliseconds - job.queuedAt > 5 * 60_000) return;
+      if (now.epochMilliseconds - job.queuedAt > JOB_TTL_MS) return;
       const targets = yield* devices.listTargets({ userId: job.userId });
       const target = targets.find(
         (device) =>
@@ -212,6 +203,16 @@ const make = Effect.gen(function* () {
       const preferences = decodePreferences(target.preferences_json);
       if (Option.isNone(preferences)) return;
       const currentHiddenEnvironmentIds = hiddenEnvironmentIds(preferences.value);
+      // Jobs queued before their environment's re-enable reached the device are replay history.
+      const environmentRevealedAt: Record<string, number> = {};
+      for (const [environmentId, at] of Object.entries(target.environment_revealed_at ?? {})) {
+        if (now.epochMilliseconds - at <= JOB_TTL_MS) environmentRevealedAt[environmentId] = at;
+      }
+      for (const environmentId of target.last_hidden_environment_ids ?? []) {
+        if (!currentHiddenEnvironmentIds.includes(environmentId)) {
+          environmentRevealedAt[environmentId] = now.epochMilliseconds;
+        }
+      }
 
       // Re-read at consumption to honor current links, tokens, preferences, and thread states.
       const states = preferences.value.liveActivitiesEnabled
@@ -290,10 +291,9 @@ const make = Effect.gen(function* () {
           });
         } else if (
           deliveryUser?.notificationsEnabled &&
-          !job.environmentHidden &&
           state?.phase === job.state.phase &&
           state.updatedAt === job.state.updatedAt &&
-          !target.last_hidden_environment_ids?.includes(state.environmentId) &&
+          job.queuedAt > (environmentRevealedAt[state.environmentId] ?? -Infinity) &&
           !isExpiredAgentActivityState(state, now.epochMilliseconds)
         ) {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
@@ -355,6 +355,7 @@ const make = Effect.gen(function* () {
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
           aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
           hiddenEnvironmentIds: currentHiddenEnvironmentIds,
+          environmentRevealedAt,
           deliveredAt: DateTime.formatIso(now),
         });
       }

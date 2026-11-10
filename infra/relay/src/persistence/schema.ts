@@ -54,6 +54,9 @@ export const relayLiveActivities = pgTable(
     lastAggregateJson: jsonb("last_aggregate_json").$type<RelayAgentActivityAggregateState>(),
     // Environments the device hid when that baseline was computed; their rows are not new there.
     lastHiddenEnvironmentIds: jsonb("last_hidden_environment_ids").$type<ReadonlyArray<string>>(),
+    // Android: when each environment was re-enabled; older queued jobs for it stay silent.
+    environmentRevealedAt:
+      jsonb("environment_revealed_at").$type<Readonly<Record<string, number>>>(),
     lastLiveActivityDeliveryAt: varchar("last_live_activity_delivery_at", { length: 64 }),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),

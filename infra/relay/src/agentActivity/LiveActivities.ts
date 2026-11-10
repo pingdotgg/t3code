@@ -90,6 +90,7 @@ export interface LiveActivityRow {
   readonly ended_at: string | null;
   readonly last_aggregate_json: string | null;
   readonly last_hidden_environment_ids: ReadonlyArray<string> | null;
+  readonly environment_revealed_at: Readonly<Record<string, number>> | null;
   readonly last_live_activity_delivery_at: string | null;
 }
 
@@ -117,6 +118,7 @@ export class LiveActivities extends Context.Service<
       readonly kind: Exclude<RelayDeliveryKind, "live_activity_start">;
       readonly aggregate: RelayAgentActivityAggregateState | null;
       readonly hiddenEnvironmentIds: ReadonlyArray<string> | null;
+      readonly environmentRevealedAt?: Readonly<Record<string, number>>;
       readonly deliveredAt: string;
     }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
     readonly invalidateDeliveryToken: (input: {
@@ -234,6 +236,7 @@ const make = Effect.gen(function* () {
           ended_at: relayLiveActivities.endedAt,
           last_aggregate_json: relayLiveActivities.lastAggregateJson,
           last_hidden_environment_ids: relayLiveActivities.lastHiddenEnvironmentIds,
+          environment_revealed_at: relayLiveActivities.environmentRevealedAt,
           last_live_activity_delivery_at: relayLiveActivities.lastLiveActivityDeliveryAt,
         })
         .from(relayMobileDevices)
@@ -326,6 +329,7 @@ const make = Effect.gen(function* () {
             endedAt: input.kind === "live_activity_end" ? input.deliveredAt : null,
             lastAggregateJson: aggregateJson,
             lastHiddenEnvironmentIds: input.hiddenEnvironmentIds,
+            environmentRevealedAt: input.environmentRevealedAt ?? null,
             lastLiveActivityDeliveryAt: input.deliveredAt,
             createdAt: input.deliveredAt,
             updatedAt: input.deliveredAt,
@@ -348,6 +352,9 @@ const make = Effect.gen(function* () {
                   : relayLiveActivities.endedAt,
               lastAggregateJson: aggregateJson,
               lastHiddenEnvironmentIds: input.hiddenEnvironmentIds,
+              ...(input.environmentRevealedAt
+                ? { environmentRevealedAt: input.environmentRevealedAt }
+                : {}),
               lastLiveActivityDeliveryAt: input.deliveredAt,
               updatedAt: input.deliveredAt,
             },
