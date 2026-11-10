@@ -511,7 +511,7 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       );
     }
     // Only runs count: queued runs and idle background items do not block an update.
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("active-work"), [blocked]);
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("active-work"), [background, blocked]);
     const recoveryState = yield* projections.getRuntimeRecoveryProjection(queued);
     assert.deepEqual(
       recoveryState.runs.map((run) => run.id),

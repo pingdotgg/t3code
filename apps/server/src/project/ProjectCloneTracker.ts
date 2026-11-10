@@ -31,6 +31,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as RestartWork from "../updates/RestartWork.ts";
 
 export class ProjectCloneTracker extends Context.Service<
   ProjectCloneTracker,
@@ -93,6 +94,7 @@ interface TrackedClone {
 /** @public */
 export const make = Effect.gen(function* () {
   const repositories = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+  const restartWork = yield* RestartWork.RestartWork;
   const clones = yield* Ref.make(new Map<ProjectId, TrackedClone>());
   const changes = yield* PubSub.unbounded<ReadonlyArray<ProjectCloneSnapshot>>();
   const retentionFibers = new Map<ProjectId, Fiber.Fiber<unknown, never>>();
@@ -256,7 +258,10 @@ export const make = Effect.gen(function* () {
     const current = yield* Ref.get(clones);
     const tracked = current.get(projectId);
     if (!tracked) return;
-    const fiber = yield* runClone(projectId, tracked).pipe(Effect.forkIn(cloneScope));
+    // A restart would lose the clone, so it counts as restart work from the moment it forks.
+    const fiber = yield* restartWork
+      .track(runClone(projectId, tracked))
+      .pipe(Effect.forkIn(cloneScope, { startImmediately: true }));
     yield* Ref.update(clones, (map) => {
       const existing = map.get(projectId);
       if (!existing) return map;
@@ -335,6 +340,7 @@ export const make = Effect.gen(function* () {
         repository: prepared.repository,
       };
     },
+    restartWork.track,
   );
 
   const get: ProjectCloneTracker["Service"]["get"] = (projectId) =>
@@ -433,7 +439,7 @@ export const make = Effect.gen(function* () {
       return yield* locked(cancel(projectId));
     }),
     retry: Effect.fnUntraced(function* (projectId) {
-      return yield* locked(retry(projectId));
+      return yield* locked(restartWork.track(retry(projectId)));
     }),
     discard: Effect.fnUntraced(function* (projectId) {
       return yield* locked(discard(projectId));

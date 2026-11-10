@@ -39,6 +39,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./Manager.ts";
+import * as RestartWork from "../updates/RestartWork.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
@@ -251,6 +252,7 @@ interface ManagerFixture {
   readonly ptyAdapter: FakePtyAdapter;
   readonly manager: TerminalManager.TerminalManager["Service"];
   readonly getEvents: Effect.Effect<ReadonlyArray<TerminalEvent>>;
+  readonly restartWork: RestartWork.RestartWork["Service"];
 }
 
 const createManager = (
@@ -268,6 +270,7 @@ const createManager = (
       const logsDir = join(baseDir, "userdata", "logs", "terminals");
       const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
 
+      const restartWork = yield* RestartWork.RestartWork.pipe(Effect.provide(RestartWork.layer));
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
         historyLineLimit,
@@ -300,7 +303,7 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
-      });
+      }).pipe(Effect.provideService(RestartWork.RestartWork, restartWork));
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
         Ref.update(eventsRef, (events) => [...events, event]),
@@ -314,6 +317,7 @@ const createManager = (
         ptyAdapter,
         manager,
         getEvents: Ref.get(eventsRef),
+        restartWork,
       };
     }),
   );
@@ -416,7 +420,22 @@ it.layer(
 )("TerminalManager", (it) => {
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
+      const { manager, ptyAdapter, restartWork } = yield* createManager();
+      const gated = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const gate = yield* restartWork
+        .withRestartGate(
+          Deferred.succeed(gated, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(gated);
+      const waitingOpen = yield* manager
+        .open(openInput())
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(gate);
+      yield* Fiber.join(waitingOpen);
       const [first, second] = yield* Effect.all(
         [manager.open(openInput()), manager.open(openInput())],
         { concurrency: "unbounded" },
@@ -428,6 +447,17 @@ it.layer(
       assert.equal(second.threadId, "thread-1");
       assert.equal(third.threadId, "thread-1");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      const writing = yield* restartWork.withRestartGate(
+        Effect.gen(function* () {
+          const pending = yield* manager
+            .write({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, data: "echo held\r" })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          expect(ptyAdapter.processes[0]!.writes).toEqual([]);
+          return pending;
+        }),
+      );
+      yield* Fiber.join(writing);
+      expect(ptyAdapter.processes[0]!.writes).toEqual(["echo held\r"]);
     }),
   );
 
@@ -738,6 +768,71 @@ it.layer(
       expect(second.writes).toEqual(["ls\n"]);
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
     }),
+  );
+
+  it.effect("reports busy only while a terminal runs a foreground command", () =>
+    Effect.gen(function* () {
+      let inspect: {
+        readonly hasRunningSubprocess: boolean;
+        readonly childCommand: string | null;
+        readonly processIds: ReadonlyArray<number>;
+      } = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+      const { manager } = yield* createManager(5, {
+        subprocessInspector: () => Effect.succeed(inspect),
+        subprocessPollIntervalMs: 60_000,
+      });
+      expect(yield* manager.hasBusyTerminals).toBe(false);
+
+      yield* manager.open(openInput());
+      expect(yield* manager.hasBusyTerminals).toBe(false);
+
+      inspect = { hasRunningSubprocess: true, childCommand: "vim", processIds: [100] };
+      expect(yield* manager.hasBusyTerminals).toBe(true);
+
+      inspect = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+      expect(yield* manager.hasBusyTerminals).toBe(false);
+    }),
+  );
+
+  it.effect(
+    "uses the process fallback for fresh activity and blocks restarts only when both paths fail",
+    () =>
+      Effect.gen(function* () {
+        let output = "  9000  1 bash";
+        let fails = false;
+        const processRunner: ProcessRunner.ProcessRunner["Service"] = {
+          run: () =>
+            Effect.succeed({
+              stdout: output,
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(fails ? 1 : 0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            }),
+        };
+        const { manager } = yield* createManager(5, {
+          subprocessPollIntervalMs: 60_000,
+          processTable: Effect.fail("sidecar unavailable").pipe(
+            Effect.mapError((cause) => cause as never),
+          ),
+        }).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+          Effect.provide(layerWithHostPlatform("linux")),
+        );
+        expect(yield* manager.hasBusyTerminals).toBe(false);
+        yield* manager.open(openInput());
+        fails = true;
+        expect(yield* manager.hasBusyTerminals).toBe(true);
+        fails = false;
+        expect(yield* manager.hasBusyTerminals).toBe(false);
+        output += "\n  100  9000 vim";
+        expect(yield* manager.hasBusyTerminals).toBe(true);
+        output = "  9000  1 bash";
+        expect(yield* manager.hasBusyTerminals).toBe(false);
+      }),
   );
 
   it.effect(
