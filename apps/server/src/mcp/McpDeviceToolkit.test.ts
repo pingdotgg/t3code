@@ -324,7 +324,7 @@ it.effect("device_open reports a failed host's setup error instead of no devices
     Effect.scoped,
     Effect.provide(
       McpHttpServer.layerDeviceToolkit.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(layerFailed),
         Layer.provide(layerProjectsMock),
