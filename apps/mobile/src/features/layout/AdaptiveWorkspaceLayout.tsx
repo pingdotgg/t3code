@@ -14,7 +14,6 @@ import {
 } from "./adaptive-workspace-context";
 import { threadSelectionDeferral } from "./deferred-navigation";
 import { uuidv4 } from "../../lib/uuid";
-import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
@@ -36,7 +35,6 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { KeyboardController, useKeyboardContext } from "react-native-keyboard-controller";
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -325,30 +323,15 @@ function AdaptiveWorkspaceLayoutContent(
   });
   const [composerEditing, setComposerEditing] = useState(false);
   const softKeyboardVisible = useSoftKeyboardShowing();
-  // Keyed on the soft keyboard, not focus: a hardware keyboard leaves room for the sidebar, and
-  // Back closes the keyboard while the editor keeps focus. The sidebar returns as the keyboard
-  // starts hiding, not after. The header, the pane width, and the sidebar's exit all change in
-  // the keyboard's first commit; the sidebar itself follows the keyboard on the UI thread.
+  // Keyed on the soft keyboard, not focus: Back closes the keyboard while the editor keeps focus.
+  // It only compacts the thread header; the sidebar stays, so no pane changes width for typing.
   const composerKeyboardActive =
     Platform.OS === "android" && baseLayout.usesSplitView && composerEditing && softKeyboardVisible;
-  const sidebarWithoutKeyboard =
-    !workspacePage && (primarySidebarPinned || preferredSidebarVisible);
-  const showPrimarySidebar =
-    sidebarWithoutKeyboard && (primarySidebarPinned || !composerKeyboardActive);
+  const showPrimarySidebar = !workspacePage && (primarySidebarPinned || preferredSidebarVisible);
   // Medium windows float the sidebar over a page; beside a list it keeps its room.
   const sidebarFloats =
     baseLayout.variant === "medium" &&
     (nativeWorkspace || (!primarySidebarPinned && !workspacePage));
-  // While the composer edits, the sidebar's width follows the keyboard's own progress, so it
-  // leaves and returns in step with the keyboard instead of on a timer of its own.
-  const keyboardHoldsSidebar =
-    Platform.OS === "android" &&
-    baseLayout.usesSplitView &&
-    !workspacePage &&
-    !primarySidebarPinned &&
-    !sidebarFloats &&
-    (composerEditing || composerKeyboardActive);
-  const keyboardProgress = useKeyboardContext().reanimated.progress;
   const shouldRenderNavigationRail =
     Platform.OS === "android" && baseLayout.usesSplitView && !floatingTabsEnabled;
   const enabledTabs = useEnabledNavigationTabs();
@@ -455,39 +438,6 @@ function AdaptiveWorkspaceLayoutContent(
       workspacePage,
     ],
   );
-  // Whether the sidebar is open once the keyboard is gone; the keyboard's progress scales it.
-  const sidebarRestsOpen = useMemo(
-    () =>
-      showPrimarySidebar === sidebarWithoutKeyboard
-        ? panes.primarySidebarVisible
-        : deriveWorkspacePaneLayout({
-            layout,
-            viewportWidth: width,
-            horizontalSafeArea,
-            nativeWorkspace,
-            primarySidebarFloats: sidebarFloats,
-            primarySidebarPreferredVisible: sidebarWithoutKeyboard,
-            auxiliaryPanePreferredVisible:
-              !workspacePage && inspectorActive && fileInspectorPreferredVisible,
-            auxiliaryPanePreferredWidth: fileInspectorPreferredWidth ?? undefined,
-            nativeInspectorWidth,
-          }).primarySidebarVisible,
-    [
-      nativeInspectorWidth,
-      horizontalSafeArea,
-      fileInspectorPreferredVisible,
-      fileInspectorPreferredWidth,
-      inspectorActive,
-      layout,
-      nativeWorkspace,
-      panes.primarySidebarVisible,
-      showPrimarySidebar,
-      sidebarFloats,
-      sidebarWithoutKeyboard,
-      width,
-      workspacePage,
-    ],
-  );
   // Routes still on the stack remember their reveal, so going back to one keeps the user's choice.
   const revealedInspectors = useRef<ReadonlyMap<string, string>>(new Map());
   const workspaceInspectorOwner = useRef<symbol | null>(null);
@@ -536,12 +486,6 @@ function AdaptiveWorkspaceLayoutContent(
     if (primarySidebarPinned) {
       return;
     }
-    // A sidebar the keyboard set aside returns with the keyboard; the user's preference stays
-    // intact. One the user had hidden still opens.
-    if (composerKeyboardActive) {
-      void KeyboardController.dismiss();
-      if (preferredSidebarVisible) return;
-    }
     if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
       setPrimarySidebarPreferredVisible(true);
@@ -550,7 +494,6 @@ function AdaptiveWorkspaceLayoutContent(
     setPrimarySidebarVisible(!preferredSidebarVisible);
   };
   const revealPrimarySidebar = () => {
-    if (composerKeyboardActive) void KeyboardController.dismiss();
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
     }
@@ -705,11 +648,8 @@ function AdaptiveWorkspaceLayoutContent(
     !sidebarFloats;
   const sidebarSlotWidth = (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0);
   // The pane takes its new width in the commit that starts the sidebar moving, so it rewraps as
-  // the strip starts to slide rather than after it lands: a sidebar on its way in (or back from
-  // the keyboard) finds the narrow pane, and one leaving uncovers the wide pane.
-  const sidebarTargetOpen = keyboardHoldsSidebar ? sidebarRestsOpen : panes.primarySidebarVisible;
-  const contentSpansSidebar =
-    stripSidebar && (!sidebarTargetOpen || (keyboardHoldsSidebar && composerKeyboardActive));
+  // the strip starts to slide rather than after it lands.
+  const contentSpansSidebar = stripSidebar && !panes.primarySidebarVisible;
   const contentTargetWidth = !layout.usesSplitView
     ? null
     : Math.max(
@@ -820,18 +760,12 @@ function AdaptiveWorkspaceLayoutContent(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0) : 0,
   );
   const renderedRailWidth = useSharedValue(navigationRailWidth);
-  const keyboardHold = useSharedValue(keyboardHoldsSidebar);
   const leavingWorkspacePage = useRef(false);
   // The slide starts after the commit that lays the pane out, not in the press handler: Reanimated
   // commits the shadow tree every frame, and that starves a large React commit until it stops.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- animates the Reanimated rail and sidebar width shared values toward the layout's targets
   useEffect(() => {
     if (nativeWorkspace) return;
-    // Released mid-keyboard (the composer blurred), the timing starts where the sidebar is drawn.
-    if (keyboardHold.get() && !keyboardHoldsSidebar) {
-      renderedSidebarWidth.set(renderedSidebarWidth.get() * (1 - keyboardProgress.get()));
-    }
-    keyboardHold.set(keyboardHoldsSidebar);
     renderedRailWidth.set(withTiming(navigationRailWidth, WORKSPACE_PANE_TIMING));
     // A workspace page hides the sidebar through React instead, in the same commit that mounts
     // the page. Animating it here would hide it a few frames before the page appears.
@@ -841,7 +775,7 @@ function AdaptiveWorkspaceLayoutContent(
     }
     const snap = leavingWorkspacePage.current;
     leavingWorkspacePage.current = false;
-    const targetWidth = (keyboardHoldsSidebar ? sidebarRestsOpen : panes.primarySidebarVisible)
+    const targetWidth = panes.primarySidebarVisible
       ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
       : 0;
     // The content beside it already took its final width when the page closed.
@@ -859,10 +793,6 @@ function AdaptiveWorkspaceLayoutContent(
     layout.listPaneWidth,
     layout.listPaneGap,
     panes.primarySidebarVisible,
-    keyboardHoldsSidebar,
-    keyboardHold,
-    keyboardProgress,
-    sidebarRestsOpen,
     renderedSidebarWidth,
     renderedRailWidth,
     settleListPane,
@@ -898,45 +828,29 @@ function AdaptiveWorkspaceLayoutContent(
   // Showing or hiding the sidebar clips a fixed-width list. A hinge resize instead tracks the
   // animated edge, so the header actions slide with it rather than jumping or being covered.
   const listPaneGap = layout.listPaneGap ?? 0;
-  const keyboardSidebarRest = sidebarRestsOpen
-    ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
-    : 0;
-  const drawnSidebarWidth = useDerivedValue(
-    () => renderedSidebarWidth.value * (keyboardHold.value ? 1 - keyboardProgress.value : 1),
-  );
   const listPaneAnimatedStyle = useAnimatedStyle(() => ({
     width: Math.min(
       listPaneCeiling,
       Math.max(
         listPaneFloor,
-        (stripSidebar ? sidebarSlotWidth : drawnSidebarWidth.value) - listPaneGap,
+        (stripSidebar ? sidebarSlotWidth : renderedSidebarWidth.value) - listPaneGap,
       ),
     ),
   }));
   // How far the strip has slid: 0 with the sidebar shown, minus its width with it gone.
   const stripOffset = useDerivedValue(() =>
-    stripSidebar ? drawnSidebarWidth.value - sidebarSlotWidth : 0,
+    stripSidebar ? renderedSidebarWidth.value - sidebarSlotWidth : 0,
   );
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     // Fading a UIKit glass ancestor can leave remounted header effects missing.
     opacity:
       stripSidebar || Platform.OS === "ios" || floatingTabsEnabled
         ? 1
-        : Math.min(1, drawnSidebarWidth.value / 80),
-    width: stripSidebar ? sidebarSlotWidth : drawnSidebarWidth.value,
+        : Math.min(1, renderedSidebarWidth.value / 80),
+    width: stripSidebar ? sidebarSlotWidth : renderedSidebarWidth.value,
     flexShrink: stripSidebar ? 0 : 1,
     transform: [{ translateX: stripOffset.value }],
   }));
-  // The content keeps the width React laid it out at and rides the sidebar's edge, so a keyboard
-  // transition relays nothing out per frame, the way UIKit animates the iOS split view.
-  // Until React commits the wider layout, the detail card continues past its right edge, so the
-  // strip the narrower column leaves shows the card instead of the row behind it.
-  const contentOverhangStyle = useAnimatedStyle(() => ({
-    opacity: keyboardHold.value && keyboardProgress.value > 0 ? 1 : 0,
-  }));
-  const threadHeader = useToolbarLayout(false, composerKeyboardActive);
-  const threadHeaderHeight =
-    threadHeader.paddingTop + threadHeader.height + threadHeader.paddingBottom;
 
   // Clip the navigator at its settled width so native headers and markdown reflow only once per pane toggle.
   const renderedInspectorWidth = useSharedValue(inspectorColumnTargetWidth);
@@ -945,7 +859,7 @@ function AdaptiveWorkspaceLayoutContent(
       0,
       viewportWidth -
         (sidebarFloats ? 0 : renderedRailWidth.value) -
-        (workspacePage || sidebarFloats ? 0 : drawnSidebarWidth.value) -
+        (workspacePage || sidebarFloats ? 0 : renderedSidebarWidth.value) -
         renderedInspectorWidth.value,
     ),
   );
@@ -1028,7 +942,6 @@ function AdaptiveWorkspaceLayoutContent(
       primarySidebarSearchQuery,
       sidebarToggleable,
       composerKeyboardActive,
-      keyboardHoldsSidebar,
       sidebarByOrientation,
     }),
     [
@@ -1037,7 +950,6 @@ function AdaptiveWorkspaceLayoutContent(
       primarySidebarSearchQuery,
       sidebarToggleable,
       composerKeyboardActive,
-      keyboardHoldsSidebar,
       sidebarByOrientation,
     ],
   );
@@ -1203,35 +1115,6 @@ function AdaptiveWorkspaceLayoutContent(
             </WorkspaceSettledContentWidthContext>
           </WorkspaceContentWidthContext>
         </Animated.View>
-        {keyboardHoldsSidebar && contentTargetWidth !== null ? (
-          <>
-            <Animated.View
-              pointerEvents="none"
-              className="absolute top-0 bg-header"
-              style={[
-                {
-                  left: contentTargetWidth,
-                  width: keyboardSidebarRest + contentEndGap,
-                  height: threadHeaderHeight,
-                },
-                contentOverhangStyle,
-              ]}
-            />
-            <Animated.View
-              pointerEvents="none"
-              className="absolute bottom-0 rounded-tr-[28px] bg-thread-canvas"
-              style={[
-                {
-                  // Starts under the card's rounded corner so the two read as one card.
-                  left: contentTargetWidth - 28,
-                  width: keyboardSidebarRest + 28,
-                  top: threadHeaderHeight,
-                },
-                contentOverhangStyle,
-              ]}
-            />
-          </>
-        ) : null}
       </Animated.View>
       {sidebarFloats ? (
         <Animated.View

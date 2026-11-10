@@ -68,8 +68,6 @@ interface WorkspacePaneStateValue {
    * (the unfolded Duo). The native split switches between them as a rotation starts.
    */
   readonly sidebarByOrientation: { readonly landscape: boolean; readonly portrait: boolean } | null;
-  /** Android split: the composer's keyboard slides the sidebar, from focus until it lets go. */
-  readonly keyboardHoldsSidebar?: boolean;
 }
 
 const compactLayout = deriveLayout({ width: 0, height: 0 });
