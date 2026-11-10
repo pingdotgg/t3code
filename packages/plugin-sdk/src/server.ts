@@ -65,6 +65,17 @@ export interface PluginLogger {
   readonly error: (message: string, fields?: JsonObject) => void;
 }
 
+export interface PluginRunEvent {
+  readonly type: "run.finished";
+  readonly sequence: number;
+  /** Identifies one committed update; stable when replayed after a restart. */
+  readonly deliveryId: string;
+  readonly threadId: string;
+  readonly runId: string;
+  readonly status: "completed" | "failed" | "cancelled" | "interrupted";
+  readonly completedAt: string;
+}
+
 /**
  * What `activate` receives. Everything is scoped to one activation and released on deactivate.
  * `Rpc` types the methods and channels the web half calls.
@@ -80,6 +91,14 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly id: string;
   readonly rootDir: string;
   readonly log: PluginLogger;
+  readonly events: {
+    /**
+     * Follows finished runs until deactivation; no cursor starts with new events. Save `sequence`
+     * after handling it and pass it as `afterSequence` to resume. Deduplicate at-least-once
+     * delivery by `deliveryId`; pruned cursors fail. Added in version 2.
+     */
+    readonly runs: (options?: { readonly afterSequence?: number }) => AsyncIterable<PluginRunEvent>;
+  };
   readonly settings: {
     /**
      * The saved settings, secret values included. Fields nobody saved read as the `default` in

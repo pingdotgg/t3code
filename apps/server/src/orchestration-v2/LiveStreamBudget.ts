@@ -326,6 +326,7 @@ type ReplayLiveInput<A extends { readonly sequence: number }, E, R> = {
   readonly subscribe: Effect.Effect<PubSub.Subscription<A>, never, Scope.Scope>;
   readonly latestSequence: Effect.Effect<number, E, R>;
   readonly replay: (throughSequence: number) => Stream.Stream<A, E, R>;
+  readonly onReplayComplete?: Effect.Effect<void, E, R>;
   readonly afterSequence?: number;
   readonly filter?: (event: A) => boolean;
 };
@@ -373,7 +374,10 @@ export const replayAndBufferProjectedLiveEvents = <
       );
       return budget.deliver(
         Stream.concat(
-          replay,
+          Stream.concat(
+            replay,
+            Stream.fromEffect(input.onReplayComplete ?? Effect.void).pipe(Stream.drain),
+          ),
           live.pipe(
             Stream.filter((item) => {
               if (item.value.sequence > throughSequence) return true;

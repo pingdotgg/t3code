@@ -43,6 +43,13 @@ export type UnsequencedProjectEvent = ApplicationProjectEvent extends infer Even
     : never
   : never;
 
+type ProjectedApplicationStreamInput<A, E> = {
+  readonly afterSequence?: number;
+  readonly project: (event: ApplicationStoredEvent) => A;
+  readonly filter?: (event: ApplicationStoredEvent) => boolean;
+  readonly onReplayComplete?: Effect.Effect<void, E>;
+};
+
 export class OrchestrationEventStore extends Context.Service<
   OrchestrationEventStore,
   {
@@ -115,11 +122,9 @@ export class OrchestrationEventStore extends Context.Service<
     readonly streamApplicationEvents: (input?: {
       readonly afterSequence?: number;
     }) => Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError>;
-    readonly streamProjectedApplicationEvents: <A extends { readonly sequence: number }>(input: {
-      readonly afterSequence?: number;
-      readonly project: (event: ApplicationStoredEvent) => A;
-      readonly filter?: (event: ApplicationStoredEvent) => boolean;
-    }) => Stream.Stream<A, OrchestrationEventStoreError>;
+    readonly streamProjectedApplicationEvents: <A extends { readonly sequence: number }, E = never>(
+      input: ProjectedApplicationStreamInput<A, E>,
+    ) => Stream.Stream<A, OrchestrationEventStoreError | E>;
   }
 >()("t3/persistence/OrchestrationEventStore") {}
 
@@ -726,31 +731,33 @@ const makeEventStore = Effect.gen(function* () {
       ),
     );
 
-  const streamProjectedApplicationEvents: OrchestrationEventStore["Service"]["streamProjectedApplicationEvents"] =
-    (input) =>
-      replayAndBufferProjectedLiveEvents<
-        ApplicationStoredEvent,
-        ReturnType<typeof input.project>,
-        OrchestrationEventStoreError,
-        never
-      >({
-        subscribe: PubSub.subscribe(committedEvents),
-        latestSequence: latestApplicationSequence,
-        afterSequence: input.afterSequence ?? 0,
-        project: input.project,
-        ...(input.filter === undefined ? {} : { filter: input.filter }),
-        replay: (throughSequence) =>
-          catchUpApplicationEvents({
-            afterSequence: input?.afterSequence ?? 0,
-            throughSequence,
-          }),
-      }).pipe(
-        Stream.catchTag("LiveStreamBufferError", (cause) =>
-          Stream.fail(
-            toPersistenceSqlError("OrchestrationEventStore.streamApplicationEvents:buffer")(cause),
-          ),
+  const streamProjectedApplicationEvents = <A extends { readonly sequence: number }, E = never>(
+    input: ProjectedApplicationStreamInput<A, E>,
+  ) =>
+    replayAndBufferProjectedLiveEvents<
+      ApplicationStoredEvent,
+      A,
+      OrchestrationEventStoreError | E,
+      never
+    >({
+      subscribe: PubSub.subscribe(committedEvents),
+      latestSequence: latestApplicationSequence,
+      afterSequence: input.afterSequence ?? 0,
+      project: input.project,
+      ...(input.filter === undefined ? {} : { filter: input.filter }),
+      ...(input.onReplayComplete === undefined ? {} : { onReplayComplete: input.onReplayComplete }),
+      replay: (throughSequence) =>
+        catchUpApplicationEvents({
+          afterSequence: input?.afterSequence ?? 0,
+          throughSequence,
+        }),
+    }).pipe(
+      Stream.catchTag("LiveStreamBufferError", (cause) =>
+        Stream.fail(
+          toPersistenceSqlError("OrchestrationEventStore.streamApplicationEvents:buffer")(cause),
         ),
-      );
+      ),
+    );
 
   const streamApplicationEvents: OrchestrationEventStore["Service"]["streamApplicationEvents"] = (
     input,
