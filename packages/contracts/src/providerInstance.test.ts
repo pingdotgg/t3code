@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { normalizeProviderIconUrl, ProviderInstanceConfig, ProviderInstanceEnvironmentVariable } from "./providerInstance.ts";
+import {
+  normalizeProviderIconUrl,
+  ProviderInstanceConfig,
+  ProviderInstanceEnvironmentVariable,
+} from "./providerInstance.ts";
 
 const decodeEnvironmentVariable = Schema.decodeUnknownSync(ProviderInstanceEnvironmentVariable);
 

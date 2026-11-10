@@ -1186,7 +1186,6 @@ function OnboardingCodexSetup({
       readOnly={!canManageProviders}
       existingCliDisabled={!canOperateTerminal}
       displayName={agentName(provider)}
-          iconUrl={provider.iconUrl}
       onModeChange={changeMode}
     />
   );
