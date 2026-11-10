@@ -136,6 +136,11 @@ const make = Effect.gen(function* () {
           { recoverTransientFailure: false, bypassCache: true },
         )
         .pipe(
+          Effect.flatMap((summary) =>
+            summary.state === "merged"
+              ? Effect.fail(new PullRequestNotOpenError({ state: "merged" }))
+              : Effect.void,
+          ),
           Effect.catchTags({
             // Host and transport errors can recover while the watch is active.
             PullRequestOperationError: () => Effect.void,

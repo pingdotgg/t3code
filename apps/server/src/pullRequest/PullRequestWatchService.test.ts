@@ -4,6 +4,7 @@ import {
   ThreadId,
   PullRequestOperationError,
   PullRequestUnavailableError,
+  type PullRequestSummary,
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   type OrchestrationProjectShell,
   type ThreadPullRequestLink,
@@ -112,6 +113,7 @@ interface HarnessOptions {
   readonly thread?: PullRequestTestThread | null;
   readonly project?: OrchestrationProjectShell | null;
   readonly readFailure?: PullRequestService.PullRequestError;
+  readonly readState?: PullRequestSummary["state"];
 }
 
 const makeHarness = Effect.fn("makePullRequestWatchHarness")(function* (
@@ -141,7 +143,7 @@ const makeHarness = Effect.fn("makePullRequestWatchHarness")(function* (
               provider: SourceControlProviderKind.make("github"),
               title: "Pull request",
               url: `https://github.com/${input.repository}/pull/${input.number}`,
-              state: "open" as const,
+              state: options.readState ?? "open",
               headBranch: "feature",
               baseBranch: "main",
               updatedAt: "2026-08-20T00:00:00.000Z",
@@ -210,6 +212,13 @@ describe("PullRequestWatchService", () => {
 
   it.effect("rejects merged PRs and keeps an active watch usable without hosting access", () =>
     Effect.gen(function* () {
+      const freshMerged = yield* makeHarness({ readState: "merged" });
+      const freshError = yield* freshMerged
+        .setWatching(true, { repository: "t3tools/t3code", number: 1 })
+        .pipe(Effect.flip);
+      expect(freshError).toMatchObject({ _tag: "PullRequestNotOpenError", state: "merged" });
+      expect(yield* Ref.get(freshMerged.commands)).toEqual([]);
+
       const watch = {
         startedAt: "2026-08-20T00:00:00.000Z",
         headSha: null,
@@ -251,6 +260,7 @@ describe("PullRequestWatchService", () => {
     Effect.gen(function* () {
       const closed = makeLink(1, { headBranch: "closed" });
       const harness = yield* makeHarness({
+        readState: "closed",
         thread: makeThread([
           { ...closed, snapshot: closed.snapshot && { ...closed.snapshot, state: "closed" } },
         ]),
