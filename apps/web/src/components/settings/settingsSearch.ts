@@ -417,7 +417,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "surface-style",
     title: "Style",
     to: "/settings/appearance",
-    searchTerms: ["surface buttons composer toned aqua gradient rim flat soft gloss blue"],
+    searchTerms: [
+      "surface buttons composer finish satin flat soft gloss glossy accent outline aqua gradient rim",
+    ],
   },
   {
     id: "panel-animations",
