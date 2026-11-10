@@ -82,6 +82,7 @@ const event = (
       id: `evt_${type.replaceAll(".", "")}0000`,
       created: 1,
       type,
+      ...(type.startsWith("rpc.") ? { location: { directory: WORK } } : {}),
       data,
       durable: { ...durable.durable, version },
     },
@@ -163,6 +164,7 @@ const withInstructions = (
         "session.compact",
         "command.list",
         "skill.list",
+        "rpc.call",
       ].includes(String(entry.frame.type)),
   );
   const after = entries.findIndex(
@@ -421,6 +423,17 @@ const history = {
   ],
   cursor: {},
 };
+
+const nativeGoal = (status: "active" | "paused" | "complete") => ({
+  id: "goal-1",
+  objective: "Write proof.txt",
+  status,
+  rounds: 2,
+  maxRounds: 100,
+  boot: "boot-1",
+  updatedAt: 1,
+  reason: "Checked proof.txt",
+});
 
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   it.effect("switches the session's model and variant before a turn that changed them", () =>
@@ -5030,6 +5043,133 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.deepEqual(terminals, ["completed", "completed"]);
       assert.lengthOf(offers, 1);
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
+  );
+  it.effect("reads an existing OpenCode 2.2.5 goal when resuming a session", () =>
+    Effect.gen(function* () {
+      const runtime = yield* openCode2ReplayRuntime(
+        [
+          ...opening,
+          out("session.get", { sessionID: SESSION }),
+          replyData("session.get", sessionInfo()),
+          ...noOpenRequests,
+          out("rpc.call", {
+            rpcID: "opencode.goal",
+            method: "get",
+            "location[directory]": WORK,
+            input: { sessionID: SESSION },
+          }),
+          reply("rpc.call", { output: nativeGoal("paused") }),
+        ],
+        { version: "2.2.5" },
+      );
+      const thread = yield* runtime.resumeThread({
+        providerThread: providerThread(yield* DateTime.now),
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      assert.deepEqual(thread.goal, {
+        objective: "Write proof.txt",
+        status: "paused",
+        checks: 2,
+        lastCheck: "Checked proof.txt",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["complete", "paused"] as const)(
+    "keeps an OpenCode goal turn open across executions until its goal is %s",
+    (status) =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed([
+          out("command.list", "<any>"),
+          reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+          reply("message.list", { data: [], cursor: {} }),
+          out("session.command", { sessionID: SESSION, name: "goal", text: "Write proof.txt" }),
+          reply("session.command", null),
+          event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal("active") }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          ...(status === "complete"
+            ? [event("session.execution.started", { sessionID: SESSION })]
+            : []),
+          event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal(status) }),
+          ...(status === "complete"
+            ? [event("session.execution.succeeded", { sessionID: SESSION })]
+            : []),
+        ]);
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const input = turnInput(thread);
+        yield* runtime.startTurn({
+          ...input,
+          message: { ...input.message, text: "/goal Write proof.txt" },
+        });
+        const collected = yield* Fiber.join(events);
+        const goals = collected.flatMap((e) =>
+          e.type === "provider_thread.updated" && e.providerThread.goal
+            ? [e.providerThread.goal]
+            : [],
+        );
+        assert.includeDeepMembers(goals, [
+          {
+            objective: "Write proof.txt",
+            status: "active",
+            checks: 2,
+            lastCheck: "Checked proof.txt",
+          },
+          {
+            objective: "Write proof.txt",
+            status,
+            checks: 2,
+            lastCheck: "Checked proof.txt",
+          },
+        ]);
+        assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["show", "pause", "clear"] as const)(
+    "settles OpenCode /goal %s without waiting for an execution",
+    (control) =>
+      Effect.gen(function* () {
+        const goal = control === "clear" ? null : nativeGoal("paused");
+        const { runtime, thread } = yield* resumed(
+          control === "show"
+            ? [out("rpc.call", "<any>"), reply("rpc.call", { output: goal })]
+            : [
+                out("command.list", "<any>"),
+                reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
+                out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+                reply("message.list", { data: [], cursor: {} }),
+                out("session.command", { sessionID: SESSION, name: "goal", text: control }),
+                event("rpc.opencode.goal.changed", { sessionID: SESSION, goal }),
+                reply("session.command", null),
+              ],
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const input = turnInput(thread);
+        yield* runtime.startTurn({
+          ...input,
+          message: { ...input.message, text: control === "show" ? "/goal" : `/goal ${control}` },
+        });
+        const collected = yield* Fiber.join(events);
+        const updated = collected.findLast((e) => e.type === "provider_thread.updated");
+        assert.equal(
+          updated?.type === "provider_thread.updated"
+            ? (updated.providerThread.goal?.status ?? null)
+            : undefined,
+          goal?.status ?? null,
+        );
+        assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      }).pipe(Effect.scoped),
   );
 });
 
