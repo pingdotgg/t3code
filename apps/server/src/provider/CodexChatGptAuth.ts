@@ -31,6 +31,7 @@ import type { ProviderAuthFlowContext } from "@t3tools/provider-core/server/prov
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { withChatGptSessionLock } from "./CodexChatGptSessionLock.ts";
+import { TOKEN_RENEWAL_MARGIN_MS } from "./CodexManagedTokenProtocol.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -823,7 +824,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
         "Token sharing is disabled. Sign in with ChatGPT and enable token sharing.",
       );
     const now = yield* Clock.currentTimeMillis;
-    if (record.expiresAt - now > 60_000) return record;
+    if (record.expiresAt - now > TOKEN_RENEWAL_MARGIN_MS) return record;
     if (record.earliestRefreshAt !== null && record.earliestRefreshAt > now) {
       if (record.expiresAt > now) return record;
       return yield* failure(
