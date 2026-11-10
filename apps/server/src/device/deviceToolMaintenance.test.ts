@@ -97,6 +97,7 @@ describe.each([false, true])("device tool cleanup, flat=%s", (flat) => {
   });
 });
 
+// regression: #12819 safely reclaim obsolete managed tool versions
 it.effect("maintenance failures retain safe context and the original process result", () =>
   Effect.gen(function* () {
     const output = {

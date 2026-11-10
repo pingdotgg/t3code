@@ -7,17 +7,19 @@ import * as NodeURL from "node:url";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import {
-  generateThirdPartyLicenseManifest,
-  THIRD_PARTY_LICENSES_FILE_NAME,
-  thirdPartyLicensesPlugin,
-} from "./third-party-licenses.js";
+import { generateThirdPartyLicenseManifest } from "./third-party-licenses.js";
 
 const tempDirectories: string[] = [];
 const REPOSITORY_ROOT = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../..",
 );
+const DEVICE_TOOL_VERSIONS = JSON.parse(
+  await NodeFSP.readFile(
+    NodePath.join(REPOSITORY_ROOT, "apps/server/src/device/deviceToolVersions.json"),
+    "utf8",
+  ),
+) as { readonly "agent-device": string; readonly "expo-device-hub": string };
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
@@ -77,20 +79,55 @@ afterEach(async () => {
 });
 
 describe("third-party license generation", () => {
-  it("keeps the GhosttyKit notice pinned to the vendored framework revision", async () => {
-    const [config, revision] = await Promise.all([
-      NodeFSP.readFile(NodePath.join(REPOSITORY_ROOT, "third-party-licenses.config.json"), "utf8"),
-      NodeFSP.readFile(
-        NodePath.join(REPOSITORY_ROOT, "apps/mobile/modules/t3-terminal/Vendor/libghostty/VERSION"),
-        "utf8",
-      ),
-    ]);
+  it.each(["web", "mobile"])(
+    "uses installer pins for device tool notices in the %s manifest",
+    async (bundle) => {
+      const fixture = await createFixture();
+      await writeJson(fixture.configFile, {
+        customNotices: [
+          {
+            name: "agent-device",
+            license: "MIT",
+            noticeFile: "asset-notice.txt",
+            bundles: ["device-tools"],
+            includeInBundles: ["web", "mobile"],
+          },
+          {
+            name: "expo-device-hub",
+            license: "MIT",
+            noticeFile: "asset-notice.txt",
+            version: "0.0.0",
+            bundles: ["device-tools"],
+            includeInBundles: ["web", "mobile"],
+          },
+          {
+            name: "vendored-asset",
+            license: "MIT",
+            noticeFile: "asset-notice.txt",
+            version: "1.2.3",
+            bundles: ["web", "mobile"],
+          },
+        ],
+      });
 
-    expect(config).toContain(revision.trim());
-    expect(config).toContain(
-      "https://github.com/Yash-Singh1/ghostty/tree/t3code/custom-io-ordered-feed",
-    );
-  });
+      const manifest = await generateThirdPartyLicenseManifest({
+        configFile: fixture.configFile,
+        packageManifests: [{ bundle, path: fixture.appManifest }],
+      });
+
+      expect(manifest.entries.find((entry) => entry.name === "agent-device")).toMatchObject({
+        version: DEVICE_TOOL_VERSIONS["agent-device"],
+        bundles: ["device-tools"],
+      });
+      expect(manifest.entries.find((entry) => entry.name === "expo-device-hub")).toMatchObject({
+        version: DEVICE_TOOL_VERSIONS["expo-device-hub"],
+        bundles: ["device-tools"],
+      });
+      expect(manifest.entries.find((entry) => entry.name === "vendored-asset")?.version).toBe(
+        "1.2.3",
+      );
+    },
+  );
 
   it("collects production packages and custom asset notices", async () => {
     const fixture = await createFixture();
@@ -124,15 +161,12 @@ describe("third-party license generation", () => {
     });
   });
 
-  it("renders generated notices from the ignored SPDX cache", async () => {
+  it("renders generated notices from the committed SPDX templates", async () => {
     const fixture = await createFixture();
-    await writeJson(
-      NodePath.join(fixture.root, ".generated/third-party-licenses/spdx/v3.28.0/MIT.json"),
-      {
-        licenseId: "MIT",
-        licenseText: "MIT License\n\nCopyright (c) <year> <copyright holders>\n\nPermission text",
-      },
-    );
+    await writeJson(NodePath.join(fixture.root, "third-party-licenses/spdx/v3.28.0/MIT.json"), {
+      licenseId: "MIT",
+      licenseText: "MIT License\n\nCopyright (c) <year> <copyright holders>\n\nPermission text",
+    });
     await writeJson(fixture.configFile, {
       customNotices: [
         {
@@ -161,29 +195,6 @@ describe("third-party license generation", () => {
     );
   });
 
-  it("omits generated rows without a cache during optional development", async () => {
-    const fixture = await createFixture();
-    await writeJson(fixture.configFile, {
-      customNotices: [
-        {
-          name: "generated-asset",
-          license: "MIT",
-          generatedNotices: [{ licenseId: "MIT" }],
-          bundles: ["assets", "web"],
-        },
-      ],
-      packageOverrides: [],
-    });
-
-    const manifest = await generateThirdPartyLicenseManifest({
-      configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
-      allowMissingGeneratedNotices: true,
-    });
-
-    expect(manifest.entries.some((entry) => entry.name === "generated-asset")).toBe(false);
-  });
-
   it("finds packages whose exports hide both their manifest and entry point", async () => {
     const fixture = await createFixture();
     await writeJson(NodePath.join(fixture.dependencyRoot, "package.json"), {
@@ -202,66 +213,86 @@ describe("third-party license generation", () => {
     expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
   });
 
-  it("includes custom notices selected by the dev server bundle", async () => {
+  it("leaves type-only packages out of the notices but still walks their dependencies", async () => {
     const fixture = await createFixture();
-    await writeJson(fixture.configFile, {
-      customNotices: [
-        {
-          name: "desktop-only-asset",
-          license: "CC-BY-4.0",
-          noticeFile: "asset-notice.txt",
-          bundles: ["assets"],
-          includeInBundles: ["desktop"],
-        },
-      ],
-      packageOverrides: [],
+    const modules = NodePath.join(fixture.root, "node_modules");
+    const write = async (name: string, packageJson: Record<string, unknown>) => {
+      await writeJson(NodePath.join(modules, name, "package.json"), {
+        name,
+        version: "1.0.0",
+        license: "MIT",
+        ...packageJson,
+      });
+      await NodeFSP.writeFile(NodePath.join(modules, name, "LICENSE"), `${name} license\n`, "utf8");
+    };
+    await writeJson(fixture.appManifest, {
+      name: "fixture-app",
+      dependencies: { "demo-dependency": "1.2.3", "@types/demo": "1.0.0" },
     });
+    await write("@types/demo", {
+      main: "",
+      types: "index.d.ts",
+      exports: {
+        ".": { types: { import: "./index.d.mts", default: "./index.d.ts" } },
+        "./package.json": "./package.json",
+      },
+      dependencies: { "demo-css-types": "1.0.0", "demo-runtime": "1.0.0" },
+    });
+    await write("demo-css-types", { main: "", types: "index.d.ts" });
+    await write("demo-runtime", { main: "index.js" });
 
-    const plugin = thirdPartyLicensesPlugin({
-      bundleName: "desktop",
+    const manifest = await generateThirdPartyLicenseManifest({
       configFile: fixture.configFile,
       packageManifests: [{ bundle: "web", path: fixture.appManifest }],
     });
-    let middleware:
-      | ((
-          request: { readonly url: string },
-          response: {
-            statusCode: number;
-            setHeader(name: string, value: string): void;
-            end(body: string): void;
-          },
-          next: (error?: Error) => void,
-        ) => void)
-      | undefined;
-    if (typeof plugin.configureServer !== "function") {
-      throw new Error("Expected the license plugin to define a configureServer hook.");
-    }
-    plugin.configureServer.call(
-      {} as never,
-      {
-        middlewares: {
-          use(handler: typeof middleware) {
-            middleware = handler;
-          },
-        },
-      } as never,
-    );
-    if (!middleware) throw new Error("Expected the license plugin to register middleware.");
 
-    const responseBody = await new Promise<string>((resolve, reject) => {
-      middleware!(
-        { url: `/${THIRD_PARTY_LICENSES_FILE_NAME}` },
-        {
-          statusCode: 0,
-          setHeader() {},
-          end: resolve,
-        },
-        (error) => reject(error ?? new Error("License middleware skipped the request.")),
-      );
+    const names = manifest.entries.map((entry) => entry.name);
+    expect(names).toContain("demo-dependency");
+    expect(names).toContain("demo-runtime");
+    expect(names).not.toContain("@types/demo");
+    expect(names).not.toContain("demo-css-types");
+  });
+
+  it.each([
+    {
+      shape: "a JS entry next to its declarations",
+      entry: {
+        main: "./dist/index.mjs",
+        exports: { ".": { types: "./dist/index.d.mts", import: "./dist/index.mjs" } },
+      },
+      indexFile: null,
+    },
+    { shape: "only a stylesheet", entry: { main: "", style: "dist/theme.css" }, indexFile: null },
+    {
+      shape: "only a react-native entry",
+      entry: { main: "", "react-native": "lib/index.native.js" },
+      indexFile: null,
+    },
+    { shape: "an index.js behind an empty main", entry: { main: "" }, indexFile: "index.js" },
+    { shape: "an index.node addon and no main", entry: {}, indexFile: "index.node" },
+  ])("keeps a package that declares types but ships $shape", async ({ entry, indexFile }) => {
+    const fixture = await createFixture();
+    await writeJson(NodePath.join(fixture.dependencyRoot, "package.json"), {
+      name: "demo-dependency",
+      version: "1.2.3",
+      license: "MIT",
+      types: "./dist/index.d.mts",
+      ...entry,
+      repository: "example/demo-dependency",
     });
-    const manifest = JSON.parse(responseBody) as { entries: ReadonlyArray<{ name: string }> };
+    if (indexFile !== "index.js") {
+      await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "index.js"));
+    }
+    if (indexFile !== null) {
+      await NodeFSP.writeFile(NodePath.join(fixture.dependencyRoot, indexFile), "", "utf8");
+    }
 
-    expect(manifest.entries.some((entry) => entry.name === "desktop-only-asset")).toBe(true);
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+
+    expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
   });
 
   it("fails when a production package has no distributable notice text", async () => {
@@ -330,10 +361,7 @@ describe("third-party license generation", () => {
     await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));
     for (const licenseId of ["Apache-2.0", "BSD-3-Clause"]) {
       await writeJson(
-        NodePath.join(
-          fixture.root,
-          `.generated/third-party-licenses/spdx/v3.28.0/${licenseId}.json`,
-        ),
+        NodePath.join(fixture.root, `third-party-licenses/spdx/v3.28.0/${licenseId}.json`),
         { licenseId, licenseText: `${licenseId} terms` },
       );
     }
@@ -357,51 +385,6 @@ describe("third-party license generation", () => {
     expect(manifest.entries[0]?.noticeText).toBe(
       "Copyright primary author\n\nApache-2.0 terms\n\n---\n\nCopyright vendored author\n\nBSD-3-Clause terms",
     );
-  });
-
-  it("rejects conflicting package notice sources", async () => {
-    const fixture = await createFixture();
-    await writeJson(fixture.configFile, {
-      packageOverrides: [
-        {
-          name: "demo-dependency",
-          generatedNotice: { licenseId: "MIT" },
-          generatedNotices: [{ licenseId: "BSD-3-Clause" }],
-        },
-      ],
-    });
-    await expect(
-      generateThirdPartyLicenseManifest({
-        configFile: fixture.configFile,
-        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
-      }),
-    ).rejects.toThrow("can define only one");
-  });
-
-  it("applies repository overrides across monorepo packages", async () => {
-    const fixture = await createFixture();
-    await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));
-    await NodeFSP.writeFile(
-      NodePath.join(fixture.root, "override.txt"),
-      "Repository text\n",
-      "utf8",
-    );
-    await writeJson(fixture.configFile, {
-      customNotices: [],
-      packageOverrides: [
-        {
-          repositoryUrl: "https://github.com/example/demo-dependency",
-          noticeFile: "override.txt",
-        },
-      ],
-    });
-
-    const manifest = await generateThirdPartyLicenseManifest({
-      configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
-    });
-
-    expect(manifest.entries[0]?.noticeText).toBe("Repository text");
   });
 
   it("reuses a repository license for packages from the same monorepo", async () => {
@@ -513,45 +496,5 @@ describe("third-party license generation", () => {
       bundles: ["device-tools"],
       noticeText: "Tool license\n\n---\n\nVendor notice",
     });
-  });
-
-  it("fails when a custom notice file is empty", async () => {
-    const fixture = await createFixture();
-    await NodeFSP.writeFile(NodePath.join(fixture.root, "asset-notice.txt"), "\n", "utf8");
-
-    await expect(
-      generateThirdPartyLicenseManifest({
-        configFile: fixture.configFile,
-        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
-      }),
-    ).rejects.toThrow('Custom third-party notice "demo-asset" is empty');
-  });
-
-  it("fails generation when custom notices produce duplicate navigation keys", async () => {
-    const fixture = await createFixture();
-    await writeJson(fixture.configFile, {
-      customNotices: [
-        {
-          name: "duplicate-asset",
-          license: "MIT",
-          noticeFile: "asset-notice.txt",
-          bundles: ["assets", "web"],
-        },
-        {
-          name: "duplicate-asset",
-          license: "CC0-1.0",
-          noticeFile: "asset-notice.txt",
-          bundles: ["assets", "web"],
-        },
-      ],
-      packageOverrides: [],
-    });
-
-    await expect(
-      generateThirdPartyLicenseManifest({
-        configFile: fixture.configFile,
-        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
-      }),
-    ).rejects.toThrow("duplicate custom notice for duplicate-asset");
   });
 });

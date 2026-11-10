@@ -1,19 +1,10 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
+import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { cn } from "../lib/utils";
-import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { RefreshIcon } from "./ui/refresh-icon";
 import { Switch } from "./ui/switch";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
@@ -28,13 +19,11 @@ import {
 } from "./ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-/** Shared composer picker UI. The caller owns selection and any checkout mutations. */
 export function BranchPicker({
   items,
   filteredItems,
   value,
   query,
-  resultsQuery,
   onQueryChange,
   open,
   onOpenChange,
@@ -53,7 +42,6 @@ export function BranchPicker({
   filteredItems: string[];
   value: string | null;
   query: string;
-  resultsQuery: string;
   onQueryChange: (value: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -70,88 +58,27 @@ export function BranchPicker({
 }) {
   const highlightedValueRef = useRef<string | null>(null);
   const startFromOriginSwitchId = useId();
-  const branchListScrollElementRef = useRef<HTMLElement | null>(null);
-  const previousBranchListScrollTopRef = useRef<number | null>(null);
-  const handleOpenChange = useCallback(
-    (nextOpen: boolean) => {
-      previousBranchListScrollTopRef.current = null;
-      if (!nextOpen) highlightedValueRef.current = null;
-      onOpenChange(nextOpen);
-    },
-    [onOpenChange],
-  );
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) highlightedValueRef.current = null;
+    onOpenChange(nextOpen);
+  };
   const [showTopBranchScrollFade, setShowTopBranchScrollFade] = useState(false);
   const [showBottomBranchScrollFade, setShowBottomBranchScrollFade] = useState(false);
-  const fetchNextBranchPage = useCallback(() => {
+  const fetchNextBranchPage = () => {
     if (!hasNextPage || isFetchingNextPage) {
       return;
     }
 
     onLoadNext();
-  }, [onLoadNext, hasNextPage, isFetchingNextPage]);
-  const maybeFetchNextBranchPage = useCallback(() => {
-    const scrollElement = branchListScrollElementRef.current;
-    if (!scrollElement) {
-      return;
-    }
-
-    const previousScrollTop = previousBranchListScrollTopRef.current;
-    previousBranchListScrollTopRef.current = scrollElement.scrollTop;
-    if (
-      !open ||
-      !hasNextPage ||
-      isFetchingNextPage ||
-      !shouldLoadNextBranchPageAfterScroll({
-        previousScrollTop,
-        scrollTop: scrollElement.scrollTop,
-        scrollHeight: scrollElement.scrollHeight,
-        clientHeight: scrollElement.clientHeight,
-      })
-    ) {
-      return;
-    }
-
-    fetchNextBranchPage();
-  }, [fetchNextBranchPage, hasNextPage, open, isFetchingNextPage]);
-
+  };
   const branchListRef = useRef<LegendListRef | null>(null);
-  const updateBranchListScrollFades = useCallback(() => {
-    const scrollElement = branchListRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) {
-      return;
-    }
-    branchListScrollElementRef.current = scrollElement;
-    const maxScrollOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    setShowTopBranchScrollFade(scrollElement.scrollTop > 1);
-    setShowBottomBranchScrollFade(maxScrollOffset - scrollElement.scrollTop > 1);
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    let nestedFrame = 0;
-    const frame = requestAnimationFrame(() => {
-      updateBranchListScrollFades();
-      nestedFrame = requestAnimationFrame(updateBranchListScrollFades);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      cancelAnimationFrame(nestedFrame);
-    };
-  }, [open, updateBranchListScrollFades]);
-
-  const previousResultsQuery = useRef<string | null>(null);
-  useEffect(() => {
-    if (!open) {
-      previousResultsQuery.current = null;
-      return;
-    }
-    if (previousResultsQuery.current === resultsQuery) return;
-    previousResultsQuery.current = resultsQuery;
-    void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
-  }, [resultsQuery, open]);
+  const updateBranchListScrollFades = () => {
+    const metrics = branchListRef.current?.getState();
+    if (!metrics) return;
+    setShowTopBranchScrollFade(!metrics.isAtStart);
+    setShowBottomBranchScrollFade(!metrics.isAtEnd);
+  };
+  const branchScrollRef = useLegendListRef(branchListRef, updateBranchListScrollFades);
 
   return (
     <Combobox
@@ -178,7 +105,10 @@ export function BranchPicker({
         <ComboboxSearchInput
           placeholder="Search refs..."
           value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
+          onChange={(event) => {
+            onQueryChange(event.target.value);
+            void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+          }}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229)
               return;
@@ -195,27 +125,24 @@ export function BranchPicker({
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ComboboxEmpty>No refs found.</ComboboxEmpty>
-          <div className="relative min-h-0 w-full max-h-56 flex-1 overflow-hidden">
-            <ComboboxListVirtualized className="size-full min-w-0">
+          <div className="relative flex min-h-0 w-full max-h-56 flex-1 flex-col overflow-hidden">
+            <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
               <LegendList<string>
-                ref={branchListRef}
+                ref={branchScrollRef}
                 data={filteredItems}
+                initialScrollOffset={0}
                 keyExtractor={(item) => item}
                 {...(getItemType ? { getItemType } : {})}
                 renderItem={({ item, index }) => renderItem(item, index)}
                 estimatedItemSize={28}
                 drawDistance={336}
-                onLayout={() => {
-                  updateBranchListScrollFades();
-                  previousBranchListScrollTopRef.current =
-                    branchListScrollElementRef.current?.scrollTop ?? null;
-                }}
-                onScroll={() => {
-                  updateBranchListScrollFades();
-                  maybeFetchNextBranchPage();
-                }}
+                onScroll={updateBranchListScrollFades}
+                onLayout={updateBranchListScrollFades}
+                onReady={updateBranchListScrollFades}
+                onEndReached={fetchNextBranchPage}
+                onEndReachedThreshold={0.5}
                 className={cn(
-                  "max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 pt-2 pb-1",
+                  "min-h-0 max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 py-2",
                   getVirtualizedScrollFadeClassName({
                     top: showTopBranchScrollFade,
                     bottom: showBottomBranchScrollFade,
@@ -234,21 +161,22 @@ export function BranchPicker({
                   >
                     <span className="flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
                       <RefreshIcon aria-hidden="true" className="size-3 shrink-0" />
-                      <span className="truncate">Start from origin</span>
+                      <span className="truncate">Start from remote</span>
                     </span>
                     <Switch
                       id={startFromOriginSwitchId}
                       checked={originControl.checked}
                       size="sm"
-                      aria-label="Start worktree from origin"
+                      aria-label="Start worktree from remote"
                       onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
                     />
                   </label>
                 }
               />
               <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-                Creates the worktree from the latest matching branch on origin instead of your local
-                branch.
+                Uses the latest commit of the base branch’s tracked remote branch, even if its name
+                differs. Otherwise uses the same-named branch on origin. Uses your local branch if
+                that remote branch is missing.
               </TooltipPopup>
             </Tooltip>
           ) : null}

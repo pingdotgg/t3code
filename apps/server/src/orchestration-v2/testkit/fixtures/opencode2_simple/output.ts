@@ -13,7 +13,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/** One OpenCode 2 turn with streamed reasoning and text, ended by `execution.succeeded`. */
 export function assertOpenCode2SimpleOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -34,7 +33,6 @@ export function assertOpenCode2SimpleOutput(
   const reasoning = projection.turnItems.find((item) => item.type === "reasoning");
   assert.include(reasoning?.type === "reasoning" ? reasoning.text : "", "17×23 = 391");
 
-  // `step.ended` usage becomes the turn's usage; the model's input limit is the window.
   const [providerTurn] = projection.providerTurns;
   assert.equal(providerTurn?.status, "completed");
   assert.deepInclude(providerTurn?.turnTokenUsage, {
@@ -43,6 +41,7 @@ export function assertOpenCode2SimpleOutput(
     cachedInputTokens: 489,
     outputTokens: 113 + 147,
     reasoningTokens: 147,
+    models: ["opencode/space-bunny-free"],
   });
   assert.deepInclude(providerTurn?.tokenUsage, {
     usedTokens: 8701 + 489 + 113,

@@ -15,20 +15,3 @@ export interface SavedRemoteConnection {
 }
 
 export type RemoteClientConnectionState = EnvironmentConnectionPhase;
-
-export function isRelayManagedConnection(
-  connection: Pick<SavedRemoteConnection, "authenticationMethod" | "relayManaged">,
-): boolean {
-  return connection.relayManaged === true || connection.authenticationMethod === "dpop";
-}
-
-export function toStableSavedRemoteConnection(
-  connection: SavedRemoteConnection,
-): SavedRemoteConnection {
-  if (!isRelayManagedConnection(connection) || !connection.dpopAccessToken) {
-    return connection;
-  }
-
-  const { dpopAccessToken: _, ...stableConnection } = connection;
-  return stableConnection;
-}

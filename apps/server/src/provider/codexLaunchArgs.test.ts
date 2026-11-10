@@ -2,44 +2,14 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import {
-  codexAppServerArgs,
-  codexExecLaunchArgs,
-  resolveCodexLaunchArgs,
-} from "./codexLaunchArgs.ts";
-
-describe("resolveCodexLaunchArgs", () => {
-  it("uses T3CODE_CODEX_LAUNCH_ARGS before configured settings", () => {
-    NodeAssert.equal(
-      resolveCodexLaunchArgs(" --strict-config ", { T3CODE_CODEX_LAUNCH_ARGS: "--enable foo" }),
-      "--enable foo",
-    );
-  });
-
-  it("uses configured settings when T3CODE_CODEX_LAUNCH_ARGS is empty", () => {
-    NodeAssert.equal(
-      resolveCodexLaunchArgs(" --strict-config ", { T3CODE_CODEX_LAUNCH_ARGS: "   " }),
-      "--strict-config",
-    );
-  });
-
-  it("ignores whitespace-only environment values", () => {
-    NodeAssert.equal(resolveCodexLaunchArgs("", { T3CODE_CODEX_LAUNCH_ARGS: "   " }), "");
-  });
-});
+import { codexAppServerArgs, codexExecLaunchArgs } from "./codexLaunchArgs.ts";
 
 describe("codexAppServerArgs", () => {
-  it("returns the app-server command for empty launch args", () => {
-    NodeAssert.deepStrictEqual(codexAppServerArgs(""), ["app-server"]);
-  });
-
-  it("appends parsed launch args after app-server", () => {
-    NodeAssert.deepStrictEqual(codexAppServerArgs("--strict-config --enable foo"), [
-      "app-server",
-      "--strict-config",
-      "--enable",
-      "foo",
-    ]);
+  it("preserves escaped TOML quotes in config values", () => {
+    NodeAssert.deepStrictEqual(
+      codexAppServerArgs(String.raw`--config model=\"gpt-6.1-sol\" --strict-config`),
+      ["app-server", "--config", 'model="gpt-6.1-sol"', "--strict-config"],
+    );
   });
 });
 

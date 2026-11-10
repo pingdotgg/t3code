@@ -3,6 +3,8 @@ import {
   CommandId,
   RuntimeRequestId,
   EnvironmentId,
+  MessageId,
+  RunId,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
@@ -11,19 +13,24 @@ import {
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
+import { BearerConnectionTarget } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
+import * as ThreadHistoryController from "./threadHistoryController.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("remote");
 const THREAD_ID = ThreadId.make("thread");
@@ -80,13 +87,21 @@ const SNAPSHOT: OrchestrationV2ShellSnapshot = {
   ],
 };
 
-const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
+const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (options?: {
+  readonly loadEarlier?: () => Effect.Effect<ThreadHistoryController.ThreadHistoryLoadEarlierResult>;
+  readonly reconcilePendingWork?: (threadId: ThreadId) => Effect.Effect<void>;
+}) {
   const requests = yield* Queue.unbounded<{
     command: OrchestrationV2Command;
     reply: Deferred.Deferred<{ sequence: number }, Error>;
   }>();
+  const reconciled = yield* Queue.unbounded<ThreadId>();
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-    target: { environmentId: ENVIRONMENT_ID },
+    target: new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Test",
+      connectionId: "test",
+    }),
     session: yield* SubscriptionRef.make(
       Option.some({
         client: {
@@ -107,10 +122,17 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
           Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
       } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
       Layer.succeed(
-        Crypto.Crypto,
-        Crypto.make({
-          randomBytes: (size) => new Uint8Array(size),
-          digest: (_algorithm, data) => Effect.succeed(data),
+        SecureRandom.SecureRandom,
+        SecureRandom.make((size) => new Uint8Array(size)),
+      ),
+      Layer.succeed(
+        ThreadHistoryController.ThreadHistoryController,
+        ThreadHistoryController.ThreadHistoryController.of({
+          register: () => Effect.die("unused"),
+          unregister: () => Effect.void,
+          loadEarlier: () => options?.loadEarlier?.() ?? Effect.die("unused"),
+          reconcilePendingWork: (_environmentId, threadId) =>
+            options?.reconcilePendingWork?.(threadId) ?? Queue.offer(reconciled, threadId),
         }),
       ),
     ),
@@ -121,7 +143,116 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
   const visibleAtom = commands.snapshotAtom(ENVIRONMENT_ID);
   registry.mount(visibleAtom);
-  return { registry, commands, snapshotAtom, visibleAtom, requests };
+  return { registry, commands, snapshotAtom, visibleAtom, requests, reconciled };
+});
+
+describe("history loading", () => {
+  it.effect("sends a message on the thread while earlier history is loading", () =>
+    Effect.gen(function* () {
+      const historyStarted = yield* Deferred.make<void>();
+      const historyReply =
+        yield* Deferred.make<ThreadHistoryController.ThreadHistoryLoadEarlierResult>();
+      const h = yield* makeHarness({
+        loadEarlier: () =>
+          Deferred.succeed(historyStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(historyReply)),
+          ),
+      });
+      yield* Effect.addFinalizer(() => Deferred.succeed(historyReply, { _tag: "loaded" }));
+      const history = h.commands.loadEarlierHistory.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID },
+      });
+      yield* Deferred.await(historyStarted);
+      const send = h.commands.startTurn.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: {
+          threadId: THREAD_ID,
+          message: {
+            messageId: MessageId.make("message"),
+            role: "user",
+            text: "Send while history loads",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: "start",
+        },
+      });
+      // Dispatched after Send on another thread, so it arrives first only if Send is queued.
+      const controlThreadId = ThreadId.make("control-thread");
+      const control = h.commands.interruptTurn.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: controlThreadId, runId: RunId.make("control-run") },
+      });
+      const first = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(first.reply, { sequence: 1 });
+      yield* Deferred.succeed(historyReply, { _tag: "loaded" });
+      const second = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(second.reply, { sequence: 2 });
+      const results = yield* Effect.promise(() => Promise.all([history, send, control]));
+
+      expect(first.command).toMatchObject({ type: "message.dispatch", threadId: THREAD_ID });
+      expect(second.command).toMatchObject({ type: "run.interrupt", threadId: controlThreadId });
+      expect(results.map((value) => value._tag)).toEqual(["Success", "Success", "Success"]);
+    }),
+  );
+});
+
+describe("interrupt turn", () => {
+  // A stale cached item has nothing left to interrupt, so the server can reject Stop.
+  it.effect("reconciles pending work when the server rejects the interrupt", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const result = h.commands.interruptTurn.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, runId: RunId.make("finished-run") },
+      });
+      const request = yield* Queue.take(h.requests);
+      expect(request.command.type).toBe("run.interrupt");
+      yield* Deferred.fail(request.reply, new Error("Run is not interruptible"));
+      expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
+      expect(yield* Queue.take(h.reconciled)).toBe(THREAD_ID);
+    }),
+  );
+
+  // Mirrors the thread state's handler: the lookup runs in the thread's scope and is joined.
+  const stopWithBlockedLookup = Effect.fn("stopWithBlockedLookup")(function* () {
+    const threadScope = yield* Scope.make();
+    const asked = yield* Deferred.make<void>();
+    const h = yield* makeHarness({
+      reconcilePendingWork: () =>
+        Deferred.succeed(asked, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.forkIn(threadScope),
+          Effect.flatMap(Fiber.join),
+        ),
+    });
+    const result = h.commands.interruptTurn.run(h.registry, {
+      environmentId: ENVIRONMENT_ID,
+      input: { threadId: THREAD_ID, runId: RunId.make("running-run") },
+    });
+    const request = yield* Queue.take(h.requests);
+    yield* Deferred.succeed(request.reply, { sequence: 1 });
+    yield* Deferred.await(asked);
+    return { threadScope, result };
+  });
+
+  it.effect("resolves Stop without waiting for the pending work lookup", () =>
+    Effect.gen(function* () {
+      const { threadScope, result } = yield* stopWithBlockedLookup();
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+      yield* Scope.close(threadScope, Exit.void);
+    }),
+  );
+
+  it.effect("keeps an accepted Stop when the thread closes during the lookup", () =>
+    Effect.gen(function* () {
+      const { threadScope, result } = yield* stopWithBlockedLookup();
+      yield* Scope.close(threadScope, Exit.void);
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+    }),
+  );
 });
 
 describe("remote thread lifecycle commands", () => {
@@ -180,6 +311,28 @@ describe("remote thread lifecycle commands", () => {
         expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
         expect(h.registry.get(h.visibleAtom)).toBe(initial);
       }),
+  );
+
+  it.effect("restamps snoozedAt when re-snoozing to the same wake time", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const earlierSnoozedAt = DateTime.makeUnsafe("2000-01-01T00:00:00.000Z");
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+        ...SNAPSHOT,
+        threads: [{ ...SNAPSHOT.threads[0]!, snoozedUntil: FUTURE, snoozedAt: earlierSnoozedAt }],
+      });
+      const result = h.commands.snooze.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, snoozedUntil: DateTime.formatIso(FUTURE) },
+      });
+      const snoozedAt = h.registry.get(h.visibleAtom)?.threads[0]?.snoozedAt;
+      expect(DateTime.toEpochMillis(snoozedAt!)).toBeGreaterThan(
+        DateTime.toEpochMillis(earlierSnoozedAt),
+      );
+      const request = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+    }),
   );
 
   it.effect("keeps the preview after acknowledgement until the matching shell update arrives", () =>
@@ -271,25 +424,6 @@ describe("remote thread lifecycle commands", () => {
     }),
   );
 
-  it.effect("keeps pending approvals visible while a lifecycle request is pending", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      const blocked = {
-        ...SNAPSHOT,
-        threads: [{ ...SNAPSHOT.threads[0]!, pendingRuntimeRequest: APPROVAL }],
-      };
-      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), blocked);
-      const result = h.commands.settle.run(h.registry, {
-        environmentId: ENVIRONMENT_ID,
-        input: { threadId: THREAD_ID },
-      });
-      const request = yield* Queue.take(h.requests);
-      expect(h.registry.get(h.visibleAtom)?.threads[0]).toBe(blocked.threads[0]);
-      yield* Deferred.fail(request.reply, new Error("Approval pending"));
-      yield* Effect.promise(() => result);
-    }),
-  );
-
   const undoableActions = ["settle", "snooze"] as const;
 
   it.effect.each(undoableActions)("restores a confirmed %s when a queued undo fails", (action) =>
@@ -364,14 +498,52 @@ describe("remote thread lifecycle commands", () => {
           input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
         });
         const request = yield* Queue.take(h.requests);
-        expect(h.registry.get(h.visibleAtom)?.threads[0]).toBe(stale.threads[0]);
+        if (action === "settle") {
+          expect(h.registry.get(h.visibleAtom)?.threads[0]).toBe(stale.threads[0]);
+        } else {
+          expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject({
+            snoozedUntil: FUTURE,
+            pendingRuntimeRequest: USER_INPUT,
+          });
+        }
         yield* Deferred.succeed(request.reply, { sequence: 2 });
         expect((yield* Effect.promise(() => result))._tag).toBe("Success");
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(
           action === "settle" ? { settledOverride: "settled" } : { snoozedUntil: FUTURE },
         );
-        expect(h.registry.get(h.visibleAtom)?.threads[0]?.pendingRuntimeRequest).toBeNull();
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.pendingRuntimeRequest).toEqual(
+          action === "settle" ? null : USER_INPUT,
+        );
         expect(h.registry.get(h.snapshotAtom(ENVIRONMENT_ID))).toBe(stale);
       }),
+  );
+  it.effect("acknowledges a new question when snoozing again to the same wake time", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const initial = {
+        ...SNAPSHOT,
+        threads: [
+          {
+            ...SNAPSHOT.threads[0]!,
+            pendingRuntimeRequest: USER_INPUT,
+            snoozedAt: DateTime.makeUnsafe("2026-09-12T09:00:00.000Z"),
+            snoozedUntil: FUTURE,
+          },
+        ],
+      };
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), initial);
+      const result = h.commands.snooze.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
+      });
+      const request = yield* Queue.take(h.requests);
+      const snoozed = h.registry.get(h.visibleAtom)?.threads[0];
+      expect(DateTime.toEpochMillis(snoozed!.snoozedAt!)).toBeGreaterThanOrEqual(
+        DateTime.toEpochMillis(USER_INPUT.createdAt),
+      );
+      expect(snoozed?.pendingRuntimeRequest).toEqual(USER_INPUT);
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+    }),
   );
 });

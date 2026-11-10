@@ -10,15 +10,32 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
+// Older caches may contain human turns that bypassed server history budgets.
+export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 5 as const;
+
+/**
+ * The server snapshot the cached rows descend from. Written only for rows that have one, so a
+ * cache from before it existed decodes and never resumes.
+ */
+export const ShellCacheOrigin = Schema.Struct({
+  serverVersion: Schema.String,
+  databaseMigration: Schema.NullOr(Schema.Int),
+  omitIdleSubagents: Schema.Boolean,
+  omitOlderSettled: Schema.Boolean,
+  /** Epoch milliseconds of that snapshot; replay does not renew it. */
+  snapshotAt: Schema.Number,
+});
+export type ShellCacheOrigin = typeof ShellCacheOrigin.Type;
 
 export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   snapshot: OrchestrationV2ShellSnapshotJson,
+  origin: Schema.optionalKey(ShellCacheOrigin),
 });
 
 export const StoredOrchestrationThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
+  schemaVersion: Schema.Literal(ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   snapshot: OrchestrationV2ThreadDetailSnapshot.mapFields((fields) => ({
@@ -27,7 +44,6 @@ export const StoredOrchestrationThreadSnapshot = Schema.Struct({
   })),
 });
 
-/** Invalid orchestration caches are disposable and must never block live synchronization. */
 export function decodeOrDiscardOrchestrationCache<A, E, R, E2, R2>(
   decode: Effect.Effect<Option.Option<A>, E, R>,
   discard: Effect.Effect<void, E2, R2>,

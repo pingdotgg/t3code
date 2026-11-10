@@ -138,11 +138,8 @@ export function SnapShotSetupDialog({
     if (busy) return;
     setChecking(true);
     setChecked(false);
-    try {
-      setChecked((await onRefresh()) !== undefined);
-    } finally {
-      setChecking(false);
-    }
+    const refreshed = await onRefresh().finally(() => setChecking(false));
+    setChecked(refreshed !== undefined);
   };
   const accessCopy =
     state.message && !macPermissions

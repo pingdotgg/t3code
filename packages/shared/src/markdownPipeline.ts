@@ -1,6 +1,10 @@
-import type { Processor } from "unified";
-import { isWindowsAbsolutePath } from "./path.ts";
-import type { PluggableList } from "unified";
+import { isLocalEditorFileUrl, LOCAL_FILE_LINK_SCHEMES } from "@t3tools/contracts";
+import type { Paragraph, PhrasingContent, Root, RootContent } from "mdast";
+import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
+import { type PluggableList, type Processor, type Transformer, unified } from "unified";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { find, html } from "property-information";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
@@ -11,7 +15,7 @@ import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
-import { isWindowsDrivePathHref } from "./markdownLinks.ts";
+import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
@@ -28,14 +32,6 @@ function meaningfulHastChildren(node: MarkdownImageHastNode): MarkdownImageHastN
   );
 }
 
-/**
- * An image that is the only content of its block (optionally wrapped in a
- * link) is almost always a screenshot or figure, so it gets a reserved slot
- * while it loads. Images mixed with text or other images — badge rows, icons
- * in a sentence — stay inline at their natural size, since a placeholder taller
- * than the image would move the page more than the image itself does.
- */
-/** Containers whose sole child image reads as a figure rather than part of a sentence. */
 const STANDALONE_IMAGE_BLOCKS = new Set([
   "p",
   "div",
@@ -53,15 +49,12 @@ function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode
   const only = children[0];
   if (only?.type !== "element") return undefined;
   if (only.tagName === "img") return only;
-  // A link, emphasis, or similar inline wrapper around the image still counts
-  // as long as nothing else shares the block.
   return only.tagName === "a" || only.tagName === "strong" || only.tagName === "em"
     ? soleImageDescendant(only)
     : undefined;
 }
 
 function markStandaloneImages(node: MarkdownImageHastNode) {
-  // A raw `<img>` on its own line reaches the root without a paragraph.
   if (node.type === "root" || (node.tagName && STANDALONE_IMAGE_BLOCKS.has(node.tagName))) {
     const image = soleImageDescendant(node);
     if (image) image.properties = { ...image.properties, dataStandalone: true };
@@ -71,15 +64,13 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   });
 }
 
-/** Keep unmatched inline `<A>` placeholders from opening an HTML link over later blocks. */
 function rehypePreserveBareAnchorPlaceholders() {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
     let rawTextTag: string | undefined;
     const visit = (node: MarkdownImageHastNode) => {
       if (node.type === "raw" && typeof node.value === "string") {
-        // Raw blocks can contain several tags. Consume whole tags, quoted attributes,
-        // and comments so text resembling a closing anchor cannot pair a placeholder.
+        // Scan whole tags, attributes, and comments so embedded closing-anchor text cannot match a placeholder.
         const tags = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
         let offset = 0;
         while (rawTextTag !== "plaintext") {
@@ -119,12 +110,44 @@ function rehypePreserveBareAnchorPlaceholders() {
   };
 }
 
-/** Carries authored image source metadata through the sanitizer to the image renderer. */
+const COLOR_SCHEME_MEDIA = /^\(\s*prefers-color-scheme\s*:\s*(dark|light)\s*\)$/i;
+
+/**
+ * The renderer resolves an `<img>`'s `src` (workspace files, host media) but never a `<source>`'s
+ * `srcset`, which would load unresolved whenever its media matched. A color-scheme source moves
+ * onto the `<img>` for the renderer to pick by theme; every source is then dropped.
+ */
+function moveColorSchemeSourcesToImage(picture: MarkdownImageHastNode) {
+  if (!picture.children) return;
+  const image = picture.children.find((child) => child.tagName === "img");
+  for (const source of picture.children) {
+    if (source.tagName !== "source" || !image) continue;
+    const media = source.properties?.media;
+    const scheme = typeof media === "string" ? COLOR_SCHEME_MEDIA.exec(media)?.[1] : undefined;
+    const srcSet = source.properties?.srcSet;
+    const candidate = Array.isArray(srcSet) ? srcSet[0] : srcSet;
+    // A candidate's URL runs to the first space (a descriptor such as `2x` may follow).
+    const url =
+      typeof candidate === "string" ? candidate.trim().split(/\s/, 1)[0]?.replace(/,+$/, "") : "";
+    const key = scheme?.toLowerCase() === "dark" ? "dataDarkSrc" : "dataLightSrc";
+    // As in a browser, the first source that matches a scheme is the one shown.
+    if (scheme && url && image.properties?.[key] === undefined) {
+      // The sanitizer reads a drive letter as a protocol; as a file URL it resolves to the same path.
+      const value = isWindowsDrivePathHref(url) ? `file:///${url.replaceAll("\\", "/")}` : url;
+      image.properties = { ...image.properties, [key]: value };
+    }
+  }
+  picture.children = picture.children.filter((child) => child.tagName !== "source");
+}
+
 function rehypePreserveImageSourceMeta() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
       const src = node.properties?.src;
       const title = node.properties?.title;
+      if (node.type === "element" && node.tagName === "picture") {
+        moveColorSchemeSourcesToImage(node);
+      }
       if (node.type === "element" && node.tagName === "img") {
         node.properties = {
           ...node.properties,
@@ -140,17 +163,46 @@ function rehypePreserveImageSourceMeta() {
   };
 }
 
+const IMAGE_SRC_PROTOCOLS = [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"];
+
+// The sanitizer compares schemes case-sensitively, so lowercase accepted editor links first.
+function rehypeNormalizeLocalEditorLinks() {
+  return (tree: MarkdownImageHastNode) => {
+    const visit = (node: MarkdownImageHastNode) => {
+      const href = node.properties?.href;
+      if (node.type === "element" && node.tagName === "a" && typeof href === "string") {
+        try {
+          const url = new URL(href);
+          if (isLocalEditorFileUrl(url)) node.properties = { ...node.properties, href: url.href };
+        } catch {
+          // Not an absolute URL; the sanitizer decides.
+        }
+      }
+      node.children?.forEach(visit);
+    };
+
+    visit(tree);
+  };
+}
+
 const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    // Fence languages plus the two math classes the web chat's math plugin emits.
+    code: [
+      ["className", /^language-./, "math-inline", "math-display"],
+      "dataCodeMeta",
+      "dataInlineCode",
+    ],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
     img: [
       ...(defaultSchema.attributes?.img ?? []),
+      "dataDarkSrc",
+      "dataLightSrc",
       "dataLocalSrc",
       "dataMarkdownTitle",
       "dataStandalone",
@@ -164,38 +216,173 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       "t3-citation",
       "t3-context",
       THREAD_LINK_PROTOCOL,
+      // Scheme only: the renderer's URL transform checks the rest of the link shape.
+      ...LOCAL_FILE_LINK_SCHEMES,
     ],
-    src: [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"],
+    src: IMAGE_SRC_PROTOCOLS,
+    dataDarkSrc: IMAGE_SRC_PROTOCOLS,
+    dataLightSrc: IMAGE_SRC_PROTOCOLS,
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
-  remarkKeepWindowsPathDestinations,
+  remarkKeepAutolinkSuffixes,
+  remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
+  remarkBreakAroundImageLines,
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
 ];
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
-  remarkKeepWindowsPathDestinations,
+  remarkKeepAutolinkSuffixes,
+  remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
+  remarkBreakAroundImageLines,
   remarkBreaks,
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
 ];
 
+// Start tags an HTML parser closes an open `<p>` for.
+const CLOSES_PARAGRAPH = new Set(
+  "address article aside blockquote center details dialog dir div dl fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 header hgroup hr li listing main menu nav ol p plaintext pre search section summary table ul xmp dd dt".split(
+    " ",
+  ),
+);
+const HEADING = /^h[1-6]$/;
+
+interface HtmlScope {
+  readonly anchor: boolean;
+  readonly paragraph: boolean;
+  readonly heading: boolean;
+}
+
+/**
+ * Whether the tree needs the HTML parser: raw HTML, or nesting it repairs (a footnote call in a
+ * link label nests `<a>`). Otherwise it only rewrites properties as hast-util-to-parse5 does and
+ * drops `data`, both repeated here, and moves blank text that renders the same.
+ */
+function needsHtmlParser(node: MarkdownImageHastNode, scope: HtmlScope): boolean {
+  if (node.type === "raw") return true;
+  let inner = scope;
+  if (node.type === "element" && node.tagName) {
+    const { tagName } = node;
+    const heading = HEADING.test(tagName);
+    if (
+      (tagName === "a" && scope.anchor) ||
+      (scope.paragraph && CLOSES_PARAGRAPH.has(tagName)) ||
+      (heading && scope.heading)
+    ) {
+      return true;
+    }
+    inner = {
+      anchor: scope.anchor || tagName === "a",
+      paragraph: scope.paragraph || tagName === "p",
+      heading: scope.heading || heading,
+    };
+    const properties = node.properties ?? {};
+    for (const key of Object.keys(properties)) {
+      const value = properties[key];
+      const info = find(html, key);
+      if (
+        value === false ||
+        value === null ||
+        value === undefined ||
+        Number.isNaN(value) ||
+        (!value && info.boolean)
+      ) {
+        delete properties[key];
+      } else if (value === true && !info.boolean && !info.overloadedBoolean) {
+        properties[key] = "";
+      }
+    }
+    delete (node as { data?: unknown }).data;
+  }
+  return (node.children ?? []).some((child) => needsHtmlParser(child, inner));
+}
+
+const TOP_SCOPE: HtmlScope = { anchor: false, paragraph: false, heading: false };
+
+/** rehype-raw reparses the whole tree through an HTML parser, which most trees can skip. */
+function rehypeRawWhenPresent(this: Processor) {
+  const transform = rehypeRaw.call(this) as unknown as (
+    tree: MarkdownImageHastNode,
+    file: unknown,
+  ) => unknown;
+  return (tree: MarkdownImageHastNode, file: unknown) =>
+    needsHtmlParser(tree, TOP_SCOPE) ? transform(tree, file) : undefined;
+}
+
 export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
   rehypePreserveBareAnchorPlaceholders,
-  rehypeRaw,
+  rehypeRawWhenPresent,
   rehypePreserveImageSourceMeta,
+  rehypeNormalizeLocalEditorLinks,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ];
+
+const isImageNode = (node: PhrasingContent | undefined): boolean =>
+  node?.type === "image" ||
+  node?.type === "imageReference" ||
+  ((node?.type === "link" || node?.type === "linkReference") &&
+    node.children.length === 1 &&
+    isImageNode(node.children[0]));
+const endsLine = (node: PhrasingContent | undefined) =>
+  node === undefined ||
+  node.type === "break" ||
+  (node.type === "text" && /\n[ \t]*$/.test(node.value));
+const startsLine = (node: PhrasingContent | undefined) =>
+  node === undefined ||
+  node.type === "break" ||
+  (node.type === "text" && /^[ \t]*\n/.test(node.value));
+
+function breakLinesAroundImages(paragraph: Paragraph) {
+  const children = paragraph.children;
+  if (!children.some(isImageNode)) return;
+  const ownsLine = (index: number) =>
+    isImageNode(children[index]) &&
+    endsLine(children[index - 1]) &&
+    startsLine(children[index + 1]);
+  paragraph.children = children.flatMap((child, index): PhrasingContent[] => {
+    if (child.type !== "text") return [child];
+    const afterImage = ownsLine(index - 1);
+    const beforeImage = ownsLine(index + 1);
+    if (!afterImage && !beforeImage) return [child];
+    const parts: PhrasingContent[] = [];
+    let value = child.value;
+    if (afterImage) {
+      value = value.replace(/^[ \t]*\n/, "");
+      parts.push({ type: "break" });
+    }
+    const breakAfter = beforeImage && /\n[ \t]*$/.test(value);
+    if (breakAfter) value = value.replace(/[ \t]*\n[ \t]*$/, "");
+    if (value) parts.push({ type: "text", value });
+    if (breakAfter) parts.push({ type: "break" });
+    return parts;
+  });
+}
+
+/**
+ * Agents label screenshots with a line like `**Palette**` right above the image. CommonMark
+ * joins those lines into one paragraph, which puts the image inline beside its label. An
+ * image alone on its source line keeps that line; prose and inline badges still wrap.
+ */
+function remarkBreakAroundImageLines() {
+  return (tree: Root) => {
+    const visit = (node: Root | RootContent) => {
+      if (node.type === "paragraph") breakLinesAroundImages(node);
+      else if ("children" in node) node.children.forEach(visit);
+    };
+    visit(tree);
+  };
+}
 
 type MarkdownAstNode = {
   type?: string;
@@ -206,6 +393,52 @@ type MarkdownAstNode = {
   };
   children?: MarkdownAstNode[];
 };
+
+function remarkKeepAutolinkSuffixes(): Transformer<Root> {
+  return (tree, file) => {
+    const source = String(file);
+    const visit = (node: Root | RootContent) => {
+      if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
+      for (let index = 0; index < node.children.length; index++) {
+        const child = node.children[index];
+        const next = node.children[index + 1];
+        if (child?.type === "link" && /^https?:\/\//i.test(child.url) && next?.type === "text") {
+          const suffix = /^[_~]+/.exec(next.value)?.[0];
+          if (!suffix) continue;
+          const label = child.children.length === 1 ? child.children[0] : undefined;
+          if (label?.type !== "text") continue;
+          if (label.value !== child.url && `http://${label.value}` !== child.url) continue;
+          const start = child.position?.start.offset;
+          const end = child.position?.end.offset;
+          const bare =
+            !child.position ||
+            (start !== undefined &&
+              end !== undefined &&
+              source.slice(start, end) === label.value &&
+              source.slice(end, end + suffix.length) === suffix);
+          if (bare) {
+            child.url += suffix;
+            label.value += suffix;
+            next.value = next.value.slice(suffix.length);
+            if (child.position && end !== undefined) {
+              const boundary = {
+                ...child.position.end,
+                column: child.position.end.column + suffix.length,
+                offset: end + suffix.length,
+              };
+              child.position.end = boundary;
+              if (label.position) label.position.end = boundary;
+              if (next.position) next.position.start = boundary;
+            }
+            if (!next.value) node.children.splice(index + 1, 1);
+          }
+        }
+        if (child) visit(child);
+      }
+    };
+    visit(tree);
+  };
+}
 
 function remarkPreserveCodeMeta() {
   return (tree: MarkdownAstNode) => {
@@ -226,11 +459,6 @@ function remarkPreserveCodeMeta() {
   };
 }
 
-/**
- * Preserve Windows drive links as allowed `file:` URLs before sanitization.
- * The same traversal tags inline code while it can still be distinguished
- * from fenced code. Code inside links stays untagged to avoid nested anchors.
- */
 function remarkNormalizeLinksAndTagInlineCode() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode, insideLink: boolean) => {
@@ -258,36 +486,50 @@ function remarkNormalizeLinksAndTagInlineCode() {
   };
 }
 
-interface DestinationCompileContext {
-  readonly stack: ReadonlyArray<{ readonly type: string; url?: string }>;
-  resume(): string;
-  sliceSerialize(token: unknown): string;
+export function shouldPreserveAssistantLineBreaks(text: string): boolean {
+  return /^★ Insight(?:\s|─)/mu.test(text);
 }
 
-function keepWindowsPathDestination(this: DestinationCompileContext, token: unknown) {
-  const decoded = this.resume();
-  const authored = this.sliceSerialize(token);
-  const node = this.stack.at(-1);
-  // Character references still need decoding, so those destinations keep the parsed URL.
-  if (node)
-    node.url = isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : decoded;
+const imageSourceProcessor = unified()
+  .use(remarkParse)
+  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+
+interface ImageSourceNode {
+  readonly type: string;
+  readonly tagName?: string;
+  readonly properties?: {
+    readonly src?: unknown;
+    readonly dataLocalSrc?: unknown;
+    readonly dataDarkSrc?: unknown;
+    readonly dataLightSrc?: unknown;
+  };
+  readonly children?: ReadonlyArray<ImageSourceNode>;
 }
 
 /**
- * CommonMark reads the `\.` in `C:\me\.t3\shot.png` as an escape, even in a link
- * destination. Every backslash in a Windows path is a separator, so link, image, and
- * definition destinations that are Windows paths keep the text as written.
+ * The sources of the images chat markdown shows, read as ChatMarkdown's `img` renderer reads
+ * them. Code, comments, and plain links show no image, so they add none.
  */
-function remarkKeepWindowsPathDestinations(this: Processor) {
-  const data = this.data();
-  (data.fromMarkdownExtensions ??= []).push({
-    exit: {
-      resourceDestinationString: keepWindowsPathDestination,
-      definitionDestinationString: keepWindowsPathDestination,
-    },
-  });
-}
-
-export function shouldPreserveAssistantLineBreaks(text: string): boolean {
-  return /^★ Insight(?:\s|─)/mu.test(text);
+export function chatMarkdownImageSources(markdown: string): Array<string> {
+  const sources: Array<string> = [];
+  const visit = (node: ImageSourceNode) => {
+    if (node.type === "element" && node.tagName === "img") {
+      const { src, dataLocalSrc, dataDarkSrc, dataLightSrc } = node.properties ?? {};
+      // The sanitizer drops a Windows drive path from `src`; the renderer reads it from here.
+      if (typeof dataLocalSrc === "string") {
+        sources.push(normalizeMarkdownLinkDestination(dataLocalSrc).replaceAll("\\", "/"));
+      } else if (typeof src === "string") {
+        sources.push(normalizeMarkdownLinkDestination(src));
+      }
+      // A `<picture>` shows one of these instead, by the viewer's theme.
+      for (const variant of [dataDarkSrc, dataLightSrc]) {
+        if (typeof variant === "string") sources.push(normalizeMarkdownLinkDestination(variant));
+      }
+    }
+    node.children?.forEach(visit);
+  };
+  visit(imageSourceProcessor.runSync(imageSourceProcessor.parse(markdown)) as ImageSourceNode);
+  return sources;
 }

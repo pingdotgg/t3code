@@ -1,10 +1,24 @@
 import type { OrchestrationV2TurnItem, OrchestrationV2TurnItemStatus } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { MuseItem } from "./protocol.ts";
 
 const decodeToolArgs = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+const decodeWebSearchOutput = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      results: Schema.Array(
+        Schema.Struct({
+          url: Schema.optional(Schema.String),
+          title: Schema.optional(Schema.String),
+          snippet: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  ),
 );
 
 type Fields<
@@ -21,7 +35,6 @@ type MuseToolPresentation = {
   | Fields<"dynamic_tool", "type" | "toolName" | "input" | "output">
 );
 
-/** Unrecognized native terminal states must not appear as successful work. */
 export function museItemStatus(item: MuseItem): OrchestrationV2TurnItemStatus {
   if (item.status === "inProgress") return "running";
   if (item.status === "cancelled") return "cancelled";
@@ -33,7 +46,6 @@ export function museItemStatus(item: MuseItem): OrchestrationV2TurnItemStatus {
   return "failed";
 }
 
-/** Converts native tool details into the shared timeline fields used by every client. */
 export function museToolPresentation(
   item: MuseItem,
   status = museItemStatus(item),
@@ -68,6 +80,7 @@ export function museToolPresentation(
     item.result?.summary ??
     item.text ??
     item.summary?.join("\n") ??
+    item.finalSummary ??
     item.fallbackText ??
     item.objective ??
     "";
@@ -100,11 +113,24 @@ export function museToolPresentation(
   }
   if (item.kind === "toolCall" && /web|browse|fetch/i.test(toolName)) {
     const query = stringArg("query", "url", "pattern")?.trim();
+    const pageUrl = stringArg("url")?.trim();
+    const hits =
+      item.tool === "web_search" && !detail
+        ? Option.getOrUndefined(decodeWebSearchOutput(text))?.results.map(
+            ({ url, title, snippet }) => ({
+              ...(url?.trim() ? { url: url.trim() } : {}),
+              ...(title?.trim() ? { title: title.trim() } : {}),
+              ...(snippet ? { snippet } : {}),
+            }),
+          )
+        : undefined;
+    const results =
+      hits ?? (output ? [{ ...(pageUrl ? { url: pageUrl } : {}), snippet: output }] : []);
     return {
       ...shared,
       type: "web_search",
       ...(query ? { patterns: [query] } : {}),
-      ...(output ? { results: [{ snippet: output }] } : {}),
+      ...(results.length ? { results } : {}),
     };
   }
   return {

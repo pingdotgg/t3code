@@ -33,8 +33,11 @@ dist-electron/
 .showcase/
 apps/mobile/.showcase/
 apps/mobile/.generated/
+apps/mobile/.android-cache/
 /.generated/
 artifacts/app-store/screenshots/
+artifacts/mobile-e2e/
+artifacts/mobile-behavior/
 .github/pr-assets/
 native/**/target/
 node_modules/

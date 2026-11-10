@@ -1,13 +1,9 @@
-/**
- * Muse Code internals for replay tests and the fixture recorder: the MSP
- * launch arguments, initialize parameters, environment, and version parser.
- *
- * @module provider-muse/testing
- */
 export {
   makeMuseEnvironment,
   museInitializeParams,
+  museLaunch,
   museServeArgs,
+  museWorkspaceRoot,
   type MuseSdkHost,
   type MuseSdkHostOptions,
 } from "./server/sdk.ts";

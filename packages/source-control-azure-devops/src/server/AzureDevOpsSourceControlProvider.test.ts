@@ -1,120 +1,107 @@
-import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { SourceControlProviderKind } from "@t3tools/contracts";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
+import { assert, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
-function makeProvider(azure: Partial<AzureDevOpsCli.AzureDevOpsCli["Service"]>) {
-  return AzureDevOpsSourceControlProvider.make.pipe(
-    Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)(azure)),
+const { parseAuth } = AzureDevOpsSourceControlProvider.discovery;
+
+it("reads the signed-in Azure account and says when az is signed out", () => {
+  assert.deepStrictEqual(parseAuth(processOutput("azure-user@example.com\n")), {
+    status: "authenticated",
+    account: Option.some("azure-user@example.com"),
+    host: Option.some("dev.azure.com"),
+    detail: Option.none(),
+  });
+  assert.strictEqual(
+    parseAuth(
+      processOutput("", {
+        stderr: "Please run 'az login' to setup account.\n",
+        exitCode: ChildProcessSpawner.ExitCode(1),
+      }),
+    ).status,
+    "unauthenticated",
   );
-}
+  assert.strictEqual(parseAuth(processOutput("\n")).status, "unknown");
+});
 
-it.effect("maps Azure DevOps PR summaries into provider-neutral change requests", () =>
-  Effect.gen(function* () {
-    const provider = yield* makeProvider({
-      getPullRequest: () =>
-        Effect.succeed({
-          number: 42,
-          title: "Add Azure provider",
-          url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
-          baseRefName: "main",
-          headRefName: "feature/source-control",
-          state: "closed",
-          closedAt: "2026-08-23T10:00:00Z",
-          updatedAt: Option.none(),
+it.effect("names the remote's repository when reading the default branch", () => {
+  const run = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>(() =>
+    Effect.succeed(
+      processOutput(
+        JSON.stringify({
+          name: "My Repo",
+          webUrl: "https://dev.azure.com/acme/project/_git/My%20Repo",
+          remoteUrl: "https://dev.azure.com/acme/project/_git/My%20Repo",
+          sshUrl: "git@ssh.dev.azure.com:v3/acme/project/My%20Repo",
+          defaultBranch: "refs/heads/master",
         }),
-    });
-
-    const changeRequest = yield* provider.getChangeRequest({
-      cwd: "/repo",
-      reference: "42",
-    });
-
-    assert.deepStrictEqual(changeRequest, {
-      provider: "azure-devops",
-      number: 42,
-      title: "Add Azure provider",
-      url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
-      baseRefName: "main",
-      headRefName: "feature/source-control",
-      state: "closed",
-      closedAt: "2026-08-23T10:00:00Z",
-      mergedAt: null,
-      updatedAt: Option.none(),
-      isCrossRepository: false,
-    });
-  }),
-);
-
-it.effect("adds change-request context while retaining Azure CLI causes", () =>
-  Effect.gen(function* () {
-    const cause = new AzureDevOpsCli.AzureDevOpsCommandFailedError({
-      operation: "execute",
-      command: "az",
-      cwd: "/repo",
-      argumentCount: 2,
-      cause: new Error("raw upstream detail that should remain in the cause"),
-    });
-    const provider = yield* makeProvider({
-      checkoutPullRequest: () => Effect.fail(cause),
-    });
-
-    const error = yield* provider
-      .checkoutChangeRequest({ cwd: "/repo", reference: "#42" })
-      .pipe(Effect.flip);
-
-    assert.deepStrictEqual(
-      {
-        provider: error.provider,
-        operation: error.operation,
-        command: error.command,
-        cwd: error.cwd,
-        reference: error.reference,
-        detail: error.detail,
-      },
-      {
-        provider: "azure-devops",
-        operation: "checkoutChangeRequest",
-        command: "az",
+      ),
+    ),
+  );
+  const support = Layer.mergeAll(
+    TestSourceControlHost.layer({ process: { run } }),
+    NodeServices.layer,
+  );
+  return Effect.gen(function* () {
+    const provider = yield* AzureDevOpsSourceControlProvider.make;
+    for (const [remoteUrl, repository] of [
+      ["https://acme@dev.azure.com/acme/project/_git/My%20Repo", "My Repo"],
+      ["https://dev.azure.com/acme/project/_git/My%20Repo?view=x#readme", "My Repo"],
+      ["https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/", "My Repo"],
+      ["git@ssh.dev.azure.com:v3/acme/project/My%20Repo", "My Repo"],
+      ["ssh://git@ssh.dev.azure.com/v3/acme/project/My%20Repo", "My Repo"],
+      ["https://dev.azure.com/acme/project/_git/service.git", "service.git"],
+      ["https://dev.azure.com/acme/project/_git/-repo", "-repo"],
+      ["https://dev.azure.com/acme/project/_git/%40.env", null],
+    ] as const) {
+      run.mockClear();
+      const branch = yield* provider.getDefaultBranch({
         cwd: "/repo",
-        reference: "#42",
-        detail: "Azure DevOps CLI command failed.",
-      },
-    );
-    assert.strictEqual(error.cause, cause);
-    assert.equal(error.message.includes("raw upstream detail"), false);
-  }),
-);
+        context: {
+          provider: {
+            kind: SourceControlProviderKind.make("azure-devops"),
+            name: "Azure DevOps",
+            baseUrl: "https://dev.azure.com",
+          },
+          remoteName: "origin",
+          remoteUrl,
+        },
+      });
+      if (repository === null) {
+        assert.strictEqual(branch, null, remoteUrl);
+        assert.strictEqual(run.mock.calls.length, 0, remoteUrl);
+        continue;
+      }
+      assert.strictEqual(branch, "master", remoteUrl);
+      assert.include(
+        [...(run.mock.calls[0]?.[0].args ?? [])],
+        `--repository=${repository}`,
+        remoteUrl,
+      );
+    }
+  }).pipe(Effect.provide(AzureDevOpsCli.layer.pipe(Layer.provide(support))));
+});
 
-it.effect("creates Azure DevOps PRs through provider-neutral input names", () =>
-  Effect.gen(function* () {
-    let createInput:
-      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["createPullRequest"]>[0]
-      | null = null;
-    const provider = yield* makeProvider({
-      createPullRequest: (input) => {
-        createInput = input;
-        return Effect.void;
-      },
-    });
-
-    yield* provider.createChangeRequest({
-      cwd: "/repo",
-      baseRefName: "main",
-      headSelector: "feature/provider",
-      title: "Provider PR",
-      bodyFile: "/tmp/body.md",
-    });
-
-    assert.deepStrictEqual(createInput, {
-      cwd: "/repo",
-      baseBranch: "main",
-      headSelector: "feature/provider",
-      title: "Provider PR",
-      bodyFile: "/tmp/body.md",
-    });
-  }),
+it.effect(
+  "looks up a branch's pull requests a full page at a time, past forks' same-named branches",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* AzureDevOpsSourceControlProvider.make;
+      assert.deepStrictEqual(
+        provider.headBranchProbe?.({
+          headSelectors: ["octocat:feature", "feature"],
+          state: "open",
+        }),
+        { headSelectors: ["feature"], limit: 100 },
+      );
+    }).pipe(Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}))),
 );

@@ -4,7 +4,6 @@ import {
   type OrchestratorFixtureInput,
 } from "../shared.ts";
 
-/** Two turns that write the same file, then a rollback to the first. */
 export function openCode2RevertInput(): OrchestratorFixtureInput {
   return {
     steps: [

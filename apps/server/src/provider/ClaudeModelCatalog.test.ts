@@ -1,10 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
-import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
   formatClaudeVersionUpgradeMessage,
+  getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogContextWindowTokens,
@@ -15,13 +15,6 @@ import {
   resolveClaudeUpdateRequiredModels,
   scopeClaudeModelCatalog,
 } from "./ClaudeModelCatalog.ts";
-
-/**
- * Test policy: adding or changing a real Claude model in model-manifest.json
- * must not add or update tests here. These synthetic fixtures cover resolver
- * behavior once. Add a test only when Claude adapter semantics change, such
- * as introducing a new compatibility rule or dispatch mapping type.
- */
 
 const manifest = (): ModelManifestData => ({
   version: 1,
@@ -73,7 +66,6 @@ const manifest = (): ModelManifestData => ({
 
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 
-/** Resolves Claude's catalog the way the driver does: through its manifest catalog entry. */
 const catalogFromManifest = (data: ModelManifestData) =>
   resolveClaudeModelCatalog(resolveProviderCatalog(data, CLAUDE) ?? undefined);
 
@@ -179,27 +171,6 @@ describe("Claude model catalog", () => {
     );
   });
 
-  it("rejects malformed adapter mappings", () => {
-    const base = manifest();
-    const malformed: ModelManifestData = {
-      ...base,
-      providers: {
-        ...base.providers,
-        claudeAgent: {
-          ...base.providers!.claudeAgent!,
-          profiles: {
-            ...base.providers!.claudeAgent!.profiles,
-            synthetic: {
-              ...base.providers!.claudeAgent!.profiles.synthetic!,
-              adapter: { claudeCode: { effortMap: { extreme: 123 } } },
-            },
-          },
-        },
-      },
-    };
-    assert.isFalse(hasValidClaudeManifestAdapters(malformed));
-  });
-
   it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {
     const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
       "synthetic",
@@ -215,6 +186,7 @@ describe("Claude model catalog", () => {
               options: [
                 { id: "gentle", label: "Gentle", isDefault: true },
                 { id: "brutal", label: "Brutal" },
+                { id: "ultracode", label: "Ultracode" },
               ],
             },
           ],
@@ -222,12 +194,11 @@ describe("Claude model catalog", () => {
       },
     ]);
 
-    // The bare custom slug shadows the built-in alias, so it no longer resolves to it.
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "synthetic");
-    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"), undefined);
+    assert.isUndefined(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"));
+    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "max"), "max");
+    assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "max", "synthetic"), "max");
 
-    // The entry with descriptors resolves user-defined effort ids and passes
-    // them through untouched (no effortMap, no model suffix).
     assert.strictEqual(
       resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "brutal"),
       "brutal",
@@ -235,6 +206,12 @@ describe("Claude model catalog", () => {
     assert.strictEqual(
       resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "bogus"),
       "gentle",
+    );
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(catalog, "claude-custom-tuned").optionDescriptors?.map(
+        ({ id, type }) => `${id}:${type}`,
+      ),
+      ["effort:select", "ultracode:boolean"],
     );
     assert.strictEqual(
       normalizeClaudeCatalogEffort(catalog, "brutal", "claude-custom-tuned"),

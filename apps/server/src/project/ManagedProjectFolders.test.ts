@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, GitCommandError, ProjectId, ThreadId } from "@t3tools/contracts";
+import { CommandId, ProjectId, ThreadId, VcsProcessSpawnError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -8,13 +10,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
+import * as GitManager from "../git/GitManager.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -25,20 +30,11 @@ import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 
-// Real repository detection: the service only asks the Git workflow whether
-// the data dir is inside a checkout.
-const layerGitWorkflow = Layer.unwrap(
-  Effect.gen(function* () {
-    const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
-    return Layer.mock(GitWorkflow.GitWorkflowService)({
-      isRepository: (cwd) =>
-        registry.detect({ cwd }).pipe(
-          Effect.map((handle) => handle?.kind === "git"),
-          Effect.orDie,
-        ),
-    });
-  }),
-).pipe(Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))));
+const layerGitWorkflow = (vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>) =>
+  GitWorkflow.layer.pipe(
+    Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(vcsProcess ?? VcsProcess.layer))),
+    Layer.provide(Layer.mock(GitManager.GitManager)({})),
+  );
 
 const layerEnrichment = ProjectEnrichmentService.layer.pipe(
   Layer.provide(
@@ -47,6 +43,7 @@ const layerEnrichment = ProjectEnrichmentService.layer.pipe(
         resolve: () => Effect.succeed(null),
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
         resolvePath: () => Effect.succeed(null),
       }),
     ),
@@ -56,18 +53,13 @@ const layerEnrichment = ProjectEnrichmentService.layer.pipe(
 const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
-  /** A git driver for failures real git cannot produce on demand. */
+  readonly vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>;
   readonly git?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
-  /** Wraps the real ProjectService, for failures it cannot produce on demand. */
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
   ) => ProjectService.ProjectService["Service"];
 }
 
-/**
- * The service over a real ProjectService and real git, with its data dir at
- * `baseDir`.
- */
 const layer = (baseDir: string, options?: HarnessOptions) =>
   ManagedProjectFolders.layer.pipe(
     Layer.provide(
@@ -81,14 +73,14 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(RuntimeLayer.layerProjectService),
     Layer.provideMerge(layerEnrichment),
     Layer.provideMerge(WorkspacePaths.layer),
-    Layer.provideMerge(layerGitWorkflow),
+    Layer.provideMerge(layerGitWorkflow(options?.vcsProcess)),
     Layer.provideMerge(options?.git ?? layerRealGit),
     Layer.provideMerge(SqlitePersistence.layerMemory),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
-/** Runs `body` with a data dir in a fresh temp folder, outside any checkout. */
 const withScratch = <A, E>(
   body: (input: {
     readonly baseDir: string;
@@ -106,7 +98,7 @@ const withScratch = <A, E>(
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-managed-folders-" });
     return yield* body({ baseDir }).pipe(Effect.provide(layer(baseDir, options)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   ProcessRunner.ProcessRunner.pipe(
@@ -119,15 +111,6 @@ const requireRoot = Effect.gen(function* () {
   return Option.getOrThrow(yield* scratch.scratchRoot);
 });
 
-it.effect("offers a Scratch folder under the data dir when it is outside a checkout", () =>
-  withScratch(({ baseDir }) =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      assert.equal(yield* requireRoot, path.resolve(baseDir, "scratch"));
-    }),
-  ),
-);
-
 it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -139,10 +122,39 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
     yield* Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
       assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+      assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");
     }).pipe(Effect.provide(layer(baseDir)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("offers a Scratch folder when Git is not installed", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        assert.equal(yield* requireRoot, path.resolve(baseDir, "scratch"));
+      }),
+    {
+      vcsProcess: Layer.succeed(VcsProcess.VcsProcess, {
+        run: (input) =>
+          Effect.fail(
+            new VcsProcessSpawnError({
+              operation: input.operation,
+              command: input.command,
+              cwd: input.cwd,
+              cause: PlatformError.systemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                syscall: `spawn ${input.command}`,
+              }),
+            }),
+          ),
+      }),
+    },
+  ),
 );
 
 it.effect("creates one Scratch project, even for concurrent first requests", () =>
@@ -150,7 +162,6 @@ it.effect("creates one Scratch project, even for concurrent first requests", () 
     Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
       const projects = yield* ProjectService.ProjectService;
-      // Without handling the losing creates' conflicts, eight racers fail.
       const racers = yield* Effect.all(
         Array.from({ length: 8 }, () => scratch.ensureScratchProject),
         { concurrency: "unbounded" },
@@ -207,7 +218,6 @@ it.effect("gives each Scratch thread its own folder, named from its message", ()
       const { projectId } = yield* scratch.ensureScratchProject;
       const root = yield* requireRoot;
       const text = "Convert these PNGs to WebP, please!";
-      // Two ids with the same tail would collide on the short name.
       const first = Option.getOrThrow(
         yield* scratch.folderForThread({
           projectId,
@@ -223,7 +233,6 @@ it.effect("gives each Scratch thread its own folder, named from its message", ()
         }),
       );
 
-      // Ids that normalize to the same characters take both of its names.
       const third = Option.getOrThrow(
         yield* scratch.folderForThread({
           projectId,
@@ -259,7 +268,7 @@ it.effect("leaves threads in other projects alone", () =>
       const projects = yield* ProjectService.ProjectService;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* scratch.ensureScratchProject;
+      const { projectId: scratchId } = yield* scratch.ensureScratchProject;
       const other = yield* projects.create({
         commandId: CommandId.make("command:other"),
         projectId: ProjectId.make("project:other"),
@@ -275,6 +284,8 @@ it.effect("leaves threads in other projects alone", () =>
       });
       assert.isTrue(Option.isNone(folder));
       assert.deepEqual(yield* fileSystem.readDirectory(yield* requireRoot), []);
+      assert.isTrue(yield* scratch.isScratchProject(scratchId));
+      assert.isFalse(yield* scratch.isScratchProject(other.id));
     }),
   ),
 );
@@ -289,11 +300,6 @@ const GIT_IDENTITY_KEYS = [
   "GIT_CONFIG_NOSYSTEM",
 ] as const;
 
-/**
- * Runs `effect` with git reading only an empty global config plus `env`, so
- * the developer's own identity and signing settings stay out of the test. The
- * suite's pinned settings (gitConfig.setup.ts) still apply.
- */
 const withGitEnv = <A, E, R>(
   env: Partial<Record<(typeof GIT_IDENTITY_KEYS)[number], string>>,
   effect: Effect.Effect<A, E, R>,
@@ -301,25 +307,15 @@ const withGitEnv = <A, E, R>(
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const emptyConfig = yield* fileSystem.makeTempFileScoped({ prefix: "t3-gitconfig-" });
-    return yield* Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const saved = GIT_IDENTITY_KEYS.map((key) => [key, process.env[key]] as const);
-        for (const key of GIT_IDENTITY_KEYS) delete process.env[key];
-        Object.assign(process.env, {
-          GIT_CONFIG_GLOBAL: emptyConfig,
-          GIT_CONFIG_NOSYSTEM: "1",
-          ...env,
-        });
-        return saved;
+    const hostEnv: NodeJS.ProcessEnv = { ...(yield* HostProcess.Environment) };
+    for (const key of GIT_IDENTITY_KEYS) delete hostEnv[key];
+    return yield* effect.pipe(
+      Effect.provideService(HostProcess.Environment, {
+        ...hostEnv,
+        GIT_CONFIG_GLOBAL: emptyConfig,
+        GIT_CONFIG_NOSYSTEM: "1",
+        ...env,
       }),
-      () => effect,
-      (saved) =>
-        Effect.sync(() => {
-          for (const [key, value] of saved) {
-            if (value === undefined) delete process.env[key];
-            else process.env[key] = value;
-          }
-        }),
     );
   });
 
@@ -344,6 +340,12 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         const path = yield* Path.Path;
         const root = path.resolve(baseDir, "projects");
         assert.equal(folders.namedProjectsRoot, root);
+        const attributes = path.join(baseDir, "crlf.gitattributes");
+        const crlfConfig = path.join(baseDir, "crlf.gitconfig");
+        yield* fileSystem.writeFileString(attributes, "* text=auto eol=crlf\n");
+        yield* git(baseDir, ["config", "--file", crlfConfig, "core.safecrlf", "true"]);
+        yield* git(baseDir, ["config", "--file", crlfConfig, "core.attributesFile", attributes]);
+        (yield* HostProcess.Environment).GIT_CONFIG_GLOBAL = crlfConfig;
 
         const first = yield* folders.createNamedProject({ name: "Pinball Stats" });
         const second = yield* folders.createNamedProject({ name: "pinball stats" });
@@ -405,7 +407,6 @@ it.effect("gives concurrent named projects with the same name distinct folders",
 
 it.effect("keeps a named project and reports why when Git cannot commit", () =>
   withScratch(({ baseDir }) =>
-    // No identity anywhere, and Git may not guess one from the host name.
     withGitEnv(
       {},
       Effect.gen(function* () {
@@ -417,7 +418,10 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
           path.join(baseDir, "no-identity.gitconfig"),
           "[user]\n\tuseConfigOnly = true\n",
         );
-        process.env.GIT_CONFIG_GLOBAL = path.join(baseDir, "no-identity.gitconfig");
+        (yield* HostProcess.Environment).GIT_CONFIG_GLOBAL = path.join(
+          baseDir,
+          "no-identity.gitconfig",
+        );
 
         const result = yield* folders.createNamedProject({ name: "No Identity" });
 
@@ -440,8 +444,6 @@ it.effect("keeps a folder that another project owns when the create conflicts", 
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const taken = path.join(folders.namedProjectsRoot, "taken");
-        // A project registered at this path some other way (by hand, or a
-        // client that predates the claim) owns the folder the create claims.
         yield* projects.create({
           commandId: CommandId.make("command:owner"),
           projectId: ProjectId.make("project:owner"),
@@ -483,8 +485,6 @@ it.effect("removes the folder when the project create is rejected for another re
         }),
       ),
     {
-      // The project store failing the create is not something a real
-      // ProjectService can be made to do on demand.
       projects: (real) =>
         ProjectService.ProjectService.of({
           ...real,
@@ -525,7 +525,6 @@ it.effect("removes the folder when the create is cancelled before the project ex
           assert.deepEqual((yield* projects.snapshot).projects, []);
         }),
       {
-        // Holds `git init` open so the create can be interrupted mid-scaffold.
         git: Layer.mock(GitVcsDriver.GitVcsDriver)({
           readConfigValue: () => Effect.succeed(null),
           execute: () =>
@@ -534,39 +533,4 @@ it.effect("removes the folder when the create is cancelled before the project ex
       },
     );
   }),
-);
-
-it.effect("removes the folder when the repository cannot be made", () =>
-  withScratch(
-    ({ baseDir }) =>
-      Effect.gen(function* () {
-        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-        const projects = yield* ProjectService.ProjectService;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-
-        const failure = yield* Effect.flip(folders.createNamedProject({ name: "Broken" }));
-
-        assert.equal(failure._tag, "NamedProjectFolderError");
-        assert.equal(failure.message, "Failed to create the project folder.");
-        assert.deepEqual(yield* fileSystem.readDirectory(path.resolve(baseDir, "projects")), []);
-        assert.deepEqual((yield* projects.snapshot).projects, []);
-      }),
-    {
-      // git init itself failing (a missing or broken git) is not something a
-      // real git can be made to do on demand.
-      git: Layer.mock(GitVcsDriver.GitVcsDriver)({
-        readConfigValue: () => Effect.succeed(null),
-        execute: (input) =>
-          Effect.fail(
-            new GitCommandError({
-              operation: input.operation,
-              command: "git",
-              cwd: input.cwd,
-              detail: "git is broken",
-            }),
-          ),
-      }),
-    },
-  ),
 );

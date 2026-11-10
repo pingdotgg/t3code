@@ -32,7 +32,6 @@ export function configureAndroidAgentNotifications(
   native?.configure?.(deviceId, userId, appScheme(), ongoingEnabled);
 }
 
-/** Posts a staged relay payload for the showcase capture; false when unsupported. */
 export function showAndroidShowcaseAgentActivity(data: Record<string, string>): boolean {
   if (!native?.showShowcaseActivity) return false;
   native.showShowcaseActivity(appScheme(), data);
@@ -43,7 +42,6 @@ export function clearAndroidAgentNotifications(): void {
   native?.clear?.();
 }
 
-/** Tells the FCM handler which thread route is on screen so its alerts stay quiet. */
 export function setAndroidThreadOnScreen(path: string | null): void {
   native?.setThreadOnScreen?.(path);
 }

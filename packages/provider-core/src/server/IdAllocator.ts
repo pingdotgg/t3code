@@ -251,7 +251,6 @@ const randomId =
       ),
     );
 
-/** Deterministic id derivations; pure, so callers that only derive need no allocator. */
 export const derive: IdAllocatorV2Derive = {
   providerSession: (input) =>
     ProviderSessionId.make(

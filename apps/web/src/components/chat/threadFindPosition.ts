@@ -1,7 +1,6 @@
 import type { ThreadFindStart } from "./threadFind";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 
-/** Anchor to the first row being read, skipping occurrences above its viewport. */
 export function readThreadFindPosition(
   container: HTMLElement,
   query: string,

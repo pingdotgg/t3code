@@ -14,12 +14,9 @@ import {
   useTimelineBackgroundFailed,
 } from "../chat/ChatTimelineBackground";
 import ChatMarkdown from "../ChatMarkdown";
-import {
-  AssistantMessageSurface,
-  UserMessageBubble,
-  WorkingIndicator,
-  LiveActivityRow,
-} from "../chat/MessagesTimeline";
+import { AssistantMessageSurface } from "../chat/TimelineAssistantRows";
+import { UserMessageBubble } from "../chat/TimelineUserMessageRow";
+import { LiveActivityRow, WorkingIndicator } from "../chat/TimelineWorkGroupRows";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";

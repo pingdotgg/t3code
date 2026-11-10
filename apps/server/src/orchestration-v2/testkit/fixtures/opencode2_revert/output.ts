@@ -12,10 +12,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * The rollback stages a revert before the second turn's user message and
- * commits it, so OpenCode's history ends with the first turn.
- */
 export function assertOpenCode2RevertOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -30,7 +26,6 @@ export function assertOpenCode2RevertOutput(
   assertSemanticProjectionIntegrity(projection);
   assertVisibleUserMessagesInclude(projection, [OPENCODE2_REVERT_FIRST_PROMPT]);
   assertVisibleUserMessagesExclude(projection, [OPENCODE2_REVERT_SECOND_PROMPT]);
-  // The provider thread's head is the kept turn's prompt, OpenCode's last user message.
   const kept = projection.providerTurns.find((turn) => turn.ordinal === 1);
   assert.equal(
     projection.providerThreads[0]?.nativeConversationHeadRef?.nativeId,

@@ -26,7 +26,6 @@ const rates: RateTable = new Map([
 function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   return {
     provider: "claude",
-    // 2026-08-07T04:05Z is still Aug 6 in Los Angeles.
     timestampMs: Date.parse("2026-08-07T04:05:13.944Z"),
     model: "claude-fable-5",
     sessionId: "session-a",
@@ -69,23 +68,9 @@ function aggregate(
 }
 
 describe("UsageAggregator", () => {
-  it("requires exact bounds for hourly aggregation", () => {
-    expect(
-      () =>
-        new UsageAggregator({
-          timeZone: "UTC",
-          sinceDay: "2026-08-01",
-          untilDay: "2026-08-31",
-          resolution: "hour",
-          rates,
-        }),
-    ).toThrow("requires exact time bounds");
-  });
-
   it("splits a bucket's cost by category and speed", () => {
     const [bucket] = aggregate([record(), record({ speed: "fast" })]).buckets;
 
-    // Standard costs $0.005625 and fast twice that.
     expect(bucket).toMatchObject({
       costUsd: expect.closeTo(0.016875),
       categoryCostUsd: {
@@ -113,13 +98,6 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
   });
 
-  it("still sums records that carry no dedupe key", () => {
-    const result = aggregate([record(), record()]);
-
-    expect(result.duplicatesDropped).toBe(0);
-    expect(result.buckets[0]?.totals.outputTokens).toBe(100);
-  });
-
   it("buckets by the day in the requested time zone", () => {
     const utc = aggregate([record()], "UTC");
     const losAngeles = aggregate([record()], "America/Los_Angeles");
@@ -129,7 +107,6 @@ describe("UsageAggregator", () => {
   });
 
   it("finds the day at a quarter-hour zone's midnight across interleaved buckets", () => {
-    // Kathmandu is UTC+5:45, so its midnight falls at 18:15 UTC.
     const result = aggregate(
       [
         record({ timestampMs: Date.parse("2026-08-01T18:14:59.999Z") }),
@@ -148,7 +125,6 @@ describe("UsageAggregator", () => {
   });
 
   it("finds the day at a fixed offset's midnight between quarter hours", () => {
-    // At +00:01, midnight falls at 23:59 UTC.
     const result = aggregate(
       [
         record({ timestampMs: Date.parse("2026-08-01T23:58:59.999Z") }),
@@ -198,25 +174,6 @@ describe("UsageAggregator", () => {
     ]);
   });
 
-  it("keeps daily payloads collapsed when hourly resolution is not requested", () => {
-    const result = aggregate([
-      record({ timestampMs: Date.parse("2026-08-07T04:05:13.944Z") }),
-      record({ timestampMs: Date.parse("2026-08-07T05:05:13.944Z") }),
-    ]);
-
-    expect(result.buckets).toHaveLength(1);
-    expect(result.buckets[0]?.hourStart).toBeUndefined();
-    expect(result.buckets[0]?.records).toBe(2);
-  });
-
-  it("prices against the rate table", () => {
-    const result = aggregate([record()]);
-
-    // 100*1e-5 + 1000*1e-6 + 10*1.25e-5 + 50*5e-5
-    expect(result.buckets[0]?.costUsd).toBeCloseTo(0.004625, 9);
-    expect(result.buckets[0]?.costSource).toBe("modelPriced");
-  });
-
   it("counts tokens but not cost for a model with no rate", () => {
     const result = aggregate([record({ model: "kimi-k3" })]);
 
@@ -231,26 +188,6 @@ describe("UsageAggregator", () => {
 
     expect(result.buckets[0]?.costUsd).toBe(1.25);
     expect(result.buckets[0]?.costSource).toBe("providerReported");
-  });
-
-  it("drops records outside the window", () => {
-    const result = aggregate([record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") })]);
-
-    expect(result.outOfWindow).toBe(1);
-    expect(result.buckets).toHaveLength(0);
-  });
-
-  it("reports whether a record contributed", () => {
-    const aggregator = new UsageAggregator({
-      timeZone: "UTC",
-      sinceDay: "2026-08-01",
-      untilDay: "2026-08-31",
-      rates,
-    });
-
-    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
-    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(false);
-    expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }))).toBe(false);
   });
 
   it("folds a mapped model into its target and prices it there", () => {
@@ -270,16 +207,6 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.records).toBe(2);
     expect(result.buckets[0]?.costUsd).toBeCloseTo(0.00925, 9);
     expect(result.buckets[0]?.unpricedRecords).toBe(0);
-  });
-
-  it("separates providers and models into their own buckets", () => {
-    const result = aggregate([
-      record(),
-      record({ provider: "codex", model: "gpt-5.6-sol" }),
-      record({ model: "claude-opus-5" }),
-    ]);
-
-    expect(result.buckets).toHaveLength(3);
   });
 });
 

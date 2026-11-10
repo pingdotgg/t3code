@@ -1,8 +1,3 @@
-/**
- * Pure checks behind T3 Connect link proofs and relay requests: which local
- * origin a link may point at, and which scopes and lifetimes a proof claims and
- * accepts.
- */
 import type {
   RelayEnvironmentLinkProofPayload,
   RelayLinkProofRequest,
@@ -84,26 +79,39 @@ export function parseManagedEndpointLocalOrigin(localOrigin: string) {
   };
 }
 
+/**
+ * Whether clients should offer to turn on T3 Connect over this session: only the desktop app's
+ * own bootstrap session, from any address (WSL answers on a distro IP), never through a proxy.
+ * A loopback address alone does not count, since SSH port forwards look like loopback too.
+ */
+export function canLinkHere(
+  request: HttpServerRequest.HttpServerRequest,
+  subject: string,
+): boolean {
+  return (
+    subject === "desktop-bootstrap" &&
+    requestAbsoluteUrl(request) !== null &&
+    !hasForwardedAuthorityHeaders(request)
+  );
+}
+
 export function isAllowedEndpointOrigin(input: {
   readonly origin: RelayManagedEndpointOrigin;
   readonly requestUrl: string;
+  readonly allowNonLoopbackRequestHost?: boolean;
 }): boolean {
   if (!isLoopbackHostname(input.origin.localHttpHost)) {
     return false;
   }
 
   const url = new URL(input.requestUrl);
-  if (!isLoopbackHostname(url.hostname)) {
+  if (!input.allowNonLoopbackRequestHost && !isLoopbackHostname(url.hostname)) {
     return false;
   }
 
   return input.origin.localHttpPort === endpointRequestPort(url);
 }
 
-// A managed (Cloudflare tunnel) endpoint is provisioned by the relay and must
-// point at a loopback origin. A manual endpoint is reached out of band (e.g.
-// Tailscale) or not advertised at all for publish-only links, so it is not
-// tied to the managed-tunnel scope.
 export function isSupportedLinkProviderKind(request: RelayLinkProofRequest): boolean {
   return (
     request.endpoint.providerKind === "cloudflare_tunnel" ||

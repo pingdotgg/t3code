@@ -45,7 +45,6 @@ function digest(seed: number): string {
     .join("");
 }
 
-/** Produces safe, deterministic output with enough entropy to exercise gzip. */
 export function diagnosticOutput(input: {
   readonly provider: ProviderDriverKind;
   readonly turnIndex: number;

@@ -1,9 +1,10 @@
+import AVFoundation
 import ExpoModulesCore
+import Photos
 import Security
 import UIKit
+import UniformTypeIdentifiers
 
-// Expo Modules 2.0: plain members marked @JS are bound by the macro, while the
-// views and main-queue presenters stay in definition(). Both are merged.
 @ExpoModule("T3NativeControls")
 public final class T3NativeControlsModule: Module {
   private let presentationSources = T3PresentationSources()
@@ -11,6 +12,7 @@ public final class T3NativeControlsModule: Module {
   private var filePresentation: T3NativeFilePresentation?
 
   public func definition() -> ModuleDefinition {
+    Events("videoPlaybackChange")
     Constants {
       if #available(iOS 26.0, *) {
         return [
@@ -19,9 +21,46 @@ public final class T3NativeControlsModule: Module {
       }
       return ["supportsWorkspaceColumns": false]
     }
+    View(T3SegmentedControlView.self) {
+      ViewName("SegmentedControl")
+      Events("onSelectionChange")
+      Prop("labels") { (view: T3SegmentedControlView, value: [String]) in view.labels = value }
+      Prop("selectedIndex") { (view: T3SegmentedControlView, value: Int) in view.selectedIndex = value }
+      Prop("trackColor") { (view: T3SegmentedControlView, value: UIColor) in view.trackColor = value }
+      Prop("selectedColor") { (view: T3SegmentedControlView, value: UIColor) in view.selectedColor = value }
+      Prop("textColor") { (view: T3SegmentedControlView, value: UIColor) in view.textColor = value }
+      Prop("mutedColor") { (view: T3SegmentedControlView, value: UIColor) in view.mutedColor = value }
+      Prop("appearance") { (view: T3SegmentedControlView, value: String) in view.appearance = value }
+    }
+
+    View(T3SidebarTabBarView.self) {
+      ViewName("SidebarTabBar")
+      Events("onSelectionChange", "onCompose")
+      Prop("tabs") { (view: T3SidebarTabBarView, value: [String]) in view.tabs = value }
+      Prop("selectedTab") { (view: T3SidebarTabBarView, value: String) in view.selectedTab = value }
+      Prop("selectedColor") { (view: T3SidebarTabBarView, value: UIColor) in view.selectedColor = value }
+      Prop("showsCompose") { (view: T3SidebarTabBarView, value: Bool) in view.showsCompose = value }
+      Prop("compact") { (view: T3SidebarTabBarView, value: Bool) in view.compact = value }
+      Prop("appearance") { (view: T3SidebarTabBarView, value: String) in view.appearance = value }
+    }
+
     View(T3LayoutMetricsView.self) {
       ViewName("LayoutMetrics")
       Events("onMetricsChange")
+    }
+
+    View(T3ScrollEdgeBleedView.self) {
+      ViewName("ScrollEdgeBleed")
+    }
+
+    AsyncFunction("generateDpopKey") { T3DpopKeys.generate() }
+
+    AsyncFunction("dpopKeyMatches") { (privateKey: Data, publicKey: Data) in
+      try T3DpopKeys.matches(privateKey: privateKey, publicKey: publicKey)
+    }
+
+    AsyncFunction("signDpop") { (privateKey: Data, signingInput: Data) in
+      try T3DpopKeys.sign(privateKey: privateKey, signingInput: signingInput)
     }
 
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
@@ -37,6 +76,27 @@ public final class T3NativeControlsModule: Module {
     AsyncFunction("presentFile") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentFile(url: url, title: title, sourceIdentifier: sourceIdentifier,
                            identifier: identifier, promise: promise)
+    }.runOnQueue(.main)
+
+    // A nil URL is still resolving in JS and arrives later through updateFile.
+    AsyncFunction("presentFiles") { (urls: [URL?], titles: [String], selectedIndex: Int, sourceIdentifiers: [String], identifier: String, promise: Promise) in
+      guard !urls.isEmpty, urls.count == titles.count, urls.count == sourceIdentifiers.count,
+        urls.indices.contains(selectedIndex)
+      else {
+        throw URLError(.badURL)
+      }
+      let file = try self.makeFilePresentation(sourceIdentifiers: sourceIdentifiers, identifier: identifier,
+                                               promise: promise)
+      guard let presenter = self.appContext?.utilities?.currentViewController() else {
+        file.dismiss()
+        return
+      }
+      file.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
+    }.runOnQueue(.main)
+
+    // A nil URL marks the item as one that could not be resolved.
+    AsyncFunction("updateFile") { (identifier: String, index: Int, url: URL?) in
+      if self.filePresentation?.identifier == identifier { self.filePresentation?.update(index: index, url: url) }
     }.runOnQueue(.main)
 
     OnDestroy {
@@ -75,6 +135,11 @@ public final class T3NativeControlsModule: Module {
     AsyncFunction("shareFileFromSource") { (url: URL, title: String, identifier: String, promise: Promise) in
       try self.shareFile(url: url, title: title, sourceIdentifier: identifier, promise: promise)
     }.runOnQueue(.main)
+
+    // Photos names the asset itself, so iOS ignores the Android display name.
+    AsyncFunction("saveImageToLibrary") { (url: URL, mimeType: String, name: String, promise: Promise) in
+      Self.saveImageToLibrary(url: url, mimeType: mimeType, name: name, promise: promise)
+    }
   }
 
   // UIKit presenters are main-actor isolated rather than run on the JS thread
@@ -83,6 +148,18 @@ public final class T3NativeControlsModule: Module {
   @MainActor
   func dismissVideo(identifier: String) async {
     dismissVideoPresentation(identifier: identifier)
+  }
+
+  // expo-video activates the session for inline playback but never deactivates
+  // it. Any other category or mode means another feature (recording) owns it.
+  @JS
+  @MainActor
+  func releaseVideoAudioSession() async {
+    // The fullscreen presentation releases the session in its own teardown.
+    guard videoPresentation == nil else { return }
+    let session = AVAudioSession.sharedInstance()
+    guard session.category == .playback, session.mode == .moviePlayback else { return }
+    try? session.setActive(false, options: [.notifyOthersOnDeactivation])
   }
 
   @JS
@@ -107,12 +184,8 @@ public final class T3NativeControlsModule: Module {
     }
   }
 
-  // The geometry request above can fail transiently (for example before the
-  // scene is foreground-active), so callers poll this until it settles.
-  // Screen bounds — not the scene's interface orientation — decide the
-  // answer because they match the captured framebuffer: with iPadOS
-  // windowing active, a floating landscape window still reports a portrait
-  // screen, and screenshots would come out portrait.
+  // Geometry requests can fail before foreground activation; callers retry until bounds match.
+  // Use screen bounds because iPadOS floating-window orientation can differ from the captured framebuffer.
   @JS
   @MainActor
   func getInterfaceOrientation() async -> String {
@@ -125,6 +198,12 @@ public final class T3NativeControlsModule: Module {
     }
     let bounds = windowScene.screen.coordinateSpace.bounds
     return bounds.width > bounds.height ? "landscape" : "portrait"
+  }
+
+  @JS
+  @MainActor
+  func isProtectedDataAvailable() async -> Bool {
+    UIApplication.shared.isProtectedDataAvailable
   }
 
   private func launchArgument(_ flag: String) -> String? {
@@ -192,10 +271,16 @@ public final class T3NativeControlsModule: Module {
         userInfo: [NSLocalizedDescriptionKey: "The video preview is no longer available."]
       )
     }
-    let presentation = T3NativeVideoPresentation(identifier: identifier, url: url, title: title) { [weak self] error in
-      self?.videoPresentation = nil
-      if let error { promise.reject(error) } else { promise.resolve(nil) }
-    }
+    let presentation = T3NativeVideoPresentation(
+      identifier: identifier, url: url, title: title,
+      onPlaybackChange: { [weak self] isPlaying in
+        self?.sendEvent("videoPlaybackChange", ["identifier": identifier, "isPlaying": isPlaying])
+      },
+      completion: { [weak self] error in
+        self?.videoPresentation = nil
+        if let error { promise.reject(error) } else { promise.resolve(nil) }
+      }
+    )
     videoPresentation = presentation
     presentation.present(from: presenter, sources: presentationSources, sourceIdentifier: sourceIdentifier)
   }
@@ -204,22 +289,58 @@ public final class T3NativeControlsModule: Module {
     if videoPresentation?.identifier == identifier { videoPresentation?.dismiss() }
   }
 
-  private func presentFile(url: URL, title: String, sourceIdentifier: String,
-                           identifier: String, promise: Promise) throws {
+  private func makeFilePresentation(sourceIdentifiers: [String], identifier: String,
+                                    promise: Promise) throws -> T3NativeFilePresentation {
     guard filePresentation == nil, videoPresentation == nil,
-      let presenter = appContext?.utilities?.currentViewController()
+      appContext?.utilities?.currentViewController() != nil
     else { throw URLError(.cannotLoadFromNetwork) }
     let file = T3NativeFilePresentation(identifier: identifier, sources: presentationSources,
-                                        sourceIdentifier: sourceIdentifier) { [weak self] error in
+                                        sourceIdentifiers: sourceIdentifiers) { [weak self] error in
       self?.filePresentation = nil
       if let error { promise.reject(error) } else { promise.resolve(nil) }
     }
     filePresentation = file
+    return file
+  }
+
+  private func presentFile(url: URL, title: String, sourceIdentifier: String,
+                           identifier: String, promise: Promise) throws {
+    let file = try makeFilePresentation(sourceIdentifiers: [sourceIdentifier], identifier: identifier, promise: promise)
+    guard let presenter = appContext?.utilities?.currentViewController() else { file.dismiss(); return }
     file.present(url: url, title: title, from: presenter)
   }
 
   private func dismissFilePresentation(identifier: String) {
     if filePresentation?.identifier == identifier { filePresentation?.dismiss() }
+  }
+
+  private static func saveImageToLibrary(url: URL, mimeType: String, name: String, promise: Promise) {
+    PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+      guard status == .authorized || status == .limited else {
+        promise.reject(NSError(
+          domain: "T3NativePhotos",
+          code: 1,
+          userInfo: [NSLocalizedDescriptionKey: "Allow T3 Code to add photos in Settings."]
+        ))
+        return
+      }
+      PHPhotoLibrary.shared().performChanges({
+        let options = PHAssetResourceCreationOptions()
+        options.uniformTypeIdentifier = UTType(mimeType: mimeType)?.identifier
+        options.originalFilename = name
+        PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: url, options: options)
+      }, completionHandler: { saved, error in
+        if saved {
+          promise.resolve(nil)
+        } else {
+          promise.reject(error ?? NSError(
+            domain: "T3NativePhotos",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "Photos could not save this image."]
+          ))
+        }
+      })
+    }
   }
 
   private func shareFile(url: URL, title: String, sourceIdentifier: String, promise: Promise) throws {

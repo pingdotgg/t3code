@@ -37,31 +37,13 @@ export class PreviewPasskeysConfigureError extends Schema.TaggedError<PreviewPas
   }
 }
 
-/**
- * Passkeys for in-app browser pages on macOS, where Electron has no WebAuthn UI
- * of its own. Signed builds record which entitlements their provisioning
- * profile granted (scripts/build-desktop-artifact.ts), and each path turns on
- * only when its entitlement is present:
- *
- * - Touch ID: Electron's built-in platform authenticator. Passkeys it creates
- *   stay on this Mac, in T3 Code's keychain group.
- * - Browser passkeys: Apple's managed browser entitlement lets the system sheet
- *   (iCloud Keychain, password managers, phones, security keys) serve any
- *   site. The guest preload hands each ceremony to this process, which pins
- *   the requesting frame's real origin.
- *
- * Windows needs neither: Chromium already uses Windows Hello there.
- */
 export class PreviewPasskeys extends Context.Service<
   PreviewPasskeys,
   {
-    /** Whether preview pages route WebAuthn through the system passkey sheet. */
     readonly bridgeEnabled: boolean;
-    /** Turns on Touch ID passkeys when this build is entitled to them. Runs after app ready. */
+    /** Runs after app ready. */
     readonly configure: Effect.Effect<void>;
-    /** Lets the user choose between several passkeys for one site. Idempotent. */
     readonly installSessionHandlers: (session: Session) => void;
-    /** Serves a preview guest's passkey ceremonies. Returns the detach function. */
     readonly attachGuest: (guest: WebContents) => () => void;
   }
 >()("@t3tools/desktop/preview/Passkeys/PreviewPasskeys") {}
@@ -102,8 +84,7 @@ const chooseAccount = async (details: Electron.SelectWebauthnAccountDetails) => 
 const NATIVE_DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const NATIVE_MAX_TIMEOUT_MS = 60 * 60 * 1000;
 
-// Mirrors the native layer's own clamp, plus a margin: it can leave a ceremony
-// unsettled, and the page must still get an answer.
+// Native ceremonies can remain unsettled; match its deadline clamp with a margin.
 const ceremonyDeadline = (timeout: unknown) =>
   (typeof timeout === "number" && timeout > 0
     ? Math.min(timeout, NATIVE_MAX_TIMEOUT_MS)
@@ -117,9 +98,7 @@ const withDeadline = (ceremony: Promise<PasskeyCeremonyResult>, milliseconds: nu
   return Promise.race([ceremony, deadline]).finally(() => clearTimeout(timer));
 };
 
-// Secure contexts only: https, or http on this machine. Chromium also trusts
-// `*.localhost`, but the macOS layer refuses it, so it is turned away here
-// instead of failing deeper with a less useful error.
+// macOS refuses *.localhost even though Chromium trusts it.
 const isTrustworthyOrigin = (origin: string) => {
   if (!URL.canParse(origin)) return false;
   const { protocol, hostname } = new URL(origin);
@@ -130,10 +109,7 @@ const isTrustworthyOrigin = (origin: string) => {
   );
 };
 
-/**
- * The platform that serves preview pages' passkey ceremonies, or none. Windows
- * needs none: Chromium already hands WebAuthn to Windows Hello there.
- */
+// Chromium already delegates to Windows Hello.
 const backendFor = (platform: NodeJS.Platform): PasskeyBackend | undefined =>
   platform === "darwin" ? macPasskeyBackend : undefined;
 
@@ -187,11 +163,8 @@ const make = Effect.gen(function* () {
         // Only the guest's main frame runs the bridge preload.
         const frame = event.senderFrame;
         if (!frame || frame !== guest.mainFrame) return notAllowed;
-        // The page shares a JS world with the preload, so nothing it sends can
-        // be trusted for the origin. Read the committed origin before any await:
-        // the frame object outlives a navigation.
+        // The page shares the preload's JS world; read the frame's committed origin before any await/navigation.
         const origin = frame.origin;
-        // Like Chromium, only a focused page may open the sheet, one at a time.
         if (!isTrustworthyOrigin(origin) || ceremonyPending || !guest.isFocused()) {
           return notAllowed;
         }
@@ -224,8 +197,6 @@ const make = Effect.gen(function* () {
         guest.ipc.removeHandler(PASSKEY_GET_CHANNEL);
       };
       detach();
-      // Option shapes are the page's to get wrong: the native layer validates
-      // them and answers with a TypeError.
       guest.ipc.handle(
         PASSKEY_CREATE_CHANNEL,
         (event, publicKey: PublicKeyCredentialCreationOptions) =>

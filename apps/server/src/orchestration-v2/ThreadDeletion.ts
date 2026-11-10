@@ -14,7 +14,6 @@ export interface ThreadDeletionPlan {
   readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
 }
 
-/** Plan the same durable cleanup for direct thread deletion and project removal. */
 export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")(function* (input: {
   readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.delete" }>;
   readonly projection: Pick<
@@ -209,6 +208,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       },
     });
   }
+  effects.push({
+    id: `effect:${command.commandId}:scheduled-tasks.cleanup`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "scheduled-tasks.cleanup" },
+  });
   effects.push({
     id: `effect:${command.commandId}:terminal.cleanup`,
     commandId: command.commandId,

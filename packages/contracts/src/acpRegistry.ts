@@ -13,7 +13,6 @@ const AcpRegistryAgentId = TrimmedNonEmptyString.check(
 const ACP_REGISTRY_CDN_HOSTNAME = "cdn.agentclientprotocol.com";
 const ACP_REGISTRY_AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 
-/** Derives the official Registry icon URL without trusting stored URL metadata. */
 export function officialAcpRegistryIconUrlForAgentId(
   agentId: string | null | undefined,
 ): string | null {
@@ -23,7 +22,6 @@ export function officialAcpRegistryIconUrlForAgentId(
   return `https://${ACP_REGISTRY_CDN_HOSTNAME}/registry/v1/latest/${agentId}.svg`;
 }
 
-/** Allows provider icons only from the credential-free official Registry CDN origin. */
 export function resolveOfficialAcpRegistryIconUrl(icon: string | null | undefined): string | null {
   if (!icon) return null;
   try {
@@ -49,8 +47,13 @@ export type AcpRegistryDistribution = typeof AcpRegistryDistribution.Type;
 export const AcpRegistryIntegrity = Schema.Literals(["sha256", "registry"]);
 export type AcpRegistryIntegrity = typeof AcpRegistryIntegrity.Type;
 
+export const ACP_REGISTRY_MAX_AGENTS = 512;
+
 export const AcpRegistrySearchInput = Schema.Struct({
   query: TrimmedString.check(Schema.isMaxLength(120)),
+  limit: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: ACP_REGISTRY_MAX_AGENTS })),
+  ),
 });
 export type AcpRegistrySearchInput = typeof AcpRegistrySearchInput.Type;
 
@@ -72,7 +75,7 @@ export const AcpRegistrySearchAgent = Schema.Struct({
 export type AcpRegistrySearchAgent = typeof AcpRegistrySearchAgent.Type;
 
 export const AcpRegistrySearchResult = Schema.Struct({
-  agents: Schema.Array(AcpRegistrySearchAgent).check(Schema.isMaxLength(20)),
+  agents: Schema.Array(AcpRegistrySearchAgent).check(Schema.isMaxLength(ACP_REGISTRY_MAX_AGENTS)),
 });
 export type AcpRegistrySearchResult = typeof AcpRegistrySearchResult.Type;
 
@@ -110,12 +113,8 @@ export const AcpRegistryProbeAuthMethod = Schema.Struct({
   name: AcpRegistryProbeText,
   description: AcpRegistryProbeDescription,
   type: Schema.Literals(["agent", "env_var", "terminal"]),
-  // Terminal methods: the full command line the user runs in a thread
-  // terminal on the owning environment to complete interactive auth.
   command: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2_048))),
-  // Env-var methods: variable names the user sets on the provider instance.
   envVarNames: Schema.optionalKey(Schema.Array(AcpRegistryProbeText).check(Schema.isMaxLength(16))),
-  // Env-var methods may advertise where credentials can be created.
   link: Schema.optionalKey(AcpRegistryUrl),
 });
 export type AcpRegistryProbeAuthMethod = typeof AcpRegistryProbeAuthMethod.Type;
@@ -124,8 +123,6 @@ export const AcpRegistryUrlAuthAction = Schema.Struct({
   elicitationId: AcpRegistryProbeText,
   url: AcpRegistryUrl,
   message: Schema.String.check(Schema.isMaxLength(1_024)),
-  // Optional for mixed-version clients. New servers include both timestamps
-  // so a pending browser login remains understandable on another device.
   createdAt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
   expiresAt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
 });
@@ -273,15 +270,12 @@ export type AcpRegistryProbeModel = typeof AcpRegistryProbeModel.Type;
 
 export const AcpRegistryProbeResult = Schema.Struct({
   instanceId: ProviderInstanceId,
-  // `ready` is only returned after a disposable ACP session/new probe completes.
-  // It does not imply that authentication was passively detected.
+  // `ready` requires a disposable ACP session/new probe, not passive auth detection.
   ready: Schema.Literal(true),
   icon: Schema.NullOr(AcpRegistryUrl),
   authMethods: Schema.Array(AcpRegistryProbeAuthMethod).check(Schema.isMaxLength(32)),
   models: Schema.Array(AcpRegistryProbeModel).check(Schema.isMaxLength(256)),
   currentModelId: Schema.NullOr(AcpRegistryProbeText),
-  // Non-model session config options and session modes, pre-mapped onto T3's
-  // provider option descriptors so model capabilities can carry them directly.
   configOptions: Schema.Array(ProviderOptionDescriptor).check(Schema.isMaxLength(16)),
   sessionManagement: Schema.Struct({
     canList: Schema.Boolean,

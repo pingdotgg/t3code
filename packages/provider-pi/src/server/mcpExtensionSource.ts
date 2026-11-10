@@ -1,13 +1,4 @@
-/**
- * Source for the T3-owned Pi extension that consumes T3's HTTP MCP server.
- *
- * Pi 0.99+ discovers optional HTTP bridge tools on demand. Older versions
- * keep them directly available. Pi loads this TypeScript via `--extension`; the
- * server writes it to a cache so packaged builds need no sibling .ts file.
- *
- * Do not import t3code modules from the string body. The Pi process resolves
- * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
- */
+// No T3 imports inside the string; resolve Pi and typebox from the user's Pi install.
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
@@ -15,15 +6,14 @@ export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
+export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
+export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
 
-/**
- * Pi tools whose confirmations the bridge raises as file-change approvals.
- * Auto-accept edits skips them; the adapter keys the approval kind off them.
- */
+// These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
-import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { Type } from "typebox";
@@ -31,16 +21,20 @@ import { Type } from "typebox";
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
+const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
+const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 type JsonRpcResponse = {
   readonly id?: number | string;
-  readonly result?: unknown;
+  readonly result?: JsonValue;
   readonly error?: { readonly message?: string };
 };
 
@@ -48,6 +42,8 @@ type McpTool = {
   readonly name: string;
   readonly description?: string;
   readonly inputSchema?: Record<string, unknown>;
+  readonly annotations?: { readonly readOnlyHint?: boolean };
+  readonly outputSchema?: Record<string, unknown>;
 };
 
 function env(name: string): string | undefined {
@@ -91,33 +87,68 @@ function parseSseOrJson(body: string, contentType: string): JsonRpcResponse {
 function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   const unsafe = (Type as { Unsafe?: (value: unknown) => unknown }).Unsafe;
   if (typeof unsafe === "function" && schema !== undefined) {
-    return unsafe(schema);
+    // Zero-argument MCP tools may omit "properties", which some OpenAI-compatible
+    // servers reject. Declare it, as Pi does for its own MCP tools.
+    return unsafe({
+      ...schema,
+      type: schema.type ?? "object",
+      ...(schema.properties === undefined ? { properties: {} } : {}),
+    });
   }
   return Type.Object({}, { additionalProperties: true });
 }
 
-function formatMcpContent(result: unknown): string {
-  if (result === null || result === undefined) return "";
-  if (typeof result !== "object") return String(result);
+type ModelContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
+function mcpModelContent(result: unknown): ModelContent[] {
+  if (result === null || result === undefined) return [];
+  if (typeof result !== "object") return [{ type: "text", text: String(result) }];
   const record = result as {
-    readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>;
+    readonly content?: ReadonlyArray<{
+      readonly type?: string;
+      readonly text?: string;
+      readonly data?: string;
+      readonly mimeType?: string;
+    }>;
     readonly structuredContent?: unknown;
-    readonly isError?: boolean;
   };
-  const texts: string[] = [];
+  const content: ModelContent[] = [];
   if (Array.isArray(record.content)) {
     for (const part of record.content) {
-      if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
+      if (part?.type === "text" && typeof part.text === "string") {
+        content.push({ type: "text", text: part.text });
+      } else if (part?.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string") {
+        content.push({ type: "image", data: part.data, mimeType: part.mimeType });
+      }
     }
   }
-  // Most T3 tools mirror structuredContent in a text block. Repeating it would
-  // leave T3's own output parsing two JSON documents instead of one.
-  if (record.structuredContent !== undefined) {
-    const structured = JSON.stringify(record.structuredContent);
-    if (!texts.includes(structured)) texts.push(structured);
+  // Structured output belongs to scripts. Only use it as model text when
+  // the server supplied no model-facing blocks, matching Pi's native MCP tools.
+  if (content.length === 0) {
+    content.push({ type: "text", text: JSON.stringify(record.structuredContent ?? result) });
   }
-  if (texts.length > 0) return texts.join("\\n");
-  return JSON.stringify(result);
+  return content;
+}
+
+function mcpScriptResult(result: JsonValue | undefined) {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) return result;
+  const { _meta: _ignored, ...scriptResult } = result;
+  return scriptResult;
+}
+
+function mcpOutputSchema(tool: McpTool) {
+  return jsonSchemaToTypebox({
+    type: "object",
+    properties: {
+      content: { type: "array", items: { type: "object" } },
+      ...(tool.outputSchema === undefined ? {} : { structuredContent: tool.outputSchema }),
+      isError: { type: "boolean" },
+      _meta: { type: "object" },
+    },
+    required: ["content"],
+  });
 }
 
 function isMcpToolError(result: unknown): boolean {
@@ -212,6 +243,20 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  // RPC has no trust prompt, so Pi skips an untrusted folder's protected resources. Session
+  // replacement reruns this factory without project_trust, and T3 drops notices outside a turn,
+  // so check each session's first turn. An explicit --no-approve is deliberate and stays quiet.
+  let projectTrustChecked = false;
+  pi.on("before_agent_start", (_event, ctx) => {
+    if (projectTrustChecked) return;
+    projectTrustChecked = true;
+    if (ctx.isProjectTrusted() || process.argv.some((arg) => arg === "--no-approve" || arg === "-na")) return;
+    ctx.ui.notify(
+      \`Pi did not load project settings, extensions, skills, prompts, MCP servers or system prompt files for \${ctx.cwd} because the folder is not trusted. To load them, run the configured Pi binary there with the same PI_CODING_AGENT_DIR (if set), trust the folder or its parent with /trust, then start a new thread in that same worktree. To trust every project, add --approve to Pi's launch arguments in T3 Code settings; to keep them off without this notice, add --no-approve.\`,
+      "warning",
+    );
+  });
+
   // Keep skill chips in the request. Pi expands only one leading /skill:
   // command, so use its own frontmatter loader for every selected chip here.
   pi.on("input", async (event, ctx) => {
@@ -244,23 +289,43 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     };
   });
 
-  // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
-  // previous response's usage even when a fork's instructions/tools differ,
-  // then reserves almost all remaining context for output. OpenRouter can
-  // reject even a short conversation. Remove this cap when Pi accounts for
-  // the current request prefix reliably (api/simple-options + utils/estimate).
+  // Pi has no service tier setting, so T3 sets one through this command before each turn.
+  // Only a tier the active model advertises is sent; Standard sends none.
+  let serviceTier: string | undefined;
+  pi.registerCommand(SERVICE_TIER_COMMAND, {
+    description: "Set the service tier T3 Code sends with provider requests",
+    handler: async (args) => {
+      serviceTier = args.trim() || undefined;
+    },
+  });
+
   pi.on("before_provider_request", (event, ctx) => {
-    if (ctx.model?.provider !== "openrouter") return;
     const payload = event.payload;
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return;
     const replacement = { ...payload } as Record<string, unknown>;
     let changed = false;
-    for (const key of ["max_tokens", "max_completion_tokens"]) {
-      const limit = replacement[key];
-      if (typeof limit === "number" && Number.isFinite(limit) && limit > 32_768) {
-        replacement[key] = 32_768;
-        changed = true;
+    // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
+    // previous response's usage even when a fork's instructions/tools differ,
+    // then reserves almost all remaining context for output. OpenRouter can
+    // reject even a short conversation. Remove this cap when Pi accounts for
+    // the current request prefix reliably (api/simple-options + utils/estimate).
+    if (ctx.model?.provider === "openrouter") {
+      for (const key of ["max_tokens", "max_completion_tokens"]) {
+        const limit = replacement[key];
+        if (typeof limit === "number" && Number.isFinite(limit) && limit > 32_768) {
+          replacement[key] = 32_768;
+          changed = true;
+        }
       }
+    }
+    const tiers = (ctx.model as { serviceTiers?: unknown } | undefined)?.serviceTiers;
+    if (
+      serviceTier !== undefined &&
+      Array.isArray(tiers) &&
+      tiers.some((tier) => tier?.id === serviceTier)
+    ) {
+      replacement.service_tier = serviceTier;
+      changed = true;
     }
     if (changed) return replacement;
   });
@@ -274,10 +339,21 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     typeof pi.getAllTools === "function" &&
     pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path === "builtin:tool-search");
 
+  const readOnlyMcpTools = new Set<string>();
+  const isReadOnlyMcpTool = (name: string) => {
+    const extensionPath = env(EXTENSION_PATH_ENV);
+    if (extensionPath === undefined || !readOnlyMcpTools.has(name) || typeof pi.getAllTools !== "function") return false;
+    // A user extension may own the same name. Only our registered HTTP bridge
+    // may inherit the canonical T3 server's read-only annotation.
+    return pi.getAllTools().some((tool) => tool.name === name &&
+      typeof tool.sourceInfo?.path === "string" &&
+      NodePath.resolve(tool.sourceInfo.path) === NodePath.resolve(extensionPath));
+  };
+
   pi.on("tool_call", async (event, ctx) => {
     const mode = runtimeMode();
     if (mode === "full-access") return;
-    if (event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) {
+    if ((event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) || isReadOnlyMcpTool(event.toolName)) {
       return;
     }
     if (mode === "auto-accept-edits" && FILE_CHANGE_TOOLS.has(event.toolName)) {
@@ -286,6 +362,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const approved = await ctx.ui.confirm(
       \`Allow \${event.toolName}?\`,
       toolInputSummary(event.input),
+      { signal: ctx.signal },
     );
     if (!approved) {
       return { block: true, reason: \`\${event.toolName} was declined in T3 Code.\` };
@@ -318,9 +395,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     // Preserve public names for saved loadouts and tool selectors. Hidden
     // canonical names reserve ownership against Pi's configured MCP servers.
     const prefixes = supportsExposure ? ["mcp__t3-code__", "mcp__t3_code__"] : ["mcp__t3-code__"];
+    readOnlyMcpTools.clear();
     for (const tool of catalog) {
       const name = tool.name;
       for (const prefix of prefixes) {
+        if (tool.annotations?.readOnlyHint === true) readOnlyMcpTools.add(\`\${prefix}\${name}\`);
         const exposure = prefix === "mcp__t3_code__" ? "hidden" :
           deferOptionalTools && !directTools.has(name) ? "deferred" : "direct";
         pi.registerTool({
@@ -328,6 +407,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
           label: name,
           description: tool.description ?? name,
           parameters: jsonSchemaToTypebox(tool.inputSchema),
+          ...(supportsExposure ? { outputSchema: mcpOutputSchema(tool) } : {}),
           ...(supportsExposure ? { exposure } : {}),
           async execute(_toolCallId, params, signal) {
             const result = await client.callTool(
@@ -335,9 +415,13 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
               (params ?? {}) as Record<string, unknown>,
               signal,
             );
-            const text = formatMcpContent(result);
+            const content = mcpModelContent(result);
+            if (isMcpToolError(result) && !content.some((part) => part.type === "text" && part.text.length > 0)) {
+              content.push({ type: "text", text: "MCP tool t3-code/" + name + " returned an error" });
+            }
             return {
-              content: [{ type: "text", text }],
+              content,
+              structuredContent: mcpScriptResult(result),
               details: { server: "t3-code", tool: name },
               ...(isMcpToolError(result) ? { isError: true } : {}),
             };
@@ -367,23 +451,31 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // mcp.json configures it; retry a failed connection at session_start.
   await ensureStarted().catch(() => undefined);
 
-  const reconcileDiscovery = () => {
+  const reconcileDiscovery = (ctx: Pick<ExtensionContext, "model">) => {
     if (!supportsExposure) return;
     // A disabled or replaced search builtin cannot discover deferred tools.
     const hasToolSearch = hasBuiltinToolSearch();
     const exposureChanged = deferOptionalTools !== hasToolSearch;
     deferOptionalTools = hasToolSearch;
     if (exposureChanged) registerTools();
-    if (hasToolSearch) {
-      const active = pi.getActiveTools();
-      if (!active.includes("tool_search")) pi.setActiveTools([...active, "tool_search"]);
-    }
+    const active = pi.getActiveTools();
+    // Completion gateways can silently drop calls to undeclared tools named
+    // in history or guidance. Eagerly load T3 schemas, including after tree
+    // restores, while retaining deferred exposure for Pi's allowlist rules.
+    // Pi still applies --tools/--exclude-tools to this active loadout.
+    const required = [
+      ...(hasToolSearch ? ["tool_search"] : []),
+      ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => "mcp__t3-code__" + tool.name) : []),
+    ];
+    const missing = required.filter((name) => !active.includes(name));
+    if (missing.length > 0) pi.setActiveTools([...active, ...missing]);
   };
 
   // Tree navigation restores its saved loadout after session_start.
-  pi.on("session_tree", reconcileDiscovery);
+  pi.on("session_tree", (_event, ctx) => reconcileDiscovery(ctx));
+  pi.on("model_select", (_event, ctx) => reconcileDiscovery(ctx));
   pi.on("session_start", async (_event, ctx) => {
-    reconcileDiscovery();
+    reconcileDiscovery(ctx);
     try {
       await ensureStarted();
     } catch (error) {
@@ -392,11 +484,16 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
-  // Deliver orchestration guidance through pi's real system-prompt channel.
-  // Wrapping the first user message instead would stop it from starting
-  // with "/" and silently break slash-command expansion.
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS,
-  }));
+  // Keep guidance in the system prompt so leading slash commands still expand.
+  pi.on("before_agent_start", (event, ctx) => {
+    reconcileDiscovery(ctx);
+    const sections = event.systemPromptOptions?.sections;
+    if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
+      // A full prompt override bypasses Pi's later section rendering.
+      sections.t3_code_orchestration = ORCHESTRATION_INSTRUCTIONS;
+      return undefined;
+    }
+    return { systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS };
+  });
 }
 `;

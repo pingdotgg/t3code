@@ -1,99 +1,100 @@
-import { type PointerEvent, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { type PointerEvent, useState } from "react";
+
+export interface ResizeBounds {
+  readonly min: number;
+  readonly max: number;
+}
 
 interface ResizeSession {
   width: number;
   edge: "left" | "right";
+  /** Pointer widths are clamped to these before `resize` sees them. */
+  bounds: ResizeBounds;
   resize: (width: number) => number;
   finish: (width: number, moved: boolean) => void;
-  cleanup?: () => void;
+  cleanup?: (committed: boolean) => void;
 }
 
-/** Shared pointer lifecycle for side panels, including interrupted and sub-frame drags. */
-export function useResizeDrag<T extends HTMLElement>(
-  start: (event: PointerEvent<T>) => ResizeSession | null,
-  resetKey?: string,
-) {
-  const drag = useRef<{
-    session: ResizeSession;
-    target: T;
-    pointerId: number;
-    startX: number;
-    pendingX: number;
-    width: number;
-    moved: boolean;
-    frame: number | null;
-  } | null>(null);
+function clampToBounds(width: number, bounds: ResizeBounds): number {
+  return Math.max(bounds.min, Math.min(bounds.max, width));
+}
 
-  const flush = useCallback(() => {
-    const active = drag.current;
+interface ActiveDrag<T extends HTMLElement> {
+  session: ResizeSession;
+  target: T;
+  pointerId: number;
+  startX: number;
+  pendingX: number;
+  width: number;
+  moved: boolean;
+  frame: number | null;
+  onBlur: () => void;
+}
+
+function createResizeDrag<T extends HTMLElement>() {
+  let drag: ActiveDrag<T> | null = null;
+
+  const flush = () => {
+    const active = drag;
     if (!active) return;
     const delta = (active.pendingX - active.startX) * (active.session.edge === "left" ? -1 : 1);
-    active.moved ||= Math.abs(delta) > 2;
-    active.width = active.session.resize(active.session.width + delta);
-  }, []);
+    if (Math.abs(delta) > 2) active.moved = true;
+    active.width = active.session.resize(
+      clampToBounds(active.session.width + delta, active.session.bounds),
+    );
+  };
 
-  const finish = useCallback(
-    (commit = true) => {
-      const active = drag.current;
-      if (!active) return;
-      if (active.frame !== null) cancelAnimationFrame(active.frame);
-      if (commit) flush();
-      // Release can synchronously dispatch lostpointercapture.
-      drag.current = null;
-      try {
-        if (active.target.hasPointerCapture(active.pointerId)) {
-          active.target.releasePointerCapture(active.pointerId);
-        }
-      } catch {
-        // Capture may already have been released by the browser.
+  const finish = (commit: boolean) => {
+    const active = drag;
+    if (!active) return;
+    if (active.frame !== null) cancelAnimationFrame(active.frame);
+    window.removeEventListener("blur", active.onBlur);
+    if (commit) flush();
+    // Release can synchronously dispatch lostpointercapture.
+    drag = null;
+    try {
+      if (active.target.hasPointerCapture(active.pointerId)) {
+        active.target.releasePointerCapture(active.pointerId);
       }
-      document.body.style.removeProperty("cursor");
-      document.body.style.removeProperty("user-select");
-      active.session.cleanup?.();
-      if (commit) active.session.finish(active.width, active.moved);
-    },
-    [flush],
-  );
-
-  const previousResetKey = useRef(resetKey);
-  useLayoutEffect(() => {
-    if (previousResetKey.current !== resetKey) {
-      finish(false);
-      previousResetKey.current = resetKey;
-    }
-  }, [finish, resetKey]);
-
-  useEffect(() => {
-    const onBlur = () => finish();
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("blur", onBlur);
-      finish(false);
-    };
-  }, [finish]);
+    } catch {}
+    document.body.style.removeProperty("cursor");
+    document.body.style.removeProperty("user-select");
+    active.session.cleanup?.(commit);
+    if (commit) active.session.finish(active.width, active.moved);
+  };
 
   const end = (event: PointerEvent<T>, usePosition: boolean) => {
-    const active = drag.current;
+    const active = drag;
     if (!active || active.pointerId !== event.pointerId) return;
     event.preventDefault();
     if (usePosition) active.pendingX = event.clientX;
-    finish();
+    finish(true);
   };
 
   return {
-    onPointerDown(event: PointerEvent<T>) {
-      if (event.button !== 0 || drag.current) return;
+    ref: (node: T | null) => (node === null ? undefined : () => finish(false)),
+    cancel: () => finish(false),
+    refresh(bounds?: ResizeBounds) {
+      if (!drag) return;
+      if (bounds) drag.session.bounds = bounds;
+      flush();
+    },
+    begin(event: PointerEvent<T>, start: (event: PointerEvent<T>) => ResizeSession | null) {
+      if (event.button !== 0 || drag) return;
       const session = start(event);
       if (!session) return;
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
-        session.cleanup?.();
+        session.cleanup?.(false);
         return;
       }
       event.preventDefault();
       event.stopPropagation();
-      drag.current = {
+      // Leaving the window mid-drag commits where the pointer was.
+      const onBlur = () => finish(true);
+      window.addEventListener("blur", onBlur);
+      drag = {
         session,
         target: event.currentTarget,
         pointerId: event.pointerId,
@@ -102,16 +103,17 @@ export function useResizeDrag<T extends HTMLElement>(
         width: session.width,
         moved: false,
         frame: null,
+        onBlur,
       };
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
     },
     onPointerMove(event: PointerEvent<T>) {
-      const active = drag.current;
+      const active = drag;
       if (!active || active.pointerId !== event.pointerId) return;
       event.preventDefault();
       active.pendingX = event.clientX;
-      active.moved ||= Math.abs(event.clientX - active.startX) > 2;
+      if (Math.abs(event.clientX - active.startX) > 2) active.moved = true;
       if (active.frame !== null) return;
       active.frame = requestAnimationFrame(() => {
         active.frame = null;
@@ -122,4 +124,18 @@ export function useResizeDrag<T extends HTMLElement>(
     onPointerCancel: (event: PointerEvent<T>) => end(event, false),
     onLostPointerCapture: (event: PointerEvent<T>) => end(event, false),
   };
+}
+
+/**
+ * A pointer drag that resizes along one edge. The session `start` returns owns
+ * everything the drag needs, so options read at pointer-down hold for the whole
+ * drag. Attach `ref` to the handle so unmounting it abandons the drag.
+ */
+export function useResizeDrag<T extends HTMLElement>(
+  start: (event: PointerEvent<T>) => ResizeSession | null,
+) {
+  // Created once: `ref` must keep its identity, or a re-render mid-drag would run its cleanup.
+  const [drag] = useState(createResizeDrag<T>);
+  const { begin, ...rest } = drag;
+  return { ...rest, onPointerDown: (event: PointerEvent<T>) => begin(event, start) };
 }

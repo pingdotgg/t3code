@@ -1,19 +1,22 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
-import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 import {
@@ -21,26 +24,29 @@ import {
   makeTargetedProviderUpdateAction,
   enrichProviderSnapshotWithVersionAdvisory,
   homebrewOwnershipFromCommandPath,
+  invalidateLatestProviderVersion,
   makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
   normalizeCommandPath,
   npmGlobalPrefixFromCommandPath,
+  parseChocolateyLatestVersion,
   parseHomebrewLatestVersion,
   resolveLatestProviderVersion,
   resolvePackageManagedProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
+  type PackageManagedProviderMaintenanceDefinition,
   type ProviderMaintenanceCapabilities,
 } from "./maintenanceResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
-// These write `#!/bin/sh` stubs and evaluate them with darwin/linux path
-// semantics; a Windows temp path cannot be split on `:`.
+// Shell stubs use POSIX paths; Windows temp paths cannot split on colon.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const makeTempDir = (name: string) =>
-  Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomUUIDv4),
+  SecureRandom.SecureRandom.pipe(
+    Effect.flatMap((random) => random.uuidV4()),
     Effect.map((id) => NodePath.join(NodeFS.realpathSync(NodeOS.tmpdir()), `${name}-${id}`)),
   );
 const isNativeTestCommandPath =
@@ -59,6 +65,12 @@ const nativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
     args: ["update"],
     isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
   },
+});
+const miseToolUpdate = makePackageManagedProviderMaintenanceResolver({
+  provider: driver("packageTool"),
+  npmPackageName: "@example/package-tool",
+  mise: { tool: "package-tool" },
+  nativeUpdate: null,
 });
 const installedPackageToolProvider: ServerProvider = {
   instanceId: ProviderInstanceId.make("packageTool"),
@@ -85,7 +97,6 @@ function writeExecutable(path: string) {
   NodeFS.chmodSync(path, 0o755);
 }
 
-/** Symlink `<tempDir>/bin/<name>` into a package entry point, like npm/pnpm do. */
 function linkIntoPackage(tempDir: string, name: string, packageSegments: ReadonlyArray<string>) {
   const target = NodePath.join(tempDir, ...packageSegments, "bin", `${name}.js`);
   writeExecutable(target);
@@ -99,7 +110,10 @@ const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("maintenance resolution should not spawn a process here"),
 );
 
-function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) => string) {
+function stdoutSpawner(
+  onSpawn: (command: string, args: ReadonlyArray<string>) => string,
+  exitCodeOf: (args: ReadonlyArray<string>) => number = () => 0,
+) {
   return ChildProcessSpawner.make((command) => {
     const { command: executable, args } = command as unknown as {
       readonly command: string;
@@ -108,7 +122,7 @@ function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) =
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCodeOf(args))),
         isRunning: Effect.succeed(false),
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
@@ -123,25 +137,128 @@ function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) =
   });
 }
 
-it.layer(NodeServices.layer)("providerMaintenance", (it) => {
-  it.effect("reads cached versions through ProviderLatestVersions", () =>
-    resolveLatestProviderVersion(manualPackageTool).pipe(
-      Effect.provideServiceEffect(
-        ProviderLatestVersions.ProviderLatestVersions,
-        ProviderLatestVersions.make([["@example/package-tool", "9.9.9"]]),
-      ),
-      Effect.provideService(
-        HttpClient.HttpClient,
-        HttpClient.make(() =>
-          Effect.die("cached provider version should not make an HTTP request"),
-        ),
-      ),
-      Effect.map((version) => {
-        expect(version).toBe("9.9.9");
-      }),
-    ),
-  );
+type MiseLatestAnswer = string | { readonly stdout?: string; readonly exitCode?: number } | "hang";
 
+/** A `mise` answering `which`, `ls --json --installed [tool]`, and `latest`, recording each call. */
+function miseSpawner(
+  answers: {
+    readonly which: string;
+    readonly latest?: MiseLatestAnswer;
+    readonly installed: Record<string, ReadonlyArray<unknown>>;
+  },
+  spawned: Array<ReadonlyArray<string>>,
+) {
+  return ChildProcessSpawner.make((command) => {
+    const { command: executable, args } = command as unknown as {
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+    };
+    spawned.push([executable, ...args]);
+    const latest = answers.latest ?? "";
+    const hang = args[0] === "latest" && latest === "hang";
+    let stdout = "";
+    let exitCode = 0;
+    if (args[0] === "which") {
+      stdout = `${answers.which}\n`;
+    } else if (args[0] === "latest" && typeof latest === "string") {
+      stdout = latest === "hang" ? "" : `${latest}\n`;
+    } else if (args[0] === "latest" && typeof latest !== "string") {
+      stdout = latest.stdout ?? "";
+      exitCode = latest.exitCode ?? 0;
+    } else if (args[0] === "ls") {
+      // `mise ls --json <tool>` lists one tool's installs; without a tool, every tool's.
+      const tool = args.slice(1).find((arg) => !arg.startsWith("-"));
+      stdout = JSON.stringify(tool ? (answers.installed[tool] ?? []) : answers.installed);
+    } else {
+      exitCode = 1;
+    }
+    return Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: hang ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+        isRunning: Effect.succeed(hang),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: hang ? Stream.never : Stream.encodeText(Stream.make(stdout)),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      }),
+    );
+  });
+}
+
+/**
+ * A mise binary on its own PATH dir and an install of `package-tool` 1.0.0 in its data dir,
+ * with the `latest` link mise keeps pointing at the newest install.
+ */
+function miseFixture(
+  tempDir: string,
+  options: {
+    readonly misePresent?: boolean;
+    readonly tool?: string;
+    readonly dataDir?: string;
+  } = {},
+) {
+  const miseBinDir = NodePath.join(tempDir, "mise-bin");
+  const misePath = NodePath.join(miseBinDir, "mise");
+  if (options.misePresent !== false) writeExecutable(misePath);
+  const toolDir = NodePath.join(
+    options.dataDir ?? NodePath.join(tempDir, "mise"),
+    "installs",
+    "package-tool",
+  );
+  const latestDir = NodePath.join(toolDir, "latest");
+  let installPath = "";
+  let binaryPath = "";
+  /** Installs `version` and points `latest` at it, as `mise upgrade` does. */
+  const install = (version: string) => {
+    installPath = NodePath.join(toolDir, version);
+    binaryPath = NodePath.join(installPath, "bin", "package-tool");
+    writeExecutable(binaryPath);
+    if (symlinksSupported) {
+      NodeFS.rmSync(latestDir, { force: true });
+      NodeFS.symlinkSync(installPath, latestDir);
+    }
+    return binaryPath;
+  };
+  install("1.0.0");
+  const installed = (
+    install: { readonly requested_version?: string; readonly active?: boolean } = {},
+  ) => ({
+    [options.tool ?? "package-tool"]: [
+      { install_path: installPath, requested_version: "latest", active: true, ...install },
+    ],
+  });
+  return {
+    miseBinDir,
+    misePath,
+    get binaryPath() {
+      return binaryPath;
+    },
+    latestBinaryPath: NodePath.join(latestDir, "bin", "package-tool"),
+    install,
+    installed,
+  };
+}
+
+/** A mise shim: a link named for the tool that points at mise itself. */
+function linkShim(tempDir: string, misePath: string, name: string) {
+  const shimPath = NodePath.join(tempDir, "mise", "shims", name);
+  NodeFS.mkdirSync(NodePath.dirname(shimPath), { recursive: true });
+  NodeFS.symlinkSync(misePath, shimPath);
+  return shimPath;
+}
+
+it.layer(
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    Layer.succeed(HostProcess.Environment, { PATH: "" }),
+  ),
+)("providerMaintenance", (it) => {
   it.effect("prefers the installer's own latest version over the npm registry", () =>
     resolveLatestProviderVersion({ ...manualPackageTool, latestVersion: "1.2.0" }).pipe(
       Effect.provide(ProviderLatestVersions.layer),
@@ -157,10 +274,45 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ),
   );
 
+  it.effect("reads the latest version from the npm registry", () =>
+    resolveLatestProviderVersion(manualPackageTool).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "1.2.3" }))),
+        ),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("1.2.3");
+      }),
+    ),
+  );
+
+  it.effect("gives up on a registry body that stalls after the headers", () =>
+    Effect.gen(function* () {
+      const lookup = yield* resolveLatestProviderVersion(manualPackageTool).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(new ReadableStream()))),
+          ),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("4 seconds");
+      expect(lookup.pollUnsafe()).toBeDefined();
+      expect(yield* Fiber.join(lookup)).toBeNull();
+    }),
+  );
+
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
-    enrichProviderSnapshotWithVersionAdvisory(installedPackageToolProvider, manualPackageTool, {
-      enableProviderUpdateChecks: false,
-    }).pipe(
+    enrichProviderSnapshotWithVersionAdvisory(
+      { ...installedPackageToolProvider, installedVersion: "1.1.0" },
+      manualPackageTool,
+      { enableProviderUpdateChecks: false },
+    ).pipe(
       Effect.provide(ProviderLatestVersions.layer),
       Effect.provideService(
         HttpClient.HttpClient,
@@ -171,7 +323,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       Effect.map((provider) => {
         expect(provider.versionAdvisory).toMatchObject({
           status: "unknown",
-          currentVersion: "1.0.0",
+          currentVersion: "1.1.0",
           latestVersion: null,
           checkedAt: "2026-04-10T00:00:00.000Z",
         });
@@ -179,49 +331,201 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ),
   );
 
-  it("marks providers with unknown current versions as unknown", () => {
-    expect(
-      createProviderVersionAdvisory({
-        driver: driver("packageTool"),
-        currentVersion: null,
-        latestVersion: "9.9.9",
+  it.effect.each([
+    { install: "native", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
+    { install: "manual", stdout: '["1.2.0"]', exitCode: 0, latest: "1.2.0" },
+    { install: "npm", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
+    { install: "native", stdout: "", exitCode: 1, latest: null },
+    { install: "npm", stdout: '"1.2.0"', exitCode: 1, latest: null },
+    { install: "native", stdout: "not json", exitCode: 0, latest: null },
+    { install: "manual", stdout: '["1.2.0", "1.3.0"]', exitCode: 0, latest: null },
+    { install: "manual", stdout: '""', exitCode: 0, latest: null },
+  ])(
+    "uses npm's registry for $install installs (exit $exitCode, output $stdout)",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-registry-version");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath =
+          fixture.install === "npm"
+            ? linkIntoPackage(tempDir, "package-tool", [
+                "lib",
+                "node_modules",
+                "@example",
+                "package-tool",
+              ])
+            : NodePath.join(tempDir, ".local/bin/native-package-tool");
+        if (fixture.install !== "npm") writeExecutable(binaryPath);
+        let probes = 0;
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          fixture.install === "native" ? nativePackageToolUpdate : packageToolUpdate,
+          { binaryPath, env: { PATH: fixture.install === "npm" ? npmBinDir : "" } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (command, args) => {
+                probes++;
+                expect(command).toBe(NodePath.join(npmBinDir, "npm"));
+                expect(args).toEqual([
+                  "view",
+                  "--global",
+                  ...(fixture.install === "npm" ? ["--prefix", tempDir] : []),
+                  "--json",
+                  `${capabilities.packageName}@latest`,
+                  "version",
+                ]);
+                return fixture.stdout;
+              },
+              () => fixture.exitCode,
+            ),
+          ),
+        );
+        const program = Effect.gen(function* () {
+          yield* enrichProviderSnapshotWithVersionAdvisory(
+            installedPackageToolProvider,
+            capabilities,
+            { enableProviderUpdateChecks: false },
+          );
+          expect(probes).toBe(0);
+          const snapshot = yield* enrichProviderSnapshotWithVersionAdvisory(
+            installedPackageToolProvider,
+            capabilities,
+          );
+          expect(snapshot.versionAdvisory?.latestVersion).toBe(fixture.latest);
+          expect(probes).toBe(1);
+          expect(yield* resolveLatestProviderVersion(capabilities)).toBe(fixture.latest);
+          expect(probes).toBe(1);
+          yield* invalidateLatestProviderVersion(capabilities);
+          expect(yield* resolveLatestProviderVersion(capabilities)).toBe(fixture.latest);
+          expect(probes).toBe(2);
+        });
+        yield* program.pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([
+              ["@example/package-tool", "9.9.9"],
+              ["@example/native-package-tool", "9.9.9"],
+            ]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() =>
+              Effect.die("a configured npm lookup must not fall back to public npm"),
+            ),
+          ),
+        );
       }),
-    ).toMatchObject({
-      status: "unknown",
-      currentVersion: null,
-      latestVersion: "9.9.9",
-    });
-  });
+    { skip: !symlinksSupported || windowsHost },
+  );
 
-  it("marks providers with unknown latest versions as unknown", () => {
-    expect(
+  it("pins the advertised stable version in a pnpm-global update command", () => {
+    const advisoryFor = (
+      maintenanceCapabilities: ReturnType<typeof makeProviderMaintenanceCapabilities>,
+      latestVersion: string,
+    ) =>
       createProviderVersionAdvisory({
         driver: driver("packageTool"),
         currentVersion: "1.0.0",
-        latestVersion: null,
-      }),
-    ).toMatchObject({
-      status: "unknown",
-      currentVersion: "1.0.0",
-      latestVersion: null,
-      message: null,
+        latestVersion,
+        maintenanceCapabilities,
+      }).updateCommand;
+    const pnpmTool = makeProviderMaintenanceCapabilities({
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      updateExecutable: "pnpm",
+      updateArgs: [
+        "add",
+        "-g",
+        "--allow-build=@example/package-tool",
+        "@example/package-tool@latest",
+      ],
+      updateLockKey: "pnpm-global",
     });
+
+    expect(advisoryFor(pnpmTool, "1.1.0")).toBe(
+      "pnpm add -g --allow-build=@example/package-tool @example/package-tool@1.1.0",
+    );
+    // A prerelease cannot be pinned safely, so pnpm keeps @latest.
+    expect(advisoryFor(pnpmTool, "1.1.0-beta.1")).toBe(
+      "pnpm add -g --allow-build=@example/package-tool @example/package-tool@latest",
+    );
+    // Only pnpm's minimumReleaseAge skips fresh releases; npm keeps @latest.
+    expect(
+      advisoryFor(
+        makeProviderMaintenanceCapabilities({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          updateExecutable: "npm",
+          updateArgs: ["install", "-g", "@example/package-tool@latest"],
+          updateLockKey: "npm-global:/opt/node",
+        }),
+        "1.1.0",
+      ),
+    ).toBe("npm install -g @example/package-tool@latest");
   });
 
-  it("keeps the manual update hint when the install is behind but unowned", () => {
+  it("names the install to update when it is behind but unowned", () => {
     expect(
       createProviderVersionAdvisory({
         driver: driver("packageTool"),
         currentVersion: "2.1.110",
         latestVersion: "2.1.117",
-        maintenanceCapabilities: manualPackageTool,
+        maintenanceCapabilities: {
+          ...manualPackageTool,
+          installPath: "/Applications/Tool.app/Contents/Resources/bin/package-tool",
+        },
       }),
     ).toMatchObject({
       status: "behind_latest",
       latestVersion: "2.1.117",
       updateCommand: null,
       canUpdate: false,
+      message:
+        "Version 2.1.117 is out. T3 Code runs /Applications/Tool.app/Contents/Resources/bin/package-tool; update it with the app or tool that installed it.",
+    });
+  });
+
+  it("offers the update when an owned install is behind", () => {
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("packageTool"),
+        currentVersion: "2.1.110",
+        latestVersion: "2.1.117",
+        maintenanceCapabilities: makeProviderMaintenanceCapabilities({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          updateExecutable: "npm",
+          updateArgs: ["install", "-g", "@example/package-tool@latest"],
+          updateLockKey: "npm-global:/usr/local",
+        }),
+      }),
+    ).toMatchObject({
+      status: "behind_latest",
+      canUpdate: true,
       message: "Install the update now or review provider settings.",
+    });
+  });
+
+  it("shows the Chocolatey upgrade command without offering to run it", () => {
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("claudeAgent"),
+        currentVersion: "2.1.304",
+        latestVersion: "2.1.306",
+        maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+          provider: driver("claudeAgent"),
+          packageName: "@anthropic-ai/claude-code",
+          installPath: "C:\\ProgramData\\chocolatey\\bin\\claude.exe",
+          manualCommand: "choco upgrade claude-code",
+        }),
+      }),
+    ).toMatchObject({
+      canUpdate: false,
+      canInstallVersion: false,
+      updateCommand: "choco upgrade claude-code",
     });
   });
 
@@ -238,7 +542,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "pins npm updates to the global prefix that owns the package",
+    "pins npm updates to the global prefix that owns the package and the provider's PATH",
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-npm-capabilities");
@@ -248,12 +552,14 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           "@example",
           "package-tool",
         ]);
+        // A version manager's Node, which only the provider's settings put on PATH.
+        const providerEnv = { PATH: NodePath.join(tempDir, "bin") };
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
           {
             binaryPath: link,
-            env: { PATH: "" },
+            env: providerEnv,
           },
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
@@ -272,6 +578,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
               "@example/package-tool@latest",
             ],
             lockKey: `npm-global:${normalizeCommandPath(tempDir)}`,
+            env: providerEnv,
           },
         });
       }),
@@ -284,7 +591,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "@openai/codex",
       ),
     ).toBe("/usr/local");
-    // A copy nested inside another package is not a global install.
     expect(
       npmGlobalPrefixFromCommandPath(
         "/usr/local/lib/node_modules/other/node_modules/@openai/codex/bin/codex.js",
@@ -297,7 +603,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "@openai/codex",
       ),
     ).toBe("/");
-    // Neither is a project-local dependency.
     expect(
       npmGlobalPrefixFromCommandPath(
         "/work/app/node_modules/@openai/codex/bin/codex.js",
@@ -306,10 +611,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ).toBeNull();
   });
 
-  // The Codex Windows installer exposes `%LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin`
-  // as a junction into `%CODEX_HOME%\\packages\\standalone\\current\\bin`. Node's
-  // realpath follows junctions, so the real path carries the standalone marker
-  // even though the visible path does not.
+  // The Windows Codex bin junction resolves into CODEX_HOME/packages/standalone/current/bin.
   it.effect("recognizes a Windows standalone install through its junctioned bin dir", () =>
     Effect.gen(function* () {
       const visiblePath =
@@ -342,6 +644,327 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps an unrecognized install manual-only when the native updater requires its path",
+    () =>
+      Effect.gen(function* () {
+        const systemPath =
+          "/usr/local/lib/codex/releases/rust-v0.162.1-x86_64-unknown-linux-musl/bin/codex";
+        const capabilities = yield* resolvePackageManagedProviderMaintenance(
+          {
+            provider: driver("codex"),
+            npmPackageName: "@openai/codex",
+            nativeUpdate: {
+              args: ["update"],
+              isCommandPath: isNativeTestCommandPath("/packages/standalone/"),
+              requiresCommandPath: true,
+            },
+          },
+          {
+            binaryPath: "codex",
+            resolvedCommandPath: "/usr/local/bin/codex",
+            realCommandPath: systemPath,
+            env: {},
+            platform: "linux",
+          },
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
+
+        expect(capabilities.update).toBeNull();
+        expect(capabilities.installPath).toBe(systemPath);
+      }),
+  );
+
+  const claudeUpdate = {
+    provider: driver("claudeAgent"),
+    npmPackageName: "@anthropic-ai/claude-code",
+    nativeUpdate: {
+      args: ["update"],
+      isCommandPath: isNativeTestCommandPath("/.local/bin/claude"),
+    },
+  };
+  const otherProviderUpdate = {
+    provider: driver("nativePackageTool"),
+    npmPackageName: "@example/native-package-tool",
+    nativeUpdate: {
+      args: ["update"],
+      isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
+    },
+  };
+  const resolveInstall = (input: {
+    readonly definition: PackageManagedProviderMaintenanceDefinition;
+    readonly resolved: string;
+    readonly real: string;
+    readonly platform?: NodeJS.Platform;
+    readonly env?: NodeJS.ProcessEnv;
+  }) =>
+    resolvePackageManagedProviderMaintenance(input.definition, {
+      binaryPath: "claude",
+      resolvedCommandPath: input.resolved,
+      realCommandPath: input.real,
+      env: input.env ?? {},
+      platform: input.platform ?? "win32",
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, input.platform ?? "win32"),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+    );
+  const userWinGetLink = "C:\\Users\\me\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe";
+  const userWinGetPackage =
+    "C:\\Users\\me\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe";
+  const machineWinGetLink = "C:\\Program Files\\WinGet\\Links\\claude.exe";
+  const machineWinGetPackage =
+    "C:\\Program Files\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe";
+  const nativeClaude = "C:\\Users\\me\\.local\\bin\\claude.exe";
+
+  it.effect.each([
+    { name: "a user-scope link", resolved: userWinGetLink, real: userWinGetPackage },
+    { name: "a user-scope package", resolved: userWinGetPackage, real: userWinGetPackage },
+    { name: "a machine-scope package", resolved: machineWinGetPackage, real: machineWinGetPackage },
+    { name: "a machine-scope link alone", resolved: machineWinGetLink, real: machineWinGetLink },
+    {
+      name: "a mixed-case link",
+      resolved: "c:\\USERS\\me\\appdata\\local\\MICROSOFT\\winget\\links\\Claude.EXE",
+      real: userWinGetPackage.toUpperCase(),
+    },
+    { name: "a native-looking alias", resolved: nativeClaude, real: userWinGetPackage },
+  ] as const)("keeps a WinGet Claude install manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
+  const chocolateyShim = "C:\\ProgramData\\chocolatey\\bin\\claude.exe";
+  const chocolateyPackage = "C:\\ProgramData\\chocolatey\\lib\\claude-code\\tools\\claude.exe";
+
+  it.effect.each([
+    { name: "the shimgen shim", resolved: chocolateyShim, real: chocolateyShim },
+    { name: "the package binary", resolved: chocolateyPackage, real: chocolateyPackage },
+    {
+      name: "a custom root",
+      resolved: "D:\\Tools\\Choco\\bin\\claude.exe",
+      real: "D:\\Tools\\Choco\\bin\\claude.exe",
+      env: { ChocolateyInstall: "D:\\Tools\\Choco" },
+    },
+    {
+      name: "a custom root package",
+      resolved: "D:\\Tools\\Choco\\lib\\claude-code\\tools\\claude.exe",
+      real: "D:\\Tools\\Choco\\lib\\claude-code\\tools\\claude.exe",
+      env: { ChocolateyInstall: "D:\\Tools\\Choco" },
+    },
+    {
+      name: "a mixed-case custom root with a trailing separator",
+      resolved: "D:\\Tools\\Choco\\bin\\Claude.EXE",
+      real: "D:\\Tools\\Choco\\bin\\Claude.EXE",
+      env: { ChocolateyInstall: "d:/tools/choco/" },
+    },
+    { name: "a native-looking alias", resolved: nativeClaude, real: chocolateyPackage },
+  ] as const)("keeps a Chocolatey Claude install manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
+
+      expect(capabilities.update).toBeNull();
+      expect(capabilities.installPath).toBe(fixture.real);
+      expect(capabilities.latestVersion).toBeNull();
+      expect(capabilities.lookupLatestVersion).toBeDefined();
+      expect(capabilities.manualCommand).toBe("choco upgrade claude-code");
+    }),
+  );
+
+  it.effect("keeps a Chocolatey-shaped path off Windows on the native updater", () =>
+    Effect.gen(function* () {
+      const commandPath = "/home/me/chocolatey/bin/claude.exe";
+      const capabilities = yield* resolveInstall({
+        definition: claudeUpdate,
+        resolved: commandPath,
+        real: commandPath,
+        platform: "linux",
+      });
+
+      expect(capabilities.update).toMatchObject({ lockKey: "claudeAgent-native" });
+    }),
+  );
+
+  // Chocolatey publishes behind npm, so comparing against the registry would
+  // report an update `choco upgrade` cannot install yet.
+  it.effect("compares a Chocolatey Claude install against choco search", () =>
+    Effect.gen(function* () {
+      const probes: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
+        binaryPath: "claude",
+        resolvedCommandPath: chocolateyShim,
+        realCommandPath: chocolateyShim,
+        env: {},
+        platform: "win32",
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner((command, args) => {
+            probes.push({ command, args });
+            return "claude-code|2.1.304\r\n";
+          }),
+        ),
+      );
+      expect(probes).toEqual([]);
+
+      const latest = yield* resolveLatestProviderVersion(capabilities).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("the installer's latest should not come from npm")),
+        ),
+      );
+
+      expect(latest).toBe("2.1.304");
+      expect(probes.map(({ command }) => NodePath.basename(command).replace(/\.\w+$/, ""))).toEqual(
+        ["choco"],
+      );
+      expect(probes[0]?.args).toEqual(["search", "claude-code", "--exact", "--limit-output"]);
+      expect(
+        createProviderVersionAdvisory({
+          driver: driver("claudeAgent"),
+          currentVersion: "2.1.304",
+          latestVersion: latest,
+          maintenanceCapabilities: capabilities,
+        }),
+      ).toMatchObject({ status: "current", canUpdate: false, canInstallVersion: false });
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("stays unknown when choco search fails instead of asking npm", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
+        binaryPath: "claude",
+        resolvedCommandPath: chocolateyShim,
+        realCommandPath: chocolateyShim,
+        env: {},
+        platform: "win32",
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner(
+            () => "",
+            () => 1,
+          ),
+        ),
+      );
+
+      const latest = yield* resolveLatestProviderVersion(capabilities).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("a failed choco search should not fall back to npm")),
+        ),
+      );
+
+      expect(latest).toBeNull();
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect.each([
+    {
+      name: "a native install",
+      definition: claudeUpdate,
+      resolved: nativeClaude,
+      real: nativeClaude,
+    },
+    {
+      name: "a WinGet-shaped path off Windows",
+      definition: claudeUpdate,
+      resolved: "/home/me/winget/links/claude.exe",
+      real: "/home/me/winget/links/claude.exe",
+      platform: "linux",
+    },
+    {
+      name: "a WinGet-named folder outside the WinGet roots",
+      definition: claudeUpdate,
+      resolved: "C:\\Work\\WinGet\\Links\\claude.exe",
+      real: "C:\\Work\\WinGet\\Links\\claude.exe",
+    },
+    {
+      name: "a WinGet-named folder inside another directory",
+      definition: claudeUpdate,
+      resolved: "C:\\Work\\Microsoft\\WinGet\\Links\\claude.exe",
+      real: "C:\\Work\\Microsoft\\WinGet\\Links\\claude.exe",
+    },
+    {
+      name: "another provider in WinGet",
+      definition: otherProviderUpdate,
+      resolved: userWinGetLink,
+      real: userWinGetPackage,
+    },
+    {
+      name: "a claude-code tools path outside Chocolatey",
+      definition: claudeUpdate,
+      resolved: "C:\\Work\\lib\\claude-code\\tools\\claude.exe",
+      real: "C:\\Work\\lib\\claude-code\\tools\\claude.exe",
+    },
+    {
+      name: "another WinGet package",
+      definition: claudeUpdate,
+      resolved: userWinGetPackage.replace("ClaudeCode_", "ClaudeCodeOther_"),
+      real: userWinGetPackage.replace("ClaudeCode_", "ClaudeCodeOther_"),
+    },
+  ] as const)("keeps the native updater for $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall(fixture);
+
+      expect(capabilities.update).toMatchObject({
+        executable: fixture.resolved,
+        args: ["update"],
+        lockKey: `${fixture.definition.provider}-native`,
+      });
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "the default home",
+      resolved: "/Users/theo/.vite-plus/bin/claude",
+      real: "/Users/theo/.vite-plus/current/bin/vp",
+      platform: "darwin",
+    },
+    {
+      name: "the XDG home",
+      resolved: "/home/theo/.local/share/vite-plus/bin/claude",
+      real: "/home/theo/.local/share/vite-plus/current/bin/vp",
+      platform: "linux",
+    },
+    {
+      name: "the Windows home",
+      resolved: "C:\\Users\\Theo\\AppData\\Local\\vite-plus\\bin\\claude.cmd",
+      real: "C:\\Users\\Theo\\AppData\\Local\\vite-plus\\packages\\@anthropic-ai\\claude-code\\lib\\node_modules\\@anthropic-ai\\claude-code\\cli.js",
+      platform: "win32",
+    },
+  ] as const)("updates a Vite+ global install in $name with vp", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
+
+      expect(capabilities.update).toMatchObject({
+        command: "vp i -g @anthropic-ai/claude-code",
+        lockKey: "vite-plus-global",
+      });
+    }),
+  );
+
+  it.effect("keeps a project folder named vite-plus manual-only", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({
+        definition: claudeUpdate,
+        resolved: "/work/vite-plus/bin/claude",
+        real: "/work/vite-plus/node_modules/@anthropic-ai/claude-code/cli.js",
+        platform: "linux",
+      });
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
   it.effect("proves Windows npm ownership from the package manifest beside the shim", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-windows-capabilities");
@@ -369,7 +992,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         args: ["install", "-g", "--prefix", tempDir, expect.any(String), expect.any(String)],
       });
 
-      // The same layout on POSIX is a project checkout, not a global install.
       const script = NodePath.join(tempDir, "package-tool");
       writeExecutable(script);
       const posix = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
@@ -399,19 +1021,142 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           "package-tool",
         ]);
 
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
+        const updateCommand = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
+          resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
             binaryPath: link,
             env: { PATH: "" },
-          },
-        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+          }).pipe(
+            Effect.map((capabilities) => capabilities.update),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+        const pnpmVersion = (version: string) =>
+          stdoutSpawner((command, args) => {
+            expect([command, ...args].join(" ")).toMatch(/pnpm(\.cmd)?"? --version$/);
+            return `${version}
+`;
+          });
 
-        expect(capabilities.update).toMatchObject({
-          command: "pnpm add -g @example/package-tool@latest",
+        expect(yield* updateCommand(pnpmVersion("11.1.3"))).toMatchObject({
+          command: "pnpm add -g --allow-build=@example/package-tool @example/package-tool@latest",
           lockKey: "pnpm-global",
         });
+        expect((yield* updateCommand(pnpmVersion("10.3.0")))?.command).toBe(
+          "pnpm add -g @example/package-tool@latest",
+        );
+        expect((yield* updateCommand(noSpawn))?.command).toBe(
+          "pnpm add -g @example/package-tool@latest",
+        );
       }),
+  );
+
+  it.effect.each([
+    {
+      case: "the eligible release with an inherited PATH",
+      inheritPath: true,
+      outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
+      exitCode: 1,
+      npmOutput: '"1.2.0"',
+      expected: "1.1.0",
+    },
+    {
+      case: "no update during cooldown",
+      outdated: {},
+      exitCode: 0,
+      npmOutput: '"1.2.0"',
+      expected: "1.0.0",
+    },
+    {
+      case: "the public registry fallback when pnpm fails and npm is unavailable",
+      outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
+      exitCode: 2,
+      expected: "9.9.9",
+    },
+    {
+      case: "the configured npm registry when the pnpm probe fails",
+      outdated: {},
+      exitCode: 2,
+      npmOutput: '"1.2.0"',
+      expected: "1.2.0",
+    },
+    {
+      case: "an unknown version when both configured lookups fail",
+      outdated: {},
+      exitCode: 2,
+      npmOutput: "not json",
+      expected: null,
+    },
+  ])(
+    "advertises $case for pnpm-global installs",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-pnpm-latest");
+        const pnpmBinDir = NodePath.join(tempDir, "pnpm-bin");
+        writeExecutable(NodePath.join(pnpmBinDir, "pnpm"));
+        if (fixture.npmOutput !== undefined) writeExecutable(NodePath.join(pnpmBinDir, "npm"));
+        const link = linkIntoPackage(tempDir, "package-tool", [
+          ".local",
+          "share",
+          "pnpm",
+          "global",
+          "5",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+
+        let npmProbes = 0;
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath: link, env: fixture.inheritPath ? {} : { PATH: pnpmBinDir } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, {
+            PATH: fixture.inheritPath ? pnpmBinDir : "",
+          }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (_command, args) => {
+                if (args[0] === "view") {
+                  npmProbes++;
+                  return fixture.npmOutput ?? "";
+                }
+                return args[0] === "outdated"
+                  ? JSON.stringify(fixture.outdated)
+                  : JSON.stringify([
+                      { dependencies: { "@example/package-tool": { version: "1.0.0" } } },
+                    ]);
+              },
+              (args) => (args[0] === "outdated" ? fixture.exitCode : 0),
+            ),
+          ),
+        );
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+        ).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([["@example/package-tool", "9.9.9"]]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("the npm version is already cached")),
+          ),
+        );
+        expect(provider.versionAdvisory).toMatchObject({
+          status:
+            fixture.expected === null
+              ? "unknown"
+              : fixture.expected === "1.0.0"
+                ? "current"
+                : "behind_latest",
+          currentVersion: "1.0.0",
+          latestVersion: fixture.expected,
+        });
+        expect(npmProbes).toBe(fixture.exitCode === 2 && fixture.npmOutput !== undefined ? 1 : 0);
+      }),
+    { skip: !symlinksSupported || windowsHost },
   );
 
   it.effect.skipIf(windowsHost)(
@@ -471,43 +1216,75 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  // Regression for #9850: an explicit native path outside PATH, with spaces,
-  // must be what actually gets spawned.
-  it.effect.skipIf(windowsHost)("runs an explicit native updater outside PATH", () =>
-    Effect.gen(function* () {
-      const tempDir = yield* makeTempDir("t3-native-update");
-      const nativePath = NodePath.join(
-        tempDir,
-        "with spaces",
-        ".local",
-        "bin",
-        "native-package-tool",
-      );
-      NodeFS.mkdirSync(NodePath.dirname(nativePath), { recursive: true });
-      NodeFS.writeFileSync(nativePath, "#!/bin/sh\nprintf '%s' \"$1\"\n");
-      NodeFS.chmodSync(nativePath, 0o755);
+  it.effect.each(["wrapper", "symlink"])(
+    "keeps a mise-owned %s in a native install location manual-only",
+    (launcher, { skip }) => {
+      if (windowsHost || (launcher === "symlink" && !symlinksSupported)) skip();
+      return Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-mise");
+        const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        if (launcher === "wrapper") {
+          writeExecutable(nativePath);
+          NodeFS.writeFileSync(
+            nativePath,
+            '#!/bin/sh\nexec mise x native-package-tool -- native-package-tool "$@"\n',
+          );
+        } else {
+          const target = NodePath.join(
+            tempDir,
+            "mise",
+            "installs",
+            "native-package-tool",
+            "1.0.0",
+            "native-package-tool",
+          );
+          writeExecutable(target);
+          NodeFS.mkdirSync(NodePath.dirname(nativePath), { recursive: true });
+          NodeFS.symlinkSync(target, nativePath);
+        }
 
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-        nativePackageToolUpdate,
-        { binaryPath: nativePath, env: { PATH: "" } },
-      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath: nativePath, env: { PATH: "" } },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
-      expect(capabilities.update?.executable).toBe(nativePath);
-      const result = NodeChildProcess.spawnSync(
-        capabilities.update!.executable,
-        capabilities.update!.args,
-        { env: { PATH: "" }, encoding: "utf8" },
-      );
-      expect(result.status).toBe(0);
-      expect(result.stdout).toBe("update");
-    }),
+        expect(capabilities.update).toBeNull();
+      });
+    },
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "updates an npm-owned launcher in a native install location with npm",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-npm");
+        const prefix = NodePath.join(tempDir, ".local");
+        const packageBin = NodePath.join("node_modules", "@example", "native-package-tool", "bin");
+        writeExecutable(NodePath.join(prefix, "lib", packageBin, "native-package-tool.exe"));
+        const launcher = NodePath.join(prefix, "bin", "native-package-tool");
+        NodeFS.mkdirSync(NodePath.dirname(launcher), { recursive: true });
+        NodeFS.symlinkSync(
+          NodePath.join("..", "lib", packageBin, "native-package-tool.exe"),
+          launcher,
+        );
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath: launcher, env: { PATH: "" } },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect(capabilities.update).toMatchObject({
+          executable: "npm",
+          args: expect.arrayContaining(["--prefix", prefix]),
+          lockKey: `npm-global:${normalizeCommandPath(prefix)}`,
+        });
+      }),
   );
 
   it.effect.skipIf(!symlinksSupported)(
     "prefers npm ownership over the Node keg the package lives under",
     () =>
       Effect.gen(function* () {
-        // `brew install node` keeps npm globals inside the node keg.
         const tempDir = yield* makeTempDir("t3-homebrew-node-capabilities");
         const keg = NodePath.join(tempDir, "Cellar", "node", "22.1.0");
         const target = NodePath.join(
@@ -593,6 +1370,13 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it("reads the Chocolatey package version from choco search --limit-output", () => {
+    expect(parseChocolateyLatestVersion("claude-code|2.1.304\r\n", "claude-code")).toBe("2.1.304");
+    expect(parseChocolateyLatestVersion("Claude-Code|2.1.304\r\n", "claude-code")).toBe("2.1.304");
+    expect(parseChocolateyLatestVersion("claude-code-other|9.9.9\r\n", "claude-code")).toBeNull();
+    expect(parseChocolateyLatestVersion("", "claude-code")).toBeNull();
+  });
+
   it("recognizes Homebrew kegs and casks from the real executable path", () => {
     expect(
       homebrewOwnershipFromCommandPath("/opt/homebrew/Cellar/claude-code@latest/2.1.0/bin/claude"),
@@ -602,102 +1386,98 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       name: "codex",
       prefix: "/usr/local",
     });
-    // A plain /usr/local/bin binary is not evidence of Homebrew (#8832).
     expect(homebrewOwnershipFromCommandPath("/usr/local/bin/codex")).toBeNull();
-    // A keg elsewhere reports its prefix so the resolver can reject it against
-    // `brew --prefix`.
     expect(homebrewOwnershipFromCommandPath("/srv/Cellar/claude/1.0.0/bin/claude")).toMatchObject({
       prefix: "/srv",
     });
   });
 
-  it.effect.skipIf(windowsHost)(
-    "stays manual-only for an explicit binary path that does not exist",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-missing-native-capabilities");
-        const missingPath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
-
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          nativePackageToolUpdate,
-          { binaryPath: missingPath, env: { PATH: "" } },
-        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
-
-        expect(capabilities.update).toBeNull();
-      }),
-  );
-
-  it.effect.each([
-    { directory: "Caskroom", name: "package-tool", kind: "cask" },
-    { directory: "Cellar", name: "package-tool", kind: "formula" },
-    { directory: "Cellar", name: "package-tool@latest", kind: "formula" },
-  ] as const)(
-    "upgrades the owning Homebrew $kind $name through an executable alias",
-    (fixture) =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-homebrew-capabilities");
-        const brewBinDir = NodePath.join(tempDir, "brew-bin");
-        const brewPath = NodePath.join(brewBinDir, "brew");
-        writeExecutable(brewPath);
-        const ownedBinary = NodePath.join(
-          tempDir,
-          fixture.directory,
-          fixture.name,
-          "0.148.0",
-          "package-tool-0.148.0",
-        );
-        writeExecutable(ownedBinary);
-        const link = NodePath.join(tempDir, "bin", "custom-package-tool");
-        NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
-        NodeFS.symlinkSync(ownedBinary, link);
-        const spawned: Array<ReadonlyArray<string>> = [];
-
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
-            binaryPath: link,
-            env: { PATH: brewBinDir },
-          },
-        ).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(
-            ChildProcessSpawner.ChildProcessSpawner,
-            stdoutSpawner((command, args) => {
-              spawned.push([command, ...args]);
-              return args[0] === "--prefix"
-                ? `${tempDir}\n`
-                : JSON.stringify(
-                    fixture.kind === "cask"
-                      ? { casks: [{ version: "0.148.0,42" }] }
-                      : { formulae: [{ versions: { stable: "0.148.0" } }] },
-                  );
-            }),
-          ),
-        );
-
-        expect(spawned).toEqual([
-          [brewPath, "--prefix"],
-          [brewPath, "info", "--json=v2", fixture.name],
-        ]);
-        expect(capabilities).toEqual({
+  it.effect("shares installer lookups only for the same executable and update target", () =>
+    Effect.gen(function* () {
+      let lookups = 0;
+      const capabilities = (executable: string, args: ReadonlyArray<string>, version: string) =>
+        makeProviderMaintenanceCapabilities({
           provider: driver("packageTool"),
           packageName: "@example/package-tool",
-          latestVersion: "0.148.0",
-          update: {
-            command:
-              fixture.kind === "cask"
-                ? `brew upgrade --cask ${fixture.name}`
-                : `brew upgrade ${fixture.name}`,
-            executable: brewPath,
-            args:
-              fixture.kind === "cask"
-                ? ["upgrade", "--cask", fixture.name]
-                : ["upgrade", fixture.name],
-            lockKey: "homebrew",
-          },
+          updateExecutable: executable,
+          updateArgs: args,
+          updateLockKey: "homebrew",
+          latestVersion: null,
+          lookupLatestVersion: Effect.sync(() => {
+            lookups += 1;
+            return version;
+          }),
         });
-      }),
-    { skip: !symlinksSupported },
+
+      const formula = capabilities("/opt/homebrew/bin/brew", ["upgrade", "package-tool"], "2.0.0");
+      const cask = capabilities(
+        "/opt/homebrew/bin/brew",
+        ["upgrade", "--cask", "package-tool"],
+        "3.0.0",
+      );
+      const otherBrew = capabilities("/usr/local/bin/brew", ["upgrade", "package-tool"], "4.0.0");
+
+      expect(yield* resolveLatestProviderVersion(formula)).toBe("2.0.0");
+      expect(yield* resolveLatestProviderVersion(cask)).toBe("3.0.0");
+      expect(yield* resolveLatestProviderVersion(otherBrew)).toBe("4.0.0");
+      const refreshed = capabilities(
+        "/opt/homebrew/bin/brew",
+        ["upgrade", "package-tool"],
+        "5.0.0",
+      );
+      expect(yield* resolveLatestProviderVersion(refreshed)).toBe("2.0.0");
+      expect(lookups).toBe(3);
+
+      yield* invalidateLatestProviderVersion(refreshed);
+      expect(yield* resolveLatestProviderVersion(refreshed)).toBe("5.0.0");
+      expect(yield* resolveLatestProviderVersion(cask)).toBe("3.0.0");
+      expect(yield* resolveLatestProviderVersion(otherBrew)).toBe("4.0.0");
+      expect(lookups).toBe(4);
+    }).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Homebrew's latest should not come from npm")),
+      ),
+    ),
+  );
+
+  it.effect(
+    "refreshes installer versions without letting an older lookup overwrite the result",
+    () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<string>();
+        let lookups = 0;
+        const capabilities = makeProviderMaintenanceCapabilities({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          updateExecutable: "/opt/homebrew/bin/brew",
+          updateArgs: ["upgrade", "package-tool"],
+          updateLockKey: "homebrew",
+          latestVersion: null,
+          lookupLatestVersion: Effect.suspend(() =>
+            ++lookups === 1
+              ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
+              : Effect.succeed("2.0.0"),
+          ),
+        });
+        const pending = yield* resolveLatestProviderVersion(capabilities).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* invalidateLatestProviderVersion(capabilities);
+        expect(yield* resolveLatestProviderVersion(capabilities)).toBe("2.0.0");
+
+        yield* Deferred.succeed(release, "1.0.0");
+        expect(yield* Fiber.join(pending)).toBe("1.0.0");
+        expect(yield* resolveLatestProviderVersion(capabilities)).toBe("2.0.0");
+        expect(lookups).toBe(2);
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Homebrew's latest should not come from npm")),
+        ),
+      ),
   );
 
   it.effect.skipIf(windowsHost)(
@@ -732,7 +1512,10 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           ),
         );
 
-        expect(capabilities).toEqual(manualPackageTool);
+        expect(capabilities).toEqual({
+          ...manualPackageTool,
+          installPath: NodeFS.realpathSync(kegBinary),
+        });
       }),
   );
 
@@ -741,6 +1524,12 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     const formula = { kind: "formula", name: "claude-code", prefix: "/opt/homebrew" } as const;
     expect(parseHomebrewLatestVersion(info, formula)).toBe("2.1.5");
     expect(parseHomebrewLatestVersion("not json", formula)).toBeNull();
+  });
+
+  it("treats Homebrew's latest cask version as unknown", () => {
+    const info = JSON.stringify({ casks: [{ version: "latest" }] });
+    const cask = { kind: "cask", name: "package-tool", prefix: "/opt/homebrew" } as const;
+    expect(parseHomebrewLatestVersion(info, cask)).toBeNull();
   });
 
   it.effect.skipIf(windowsHost)(
@@ -759,7 +1548,10 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           },
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
-        expect(capabilities).toEqual(manualPackageTool);
+        expect(capabilities).toEqual({
+          ...manualPackageTool,
+          installPath: NodeFS.realpathSync(customPath),
+        });
       }),
   );
 
@@ -786,7 +1578,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           lockKey: "packageTool-native",
         });
 
-        // A mise install is pinned in mise's config, so it stays manual.
         const misePath = NodePath.join(tempDir, "mise", "installs", "package-tool", "1.0.0", "bin");
         writeExecutable(NodePath.join(misePath, "package-tool"));
         const mise = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
@@ -794,7 +1585,387 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           env: { PATH: "" },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
         expect(mise.update).toBeNull();
+
+        // A mise command wrapper is a symlink to the mise binary, not to the tool.
+        const miseBinary = NodePath.join(tempDir, "usr", "bin", "mise");
+        writeExecutable(miseBinary);
+        const wrapper = NodePath.join(
+          tempDir,
+          ".local",
+          "share",
+          "mise",
+          "command-wrappers",
+          "bin",
+          "package-tool",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(wrapper), { recursive: true });
+        NodeFS.symlinkSync(miseBinary, wrapper);
+        const viaWrapper = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
+          binaryPath: wrapper,
+          env: { PATH: "" },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+        expect(viaWrapper.update).toBeNull();
       }),
+  );
+
+  it.effect.each([
+    { name: "its latest link", via: "latest" },
+    { name: "a latest link in a custom data dir", via: "latest", dataDir: "data" },
+    { name: "a shim", via: "shim" },
+  ])(
+    "upgrades the mapped mise tool through $name requested as latest",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-upgrade");
+        const mise = miseFixture(
+          tempDir,
+          fixture.dataDir ? { dataDir: NodePath.join(tempDir, fixture.dataDir) } : {},
+        );
+        const binaryPath =
+          fixture.via === "latest"
+            ? mise.latestBinaryPath
+            : linkShim(tempDir, mise.misePath, "package-tool");
+        const spawned: Array<ReadonlyArray<string>> = [];
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
+          binaryPath,
+          env: { PATH: mise.miseBinDir },
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner({ which: mise.binaryPath, installed: mise.installed() }, spawned),
+          ),
+        );
+
+        expect(capabilities.update).toMatchObject({
+          command: "mise upgrade package-tool",
+          executable: mise.misePath,
+          args: ["upgrade", "package-tool"],
+        });
+        expect(spawned).toContainEqual([mise.misePath, "which", "package-tool"]);
+        // Resolution proves ownership but never asks mise for releases.
+        expect(spawned.some((args) => args[1] === "latest")).toBe(false);
+      }),
+    { skip: !symlinksSupported || windowsHost },
+  );
+
+  it.effect.each([
+    { name: "a pinned version", installed: { requested_version: "1.0.0" } },
+    { name: "an inactive install", installed: { active: false } },
+    { name: "an install of another mise tool", tool: "other-tool" },
+    { name: "an install mise which does not run", which: "elsewhere" },
+    { name: "an install without mise on PATH", misePresent: false },
+    { name: "a provider with no mise tool", definition: "unmapped" },
+    { name: "a mise x wrapper", via: "wrapper" },
+    { name: "a fixed version path", via: "versioned" },
+    { name: "a version mise activate put on PATH", via: "activated" },
+  ] as const)(
+    "leaves $name manual-only",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-manual");
+        const mise = miseFixture(tempDir, {
+          misePresent: !("misePresent" in fixture),
+          tool: "tool" in fixture ? fixture.tool : "package-tool",
+        });
+        let binaryPath = symlinksSupported ? mise.latestBinaryPath : mise.binaryPath;
+        let path = mise.miseBinDir;
+        if ("via" in fixture && fixture.via === "versioned") {
+          binaryPath = mise.binaryPath;
+        } else if ("via" in fixture && fixture.via === "activated") {
+          binaryPath = "package-tool";
+          path = [NodePath.dirname(mise.binaryPath), mise.miseBinDir].join(NodePath.delimiter);
+        } else if ("via" in fixture) {
+          binaryPath = NodePath.join(tempDir, "bin", "package-tool");
+          NodeFS.mkdirSync(NodePath.dirname(binaryPath), { recursive: true });
+          NodeFS.writeFileSync(
+            binaryPath,
+            '#!/bin/sh\nexec mise x package-tool -- package-tool "$@"\n',
+          );
+          NodeFS.chmodSync(binaryPath, 0o755);
+        }
+        const which =
+          "which" in fixture
+            ? NodePath.join(tempDir, "elsewhere", "package-tool")
+            : mise.binaryPath;
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          "definition" in fixture ? packageToolUpdate : miseToolUpdate,
+          { binaryPath, env: { PATH: path } },
+        ).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner(
+              {
+                which,
+                installed: mise.installed("installed" in fixture ? fixture.installed : {}),
+              },
+              [],
+            ),
+          ),
+        );
+
+        expect(capabilities.update).toBeNull();
+        expect(capabilities.lookupLatestVersion).toBeUndefined();
+      }),
+    { skip: windowsHost },
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "keeps the provider's own updater for an install mise does not own",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-native");
+        const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        writeExecutable(nativePath);
+        const miseMappedNative = makePackageManagedProviderMaintenanceResolver({
+          provider: driver("nativePackageTool"),
+          npmPackageName: "@example/native-package-tool",
+          mise: { tool: "native-package-tool" },
+          nativeUpdate: {
+            args: ["update"],
+            isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
+          },
+        });
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(miseMappedNative, {
+          binaryPath: nativePath,
+          env: { PATH: "" },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect(capabilities.update).toEqual({
+          command: `${nativePath} update`,
+          executable: nativePath,
+          args: ["update"],
+          lockKey: "nativePackageTool-native",
+        });
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "a mise tool whose upgrades are disabled",
+      mise: { tool: "package-tool", upgrade: false },
+    },
+    { name: "a pinned mise tool", mise: { tool: "package-tool" }, pinned: true },
+    {
+      name: "an inactive version of a mise tool",
+      mise: { tool: "package-tool" },
+      inactive: true,
+    },
+    {
+      name: "an inactive version of a mise tool whose upgrades are disabled",
+      mise: { tool: "package-tool", upgrade: false },
+      inactive: true,
+    },
+  ] as const)(
+    "keeps $name in a custom data dir manual-only instead of running its own updater",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-custom-manual");
+        const mise = miseFixture(tempDir, { dataDir: NodePath.join(tempDir, "data") });
+        let binaryPath = mise.latestBinaryPath;
+        let installed = mise.installed("pinned" in fixture ? { requested_version: "1.0.0" } : {});
+        if ("inactive" in fixture) {
+          // Configured to 1.0.0 while mise resolves its active 2.0.0 instead.
+          binaryPath = mise.binaryPath;
+          const inactive = { ...installed["package-tool"]![0]!, active: false };
+          mise.install("2.0.0");
+          installed = { "package-tool": [inactive, ...mise.installed()["package-tool"]!] };
+        }
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          makePackageManagedProviderMaintenanceResolver({
+            provider: driver("packageTool"),
+            npmPackageName: "@example/package-tool",
+            mise: fixture.mise,
+            nativeUpdate: { args: ["upgrade"] },
+          }),
+          { binaryPath, env: { PATH: mise.miseBinDir } },
+        ).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner({ which: mise.binaryPath, installed }, []),
+          ),
+        );
+
+        expect(capabilities.update).toBeNull();
+      }),
+    { skip: !symlinksSupported || windowsHost },
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "updates an npm global under mise's Node with npm even when mise runs it",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-node-npm");
+        const mise = miseFixture(tempDir);
+        const nodePrefix = NodePath.join(tempDir, "mise", "installs", "node", "22.0.0");
+        const binaryPath = NodePath.join(nodePrefix, "bin", "package-tool");
+        const target = NodePath.join(
+          nodePrefix,
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+          "package-tool.js",
+        );
+        writeExecutable(target);
+        NodeFS.mkdirSync(NodePath.dirname(binaryPath), { recursive: true });
+        NodeFS.symlinkSync(target, binaryPath);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
+          binaryPath,
+          env: { PATH: mise.miseBinDir },
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            // mise resolves the npm global through its Node; no `package-tool` tool is installed.
+            miseSpawner({ which: binaryPath, installed: {} }, []),
+          ),
+        );
+
+        expect(capabilities.update?.args).toEqual([
+          "install",
+          "-g",
+          "--prefix",
+          NodeFS.realpathSync(nodePrefix),
+          "--allow-scripts=@example/package-tool",
+          "@example/package-tool@latest",
+        ]);
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "asks mise for its latest release only while update checks are enabled",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-latest");
+        const mise = miseFixture(tempDir);
+        const spawned: Array<ReadonlyArray<string>> = [];
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
+          binaryPath: mise.latestBinaryPath,
+          env: { PATH: mise.miseBinDir },
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner(
+              // mise's `minimum_release_age` can hold it behind npm's 1.2.0.
+              { which: mise.binaryPath, latest: "1.1.0", installed: mise.installed() },
+              spawned,
+            ),
+          ),
+        );
+        const advise = (enableProviderUpdateChecks: boolean) =>
+          enrichProviderSnapshotWithVersionAdvisory(installedPackageToolProvider, capabilities, {
+            enableProviderUpdateChecks,
+          });
+
+        expect((yield* advise(false)).versionAdvisory).toMatchObject({
+          status: "unknown",
+          latestVersion: null,
+        });
+        expect(spawned.filter((args) => args[1] === "latest")).toEqual([]);
+
+        expect((yield* advise(true)).versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          latestVersion: "1.1.0",
+        });
+        expect((yield* advise(true)).versionAdvisory?.latestVersion).toBe("1.1.0");
+        expect(spawned.filter((args) => args[1] === "latest")).toEqual([
+          [mise.misePath, "latest", "package-tool"],
+        ]);
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("mise answers for its own installs")),
+        ),
+      ),
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "keeps each mise environment's latest release apart",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-latest-env");
+        const mise = miseFixture(tempDir);
+        const advise = (env: NodeJS.ProcessEnv, latest: string) =>
+          resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
+            binaryPath: mise.latestBinaryPath,
+            env: { PATH: mise.miseBinDir, ...env },
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              miseSpawner({ which: mise.binaryPath, latest, installed: mise.installed() }, []),
+            ),
+            Effect.flatMap((capabilities) =>
+              enrichProviderSnapshotWithVersionAdvisory(
+                installedPackageToolProvider,
+                capabilities,
+                {
+                  enableProviderUpdateChecks: true,
+                },
+              ),
+            ),
+            Effect.map((snapshot) => snapshot.versionAdvisory?.latestVersion),
+          );
+
+        expect(yield* advise({ MISE_MINIMUM_RELEASE_AGE: "7d" }, "1.1.0")).toBe("1.1.0");
+        expect(yield* advise({}, "1.2.0")).toBe("1.2.0");
+        expect(yield* advise({ MISE_MINIMUM_RELEASE_AGE: "7d" }, "1.2.0")).toBe("1.1.0");
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("mise answers for its own installs")),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    { name: "fails", latest: { exitCode: 1 } },
+    { name: "prints nothing", latest: { stdout: "" } },
+    { name: "never answers", latest: "hang" },
+  ] as const)(
+    "reports an unknown latest version when mise latest $name",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-latest-unknown");
+        const mise = miseFixture(tempDir);
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
+          binaryPath: mise.latestBinaryPath,
+          env: { PATH: mise.miseBinDir },
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner(
+              { which: mise.binaryPath, latest: fixture.latest, installed: mise.installed() },
+              [],
+            ),
+          ),
+        );
+        expect(capabilities.update).toMatchObject({ args: ["upgrade", "package-tool"] });
+
+        const advisory = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+          { enableProviderUpdateChecks: true },
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("1 minute");
+
+        expect((yield* Fiber.join(advisory)).versionAdvisory).toMatchObject({
+          status: "unknown",
+          latestVersion: null,
+        });
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("an offline mise must not fall back to npm")),
+        ),
+      ),
+    { skip: !symlinksSupported || windowsHost },
   );
 
   it.effect.skipIf(!symlinksSupported)("updates Yarn global installs with yarn", () =>
@@ -879,24 +2050,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it.effect("caches resolution until a fresh read is requested", () =>
-    Effect.gen(function* () {
-      let resolutions = 0;
-      const resolve = yield* makeCachedProviderMaintenanceResolution(
-        Effect.sync(() => {
-          resolutions += 1;
-          return manualPackageTool;
-        }),
-      );
-      yield* resolve();
-      yield* resolve();
-      expect(resolutions).toBe(1);
-      yield* resolve({ fresh: true });
-      yield* resolve();
-      expect(resolutions).toBe(2);
-    }),
-  );
-
   it.effect("starts a fresh read instead of joining the resolution already running", () =>
     Effect.gen(function* () {
       const releaseStale = yield* Deferred.make<void>();
@@ -910,12 +2063,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         }),
       );
 
-      // An advisory read starts a resolution that is still running when the
-      // user clicks Update; the fresh read must not wait on or reuse it.
       const advisory = yield* Effect.forkChild(resolve(), { startImmediately: true });
       const fresh = yield* Effect.forkChild(resolve({ fresh: true }), { startImmediately: true });
-      // The fresh read runs its own resolution, so it finishes while the stale
-      // one is still waiting.
       expect(resolutions).toBe(2);
       expect(fresh.pollUnsafe()).toBeDefined();
       yield* Deferred.succeed(releaseStale, undefined);
@@ -940,8 +2089,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       const first = yield* Effect.forkChild(resolve(), { startImmediately: true });
       yield* Fiber.interrupt(first);
 
-      // The next read resolves again, and a reader that joined it keeps it
-      // running when the reader that started it goes away.
       const owner = yield* Effect.forkChild(resolve(), { startImmediately: true });
       const waiter = yield* Effect.forkChild(resolve(), { startImmediately: true });
       yield* Fiber.interrupt(owner);

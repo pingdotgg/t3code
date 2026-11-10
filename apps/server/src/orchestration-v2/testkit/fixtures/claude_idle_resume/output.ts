@@ -14,10 +14,6 @@ export function assertClaudeIdleResumeOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
 ) {
-  // The transcript itself enforces the regression: query.open:2 expects a
-  // `resume`-style open. A create-style reopen (the bug) fails the replay at
-  // the boundary before these assertions run. Both runs must complete — the
-  // pre-fix behavior burned the first post-idle message as a failed run.
   assertBaseProjection({
     result,
     transcript,
@@ -36,4 +32,15 @@ export function assertClaudeIdleResumeOutput(
     "idle resume first turn complete",
     "idle resume second turn complete",
   ]);
+  // The resumed process's ledger starts at zero, so the first turn is not counted again.
+  assert.deepEqual(
+    projection.providerTurns.map((turn) => [
+      turn.turnTokenUsage?.outputTokens,
+      turn.turnTokenUsage?.otherUsage,
+    ]),
+    [
+      [7, { inputTokens: 0, outputTokens: 0 }],
+      [7, { inputTokens: 0, outputTokens: 0 }],
+    ],
+  );
 }

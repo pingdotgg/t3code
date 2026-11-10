@@ -2,7 +2,6 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-// Inline Lucide-style icon paths (stroke-based, viewBox 0 0 24 24, strokeWidth 2).
 const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<string, string> }>> = {
   archive: [
     { tag: "rect", attrs: { width: "20", height: "5", x: "2", y: "3", rx: "1" } },
@@ -66,6 +65,14 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     },
     { tag: "path", attrs: { d: "m22 10-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 10" } },
   ],
+  "message-square": [
+    {
+      tag: "path",
+      attrs: {
+        d: "M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z",
+      },
+    },
+  ],
   "message-square-plus": [
     {
       tag: "path",
@@ -111,6 +118,22 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     },
     { tag: "circle", attrs: { cx: "12", cy: "12", r: "3" } },
   ],
+  "user-plus": [
+    { tag: "path", attrs: { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" } },
+    { tag: "circle", attrs: { cx: "9", cy: "7", r: "4" } },
+    { tag: "line", attrs: { x1: "19", x2: "19", y1: "8", y2: "14" } },
+    { tag: "line", attrs: { x1: "22", x2: "16", y1: "11", y2: "11" } },
+  ],
+  "folder-plus": [
+    { tag: "path", attrs: { d: "M12 10v6" } },
+    { tag: "path", attrs: { d: "M9 13h6" } },
+    {
+      tag: "path",
+      attrs: {
+        d: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
+      },
+    },
+  ],
   "folder-tree": [
     {
       tag: "path",
@@ -127,6 +150,13 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "M3 5a2 2 0 0 0 2 2h3" } },
     { tag: "path", attrs: { d: "M3 3v13a2 2 0 0 0 2 2h3" } },
   ],
+  "text-search": [
+    { tag: "path", attrs: { d: "M21 5H3" } },
+    { tag: "path", attrs: { d: "M10 12H3" } },
+    { tag: "path", attrs: { d: "M10 19H3" } },
+    { tag: "circle", attrs: { cx: "17", cy: "15", r: "3" } },
+    { tag: "path", attrs: { d: "m21 19-1.9-1.9" } },
+  ],
   trash: [
     { tag: "path", attrs: { d: "M3 6h18" } },
     { tag: "path", attrs: { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" } },
@@ -142,6 +172,7 @@ function createIconElement(name: string, tone: "neutral" | "destructive"): SVGSV
     return null;
   }
   const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("xmlns", SVG_NS);
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
@@ -197,44 +228,36 @@ function isNodeWithinMenuStack(target: EventTarget | null, menuStack: readonly H
   return false;
 }
 
-// Only one fallback menu exists at a time in the renderer; the active one is
-// tracked so a state change (for example a terminal selection clearing) can
-// dismiss it with the same result as an outside click or Escape.
-let activeContextMenuDismiss: (() => void) | null = null;
+let activeContextMenuDismiss: ((restoreFocus?: boolean) => void) | null = null;
 
 export function isContextMenuOpen(): boolean {
   return activeContextMenuDismiss !== null;
 }
 
-/**
- * Closes the currently open fallback context menu, resolving its show() with
- * null (the same result as dismissing by outside click or Escape). No-op when
- * no fallback menu is open.
- */
-export function dismissContextMenu(): void {
-  activeContextMenuDismiss?.();
+export function dismissContextMenu(restoreFocus = true): void {
+  activeContextMenuDismiss?.(restoreFocus);
   activeContextMenuDismiss = null;
 }
 
-/**
- * Imperative DOM-based context menu for non-Electron environments.
- * Supports nested submenus and resolves with the clicked leaf item id.
- */
 export function showContextMenuFallback<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number },
 ): Promise<T | null> {
+  dismissContextMenu();
   return new Promise<T | null>((resolve) => {
-    const previouslyFocusedElement =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    let focusedElement = document.activeElement;
+    while (focusedElement?.shadowRoot?.activeElement) {
+      focusedElement = focusedElement.shadowRoot.activeElement;
+    }
+    const previouslyFocusedElement = focusedElement instanceof HTMLElement ? focusedElement : null;
     const menuStack: HTMLDivElement[] = [];
     const submenuTriggerStack: Array<HTMLButtonElement | undefined> = [];
     let isDisposed = false;
     let canDismissFromPointer = false;
 
-    const dismiss = () => cleanup(null);
+    const dismiss = (restoreFocus = true) => cleanup(null, restoreFocus);
 
-    const cleanup = (result: T | null) => {
+    const cleanup = (result: T | null, restoreFocus = true) => {
       if (isDisposed) {
         return;
       }
@@ -245,7 +268,10 @@ export function showContextMenuFallback<T extends string>(
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("contextmenu", onContextMenu, true);
-      const shouldRestoreFocus = isNodeWithinMenuStack(document.activeElement, menuStack);
+      document.removeEventListener("focusin", onFocusIn);
+      window.removeEventListener("blur", onWindowBlur);
+      const shouldRestoreFocus =
+        restoreFocus && isNodeWithinMenuStack(document.activeElement, menuStack);
       for (const menu of menuStack) {
         menu.remove();
       }
@@ -256,11 +282,77 @@ export function showContextMenuFallback<T extends string>(
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        cleanup(null);
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      )
+        return;
+      const level = menuStack.findIndex((menu) =>
+        isNodeWithinMenuStack(document.activeElement, [menu]),
+      );
+      if (level < 0) return;
+      const menu = menuStack[level]!;
+      const buttons = [...menu.querySelectorAll<HTMLButtonElement>("button")].filter(
+        (button) => !button.disabled,
+      );
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      let target: HTMLButtonElement | undefined;
+      switch (event.key) {
+        case "ArrowDown":
+          target = buttons[(index + 1) % buttons.length];
+          break;
+        case "ArrowUp":
+          target =
+            buttons[(index < 0 ? buttons.length - 1 : index - 1 + buttons.length) % buttons.length];
+          break;
+        case "Home":
+          target = buttons[0];
+          break;
+        case "End":
+          target = buttons.at(-1);
+          break;
+        case "ArrowRight":
+          if (buttons[index]?.getAttribute("aria-haspopup") !== "menu") return;
+          buttons[index]?.click();
+          break;
+        case " ":
+        case "Enter":
+          // Keyboard activation must not depend on the opening pointer gesture's frame.
+          canDismissFromPointer = true;
+          buttons[index]?.click();
+          break;
+        case "ArrowLeft":
+          if (level === 0) return;
+        // Fall through to cancel this submenu only.
+        case "Escape": {
+          const parent = submenuTriggerStack[level];
+          if (parent) {
+            parent.focus({ preventScroll: true });
+            closeMenusFromLevel(level);
+          } else cleanup(null);
+          break;
+        }
+        case "Tab":
+          // Tab closes the menu and continues from the element that opened it.
+          cleanup(null);
+          return;
+        default:
+          return;
       }
+      event.preventDefault();
+      event.stopPropagation();
+      if (target && target !== submenuTriggerStack[level + 1]) closeMenusFromLevel(level + 1);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "nearest" });
     };
+
+    const onFocusIn = (event: FocusEvent) => {
+      if (!isNodeWithinMenuStack(event.target, menuStack)) cleanup(null, false);
+    };
+    const onWindowBlur = () => cleanup(null, false);
 
     const onPointerDown = (event: PointerEvent) => {
       if (!canDismissFromPointer || isNodeWithinMenuStack(event.target, menuStack)) {
@@ -301,12 +393,16 @@ export function showContextMenuFallback<T extends string>(
       menu.style.left = `${preferredLeft}px`;
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
+      menu.dataset.contextMenu = "true";
+      menu.setAttribute("role", "menu");
+      menu.setAttribute("aria-label", parentTrigger?.textContent ?? "Context menu");
+      menu.tabIndex = -1;
 
       const inner = document.createElement("div");
       inner.className =
-        "max-h-[min(24rem,70vh)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1";
+        "max-h-[calc(100vh-0.5rem)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1";
       inner.style.cssText =
-        "max-height:min(24rem,70vh);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.25rem;";
+        "max-height:calc(100vh - 0.5rem);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.25rem;";
 
       for (const item of entries) {
         if (item.separatorBefore === true && inner.children.length > 0) {
@@ -335,6 +431,9 @@ export function showContextMenuFallback<T extends string>(
         button.type = "button";
         const isDisabled = item.disabled === true;
         button.disabled = isDisabled;
+        button.tabIndex = -1;
+        button.setAttribute("role", "menuitem");
+        button.setAttribute("aria-disabled", String(isDisabled));
         const rowBase =
           "flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left outline-none transition-colors sm:min-h-7 sm:text-sm min-h-8 text-base";
         button.className = isDisabled
@@ -354,8 +453,6 @@ export function showContextMenuFallback<T extends string>(
         }
 
         if (typeof item.checked === "boolean") {
-          // Option rows use the icon slot for the check so labels line up
-          // with icon rows. The unselected option keeps the slot empty.
           button.setAttribute("role", "menuitemradio");
           button.setAttribute("aria-checked", item.checked ? "true" : "false");
           const check = item.checked ? createIconElement("check", "neutral") : null;
@@ -492,13 +589,17 @@ export function showContextMenuFallback<T extends string>(
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("contextmenu", onContextMenu, true);
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);
-    // Only one fallback menu can be open at a time: a new show must dismiss
-    // any prior one, or its DOM and listeners leak and close() can only ever
-    // reach the newest menu.
-    if (activeContextMenuDismiss) {
-      activeContextMenuDismiss();
-    }
     activeContextMenuDismiss = dismiss;
+    // A keyboard-opened menu starts on its first action, a pointer-opened one on the menu itself.
+    // Text fields always match :focus-visible, so they say nothing about how the menu opened.
+    const firstAction =
+      previouslyFocusedElement?.matches(":focus-visible") &&
+      !previouslyFocusedElement.matches('input, textarea, select, [contenteditable="true"]')
+        ? menuStack[0]?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+        : null;
+    (firstAction ?? menuStack[0])?.focus({ preventScroll: true });
+    document.addEventListener("focusin", onFocusIn);
+    window.addEventListener("blur", onWindowBlur);
 
     requestAnimationFrame(() => {
       canDismissFromPointer = true;

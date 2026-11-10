@@ -28,7 +28,7 @@ export const CHAT_BACKGROUND_GLASS_SURFACE_CLASSES =
   "surface-glass [--surface-glass-color:var(--secondary)] [text-shadow:none] dark:[--surface-glass-color:color-mix(in_srgb,var(--input)_20%,var(--background))]";
 
 export const CHAT_BACKGROUND_TEXT_SHADOW_CLASSES =
-  "[text-shadow:var(--chat-text-shadow)] [--chat-blockquote-color:var(--contrast-foreground)] [--chat-link-color:color-mix(in_srgb,var(--info-foreground)_80%,var(--contrast-foreground))] [&_:is(button,[role=button],code,.chat-markdown-codeblock,.chat-markdown-file-link,.chat-markdown-artifact-template)]:[text-shadow:none]";
+  "[text-shadow:var(--chat-text-shadow)] [--chat-link-color:color-mix(in_srgb,var(--info-foreground)_80%,var(--contrast-foreground))] [&_:is(button,[role=button],code,.chat-markdown-codeblock,.chat-markdown-file-link,.chat-markdown-artifact-template)]:[text-shadow:none]";
 
 export function timelineTextShadowStyle(opacity: number, blur: number): CSSProperties {
   return {

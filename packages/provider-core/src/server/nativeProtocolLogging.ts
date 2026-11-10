@@ -4,11 +4,7 @@ export function structuralProtocolMethod(value: string): string {
   return value.length <= 128 && /^[A-Za-z][A-Za-z0-9._:/-]*$/.test(value) ? value : "unknown";
 }
 
-/**
- * Retain only bounded structural metadata for native protocol diagnostics.
- * Provider payload values may contain prompts, credentials, or arbitrarily
- * large tool output and must never be copied into the observability stream.
- */
+/** Never log payload values: they may contain secrets, prompts, or unbounded output. */
 export function summarizeNativeProtocolPayload(
   payload: unknown,
 ): Readonly<Record<string, unknown>> {

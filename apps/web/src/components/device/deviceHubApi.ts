@@ -2,12 +2,6 @@ import { withDeviceHubQuery } from "@t3tools/client-runtime/state/deviceHubAcces
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import type { DevicePlatform } from "@t3tools/contracts";
 
-/**
- * Read-only hub endpoints the Tools drawer consumes directly: the accessibility
- * tree, the foreground app, and the event log. Everything that changes device
- * state goes through the `device.action` RPC instead, so this file never POSTs.
- */
-
 export interface DeviceAxElement {
   readonly id: string;
   readonly label: string;
@@ -38,21 +32,25 @@ export interface DeviceForegroundInfo {
   readonly isReactNative?: boolean;
 }
 
-interface Target {
+export interface DeviceHubTarget {
   readonly access: DeviceHubAccess;
   readonly platform: DevicePlatform;
   readonly deviceId: string;
 }
 
-const vendorBase = (target: Target) =>
+const vendorBase = (target: DeviceHubTarget) =>
   `${target.access.httpBase}${target.platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu"}`;
 
-const hubUrl = (target: Target, path: string, params?: Record<string, string>) => {
+const hubUrl = (target: DeviceHubTarget, path: string, params?: Record<string, string>) => {
   const search = params ? `?${new URLSearchParams(params).toString()}` : "";
   return withDeviceHubQuery(`${vendorBase(target)}${path}${search}`, target.access);
 };
 
-const fetchJson = async (target: Target, url: string, signal?: AbortSignal): Promise<unknown> => {
+const fetchJson = async (
+  target: DeviceHubTarget,
+  url: string,
+  signal?: AbortSignal,
+): Promise<unknown> => {
   const response = await fetch(url, {
     cache: "no-store",
     credentials: target.access.credentials ? "include" : "same-origin",
@@ -70,11 +68,6 @@ const numberOr = (value: unknown, fallback: number) =>
 
 const AX_ELEMENT_LIMIT = 500;
 
-/**
- * serve-sim's helper returns the native nested tree; the root node is the
- * application covering the whole screen. Flatten it the way serve-sim's own
- * overlay does: skip nodes with the root's frame, cap the count.
- */
 const flattenIosAxTree = (roots: ReadonlyArray<unknown>): ReadonlyArray<DeviceAxElement> => {
   const first = roots[0];
   const rootFrame = isRecord(first) && isRecord(first.frame) ? first.frame : null;
@@ -107,7 +100,7 @@ const flattenIosAxTree = (roots: ReadonlyArray<unknown>): ReadonlyArray<DeviceAx
 };
 
 export async function fetchDeviceAxTree(
-  target: Target,
+  target: DeviceHubTarget,
   signal?: AbortSignal,
 ): Promise<DeviceAxTree> {
   if (target.platform === "ios") {
@@ -131,15 +124,12 @@ export async function fetchDeviceAxTree(
     const error = isRecord(payload) && typeof payload.error === "string" ? payload.error : null;
     return { elements: [], errors: [error ?? "Unexpected accessibility payload."] };
   }
-  // uiautomator reports pixel bounds; the first node is the full window.
   const nodes = payload.nodes.filter(
     (node): node is Record<string, unknown> => isRecord(node) && isRecord(node.bounds),
   );
   const root = nodes[0]?.bounds as Record<string, unknown> | undefined;
   const screenWidth = Math.max(1, numberOr(root?.right, 1));
   const screenHeight = Math.max(1, numberOr(root?.bottom, 1));
-  // Layout containers span the whole window and would tint the entire
-  // screen; only nodes a user could point at are worth drawing.
   const elements = nodes.slice(1).flatMap((node): DeviceAxElement[] => {
     const bounds = node.bounds as Record<string, unknown>;
     const left = numberOr(bounds.left, 0);
@@ -168,7 +158,7 @@ export async function fetchDeviceAxTree(
 }
 
 const openEventSource = (
-  target: Target,
+  target: DeviceHubTarget,
   url: string,
   onMessage: (data: unknown) => void,
 ): (() => void) => {
@@ -176,16 +166,13 @@ const openEventSource = (
   source.addEventListener("message", (event) => {
     try {
       onMessage(JSON.parse(String(event.data)));
-    } catch {
-      // Keep-alive comments and malformed frames carry nothing to render.
-    }
+    } catch {}
   });
   return () => source.close();
 };
 
-/** iOS only: the frontmost app, pushed by serve-sim whenever it changes. */
 export function subscribeDeviceForeground(
-  target: Target,
+  target: DeviceHubTarget,
   onChange: (app: DeviceForegroundInfo | null) => void,
 ): () => void {
   if (target.platform !== "ios") return () => {};
@@ -219,13 +206,20 @@ const toEventLogEntry = (raw: unknown): DeviceEventLogEntry | null => {
   };
 };
 
-/**
- * iOS only: serve-sim's event log, seeded with recent history and then pushed
- * live. Android's session recorder only tracks replayable gestures, which the
- * user already sees themselves, so it is not surfaced.
- */
+export const DEVICE_EVENT_LOG_LIMIT = 100;
+
+/** A reset batch replaces the log; the log keeps the newest entries up to the limit. */
+export function appendDeviceEventLog(
+  current: ReadonlyArray<DeviceEventLogEntry>,
+  incoming: ReadonlyArray<DeviceEventLogEntry>,
+  reset: boolean,
+): ReadonlyArray<DeviceEventLogEntry> {
+  const merged = reset ? [...incoming] : [...current, ...incoming];
+  return merged.length > DEVICE_EVENT_LOG_LIMIT ? merged.slice(-DEVICE_EVENT_LOG_LIMIT) : merged;
+}
+
 export function subscribeDeviceEventLog(
-  target: Target,
+  target: DeviceHubTarget,
   onEvents: (entries: ReadonlyArray<DeviceEventLogEntry>, reset: boolean) => void,
 ): () => void {
   if (target.platform !== "ios") return () => {};

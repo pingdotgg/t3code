@@ -18,7 +18,6 @@ const readOptions = (options: ReadonlyArray<unknown>) => {
   };
 };
 
-/** A guardrail for ordinary edits, not a security boundary against deliberate casts or aliases. */
 export default defineRule({
   meta: {
     type: "problem",

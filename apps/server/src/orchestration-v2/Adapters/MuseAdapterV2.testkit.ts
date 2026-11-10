@@ -1,18 +1,3 @@
-/**
- * Muse MSP replay: swaps the host factory `MuseAdapterV2` uses to launch
- * `muse serve` for one that answers from a recorded transcript. The real
- * adapter and the real `@muse-code/sdk` `Connection` run unchanged; only the
- * stdio pipe underneath is replayed.
- *
- * Transcript entries are MSP JSON-RPC lines. `expect_outbound` is one line T3
- * wrote to Muse's stdin and `emit_inbound` is one line Muse wrote to stdout.
- * Every host begins with a synthetic `host_start` outbound record carrying its
- * `muse serve` arguments; records of the Nth host (N > 1) carry an `@hN` label
- * suffix. The SDK numbers its requests, so a recorded request id is rebound to
- * the id the replaying connection sent. Command and session ids come from the
- * SDK's minter, so replay mints the ids the recording minted, in order.
- * `<any>` in an outbound frame matches any value.
- */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Connection, type DuplexTransport } from "@muse-code/sdk";
 import {
@@ -24,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { MuseSettings } from "@t3tools/provider-muse/settings";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
@@ -31,6 +17,7 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import {
   museInitializeParams,
   museServeArgs,
+  museWorkspaceRoot,
   type MuseSdkHost,
   type MuseSdkHostOptions,
 } from "@t3tools/provider-muse/testing";
@@ -38,6 +25,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
+import { materializeReplayTranscriptWorkspace } from "@t3tools/provider-testing/replayTranscript";
 import { makeMuseAdapterV2 } from "@t3tools/provider-muse/server";
 
 export const MUSE_PROVIDER_KIND = "muse";
@@ -50,7 +38,6 @@ const MuseReplayTranscript = Schema.Struct({
   version: Schema.String,
   scenario: Schema.String,
   metadata: Schema.Struct({
-    /** Ids each host's SDK minted, in order: session ids, then one per command. */
     commandIds: Schema.Array(Schema.Array(Schema.String)),
   }),
   entries: Schema.Array(ProviderReplayEntry),
@@ -117,7 +104,6 @@ function replayValueMatches(expected: unknown, actual: unknown): boolean {
   return Object.is(expected, actual);
 }
 
-/** A client request: the SDK's own numbered id plus a method. */
 function clientRequestId(frame: unknown): number | undefined {
   return isRecord(frame) && typeof frame.method === "string" && typeof frame.id === "number"
     ? frame.id
@@ -149,7 +135,6 @@ function entryLabel(entry: ProviderReplayEntryType | undefined): string | undefi
   return entry.type === "runtime_exit" ? "runtime_exit" : (entry.label ?? entry.type);
 }
 
-/** `turn/start`, `response:turn/start`, `request:approval/request`, or `reply:approval/request`. */
 export function museRecordLabel(
   frame: unknown,
   direction: "expect_outbound" | "emit_inbound",
@@ -171,7 +156,6 @@ export function museRecordLabel(
   return base === undefined || host === 1 ? base : `${base}@h${host}`;
 }
 
-/** Async line source the SDK `Connection` reads, fed by the replay controller. */
 class LineQueue implements AsyncIterable<string> {
   private readonly lines: Array<string> = [];
   private waiting: ((result: IteratorResult<string>) => void) | undefined;
@@ -209,7 +193,6 @@ class LineQueue implements AsyncIterable<string> {
 interface MuseReplayHost {
   readonly ordinal: number;
   readonly incoming: LineQueue;
-  /** Recorded request id -> id the replaying connection sent in its place. */
   readonly ids: Map<number, number>;
   readonly minted: Array<string>;
   readonly exited: Promise<{ readonly code: number | null; readonly signal: null }>;
@@ -217,14 +200,7 @@ interface MuseReplayHost {
   open: boolean;
 }
 
-/**
- * Drives every Muse host of one scenario from a single ordered transcript.
- * Outbound lines must match the recording; the inbound lines that follow them
- * go to the host that produced them. A write that matches a later outbound
- * record of the same turn is held until the transcript reaches it, because
- * independent adapter fibers can reach stdin in a different order than
- * recorded. A write that matches nothing before the next turn fails at once.
- */
+/** Adapter fibers can reorder stdin writes; hold matches within the turn until reached, and fail unmatched writes. */
 class MuseReplayController {
   private cursor = 0;
   private failure: unknown = null;
@@ -350,7 +326,6 @@ class MuseReplayController {
     while (this.failure === null) {
       const entry = this.transcript.entries[this.cursor];
       if (entry?.type === "runtime_exit") {
-        // Muse exited on its own in the recording: end the newest host.
         this.cursor += 1;
         emitted = true;
         const host = this.hosts.at(-1);
@@ -384,10 +359,6 @@ class MuseReplayController {
   }
 }
 
-/**
- * Builds a `MuseSdkHost` over any line transport, doing the same `initialize`
- * handshake the SDK's spawn path does. Replay and recording both use it.
- */
 export async function connectMuseTransport(input: {
   readonly transport: DuplexTransport;
   readonly readOnly: boolean | undefined;
@@ -435,13 +406,11 @@ function makeReplayCreateHost(controller: MuseReplayController) {
   };
 }
 
-const DEFAULT_MUSE_SETTINGS = Schema.decodeUnknownSync(MuseSettings)({ enabled: true });
+const DEFAULT_MUSE_SETTINGS = Schema.decodeSync(MuseSettings)({ enabled: true });
 
-/** Registry with the real Muse adapter on the given host factory. */
 export function layer(input: {
   readonly scenario: string;
   readonly createHost: NonNullable<Parameters<typeof makeMuseAdapterV2>[0]["createHost"]>;
-  /** Replay needs none; a live recording passes the host environment. */
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   return ProviderAdapterRegistry.layerFromAdaptersEffect(
@@ -452,7 +421,6 @@ export function layer(input: {
           settings: DEFAULT_MUSE_SETTINGS,
           environment: input.environment ?? {},
           createHost: input.createHost,
-          // Same queue the continuation worker drains when the fixture runs it.
           continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         }),
       ];
@@ -467,6 +435,31 @@ export function layer(input: {
     ),
   );
 }
+
+/** Uses canonical workspace paths, with turn/start in museWorkspaceRoot form (verbatim on Windows). */
+export const materializeMuseReplayWorkspace = Effect.fn("materializeMuseReplayWorkspace")(
+  function* (transcript: ProviderReplayTranscript, workspace: string) {
+    const canonical = yield* FileSystem.FileSystem.pipe(
+      Effect.flatMap((fs) => fs.realPath(workspace)),
+      Effect.provide(NodeServices.layer),
+    );
+    const plain = materializeReplayTranscriptWorkspace(transcript, canonical);
+    const turnStarts = materializeReplayTranscriptWorkspace(
+      transcript,
+      yield* museWorkspaceRoot(canonical),
+    );
+    return {
+      ...plain,
+      entries: plain.entries.map((entry, index) =>
+        entry.type === "expect_outbound" &&
+        isRecord(entry.frame) &&
+        entry.frame.method === "turn/start"
+          ? turnStarts.entries[index]!
+          : entry,
+      ),
+    };
+  },
+);
 
 export const MuseOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   MuseReplayTranscript,

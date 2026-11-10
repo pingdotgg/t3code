@@ -14,7 +14,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -22,38 +22,45 @@ import { Spinner } from "~/components/ui/spinner";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
+import { useNowSecond } from "~/hooks/useNowSecond";
 import { WorkLogRow } from "./WorkLog";
 
 interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
-  /** Interrupts the server-side bootstrap. Hidden once the setup has settled. */
   onCancel: (() => void) | null;
-  /** Restarts the same message in the project checkout instead of a worktree. */
   onWorkLocally: (() => void) | null;
-  /** Reveals the setup script terminal tab. Null when no script ran. */
   onOpenTerminal: (() => void) | null;
 }
 
-function stageElapsedMs(stage: WorktreeSetupStage, nowMs: number): number | null {
-  if (!stage.startedAt) return null;
-  const start = Date.parse(stage.startedAt);
-  const end = stage.endedAt ? Date.parse(stage.endedAt) : nowMs;
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-  return Math.max(0, end - start);
+function elapsedMs(startedAt: string | null, endMs: number): number | null {
+  if (!startedAt) return null;
+  const start = Date.parse(startedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(endMs)) return null;
+  return Math.max(0, endMs - start);
 }
 
-/**
- * Ticks once a second while any stage runs so elapsed labels stay live
- * without pushing a React commit through the timeline for every second.
- */
-function useNowWhile(active: boolean): number {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    const id = setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => clearInterval(id);
-  }, [active]);
-  return nowMs;
+/** Mounted only while setup runs, so finished setups never subscribe to the tick. */
+function LiveElapsed({ startedAt }: { startedAt: string }) {
+  const elapsed = elapsedMs(startedAt, useNowSecond());
+  return elapsed === null ? null : <>{formatDuration(elapsed)}</>;
+}
+
+/** A finished duration, or a ticking one while setup is still running. */
+function Elapsed({
+  startedAt,
+  endedAt,
+  live,
+}: {
+  startedAt: string | null;
+  endedAt: string | null;
+  live: boolean;
+}) {
+  if (!startedAt) return null;
+  if (endedAt) {
+    const elapsed = elapsedMs(startedAt, Date.parse(endedAt));
+    return elapsed === null ? null : <>{formatDuration(elapsed)}</>;
+  }
+  return live ? <LiveElapsed startedAt={startedAt} /> : null;
 }
 
 function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
@@ -89,7 +96,6 @@ function stageRowClassName(status: WorktreeSetupStage["status"]): string {
   }
 }
 
-/** Same shimmer treatment as the live tool rows in the timeline. */
 function ShimmerOverlay({ children }: { children: ReactNode }) {
   return (
     <span
@@ -118,17 +124,7 @@ function headerLabel(snapshot: WorktreeSetupSnapshot): string {
   }
 }
 
-/**
- * Occupies the same slot, with the same metrics, as the "Working for" header
- * so the handoff to the agent's turn only swaps the text.
- */
-function SetupHeaderRow({
-  snapshot,
-  totalElapsed,
-}: {
-  snapshot: WorktreeSetupSnapshot;
-  totalElapsed: number | null;
-}) {
+function SetupHeaderRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   const running = snapshot.phase === "running";
   const failed = snapshot.phase === "failed";
   const finishedWithFailedStage =
@@ -154,27 +150,25 @@ function SetupHeaderRow({
           <span className="block truncate">{text}</span>
           {running ? <ShimmerOverlay>{text}</ShimmerOverlay> : null}
         </span>
-        {totalElapsed !== null ? (
-          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-            {formatDuration(totalElapsed)}
-          </span>
-        ) : null}
+        <span className="ml-auto shrink-0 text-xs text-muted-foreground empty:hidden">
+          <Elapsed startedAt={snapshot.startedAt} endedAt={snapshot.endedAt} live={running} />
+        </span>
       </div>
     </div>
   );
 }
 
-/** One stage, rendered like a live work entry row. */
 function StageRow({
   stage,
-  nowMs,
+  setupRunning,
+  setupEndedAt,
   scriptName,
 }: {
   stage: WorktreeSetupStage;
-  nowMs: number;
+  setupRunning: boolean;
+  setupEndedAt: string | null;
   scriptName: string | null;
 }) {
-  const elapsed = stageElapsedMs(stage, nowMs);
   const label =
     stage.id === "setup-script" && scriptName ? scriptName : worktreeSetupStageLabel(stage.id);
   const running = stage.status === "running";
@@ -211,9 +205,14 @@ function StageRow({
               {trailing}
             </span>
           ) : null}
-          {elapsed !== null && stage.status !== "skipped" && stage.status !== "pending" ? (
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-              {formatDuration(elapsed)}
+          {stage.status !== "skipped" && stage.status !== "pending" ? (
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums empty:hidden">
+              <Elapsed
+                startedAt={stage.startedAt}
+                // A stage interrupted by the setup ending stops with it.
+                endedAt={stage.endedAt ?? setupEndedAt}
+                live={setupRunning}
+              />
             </span>
           ) : null}
         </>
@@ -222,15 +221,9 @@ function StageRow({
   );
 }
 
-/** The server keeps this many trailing lines; the box is sized for exactly that. */
 const OUTPUT_TAIL_LINES = 4;
 const OUTPUT_TAIL_SLOTS = Array.from({ length: OUTPUT_TAIL_LINES }, (_, slot) => slot);
 
-/**
- * Fixed-height window onto the script's last lines. Rows never wrap and the
- * box never grows or shrinks, so streaming output cannot push the timeline
- * around while the script runs.
- */
 function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
   const rows = OUTPUT_TAIL_SLOTS.map((slot) => ({
     slot,
@@ -291,18 +284,7 @@ function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   );
 }
 
-/**
- * One-line summary of a settled setup under a live turn. A clean finish is
- * removed from the timeline altogether, so this only renders the outcomes
- * worth keeping: a failed script, a failed setup, or a cancelled one.
- */
-function CollapsedSummaryRow({
-  snapshot,
-  totalElapsed,
-}: {
-  snapshot: WorktreeSetupSnapshot;
-  totalElapsed: number | null;
-}) {
+function CollapsedSummaryRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   const status: WorktreeSetupStage["status"] =
     snapshot.phase === "failed" || snapshot.phase === "cancelled"
       ? "failed"
@@ -321,11 +303,9 @@ function CollapsedSummaryRow({
       }
       label={<span className={stageRowClassName(status)}>{label}</span>}
       trailing={
-        totalElapsed !== null ? (
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            {formatDuration(totalElapsed)}
-          </span>
-        ) : null
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums empty:hidden">
+          <Elapsed startedAt={snapshot.startedAt} endedAt={snapshot.endedAt} live={false} />
+        </span>
       }
     />
   );
@@ -338,34 +318,14 @@ export function WorktreeSetupCard({
   onOpenTerminal,
   embedded = false,
 }: WorktreeSetupCardProps & {
-  /**
-   * The agent's turn is live and owns the "Working for" header. The stage
-   * list stays exactly where it was so the handoff never moves anything; a
-   * failed script that outlives the handoff collapses to a single row.
-   */
   embedded?: boolean;
 }) {
   const running = snapshot.phase === "running";
-  const nowMs = useNowWhile(running);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const totalElapsed = (() => {
-    const start = Date.parse(snapshot.startedAt);
-    const end = snapshot.endedAt ? Date.parse(snapshot.endedAt) : nowMs;
-    return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : null;
-  })();
   const setupStage = snapshot.stages.find((stage) => stage.id === "setup-script");
   const showTerminal = onOpenTerminal && setupStage && setupStage.status !== "pending";
   const collapsed = embedded && !running;
-  // While running, and after a clean finish until the agent's turn is live,
-  // the timeline's working row above the card carries the label (and keeps
-  // that slot when the agent takes over). The card only brings its own
-  // header for a failed or cancelled setup that has no working row above it.
   const showHeader = !embedded && !running && snapshot.phase !== "done";
-  // The tail box is part of the script row's footprint while the script runs
-  // (and after it failed, so the last lines explain the failure). It mounts
-  // with the first output line at its full fixed height, so the card grows
-  // once instead of with each line. A script that ends before printing
-  // anything never flashes an empty box.
   const showTail =
     setupStage !== undefined &&
     (setupStage.status === "failed" ||
@@ -373,16 +333,17 @@ export function WorktreeSetupCard({
 
   return (
     <section aria-label="Worktree setup" data-worktree-setup-phase={snapshot.phase}>
-      {showHeader ? <SetupHeaderRow snapshot={snapshot} totalElapsed={totalElapsed} /> : null}
+      {showHeader ? <SetupHeaderRow snapshot={snapshot} /> : null}
       {collapsed ? (
-        <CollapsedSummaryRow snapshot={snapshot} totalElapsed={totalElapsed} />
+        <CollapsedSummaryRow snapshot={snapshot} />
       ) : (
         <div className={showHeader ? "pt-1.5" : undefined}>
           {snapshot.stages.map((stage) => (
             <div key={stage.id}>
               <StageRow
                 stage={stage}
-                nowMs={nowMs}
+                setupRunning={running}
+                setupEndedAt={snapshot.endedAt}
                 scriptName={snapshot.setupScript?.name ?? null}
               />
               {stage.id === "setup-script" && showTail ? (
@@ -397,10 +358,6 @@ export function WorktreeSetupCard({
         <p className="mt-1 ml-8 text-xs text-muted-foreground">{snapshot.error}</p>
       ) : null}
 
-      {detailsOpen ? <SetupDetails snapshot={snapshot} /> : null}
-
-      {/* Indented so the first label lines up with the stage labels: the icon
-          column, minus the xs button's own horizontal padding. */}
       <div className="mt-0.5 ml-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex flex-wrap items-center gap-0.5">
         <Button
           type="button"
@@ -431,6 +388,7 @@ export function WorktreeSetupCard({
           </Button>
         ) : null}
       </div>
+      {detailsOpen ? <SetupDetails snapshot={snapshot} /> : null}
     </section>
   );
 }

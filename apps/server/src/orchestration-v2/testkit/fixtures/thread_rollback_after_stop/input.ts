@@ -6,11 +6,7 @@ import {
   type OrchestratorFixtureInput,
 } from "../shared.ts";
 
-/**
- * Rolls back past a turn the user stopped mid-tool. Stop restarts the
- * provider runtime, so the stopped turn's native rollback point must be
- * captured before the process goes away.
- */
+/** Stop restarts the runtime; capture native rollback points before process exit. */
 export function threadRollbackAfterStopInput(): OrchestratorFixtureInput {
   return {
     steps: [

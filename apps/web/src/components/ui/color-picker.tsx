@@ -14,7 +14,6 @@ function clamp(value: number) {
   return Math.min(1, Math.max(0, value));
 }
 
-/** Keep pointer capture and drag completion consistent across color controls. */
 function useColorDrag(
   update: (event: PointerEvent<HTMLDivElement>) => void,
   onInteractionEnd?: () => void,
@@ -29,8 +28,6 @@ function useColorDrag(
     onInteractionEnd?.();
   };
   return {
-    // The thumb stays inside the control at its extremes, and only animates
-    // keyboard adjustments, never continuous pointer movement.
     thumbTransition: isDragging
       ? undefined
       : "left 80ms linear, top 80ms linear, background-color 80ms linear",
@@ -57,7 +54,6 @@ type ColorControlProps<T> = {
   label: string;
   value: T;
   onChange: (value: T) => void;
-  /** Flush pending consumer updates when pointer interaction finishes. */
   onInteractionEnd?: () => void;
   className?: string;
 };
@@ -116,7 +112,7 @@ export function ColorSaturationValuePlane({
       aria-label={`${label} saturation and brightness`}
       role="group"
       className={cn(
-        "relative cursor-crosshair touch-none overflow-hidden bg-[linear-gradient(to_top,#000,transparent),linear-gradient(to_right,#fff,transparent)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-popover",
+        "relative cursor-crosshair touch-none overflow-hidden bg-[linear-gradient(to_top,#000,transparent),linear-gradient(to_right,#fff,transparent)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-popover",
         variant === "edge" ? "h-36 rounded-none" : "h-32 rounded-lg",
         className,
       )}
@@ -186,6 +182,11 @@ export function ColorHueSlider({
   }, onInteractionEnd);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      onChange(event.key === "Home" ? 0 : 360);
+      return;
+    }
     if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(event.key)) return;
     event.preventDefault();
     const step = event.shiftKey ? 10 : 1;
@@ -200,7 +201,7 @@ export function ColorHueSlider({
       aria-valuemin={0}
       aria-valuenow={Math.round(value)}
       className={cn(
-        "relative flex h-6 cursor-pointer touch-none items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover",
+        "relative flex h-6 cursor-pointer touch-none items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover",
         className,
       )}
       role="slider"

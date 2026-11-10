@@ -30,7 +30,6 @@ interface ProjectProjectionRow {
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-// Event-store setup and V1 project baseline composed by migration 055.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -123,9 +122,7 @@ export default Effect.gen(function* () {
     { concurrency: 1, discard: true },
   );
 
-  // ProjectService wrote this projection directly before the application event
-  // boundary was restored. Re-baseline every current row into the shared log so
-  // projection rebuilds preserve the exact pre-migration project state.
+  // Re-baseline current rows so shared-log rebuilds preserve pre-migration project state.
   const projectRows = yield* sql<ProjectProjectionRow>`
     SELECT
       project_id,

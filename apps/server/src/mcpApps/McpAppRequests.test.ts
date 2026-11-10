@@ -1,4 +1,5 @@
 import {
+  ProviderDriverKind,
   ProviderSessionId,
   ProviderThreadId,
   ThreadId,
@@ -14,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpAppModelContext from "./McpAppModelContext.ts";
@@ -26,7 +27,6 @@ const providerThreadId = ProviderThreadId.make("provider-thread-app");
 const providerSessionId = ProviderSessionId.make("provider-session-app");
 const forkId = ThreadId.make("thread-fork");
 const unrelatedId = ThreadId.make("thread-unrelated");
-// A chain of forks deeper than any fixed walk limit: deep-70 → … → deep-1 → app.
 const deepForkId = (depth: number) => ThreadId.make(`thread-deep-${depth}`);
 const deepParent = (id: ThreadId): ThreadId | null => {
   const match = /^thread-deep-(\d+)$/.exec(id);
@@ -63,7 +63,6 @@ const app = {
   resourceUri: "ui://weather/dashboard",
 };
 
-/** Each app's stored context, keyed by item, as the real store keeps it. */
 const storedContext = new Map<string, string>();
 
 function makeLayer(input: {
@@ -88,7 +87,6 @@ function makeLayer(input: {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (id: ThreadId) =>
             Effect.succeed({
-              // A fork of the app's thread, and an unrelated thread.
               thread: {
                 lineage:
                   deepParent(id) !== null
@@ -140,8 +138,12 @@ describe("McpAppRequests", () => {
   const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
     listTools: () =>
       Effect.succeed([
-        { name: "refresh", annotations: { readOnlyHint: true } },
-        { name: "model_only", _meta: { ui: { visibility: ["model"] } } },
+        { name: "refresh", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+        {
+          name: "model_only",
+          inputSchema: { type: "object" },
+          _meta: { ui: { visibility: ["model"] } },
+        },
       ]),
     callTool: (input) =>
       Effect.sync(() => {
@@ -165,7 +167,11 @@ describe("McpAppRequests", () => {
       assert.deepEqual(yield* requests.toolInfo({ threadId, itemId, name: "refresh" }), {
         callable: true,
         readOnly: true,
-        tool: { name: "refresh", annotations: { readOnlyHint: true } },
+        tool: {
+          name: "refresh",
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+        },
       });
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
   );
@@ -184,17 +190,40 @@ describe("McpAppRequests", () => {
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
   );
 
+  it.effect("reports a provider whose process has stopped as a stopped session", () =>
+    Effect.gen(function* () {
+      const requests = yield* McpAppRequests.McpAppRequests;
+      assert.equal(
+        yield* reason(requests.readResource({ threadId, itemId, uri: "ui://weather/app.html" })),
+        "session-stopped",
+      );
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          item: appItem({ t3McpApp: app }),
+          mcpApps: {
+            ...mcpApps,
+            readResource: () =>
+              Effect.fail(
+                new ProviderAdapter.ProviderAdapterSessionStoppedError({
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                }),
+              ),
+          },
+        }),
+      ),
+    ),
+  );
+
   it.effect("keeps each app's latest model context, without a live session", () =>
     Effect.gen(function* () {
       const requests = yield* McpAppRequests.McpAppRequests;
       const own = { threadId, itemId, conversationThreadId: threadId };
-      // The app's text is stored as sent, whitespace included.
       yield* requests.updateModelContext({
         ...own,
         content: [{ type: "text", text: "  indented value  " }],
       });
       assert.equal(storedContext.get(`${threadId}/${itemId}`), "  indented value  ");
-      // An update replaces the app's context rather than adding to it.
       yield* requests.updateModelContext({
         ...own,
         content: [{ type: "text", text: "Filtered to overdue" }],
@@ -210,7 +239,6 @@ describe("McpAppRequests", () => {
         ),
         "unsupported-content",
       );
-      // The cap is in UTF-8 bytes: 6,000 three-byte characters exceed 16 KiB.
       assert.equal(
         yield* reason(
           requests.updateModelContext({
@@ -248,7 +276,6 @@ describe("McpAppRequests", () => {
         ),
         "not-an-app",
       );
-      // However many forks deep, a descendant still counts.
       yield* requests.updateModelContext({
         threadId,
         itemId,
@@ -257,27 +284,5 @@ describe("McpAppRequests", () => {
       });
       assert.isTrue(storedContext.has(`${deepForkId(70)}/${itemId}`));
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), live: false }))),
-  );
-
-  it.effect("reports why a request cannot run", () =>
-    Effect.gen(function* () {
-      const run = (layer: ReturnType<typeof makeLayer>) =>
-        Effect.gen(function* () {
-          const requests = yield* McpAppRequests.McpAppRequests;
-          return yield* reason(requests.readResource({ threadId, itemId, uri: "ui://weather/x" }));
-        }).pipe(Effect.provide(layer));
-      assert.equal(
-        yield* run(makeLayer({ item: appItem({ result: "plain" }), mcpApps })),
-        "not-an-app",
-      );
-      assert.equal(
-        yield* run(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps, live: false })),
-        "session-stopped",
-      );
-      assert.equal(
-        yield* run(makeLayer({ item: appItem({ t3McpApp: app }) })),
-        "provider-unsupported",
-      );
-    }),
   );
 });

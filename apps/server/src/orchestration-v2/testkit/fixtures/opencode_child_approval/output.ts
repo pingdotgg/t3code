@@ -22,8 +22,6 @@ export function assertOpenCodeChildApprovalOutput(
   assertUserMessagesInclude(projection, [OPENCODE_SUBAGENT_PROMPT]);
   assertAssistantTextIncludes(projection, "PARENT_OK");
 
-  // The child session's permission ask lands on the ROOT turn as an approval
-  // request instead of being dropped, and the reply resolves it.
   const approvalItems = projection.turnItems.filter((item) => item.type === "approval_request");
   assert.lengthOf(approvalItems, 1);
   const approval = approvalItems[0];
@@ -36,7 +34,6 @@ export function assertOpenCodeChildApprovalOutput(
   assert.equal(requests[0]?.kind, "command");
   assert.equal(requests[0]?.status, "resolved");
 
-  // The delegation itself still completes.
   assert.lengthOf(projection.subagents, 1);
   assert.equal(projection.subagents[0]?.status, "completed");
   assert.include(projection.subagents[0]?.result ?? "", "CHILD_OK");

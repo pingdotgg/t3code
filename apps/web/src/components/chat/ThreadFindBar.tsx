@@ -21,20 +21,21 @@ interface ThreadFindBarProps {
   readonly onClose: () => void;
 }
 
-/**
- * Room the open bar takes at the top of the chat canvas: its `h-9` height plus
- * the shared 12px gap below it, so the details card starts on the same rhythm.
- */
 export const THREAD_FIND_BAR_RESERVED_HEIGHT = 36 + THREAD_DETAILS_CARD_GAP;
 
 export function ThreadFindBar(props: ThreadFindBarProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when the bar opens or a find shortcut fires
   useEffect(() => {
     if (!props.open) return;
     inputRef.current?.focus();
     inputRef.current?.select();
-  }, [props.focusRequestId, props.open]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each find shortcut bumps the request id, so an already-open bar refocuses and reselects its query.
+    props.focusRequestId,
+    props.open,
+  ]);
 
   if (!props.open) return null;
 
@@ -59,65 +60,70 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   };
 
   return (
-    <InputGroup
-      variant="popover"
-      size="lg"
-      onContextMenu={(event) => event.stopPropagation()}
-      role="search"
-      aria-label="Find in thread"
-      aria-busy={props.status === "loading" || props.counting === true}
-      className="absolute top-3 right-3 z-40 w-[min(24rem,calc(100%-1.5rem))]"
+    <div
+      data-thread-find-bar
+      className="absolute top-3 right-3 z-40 w-[min(var(--thread-details-panel-width),calc(100%-1.5rem))] transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
     >
-      <InputGroupInput
-        ref={inputRef}
-        type="search"
-        size="sm"
-        value={props.query}
+      <InputGroup
+        variant="popover"
+        size="lg"
+        onContextMenu={(event) => event.stopPropagation()}
+        role="search"
         aria-label="Find in thread"
-        placeholder="Find in thread"
-        maxLength={200}
-        spellCheck={false}
-        autoComplete="off"
-        onChange={(event) => props.onQueryChange(event.target.value)}
-        onKeyDown={handleKeyDown}
-      />
-      <InputGroupAddon align="inline-end" inset="pill">
-        <span
-          aria-live="polite"
-          className={cn(
-            "min-w-10 text-center text-xs tabular-nums",
-            noResults ? "text-destructive" : "text-muted-foreground",
-          )}
-        >
-          {label}
-        </span>
-        {props.status === "error" ? (
-          <Button size="xs" variant="ghost" onClick={props.onRetry}>
-            Retry
+        aria-busy={props.status === "loading" || props.counting === true}
+        className="w-full"
+      >
+        <InputGroupInput
+          ref={inputRef}
+          type="search"
+          size="sm"
+          value={props.query}
+          aria-label="Find in thread"
+          placeholder="Find in thread"
+          maxLength={200}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(event) => props.onQueryChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+        <InputGroupAddon align="inline-end" inset="pill">
+          <span
+            aria-live="polite"
+            className={cn(
+              "min-w-10 text-center text-xs tabular-nums",
+              noResults ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {label}
+          </span>
+          {props.status === "error" ? (
+            <Button size="xs" variant="ghost" onClick={props.onRetry}>
+              Retry
+            </Button>
+          ) : null}
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Previous match"
+            disabled={navigationDisabled}
+            onClick={props.onPrevious}
+          >
+            <ChevronUpIcon />
           </Button>
-        ) : null}
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Previous match"
-          disabled={navigationDisabled}
-          onClick={props.onPrevious}
-        >
-          <ChevronUpIcon />
-        </Button>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Next match"
-          disabled={navigationDisabled}
-          onClick={props.onNext}
-        >
-          <ChevronDownIcon />
-        </Button>
-        <Button size="icon-xs" variant="ghost" aria-label="Close find" onClick={props.onClose}>
-          <XIcon />
-        </Button>
-      </InputGroupAddon>
-    </InputGroup>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Next match"
+            disabled={navigationDisabled}
+            onClick={props.onNext}
+          >
+            <ChevronDownIcon />
+          </Button>
+          <Button size="icon-xs" variant="ghost" aria-label="Close find" onClick={props.onClose}>
+            <XIcon />
+          </Button>
+        </InputGroupAddon>
+      </InputGroup>
+    </div>
   );
 }

@@ -1,15 +1,16 @@
 import { HTML_RENDER_DEFAULT_FONTS, htmlRenderTheme } from "@t3tools/shared/htmlRender";
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import { appearanceFontStack } from "../appearanceFonts";
 import {
   getStandardThemeColors,
   getThemeColorsForMode,
-  getThemeDefinition,
   getThemeColorVariable,
+  getThemeDefinition,
   resolveThemeHalf,
   subscribeToCustomThemes,
   subscribeToThemePreview,
+  themeColorToHex,
   type ThemeAppearance,
   type ThemeHalves,
   type ThemePreference,
@@ -17,7 +18,6 @@ import {
 import { useClientSettings } from "./useSettings";
 import { useTheme } from "./useTheme";
 
-/** The palette `applyTheme` paints for a preference, or the stock look when no theme applies. */
 function resolveActiveThemeColors(
   theme: ThemePreference,
   halves: ThemeHalves | null,
@@ -56,7 +56,7 @@ function readPaintedTheme(): string {
     const value =
       styles.getPropertyValue(appVariable).trim() ||
       styles.getPropertyValue(HTML_RENDER_APP_ALIASES[variable] ?? appVariable).trim();
-    if (value) variables[variable] = value;
+    if (value) variables[variable] = themeColorToHex(value) ?? value;
   }
   return JSON.stringify({
     appearance: root.classList.contains("dark") ? "dark" : "light",
@@ -64,7 +64,6 @@ function readPaintedTheme(): string {
   });
 }
 
-/** The app's active theme and fonts, as handed to agent HTML renders. Stable until one changes. */
 export function useHtmlRenderTheme() {
   const { theme, resolvedTheme, themeHalves } = useTheme();
   // Custom and published palettes can be edited in place, under an unchanged preference.
@@ -76,22 +75,26 @@ export function useHtmlRenderTheme() {
   const sans = useClientSettings((settings) => settings.fontFamilySans);
   const mono = useClientSettings((settings) => settings.fontFamilyCode);
   const paintedTheme = useSyncExternalStore(subscribeToThemePreview, readPaintedTheme, () => "");
-  return useMemo(() => {
-    const painted = paintedTheme
-      ? (JSON.parse(paintedTheme) as {
-          appearance: ThemeAppearance;
-          variables: Record<string, string>;
-        })
-      : null;
-    const base = htmlRenderTheme(colors, painted?.appearance ?? resolvedTheme, {
+  const painted = paintedTheme
+    ? (JSON.parse(paintedTheme) as {
+        appearance: ThemeAppearance;
+        variables: Record<string, string>;
+      })
+    : null;
+  const base = htmlRenderTheme(
+    Object.fromEntries(
+      Object.entries(colors).map(([role, color]) => [role, themeColorToHex(color) ?? color]),
+    ) as typeof colors,
+    painted?.appearance ?? resolvedTheme,
+    {
       sans: appearanceFontStack(sans, HTML_RENDER_DEFAULT_FONTS.sans),
       mono: appearanceFontStack(mono, HTML_RENDER_DEFAULT_FONTS.mono),
-    });
-    if (!painted) return base;
-    return {
-      ...base,
-      appearance: painted.appearance,
-      variables: { ...base.variables, ...painted.variables },
-    };
-  }, [colors, resolvedTheme, sans, mono, paintedTheme]);
+    },
+  );
+  if (!painted) return base;
+  return {
+    ...base,
+    appearance: painted.appearance,
+    variables: { ...base.variables, ...painted.variables },
+  };
 }

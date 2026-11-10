@@ -1,8 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo } from "react";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { buildPendingNewTasks, type PendingNewTask } from "./pending-new-tasks-model";
 import { flattenQueuedThreadMessages } from "./thread-outbox-model";
-import { composerDraftsAtom } from "./use-composer-drafts";
+import { environmentThreadShells } from "./threads";
+import { newTaskComposerDraftsAtom } from "./use-composer-drafts";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
 
 export type {
@@ -13,13 +14,11 @@ export type {
 
 export function usePendingNewTasks(): ReadonlyArray<PendingNewTask> {
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
-  const drafts = useAtomValue(composerDraftsAtom);
-  return useMemo(
-    () =>
-      buildPendingNewTasks({
-        queuedMessages: flattenQueuedThreadMessages(queuedMessagesByThreadKey),
-        drafts,
-      }),
-    [queuedMessagesByThreadKey, drafts],
+  const drafts = useAtomValue(newTaskComposerDraftsAtom);
+  const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  // A delivered creation can stay queued after its thread is live and hidden.
+  const queuedMessages = flattenQueuedThreadMessages(queuedMessagesByThreadKey).filter(
+    (message) => !hiddenKeys.has(threadKey(message)),
   );
+  return buildPendingNewTasks({ queuedMessages, drafts });
 }

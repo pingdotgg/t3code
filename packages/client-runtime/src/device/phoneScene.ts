@@ -39,7 +39,6 @@ function roundedPath(width: number, height: number, radius: number, path = new S
   return path;
 }
 
-/** Display orientation is independent of orbit. Texture coordinates stay in raw framebuffer space. */
 export function phoneDisplayLayout(
   screen: DeviceScreenSize | null,
   rawWidth: number,
@@ -65,7 +64,6 @@ export function phoneDisplayLayout(
   };
 }
 
-/** An original procedural device body. It makes no claim to reproduce a particular hardware model. */
 export function createPhoneScene(
   texture: Texture,
   layout: ReturnType<typeof phoneDisplayLayout>,
@@ -154,7 +152,6 @@ export function createPhoneScene(
     );
     orientation.add(button);
   }
-  // Rear components share a surface-relative coordinate system, with outward positive Z.
   const rearCamera = new Group();
   rearCamera.name = "rear-camera";
   rearCamera.position.set(
@@ -236,7 +233,6 @@ export function createPhoneScene(
 
 export type PhoneDisplayLayout = ReturnType<typeof phoneDisplayLayout>;
 
-/** Canonical portrait geometry maps to raw framebuffer coordinates in every OS orientation. */
 export function updateDisplayUv(
   geometry: BufferGeometry,
   width: number,
@@ -263,7 +259,6 @@ export function updateDisplayUv(
   uv.needsUpdate = true;
 }
 
-/** New touches hit only the front display; captured drags project onto its plane and clamp. */
 export function createDisplayProjection(
   display: Mesh,
   orientation: Group,

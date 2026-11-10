@@ -29,9 +29,7 @@ export async function waitForDraftHeroTransition(): Promise<void> {
     ...activeTransitions.map(async (animation) => {
       try {
         await animation.finished;
-      } catch {
-        // A cancelled transition is already safe to hand off.
-      }
+      } catch {}
     }),
   ]);
 }
