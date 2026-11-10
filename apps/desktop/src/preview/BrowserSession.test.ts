@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,6 +16,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
+      readonly webRequest: { readonly onBeforeSendHeaders: ReturnType<typeof vi.fn> };
     }
   >(),
 }));
@@ -46,7 +48,7 @@ const layerDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
   showErrorBox: () => Effect.void,
 });
 const layer = BrowserSession.layer.pipe(
-  Layer.provide(Layer.merge(NodeServices.layer, layerDialog)),
+  Layer.provide(Layer.merge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer), layerDialog)),
 );
 
 describe("BrowserSession", () => {
@@ -61,6 +63,7 @@ describe("BrowserSession", () => {
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
+        webRequest: { onBeforeSendHeaders: vi.fn() },
       };
       sessions.set(partition, browserSession);
       return browserSession;
@@ -114,10 +117,12 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("keeps the guest's effective User-Agent equal to Electron's native one", () =>
+  it.effect("keeps the native User-Agent except for the Electron token sent to Teams", () =>
     Effect.gen(function* () {
       const nativeUserAgent =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
+      const teamsUserAgent =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Safari/537.36";
       fromPartition.mockReset();
       fromPartition.mockImplementation((partition: string) => {
         let userAgent = nativeUserAgent;
@@ -130,6 +135,7 @@ describe("BrowserSession", () => {
           setUserAgent: vi.fn((next: string) => {
             userAgent = next;
           }),
+          webRequest: { onBeforeSendHeaders: vi.fn() },
         };
         sessions.set(partition, browserSession);
         return browserSession;
@@ -142,10 +148,33 @@ describe("BrowserSession", () => {
       const browserSession = sessions.get(partition);
       assert.isDefined(browserSession);
       assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
+
+      // Teams redirects Electron to an error page before sign-in; every other host sees the native one.
+      const calls = browserSession.webRequest.onBeforeSendHeaders.mock.calls;
+      assert.strictEqual(calls.length, 1);
+      const [filter, listener] = calls[0] ?? [];
+      assert.deepStrictEqual(filter, {
+        urls: ["https://teams.cloud.microsoft/*", "https://teams.microsoft.com/*"],
+      });
+      const send = (requestHeaders: Record<string, string>) => {
+        let response: { requestHeaders?: Record<string, string> } | undefined;
+        listener({ requestHeaders }, (next: typeof response) => {
+          response = next;
+        });
+        return response;
+      };
+      for (const key of ["User-Agent", "user-agent"]) {
+        const requestHeaders = { [key]: nativeUserAgent, Accept: "*/*" };
+        assert.deepStrictEqual(send(requestHeaders), {
+          requestHeaders: { [key]: teamsUserAgent, Accept: "*/*" },
+        });
+        assert.strictEqual(requestHeaders[key], nativeUserAgent);
+      }
+      assert.deepStrictEqual(send({ Accept: "*/*" }), {});
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("grants clipboard-sanitized-write through both the request and check handlers", () =>
+  it.effect("grants preview permissions through both the request and check handlers", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
       const partition = yield* browserSessions.getPartition("scope-a");
@@ -168,7 +197,13 @@ describe("BrowserSession", () => {
         return granted;
       };
 
-      for (const permission of ["clipboard-sanitized-write", "geolocation", "fullscreen"]) {
+      for (const permission of [
+        "clipboard-sanitized-write",
+        "geolocation",
+        "fullscreen",
+        "pointerLock",
+        "loopback-network",
+      ]) {
         assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
         assert.isTrue(
           checkHandler(null, permission) as boolean,
@@ -179,7 +214,13 @@ describe("BrowserSession", () => {
       // `clipboard-write` is not a real Electron permission — the async write API
       // uses `clipboard-sanitized-write` — so the stale name must not be granted,
       // and unrelated permissions stay denied.
-      for (const permission of ["clipboard-write", "notifications", "midi"]) {
+      for (const permission of [
+        "clipboard-write",
+        "notifications",
+        "midi",
+        "local-network",
+        "local-network-access",
+      ]) {
         assert.isFalse(requestAllows(permission), `request handler should deny ${permission}`);
         assert.isFalse(
           checkHandler(null, permission) as boolean,

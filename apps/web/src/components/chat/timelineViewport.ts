@@ -1,3 +1,4 @@
+import { isInSideChatPane } from "../../lib/sideChatPane";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import {
   eventPathContainsSelector,
@@ -86,6 +87,7 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
     emit({ source: "pointer", onScrollbar: event.target === scrollNode });
   // Clicking message text can leave DOM focus on body, and keyboard scrolling
   // bypasses wheel and pointer events, so scroll keys are heard app-wide.
+  // Body keys belong to the main timeline; a side chat's hears only its own.
   const handleKeyDown = (event: KeyboardEvent, consumed: boolean) => {
     const direction = UP_KEYS.has(event.key) ? "up" : DOWN_KEYS.has(event.key) ? "down" : null;
     if (
@@ -93,8 +95,8 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
       consumed ||
       !(event.target instanceof Node) ||
       (!scrollNode.contains(event.target) &&
-        event.target !== document.body &&
-        event.target !== document.documentElement) ||
+        ((event.target !== document.body && event.target !== document.documentElement) ||
+          isInSideChatPane(scrollNode))) ||
       event.isComposing ||
       event.altKey ||
       event.ctrlKey ||
@@ -115,6 +117,12 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
     top: scrollNode.scrollTop,
     height: scrollNode.scrollHeight,
   });
+  // Only a frame's input reaches the timeline unseen. Any other unexplained upward move is not
+  // the reader's: the browser clamps scrollTop when content briefly shrinks.
+  const frameHasInput = () =>
+    scrollNode.querySelector("iframe:hover") !== null ||
+    (document.activeElement instanceof HTMLIFrameElement &&
+      scrollNode.contains(document.activeElement));
   const handleScroll = () => {
     if (
       scrolledUp({
@@ -122,6 +130,7 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
         height: scrollNode.scrollHeight,
         programmatic: programmaticHolds > 0,
       }) &&
+      frameHasInput() &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
         contentLength: scrollNode.scrollHeight,
