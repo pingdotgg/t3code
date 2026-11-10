@@ -309,7 +309,8 @@ export function deriveFileInspectorPaneLayout(input: {
   }
   if (input.inspectorSizing === "tablet") {
     const supported =
-      input.layout.usesSplitView && viewportWidth >= FILE_INSPECTOR_MIN_VIEWPORT_WIDTH;
+      input.layout.usesSplitView &&
+      viewportWidth >= AUXILIARY_PANE_MIN_WIDTH + NATIVE_INSPECTOR_MIN_MAIN_WIDTH + 4;
     return {
       supported,
       width: supported

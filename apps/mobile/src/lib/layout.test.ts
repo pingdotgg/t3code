@@ -141,7 +141,7 @@ describe("isPrimarySidebarPinned", () => {
 });
 
 describe("deriveWorkspacePaneLayout", () => {
-  it.each([660, 745, 1100])(
+  it.each([660, 744, 745, 1100])(
     "defaults Android content to equal panes and retains resized widths at %s dp",
     (viewportWidth) => {
       const layout = deriveLayout({ width: viewportWidth + 96, height: 900 });
@@ -173,7 +173,9 @@ describe("deriveWorkspacePaneLayout", () => {
           ).toMatchObject({ auxiliaryPaneWidth: width, primarySidebarVisible: false });
         }
         expect(deriveWorkspacePaneLayout({ ...input, inspectorSizing: "tablet" })).toMatchObject({
-          auxiliaryPaneWidth: viewportWidth >= 820 ? viewportWidth * 0.4 : null,
+          auxiliaryPaneWidth: viewportWidth * 0.4,
+          auxiliaryPaneVisible: true,
+          primarySidebarVisible: primarySidebarFloats,
         });
         expect(
           deriveWorkspacePaneLayout({ ...input, auxiliaryPanePreferredVisible: false }),

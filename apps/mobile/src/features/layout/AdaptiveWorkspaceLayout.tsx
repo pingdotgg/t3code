@@ -929,6 +929,20 @@ function AdaptiveWorkspaceLayoutContent(
     [sidebarInLandscape, sidebarInPortrait, sidebarOverRotates],
   );
 
+  const setAuxiliaryPaneWidth = (preferredWidth: number) => {
+    const next = deriveFileInspectorPaneLayout({
+      layout,
+      viewportWidth: width,
+      inspectorSizing,
+      preferredWidth,
+      reservedLeadingWidth:
+        shouldRenderPrimarySidebar && showPrimarySidebar && !sidebarFloats
+          ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+          : 0,
+    });
+    if (next.width !== null) setFileInspectorPreferredWidth(next.width);
+  };
+
   const actions = useStableActions({
     startNewTask: handleStartNewTask,
     selectDetail: handleSelectDetail,
@@ -940,7 +954,7 @@ function AdaptiveWorkspaceLayoutContent(
     revealPrimarySidebar,
     setPrimarySidebarVisible,
     openWorkspaceTab,
-    setAuxiliaryPaneWidth: setFileInspectorPreferredWidth,
+    setAuxiliaryPaneWidth,
     setNativeInspectorWidth: (width: number) =>
       setNativeInspectorWidthFraction(inspectorWidthFor(width / viewportWidth) / viewportWidth),
   });
@@ -1141,7 +1155,7 @@ function AdaptiveWorkspaceLayoutContent(
           active={workspaceInspector?.active ?? false}
           panes={panes}
           content={workspaceInspector?.content}
-          setAuxiliaryPaneWidth={setFileInspectorPreferredWidth}
+          setAuxiliaryPaneWidth={setAuxiliaryPaneWidth}
           onClose={() => setFileInspectorPreferredVisible(false)}
           onClosed={handleWorkspaceInspectorClosed}
         />
