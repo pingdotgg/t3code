@@ -73,8 +73,11 @@ interface AttachedTab {
    */
   agentUsed: boolean;
   focusReleasing: boolean;
-  /** The sessions sharing the guest's one Chromium screencast; it stops with the last of them. */
-  readonly screencasts: Set<string | undefined>;
+  /**
+   * The sessions sharing the guest's one Chromium screencast, by their latest start; it stops
+   * with the last of them.
+   */
+  readonly screencasts: Map<string | undefined, object>;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -325,9 +328,10 @@ export const make = Effect.gen(function* () {
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
         send: (method, params, sessionId, owner) => {
+          const start = {};
           // A child session's screencast is not the page's, such as a late one on a detached session.
           if (sessionId === undefined && method === "Page.startScreencast") {
-            tab.screencasts.add(owner);
+            tab.screencasts.set(owner, start);
             if (owner !== undefined) streamingOwners.add(owner);
           } else if (sessionId === undefined && method === "Page.stopScreencast") {
             tab.screencasts.delete(owner);
@@ -359,8 +363,14 @@ export const make = Effect.gen(function* () {
               )
             : method === "Page.startScreencast"
               ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
-                  // A viewer can outlive a refused stream; nothing is streaming for it.
-                  if (sessionId === undefined && tab.relay === relay) leaveScreencast(tab, owner);
+                  // A viewer can outlive a refused stream; a later start may still stream for it.
+                  if (
+                    sessionId === undefined &&
+                    tab.relay === relay &&
+                    tab.screencasts.get(owner) === start
+                  ) {
+                    leaveScreencast(tab, owner);
+                  }
                   releaseFocusWhenIdle(tab);
                   syncPainting(tab);
                   throw cause;
@@ -458,7 +468,7 @@ export const make = Effect.gen(function* () {
       painting: false,
       agentUsed: false,
       focusReleasing: false,
-      screencasts: new Set(),
+      screencasts: new Map(),
       onMessage: (_event, method, params, sessionId) => {
         if (method === "Page.downloadWillBegin") {
           const guid = (params as { guid?: unknown } | undefined)?.guid;

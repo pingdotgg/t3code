@@ -53,6 +53,7 @@ const makeDebuggee = (
   const focusChanges: Array<() => void> = [];
   const sent: Array<unknown> = [];
   const methods: Array<string> = [];
+  const rejects: Array<() => void> = [];
   const sendWaiters: Array<() => void> = [];
   const focusEmulation: Array<boolean> = [];
   const debuggee = Object.assign(emitter, {
@@ -78,6 +79,7 @@ const makeDebuggee = (
         }
         sent.push(params?.id);
         methods.push(method);
+        rejects.push(() => reject(new Error("Refused")));
         pending.push(() => resolve({ method }));
         sendWaiters.shift()?.();
       }),
@@ -107,6 +109,8 @@ const makeDebuggee = (
     sent,
     /** Methods of the same commands, in order. */
     methods,
+    /** Refuses the pending command the debugger received with this id. */
+    refuse: (id: number) => rejects[sent.indexOf(id)]?.(),
     focusEmulation,
     nextSend: () => new Promise<void>((resolve) => sendWaiters.push(resolve)),
     release: () => pending.splice(0).forEach((resolve) => resolve()),
@@ -1082,6 +1086,44 @@ describe("DesktopBrowserHost", () => {
       yield* raw({ id: 6, method: "Page.stopScreencast", sessionId: "t3-preview-page-2" });
       yield* settle;
       expect(nativeStops()).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a session's screencast when its earlier start is refused", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const frames: Array<string | undefined> = [];
+      const replies = yield* watchReplies(host, frames);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+
+      yield* raw({ id: 0, method: "Target.setAutoAttach", params: { autoAttach: true } });
+      expect(yield* Queue.take(replies)).toBe(0);
+      yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect(yield* Queue.take(replies)).toBe(1);
+      yield* raw({
+        id: 2,
+        method: "Page.startScreencast",
+        params: { id: 2 },
+        sessionId: "t3-preview-page-1",
+      });
+      yield* raw({
+        id: 3,
+        method: "Page.startScreencast",
+        params: { id: 3 },
+        sessionId: "t3-preview-page-1",
+      });
+      yield* settle;
+      debuggee.refuse(2);
+      debuggee.release();
+      expect([yield* Queue.take(replies), yield* Queue.take(replies)].toSorted()).toEqual([2, 3]);
+      yield* settle;
+      expect(debuggee.methods).not.toContain("Page.stopScreencast");
+      debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 1 });
+      yield* settle;
+      expect(frames).toContain("t3-preview-page-1");
     }).pipe(Effect.scoped),
   );
 
