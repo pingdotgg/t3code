@@ -117,6 +117,7 @@ describe("sidebar numbered jumps", () => {
       activeDraftThread: null,
       activeThread: null,
       defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
       handleNewThread: vi.fn(),
       routeDraftId: null,
       routeThreadRef: null,
