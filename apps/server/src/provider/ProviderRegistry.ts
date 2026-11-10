@@ -756,7 +756,7 @@ export const layer = Layer.effect(
             syncLiveSourcesAndContinue.pipe(
               Effect.andThen(Ref.get(liveSubsRef)),
               Effect.flatMap((instances) =>
-                Effect.forEach(instances.values(), (instance) => refreshOneSource(instance), {
+                Effect.forEach(instances.values(), ({ instance }) => refreshOneSource(instance), {
                   concurrency: "unbounded",
                   discard: true,
                 }),
@@ -788,7 +788,7 @@ export const layer = Layer.effect(
     ) {
       yield* refreshHostPath;
       yield* syncLiveSourcesAndContinue;
-      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
+      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId)?.instance;
       if (!instance) {
         return yield* Ref.get(providersRef);
       }
