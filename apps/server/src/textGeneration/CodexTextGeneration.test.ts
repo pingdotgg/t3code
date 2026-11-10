@@ -659,7 +659,10 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
               DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
           },
     ]);
-    expect([...discovered]).toEqual(exhausted ? [primary, fallback] : [primary]);
+    // The primary is always discovered; others only when the primary cannot be used.
+    expect([...discovered]).toEqual(
+      primaryState === "ready" || primaryState === "pending" ? [primary] : [primary, fallback],
+    );
   }),
 );
 

@@ -193,8 +193,7 @@ it.effect("resends late editors without rolling back updates already sent", () =
       Stream.empty,
       {
         resolveAvailableEditors: () => Effect.succeed([]),
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+        resolveFileManagerRevealKind: () => Effect.undefined,
       },
       { resolveTargets: () => Effect.succeed([]) },
       { resolve: () => Effect.succeed([]) },
@@ -1096,7 +1095,7 @@ it.effect.each([
         assert.deepEqual(editors.config.availableEditors, []);
         assert.deepEqual(
           editors.config.settings,
-          ServerSettings.redactServerSettingsForClient(latestSettings),
+          ServerSettings.redactServerSettingsForClient(latestSettings, { secretReferences: true }),
         );
         assert.deepEqual(editors.config.keybindings, latestKeybindings.keybindings);
       }

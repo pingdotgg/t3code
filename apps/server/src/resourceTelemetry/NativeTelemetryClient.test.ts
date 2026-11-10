@@ -1,6 +1,7 @@
 import type { HostPowerSnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -35,6 +36,12 @@ const basePower: HostPowerSnapshot = {
   thermalState: "nominal",
   stale: false,
   updatedAt: DateTime.makeUnsafe("2026-06-17T12:00:00.000Z"),
+};
+
+// Each request id must differ so samples resolve their own pending request.
+const testRandom = () => {
+  let call = 0;
+  return SecureRandom.make((size) => new Uint8Array(size).fill(++call % 256));
 };
 
 it.effect("shares demand, stops after the last request, and retains history across visits", () =>
@@ -191,7 +198,11 @@ it.effect("shares demand, stops after the last request, and retains history acro
     expect(yield* exported.readHistory(60_000)).toHaveLength(1);
     yield* Scope.close(exportScope, Exit.void);
     expect(starts).toBe(stops);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(SecureRandom.SecureRandom, testRandom()),
+  ),
 );
 
 describe("commitCollectionControlUpdate", () => {

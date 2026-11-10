@@ -85,6 +85,7 @@ it.effect.each(["ready before request", "ready after request", "restart before r
           yield* SubscriptionRef.set(primaryBackendStartup, {
             _tag: "Failing",
             reason: "backend restarting",
+            managedPolicy: false,
             output: "process exited",
           });
           assert.equal(yield* Ref.get(exchanges), 0);

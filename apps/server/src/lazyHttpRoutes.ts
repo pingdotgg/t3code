@@ -45,13 +45,6 @@ export const lazyHttpRoutes = <A, E, R>(
           Effect.forkIn(Context.get(context, Scope.Scope)),
         ),
       );
-      yield* router.add(
-        "*",
-        path,
-        initialize.pipe(
-          Effect.flatMap(Fiber.join),
-          Effect.flatMap((handler) => handler),
-        ),
-      );
+      yield* router.add("*", path, initialize.pipe(Effect.flatMap(Fiber.join), Effect.flatten));
     }),
   );

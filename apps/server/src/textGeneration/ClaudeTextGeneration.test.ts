@@ -129,6 +129,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             generateBranchName: () => Effect.succeed({ branch: "feature" }),
             generateThreadTitle: () => Effect.succeed({ title: "thread" }),
             generateReviewGuide: () => Effect.die("unused"),
+            generateTranscriptionPostProcessing: () => Effect.die("unused"),
           };
         }),
       );

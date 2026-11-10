@@ -76,14 +76,18 @@ import type * as EasDeviceHost from "./EasDeviceHost.ts";
 import type * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Exit from "effect/Exit";
+import * as Predicate from "effect/Predicate";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
 export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
 const isSshCommandError = Schema.is(SshCommandError);
+// SshDeviceHost loads on first use, so match its Windows error by tag.
+const isSshWindowsHostError = (cause: unknown): cause is SshDeviceHost.SshWindowsHostError =>
+  Predicate.isTagged(cause, "SshWindowsHostError");
 
 const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
-  const windows = SshDeviceHost.isSshWindowsHostError(error.cause) ? error.cause : null;
+  const windows = isSshWindowsHostError(error.cause) ? error.cause : null;
   const cause = windows ? windows.cause : error.cause;
   if (
     !isSshCommandError(cause) ||
@@ -1390,7 +1394,7 @@ export const make = Effect.gen(function* () {
         return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
       }).pipe(
         Effect.mapError((error) =>
-          error._tag === "DeviceHostError" && SshDeviceHost.isSshWindowsHostError(error.cause)
+          error._tag === "DeviceHostError" && isSshWindowsHostError(error.cause)
             ? new DeviceHostUnavailableError({
                 hostId: host.id,
                 hostLabel: host.label,

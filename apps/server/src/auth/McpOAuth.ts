@@ -281,9 +281,7 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<McpOAuthClient | undefined> {
     const [body, signature, extra] = clientId.split(".");
     if (!body || !signature || extra !== undefined) return undefined;
-    const verified = yield* signer
-      .verify(`mcp-client-id.${body}`, signature)
-      .pipe(Effect.orDie);
+    const verified = yield* signer.verify(`mcp-client-id.${body}`, signature).pipe(Effect.orDie);
     if (!verified) return undefined;
     const json = Option.liftThrowable(base64UrlDecodeUtf8)(body);
     if (Option.isNone(json)) return undefined;

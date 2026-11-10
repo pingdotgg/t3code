@@ -51,6 +51,7 @@ it.effect(
         {
           _tag: "Failing",
           reason: "Backend could not start",
+          managedPolicy: false,
           output: "startup failed",
         },
       );

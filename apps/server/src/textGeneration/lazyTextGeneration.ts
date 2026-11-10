@@ -24,5 +24,7 @@ export const makeLazyTextGeneration = Effect.fn("makeLazyTextGeneration")(functi
       Effect.flatMap(service, (value) => value.generateThreadTitle(input)),
     generateReviewGuide: (input) =>
       Effect.flatMap(service, (value) => value.generateReviewGuide(input)),
+    generateTranscriptionPostProcessing: (input) =>
+      Effect.flatMap(service, (value) => value.generateTranscriptionPostProcessing(input)),
   } satisfies ProviderTextGeneration;
 });

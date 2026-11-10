@@ -57,7 +57,6 @@ export const DesktopWindowBoundsSchema = Schema.Struct({
 export type DesktopWindowBounds = typeof DesktopWindowBoundsSchema.Type;
 export {
   DEFAULT_MAIN_WINDOW_SIZE,
-  MIN_MAIN_WINDOW_SIZE,
   normalizeMainWindowBounds,
 } from "../window/mainWindowOptions.ts";
 
