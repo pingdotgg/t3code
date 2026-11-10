@@ -10,7 +10,7 @@ description: Authenticate each request and provide a typed current user to Effec
 import { BetterAuth } from "@alchemy.run/better-auth";
 import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
 import { RuntimeContext } from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Http from "alchemy/Http";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -146,7 +146,7 @@ The private group requires authentication, while the health group and Better Aut
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import AuthApi from "./worker.ts";
 
