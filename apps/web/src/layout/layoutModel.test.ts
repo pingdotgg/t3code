@@ -6,6 +6,7 @@ import {
   createLayoutState,
   ghostLoneLayoutChats,
   layoutChatSwaps,
+  moveLayoutTabToWorkspace,
   openLayoutGhostChat,
   openLayoutKeptTab,
   openLayoutTab,
@@ -13,6 +14,7 @@ import {
   replaceLayoutTabContent,
   resizeLayoutColumnEdge,
   selectFocusedTab,
+  selectFocusedWorkspace,
   selectLayoutPaneSlots,
   showLayoutContent,
   type LayoutState,
@@ -150,6 +152,21 @@ function drawnRightEdges(
   });
   return slots.map((slot) =>
     Math.round((slot.rect.left + slot.rect.width) * stripWidth * viewportWidth),
+  );
+}
+
+function chatFor(id: string): LayoutTabContent {
+  return {
+    kind: "chat",
+    target: { kind: "server", threadRef: scopeThreadRef(environmentId, ThreadId.make(id)) },
+  };
+}
+
+function tabContents(state: LayoutState) {
+  return state.workspaces.map((workspace) =>
+    workspace.columns
+      .flatMap((column) => column.panes)
+      .flatMap((pane) => pane.tabs.map((tab) => tab.content)),
   );
 }
 
@@ -436,5 +453,23 @@ describe("resizeLayoutColumnEdge", () => {
       unitWidth,
     );
     expect(drawnRightEdges(released, viewportWidth, "always-shrink")).toEqual([333, 600, 1000]);
+  });
+});
+
+describe("moveLayoutTabToWorkspace", () => {
+  it("moves the top workspace's tab into a new workspace above it", () => {
+    const first = chatFor("first");
+    const second = chatFor("second");
+    const state = [first, second].reduce(
+      (layout, content) =>
+        openLayoutTab(layout, content, { placement: "active-pane", position: "end" }),
+      createLayoutState(),
+    );
+
+    const moved = moveLayoutTabToWorkspace(state, -1);
+
+    expect(tabContents(moved)).toEqual([[second], [first], []]);
+    expect(selectFocusedWorkspace(moved)).toBe(moved.workspaces[0]);
+    expect(selectFocusedTab(moved)?.content).toBe(second);
   });
 });
