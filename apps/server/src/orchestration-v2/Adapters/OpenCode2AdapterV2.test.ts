@@ -5454,13 +5454,16 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           event("session.execution.succeeded", { sessionID: SESSION }),
         ]);
         const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const firstTerminal = yield* Deferred.make<void>();
         let terminalsSeen = 0;
         const collector = yield* Stream.runForEach(
           runtime.events.pipe(
             Stream.tap((event) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
                 events.push(event);
-                if (event.type === "turn.terminal") terminalsSeen += 1;
+                if (event.type !== "turn.terminal") return;
+                terminalsSeen += 1;
+                yield* Deferred.succeed(firstTerminal, undefined);
               }),
             ),
             Stream.takeUntil(() => terminalsSeen >= 2),
@@ -5468,9 +5471,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           () => Effect.void,
         ).pipe(Effect.forkScoped);
         yield* runtime.startTurn(turnInput(thread));
-        yield* Stream.runHead(
-          runtime.events.pipe(Stream.filter((event) => event.type === "turn.terminal")),
-        );
+        yield* Deferred.await(firstTerminal);
         yield* runtime.startTurn({
           ...turnInput(thread),
           runId: RunId.make("run:opencode2-adapter:overflow"),
@@ -5478,10 +5479,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           providerTurnOrdinal: 2,
           attemptId: RunAttemptId.make("attempt:opencode2-adapter:overflow"),
         });
-        yield* Stream.runHead(
-          runtime.events.pipe(Stream.filter((event) => event.type === "turn.terminal")),
-        );
-        yield* Fiber.interrupt(collector);
+        yield* Fiber.join(collector);
         // The live event stream coalesces rapid updates; dedupe by item id so
         // ordinal uniqueness is asserted over distinct items.
         const ordinalsById = new Map(
@@ -5497,11 +5495,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           counts.set(ordinal, (counts.get(ordinal) ?? 0) + 1);
         }
         const duplicated = [...counts.entries()].filter(([, count]) => count > 1);
-        // @effect-diagnostics-next-line globalConsoleInEffect:off -- probe
-        console.log(
-          "[probe] allocated ordinals:",
-          JSON.stringify((globalThis as { __acpOrd?: number[] }).__acpOrd),
-        );
         expect(duplicated).toEqual([]);
       }),
     );

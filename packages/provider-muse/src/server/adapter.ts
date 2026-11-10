@@ -443,7 +443,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const itemIdentity = (turn: ActiveTurn, nativeId: string) =>
         `${options.instanceId}:${turn.input.providerThread.id}:${turn.nativeId}:${nativeId}`;
       const baseItem = (turn: ActiveTurn, nativeId: string, time: DateTime.Utc) => {
-        if (!turn.ordinals.has(nativeId)) turn.ordinals.set(nativeId, turn.nextOrdinal++);
+        if (!turn.ordinals.has(nativeId)) {
+          // Overflowing turns continue past their band; the next band starts past this mark.
+          lastItemOrdinal = Math.max(lastItemOrdinal, turn.nextOrdinal);
+          turn.ordinals.set(nativeId, turn.nextOrdinal++);
+        }
         if (!turn.started.has(nativeId)) turn.started.set(nativeId, time);
         const identity = itemIdentity(turn, nativeId);
         return {
@@ -1054,9 +1058,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             : {}),
         });
         yield* updateSession(disposition === "broken" ? "error" : "ready", detail ?? null);
-        // An overflowing turn continued past its band; the high-water mark moves
-        // up so the next turn's band base never reuses ordinals.
-        lastItemOrdinal = Math.max(lastItemOrdinal, turn.nextOrdinal - 1);
         active = undefined;
         if (status === "failed") {
           const usageLimited =
@@ -2127,7 +2128,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           settledRequests: new Set(),
           retries: [],
           done: yield* Deferred.make<void>(),
-          nextOrdinal: Math.max(lastItemOrdinal, turnInput.providerTurnOrdinal * 100 + 1),
+          nextOrdinal: Math.max(lastItemOrdinal + 1, turnInput.providerTurnOrdinal * 100 + 1),
           flushScheduled: false,
           interruptRequested: false,
           compact,

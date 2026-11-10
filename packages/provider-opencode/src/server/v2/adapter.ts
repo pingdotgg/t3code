@@ -1714,9 +1714,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const turn = state.active;
       if (turn === undefined) return;
       state.active = undefined;
-      // An overflowing turn continued past its band; the thread high-water mark
-      // moves up so the next turn's band base never reuses ordinals.
-      state.lastItemOrdinal = Math.max(state.lastItemOrdinal, turn.nextOrdinal - 1);
       for (const inboxID of turn.steers) state.strandedSteers.add(inboxID);
       for (const entry of pending.values()) {
         const background = callsAbove(entry.sessionId).some((call) => call.background);
@@ -1844,6 +1841,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             }
           : { ...base, status: terminal.status, failure: null },
       );
+      // Recorded after the terminal failure ordinal so the next band never reuses it.
+      state.lastItemOrdinal = Math.max(state.lastItemOrdinal, turn.nextOrdinal - 1);
       // Cold servers list models lazily; refresh unknown windows off-stream for the next turn.
       if (window === undefined) {
         yield* Effect.forkIn(readModels(directoryOf(turn.input.runtimePolicy.cwd)), sessionScope);

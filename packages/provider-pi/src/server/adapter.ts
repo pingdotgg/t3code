@@ -1715,9 +1715,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const turn = state.activeTurn;
         if (turn === null) return;
         state.activeTurn = null;
-        // An overflowing turn continued past its band; the thread high-water mark
-        // moves up so the next turn's band base never reuses ordinals.
-        state.lastItemOrdinal = Math.max(state.lastItemOrdinal, turn.nextItemOrdinal - 1);
         const interrupted = turn.interrupted || turn.nativeAborted;
         const completedAt = yield* DateTime.now;
         yield* completeOpenStreamItems(turn);
@@ -1829,6 +1826,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             threadDisposition: "reusable",
           });
         }
+        // Recorded after the terminal failure item so the next band never reuses its ordinal.
+        state.lastItemOrdinal = Math.max(state.lastItemOrdinal, turn.nextItemOrdinal - 1);
       });
 
       const scheduleSettleProbe = (
@@ -2822,7 +2821,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               startedAt,
               itemOrdinals: new Map(),
               nextItemOrdinal: Math.max(
-                state.lastItemOrdinal,
+                state.lastItemOrdinal + 1,
                 turnInput.providerTurnOrdinal * 100 + 1,
               ),
               messageOrdinal: 0,
