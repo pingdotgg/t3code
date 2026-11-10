@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/co
 import { AsyncResult } from "effect/reactivity";
 import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
@@ -384,7 +385,7 @@ describe("file view comments", () => {
     expect(screen.getByText("Removed from the composer").query()).toBeNull();
   });
 
-  it("deleting a commented line removes its comment instead of moving it", async () => {
+  it("deleting a commented line neither moves nor rewrites its comment, and Undo restores it", async () => {
     using _settings = setup();
     const contents = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
     state.file = {
@@ -429,6 +430,26 @@ describe("file view comments", () => {
           }),
         );
       });
+    const isMac = isMacPlatform(navigator.platform);
+    const undo = () =>
+      act(async () => {
+        content()!.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "z",
+            code: "KeyZ",
+            metaKey: isMac,
+            ctrlKey: !isMac,
+            bubbles: true,
+            composed: true,
+            cancelable: true,
+          }),
+        );
+      });
+    const storedComment = () =>
+      useComposerDraftStore
+        .getState()
+        .getComposerDraft(threadRef)
+        ?.reviewComments.find(({ id }) => id === comment.id);
 
     content()!.focus();
     const selectionSynced = new Promise((resolve) =>
@@ -444,10 +465,116 @@ describe("file view comments", () => {
     await vi.waitFor(() =>
       expect(state.optimistic?.contents).toBe("const a = 1;\nxconst c = 3;\n"),
     );
-
-    const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
-    expect(draft?.reviewComments ?? []).toEqual([]);
     expect(screen.getByText("This is about b").query()).toBeNull();
+    expect(storedComment()).toEqual(comment);
+
+    await undo();
+    await vi.waitFor(() => expect(state.optimistic?.contents).toBe("const a = 1;\nconst c = 3;\n"));
+    await undo();
+    await vi.waitFor(() => expect(state.optimistic?.contents).toBe(contents));
+    await expect.element(screen.getByText("This is about b")).toBeVisible();
+    expect(storedComment()).toEqual(comment);
+  });
+
+  it("undoing an earlier edit keeps a comment added after it", async () => {
+    using _settings = setup();
+    const contents = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
+    state.file = {
+      relativePath: "config.ts",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    const store = useComposerDraftStore.getState();
+    const comment = buildFileReviewComment({
+      id: "file-comment-earlier",
+      filePath: "config.ts",
+      startLine: 2,
+      endLine: 2,
+      text: "This is about b",
+      contents,
+    });
+    store.addReviewComment(threadRef, comment);
+    using _comments = {
+      [Symbol.dispose]: () => {
+        const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+        for (const { id } of draft?.reviewComments ?? []) store.removeReviewComment(threadRef, id);
+      },
+    };
+
+    await using screen = await render(filePreview("config.ts"));
+    await expect.element(screen.getByText("This is about b")).toBeVisible();
+    const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
+    const content = () => shadowRoot()?.querySelector<HTMLElement>("[data-content]");
+    await vi.waitFor(() => expect(content()?.isContentEditable).toBe(true));
+
+    const firstLine = shadowRoot()!.querySelector('[data-line="1"]')!;
+    const caret = document.createTreeWalker(firstLine, NodeFilter.SHOW_TEXT).nextNode()!;
+    content()!.focus();
+    const selectionSynced = new Promise((resolve) =>
+      document.addEventListener("selectionchange", resolve, { once: true }),
+    );
+    document.getSelection()!.setBaseAndExtent(caret, 0, caret, 0);
+    await selectionSynced;
+    await act(async () => {
+      content()!.dispatchEvent(
+        new InputEvent("beforeinput", {
+          inputType: "insertParagraph",
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await vi.waitFor(() => expect(state.optimistic?.contents).toBe(`\n${contents}`));
+
+    const lineNumber = shadowRoot()!.querySelector<HTMLElement>('[data-column-number="4"]')!;
+    const { left, top, width, height } = lineNumber.getBoundingClientRect();
+    const point = {
+      clientX: left + width / 2,
+      clientY: top + height / 2,
+      pointerId: 1,
+      pointerType: "mouse",
+      button: 0,
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    };
+    await act(async () => {
+      lineNumber.dispatchEvent(new PointerEvent("pointerdown", point));
+      document.dispatchEvent(new PointerEvent("pointerup", point));
+    });
+    await userEvent.fill(screen.getByRole("textbox", { name: "Comment on lines L4" }), "About c");
+    await userEvent.click(screen.getByRole("button", { name: "Comment", exact: true }));
+    await expect.element(screen.getByText("About c")).toBeVisible();
+    const commentIds = () =>
+      useComposerDraftStore
+        .getState()
+        .getComposerDraft(threadRef)
+        ?.reviewComments.map(({ id }) => id)
+        .toSorted();
+    expect(commentIds()).toHaveLength(2);
+    const ids = commentIds();
+
+    content()!.focus();
+    const isMac = isMacPlatform(navigator.platform);
+    await act(async () => {
+      content()!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "z",
+          code: "KeyZ",
+          metaKey: isMac,
+          ctrlKey: !isMac,
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await vi.waitFor(() => expect(state.optimistic?.contents).toBe(contents));
+
+    expect(commentIds()).toEqual(ids);
+    await expect.element(screen.getByText("This is about b")).toBeVisible();
   });
 
   it("keeps a linked line revealed when the thread changes under the file view", async () => {

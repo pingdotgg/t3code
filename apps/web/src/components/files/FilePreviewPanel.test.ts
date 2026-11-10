@@ -9,6 +9,7 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 
 import {
   fileCommentAnnotationsFromReviewComments,
+  pruneFileCommentAnnotations,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import {
@@ -93,6 +94,38 @@ describe("file comment annotations", () => {
         },
       },
     ]);
+  });
+  it("prunes only completed comments the composer draft no longer holds", () => {
+    const contents = "a\nb\nc\n";
+    const stored = buildFileReviewComment({
+      id: "kept",
+      filePath: "a.ts",
+      startLine: 1,
+      endLine: 1,
+      text: "kept",
+      contents,
+    });
+    const annotations = fileCommentAnnotationsFromReviewComments([stored], "a.ts");
+    expect(pruneFileCommentAnnotations(annotations, [stored])).toBe(annotations);
+
+    const draft = { id: "draft", kind: "draft", startLine: 2, endLine: 2, text: "" } as const;
+    const removed = {
+      id: "removed",
+      kind: "comment",
+      startLine: 2,
+      endLine: 2,
+      text: "x",
+    } as const;
+    expect(
+      pruneFileCommentAnnotations(
+        [
+          ...annotations,
+          { lineNumber: 2, metadata: { entries: [draft, removed] } },
+          { lineNumber: 3, metadata: { entries: [{ ...removed, id: "gone" }] } },
+        ],
+        [stored],
+      ),
+    ).toEqual([...annotations, { lineNumber: 2, metadata: { entries: [draft] } }]);
   });
 });
 

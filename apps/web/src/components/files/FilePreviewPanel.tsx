@@ -97,7 +97,7 @@ import {
   formatFileCommentRange,
   nextFileCommentId,
   normalizeFileCommentRange,
-  reconcileFileCommentAnnotations,
+  pruneFileCommentAnnotations,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
@@ -700,14 +700,10 @@ function EditableFileSurface({
   const [lineAnnotations, setLineAnnotations] = useState(() =>
     fileCommentAnnotationsFromReviewComments(reviewComments, relativePath),
   );
-  // The composer draft owns completed comments; the editor's copy only tracks their moved lines.
-  const reconciledLineAnnotations = reconcileFileCommentAnnotations(
-    lineAnnotations,
-    reviewComments,
-    relativePath,
-  );
-  if (reconciledLineAnnotations !== lineAnnotations) {
-    setLineAnnotations(reconciledLineAnnotations);
+  // The composer draft decides which comments exist; the editor decides where they sit.
+  const prunedLineAnnotations = pruneFileCommentAnnotations(lineAnnotations, reviewComments);
+  if (prunedLineAnnotations !== lineAnnotations) {
+    setLineAnnotations(prunedLineAnnotations);
   }
   const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
   const selectedRange =
@@ -749,16 +745,6 @@ function EditableFileSurface({
     setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
     changeFileSaveSession(saveTarget, file.contents);
     if (!nextLineAnnotations) return;
-    const keptIds = new Set(
-      nextLineAnnotations.flatMap((annotation) => annotation.metadata.entries.map(({ id }) => id)),
-    );
-    for (const annotation of lineAnnotations) {
-      for (const entry of annotation.metadata.entries) {
-        if (entry.kind === "comment" && !keptIds.has(entry.id)) {
-          removeReviewComment(composerDraftTarget, entry.id);
-        }
-      }
-    }
     const remapped = remapFileCommentAnnotations(nextLineAnnotations);
     // The editor hands back the array it was given until an edit moves an annotation.
     setLineAnnotations((current) => (current === nextLineAnnotations ? current : remapped));
