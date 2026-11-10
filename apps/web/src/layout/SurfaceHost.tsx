@@ -522,8 +522,8 @@ export function LayoutSurfaceHost({
   pagePlane?: React.ReactNode;
 }) {
   // A resize drag previews here and commits to the store once on release.
-  const [preview, setPreview] = useState<LayoutState | null>(null);
-  const shown = preview ?? layout;
+  const [preview, setPreview] = useState<{ layout: LayoutState; heldStripPx: number } | null>(null);
+  const shown = preview?.layout ?? layout;
   const workspace = selectFocusedWorkspace(shown);
   const narrow = useMediaQuery("max-md");
   useSyncLayoutBehavior();
@@ -1402,6 +1402,13 @@ export function LayoutSurfaceHost({
             />
           ) : null}
         </div>
+        {preview ? (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute top-0 left-0 h-px"
+            style={{ width: preview.heldStripPx }}
+          />
+        ) : null}
       </div>
       <ThreadSurfaceServices />
       {pagePlane}
