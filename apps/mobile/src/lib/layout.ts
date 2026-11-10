@@ -60,7 +60,7 @@ const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;
 // UIKit's inspector column keeps its own width, so the sidebar steps aside only when the page
 // would get narrower than this: landscape 11" and 13" iPads keep three columns, portrait ones don't.
-const NATIVE_INSPECTOR_MIN_MAIN_WIDTH = 320;
+export const NATIVE_INSPECTOR_MIN_MAIN_WIDTH = 320;
 
 /**
  * The window's width class. Compact: the sidebar is the root and pages push over it. Medium: the
@@ -91,18 +91,6 @@ export interface WorkspacePaneLayout {
 export interface FileInspectorPaneLayout {
   readonly supported: boolean;
   readonly width: number | null;
-}
-
-export function deriveThreadFeedInitialContentInset(input: {
-  readonly platform: string;
-  readonly usesNativeAutomaticInsets: boolean;
-  readonly bottomContentInset: number;
-}): { readonly bottom: number } | undefined {
-  if (input.platform !== "android" || input.usesNativeAutomaticInsets) {
-    return undefined;
-  }
-
-  return { bottom: Math.max(0, input.bottomContentInset) };
 }
 
 export function deriveLayout(input: {
@@ -218,6 +206,8 @@ export function isPrimarySidebarPinned(input: {
 export function deriveWorkspacePaneLayout(input: {
   readonly layout: Layout;
   readonly viewportWidth: number;
+  /** Width UIKit keeps out of its columns, such as the Duo's system bar. */
+  readonly horizontalSafeArea?: number;
   readonly nativeWorkspace?: boolean;
   /** Whether the sidebar floats over the content rather than taking its room; medium by default. */
   readonly primarySidebarFloats?: boolean;
@@ -251,7 +241,11 @@ export function deriveWorkspacePaneLayout(input: {
     auxiliaryPaneVisible &&
     inspectorWidth !== null &&
     input.layout.listPaneWidth !== null &&
-    viewportWidth - input.layout.listPaneWidth - (input.layout.listPaneGap ?? 0) - inspectorWidth <
+    viewportWidth -
+      (input.nativeWorkspace ? (input.horizontalSafeArea ?? 0) : 0) -
+      input.layout.listPaneWidth -
+      (input.layout.listPaneGap ?? 0) -
+      inspectorWidth <
       (input.nativeWorkspace ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH : FILE_INSPECTOR_MIN_MAIN_WIDTH);
   const primarySidebarVisible =
     preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
@@ -268,8 +262,21 @@ export function deriveWorkspacePaneLayout(input: {
   };
 }
 
-export function nativeInspectorColumnWidth(viewportWidth: number, fraction: number) {
-  return Math.max(260, Math.min(viewportWidth * 0.6, viewportWidth * fraction));
+/**
+ * UIKit drops the inspector column, and refuses to show it again, once the page beside it would
+ * fall under its minimum inside the safe area (the Duo's system bar takes width from the window).
+ */
+export function nativeInspectorColumnWidth(input: {
+  readonly viewportWidth: number;
+  readonly horizontalSafeArea: number;
+  readonly fraction: number;
+}) {
+  const { viewportWidth } = input;
+  const maxWidth = Math.min(
+    viewportWidth * 0.6,
+    viewportWidth - input.horizontalSafeArea - NATIVE_INSPECTOR_MIN_MAIN_WIDTH,
+  );
+  return Math.max(260, Math.min(maxWidth, viewportWidth * input.fraction));
 }
 
 export function deriveFileInspectorPaneLayout(input: {
