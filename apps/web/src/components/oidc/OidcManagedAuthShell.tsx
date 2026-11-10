@@ -1,5 +1,5 @@
 import type { OidcController } from "@t3tools/client-runtime/relay";
-import { type ReactNode, useEffect, useSyncExternalStore } from "react";
+import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
 
 import { CloudAuthProvider, type CloudAuth } from "../../cloud/cloudAuth";
 import { createManagedRelayAccountService } from "../../cloud/managedAuth";
@@ -7,6 +7,8 @@ import {
   getBrowserOidcController,
   signInThroughDesktopBrowser,
 } from "../../cloud/oidc/browserOidc";
+import { T3ConnectUserProfilePage } from "../clerk/T3ConnectUserProfilePage";
+import { Dialog, DialogPanel, DialogPopup } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 
 // The relay verifies the ID token, so that is what the controller hands out as the relay token.
@@ -30,6 +32,7 @@ function ConfiguredOidcShell({
   readonly children: ReactNode;
 }) {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const [accountOpen, setAccountOpen] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the OIDC controller to the managed relay account service for the provider's lifetime
   useEffect(() => accountService.attach(controller), [controller]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- another tab signs in, refreshes, or signs out through shared storage
@@ -56,10 +59,22 @@ function ConfiguredOidcShell({
       void signedIn.catch(reportSignInFailure);
     },
     signOut: controller.signOut,
-    openAccount: null,
+    // The relay's account page is the only one; it lists linked environments to deregister.
+    openAccount: () => setAccountOpen(true),
   };
 
-  return <CloudAuthProvider value={value}>{children}</CloudAuthProvider>;
+  return (
+    <CloudAuthProvider value={value}>
+      {children}
+      <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
+        <DialogPopup className="sm:max-w-2xl" aria-label="T3 Connect account">
+          <DialogPanel>
+            <T3ConnectUserProfilePage />
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
+    </CloudAuthProvider>
+  );
 }
 
 /** Lazy-loaded when the build configures an OpenID Connect provider; Clerk is not loaded then. */

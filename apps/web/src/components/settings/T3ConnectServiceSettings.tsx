@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/relay/self-hosted";
 import { useState } from "react";
 
+import { useCloudAuth } from "~/cloud/cloudAuth";
 import { readSelfHostedRelay, saveSelfHostedRelay } from "~/cloud/publicConfig";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -35,6 +36,7 @@ const switchTo = (relay: SelfHostedRelay | null) => {
 /** Chooses between the build's T3 Connect and a relay the user runs themselves. */
 export function T3ConnectServiceSettings() {
   const current = readSelfHostedRelay();
+  const { isSignedIn, openAccount } = useCloudAuth();
   const [service, setService] = useState<Service>(current ? "self-hosted" : "default");
   const [address, setAddress] = useState(current?.relayUrl ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +112,19 @@ export function T3ConnectServiceSettings() {
             </form>
           }
         />
-      ) : current ? (
+      ) : null}
+      {current && isSignedIn && openAccount ? (
+        <SettingsRow
+          title="Linked environments"
+          description="Environments linked to your relay account. Deregister one you no longer use."
+          control={
+            <Button size="xs" variant="outline" onClick={() => openAccount()}>
+              Manage
+            </Button>
+          }
+        />
+      ) : null}
+      {service !== "self-hosted" && current ? (
         <SettingsRow
           title="Switch back to T3 Connect"
           description="Sign-in starts over, and environments linked to your relay stay there until you link them again."

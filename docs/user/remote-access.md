@@ -74,7 +74,9 @@ On each web, desktop, and mobile app, open **Settings → Connections → T3 Con
 service**, choose **Self-hosted relay**, and enter the relay's address. The app
 reads the sign-in provider from the relay, reloads, and asks you to sign in.
 Choose **T3 Connect** there to switch back. Environments you linked through your
-relay stay linked to it until you turn T3 Connect off and on again.
+relay stay linked to it until you turn T3 Connect off and on again. To remove
+one from your relay account, choose **Linked environments → Manage** there, or
+**Settings → T3 Account** on mobile, and choose **Deregister**.
 
 A self-hosted relay has no managed tunnels. If the relay sets
 `RELAY_CHANNELS=true`, a linked environment with no public address is carried

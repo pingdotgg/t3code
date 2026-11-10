@@ -39,7 +39,7 @@ export function SettingsAuthRouteScreen() {
   );
 }
 
-/** An OpenID Connect provider hosts no profile view, so this screen only signs in and out. */
+/** An OpenID Connect provider hosts no profile view, so this screen signs in and out and lists linked environments. */
 function OidcSettingsAuthRouteScreen() {
   const { isSignedIn, accountLabel, signOut } = useCloudAuth();
   const [busy, setBusy] = useState(false);
@@ -61,25 +61,32 @@ function OidcSettingsAuthRouteScreen() {
 
   return (
     <SettingsScreen title="T3 Account">
-      <ScrollView contentContainerClassName="gap-6 px-5 pt-4">
-        <SettingsSection>
-          {isSignedIn ? (
-            <SettingsRow
-              icon="arrow.right.circle"
-              label="Sign out"
-              value={accountLabel ?? undefined}
-              onPress={() => void signOut()}
-            />
-          ) : (
+      {isSignedIn ? (
+        <View className="flex-1">
+          <View className="px-5 pt-4">
+            <SettingsSection>
+              <SettingsRow
+                icon="arrow.right.circle"
+                label="Sign out"
+                value={accountLabel ?? undefined}
+                onPress={() => void signOut()}
+              />
+            </SettingsSection>
+          </View>
+          <T3ConnectProfilePage />
+        </View>
+      ) : (
+        <ScrollView contentContainerClassName="gap-6 px-5 pt-4">
+          <SettingsSection>
             <SettingsRow
               icon="person.crop.circle"
               label={busy ? "Opening sign-in…" : "Sign in"}
               disabled={busy}
               onPress={() => void signIn()}
             />
-          )}
-        </SettingsSection>
-      </ScrollView>
+          </SettingsSection>
+        </ScrollView>
+      )}
     </SettingsScreen>
   );
 }
