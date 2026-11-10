@@ -397,7 +397,11 @@ describe("pools", () => {
         EnvironmentId.make("env-b"),
         {
           entry: { target: { label: "Desktop" } },
-          serverConfig: { providers: [go("key-A", "2026-11-04T17:55:00.000Z", [0, 18, 21])] },
+          serverConfig: {
+            providers: [
+              go("key-A", "2026-11-04T17:55:00.000Z", [0, 18, 21], "2026-11-15T15:39:19.000Z"),
+            ],
+          },
         },
       ],
     ]);
