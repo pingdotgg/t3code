@@ -115,7 +115,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
         }),
       );
       return yield* Fiber.await(child).pipe(
-        Effect.flatMap((exit) => exit),
+        Effect.flatten,
         Effect.ensuring(Fiber.interrupt(child)),
       );
     });

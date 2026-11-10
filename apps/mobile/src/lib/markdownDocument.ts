@@ -229,8 +229,8 @@ function htmlTagMarkdown(
   const blockBreak = anchors.open === 0 ? "\n\n" : " ";
   if (/^<summary\b/i.test(tag)) return `${blockBreak}**`;
   if (/^<\/summary\s*>/i.test(tag)) return `**${blockBreak}`;
-  // A line break would end the table row, so a cell keeps its content on one line.
-  if (/^<br\b/i.test(tag)) return options.inTableCell ? " " : "  \n";
+  // A raw newline would end the table row; both parsers decode this reference to one inside the cell.
+  if (/^<br\b/i.test(tag)) return options.inTableCell ? "&#10;" : "  \n";
   if (/^<\/?(?:p|div|details)\b/i.test(tag)) return blockBreak;
   return "";
 }
@@ -279,9 +279,7 @@ export function markdownWithHtml(markdown: string): string {
     }
   };
   visit(parser.parse(markdown), false, false);
-  for (const edit of edits.reverse())
-    markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
-  return markdown;
+  return applyMarkdownEdits(markdown, edits);
 }
 
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
