@@ -349,7 +349,7 @@ thread does not change it, and the agent cannot send messages to it unless you a
 
 A thread from a linked machine, picked, pasted or dropped, stays a reference that the agent reads
 on that machine. Pasting or dropping a thread from any other environment attaches a saved
-transcript file, and a pasted link to it stays a link. The source
+transcript file, and a pasted one also stays a link to the thread. The source
 environment must be connected and up to date. The transcript includes the visible history and
 saved text context at the time you attached it; later messages and the contents of attached files
 are not copied. The agent can read the saved transcript after the source disconnects. Normal

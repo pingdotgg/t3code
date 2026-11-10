@@ -32,6 +32,7 @@ import { compressImageForStash } from "../../lib/imageCompression";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { pendingDraftWork } from "./pendingDraftWork";
+import { unreadableThreadLink } from "../composerInlineTokenPaste";
 import {
   previewAnnotationContextRecord,
   reviewCommentContextRecord,
@@ -209,7 +210,7 @@ export function useComposerStash(input: {
       : new Map<string, string | null>();
     const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
       const contextId = rewrittenContextIds.get(reference.contextId);
-      if (contextId === null) return reference.label;
+      if (contextId === null) return unreadableThreadLink(entry.records ?? [], reference);
       return contextId
         ? formatInlineContextReference({
             ...reference,

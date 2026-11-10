@@ -13,9 +13,12 @@ import {
   collectComposerContextReferences,
   formatComposerContextReference,
   replaceComposerContextReferences,
+  sanitizeComposerContextLabel,
   threadLinkContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 import { isClosingFence, parseOpeningFence } from "~/composer-rich-text-doc";
+import { configuredHostedAppUrl } from "~/hostedPairing";
 import { readThreadShell } from "~/state/entities";
 
 const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
@@ -97,6 +100,17 @@ function codeOffsetTest(text: string): (offset: number) => boolean {
   };
 }
 
+/** A thread the agent cannot read stays a link to its machine, whether or not its transcript arrives. */
+export function unreadableThreadLink(
+  records: ReadonlyArray<ComposerContextRecord>,
+  reference: { readonly contextId: string; readonly label: string },
+): string {
+  const record = records.find((candidate) => candidate.contextId === reference.contextId);
+  if (record?.kind !== "thread" || !("threadId" in record)) return reference.label;
+  const link = hostedThreadLink(record, configuredHostedAppUrl());
+  return `[${sanitizeComposerContextLabel(reference.label, "thread")}](${link})`;
+}
+
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
@@ -169,10 +183,10 @@ export function importPastedComposerText(
         kind: occurrence.kind === "element" ? "preview-annotation" : occurrence.kind,
       });
     }
-    return rewrittenIds?.get(occurrence.contextId) !== null &&
-      heldContextIds.has(occurrence.contextId)
-      ? occurrence.source
-      : occurrence.label;
+    if (rewrittenIds?.get(occurrence.contextId) === null) {
+      return unreadableThreadLink(fragment?.records ?? [], occurrence);
+    }
+    return heldContextIds.has(occurrence.contextId) ? occurrence.source : occurrence.label;
   });
   // A thread the import refused, on a machine this agent cannot read, stays the link it was.
   return threadLinkContextReferences(text, fragment?.records ?? [], threadTitle, (record) =>

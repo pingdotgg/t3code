@@ -11,10 +11,12 @@ import {
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import { configuredHostedAppUrl } from "../../hostedPairing";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import { threadContextReference } from "../../lib/composerContextRecords";
 import { rememberCopiedComposerAttachments } from "../../lib/copiedComposerAttachments";
@@ -231,10 +233,10 @@ it.each([
   );
 });
 
-// Its chip used to resolve to nothing, or block the send; a dropped one comes in as its transcript.
+// Its chip used to resolve to nothing; now it keeps a link naming the thread and its machine.
 it.each([
   { machine: "unlinked-machine", transcript: true },
-  // Nothing can load a machine this client is not connected to, so the chip is only its label.
+  // Nothing can load a machine this client is not connected to, so only the link remains.
   { machine: "disconnected-machine", transcript: false },
 ])(
   "pastes a thread from $machine, importing its transcript: $transcript",
@@ -276,7 +278,7 @@ it.each([
         importer.importContextFragment,
       );
     });
-    expect(pasted).toBe("See Remote thread");
+    expect(pasted).toBe(`See [Remote thread](${hostedThreadLink(ref, configuredHostedAppUrl())})`);
     expect(importThreadTranscript.mock.calls).toEqual(transcript ? [[ref, target]] : []);
     expect(store.getComposerDraft(target)?.threadContexts ?? []).toEqual([]);
   },

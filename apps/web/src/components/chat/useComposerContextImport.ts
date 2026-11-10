@@ -302,7 +302,7 @@ export function useComposerContextImport(input: {
     sourceEnvironmentId: EnvironmentId | null,
     threadDraftTarget = attachmentDraftTarget,
   ): ReadonlyMap<string, string | null> => {
-    // A null id means the reference becomes its plain label.
+    // A null id means the reference becomes a link to a thread the agent cannot read.
     const rewritten = new Map<string, string | null>();
     const dependentAttachmentLocalIds = new Map<string, string>();
     const skippedDependentAttachmentIds = new Set<string>();
@@ -416,11 +416,12 @@ export function useComposerContextImport(input: {
             record.environmentId !== environmentId &&
             !linkedEnvironments.has(record.environmentId)
           ) {
-            if (!readPreparedConnection(record.environmentId)) break;
-            importThreadTranscript(
-              { environmentId: record.environmentId, threadId: record.threadId },
-              threadDraftTarget,
-            );
+            if (readPreparedConnection(record.environmentId)) {
+              importThreadTranscript(
+                { environmentId: record.environmentId, threadId: record.threadId },
+                threadDraftTarget,
+              );
+            }
             rewritten.set(record.contextId, null);
             break;
           }
