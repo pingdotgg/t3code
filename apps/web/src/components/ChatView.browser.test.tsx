@@ -150,3 +150,28 @@ it("preserves the current conversation and draft across Pull requests and Back",
     await expect.element(editor).toHaveTextContent(draft);
   }
 });
+
+it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
+  const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("older-settled: question 0")).toBeVisible();
+
+  await page.getByRole("button", { name: `Thread actions for ${thread.title}` }).click();
+  // Without a bound the poll runs to the test deadline and reports a bare timeout.
+  await expect
+    .element(page.getByRole("menuitem", { name: "Rename thread" }), { timeout: 5_000 })
+    .toBeVisible();
+});

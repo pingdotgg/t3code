@@ -60,6 +60,7 @@ export type KeybindingCommandOption = KeybindingCommand;
 const CORE_WHEN_VARIABLES = [
   "terminalFocus",
   "terminalOpen",
+  "previewOpen",
   "isWeb",
   "isDesktop",
   "true",
