@@ -1,12 +1,15 @@
+import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   MessageId,
+  ThreadId,
   TurnItemId,
   type OrchestrationV2ThreadDetailSnapshot,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
@@ -17,79 +20,203 @@ import {
 import {
   COMPACT_THREAD_CACHE_SCHEMA_VERSION,
   decodeStoredThreadSnapshot,
-  encodeStoredThreadSnapshot,
+  makeStoredThreadSnapshotEncoder,
 } from "./threadCacheEncoding.ts";
 
-const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
-const BODY = "a body long enough to count ".repeat(4);
-const COMMAND_OUTPUT = "only the items carry this output";
+const environmentId = EnvironmentId.make("environment-thread-cache");
+const otherThreadId = ThreadId.make("thread-parent");
+const encodeOriginal = Schema.encodeEffect(
+  Schema.fromJsonString(StoredOrchestrationThreadSnapshot),
+);
 
-const base = (id: string, ordinal: number) => ({
-  id: TurnItemId.make(id),
-  threadId: v2ThreadId,
+const notice = (index: number, threadId = v2ThreadId) => ({
+  id: TurnItemId.make(`notice-${threadId}-${index}`),
+  threadId,
   runId: null,
   nodeId: null,
   providerThreadId: null,
   providerTurnId: null,
   nativeItemRef: null,
   parentItemId: null,
-  ordinal,
+  ordinal: index,
   status: "completed" as const,
-  title: null,
-  startedAt: v2Now,
-  completedAt: v2Now,
+  title: index % 2 === 0 ? null : `  Notice ${index}  `,
+  startedAt: DateTime.add(v2Now, { seconds: index }),
+  completedAt: index % 3 === 0 ? null : v2Now,
   updatedAt: v2Now,
+  type: "system_notice" as const,
+  message: `Notice ${index}`,
 });
 
-const messageId = MessageId.make("message-1");
-const answer = {
-  ...base("answer", 1),
-  type: "assistant_message" as const,
-  messageId,
-  text: BODY,
-  streaming: false,
-};
-const command = {
-  ...base("command", 2),
-  type: "command_execution" as const,
-  input: "pwd",
-  output: COMMAND_OUTPUT,
-  exitCode: 0,
-};
-const rowOf = <Item extends { readonly id: TurnItemId }>(item: Item, position: number) => ({
-  position,
-  visibility: "local" as const,
-  sourceThreadId: v2ThreadId,
-  sourceItemId: item.id,
-  item,
+// Inherited rows come first, as in a fork, then local rows whose items alias turnItems.
+function projectionWith(count: number): OrchestrationV2ThreadProjection {
+  const inherited = Array.from({ length: 5 }, (_, index) => notice(index, otherThreadId));
+  const turnItems = Array.from({ length: count }, (_, index) => notice(index));
+  return {
+    ...v2Projection,
+    turnItems,
+    visibleTurnItems: [
+      ...inherited.map((item) => ({
+        position: 0,
+        visibility: "inherited" as const,
+        sourceThreadId: otherThreadId,
+        sourceItemId: item.id,
+        item,
+      })),
+      ...turnItems.map((item) => ({
+        position: 0,
+        visibility: "local" as const,
+        sourceThreadId: v2ThreadId,
+        sourceItemId: item.id,
+        item,
+      })),
+    ].map((row, position) => ({ ...row, position })),
+  };
+}
+
+const stored = (projection: OrchestrationV2ThreadProjection) => ({
+  environmentId,
+  threadId: v2ThreadId,
+  snapshot: { snapshotSequence: 7, projection, historyCursor: null, hasMoreHistory: false },
 });
-const projection: OrchestrationV2ThreadProjection = {
-  ...v2Projection,
-  messages: [
-    {
-      id: messageId,
-      threadId: v2ThreadId,
-      runId: null,
-      nodeId: null,
-      role: "assistant",
-      text: BODY,
-      attachments: [],
-      streaming: false,
-      createdBy: "agent",
-      creationSource: "provider",
-      createdAt: v2Now,
-      updatedAt: v2Now,
-    },
-  ],
-  turnItems: [answer, command],
-  visibleTurnItems: [rowOf(answer, 0), rowOf(command, 1)],
-};
-const snapshot: OrchestrationV2ThreadDetailSnapshot = { snapshotSequence: 3, projection };
-const stored = { environmentId: ENVIRONMENT_ID, threadId: v2ThreadId, snapshot };
-const encodeFull = Schema.encodeEffect(Schema.fromJsonString(StoredOrchestrationThreadSnapshot));
-const occurrences = (text: string, part: string) => text.split(part).length - 1;
+
+describe("cooperative thread cache encoding", () => {
+  it.effect("matches the plain encoding across chunks, cold and after rows change", () =>
+    Effect.gen(function* () {
+      const encode = makeStoredThreadSnapshotEncoder({ format: "full" });
+      const original = (projection: OrchestrationV2ThreadProjection) =>
+        encodeOriginal({
+          ...stored(projection),
+          schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+        });
+      const cold = projectionWith(70);
+      expect(yield* encode(stored(cold))).toEqual(Option.some(yield* original(cold)));
+
+      const [first, ...rest] = cold.turnItems;
+      const replaced = { ...first!, message: "Edited" };
+      const added = notice(70);
+      const warm: OrchestrationV2ThreadProjection = {
+        ...cold,
+        turnItems: [replaced, ...rest, added],
+        visibleTurnItems: [
+          ...cold.visibleTurnItems.map((row) =>
+            row.item === first ? { ...row, item: replaced } : row,
+          ),
+          {
+            position: cold.visibleTurnItems.length,
+            visibility: "local",
+            sourceThreadId: v2ThreadId,
+            sourceItemId: added.id,
+            item: added,
+          },
+        ],
+      };
+      expect(yield* encode(stored(warm))).toEqual(Option.some(yield* original(warm)));
+    }),
+  );
+
+  it.effect("round-trips the compact format", () =>
+    Effect.gen(function* () {
+      const projection = projectionWith(40);
+      const encoded = yield* makeStoredThreadSnapshotEncoder({ format: "compact" })(
+        stored(projection),
+      );
+      const decoded = yield* decodeStoredThreadSnapshot(Option.getOrThrow(encoded));
+      expect(decoded.snapshot.projection).toEqual(projection);
+    }),
+  );
+
+  it.effect("encodes nothing once the rows exceed the budget, warm or cold", () =>
+    Effect.gen(function* () {
+      const small = stored(projectionWith(4));
+      const large = stored(projectionWith(200));
+      const limit = Option.getOrThrow(
+        yield* makeStoredThreadSnapshotEncoder({ format: "full" })(small),
+      ).length;
+      for (const format of ["full", "compact"] as const) {
+        const encode = makeStoredThreadSnapshotEncoder({ format, maxJsonLength: limit });
+        expect(Option.isSome(yield* encode(small))).toBe(true);
+        expect(Option.isNone(yield* encode(large))).toBe(true);
+        expect(Option.isNone(yield* encode(large))).toBe(true);
+      }
+    }),
+  );
+});
 
 describe("thread cache records", () => {
+  const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
+  const BODY = "a body long enough to count ".repeat(4);
+  const COMMAND_OUTPUT = "only the items carry this output";
+
+  const base = (id: string, ordinal: number) => ({
+    id: TurnItemId.make(id),
+    threadId: v2ThreadId,
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status: "completed" as const,
+    title: null,
+    startedAt: v2Now,
+    completedAt: v2Now,
+    updatedAt: v2Now,
+  });
+
+  const messageId = MessageId.make("message-1");
+  const answer = {
+    ...base("answer", 1),
+    type: "assistant_message" as const,
+    messageId,
+    text: BODY,
+    streaming: false,
+  };
+  const command = {
+    ...base("command", 2),
+    type: "command_execution" as const,
+    input: "pwd",
+    output: COMMAND_OUTPUT,
+    exitCode: 0,
+  };
+  const rowOf = <Item extends { readonly id: TurnItemId }>(item: Item, position: number) => ({
+    position,
+    visibility: "local" as const,
+    sourceThreadId: v2ThreadId,
+    sourceItemId: item.id,
+    item,
+  });
+  const projection: OrchestrationV2ThreadProjection = {
+    ...v2Projection,
+    messages: [
+      {
+        id: messageId,
+        threadId: v2ThreadId,
+        runId: null,
+        nodeId: null,
+        role: "assistant",
+        text: BODY,
+        attachments: [],
+        streaming: false,
+        createdBy: "agent",
+        creationSource: "provider",
+        createdAt: v2Now,
+        updatedAt: v2Now,
+      },
+    ],
+    turnItems: [answer, command],
+    visibleTurnItems: [rowOf(answer, 0), rowOf(command, 1)],
+  };
+  const snapshot: OrchestrationV2ThreadDetailSnapshot = { snapshotSequence: 3, projection };
+  const stored = { environmentId: ENVIRONMENT_ID, threadId: v2ThreadId, snapshot };
+  const encodeFull = Schema.encodeEffect(Schema.fromJsonString(StoredOrchestrationThreadSnapshot));
+  const occurrences = (text: string, part: string) => text.split(part).length - 1;
+
+  const encodeCompactRecord = makeStoredThreadSnapshotEncoder({ format: "compact" });
+  const encodeStoredThreadSnapshot = (value: typeof stored) =>
+    encodeCompactRecord(value).pipe(Effect.map(Option.getOrThrow));
+
   it.effect("writes each item once", () =>
     Effect.gen(function* () {
       const raw = yield* encodeStoredThreadSnapshot(stored);
