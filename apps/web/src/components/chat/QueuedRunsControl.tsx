@@ -286,7 +286,7 @@ export function QueuedRunsControl({
       aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
       data-thread-queue="true"
       // Anchors the sr-only live region; unanchored, it escapes the timeline scroller and makes the chat column scroll.
-      className="relative flex w-full min-w-0 flex-col px-2 py-1 text-meta"
+      className="surface-composer-banner flex w-full min-w-0 flex-col px-2 py-1 text-meta"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           setDrag(null);
