@@ -69,8 +69,9 @@ jobs:
         # Pool emulators are x86_64; a dispatch builds the ABI it asks for.
         abi: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.abi)) || fromJSON('["x86_64"]') }}
     concurrency:
-      # Runs for one client queue up; the later one finds it in the cache.
-      group: mobile-dev-client-android-${{ matrix.abi }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'shared' }}
+      # One run per client: a second request for the same fingerprint waits and finds it
+      # in the cache. A shared group would drop every waiting run but the newest.
+      group: mobile-dev-client-android-${{ matrix.abi }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.fingerprint || github.sha }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     env:
       NODE_OPTIONS: --max-old-space-size=8192
@@ -86,15 +87,40 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
 
-      # The build runs dependency scripts; it gets no token. `persist-credentials: false`
-      # fails here: its cleanup runs `git submodule foreach`, which stops at the vendored
-      # gitlinks under .repos (no .gitmodules entry).
+      # A dispatch names any commit GitHub has, including a fork's. Only a commit that
+      # collaborators pushed here builds with the cache login and the shared disk.
+      - name: Check the commit belongs to this repository
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          if git ls-remote --heads origin | grep -q "^$sha"; then
+            exit 0
+          fi
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...main" --jq .status || true)"
+          if [ "$status" = "ahead" ] || [ "$status" = "identical" ]; then
+            exit 0
+          fi
+          echo "::error::$sha is not the head of a branch in $GITHUB_REPOSITORY and not on main; build it locally."
+          exit 1
+
+      # The build runs dependency scripts; it gets no token. checkout keeps the token in a
+      # file under RUNNER_TEMP that .git/config includes, so both go. `persist-credentials:
+      # false` fails here: its cleanup runs `git submodule foreach`, which stops at the
+      # vendored gitlinks under .repos (no .gitmodules entry).
       - name: Drop checkout credentials
         run: |
-          git config --local --name-only --get-regexp '^(http\..*\.extraheader|includeif\..*)$' \
-            | while read -r key; do git config --local --unset-all "$key"; done
-          if git config --local --get-regexp 'extraheader|includeif' ; then
-            echo "::error::checkout credentials are still configured"
+          git config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+            rm -f "$file"
+            git config --local --unset-all "$key"
+          done
+          git config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if git config --local --get-regexp 'extraheader|includeif' || ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::checkout credentials are still present"
             exit 1
           fi
 
@@ -114,7 +140,10 @@ jobs:
             echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
           } >> "$GITHUB_ENV"
 
+      # Pull requests build cold: their code must not write Gradle or ccache state that
+      # the runs holding the cache login restore.
       - name: Mount build cache
+        if: github.event_name != 'pull_request'
         uses: useblacksmith/stickydisk@v1
         with:
           key: ${{ github.repository }}-android-dev-client-${{ matrix.abi }}
@@ -193,7 +222,7 @@ jobs:
     runs-on: blacksmith-12vcpu-macos-26
     timeout-minutes: 60
     concurrency:
-      group: mobile-dev-client-ios-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'shared' }}
+      group: mobile-dev-client-ios-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.fingerprint || github.sha }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     env:
       NODE_OPTIONS: --max-old-space-size=8192
@@ -207,15 +236,40 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
 
-      # The build runs dependency scripts; it gets no token. `persist-credentials: false`
-      # fails here: its cleanup runs `git submodule foreach`, which stops at the vendored
-      # gitlinks under .repos (no .gitmodules entry).
+      # A dispatch names any commit GitHub has, including a fork's. Only a commit that
+      # collaborators pushed here builds with the cache login and the shared disk.
+      - name: Check the commit belongs to this repository
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          if git ls-remote --heads origin | grep -q "^$sha"; then
+            exit 0
+          fi
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...main" --jq .status || true)"
+          if [ "$status" = "ahead" ] || [ "$status" = "identical" ]; then
+            exit 0
+          fi
+          echo "::error::$sha is not the head of a branch in $GITHUB_REPOSITORY and not on main; build it locally."
+          exit 1
+
+      # The build runs dependency scripts; it gets no token. checkout keeps the token in a
+      # file under RUNNER_TEMP that .git/config includes, so both go. `persist-credentials:
+      # false` fails here: its cleanup runs `git submodule foreach`, which stops at the
+      # vendored gitlinks under .repos (no .gitmodules entry).
       - name: Drop checkout credentials
         run: |
-          git config --local --name-only --get-regexp '^(http\..*\.extraheader|includeif\..*)$' \
-            | while read -r key; do git config --local --unset-all "$key"; done
-          if git config --local --get-regexp 'extraheader|includeif' ; then
-            echo "::error::checkout credentials are still configured"
+          git config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+            rm -f "$file"
+            git config --local --unset-all "$key"
+          done
+          git config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if git config --local --get-regexp 'extraheader|includeif' || ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::checkout credentials are still present"
             exit 1
           fi
 
