@@ -841,6 +841,7 @@ effectIt.effect.each(["linux", "darwin"] as const)(
               if (input.args[0] === "-A") {
                 return Effect.succeed(processOutput(`4242 ${process.pid} 4242\n`));
               }
+              if (!input.args.includes("-E")) return Effect.succeed(processOutput(""));
               if (environmentFails) {
                 return Effect.fail(
                   new ProcessRunner.ProcessTimeoutError({
@@ -921,6 +922,7 @@ effectIt.effect("labels a terminal's servers on macOS by their process titles", 
     { pid: 1234, port: 4321, title: "api" },
     { pid: 1235, port: 4322, title: "web" },
   ];
+  const psCalls: Array<ReadonlyArray<string>> = [];
   const layer = PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -934,15 +936,10 @@ effectIt.effect("labels a terminal's servers on macOS by their process titles", 
                 ),
               );
             }
-            const format = input.args[input.args.indexOf("-o") + 1] ?? "";
-            if (input.command !== "ps" || !/\b(?:command|args)=/.test(format)) {
-              return Effect.succeed(processOutput(""));
-            }
-            const listed = input.args.includes("-p")
-              ? (input.args[input.args.indexOf("-p") + 1] ?? "").split(",").map(Number)
-              : servers.map(({ pid }) => pid);
+            psCalls.push(input.args);
+            const listed = (input.args[input.args.indexOf("-p") + 1] ?? "").split(",").map(Number);
             const environment = input.args.includes("-E")
-              ? " PATH=/usr/bin T3CODE_THREAD_ID=agent-thread HOME=/Users/dev"
+              ? ` PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=agent-thread HOME=/Users/dev`
               : "";
             return Effect.succeed(
               processOutput(
@@ -964,16 +961,21 @@ effectIt.effect("labels a terminal's servers on macOS by their process titles", 
 
   return Effect.gen(function* () {
     const scanner = yield* ownedScanner(servers.map(({ pid }) => pid));
-    expect(
-      (yield* scanner.scan()).map(({ port, processName, terminal }) => ({
-        port,
-        processName,
-        terminalId: terminal?.terminalId,
-      })),
-    ).toEqual([
+    const labels = [
       { port: 4321, processName: "api", terminalId: "scanner-terminal" },
       { port: 4322, processName: "web", terminalId: "scanner-terminal" },
-    ]);
+    ];
+    for (let scan = 0; scan < 2; scan++) {
+      expect(
+        (yield* scanner.scan()).map(({ port, processName, terminal }) => ({
+          port,
+          processName,
+          terminalId: terminal?.terminalId,
+        })),
+      ).toEqual(labels);
+    }
+    // Titles never read the environment, and a terminal's own listeners never need it.
+    expect(psCalls).toEqual([["-ww", "-o", "pid=,command=", "-p", "1234,1235"]]);
   }).pipe(Effect.provide(layer));
 });
 
