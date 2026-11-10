@@ -89,6 +89,12 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
             { HOME: "/accounts/shell" },
           ),
         ).toBe("/accounts/shell/.claude.json");
+        // Unix env names are case-sensitive: a lowercase `home` is not the child's HOME.
+        const unixEnv = yield* makeClaudeEnvironment(
+          { homePath: "/accounts/profile/.claude" },
+          { home: "/accounts/profile", HOME: "/accounts/actual" },
+        );
+        expect(unixEnv.CLAUDE_CONFIG_DIR).toBe("/accounts/profile/.claude");
       }),
     );
 

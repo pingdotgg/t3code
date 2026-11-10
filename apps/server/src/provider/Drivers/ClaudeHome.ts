@@ -34,8 +34,10 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
 const resolveClaudeChildHome = Effect.fn("resolveClaudeChildHome")(function* (
   environment: NodeJS.ProcessEnv,
 ) {
-  const name = (yield* HostProcess.Platform) === "win32" ? "USERPROFILE" : "HOME";
-  const value = Object.entries(environment).find(([key]) => key.toUpperCase() === name)?.[1];
+  const value =
+    (yield* HostProcess.Platform) === "win32"
+      ? Object.entries(environment).find(([key]) => key.toUpperCase() === "USERPROFILE")?.[1]
+      : environment.HOME;
   return value?.trim() || (yield* HostProcess.HomeDirectory);
 });
 
