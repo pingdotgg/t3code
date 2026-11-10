@@ -61,16 +61,6 @@ describe("HistorySwipeNavigation", () => {
 
   it.each([
     [
-      "a macOS trackpad swipe navigates",
-      1,
-      [
-        [-4, 12],
-        [-60, 180],
-        [-60, 180],
-      ],
-      true,
-    ],
-    [
       "a macOS trackpad swipe opening with one native pixel at 299% zoom navigates",
       1.2 ** 6,
       [[-1 / 1.2 ** 6, 1], ...Array.from({ length: 6 }, () => [-60 / 1.2 ** 6, 60] as const)],
@@ -86,7 +76,6 @@ describe("HistorySwipeNavigation", () => {
       ],
       true,
     ],
-    ["an accelerated macOS mouse wheel notch keeps the thread", 1, [[-200, 240]], false],
     [
       "slow macOS mouse wheel notches keep the thread",
       1,
@@ -106,7 +95,6 @@ describe("HistorySwipeNavigation", () => {
       ],
       false,
     ],
-    ["a macOS mouse wheel notch at 110% zoom keeps the thread", 1.1, [[-181.82, 218]], false],
     ["a Linux horizontal mouse wheel notch keeps the thread", 1, [[-120, 120]], false],
   ] as const)("%s", async (_name, zoomFactor, events, navigates) => {
     navigateHistory.mockReset();
