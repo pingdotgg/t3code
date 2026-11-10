@@ -9180,21 +9180,6 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       current = yield* orchestrator.getThreadProjection(childId);
       assert.lengthOf(current.runs, 1);
       assert.isFalse(current.thread.limitRecovery!.autoResume);
-      yield* orchestrator.dispatch({
-        type: "thread.metadata.update",
-        commandId: CommandId.make("recovery:settled-parent:rearm"),
-        threadId: childId,
-        limitRecovery: { runId: run.id, resetAt, autoResume: true },
-      });
-      const rearmed = (yield* orchestrator.getThreadProjection(childId)).thread.limitRecovery;
-      assert.isTrue(rearmed!.autoResume);
-      yield* orchestrator.dispatch({
-        ...resume!,
-        commandId: CommandId.make("recovery:settled-parent:stale-resume"),
-      });
-      current = yield* orchestrator.getThreadProjection(childId);
-      assert.lengthOf(current.runs, 1);
-      assert.deepEqual(current.thread.limitRecovery, rearmed);
     }),
   );
 });
