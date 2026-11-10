@@ -163,19 +163,19 @@ it("kills a hung streaming feed without waiting for native cleanup", async () =>
 it("skips process exit teardown when the backend dies during native inference", async () => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-speech-orphan-"));
   const marker = NodePath.join(directory, "exit-teardown");
+  // The exit hook stands in for native atexit teardown; the interval for the threadpool call.
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    streamingFixture(`async () => {
+      const { writeFileSync } = process.getBuiltinModule("node:fs");
+      process.once("exit", () => writeFileSync(${JSON.stringify(marker)}, "ran"));
+      setInterval(() => {}, 1 << 30);
+      process.disconnect();
+      return await new Promise(() => {});
+    }`),
+  );
   try {
-    // The exit hook stands in for native atexit teardown; the interval for the threadpool call.
-    const model = await loadNativeSpeechModel(
-      "unused.gguf",
-      new AbortController().signal,
-      streamingFixture(`async () => {
-        const { writeFileSync } = process.getBuiltinModule("node:fs");
-        process.once("exit", () => writeFileSync(${JSON.stringify(marker)}, "ran"));
-        setInterval(() => {}, 1 << 30);
-        process.disconnect();
-        return await new Promise(() => {});
-      }`),
-    );
     await model.begin({ timestamps: "none" }, false);
     await expect(model.feed(new Float32Array(512).fill(0.25))).rejects.toThrow(
       "Speech process exited",
@@ -185,6 +185,7 @@ it("skips process exit teardown when the backend dies during native inference", 
       "orphaned worker ran exit teardown while native inference was in flight",
     ).toBe(false);
   } finally {
+    await model.dispose();
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }
 });
