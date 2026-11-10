@@ -16,6 +16,7 @@ const GitFilePath = Schema.String.check(Schema.isNonEmpty());
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
 
 export const GitStackedAction = Schema.Literals([
+  "create_branch",
   "commit",
   "push",
   "create_pr",
