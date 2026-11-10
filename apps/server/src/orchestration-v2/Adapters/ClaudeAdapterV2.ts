@@ -4112,23 +4112,19 @@ function providerFailureFromResult(
   failureHint?: string,
   usageLimited = false,
 ): OrchestrationV2ProviderFailure | null {
-  // Keep malformed provider output from making regex matching unbounded.
-  const resultForGatewayParsing =
-    message.subtype === "success" ? message.result.slice(0, 4096) : "";
-  const gatewayLimit =
-    message.subtype === "success" && message.is_error && message.terminal_reason === "api_error"
-      ? message.api_error_status === 503 && failureHint === undefined
-        ? /^API Error: 503 \[[^\]\r\n]+\] \[429\]: \{"type":"error","error":\{"type":"rate_limit_error",[^\r\n]*\} \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
-            resultForGatewayParsing,
-          )
-        : message.api_error_status === 429
-          ? // CLIProxyAPI rejects every request until its credentials' cooldown ends.
-            /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
-              resultForGatewayParsing,
-            )
-          : null
-      : null;
-  const gatewayResetAt = gatewayCooldownResetAt(gatewayLimit, receivedAt);
+  const gatewayResetAt =
+    failureHint === undefined &&
+    message.subtype === "success" &&
+    message.is_error &&
+    message.terminal_reason === "api_error" &&
+    message.api_error_status === 503
+      ? gatewayCooldownResetAt(
+          /^API Error: 503 \[[^\]\r\n]+\] \[429\]: \{"type":"error","error":\{"type":"rate_limit_error",[^\r\n]*\} \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
+            message.result,
+          ),
+          receivedAt,
+        )
+      : undefined;
   if (gatewayResetAt !== undefined) {
     return makeProviderFailure({
       class: "usage_limit",
@@ -4167,11 +4163,15 @@ function providerFailureFromResult(
   const apiErrorStatus = message.api_error_status ?? null;
   // API-key sessions get no rate_limit_info, so a gateway's 429 carries its reset only as text.
   const resetAt =
-    apiErrorStatus === 429 &&
-    message.result.startsWith("API Error:") &&
-    !message.result.startsWith("API Error: Request rejected (429) · All credentials for model ")
+    apiErrorStatus === 429 && message.result.startsWith("API Error:")
       ? gatewayCooldownResetAt(
-          /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(message.result),
+          // CLIProxyAPI nests upstream errors in its message; only its own cooldown counts.
+          (message.result.startsWith(
+            "API Error: Request rejected (429) · All credentials for model ",
+          )
+            ? /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/
+            : /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/
+          ).exec(message.result),
           receivedAt,
         )
       : undefined;
