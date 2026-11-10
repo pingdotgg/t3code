@@ -1,0 +1,33 @@
+import type * as organizations from "@distilled.cloud/aws/organizations";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `organizations:ListParents`.
+ *
+ * Lists the direct parent (root or OU) of the specified child account or OU — walking the organization tree upward.
+ * Account-level operation — Organizations is a management-account-scoped
+ * global service, so the binding takes no resource argument. Provide the
+ * implementation with `Effect.provide(AWS.Organizations.ListParentsHttp)`.
+ * ### Reading the Organization Tree
+ * **Example:** Find an Account's Parent
+ * ```typescript
+ * // init — account-level binding, no resource argument
+ * const listParents = yield* AWS.Organizations.ListParents();
+ *
+ * // runtime
+ * const { Parents } = yield* listParents({ ChildId: accountId });
+ * ```
+ *
+ * @binding
+ */
+export interface ListParents extends Binding.Service<
+  ListParents,
+  "AWS.Organizations.ListParents",
+  () => Effect.Effect<
+    (
+      request: organizations.ListParentsRequest,
+    ) => Effect.Effect<organizations.ListParentsResponse, organizations.ListParentsError>
+  >
+> {}
+export const ListParents = Binding.Service<ListParents>("AWS.Organizations.ListParents");
