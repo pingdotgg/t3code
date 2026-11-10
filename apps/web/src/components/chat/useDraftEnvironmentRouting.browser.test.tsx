@@ -2,7 +2,12 @@ import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
 import type { EnvironmentPresentation } from "../../state/environments";
 import type { ServerProvider } from "@t3tools/contracts";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import { createModelSelection } from "@t3tools/shared/model";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   EnvironmentId,
@@ -15,6 +20,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
 const resources = vi.hoisted(() => ({
   refreshSelection: vi.fn<(ids: readonly EnvironmentId[]) => Promise<EnvironmentId | null>>(),
@@ -134,6 +141,18 @@ function Harness({
 
 it("refreshes a stored automatic choice before sending an unsent draft", async () => {
   const { a, b, draftId, input, store } = setup();
+  const selections = ["model-a", "model-b"].map((model) =>
+    createModelSelection(ProviderInstanceId.make("codex"), model),
+  );
+  const threadId = input.draftThread!.threadId;
+  const destinationSelections = draftFanoutSelectionsAtom(
+    scopedThreadKey(scopeThreadRef(b, threadId)),
+  );
+  appAtomRegistry.set(destinationSelections, null);
+  appAtomRegistry.set(
+    draftFanoutSelectionsAtom(scopedThreadKey(scopeThreadRef(a, threadId))),
+    selections,
+  );
   store.setDraftThreadContext(draftId, {
     branch: "main",
     envMode: "worktree",
@@ -152,6 +171,7 @@ it("refreshes a stored automatic choice before sending an unsent draft", async (
     envMode: "worktree",
   });
   expect(store.getComposerDraft(draftId)?.prompt).toBe("Keep this prompt");
+  expect(appAtomRegistry.get(destinationSelections)).toEqual(selections);
 });
 
 it.each(["manual", "attachments", "promoted"] as const)(

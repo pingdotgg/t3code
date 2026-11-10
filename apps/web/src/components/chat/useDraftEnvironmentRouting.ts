@@ -9,7 +9,11 @@ import {
   resolveProjectProviderInstanceEnabled,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { toastManager } from "../ui/toast";
@@ -22,6 +26,8 @@ import { type EnvironmentPresentation, useEnvironmentProviders } from "../../sta
 import { useProjects } from "../../state/entities";
 import type { DraftSessionState } from "../../composerDraftStore";
 import { loadBalancingSendWarning } from "./composerSend.logic";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
 interface DraftEnvironmentRoutingInput {
   readonly draftId: DraftId | null;
@@ -156,6 +162,18 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         return false;
       }
       const projectRef = scopeProjectRef(target.environmentId, target.projectId);
+      if (originalDraft && target.environmentId !== originalDraft.environmentId) {
+        appAtomRegistry.set(
+          draftFanoutSelectionsAtom(
+            scopedThreadKey(scopeThreadRef(target.environmentId, originalDraft.threadId)),
+          ),
+          appAtomRegistry.get(
+            draftFanoutSelectionsAtom(
+              scopedThreadKey(scopeThreadRef(originalDraft.environmentId, originalDraft.threadId)),
+            ),
+          ),
+        );
+      }
       // The send must read the target project's composer and provider context after retargeting.
       flushSync(() =>
         setDraftThreadContext(draftId, {
