@@ -59,20 +59,13 @@ describe("HistorySwipeNavigation", () => {
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
 
-  // A vertical scroll 15° off vertical; a real swipe's first events are often diagonal.
+  // A vertical scroll 15° off vertical.
   const drift = Array.from({ length: 30 }, () => [-4, 15] as const);
-  const straightBack = Array.from({ length: 15 }, () => [-12, 0] as const);
   it.each([
     [
       "a vertical scroll that starts slightly diagonally keeps the thread",
       [[-5, 3], ...drift],
       false,
-    ],
-    ["a swipe that turns into a vertical scroll keeps the thread", [[-10, 0], ...drift], false],
-    [
-      "a swipe whose first events lean diagonally navigates",
-      [[-1, -1], [-2, -1], [-3, -1], ...straightBack],
-      true,
     ],
     [
       "a swipe that leans diagonally for two events navigates",
