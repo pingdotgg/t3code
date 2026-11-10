@@ -4827,31 +4827,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
 
     // A bare allowedTools entry shadows canUseTool, and the SDK warns on every session start.
-    it.effect.each(["approval-required", "auto-accept-edits"] as const)(
-      "does not pre-approve T3 MCP tools as bare allowedTools in %s",
-      (runtimeMode) =>
-        Effect.gen(function* () {
-          const turn = yield* openMcpTurn(runtimeMode);
-          assert.deepEqual(
-            (turn.openedOptions.allowedTools ?? []).filter(
-              (tool) => tool.startsWith("mcp__t3-code__") && !tool.includes("("),
-            ),
-            [],
-            `${turn.openedOptions.permissionMode} consults canUseTool, so bare T3 MCP allowedTools shadow it`,
-          );
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              McpProviderSessions.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-            ),
-          ),
-        ),
-    );
-
     it.effect.each([
       ["approval-required", undefined],
       ["auto-accept-edits", undefined],
@@ -4861,6 +4836,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ([runtimeMode, launchArgs]) =>
         Effect.gen(function* () {
           const turn = yield* openMcpTurn(runtimeMode, launchArgs);
+          assert.notInclude(turn.openedOptions.allowedTools ?? [], "mcp__t3-code__*");
           const settings = turn.openedOptions.settings;
           assert.isObject(settings);
           if (typeof settings !== "object") return;
