@@ -39,6 +39,7 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
 const platform = HostProcess.Platform.defaultValue();
 // Never aborted; the probe CLI here exits on its own.
 const probeAbort = new AbortController();
+const hostPath = process.env.PATH;
 
 it.effect.skipIf(platform === "win32")(
   "starts the probe CLI in its workspace through the shell trampoline",
@@ -58,7 +59,7 @@ it.effect.skipIf(platform === "win32")(
         command: "pwd",
         args: ["-P"],
         cwd: directory,
-        env: { PATH: process.env.PATH },
+        env: { PATH: hostPath },
         signal: probeAbort.signal,
       });
       const output = yield* Effect.promise(

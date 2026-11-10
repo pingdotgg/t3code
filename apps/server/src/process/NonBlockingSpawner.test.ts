@@ -39,6 +39,8 @@ const withoutEnv = NonBlockingSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
+const hostPath = process.env.PATH;
+
 const run = (command: ChildProcess.Command) =>
   ChildProcessSpawner.ChildProcessSpawner.use((spawner) => spawner.string(command));
 
@@ -132,7 +134,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("NonBlockingSpa
       const directory = yield* fileSystem.makeTempDirectoryScoped();
       const command = ChildProcess.make("env", [], {
         cwd: directory,
-        env: { PATH: process.env.PATH, A: "1", "BASH_FUNC_x%%": "() {  echo exported\n}" },
+        env: { PATH: hostPath, A: "1", "BASH_FUNC_x%%": "() {  echo exported\n}" },
       });
       const native = yield* run(command).pipe(Effect.provide(NodeServices.layer));
       expect(yield* run(command).pipe(Effect.provide(wrapped))).toBe(native);
