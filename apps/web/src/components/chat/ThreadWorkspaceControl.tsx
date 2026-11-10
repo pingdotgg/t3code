@@ -111,11 +111,11 @@ export function ThreadWorkspaceControl({
           ) : null}
         </SelectContent>
       </Select>
-      <p className="text-xs text-muted-foreground">
-        {busy
-          ? "Stop the current turn before changing workspace."
-          : "History stays in this thread. The next turn runs in the selected workspace. Add new folders as projects first."}
-      </p>
+      {busy && (
+        <p className="text-xs text-muted-foreground">
+          Stop the current turn before changing workspace.
+        </p>
+      )}
     </div>
   );
 }

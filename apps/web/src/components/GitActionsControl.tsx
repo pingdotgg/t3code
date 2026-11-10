@@ -1693,7 +1693,7 @@ export default function GitActionsControl({
         onClick={() => setIsRewriteCommitsDialogOpen(true)}
       >
         <GitCommitIcon />
-        <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Rewrite commits...</span>
+        <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Rewrite commits</span>
       </ThreadDetailsControl>
       {gitActionMenuItems
         .filter((item) => item.id === "push" || item.id === "pr")
@@ -1740,13 +1740,6 @@ export default function GitActionsControl({
           <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Publish repository...</span>
         </ThreadDetailsControl>
       ) : null}
-      {gitStatusForActions &&
-        (gitStatusForActions.refName === null || gitStatusForActions.isDefaultRef) && (
-          <p className="px-2 py-1.5 text-xs text-muted-foreground">
-            Commit, Push, and Create {changeRequestTerminology.shortLabel} create a feature branch
-            first. Commit dialog can also commit directly to the current checkout.
-          </p>
-        )}
       {gitStatusForActions &&
         gitStatusForActions.refName !== null &&
         !gitStatusForActions.hasWorkingTreeChanges &&
