@@ -14,6 +14,7 @@ import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.
 import {
   filterAvailableSettingsSearchItems,
   getThreadAutoSettlementSearchAvailability,
+  type SettingsSearchCapability,
 } from "./settingsSearch";
 
 export function useAvailableSettingsSearchItems() {
@@ -29,11 +30,11 @@ export function useAvailableSettingsSearchItems() {
       }),
     ) === true;
   // Any machine that offers it; the row then shows for a settings scope where all selected ones do.
-  const hasFastWorktreeCheckoutEnvironment =
+  const offers = (capability: SettingsSearchCapability) =>
     environments.some(
       (environment) =>
         environment.connection.phase === "connected" &&
-        environment.serverConfig?.environment.capabilities.fastWorktreeCheckout === true,
+        environment.serverConfig?.environment.capabilities[capability] === true,
     ) === true;
   const hasTextGeneratorsEnvironment =
     environments.some(
@@ -70,7 +71,10 @@ export function useAvailableSettingsSearchItems() {
     hasThreadAutoSettlement,
     managedTunnelActive,
     hasPeerLinkHost,
-    hasFastWorktreeCheckoutEnvironment,
+    offeredCapabilities: {
+      fastWorktreeCheckout: offers("fastWorktreeCheckout"),
+      keepAwake: offers("keepAwake"),
+    },
     hasTextGeneratorsEnvironment,
     hasPrimaryEnvironment: primaryEnvironmentId !== null,
   });

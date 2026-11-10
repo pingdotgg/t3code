@@ -1,7 +1,7 @@
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { SettingsIcon } from "lucide-react";
 import { useState } from "react";
-import { type BackgroundActivityProfile } from "@t3tools/contracts";
+import { type BackgroundActivityProfile, type KeepAwakeMode } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
@@ -434,6 +434,62 @@ export function BackgroundActivitySettingsRow() {
             onOpenChange={setBackgroundActivityDialogOpen}
           />
         </>
+      }
+    />
+  );
+}
+
+const KEEP_AWAKE_MODE_LABELS: Record<KeepAwakeMode, string> = {
+  off: "Off",
+  whileWorking: "While agents are working",
+  always: "Always",
+};
+
+const KEEP_AWAKE_MODES = Object.keys(KEEP_AWAKE_MODE_LABELS) as ReadonlyArray<KeepAwakeMode>;
+
+/** Shows only when every machine in scope can hold off sleep. */
+export function KeepAwakeSettingsRow() {
+  const { scope, connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["keepAwake"]);
+  if (
+    scope.kind === "project" ||
+    scope.kind === "checkout" ||
+    connectedEnvironments.length === 0 ||
+    connectedEnvironments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.keepAwake !== true,
+    )
+  )
+    return null;
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("keep-awake")}
+      settingKeys={["keepAwake"]}
+      description="Stops the computer running T3 Code from going to sleep when idle. The display can still sleep, and closing the lid or logging out still stops agents."
+      control={
+        <Select
+          value={mixed ? null : settings.keepAwake}
+          onValueChange={(value) => {
+            if (value !== null) updateSettings({ keepAwake: value });
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Keep computer awake">
+            <SelectValue>
+              {(value: KeepAwakeMode | null) =>
+                value === null ? "Mixed" : KEEP_AWAKE_MODE_LABELS[value]
+              }
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {KEEP_AWAKE_MODES.map((mode) => (
+              <SelectItem hideIndicator key={mode} value={mode}>
+                {KEEP_AWAKE_MODE_LABELS[mode]}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
       }
     />
   );

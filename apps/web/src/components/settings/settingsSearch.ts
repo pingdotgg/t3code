@@ -49,6 +49,9 @@ export type SettingsSearchScope =
   | "checkout"
   | "connections";
 
+/** Server capabilities a setting can depend on; one connected environment offering it is enough. */
+export type SettingsSearchCapability = "fastWorktreeCheckout" | "keepAwake";
+
 export interface SettingsSearchItem {
   readonly id: string;
   readonly title: string;
@@ -70,7 +73,7 @@ export interface SettingsSearchItem {
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
-  readonly fastWorktreeCheckoutOnly?: boolean;
+  readonly requiredCapability?: SettingsSearchCapability;
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
@@ -86,7 +89,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
-  readonly hasFastWorktreeCheckoutEnvironment?: boolean;
+  readonly offeredCapabilities?: Readonly<Record<SettingsSearchCapability, boolean>>;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
@@ -525,7 +528,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Fast worktree checkout",
     to: "/settings/labs",
     scope: "environment",
-    fastWorktreeCheckoutOnly: true,
+    requiredCapability: "fastWorktreeCheckout",
     searchTerms: ["beta fast worktree checkout clone apfs copy-on-write cache macos speed"],
   },
   {
@@ -773,6 +776,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
     searchTerms: [
       "balanced performance battery saver advanced git fetch provider health refresh host power monitor idle policy",
+    ],
+  },
+  {
+    id: "keep-awake",
+    title: "Keep computer awake",
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    requiredCapability: "keepAwake",
+    searchTerms: [
+      "sleep idle caffeinate insomnia amphetamine stay awake agents working always power",
     ],
   },
   {
@@ -1491,8 +1504,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
-      (!item.fastWorktreeCheckoutOnly ||
-        availability.hasFastWorktreeCheckoutEnvironment === true) &&
+      (item.requiredCapability === undefined ||
+        availability.offeredCapabilities?.[item.requiredCapability] === true) &&
       (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),
   );
 }
