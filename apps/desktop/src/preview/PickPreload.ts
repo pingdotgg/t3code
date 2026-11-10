@@ -206,6 +206,8 @@ window.addEventListener("keydown", reportHumanKeyInput, true);
 ipcRenderer.on(
   THUMB_PRESS_CHANNEL,
   (_event, phase: unknown, x: unknown, y: unknown, button: unknown) => {
+    // Main reports presses inside a frame in that frame's coordinates, so those are not replayed.
+    if (document.querySelector("iframe:hover, frame:hover, object:hover, embed:hover")) return;
     if (phase !== "down" && phase !== "up") return;
     if (typeof x !== "number" || typeof y !== "number" || typeof button !== "number") return;
     if (phase === "down") ipcRenderer.send(HUMAN_INPUT_CHANNEL, { kind: "pointer", x, y, button });
