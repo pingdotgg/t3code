@@ -48,8 +48,9 @@ function tryResolveClaudeModelCatalog(
     const profile = decodeClaudeProfileAdapter(entry.profileAdapter ?? {});
     const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
+    const model = ModelCatalog.catalogServerModel(resolved, entry);
     models.push({
-      model: ModelCatalog.catalogServerModel(resolved, entry),
+      model: { ...model, capabilities: withUltracodeToggle(model.capabilities) },
       runtime: profile.value.claudeCode ?? {},
       compatibility: adapter.value.claudeCode ?? {},
     });
@@ -57,6 +58,51 @@ function tryResolveClaudeModelCatalog(
 
   return {
     models,
+  };
+}
+
+// The manifest keeps Ultracode as an effort level because released servers read it from main.
+export function withUltracodeToggle(
+  capabilities: ModelCapabilities | null,
+): ModelCapabilities | null {
+  const descriptors = capabilities?.optionDescriptors ?? [];
+  const effortIndex = descriptors.findIndex(
+    (descriptor) =>
+      descriptor.id === "effort" &&
+      descriptor.type === "select" &&
+      descriptor.options.some((option) => option.id === "ultracode"),
+  );
+  const effort = descriptors[effortIndex];
+  if (effort?.type !== "select") return capabilities;
+  const ultracodeByDefault =
+    (effort.currentValue ?? effort.options.find((option) => option.isDefault)?.id) === "ultracode";
+  const hasXhigh = effort.options.some((option) => option.id === "xhigh");
+  // Ultracode ran at xhigh, so a model that offered it keeps xhigh, and its default moves there.
+  const options = effort.options.flatMap(({ isDefault, ...option }) => {
+    if (option.id === "ultracode") {
+      return hasXhigh
+        ? []
+        : [{ id: "xhigh", label: "Extra High", ...(isDefault ? { isDefault } : {}) }];
+    }
+    if (ultracodeByDefault && option.id === "xhigh") return [{ ...option, isDefault: true }];
+    return [isDefault && !ultracodeByDefault ? { ...option, isDefault } : option];
+  });
+  return {
+    optionDescriptors: descriptors.toSpliced(
+      effortIndex,
+      1,
+      {
+        ...effort,
+        ...(effort.currentValue === "ultracode" ? { currentValue: "xhigh" } : {}),
+        options,
+      },
+      {
+        id: "ultracode",
+        label: "Ultracode",
+        type: "boolean",
+        ...(ultracodeByDefault ? { currentValue: true } : {}),
+      },
+    ),
   };
 }
 
@@ -105,7 +151,7 @@ export function scopeClaudeModelCatalog(
         slug: entry.slug,
         name: entry.name,
         isCustom: true,
-        capabilities: entry.capabilities,
+        capabilities: withUltracodeToggle(entry.capabilities),
       },
       runtime: {},
       compatibility: {},
@@ -191,6 +237,19 @@ function resolveClaudeCatalogModel(
 
 export function resolveClaudeModelSlug(catalog: ClaudeModelCatalog, slugOrAlias: string): string {
   return resolveClaudeCatalogModel(catalog, slugOrAlias)?.model.slug ?? slugOrAlias;
+}
+
+/** Claude reports dated IDs, such as `claude-opus-4-5-20251101`, that the catalog may not list. */
+export function resolveClaudeReportedModelSlug(
+  catalog: ClaudeModelCatalog,
+  reported: string,
+): string {
+  return (
+    (
+      resolveClaudeCatalogModel(catalog, reported) ??
+      resolveClaudeCatalogModel(catalog, reported.replace(/-\d{8}$/, ""))
+    )?.model.slug ?? reported
+  );
 }
 
 export function getClaudeCatalogModelCapabilities(
@@ -294,10 +353,6 @@ export function normalizeClaudeCatalogEffort(
   const effortMap = resolveClaudeCatalogModel(catalog, model)?.runtime.effortMap;
   if (!effortMap || !Object.prototype.hasOwnProperty.call(effortMap, effort)) return effort;
   return effortMap[effort] ?? undefined;
-}
-
-export function isClaudeCatalogUltracodeEffort(effort: string | null | undefined): boolean {
-  return effort === "ultracode";
 }
 
 function resolveClaudeCatalogContextWindow(

@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  type FocusEvent,
   type MouseEventHandler,
   type ReactNode,
   useLayoutEffect,
@@ -11,7 +12,7 @@ import {
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
 import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
-import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { canReturnFocusTo, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
@@ -51,6 +52,19 @@ function ResizablePreviewPanelShell(props: PreviewPanelShellProps) {
   return <PreviewPanelShellFrame {...props} inlineSize={inlineSize} />;
 }
 
+// Prefers the element focus entered the panel from, falling back to the panel toggle.
+function returnFocus(host: HTMLElement, origin: HTMLElement | null) {
+  const { ownerDocument } = host;
+  // focus() is a no-op on a disabled origin, so activeElement says whether it took.
+  if (origin?.isConnected && !host.contains(origin) && canReturnFocusTo(origin)) {
+    origin.focus({ preventScroll: true });
+    if (ownerDocument.activeElement === origin) return true;
+  }
+  const toggle = ownerDocument.querySelector<HTMLButtonElement>("[data-right-panel-toggle]");
+  toggle?.focus();
+  return toggle !== null && ownerDocument.activeElement === toggle;
+}
+
 function PreviewPanelShellFrame(
   props: PreviewPanelShellProps & { inlineSize: PreviewPanelInlineSize },
 ) {
@@ -61,6 +75,8 @@ function PreviewPanelShellFrame(
   const maximized = props.maximized ?? false;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const returnedFocus = useRef(false);
+  const focusOrigin = useRef<HTMLElement | null>(null);
+  const lastBlurred = useRef<EventTarget | null>(null);
   const { width, handlers, observeRow } = props.inlineSize;
   // Width animates only for an open or close. Any other width change disables
   // the transition in the same commit that changes the width, so the browser
@@ -93,21 +109,30 @@ function PreviewPanelShellFrame(
       stopObservingRow();
     };
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on unmount, returns DOM focus to the panel toggle if removal dropped it on the body
+  // React focus events, unlike a listener added in attachHost, also see content that focuses
+  // itself while mounting (a terminal does, from a ref that attaches before the host's).
+  // Focus moving within the panel, portalled menus included, first blurs an element of it.
+  const rememberFocusOrigin = (event: FocusEvent<HTMLDivElement>) => {
+    const from = event.relatedTarget;
+    if (from === null || from === lastBlurred.current) return;
+    focusOrigin.current = from instanceof HTMLElement ? from : null;
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on unmount, returns DOM focus to where it came from if removal dropped it on the body
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host || !collapsible) return;
     return () => {
       if (!host.contains(host.ownerDocument.activeElement) && !returnedFocus.current) return;
+      const origin = focusOrigin.current;
       // Unmount moves the toggle; restore focus at its committed location if removal sent focus to body.
       queueMicrotask(() => {
         if (host.ownerDocument.activeElement === host.ownerDocument.body) {
-          host.ownerDocument.querySelector<HTMLButtonElement>("[data-right-panel-toggle]")?.focus();
+          returnFocus(host, origin);
         }
       });
     };
   }, [collapsible, hostRef]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves focus to the toggle and sets inert on the host DOM node before a collapse paints
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves focus out of the host and sets inert on it before a collapse paints
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -115,17 +140,19 @@ function PreviewPanelShellFrame(
     if (!collapsed) returnedFocus.current = false;
     // Move focus before making its current owner inert, while the toggle is reachable.
     if (collapsed && host.contains(host.ownerDocument.activeElement)) {
-      const toggle = host.ownerDocument.querySelector<HTMLButtonElement>(
-        "[data-right-panel-toggle]",
-      );
-      toggle?.focus();
-      returnedFocus.current = toggle !== null && host.ownerDocument.activeElement === toggle;
+      returnedFocus.current = returnFocus(host, focusOrigin.current);
     }
+    // An origin belongs to one open; the next one records its own.
+    if (collapsed) focusOrigin.current = null;
     host.toggleAttribute("inert", collapsed);
   }, [collapsible, open, hostRef]);
   return (
     <div
       ref={attachHost}
+      onFocus={rememberFocusOrigin}
+      onBlur={(event) => {
+        lastBlurred.current = event.target;
+      }}
       {...(props.workspaceArea ? panelArea : {})}
       data-workspace-focus-key={props.workspaceFocusKey}
       data-workspace-unavailable={collapsible && !open ? "true" : undefined}
