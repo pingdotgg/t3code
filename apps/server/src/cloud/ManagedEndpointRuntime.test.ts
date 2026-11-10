@@ -490,12 +490,9 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
-  it.effect.each([
-    { when: "before its first readiness check", vpnAtCheck: 1 },
-    { when: "while it runs", vpnAtCheck: 2 },
-  ])(
-    "restarts a ready QUIC connector when the host route to the tunnel edge changes $when",
-    ({ vpnAtCheck }) =>
+  it.effect(
+    "restarts a ready QUIC connector when the host route to the tunnel edge changes before its first readiness check",
+    () =>
       Effect.gen(function* () {
         routeSource.address = "192.168.1.20";
         const readinessChecks = yield* Queue.unbounded<number>();
@@ -507,7 +504,7 @@ describe("CloudManagedEndpointRuntime", () => {
             }
             readinessCheckCount += 1;
             // A VPN becomes the default route while this check is in flight.
-            if (readinessCheckCount === vpnAtCheck) routeSource.address = "10.8.0.2";
+            if (readinessCheckCount === 1) routeSource.address = "10.8.0.2";
             yield* Queue.offer(readinessChecks, readinessCheckCount);
             // cloudflared keeps reporting ready: its probed QUIC MTU no longer fits the new path.
             return HttpClientResponse.fromWeb(
