@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react
 
 import { CloudAuthProvider, type CloudAuth } from "../../cloud/cloudAuth";
 import { createManagedRelayAccountService } from "../../cloud/managedAuth";
+import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import {
   getBrowserOidcController,
   signInThroughDesktopBrowser,
@@ -66,13 +67,16 @@ function ConfiguredOidcShell({
   return (
     <CloudAuthProvider value={value}>
       {children}
-      <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
-        <DialogPopup className="sm:max-w-2xl" aria-label="T3 Connect account">
-          <DialogPanel>
-            <T3ConnectUserProfilePage />
-          </DialogPanel>
-        </DialogPopup>
-      </Dialog>
+      {/* This shell wraps the app root, so the page needs the app's atom registry itself. */}
+      <AppAtomRegistryProvider>
+        <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
+          <DialogPopup className="sm:max-w-2xl" aria-label="T3 Connect account">
+            <DialogPanel>
+              <T3ConnectUserProfilePage />
+            </DialogPanel>
+          </DialogPopup>
+        </Dialog>
+      </AppAtomRegistryProvider>
     </CloudAuthProvider>
   );
 }
