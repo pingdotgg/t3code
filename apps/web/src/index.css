@@ -4535,6 +4535,18 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --command-footer-shadow: none;
 }
 
+:where(:root[data-surface-style="flat"], [data-surface-preview="flat"])
+  [data-slot="toggle-group"]:is([data-variant="segmented"], [data-variant="segmented-slide"])
+  > :is([data-slot="toggle"][data-variant="segmented"][data-pressed], .surface-raised) {
+  background: color-mix(in srgb, var(--flat-high) 88%, var(--foreground));
+}
+
+:where(:root[data-surface-style="flat"], [data-surface-preview="flat"])
+  [data-slot="toggle-group"]:is([data-variant="segmented"], [data-variant="segmented-slide"])
+  > [data-slot="toggle"]:not([data-pressed]):hover {
+  background: color-mix(in srgb, var(--flat-high) 94%, var(--foreground));
+}
+
 /* Soft gradient carries the secondary control's smooth face and small shadow. */
 :root[data-surface-style="soft-gradient"] > body,
 [data-surface-preview="soft-gradient"],
