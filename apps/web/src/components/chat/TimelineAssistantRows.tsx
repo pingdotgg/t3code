@@ -15,7 +15,10 @@ import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useAssistantMessageText, useProject, useThreadShell } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
-import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
+import {
+  isQuotableAssistantMessage,
+  resolveAssistantMessageCopyState,
+} from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
@@ -33,6 +36,20 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   );
   const text = liveText ?? row.message.text;
   const messageText = text || (row.message.streaming ? "" : "(empty response)");
+  const markdown = (
+    <ChatMarkdown
+      text={messageText}
+      cwd={ctx.markdownCwd}
+      threadRef={ctx.threadRef ?? undefined}
+      isStreaming={Boolean(row.message.streaming)}
+      lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+      skills={ctx.skills}
+      headingLevelOffset={MESSAGE_HEADING_LEVEL}
+      onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+      onRunShellCommand={ctx.onRunShellCommand}
+      onImageExpand={ctx.onImageExpand}
+    />
+  );
 
   return (
     <>
@@ -45,19 +62,9 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             itemKey={row.id}
             request={ctx.citationRequest}
             listRef={ctx.listRef}
+            quotable={isQuotableAssistantMessage(row.projectedItem?.item.nativeItemRef)}
           >
-            <ChatMarkdown
-              text={messageText}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              isStreaming={Boolean(row.message.streaming)}
-              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-              onRunShellCommand={ctx.onRunShellCommand}
-              onImageExpand={ctx.onImageExpand}
-            />
+            {markdown}
           </AssistantCitationSource>
         </div>
         {ctx.onOpenTurnDiff ? (

@@ -30,6 +30,7 @@ import {
   liveAnswerPreview,
   deriveMessagesTimelineRowsWithState,
   shouldCollapseUserMessage,
+  isQuotableAssistantMessage,
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
@@ -51,6 +52,20 @@ describe("resolveAssistantMessageCopyState", () => {
       text: "Created [report.xlsx](<outputs/report.xlsx>).\n\nHello World (Document template)",
       visible: true,
     });
+  });
+});
+
+describe("isQuotableAssistantMessage", () => {
+  it("does not offer quotes on Claude thinking shown as a reply", () => {
+    const ref = (driver: string, nativeId: string) => ({
+      driver: ProviderDriverKind.make(driver),
+      nativeId,
+      strength: "strong" as const,
+    });
+    expect(isQuotableAssistantMessage(ref("claudeAgent", "msg_01:thinking:1"))).toBe(false);
+    expect(isQuotableAssistantMessage(ref("claudeAgent", "6b1f0c2e-uuid"))).toBe(true);
+    expect(isQuotableAssistantMessage(ref("codex", "msg_01:thinking:1"))).toBe(true);
+    expect(isQuotableAssistantMessage(null)).toBe(true);
   });
 });
 
