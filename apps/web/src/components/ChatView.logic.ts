@@ -976,6 +976,21 @@ export function deriveCommittedServerUserMessageIds(
   );
 }
 
+export function deriveTimelineWorking(input: {
+  phase: SessionPhase;
+  isSendBusy: boolean;
+  isCompacting: boolean;
+  runlessWorkStartedAt: string | null;
+}): boolean {
+  return (
+    input.phase === "connecting" ||
+    input.phase === "running" ||
+    input.isSendBusy ||
+    input.isCompacting ||
+    input.runlessWorkStartedAt !== null
+  );
+}
+
 export function hasServerAcknowledgedLocalDispatch(input: {
   localDispatch: LocalDispatchSnapshot | null;
   phase: SessionPhase;
