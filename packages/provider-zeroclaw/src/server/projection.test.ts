@@ -37,7 +37,8 @@ function state(): ProjectionState {
     items: new Map(),
     tools: new Map(),
     subagents: new Map(),
-    text: { assistant: "", reasoning: "" },
+    text: { assistant: "", reasoning: "", settled: "" },
+    segment: 0,
     nextOrdinal: 0,
   };
 }
@@ -138,6 +139,38 @@ describe("sessionUpdateToEvents", () => {
     expect(terminal.events[1]).toMatchObject({
       message: { text: "hello there", streaming: false },
     });
+  });
+
+  it("opens a new assistant row for text after a tool call", () => {
+    const current = state();
+    const rows = new Map<string, { ordinal: number; text?: string; status: string }>();
+    const record = (projected: ReturnType<typeof project>) => {
+      for (const event of projected.events) {
+        if (event.type !== "turn_item.updated") continue;
+        const item = event.turnItem;
+        rows.set(item.id, {
+          ordinal: item.ordinal,
+          status: item.status,
+          ...(item.type === "assistant_message" ? { text: item.text } : {}),
+        });
+      }
+    };
+    record(project({ type: "agent_message_chunk", text: "Checking." }, current));
+    record(
+      project(
+        { type: "tool_call", tool_call_id: "call-1", name: "shell", raw_input: "ls" },
+        current,
+      ),
+    );
+    record(project({ type: "agent_message_chunk", text: "Done" }, current));
+    record(
+      project({ type: "turn_complete", outcome: "completed", content: "Checking.Done." }, current),
+    );
+    expect([...rows.values()].toSorted((a, b) => a.ordinal - b.ordinal)).toEqual([
+      { ordinal: 1, text: "Checking.", status: "completed" },
+      { ordinal: 2, status: "running" },
+      { ordinal: 3, text: "Done.", status: "completed" },
+    ]);
   });
 
   it("projects a shell tool call as command execution and another tool as dynamic", () => {

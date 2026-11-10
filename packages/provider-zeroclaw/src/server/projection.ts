@@ -167,8 +167,10 @@ export interface ProjectionState {
     string,
     { readonly record: OrchestrationV2Subagent; readonly hasChildThread: boolean }
   >;
-  /** Cumulative text per streamed row; session/update chunks arrive as deltas. */
-  readonly text: { assistant: string; reasoning: string };
+  /** Cumulative text per streamed row; `settled` is assistant text closed by earlier tool calls. */
+  readonly text: { assistant: string; reasoning: string; settled: string };
+  /** Text rows close at each tool call, so later text opens a new row below the card. */
+  segment: number;
   nextOrdinal: number;
 }
 
@@ -215,8 +217,35 @@ function itemId(state: ProjectionState, nativeId: string): TurnItemId {
   return id;
 }
 
+function segmentSuffix(state: ProjectionState) {
+  return state.segment === 0 ? "" : `-${state.segment}`;
+}
+
 function assistantMessageId(state: ProjectionState) {
-  return MessageId.make(`zc-msg-${state.identity.providerTurnId}`);
+  return MessageId.make(`zc-msg-${state.identity.providerTurnId}${segmentSuffix(state)}`);
+}
+
+function settleTextSegment(state: ProjectionState): ReadonlyArray<ProviderAdapterV2Event> {
+  if (state.text.assistant.length === 0 && state.text.reasoning.length === 0) return [];
+  const events = [
+    ...reasoningEvents(state, false, "completed"),
+    ...assistantEvents(state, false, "completed"),
+  ];
+  state.text.settled += state.text.assistant;
+  state.text.assistant = "";
+  state.text.reasoning = "";
+  state.segment += 1;
+  return events;
+}
+
+/** Completion content may repeat text already settled into earlier rows. */
+function finalAssistantText(state: ProjectionState, content: string | undefined): string {
+  if (content === undefined || content.length === 0) return state.text.assistant;
+  const settled = state.text.settled;
+  if (settled.length > 0 && content.startsWith(settled)) {
+    return content.slice(settled.length).trimStart();
+  }
+  return content;
 }
 
 function textStatus(
@@ -243,9 +272,10 @@ function assistantEvents(
 ): ReadonlyArray<ProviderAdapterV2Event> {
   const text = state.text.assistant;
   if (text.length === 0) return [];
-  const id = itemId(state, "assistant");
+  const nativeId = `assistant${segmentSuffix(state)}`;
+  const id = itemId(state, nativeId);
   const messageId = assistantMessageId(state);
-  const base = baseItem(state, id, "assistant");
+  const base = baseItem(state, id, nativeId);
   const message: OrchestrationV2ConversationMessage = {
     createdBy: "agent",
     creationSource: "provider",
@@ -284,13 +314,14 @@ function reasoningEvents(
 ): ReadonlyArray<ProviderAdapterV2Event> {
   const text = state.text.reasoning;
   if (text.length === 0) return [];
-  const id = itemId(state, "reasoning");
+  const nativeId = `reasoning${segmentSuffix(state)}`;
+  const id = itemId(state, nativeId);
   return [
     {
       type: "turn_item.updated",
       driver: ZEROCLAW_PROVIDER,
       turnItem: {
-        ...baseItem(state, id, "reasoning"),
+        ...baseItem(state, id, nativeId),
         ...textStatus(state, streaming, status),
         type: "reasoning",
         text,
@@ -417,8 +448,7 @@ function terminalEvents(
   content: string | undefined,
 ): ReadonlyArray<ProviderAdapterV2Event> {
   if (outcome !== "failed") {
-    state.text.assistant =
-      content !== undefined && content.length > 0 ? content : state.text.assistant;
+    state.text.assistant = finalAssistantText(state, content);
     return [
       ...reasoningEvents(state, false, terminalItemStatus(outcome)),
       ...assistantEvents(state, false, terminalItemStatus(outcome)),
@@ -494,6 +524,7 @@ export function sessionUpdateToEvents(
     }
     case "tool_call": {
       if (!("toolCallId" in update)) return { events: [] };
+      const settledText = settleTextSegment(state);
       const id = itemId(state, update.toolCallId);
       const command = SHELL_TOOLS.has(update.name);
       const input = update.input ?? {};
@@ -522,6 +553,7 @@ export function sessionUpdateToEvents(
           };
       return {
         events: [
+          ...settledText,
           { type: "turn_item.updated", driver: ZEROCLAW_PROVIDER, turnItem: item },
           ...subagentEvents(state, update.toolCallId, update.name, update.input),
         ],

@@ -371,7 +371,8 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")((
           items: new Map(),
           tools: new Map(),
           subagents: new Map(),
-          text: { assistant: "", reasoning: "" },
+          text: { assistant: "", reasoning: "", settled: "" },
+          segment: 0,
           nextOrdinal: 0,
         },
       });
@@ -474,7 +475,8 @@ export const makeZeroClawAdapterV2 = Effect.fn("makeZeroClawAdapterV2")((
           tools: new Map(),
           subagents: new Map(),
           nextOrdinal: 0,
-          text: { assistant: "", reasoning: "" },
+          text: { assistant: "", reasoning: "", settled: "" },
+          segment: 0,
         };
         yield* emit({
           type: "provider_turn.updated",
