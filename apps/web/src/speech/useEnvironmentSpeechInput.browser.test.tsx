@@ -484,21 +484,35 @@ it("does not start or cancel from another thread while the previous one finishes
   expect(drafts["thread-b"]).toBe("");
 });
 
-it("waits for the transcript when Send is pressed after returning to its thread", async () => {
-  setup({ destination: "env-a" });
-  const resolveTranscript = pendingTranscript();
-  const drafts: Record<string, string> = { "thread-a": "Fix", "thread-b": "" };
-  await using screen = await render(<ThreadProbe owner="thread-a" drafts={drafts} />);
-  await act(() => mocks.voice.start());
-  await screen.rerender(<ThreadProbe owner="thread-b" drafts={drafts} />);
-  await screen.rerender(<ThreadProbe owner="thread-a" drafts={drafts} />);
-  expect(mocks.voice.freezesEditor).toBe(true);
-  const submit = vi.fn();
-  await act(() => mocks.voice.submitAfterDictation(submit));
-  expect(submit).not.toHaveBeenCalled();
-  await act(async () => resolveTranscript("the login bug"));
-  await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("Fix the login bug"));
-});
+it.each([
+  ["the same editor", false],
+  ["a remounted editor", true],
+])(
+  "waits for the transcript when Send is pressed after returning to its thread in %s",
+  async (_, remount) => {
+    setup({ destination: "env-a" });
+    const resolveTranscript = pendingTranscript();
+    const drafts: Record<string, string> = { "thread-a": "Fix", "thread-b": "" };
+    await using screen = await render(<ThreadProbe key="a" owner="thread-a" drafts={drafts} />);
+    await act(() => mocks.voice.start());
+    await screen.rerender(
+      <ThreadProbe key={remount ? "b" : "a"} owner="thread-b" drafts={drafts} />,
+    );
+    vi.mocked(toastManager.add).mockClear();
+    await act(() => mocks.voice.start());
+    expect(toastManager.add).toHaveBeenCalledWith(expect.objectContaining({ type: "info" }));
+    expect(mocks.voice.state.phase).toBe("idle");
+    await screen.rerender(
+      <ThreadProbe key={remount ? "a-again" : "a"} owner="thread-a" drafts={drafts} />,
+    );
+    expect(mocks.voice.freezesEditor).toBe(true);
+    const submit = vi.fn();
+    await act(() => mocks.voice.submitAfterDictation(submit));
+    expect(submit).not.toHaveBeenCalled();
+    await act(async () => resolveTranscript("the login bug"));
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("Fix the login bug"));
+  },
+);
 
 it("discards a detached transcript when voice input is turned off after the editor unmounts", async () => {
   setup({ destination: "env-a" });
