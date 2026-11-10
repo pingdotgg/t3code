@@ -47,18 +47,20 @@ function readMainContentBounds(): SwipeBounds {
 }
 
 // Electron cannot tell a wheel from a trackpad, but Chromium's legacy wheelDelta counts wheel
-// notches in multiples of 120, divided by page zoom and rounded to an integer. A trackpad's
-// pixel deltas can land on a multiple too, but a whole swipe rarely stays on them.
+// notches in multiples of 120, divided by page zoom and truncated (99 for one notch at 120%).
+// A trackpad's pixel deltas can land on a multiple too, but a whole swipe rarely stays on them.
 function isMouseWheelNotch(event: WheelEvent): boolean {
   const { wheelDeltaX = 0, wheelDeltaY = 0 } = event as WheelEvent & {
     wheelDeltaX?: number;
     wheelDeltaY?: number;
   };
-  const zoom = window.desktopBridge?.getWindowZoomFactor() ?? 1;
-  const notches = [wheelDeltaX, wheelDeltaY].map((delta) => (delta * zoom) / WHEEL_NOTCH_DELTA);
+  const notchDelta = WHEEL_NOTCH_DELTA / (window.desktopBridge?.getWindowZoomFactor() ?? 1);
+  const notches = [wheelDeltaX, wheelDeltaY].map((delta) => Math.round(delta / notchDelta));
   return (
-    notches.some((count) => Math.round(count) !== 0) &&
-    notches.every((count) => Math.abs(count - Math.round(count)) * WHEEL_NOTCH_DELTA <= zoom)
+    notches.some((count) => count !== 0) &&
+    [wheelDeltaX, wheelDeltaY].every(
+      (delta, index) => Math.abs(delta - notches[index]! * notchDelta) < 1.5,
+    )
   );
 }
 

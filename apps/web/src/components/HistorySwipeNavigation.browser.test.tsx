@@ -97,7 +97,15 @@ describe("HistorySwipeNavigation", () => {
       ],
       false,
     ],
-    ["a macOS mouse wheel notch at 120% zoom keeps the thread", 1.2, [[-166.67, 200]], false],
+    [
+      "two mouse wheel notches at 120% zoom keep the thread",
+      1.2,
+      [
+        [-100, 99],
+        [-100, 99],
+      ],
+      false,
+    ],
     ["a macOS mouse wheel notch at 110% zoom keeps the thread", 1.1, [[-181.82, 218]], false],
     ["a Linux horizontal mouse wheel notch keeps the thread", 1, [[-120, 120]], false],
   ] as const)("%s", async (_name, zoomFactor, events, navigates) => {
