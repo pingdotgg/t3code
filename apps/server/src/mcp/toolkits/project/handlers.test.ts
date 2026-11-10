@@ -623,30 +623,11 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
 
 it.effect("creating a project through MCP refuses a model default instead of dropping it", () =>
   Effect.gen(function* () {
-    const created: Array<Project.ProjectCreateInput> = [];
     const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
     const dependencies = Layer.merge(
       harness.dependencies,
       Layer.mock(Project.ProjectService)({
-        create: (input) =>
-          Effect.sync(() => {
-            created.push(input);
-            return {
-              id: input.projectId,
-              title: input.title,
-              workspaceRoot: input.workspaceRoot,
-              repositoryIdentity: null,
-              faviconPath: null,
-              defaultModelSelection: null,
-              defaultThreadEnvMode: null,
-              autoPull: false,
-              projectIcon: null,
-              scripts: [],
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-              deletedAt: null,
-            } as unknown as ProjectRecord;
-          }),
+        create: () => Effect.die("the project was created without its model default"),
       }),
     );
     const toolkit = yield* ProjectToolkit.pipe(
@@ -667,7 +648,6 @@ it.effect("creating a project through MCP refuses a model default instead of dro
       code: "invalid_request",
       message: expect.stringContaining("t3_project_update"),
     });
-    expect(created).toHaveLength(0);
   }),
 );
 
