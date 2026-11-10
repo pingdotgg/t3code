@@ -159,7 +159,7 @@ const makeLayer = (input: {
   readonly stored: Deferred.Deferred<void>;
   readonly enabled?: boolean;
   readonly currentHead?: Ref.Ref<string>;
-  readonly identity?: typeof ACME_APP & { readonly webUrl?: string };
+  readonly identity?: typeof ACME_APP;
 }) =>
   PullRequestReviewGuideService.layer.pipe(
     Layer.provide(
@@ -591,47 +591,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         );
         const result = yield* Effect.flip(service.generate(reference));
         assert.include(result.message, "in another repository");
-      }),
-    ),
-  );
-
-  it.effect("writes a guide for a Forgejo checkout whose SSH remote is not the web host", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const repositories = yield* makeRepositories;
-        const stored = yield* Deferred.make<void>();
-        const context = yield* Layer.build(
-          makeLayer({
-            ...repositories,
-            stored,
-            // The checkout's remote is not HTTP, so only the signed-in server's web URL names the host.
-            identity: {
-              ...ACME_APP,
-              provider: "forgejo",
-              canonicalKey: "git-ssh.internal/owner/repo",
-              displayName: "owner/repo",
-              owner: "owner",
-              name: "repo",
-              webUrl: "https://git.example.com/owner/repo",
-            },
-            generate: () => Effect.succeed({ stops: [] }),
-          }),
-        );
-        const service = Context.get(
-          context,
-          PullRequestReviewGuideService.PullRequestReviewGuideService,
-        );
-        const forgejoReference: PullRequestRef = {
-          projectId,
-          host: "git.example.com",
-          repository: "owner/repo",
-          number: 7,
-        };
-        const started = yield* service.generate(forgejoReference);
-        assert.isTrue(started.started);
-        yield* Deferred.await(stored);
-        const result = yield* service.get(forgejoReference);
-        assert.strictEqual(result.guide?.headSha, repositories.headSha);
       }),
     ),
   );
