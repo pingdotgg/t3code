@@ -183,6 +183,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
           soniox: "",
         },
         usageLimitSources,
+        textGenerators: {},
         easDeviceHosts,
         simlockDeviceHosts,
       }),
