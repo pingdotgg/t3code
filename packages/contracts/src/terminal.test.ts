@@ -55,7 +55,9 @@ describe("TerminalOpenInput", () => {
       terminalId: DEFAULT_TERMINAL_ID,
       cwd: "/tmp/project",
       initialCommand: "npm run dev",
+      initialCommandShellHistory: "preserve",
     });
     expect(parsed.initialCommand).toBe("npm run dev");
+    expect(parsed.initialCommandShellHistory).toBe("preserve");
   });
 });

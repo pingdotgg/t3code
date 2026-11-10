@@ -279,6 +279,7 @@ interface TerminalStartInput {
   readonly cols: number;
   readonly rows: number;
   readonly initialCommand?: string;
+  readonly initialCommandShellHistory?: "preserve" | "suppress";
 }
 
 interface TerminalSessionState {
@@ -608,18 +609,34 @@ function formatShellCandidate(candidate: ShellCandidate): string {
 }
 
 function quotePosixShellArgument(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
 function posixShellCandidateWithInitialCommand(
   candidate: ShellCandidate,
   initialCommand: string,
+  shellHistory: "preserve" | "suppress" | undefined,
 ): ShellCandidate {
   const baseArgs = candidate.args ?? [];
   const reenterShell = [candidate.shell, ...baseArgs].map(quotePosixShellArgument).join(" ");
+  const shellName = basenameForPlatform(candidate.shell, "linux").toLowerCase();
+  const quotedCommand = quotePosixShellArgument(initialCommand);
+  const recordHistory =
+    shellHistory !== "preserve"
+      ? ""
+      : shellName === "bash"
+        ? `history -s -- ${quotedCommand}; history -a\n`
+        : shellName === "zsh"
+          ? `print -s -- ${quotedCommand}; fc -AI\n`
+          : "";
   return {
     shell: candidate.shell,
-    args: [...baseArgs, "-i", "-c", `trap ':' INT\n${initialCommand}\nexec ${reenterShell}`],
+    args: [
+      ...baseArgs,
+      "-i",
+      "-c",
+      `trap ':' INT\n${recordHistory}${initialCommand}\nexec ${reenterShell}`,
+    ],
   };
 }
 
@@ -2495,7 +2512,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             ) {
               initialCommandHandled = true;
               shellCandidates = resolvedShellCandidates.map((candidate) =>
-                posixShellCandidateWithInitialCommand(candidate, initialCommand),
+                posixShellCandidateWithInitialCommand(
+                  candidate,
+                  initialCommand,
+                  input.initialCommandShellHistory,
+                ),
               );
             }
             const terminalEnv = createTerminalSpawnEnv(
@@ -2953,6 +2974,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cols,
           rows,
           ...(input.initialCommand ? { initialCommand: input.initialCommand } : {}),
+          ...(input.initialCommandShellHistory
+            ? { initialCommandShellHistory: input.initialCommandShellHistory }
+            : {}),
         },
         "started",
       );
@@ -3004,6 +3028,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cols: targetCols,
           rows: targetRows,
           ...(input.initialCommand ? { initialCommand: input.initialCommand } : {}),
+          ...(input.initialCommandShellHistory
+            ? { initialCommandShellHistory: input.initialCommandShellHistory }
+            : {}),
         },
         "started",
       );

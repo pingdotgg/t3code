@@ -90,6 +90,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     readonly stopOnSettle?: boolean;
     readonly size?: { readonly cols: number; readonly rows: number };
     readonly initialCommand?: string;
+    readonly initialCommandShellHistory?: "preserve" | "suppress";
   }) => {
     if (!threadRef || !canWrite() || !project) return null;
     const location = input.location ?? defaultLaunchLocation();
@@ -111,6 +112,9 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         ...input.size,
         ...(input.stopOnSettle !== undefined ? { stopOnSettle: input.stopOnSettle } : {}),
         ...(input.initialCommand !== undefined ? { initialCommand: input.initialCommand } : {}),
+        ...(input.initialCommandShellHistory
+          ? { initialCommandShellHistory: input.initialCommandShellHistory }
+          : {}),
       },
     });
     return { terminalId, result };

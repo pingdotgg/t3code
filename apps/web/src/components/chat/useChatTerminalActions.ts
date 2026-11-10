@@ -257,7 +257,8 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       location: { cwd: targetCwd, worktreePath: targetWorktreePath },
       stopOnSettle: script.stopOnSettle ?? false,
       ...(options?.env ? { extraEnv: options.env } : {}),
-      initialCommand: script.command,
+      ...(script.command.length <= 65_536 ? { initialCommand: script.command } : {}),
+      ...(options?.shellHistory ? { initialCommandShellHistory: options.shellHistory } : {}),
     });
     if (!launched) return;
     const targetTerminalId = launched.terminalId;
