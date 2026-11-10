@@ -348,6 +348,13 @@ it.each(["", "Design system"])("clones a Git URL with project name %j", async (n
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByRole("textbox", { name: "Project name" }).fill(name);
+  await page.getByRole("button", { name: "Local folder", exact: true }).click();
+  await page.getByRole("combobox").fill("/workspace/first");
+  await userEvent.keyboard("{Enter}");
+  await expect
+    .element(page.getByRole("textbox", { name: "Project name" }))
+    .toHaveValue(name || "first");
+  await userEvent.keyboard("{Tab}{Enter}");
   await page.getByRole("button", { name: "Git URL", exact: true }).click();
   await page.getByRole("combobox").fill("https://scm.example.test/team/repository.git");
   await userEvent.keyboard("{Enter}");

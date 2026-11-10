@@ -2920,7 +2920,11 @@ function OpenCommandPaletteDialog(props: {
           setProjectName(name);
           setAutoFilledProjectName(null);
         }}
-        onClearFolder={() => setSelectedProjectFolder(null)}
+        onClearFolder={() => {
+          setSelectedProjectFolder(null);
+          if (projectName === autoFilledProjectName) setProjectName("");
+          setAutoFilledProjectName(null);
+        }}
         onClose={() => setOpen(false)}
         {...(viewStack.length > 1 ? { onBack: popView } : {})}
         onSelectSource={(source) => {
