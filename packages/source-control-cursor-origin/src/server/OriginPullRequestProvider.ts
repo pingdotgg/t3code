@@ -85,6 +85,13 @@ const PAGE_SIZE = 100;
 const EXPIRED_LIST_POSITION = "listChangeRequests.resume";
 /** Bounds each paged read, so one very long pull request cannot stall its detail. */
 const MAX_PAGES = 10;
+const UNREAD_CHECKS = {
+  name: "More checks",
+  status: "pending",
+  description: "Origin listed more check runs than T3 Code reads.",
+  url: null,
+  placeholder: true,
+} as const;
 
 const unsupported = (operation: string, detail: string) =>
   Effect.fail(
@@ -320,7 +327,11 @@ export const make = Effect.gen(function* () {
         OriginCheckRunListSchema,
         (page) => page.checkRuns,
       ).pipe(
-        Effect.map((page) => ({ checks: page.items.map(originCheck), truncated: page.truncated })),
+        Effect.map((page) => [
+          ...page.items.map(originCheck),
+          // Unread runs may be failing, so the list must not read as complete or all green.
+          ...(page.truncated ? [UNREAD_CHECKS] : []),
+        ]),
       );
     },
     { capacity: 256, timeToLive: (exit) => (Exit.isSuccess(exit) ? "1 second" : 0) },
@@ -330,7 +341,7 @@ export const make = Effect.gen(function* () {
   ) =>
     input.sha
       ? Cache.get(checkRuns, `${input.cwd}\n${input.repository}\n${input.sha}`)
-      : Effect.succeed({ checks: [], truncated: false });
+      : Effect.succeed([]);
 
   const readPatch = (cwd: string, path: string) =>
     readPages({ cwd, operation: "getDiff", path }, OriginFileListSchema, (page) => page.files).pipe(
@@ -722,21 +733,18 @@ export const make = Effect.gen(function* () {
 
     getChangeRequestChecks: (input) =>
       withPull(input, (pullRequest) => listChecks({ ...input, sha: pullRequest.head.sha })).pipe(
-        Effect.map(([pullRequest, { checks }]) => ({ state: originState(pullRequest), checks })),
+        Effect.map(([pullRequest, checks]) => ({ state: originState(pullRequest), checks })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
 
     getChangeRequest: Effect.fn("OriginPullRequestProvider.getChangeRequest")(
       function* (input) {
-        const [[pullRequest, [checkRead, avatars, mergeability]], repository] = yield* Effect.all(
+        const [[pullRequest, [checks, avatars, mergeability]], repository] = yield* Effect.all(
           [
             withPull(input, (pullRequest) =>
               Effect.all(
                 [
-                  recover(listChecks({ ...input, sha: pullRequest.head.sha }), {
-                    checks: [],
-                    truncated: false,
-                  }),
+                  recover(listChecks({ ...input, sha: pullRequest.head.sha }), []),
                   avatarsFor(input.cwd, [pullRequest.author], viewArgs(input, "author")),
                   mergeabilityOf(input, pullRequest),
                 ],
@@ -747,13 +755,10 @@ export const make = Effect.gen(function* () {
           ],
           { concurrency: "unbounded" },
         );
-        const { checks, truncated } = checkRead;
-        const rollup = checksState(checks);
         const detail: ProviderChangeRequestDetail = {
           ...toProviderChangeRequest(pullRequest, avatars),
           mergeability,
-          // Checks past the last page read are unknown, so all-green ones read are not a pass.
-          checksState: truncated && rollup === "passing" ? "pending" : rollup,
+          checksState: checksState(checks),
           headSha: pullRequest.head.sha ?? null,
           body: pullRequest.body ?? "",
           changedFiles: pullRequest.changedFiles ?? 0,

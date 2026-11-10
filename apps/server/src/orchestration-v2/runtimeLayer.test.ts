@@ -3890,6 +3890,97 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("a placeholder check does not keep a quiet pull request on the fast reread", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-placeholder");
+      const projectId = ProjectId.make("pr-watch-placeholder-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch placeholder",
+        workspaceRoot: "/workspace/watch-placeholder",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-placeholder-create"),
+        threadId,
+        projectId,
+        title: "Watch placeholder",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 14 };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-placeholder-start"),
+        threadId,
+        ...key,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
+      });
+
+      let reads = 0;
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return {
+                ...watchedPullRequestDetail({
+                  projectId,
+                  number: 14,
+                  at: "2026-10-02T12:00:00.000Z",
+                }),
+                headSha: "6074dd48ff",
+                checks: [
+                  { name: "lint", status: "success", description: null, url: null, required: true },
+                  {
+                    name: "More checks",
+                    status: "pending",
+                    description: "The provider listed more checks than were read.",
+                    url: null,
+                    placeholder: true,
+                  },
+                ],
+              };
+            }),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      for (let pass = 0; pass < 4; pass++) {
+        yield* TestClock.adjust("2 minutes");
+        yield* reactor.sweep;
+      }
+      assert.equal(reads, 1);
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-placeholder-end"),
+        threadId,
+        ...key,
+        watching: false,
+      });
+    }),
+  );
+
   it.effect("wakes for checks that complete after the no-checks notice on the same head", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

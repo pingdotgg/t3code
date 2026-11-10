@@ -555,7 +555,8 @@ export const make = Effect.gen(function* () {
       fingerprint: group.fingerprint,
       inFlight:
         detail.mergeability === "unknown" ||
-        detail.checks.some((check) => check.status === "pending"),
+        // A placeholder stands in for checks no read can reach, so it never settles.
+        detail.checks.some((check) => check.status === "pending" && check.placeholder !== true),
       remarksComplete: plan.activity ? remarks !== null : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
