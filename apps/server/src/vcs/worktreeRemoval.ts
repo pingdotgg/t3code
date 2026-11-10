@@ -80,15 +80,21 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     });
   const annexed = yield* annexedAdminDir(worktreePath);
   if (Option.isSome(annexed)) {
+    const restoreGitFile = fileSystem.writeFileString(gitFile, `gitdir: ${annexed.value}\n`);
     yield* fileSystem.remove(gitFile).pipe(
-      Effect.andThen(fileSystem.writeFileString(gitFile, `gitdir: ${annexed.value}\n`)),
+      Effect.andThen(restoreGitFile),
       Effect.mapError((cause) => refuse(`failed to restore '${gitFile}'`, cause)),
     );
     // A refused removal keeps the worktree, whose annexed files resolve through the symlink.
     yield* Effect.addFinalizer(() =>
       fileSystem
         .remove(gitFile)
-        .pipe(Effect.andThen(fileSystem.symlink(annexed.value, gitFile)), Effect.ignore),
+        .pipe(
+          Effect.andThen(
+            fileSystem.symlink(annexed.value, gitFile).pipe(Effect.catch(() => restoreGitFile)),
+          ),
+          Effect.ignore,
+        ),
     );
   }
   const linked =
