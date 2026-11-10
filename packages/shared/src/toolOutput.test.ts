@@ -195,6 +195,7 @@ describe("toolOutputImages", () => {
     expect(output).toEqual({ content, structuredContent });
     expect(mcpToolResultOutput({ content: [text], structuredContent })).toBe(structuredContent);
     expect(mcpToolResultOutput({ content })).toBe(content);
+    expect(mcpToolResultOutput({ content: [text], structuredContent: {} })).toEqual([text]);
   });
 
   it("skips types the server must not serve inline", () => {

@@ -115,7 +115,10 @@ describe("tool image output parsing", () => {
 });
 
 describe("MCP app tool output", () => {
-  it("shows the tool result, not the app wrapper", () => {
+  it.each([
+    ["text content", {}],
+    ["text content and empty structured content", { structuredContent: {} }],
+  ])("shows the tool result, not the app wrapper: %s", (_, extra) => {
     const text = "Notice\nview\tcount\n/home\t42";
     const item = toolItem({
       t3McpApp: {
@@ -124,7 +127,7 @@ describe("MCP app tool output", () => {
         tool: "aggregate_rum_events",
         resourceUri: "ui://repro/dataviz",
       },
-      result: { content: [{ type: "text", text }] },
+      result: { content: [{ type: "text", text }], ...extra },
     });
     expect(turnItemOutputText(item)).toBe(text);
   });
