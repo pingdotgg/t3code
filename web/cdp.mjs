@@ -1,0 +1,10 @@
+const [port,method,...rest]=process.argv.slice(2);
+const targets=await(await fetch(`http://localhost:${port}/json/list`)).json();
+const page=targets.find(t=>t.type==='page'&&!t.url.startsWith('devtools:'));
+const version=await(await fetch(`http://localhost:${port}/json/version`)).json();
+const ws=new WebSocket(method.startsWith('Browser.')||method.startsWith('Target.')?version.webSocketDebuggerUrl:page.webSocketDebuggerUrl);
+await new Promise(r=>ws.onopen=r);let id=0;const pending=new Map();ws.onmessage=e=>{const x=JSON.parse(e.data);if(pending.has(x.id)){pending.get(x.id)(x);pending.delete(x.id);}};
+const send=(method,params)=>new Promise(resolve=>{const n=++id;pending.set(n,resolve);ws.send(JSON.stringify({id:n,method,params}));});
+const params=rest.length?JSON.parse(rest.join(' ')):{};
+if(method==='Browser.getWindowForTarget')params.targetId=page.id;
+console.log(JSON.stringify(await send(method,params)));ws.close();

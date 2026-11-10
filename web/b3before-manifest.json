@@ -1,0 +1,3432 @@
+[
+  {
+    "side": "before",
+    "fixture": "F6",
+    "i": 0,
+    "text": "Harness: synthetic turn items\nF6 · question · pending-first · t=12s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 12s\nInput requested\n\nHarness request control: answer with Next phase.",
+    "data": {
+      "fixture": "F6",
+      "phase": "pending-first",
+      "clock": "2026-10-17T12:00:12.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "first",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:00:02.000Z",
+          "requestId": "first",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F6",
+    "i": 1,
+    "text": "Harness: synthetic turn items\nF6 · question · resumed-first · t=64s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 1m 4s\n\nprintf synthetic-work\n\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nSteer\nYou\n\nContinue with the second task.\n\n12:01 PM\n\nRunning printf\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F6",
+      "phase": "resumed-first",
+      "clock": "2026-10-17T12:01:04.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "first",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "first",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "first",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "steer",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:03.000Z",
+          "completedAt": "2026-10-17T12:01:03.000Z",
+          "updatedAt": "2026-10-17T12:01:03.000Z",
+          "type": "user_message",
+          "messageId": "steer",
+          "text": "Continue with the second task.",
+          "attachments": [],
+          "inputIntent": "steer",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "second-command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:04.000Z",
+          "completedAt": "2026-10-17T12:01:04.000Z",
+          "updatedAt": "2026-10-17T12:01:04.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F6",
+    "i": 2,
+    "text": "Harness: synthetic turn items\nF6 · question · pending-second · t=70s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 1m 10s\n\nprintf synthetic-work\n\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nSteer\nYou\n\nContinue with the second task.\n\n12:01 PM\n\nInput requested\n\nHarness request control: answer with Next phase.",
+    "data": {
+      "fixture": "F6",
+      "phase": "pending-second",
+      "clock": "2026-10-17T12:01:10.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "first",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "first",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "first",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "steer",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:03.000Z",
+          "completedAt": "2026-10-17T12:01:03.000Z",
+          "updatedAt": "2026-10-17T12:01:03.000Z",
+          "type": "user_message",
+          "messageId": "steer",
+          "text": "Continue with the second task.",
+          "attachments": [],
+          "inputIntent": "steer",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "second-command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:04.000Z",
+          "completedAt": "2026-10-17T12:01:04.000Z",
+          "updatedAt": "2026-10-17T12:01:04.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "second",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 5,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:05.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:01:05.000Z",
+          "requestId": "second",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F6",
+    "i": 3,
+    "text": "Harness: synthetic turn items\nF6 · question · resumed-second · t=127s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 2m 7s\n\nprintf synthetic-work\n\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nSteer\nYou\n\nContinue with the second task.\n\n12:01 PM\n\nprintf synthetic-work\n\n12:01 PM\n\nWhich option should the agent use?\nBlue\n\n12:01 PM\nThinking\nThinking\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F6",
+      "phase": "resumed-second",
+      "clock": "2026-10-17T12:02:07.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "first",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "first",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "first",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "steer",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:03.000Z",
+          "completedAt": "2026-10-17T12:01:03.000Z",
+          "updatedAt": "2026-10-17T12:01:03.000Z",
+          "type": "user_message",
+          "messageId": "steer",
+          "text": "Continue with the second task.",
+          "attachments": [],
+          "inputIntent": "steer",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "second-command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:04.000Z",
+          "completedAt": "2026-10-17T12:01:04.000Z",
+          "updatedAt": "2026-10-17T12:01:04.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "second",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 5,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:05.000Z",
+          "completedAt": "2026-10-17T12:02:05.000Z",
+          "updatedAt": "2026-10-17T12:02:05.000Z",
+          "requestId": "second",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "second",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F6",
+    "i": 4,
+    "text": "Harness: synthetic turn items\nF6 · question · complete · t=128s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorked for 2m 8s\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nSteer\nYou\n\nContinue with the second task.\n\n12:01 PM\n\nContinued for 1m 5s\n12:01 PM\n\nWhich option should the agent use?\nBlue\n\n12:01 PM\nT3 Code\n\nThe synthetic work is complete.\n\n12:02 PM\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F6",
+      "phase": "complete",
+      "clock": "2026-10-17T12:02:08.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "first",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "first",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "first",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "steer",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:03.000Z",
+          "completedAt": "2026-10-17T12:01:03.000Z",
+          "updatedAt": "2026-10-17T12:01:03.000Z",
+          "type": "user_message",
+          "messageId": "steer",
+          "text": "Continue with the second task.",
+          "attachments": [],
+          "inputIntent": "steer",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "second-command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:04.000Z",
+          "completedAt": "2026-10-17T12:01:04.000Z",
+          "updatedAt": "2026-10-17T12:01:04.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "second",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 5,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:05.000Z",
+          "completedAt": "2026-10-17T12:02:05.000Z",
+          "updatedAt": "2026-10-17T12:02:05.000Z",
+          "requestId": "second",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "second",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "answer",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 6,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:02:08.000Z",
+          "completedAt": "2026-10-17T12:02:08.000Z",
+          "updatedAt": "2026-10-17T12:02:08.000Z",
+          "type": "assistant_message",
+          "messageId": "answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "completed",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": "2026-10-17T12:02:08.000Z"
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F7",
+    "i": 0,
+    "text": "Harness: synthetic turn items\nF7 · question · pending · t=12s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n11:58 AM\n\nWorked for 1m 5s\n11:58 AM\n\nWhich option should the agent use?\nBlue\n\n11:58 AM\nT3 Code\n\nThe synthetic work is complete.\n\nWorked for 1ms\n11:59 AM\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 12s\nInput requested\n\nHarness request control: answer with Next phase.",
+    "data": {
+      "fixture": "F7",
+      "phase": "pending",
+      "clock": "2026-10-17T12:00:12.000Z",
+      "items": [
+        {
+          "id": "old-prompt",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:45.000Z",
+          "completedAt": "2026-10-17T11:58:45.000Z",
+          "updatedAt": "2026-10-17T11:58:45.000Z",
+          "type": "user_message",
+          "messageId": "old-prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "old-command",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:46.000Z",
+          "completedAt": "2026-10-17T11:58:46.000Z",
+          "updatedAt": "2026-10-17T11:58:46.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "old-request",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:47.000Z",
+          "completedAt": "2026-10-17T11:59:47.000Z",
+          "updatedAt": "2026-10-17T11:59:47.000Z",
+          "requestId": "old-request",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "old-request",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "old-answer",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:59:50.000Z",
+          "completedAt": "2026-10-17T11:59:50.000Z",
+          "updatedAt": "2026-10-17T11:59:50.000Z",
+          "type": "assistant_message",
+          "messageId": "old-answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        },
+        {
+          "id": "foreign",
+          "threadId": "capture-thread",
+          "runId": "foreign-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T11:59:55.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T11:59:55.000Z",
+          "requestId": "foreign",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        },
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 5,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 6,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "request",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 7,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:00:02.000Z",
+          "requestId": "request",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        }
+      ],
+      "latestRun": null,
+      "runlessWorkActive": true
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F7",
+    "i": 1,
+    "text": "Harness: synthetic turn items\nF7 · question · resumed · t=64s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n11:58 AM\n\nWorked for 1m 5s\n11:58 AM\n\nWhich option should the agent use?\nBlue\n\n11:58 AM\nT3 Code\n\nThe synthetic work is complete.\n\nWorked for 1ms\n11:59 AM\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 1m 4s\n\nprintf synthetic-work\n\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nThinking\nThinking\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F7",
+      "phase": "resumed",
+      "clock": "2026-10-17T12:01:04.000Z",
+      "items": [
+        {
+          "id": "old-prompt",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:45.000Z",
+          "completedAt": "2026-10-17T11:58:45.000Z",
+          "updatedAt": "2026-10-17T11:58:45.000Z",
+          "type": "user_message",
+          "messageId": "old-prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "old-command",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:46.000Z",
+          "completedAt": "2026-10-17T11:58:46.000Z",
+          "updatedAt": "2026-10-17T11:58:46.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "old-request",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:47.000Z",
+          "completedAt": "2026-10-17T11:59:47.000Z",
+          "updatedAt": "2026-10-17T11:59:47.000Z",
+          "requestId": "old-request",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "old-request",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "old-answer",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:59:50.000Z",
+          "completedAt": "2026-10-17T11:59:50.000Z",
+          "updatedAt": "2026-10-17T11:59:50.000Z",
+          "type": "assistant_message",
+          "messageId": "old-answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        },
+        {
+          "id": "foreign",
+          "threadId": "capture-thread",
+          "runId": "foreign-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T11:59:55.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T11:59:55.000Z",
+          "requestId": "foreign",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        },
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 5,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 6,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "request",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 7,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "request",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "request",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        }
+      ],
+      "latestRun": null,
+      "runlessWorkActive": true
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F7",
+    "i": 2,
+    "text": "Harness: synthetic turn items\nF7 · question · complete · t=65s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n11:58 AM\n\nWorked for 1m 5s\n11:58 AM\n\nWhich option should the agent use?\nBlue\n\n11:58 AM\nT3 Code\n\nThe synthetic work is complete.\n\n11:59 AM\n\nWorked for 1ms\n11:59 AM\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorked for 1m 5s\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nT3 Code\n\nThe synthetic work is complete.\n\n12:01 PM\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F7",
+      "phase": "complete",
+      "clock": "2026-10-17T12:01:05.000Z",
+      "items": [
+        {
+          "id": "old-prompt",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:45.000Z",
+          "completedAt": "2026-10-17T11:58:45.000Z",
+          "updatedAt": "2026-10-17T11:58:45.000Z",
+          "type": "user_message",
+          "messageId": "old-prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "old-command",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:46.000Z",
+          "completedAt": "2026-10-17T11:58:46.000Z",
+          "updatedAt": "2026-10-17T11:58:46.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "old-request",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:47.000Z",
+          "completedAt": "2026-10-17T11:59:47.000Z",
+          "updatedAt": "2026-10-17T11:59:47.000Z",
+          "requestId": "old-request",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "old-request",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "old-answer",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:59:50.000Z",
+          "completedAt": "2026-10-17T11:59:50.000Z",
+          "updatedAt": "2026-10-17T11:59:50.000Z",
+          "type": "assistant_message",
+          "messageId": "old-answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        },
+        {
+          "id": "foreign",
+          "threadId": "capture-thread",
+          "runId": "foreign-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T11:59:55.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T11:59:55.000Z",
+          "requestId": "foreign",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        },
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 5,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 6,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "request",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 7,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "request",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "request",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "after",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 8,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:03.000Z",
+          "completedAt": "2026-10-17T12:01:03.000Z",
+          "updatedAt": "2026-10-17T12:01:03.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "answer",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 9,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:05.000Z",
+          "completedAt": "2026-10-17T12:01:05.000Z",
+          "updatedAt": "2026-10-17T12:01:05.000Z",
+          "type": "assistant_message",
+          "messageId": "answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        }
+      ],
+      "latestRun": null,
+      "runlessWorkActive": true
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F7",
+    "i": 3,
+    "text": "Harness: synthetic turn items\nF7 · question · history · t=72s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n11:58 AM\n\nWorked for 1m 5s\n11:58 AM\n\nWhich option should the agent use?\nBlue\n\n11:58 AM\nT3 Code\n\nThe synthetic work is complete.\n\n11:59 AM\n\nWorked for 1ms\n11:59 AM\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorked for 1m 5s\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nT3 Code\n\nThe synthetic work is complete.\n\n12:01 PM\n\nYou\n\nDemonstrate waiting and working time.\n\n12:01 PM\n\nT3 Code\n\nThe synthetic work is complete.\n\n12:01 PM\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F7",
+      "phase": "history",
+      "clock": "2026-10-17T12:01:12.000Z",
+      "items": [
+        {
+          "id": "old-prompt",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:45.000Z",
+          "completedAt": "2026-10-17T11:58:45.000Z",
+          "updatedAt": "2026-10-17T11:58:45.000Z",
+          "type": "user_message",
+          "messageId": "old-prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "old-command",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:46.000Z",
+          "completedAt": "2026-10-17T11:58:46.000Z",
+          "updatedAt": "2026-10-17T11:58:46.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "old-request",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:58:47.000Z",
+          "completedAt": "2026-10-17T11:59:47.000Z",
+          "updatedAt": "2026-10-17T11:59:47.000Z",
+          "requestId": "old-request",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "old-request",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "old-answer",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:59:50.000Z",
+          "completedAt": "2026-10-17T11:59:50.000Z",
+          "updatedAt": "2026-10-17T11:59:50.000Z",
+          "type": "assistant_message",
+          "messageId": "old-answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        },
+        {
+          "id": "foreign",
+          "threadId": "capture-thread",
+          "runId": "foreign-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T11:59:55.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T11:59:55.000Z",
+          "requestId": "foreign",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        },
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 5,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 6,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "request",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 7,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "request",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "request",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "after",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 8,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:03.000Z",
+          "completedAt": "2026-10-17T12:01:03.000Z",
+          "updatedAt": "2026-10-17T12:01:03.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "answer",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 9,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:05.000Z",
+          "completedAt": "2026-10-17T12:01:05.000Z",
+          "updatedAt": "2026-10-17T12:01:05.000Z",
+          "type": "assistant_message",
+          "messageId": "answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        },
+        {
+          "id": "new-prompt",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 10,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:10.000Z",
+          "completedAt": "2026-10-17T12:01:10.000Z",
+          "updatedAt": "2026-10-17T12:01:10.000Z",
+          "type": "user_message",
+          "messageId": "new-prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "new-answer",
+          "threadId": "capture-thread",
+          "runId": null,
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 11,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:12.000Z",
+          "completedAt": "2026-10-17T12:01:12.000Z",
+          "updatedAt": "2026-10-17T12:01:12.000Z",
+          "type": "assistant_message",
+          "messageId": "new-answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        }
+      ],
+      "latestRun": null,
+      "runlessWorkActive": true
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F8",
+    "i": 0,
+    "text": "Harness: synthetic turn items\nF8 · question · resumed · t=84s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 1m 24s\n\nprintf synthetic-work\n\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n11:59 AM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nT3 Code\n\nThe synthetic work is complete.\n\nInput requested\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F8",
+      "phase": "resumed",
+      "clock": "2026-10-17T12:01:24.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "before-start",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:59:55.000Z",
+          "completedAt": "2026-10-17T11:59:59.000Z",
+          "updatedAt": "2026-10-17T11:59:59.000Z",
+          "requestId": "before-start",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "before-start",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "predecessor",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "predecessor",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "predecessor",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "predecessor-answer",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:10.000Z",
+          "completedAt": "2026-10-17T12:01:10.000Z",
+          "updatedAt": "2026-10-17T12:01:10.000Z",
+          "type": "assistant_message",
+          "messageId": "predecessor-answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        },
+        {
+          "id": "foreign",
+          "threadId": "capture-thread",
+          "runId": "foreign-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 5,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:15.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:01:15.000Z",
+          "requestId": "foreign",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        },
+        {
+          "id": "wake-command",
+          "threadId": "capture-thread",
+          "runId": "wake-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 6,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:20.000Z",
+          "completedAt": "2026-10-17T12:01:20.000Z",
+          "updatedAt": "2026-10-17T12:01:20.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        }
+      ],
+      "latestRun": {
+        "runId": "wake-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:01:20.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F8",
+    "i": 1,
+    "text": "Harness: synthetic turn items\nF8 · question · pending · t=86s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 1m 26s\n\nprintf synthetic-work\n\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n11:59 AM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nT3 Code\n\nThe synthetic work is complete.\n\nInput requested\n\nHarness request control: answer with Next phase.",
+    "data": {
+      "fixture": "F8",
+      "phase": "pending",
+      "clock": "2026-10-17T12:01:26.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "before-start",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T11:59:55.000Z",
+          "completedAt": "2026-10-17T11:59:59.000Z",
+          "updatedAt": "2026-10-17T11:59:59.000Z",
+          "requestId": "before-start",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "before-start",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "predecessor",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "predecessor",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "predecessor",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "predecessor-answer",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:10.000Z",
+          "completedAt": "2026-10-17T12:01:10.000Z",
+          "updatedAt": "2026-10-17T12:01:10.000Z",
+          "type": "assistant_message",
+          "messageId": "predecessor-answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        },
+        {
+          "id": "foreign",
+          "threadId": "capture-thread",
+          "runId": "foreign-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 5,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:15.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:01:15.000Z",
+          "requestId": "foreign",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        },
+        {
+          "id": "wake-command",
+          "threadId": "capture-thread",
+          "runId": "wake-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 6,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:20.000Z",
+          "completedAt": "2026-10-17T12:01:20.000Z",
+          "updatedAt": "2026-10-17T12:01:20.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "wake-request",
+          "threadId": "capture-thread",
+          "runId": "wake-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 7,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:25.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:01:25.000Z",
+          "requestId": "wake-request",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        }
+      ],
+      "latestRun": {
+        "runId": "wake-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:01:20.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F9",
+    "i": 0,
+    "text": "Harness: synthetic turn items\nF9 · question · work · t=12s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 12s\nInput requested\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F9",
+      "phase": "work",
+      "clock": "2026-10-17T12:00:12.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "async-question",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:00:02.000Z",
+          "requestId": "async-question",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "responseMode": "message"
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F9",
+    "i": 1,
+    "text": "Harness: synthetic turn items\nF9 · question · work-long · t=64s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 1m 4s\nInput requested\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F9",
+      "phase": "work-long",
+      "clock": "2026-10-17T12:01:04.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "async-question",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:00:02.000Z",
+          "requestId": "async-question",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "responseMode": "message"
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F9",
+    "i": 2,
+    "text": "Harness: synthetic turn items\nF9 · question · complete · t=65s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorked for 1m 5s\n12:00 PM\nT3 Code\n\nThe synthetic work is complete.\n\n12:01 PM\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F9",
+      "phase": "complete",
+      "clock": "2026-10-17T12:01:05.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "async-question",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:00:02.000Z",
+          "requestId": "async-question",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "responseMode": "message"
+        },
+        {
+          "id": "answer",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:05.000Z",
+          "completedAt": "2026-10-17T12:01:05.000Z",
+          "updatedAt": "2026-10-17T12:01:05.000Z",
+          "type": "assistant_message",
+          "messageId": "answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "completed",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": "2026-10-17T12:01:05.000Z"
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F11",
+    "i": 0,
+    "text": "Harness: synthetic turn items\nF11 · question · both-pending · t=12s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 12s\nInput requested\n\nHarness request control: answer with Next phase.",
+    "data": {
+      "fixture": "F11",
+      "phase": "both-pending",
+      "clock": "2026-10-17T12:00:12.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "first",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:00:02.000Z",
+          "requestId": "first",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        },
+        {
+          "id": "second",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:05.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:00:05.000Z",
+          "requestId": "second",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F11",
+    "i": 1,
+    "text": "Harness: synthetic turn items\nF11 · question · one-pending · t=63s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 1m 3s\n\nprintf synthetic-work\n\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nInput requested\n\nHarness request control: answer with Next phase.",
+    "data": {
+      "fixture": "F11",
+      "phase": "one-pending",
+      "clock": "2026-10-17T12:01:03.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "first",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "first",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "first",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "second",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "waiting",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:05.000Z",
+          "completedAt": null,
+          "updatedAt": "2026-10-17T12:00:05.000Z",
+          "requestId": "second",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ]
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F11",
+    "i": 2,
+    "text": "Harness: synthetic turn items\nF11 · question · resumed · t=67s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorking for 1m 7s\n\nprintf synthetic-work\n\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nThinking\nThinking\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F11",
+      "phase": "resumed",
+      "clock": "2026-10-17T12:01:07.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "first",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "first",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "first",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "second",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:05.000Z",
+          "completedAt": "2026-10-17T12:01:05.000Z",
+          "updatedAt": "2026-10-17T12:01:05.000Z",
+          "requestId": "second",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "second",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "running",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": null
+      },
+      "runlessWorkActive": false
+    }
+  },
+  {
+    "side": "before",
+    "fixture": "F11",
+    "i": 3,
+    "text": "Harness: synthetic turn items\nF11 · question · complete · t=68s\nNext phase\nReset\nshowAll\nhideSuccessful\nhideAll\nzen\nYou\n\nDemonstrate waiting and working time.\n\n12:00 PM\n\nWorked for 1m 8s\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\n\nWhich option should the agent use?\nBlue\n\n12:00 PM\nT3 Code\n\nThe synthetic work is complete.\n\n12:01 PM\n\nHarness clock is explicit. Production timeline renders above.",
+    "data": {
+      "fixture": "F11",
+      "phase": "complete",
+      "clock": "2026-10-17T12:01:08.000Z",
+      "items": [
+        {
+          "id": "prompt",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 0,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:00.000Z",
+          "completedAt": "2026-10-17T12:00:00.000Z",
+          "updatedAt": "2026-10-17T12:00:00.000Z",
+          "type": "user_message",
+          "messageId": "prompt",
+          "text": "Demonstrate waiting and working time.",
+          "attachments": [],
+          "inputIntent": "turn_start",
+          "createdBy": "user",
+          "creationSource": "web"
+        },
+        {
+          "id": "command",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 1,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:01.000Z",
+          "completedAt": "2026-10-17T12:00:01.000Z",
+          "updatedAt": "2026-10-17T12:00:01.000Z",
+          "type": "command_execution",
+          "input": "printf synthetic-work",
+          "output": "Synthetic command completed.",
+          "exitCode": 0
+        },
+        {
+          "id": "first",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 2,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:02.000Z",
+          "completedAt": "2026-10-17T12:01:02.000Z",
+          "updatedAt": "2026-10-17T12:01:02.000Z",
+          "requestId": "first",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "first",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "second",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 3,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:00:05.000Z",
+          "completedAt": "2026-10-17T12:01:05.000Z",
+          "updatedAt": "2026-10-17T12:01:05.000Z",
+          "requestId": "second",
+          "type": "user_input_request",
+          "questions": [
+            {
+              "id": "choice",
+              "header": "Choice",
+              "question": "Which option should the agent use?",
+              "options": [
+                {
+                  "label": "Blue",
+                  "description": "Use the blue option"
+                },
+                {
+                  "label": "Green",
+                  "description": "Use the green option"
+                }
+              ],
+              "isOther": false,
+              "isSecret": false
+            }
+          ],
+          "questionAnswer": {
+            "requestId": "second",
+            "questionTextById": {
+              "choice": "Which option should the agent use?"
+            },
+            "answers": {
+              "choice": "Blue"
+            },
+            "attachmentsByQuestionId": {}
+          }
+        },
+        {
+          "id": "answer",
+          "threadId": "capture-thread",
+          "runId": "capture-run",
+          "nodeId": null,
+          "providerThreadId": null,
+          "providerTurnId": null,
+          "nativeItemRef": null,
+          "parentItemId": null,
+          "ordinal": 4,
+          "status": "completed",
+          "title": null,
+          "startedAt": "2026-10-17T12:01:08.000Z",
+          "completedAt": "2026-10-17T12:01:08.000Z",
+          "updatedAt": "2026-10-17T12:01:08.000Z",
+          "type": "assistant_message",
+          "messageId": "answer",
+          "text": "The synthetic work is complete.",
+          "streaming": false
+        }
+      ],
+      "latestRun": {
+        "runId": "capture-run",
+        "status": "completed",
+        "startedAt": "2026-10-17T12:00:00.000Z",
+        "completedAt": "2026-10-17T12:01:08.000Z"
+      },
+      "runlessWorkActive": false
+    }
+  }
+]

@@ -1,0 +1,1235 @@
+{
+  "m1-before": [
+    {
+      "recording": "m1-before-h-core",
+      "seconds": 0.0,
+      "command": [
+        "record",
+        "start",
+        "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-core.mp4",
+        "--hide-touches"
+      ]
+    },
+    {
+      "recording": "m1-before-h-core",
+      "seconds": 3.6,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-core",
+      "seconds": 7.1,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-core",
+      "seconds": 10.7,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-core",
+      "seconds": 14.5,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-core",
+      "seconds": 18.7,
+      "command": [
+        "press",
+        "label=\"Worked for 1m 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-core",
+      "seconds": 21.7,
+      "command": [
+        "press",
+        "label=\"Worked for 1m 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-core",
+      "seconds": 22.6,
+      "command": [
+        "press",
+        "label=\"Request type\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-core",
+      "seconds": 26.9,
+      "command": [
+        "record",
+        "stop"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 0.0,
+      "command": [
+        "record",
+        "start",
+        "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-chapters.mp4",
+        "--hide-touches"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 1.0,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 7.1,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 11.3,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 15.0,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 18.5,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 21.6,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 24.5,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 27.3,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 30.2,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 33.0,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 36.1,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 39.0,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 42.0,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 44.8,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 47.7,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 50.6,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 53.8,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 56.8,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 59.7,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 62.5,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 65.4,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 68.6,
+      "command": [
+        "press",
+        "label=\"Worked for 1m 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 71.6,
+      "command": [
+        "press",
+        "label=\"Fail deferred\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 74.9,
+      "command": [
+        "press",
+        "@e10",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 76.7,
+      "command": [
+        "press",
+        "label=\"Complete deferred\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 80.2,
+      "command": [
+        "press",
+        "label=\"Missing wait control\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-before-h-chapters",
+      "seconds": 84.5,
+      "command": [
+        "record",
+        "stop"
+      ]
+    }
+  ],
+  "m1-after": [
+    {
+      "recording": "m1-after-h-core",
+      "seconds": 0.0,
+      "command": [
+        "record",
+        "start",
+        "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-core.mp4",
+        "--hide-touches"
+      ]
+    },
+    {
+      "recording": "m1-after-h-core",
+      "seconds": 4.1,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-core",
+      "seconds": 6.9,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-core",
+      "seconds": 9.8,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-core",
+      "seconds": 12.7,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-core",
+      "seconds": 16.0,
+      "command": [
+        "press",
+        "label=\"Worked for 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-core",
+      "seconds": 19.1,
+      "command": [
+        "press",
+        "label=\"Worked for 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-core",
+      "seconds": 20.1,
+      "command": [
+        "press",
+        "label=\"Request type\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-core",
+      "seconds": 24.6,
+      "command": [
+        "record",
+        "stop"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 0.0,
+      "command": [
+        "record",
+        "start",
+        "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-chapters.mp4",
+        "--hide-touches"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 1.1,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 4.6,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 8.8,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 12.8,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 16.4,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 20.5,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 24.9,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 29.2,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 32.9,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 37.2,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 40.5,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 43.6,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 46.7,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 50.6,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 53.9,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 57.5,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 61.0,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 64.9,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 68.8,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 72.9,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 75.8,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 79.6,
+      "command": [
+        "press",
+        "label=\"Worked for 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 83.2,
+      "command": [
+        "press",
+        "label=\"Fail deferred\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 86.7,
+      "command": [
+        "press",
+        "@e10",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 89.1,
+      "command": [
+        "press",
+        "label=\"Complete deferred\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 93.5,
+      "command": [
+        "press",
+        "label=\"Missing wait control\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m1-after-h-chapters",
+      "seconds": 98.0,
+      "command": [
+        "record",
+        "stop"
+      ]
+    }
+  ],
+  "m2-before": [
+    {
+      "recording": "m2-before-h-core",
+      "seconds": 0.0,
+      "command": [
+        "record",
+        "start",
+        "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-core.mp4",
+        "--hide-touches"
+      ]
+    },
+    {
+      "recording": "m2-before-h-core",
+      "seconds": 4.6,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-core",
+      "seconds": 9.3,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-core",
+      "seconds": 13.6,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-core",
+      "seconds": 18.1,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-core",
+      "seconds": 23.5,
+      "command": [
+        "press",
+        "label=\"Worked for 1m 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-core",
+      "seconds": 28.8,
+      "command": [
+        "press",
+        "label=\"Worked for 1m 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-core",
+      "seconds": 30.5,
+      "command": [
+        "press",
+        "label=\"Request type\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-core",
+      "seconds": 36.0,
+      "command": [
+        "record",
+        "stop"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 0.0,
+      "command": [
+        "record",
+        "start",
+        "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-chapters.mp4",
+        "--hide-touches"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 1.5,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 6.7,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 11.6,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 16.6,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 21.2,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 26.0,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 30.7,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 35.4,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 40.6,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 45.4,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 50.0,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 54.8,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 59.3,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 64.0,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 68.7,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 73.2,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 77.9,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 82.4,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 87.0,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 91.6,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 96.6,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 102.1,
+      "command": [
+        "press",
+        "label=\"Worked for 1m 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 106.9,
+      "command": [
+        "press",
+        "label=\"Fail deferred\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 112.0,
+      "command": [
+        "press",
+        "label=\"Worked for 1m 5s \u00b7 Couldn't load work. Tap to retry.\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 117.6,
+      "command": [
+        "press",
+        "label=\"Complete deferred\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 123.3,
+      "command": [
+        "press",
+        "label=\"Missing wait control\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-before-h-chapters",
+      "seconds": 131.2,
+      "command": [
+        "record",
+        "stop"
+      ]
+    }
+  ],
+  "m2-after": [
+    {
+      "recording": "m2-after-h-core",
+      "seconds": 0.0,
+      "command": [
+        "record",
+        "start",
+        "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-core.mp4",
+        "--hide-touches"
+      ]
+    },
+    {
+      "recording": "m2-after-h-core",
+      "seconds": 4.5,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-core",
+      "seconds": 9.1,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-core",
+      "seconds": 13.7,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-core",
+      "seconds": 18.4,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-core",
+      "seconds": 23.6,
+      "command": [
+        "press",
+        "label=\"Worked for 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-core",
+      "seconds": 28.4,
+      "command": [
+        "press",
+        "label=\"Worked for 5s\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-core",
+      "seconds": 29.7,
+      "command": [
+        "press",
+        "label=\"Request type\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-core",
+      "seconds": 34.7,
+      "command": [
+        "record",
+        "stop"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 0.0,
+      "command": [
+        "record",
+        "start",
+        "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-chapters.mp4",
+        "--hide-touches"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 1.3,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 6.0,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 10.7,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 15.3,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 20.1,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 24.7,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 29.4,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 33.9,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 38.4,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 43.0,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 47.6,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 52.4,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 57.1,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 61.6,
+      "command": [
+        "press",
+        "label=\"Next stage\"",
+        "--settle"
+      ]
+    },
+    {
+      "recording": "m2-after-h-chapters",
+      "seconds": 66.1,
+      "command": [
+        "press",
+        "label=\"Next chapter\"",
+        "--settle"
+      ]
+    }
+  ]
+}

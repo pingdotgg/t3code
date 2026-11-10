@@ -1,0 +1,112 @@
+{
+  "units": "seconds",
+  "note": "Manifest arithmetic checked independently in Python; rendered overlap is F11. This is not a replacement for captures or a project test run.",
+  "cases": [
+    {
+      "case": "overlap",
+      "window": [
+        0,
+        68
+      ],
+      "waits": [
+        [
+          2,
+          62
+        ],
+        [
+          5,
+          65
+        ]
+      ],
+      "union": 63,
+      "active": 5
+    },
+    {
+      "case": "nested",
+      "window": [
+        0,
+        65
+      ],
+      "waits": [
+        [
+          2,
+          62
+        ],
+        [
+          5,
+          10
+        ]
+      ],
+      "union": 60,
+      "active": 5
+    },
+    {
+      "case": "disjoint out of order",
+      "window": [
+        0,
+        35
+      ],
+      "waits": [
+        [
+          20,
+          30
+        ],
+        [
+          2,
+          12
+        ]
+      ],
+      "union": 20,
+      "active": 15
+    },
+    {
+      "case": "clipped",
+      "window": [
+        0,
+        65
+      ],
+      "waits": [
+        [
+          -5,
+          70
+        ]
+      ],
+      "union": 65,
+      "active": 0
+    },
+    {
+      "case": "reversed and empty",
+      "window": [
+        0,
+        65
+      ],
+      "waits": [
+        [
+          12,
+          2
+        ],
+        [
+          10,
+          10
+        ]
+      ],
+      "union": 0,
+      "active": 65
+    },
+    {
+      "case": "all waiting",
+      "window": [
+        0,
+        65
+      ],
+      "waits": [
+        [
+          0,
+          65
+        ]
+      ],
+      "union": 65,
+      "active": 0
+    }
+  ]
+}

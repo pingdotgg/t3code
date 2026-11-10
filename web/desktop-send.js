@@ -1,0 +1,1 @@
+(async()=>{const c=window.desktopCapture;return (await c.run(c.t.startTurn,{threadId:c.threadId,message:{messageId:crypto.randomUUID(),role:'user',text:'Show the desktop lifecycle.',attachments:[]},modelSelection:{instanceId:'devReplay',model:'approval'},runtimeMode:'approval-required',interactionMode:'default'}))._tag})()

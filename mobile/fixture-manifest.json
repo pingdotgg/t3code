@@ -1,0 +1,89 @@
+{
+  "before": "bbdc7dca320ee4fbc7131498aaffef2fa1eb3d41",
+  "after": "6b8290152712ae8ef4696e44fb9f1f00026b99cf",
+  "origin": "2026-06-20T00:00:00.000Z",
+  "core": {
+    "runStart": 0,
+    "waitStart": 2,
+    "waitEnd": 62,
+    "runEnd": 65,
+    "resumedAt": 64,
+    "expectedWorkAt64": 4,
+    "expectedCompletedWork": 5,
+    "requestTypes": [
+      "question",
+      "approval"
+    ]
+  },
+  "historical": {
+    "runStart": 0,
+    "waitStart": 2,
+    "waitEnd": 62,
+    "runEnd": 65,
+    "latestRun": null,
+    "runlessVariant": true
+  },
+  "runlessOwnership": {
+    "currentStart": 0,
+    "ownWait": [
+      2,
+      62
+    ],
+    "earlierRunlessWait": [
+      -90,
+      -30
+    ],
+    "foreignNonNullRunWait": [
+      0,
+      64
+    ],
+    "observeAt": 64,
+    "expectedWorkingSeconds": 4
+  },
+  "wake": {
+    "inheritedStart": 0,
+    "predecessorWait": [
+      2,
+      62
+    ],
+    "tooEarlyRequest": [
+      -5,
+      0
+    ],
+    "foreignOpenRequestStart": 81,
+    "observeAt": 84,
+    "expectedWorkingSeconds": 24,
+    "waitingSelection": "injected wrapper state, not verified through route selectors"
+  },
+  "messageQuestion": {
+    "responseMode": "message",
+    "requestStart": 2,
+    "requestCompleted": null,
+    "observeAt": [
+      2,
+      62,
+      64,
+      65
+    ],
+    "expectedCompletedSeconds": 65,
+    "note": "This chapter forces question type despite the generic approval selector caption."
+  },
+  "durationGallery": {
+    "workSeconds": [
+      0,
+      0.5,
+      5,
+      59.5,
+      3723
+    ],
+    "waitSeconds": 60,
+    "headLabels": [
+      "1ms",
+      "500ms",
+      "5s",
+      "1m",
+      "1h 2m 3s"
+    ]
+  },
+  "deferred": "Real RunFoldButton with injected Promise callback; wrapper supplies synthetic expanded body. Server history loading and reconnect are unverified."
+}

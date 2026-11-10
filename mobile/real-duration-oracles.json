@@ -1,0 +1,32 @@
+[
+  {
+    "sample": "m1-before-final-approval",
+    "runStart": "2026-11-10T01:09:02.137Z",
+    "runEnd": "2026-11-10T01:10:16.121Z",
+    "wallMs": 73984,
+    "waits": [
+      {
+        "type": "approval_request",
+        "startedAt": "2026-11-10T01:09:03.033Z",
+        "completedAt": "2026-11-10T01:09:58.695Z"
+      }
+    ],
+    "waitMs": 55662,
+    "workMs": 18322
+  },
+  {
+    "sample": "m1-after-final-approval",
+    "runStart": "2026-11-10T01:17:11.730Z",
+    "runEnd": "2026-11-10T01:18:55.065Z",
+    "wallMs": 103335,
+    "waits": [
+      {
+        "type": "approval_request",
+        "startedAt": "2026-11-10T01:17:12.571Z",
+        "completedAt": "2026-11-10T01:18:20.584Z"
+      }
+    ],
+    "waitMs": 68013,
+    "workMs": 35322
+  }
+]

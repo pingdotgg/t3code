@@ -1,0 +1,61 @@
+{
+  "capturedRowIds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17
+  ],
+  "pairedStills": 54,
+  "pairedRecordings": 17,
+  "selectedUploadedAssets": 251,
+  "incompleteSubcases": {
+    "F12": "Missing/null run-start and run-end combinations not exhaustive",
+    "F13": "Independent compaction-on-return timer not seeded",
+    "F15": "Controlled history Promise only; actual page transport/socket reconnect unverified",
+    "F16": "Guest timeline-props harness only; real guest route/share/relay unverified",
+    "F17": "Initial detail loading, unavailable connection and no selected shell not captured"
+  },
+  "cleanup": {
+    "capturePortsClosed": [
+      6701,
+      6840,
+      14741,
+      14880,
+      15960,
+      15961,
+      15970,
+      15971
+    ],
+    "ownedBrowserTabsClosed": 4,
+    "ownWorktreesRemoved": [
+      "/home/ubuntu/wt/pr-33577-web-before",
+      "/home/ubuntu/wt/pr-33577-web-after"
+    ],
+    "commits": 0,
+    "pushes": 0,
+    "prComments": 0,
+    "evidenceRetainedByExplicitHandoff": "/tmp/lead-33577-r2/web"
+  },
+  "friction": [
+    "tool | agent-browser and ghdrop absent | used npx agent-browser plus the provided cafe uploader; preinstall them",
+    "tool | stored origin theme overrode Browser appearance | set application theme explicitly before each take",
+    "tool | Browser recording/screenshot raster differs from CSS viewport and exposes no explicit network-idle or reduced-motion control | report CSS and raster dimensions, suppress CSS motion and require identical settled frames",
+    "runbook | bundled Electron does not register Replay automatically | document isolated desktop RPC registration",
+    "tool | upload directory included obsolete Stop takes | use the final video-metadata allowlist; two obsolete uploads excluded from selected evidence",
+    "brief | delete-scratch instruction conflicts with required fixed-path evidence/scripts and retained raw MP4 handoff | retain requested handoff artifacts; remove app state/cache and worktrees"
+  ]
+}

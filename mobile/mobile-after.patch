@@ -1,0 +1,91 @@
+diff --git a/apps/mobile/src/App.tsx b/apps/mobile/src/App.tsx
+index 6287a05956..5e4e2c6f48 100644
+--- a/apps/mobile/src/App.tsx
++++ b/apps/mobile/src/App.tsx
+@@ -1,3 +1,4 @@
++import CaptureHarness, {CAPTURE_ENABLED} from './CaptureHarness';
+ import { installPermissionUpdateNotice } from "./features/connection/permissionUpdateNotice";
+ import { installComposerAttachmentUploads } from "./state/composer-attachment-uploads";
+ import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
+@@ -220,7 +221,7 @@ export default function App() {
+     <RegistryContext.Provider value={appAtomRegistry}>
+       <CloudAuthProvider>
+         <AppearancePreferencesProvider>
+-          <AppContent />
++          {CAPTURE_ENABLED ? <CaptureHarness key="capture-v3" /> : <AppContent />}
+         </AppearancePreferencesProvider>
+       </CloudAuthProvider>
+     </RegistryContext.Provider>
+diff --git a/apps/mobile/src/features/threads/ThreadFeed.tsx b/apps/mobile/src/features/threads/ThreadFeed.tsx
+index 760663e639..68237e2f59 100644
+--- a/apps/mobile/src/features/threads/ThreadFeed.tsx
++++ b/apps/mobile/src/features/threads/ThreadFeed.tsx
+@@ -1531,13 +1531,14 @@ function compactionLabel(label: string, title: string | undefined) {
+     : label;
+ }
+ 
+-function RunFoldButton({
++export function RunFoldButton({
+   entry,
+   environmentId,
+   threadId,
+   onToggle,
+   rowSizing,
+   iconColor,
++  captureLoader,
+ }: {
+   entry: Extract<ThreadFeedEntry, { type: "run-fold" }>;
+   environmentId: EnvironmentId;
+@@ -1545,12 +1546,14 @@ function RunFoldButton({
+   onToggle: (runId: RunId) => void;
+   rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+   iconColor: ColorValue;
++  captureLoader?: () => Promise<boolean>;
+ }) {
+   const loadWork = useAtomCommand(threadEnvironment.loadEarlierHistory, { reportFailure: false });
+   const anchorsKey = entry.deferredWorkItemIds?.join("\n") ?? "";
+   const [failed, setFailed] = useState(false);
+   const load = () => {
+     if (!anchorsKey) return;
++    if (captureLoader) { void captureLoader().then(ok => setFailed(!ok)); return; }
+     void Promise.all(
+       anchorsKey
+         .split("\n")
+diff --git a/apps/mobile/src/features/threads/use-visible-second-clock.ts b/apps/mobile/src/features/threads/use-visible-second-clock.ts
+index 4242544231..77c7b58567 100644
+--- a/apps/mobile/src/features/threads/use-visible-second-clock.ts
++++ b/apps/mobile/src/features/threads/use-visible-second-clock.ts
+@@ -12,6 +12,11 @@ const subscribeNever = () => () => undefined;
+  * re-rendering them. Every visible label shares one module-level tick.
+  */
+ export function useVisibleSecondClock(enabled: boolean): number {
++  if ((globalThis as any).__captureNow !== undefined) return useSyncExternalStore(
++    (listener) => { const listeners = ((globalThis as any).__captureListeners ??= new Set()); listeners.add(listener); return () => listeners.delete(listener); },
++    () => (globalThis as any).__captureNow,
++    () => (globalThis as any).__captureNow,
++  );
+   const focused = useIsFocused();
+   // The sidebar's route stays unfocused under the page beside it.
+   const inSidebar = usePaneRole() === "sidebar";
+diff --git a/apps/server/scripts/dev-replay-agent.ts b/apps/server/scripts/dev-replay-agent.ts
+index b6eea893ad..30688b9574 100644
+--- a/apps/server/scripts/dev-replay-agent.ts
++++ b/apps/server/scripts/dev-replay-agent.ts
+@@ -230,6 +230,17 @@ function runAgent(): void {
+         );
+         send({ id, method: frame.method, params: frame.params as Record<string, unknown> });
+         await untilAbort(response, signal);
++        const captureDir = "/tmp/lead-33577-r2/mobile/gates/after";
++        NodeFS.mkdirSync(captureDir, { recursive: true });
++        const release = `${captureDir}/${sessionId}.release`;
++        NodeFS.writeFileSync(`${captureDir}/${sessionId}.waiting.json`, JSON.stringify({sessionId, answeredAt: new Date().toISOString()}));
++        await untilAbort(new Promise<void>((resolve) => {
++          const watcher = NodeFS.watch(captureDir, () => {
++            if (NodeFS.existsSync(release)) { watcher.close(); resolve(); }
++          });
++          if (NodeFS.existsSync(release)) { watcher.close(); resolve(); }
++          signal.addEventListener("abort", () => { watcher.close(); resolve(); }, {once:true});
++        }), signal);
+         pendingAgentRequests.delete(String(id));
+         // The client answers "cancelled" when the user stops the turn mid-request.
+         const outcome = (answer as { outcome?: { outcome?: string } } | undefined)?.outcome;

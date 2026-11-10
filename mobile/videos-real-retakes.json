@@ -1,0 +1,37 @@
+[
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-before-real-question-retake.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-before-real-question-retake.webp",
+    "bytes": 232326
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-after-real-question-retake.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-after-real-question-retake.webp",
+    "bytes": 188814
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-before-real-approval-retake.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-before-real-approval-retake.webp",
+    "bytes": 183148
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-after-real-approval-retake.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-after-real-approval-retake.webp",
+    "bytes": 168734
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-before-reject.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-before-reject.webp",
+    "bytes": 129884
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-after-reject.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-after-reject.webp",
+    "bytes": 134848
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-before-stop.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-before-stop.webp",
+    "bytes": 121692
+  }
+]

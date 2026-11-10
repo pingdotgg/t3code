@@ -1,0 +1,12 @@
+{
+  "directory": "/tmp/lead-33577-r2/mobile/raw/m1-before-supplement-1794274143",
+  "kind": "approval",
+  "heartbeat": "500ms native repaint counter; fixture clock frozen at each step",
+  "coreStages": [
+    1,
+    2,
+    62,
+    64,
+    65
+  ]
+}

@@ -1,0 +1,52 @@
+[
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-core.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-before-h-core.webp",
+    "bytes": 72604
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-core.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-after-h-core.webp",
+    "bytes": 72974
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-core.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m2-before-h-core.webp",
+    "bytes": 189340
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-core.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m2-after-h-core.webp",
+    "bytes": 156228
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-chapters.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-before-h-chapters.webp",
+    "bytes": 254634
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-chapters.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m1-after-h-chapters.webp",
+    "bytes": 248998
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m2-before-approval.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m2-before-approval.webp",
+    "bytes": 708248
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m2-after-approval.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m2-after-approval.webp",
+    "bytes": 741962
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m2-before-question-valid.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m2-before-question-valid.webp",
+    "bytes": 391018
+  },
+  {
+    "raw": "/tmp/lead-33577-r2/mobile/raw/m2-after-question.mp4",
+    "webp": "/tmp/lead-33577-r2/mobile/publish/m2-after-question.webp",
+    "bytes": 733710
+  }
+]

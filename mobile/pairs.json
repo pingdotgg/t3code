@@ -1,0 +1,218 @@
+[
+  {
+    "id": "m1-h-pending-start",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-pending-start-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-pending-start-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-pending-start-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-pending-start-diff16.png",
+    "changedPixels": 0,
+    "thresholdPixels": 0
+  },
+  {
+    "id": "m1-h-resumed",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-resumed-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-resumed-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-resumed-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-resumed-diff16.png",
+    "changedPixels": 12570,
+    "thresholdPixels": 3040
+  },
+  {
+    "id": "m1-h-completed",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-completed-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-completed-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-completed-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-completed-diff16.png",
+    "changedPixels": 1268,
+    "thresholdPixels": 1141
+  },
+  {
+    "id": "m1-h-expanded",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-expanded-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-expanded-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-expanded-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-expanded-diff16.png",
+    "changedPixels": 1328,
+    "thresholdPixels": 1163
+  },
+  {
+    "id": "m1-h-approval-completed",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-approval-completed-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-approval-completed-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-approval-completed-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-approval-completed-diff16.png",
+    "changedPixels": 1268,
+    "thresholdPixels": 1141
+  },
+  {
+    "id": "m1-h-history",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-history-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-history-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-history-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-history-diff16.png",
+    "changedPixels": 1268,
+    "thresholdPixels": 1141
+  },
+  {
+    "id": "m1-h-runless-history",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-runless-history-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-runless-history-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-runless-history-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-runless-history-diff16.png",
+    "changedPixels": 1268,
+    "thresholdPixels": 1141
+  },
+  {
+    "id": "m1-h-runless-ownership",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-runless-ownership-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-runless-ownership-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-runless-ownership-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-runless-ownership-diff16.png",
+    "changedPixels": 12570,
+    "thresholdPixels": 3040
+  },
+  {
+    "id": "m1-h-wake",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-wake-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-wake-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-wake-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-wake-diff16.png",
+    "changedPixels": 10937,
+    "thresholdPixels": 3367
+  },
+  {
+    "id": "m1-h-message-3",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-message-3-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-message-3-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-message-3-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-message-3-diff16.png",
+    "changedPixels": 0,
+    "thresholdPixels": 0
+  },
+  {
+    "id": "m1-h-gallery",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-gallery-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-gallery-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-gallery-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-gallery-diff16.png",
+    "changedPixels": 5423,
+    "thresholdPixels": 4759
+  },
+  {
+    "id": "m1-h-minute-1",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-minute-1-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-minute-1-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-minute-1-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-minute-1-diff16.png",
+    "changedPixels": 0,
+    "thresholdPixels": 0
+  },
+  {
+    "id": "m1-h-deferred-failed",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-deferred-failed-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-deferred-failed-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-deferred-failed-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-deferred-failed-diff16.png",
+    "changedPixels": 8805,
+    "thresholdPixels": 7759
+  },
+  {
+    "id": "m1-h-deferred-loaded",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-deferred-loaded-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-deferred-loaded-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-deferred-loaded-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-deferred-loaded-diff16.png",
+    "changedPixels": 1328,
+    "thresholdPixels": 1163
+  },
+  {
+    "id": "m1-h-deferred-missing-wait",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m1-before-1794272655/m1-before-h-deferred-missing-wait-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m1-after-1794272252/m1-after-h-deferred-missing-wait-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m1-h-deferred-missing-wait-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m1-h-deferred-missing-wait-diff16.png",
+    "changedPixels": 0,
+    "thresholdPixels": 0
+  },
+  {
+    "id": "m2-h-pending-start",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-pending-start-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-pending-start-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m2-h-pending-start-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m2-h-pending-start-diff16.png",
+    "changedPixels": 0,
+    "thresholdPixels": 0
+  },
+  {
+    "id": "m2-h-resumed",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-resumed-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-resumed-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m2-h-resumed-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m2-h-resumed-diff16.png",
+    "changedPixels": 3272,
+    "thresholdPixels": 721
+  },
+  {
+    "id": "m2-h-completed",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-completed-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-completed-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m2-h-completed-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m2-h-completed-diff16.png",
+    "changedPixels": 285,
+    "thresholdPixels": 228
+  },
+  {
+    "id": "m2-h-expanded",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-expanded-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-expanded-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m2-h-expanded-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m2-h-expanded-diff16.png",
+    "changedPixels": 279,
+    "thresholdPixels": 222
+  },
+  {
+    "id": "m2-h-approval-completed",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-approval-completed-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-approval-completed-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m2-h-approval-completed-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m2-h-approval-completed-diff16.png",
+    "changedPixels": 285,
+    "thresholdPixels": 228
+  },
+  {
+    "id": "m2-h-history",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-history-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-history-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m2-h-history-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m2-h-history-diff16.png",
+    "changedPixels": 285,
+    "thresholdPixels": 228
+  },
+  {
+    "id": "m2-h-runless-history",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-runless-history-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-runless-history-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m2-h-runless-history-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m2-h-runless-history-diff16.png",
+    "changedPixels": 285,
+    "thresholdPixels": 228
+  },
+  {
+    "id": "m2-h-gallery",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-gallery-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-gallery-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m2-h-gallery-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m2-h-gallery-diff16.png",
+    "changedPixels": 1199,
+    "thresholdPixels": 921
+  },
+  {
+    "id": "m2-h-minute-1",
+    "before": "/tmp/lead-33577-r2/mobile/raw/m2-before-1794272619/m2-before-h-minute-1-b.png",
+    "after": "/tmp/lead-33577-r2/mobile/raw/m2-after-1794272007/m2-after-h-minute-1-b.png",
+    "diff0": "/tmp/lead-33577-r2/mobile/publish/m2-h-minute-1-diff0.png",
+    "diff16": "/tmp/lead-33577-r2/mobile/publish/m2-h-minute-1-diff16.png",
+    "changedPixels": 0,
+    "thresholdPixels": 0
+  }
+]

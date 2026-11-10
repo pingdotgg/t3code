@@ -1,0 +1,786 @@
+[
+  {
+    "name": "B1-F14-0",
+    "before": "/tmp/lead-33577-r2/web/raw/B1-F14-0-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B1-F14-0-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B1-F14-0-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B1-F14-0-diffT16.png",
+    "changed0": 1058,
+    "changedT": 668,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B1-F14-1",
+    "before": "/tmp/lead-33577-r2/web/raw/B1-F14-1-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B1-F14-1-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B1-F14-1-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B1-F14-1-diffT16.png",
+    "changed0": 330,
+    "changedT": 187,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B1-F14-2",
+    "before": "/tmp/lead-33577-r2/web/raw/B1-F14-2-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B1-F14-2-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B1-F14-2-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B1-F14-2-diffT16.png",
+    "changed0": 0,
+    "changedT": 0,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B1-F14-3",
+    "before": "/tmp/lead-33577-r2/web/raw/B1-F14-3-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B1-F14-3-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B1-F14-3-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B1-F14-3-diffT16.png",
+    "changed0": 264,
+    "changedT": 176,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B1-real-approval-expanded",
+    "before": "/tmp/lead-33577-r2/web/raw/B1-real-approval-expanded-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B1-real-approval-expanded-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B1-real-approval-expanded-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B1-real-approval-expanded-diffT16.png",
+    "changed0": 282,
+    "changedT": 193,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B1-real-reject-exit",
+    "before": "/tmp/lead-33577-r2/web/raw/B1-real-reject-exit-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B1-real-reject-exit-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B1-real-reject-exit-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B1-real-reject-exit-diffT16.png",
+    "changed0": 822,
+    "changedT": 549,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B1-real-reject-pending",
+    "before": "/tmp/lead-33577-r2/web/raw/B1-real-reject-pending-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B1-real-reject-pending-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B1-real-reject-pending-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B1-real-reject-pending-diffT16.png",
+    "changed0": 1482,
+    "changedT": 1033,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B1-real-stop-exit",
+    "before": "/tmp/lead-33577-r2/web/raw/B1-real-stop-exit-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B1-real-stop-exit-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B1-real-stop-exit-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B1-real-stop-exit-diffT16.png",
+    "changed0": 1,
+    "changedT": 0,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B1-real-stop-pending",
+    "before": "/tmp/lead-33577-r2/web/raw/B1-real-stop-pending-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B1-real-stop-pending-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B1-real-stop-pending-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B1-real-stop-pending-diffT16.png",
+    "changed0": 994,
+    "changedT": 667,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B2-real-fresh-complete",
+    "before": "/tmp/lead-33577-r2/web/raw/B2-real-fresh-complete-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B2-real-fresh-complete-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B2-real-fresh-complete-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B2-real-fresh-complete-diffT16.png",
+    "changed0": 2,
+    "changedT": 0,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B2-real-fresh-pending",
+    "before": "/tmp/lead-33577-r2/web/raw/B2-real-fresh-pending-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B2-real-fresh-pending-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B2-real-fresh-pending-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B2-real-fresh-pending-diffT16.png",
+    "changed0": 3099,
+    "changedT": 2683,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B3-F11-0",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F11-0-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F11-0-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F11-0-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F11-0-diffT16.png",
+    "changed0": 1058,
+    "changedT": 668,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F11-1",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F11-1-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F11-1-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F11-1-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F11-1-diffT16.png",
+    "changed0": 1072,
+    "changedT": 688,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F11-2",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F11-2-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F11-2-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F11-2-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F11-2-diffT16.png",
+    "changed0": 255,
+    "changedT": 162,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F11-3",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F11-3-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F11-3-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F11-3-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F11-3-diffT16.png",
+    "changed0": 329,
+    "changedT": 196,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F6-4",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F6-4-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F6-4-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F6-4-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F6-4-diffT16.png",
+    "changed0": 630,
+    "changedT": 380,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F7-0",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F7-0-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F7-0-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F7-0-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F7-0-diffT16.png",
+    "changed0": 1370,
+    "changedT": 863,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F7-1",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F7-1-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F7-1-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F7-1-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F7-1-diffT16.png",
+    "changed0": 591,
+    "changedT": 372,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F7-2",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F7-2-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F7-2-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F7-2-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F7-2-diffT16.png",
+    "changed0": 628,
+    "changedT": 383,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F7-3",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F7-3-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F7-3-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F7-3-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F7-3-diffT16.png",
+    "changed0": 628,
+    "changedT": 383,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F8-0",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F8-0-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F8-0-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F8-0-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F8-0-diffT16.png",
+    "changed0": 363,
+    "changedT": 223,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F8-1",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F8-1-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F8-1-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F8-1-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F8-1-diffT16.png",
+    "changed0": 1096,
+    "changedT": 703,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F9-0",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F9-0-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F9-0-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F9-0-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F9-0-diffT16.png",
+    "changed0": 0,
+    "changedT": 0,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B3-F9-2",
+    "before": "/tmp/lead-33577-r2/web/raw/B3-F9-2-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B3-F9-2-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B3-F9-2-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B3-F9-2-diffT16.png",
+    "changed0": 0,
+    "changedT": 0,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "B4-approval-pending",
+    "before": "/tmp/lead-33577-r2/web/raw/B4-approval-pending-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B4-approval-pending-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B4-approval-pending-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B4-approval-pending-diffT16.png",
+    "changed0": 2966,
+    "changedT": 2578,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B4-real-question-complete",
+    "before": "/tmp/lead-33577-r2/web/raw/B4-real-question-complete-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B4-real-question-complete-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B4-real-question-complete-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B4-real-question-complete-diffT16.png",
+    "changed0": 0,
+    "changedT": 0,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B4-real-question-pending",
+    "before": "/tmp/lead-33577-r2/web/raw/B4-real-question-pending-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B4-real-question-pending-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B4-real-question-pending-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B4-real-question-pending-diffT16.png",
+    "changed0": 4449,
+    "changedT": 3921,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F12-gallery",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F12-gallery-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F12-gallery-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F12-gallery-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F12-gallery-diffT16.png",
+    "changed0": 3069,
+    "changedT": 2657,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F12-long-timestamp",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F12-long-timestamp-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F12-long-timestamp-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F12-long-timestamp-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F12-long-timestamp-diffT16.png",
+    "changed0": 3068,
+    "changedT": 2671,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F12-minute",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F12-minute-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F12-minute-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F12-minute-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F12-minute-diffT16.png",
+    "changed0": 583,
+    "changedT": 489,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F13-0",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F13-0-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F13-0-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F13-0-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F13-0-diffT16.png",
+    "changed0": 0,
+    "changedT": 0,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F13-1",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F13-1-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F13-1-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F13-1-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F13-1-diffT16.png",
+    "changed0": 757,
+    "changedT": 678,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F13-2",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F13-2-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F13-2-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F13-2-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F13-2-diffT16.png",
+    "changed0": 2918,
+    "changedT": 2519,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F13-3",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F13-3-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F13-3-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F13-3-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F13-3-diffT16.png",
+    "changed0": 2918,
+    "changedT": 2519,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F15-error",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F15-error-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F15-error-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F15-error-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F15-error-diffT16.png",
+    "changed0": 9856,
+    "changedT": 9060,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F15-loaded",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F15-loaded-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F15-loaded-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F15-loaded-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F15-loaded-diffT16.png",
+    "changed0": 972,
+    "changedT": 845,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F15-negative",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F15-negative-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F15-negative-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F15-negative-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F15-negative-diffT16.png",
+    "changed0": 0,
+    "changedT": 0,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F17-checkpoint",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F17-checkpoint-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F17-checkpoint-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F17-checkpoint-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F17-checkpoint-diffT16.png",
+    "changed0": 730,
+    "changedT": 610,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F17-empty",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F17-empty-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F17-empty-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F17-empty-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F17-empty-diffT16.png",
+    "changed0": 1,
+    "changedT": 0,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "B5-F17-untimed",
+    "before": "/tmp/lead-33577-r2/web/raw/B5-F17-untimed-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/B5-F17-untimed-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/B5-F17-untimed-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/B5-F17-untimed-diffT16.png",
+    "changed0": 0,
+    "changedT": 0,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "D1-complete",
+    "before": "/tmp/lead-33577-r2/web/raw/D1-complete-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/D1-complete-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/D1-complete-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/D1-complete-diffT16.png",
+    "changed0": 450,
+    "changedT": 380,
+    "pixels": 1296000,
+    "size": [
+      1440,
+      900
+    ]
+  },
+  {
+    "name": "D1-expanded",
+    "before": "/tmp/lead-33577-r2/web/raw/D1-expanded-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/D1-expanded-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/D1-expanded-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/D1-expanded-diffT16.png",
+    "changed0": 446,
+    "changedT": 376,
+    "pixels": 1296000,
+    "size": [
+      1440,
+      900
+    ]
+  },
+  {
+    "name": "D1-pending",
+    "before": "/tmp/lead-33577-r2/web/raw/D1-pending-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/D1-pending-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/D1-pending-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/D1-pending-diffT16.png",
+    "changed0": 938,
+    "changedT": 826,
+    "pixels": 1296000,
+    "size": [
+      1440,
+      900
+    ]
+  },
+  {
+    "name": "G1-0",
+    "before": "/tmp/lead-33577-r2/web/raw/G1-0-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/G1-0-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/G1-0-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/G1-0-diffT16.png",
+    "changed0": 2918,
+    "changedT": 2519,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "G1-2",
+    "before": "/tmp/lead-33577-r2/web/raw/G1-2-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/G1-2-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/G1-2-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/G1-2-diffT16.png",
+    "changed0": 830,
+    "changedT": 706,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "G1-3",
+    "before": "/tmp/lead-33577-r2/web/raw/G1-3-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/G1-3-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/G1-3-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/G1-3-diffT16.png",
+    "changed0": 2919,
+    "changedT": 2519,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "G1-5",
+    "before": "/tmp/lead-33577-r2/web/raw/G1-5-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/G1-5-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/G1-5-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/G1-5-diffT16.png",
+    "changed0": 831,
+    "changedT": 706,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "H-approval-0",
+    "before": "/tmp/lead-33577-r2/web/raw/H-approval-0-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/H-approval-0-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/H-approval-0-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/H-approval-0-diffT16.png",
+    "changed0": 0,
+    "changedT": 0,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "H-approval-2",
+    "before": "/tmp/lead-33577-r2/web/raw/H-approval-2-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/H-approval-2-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/H-approval-2-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/H-approval-2-diffT16.png",
+    "changed0": 0,
+    "changedT": 0,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "H-approval-3",
+    "before": "/tmp/lead-33577-r2/web/raw/H-approval-3-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/H-approval-3-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/H-approval-3-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/H-approval-3-diffT16.png",
+    "changed0": 1058,
+    "changedT": 668,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "H-approval-5",
+    "before": "/tmp/lead-33577-r2/web/raw/H-approval-5-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/H-approval-5-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/H-approval-5-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/H-approval-5-diffT16.png",
+    "changed0": 264,
+    "changedT": 176,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "H-approval-6",
+    "before": "/tmp/lead-33577-r2/web/raw/H-approval-6-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/H-approval-6-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/H-approval-6-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/H-approval-6-diffT16.png",
+    "changed0": 326,
+    "changedT": 192,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "H-approval-7",
+    "before": "/tmp/lead-33577-r2/web/raw/H-approval-7-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/H-approval-7-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/H-approval-7-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/H-approval-7-diffT16.png",
+    "changed0": 326,
+    "changedT": 192,
+    "pixels": 1024000,
+    "size": [
+      1280,
+      800
+    ]
+  },
+  {
+    "name": "H-question-3",
+    "before": "/tmp/lead-33577-r2/web/raw/H-question-3-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/H-question-3-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/H-question-3-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/H-question-3-diffT16.png",
+    "changed0": 2918,
+    "changedT": 2519,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "H-question-5",
+    "before": "/tmp/lead-33577-r2/web/raw/H-question-5-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/H-question-5-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/H-question-5-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/H-question-5-diffT16.png",
+    "changed0": 734,
+    "changedT": 651,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  },
+  {
+    "name": "H-question-6",
+    "before": "/tmp/lead-33577-r2/web/raw/H-question-6-before.png",
+    "after": "/tmp/lead-33577-r2/web/raw/H-question-6-after.png",
+    "diff0": "/tmp/lead-33577-r2/web/diffs/H-question-6-diff0.png",
+    "diffT": "/tmp/lead-33577-r2/web/diffs/H-question-6-diffT16.png",
+    "changed0": 830,
+    "changedT": 706,
+    "pixels": 1316640,
+    "size": [
+      780,
+      1688
+    ]
+  }
+]

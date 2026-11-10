@@ -1,0 +1,3 @@
+(async(side,tab,name)=>{
+const r=await tools.mcp__t3_code__preview_recording_stop({tabId:tab});const v=r.structuredContent;if(!v?.path)throw Error(JSON.stringify(r));
+const dest='/tmp/lead-33577-r2/web/raw/'+name+'-'+side+'.mp4';await tools.exec_command({cmd:"cp '"+v.path+"' '"+dest+"'",max_output_tokens:200});const list=load('recordings')||[];list.push({...v,side,name,path:dest});store('recordings',list);return{side,name,path:dest};})
