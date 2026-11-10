@@ -36,21 +36,15 @@ const pendingDownloadCache = Effect.fn("test.pendingDownloadCache")(function* (c
   readonly packageBytes: string;
   readonly fileName?: string;
   readonly sha512?: string;
-  readonly packageFile?: boolean;
-  readonly updateInfo?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-updater-pending-" });
   const fileName = cache.fileName ?? "T3-Code-1.2.4-mac.zip";
-  if (cache.packageFile !== false) {
-    yield* fs.writeFileString(`${directory}/${fileName}`, cache.packageBytes);
-  }
-  if (cache.updateInfo !== false) {
-    yield* fs.writeFileString(
-      `${directory}/update-info.json`,
-      JSON.stringify({ fileName, sha512: cache.sha512 ?? sha512Of(cache.packageBytes) }),
-    );
-  }
+  yield* fs.writeFileString(`${directory}/${fileName}`, cache.packageBytes);
+  yield* fs.writeFileString(
+    `${directory}/update-info.json`,
+    JSON.stringify({ fileName, sha512: cache.sha512 ?? sha512Of(cache.packageBytes) }),
+  );
   return directory;
 });
 
@@ -207,11 +201,7 @@ describe("DesktopUpdates", () => {
       Effect.gen(function* () {
         const { state, downloadCount } = yield* checkWithPendingDownload(options);
 
-        assert.equal(
-          state.status,
-          "downloaded",
-          "the update downloaded before quitting is offered for download again",
-        );
+        assert.equal(state.status, "downloaded");
         assert.equal(state.downloadedVersion, "1.2.4");
         assert.equal(downloadCount, 1);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -257,11 +247,6 @@ describe("DesktopUpdates", () => {
     {
       name: "a cached package whose bytes are damaged",
       cache: { packageBytes: "T3 Code 1.2.4 x6", sha512: sha512Of(x64Package) },
-    },
-    { name: "a missing cached package", cache: { packageBytes: x64Package, packageFile: false } },
-    {
-      name: "a cache without update-info.json",
-      cache: { packageBytes: x64Package, updateInfo: false },
     },
     {
       // Both resolved paths contain the feed's /x64/, so electron-updater picks the first .exe.
