@@ -12,6 +12,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
@@ -112,44 +113,12 @@ describe("sidebar header new thread", () => {
 });
 
 function threadShell(projectId: ProjectId, index: number): EnvironmentThreadShell {
-  return {
+  return makeThreadFixture({
     environmentId: EnvironmentId.make("local"),
     id: ThreadId.make(`thread-${index}`),
     projectId,
     title: `Thread ${index}`,
-    providerInstanceId: "codex",
-    modelSelection: { instanceId: "codex", model: "gpt-5" },
-    branch: null,
-    worktreePath: null,
-    lineage: { sideChat: false },
-    forkedFrom: null,
-    linkOrigin: null,
-    delegatedFrom: null,
-    latestRun: null,
-    runtime: null,
-    latestUserMessageAt: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
-    pendingBackgroundTasks: [],
-    providerInstanceHistory: [],
-    goal: null,
-    itemCount: 1,
-    visibleItemCount: 1,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: `2026-01-01T00:00:0${index}.000Z`,
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    unsettledAt: null,
-    snoozedUntil: null,
-    snoozedAt: null,
-    pinnedAt: null,
-    pinOrderKey: null,
-    activeOrderKey: null,
-    pullRequests: [],
-    deletedAt: null,
-  } as unknown as EnvironmentThreadShell;
+  });
 }
 
 describe("sidebar render isolation", () => {
