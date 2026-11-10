@@ -410,9 +410,8 @@ export function LayoutResizeHandles({
 }
 
 /**
- * The drag's guide line on the moving edge, the snap ticks along the strip's
- * bottom (column drags), and the pill naming the width (pen buCpT, KQQhW,
- * Fgh35). Static paint; it only moves with the pointer.
+ * The drag's guide line on the moving edge and the pill naming the width
+ * (pen buCpT, KQQhW, Fgh35). Static paint; it only moves with the pointer.
  */
 function ResizeFeedback({ drag, stripWidth }: { drag: ActiveDrag; stripWidth: number }) {
   if (drag.kind === "column") {
@@ -424,21 +423,6 @@ function ResizeFeedback({ drag, stripWidth }: { drag: ActiveDrag; stripWidth: nu
           className="absolute top-13 bottom-12 w-0.5 -translate-x-1/2 rounded-full bg-strong-foreground"
           style={{ left: toPct(edge) }}
         />
-        {LAYOUT_COLUMN_WIDTH_PRESETS.map((preset) => {
-          const at = drag.columnLeft + preset;
-          if (at > stripWidth) return null;
-          return (
-            <div
-              key={preset}
-              className={
-                drag.snapped === preset
-                  ? "absolute bottom-1 h-2 w-0.5 -translate-x-1/2 rounded-full bg-strong-foreground"
-                  : "absolute bottom-1 h-2 w-0.5 -translate-x-1/2 rounded-full bg-strong-foreground/25"
-              }
-              style={{ left: toPct(at) }}
-            />
-          );
-        })}
         <ResizePill
           style={{ left: toPct(edge), top: "58%" }}
           icon={<MoveHorizontalIcon className="size-3.25" />}
