@@ -1283,10 +1283,25 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const managerDirectory = yield* managerBinDirectory(managerPath);
     const installEnvironment = withPreferredPath(packageEnvironment, managerDirectory, platform);
     if (distribution === "npx") {
-      // npm 12 blocks dependency install scripts; an agent's native deps are unknown before install, so --allow-scripts cannot list them.
+      // npm 12 blocks dependency scripts by default and an agent's native deps are unknown before
+      // install, so allow all of them unless the user configured an allow-scripts policy.
+      const allowScriptsPolicy = yield* runCommand(
+        managerPath,
+        ["config", "get", "allow-scripts"],
+        {
+          env: installEnvironment,
+          timeout: PACKAGE_QUERY_TIMEOUT,
+          truncatedOutputReason: "install_failed",
+        },
+      );
       yield* runCommand(
         managerPath,
-        ["install", "--global", "--dangerously-allow-all-scripts", packageSpec],
+        [
+          "install",
+          "--global",
+          ...(allowScriptsPolicy.trim() === "" ? ["--dangerously-allow-all-scripts"] : []),
+          packageSpec,
+        ],
         {
           env: installEnvironment,
           timeout: PACKAGE_INSTALL_TIMEOUT,

@@ -514,6 +514,36 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("keeps a configured npm allow-scripts policy", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-allow-scripts-policy-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, npm_config_allow_scripts: "none" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      yield* resolver.resolve(settings(), "/workspace", environment);
+
+      const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      expect(npmCommands).toContain("install --global @example/acp@1.2.3\n");
+      expect(npmCommands).not.toContain("--dangerously-allow-all-scripts");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   it.effect("honors an exact Windows PATH override when launching a global package", () => {
     const agent = makeAgent({
       uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },

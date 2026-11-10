@@ -9,6 +9,10 @@ if [ "$1" = "prefix" ] && [ "$2" = "--global" ]; then
   printf '%s\n' "$prefix"
   exit 0
 fi
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "allow-scripts" ]; then
+  printf '%s\n' "${npm_config_allow_scripts:-}"
+  exit 0
+fi
 if [ "$1" = "install" ] && [ "$2" = "--global" ]; then
   package_root="$prefix/lib/node_modules/@example/acp"
   executable="$prefix/bin/example-agent"
