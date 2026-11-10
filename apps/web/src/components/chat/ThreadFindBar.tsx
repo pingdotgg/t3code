@@ -8,6 +8,8 @@ import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
 
 interface ThreadFindBarProps {
   readonly open: boolean;
+  /** Names what the bar searches; defaults to the thread. */
+  readonly label?: string;
   readonly query: string;
   readonly matchCount: number;
   readonly counting?: boolean;
@@ -39,6 +41,7 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
 
   if (!props.open) return null;
 
+  const findLabel = props.label ?? "Find in thread";
   const hasQuery = props.query.trim().length > 0;
   const noResults = hasQuery && !props.status && props.matchCount === 0;
   let label = "";
@@ -69,7 +72,7 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
         size="lg"
         onContextMenu={(event) => event.stopPropagation()}
         role="search"
-        aria-label="Find in thread"
+        aria-label={findLabel}
         aria-busy={props.status === "loading" || props.counting === true}
         className="w-full"
       >
@@ -78,8 +81,8 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
           type="search"
           size="sm"
           value={props.query}
-          aria-label="Find in thread"
-          placeholder="Find in thread"
+          aria-label={findLabel}
+          placeholder={findLabel}
           maxLength={200}
           spellCheck={false}
           autoComplete="off"

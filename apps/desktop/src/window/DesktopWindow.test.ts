@@ -45,7 +45,7 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
+import { FRAME_FIND_REQUEST_CHANNEL, SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -67,7 +67,10 @@ function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
+  const mainFrame = { name: "", parent: null };
   const webContents = {
+    mainFrame,
+    focusedFrame: mainFrame as { name: string; parent: unknown } | null,
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
@@ -152,6 +155,7 @@ function makeFakeBrowserWindow() {
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
+    webContents,
     webContentsListeners,
     webContentsOnce: webContents.once,
     windowListeners,
@@ -693,6 +697,44 @@ describe("DesktopWindow", () => {
         );
         beforeInput(event, { ...input, key: "r", isAutoRepeat: false });
         assert.isFalse(fakeWindow.setIgnoreMenuShortcuts.mock.lastCall?.[0]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("routes Cmd+F inside a named file-preview frame to the renderer", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const beforeInput = fakeWindow.webContentsListeners.get("before-input-event");
+        if (!beforeInput) {
+          return yield* Effect.die("before-input-event listener was not registered");
+        }
+        const { webContents } = fakeWindow;
+        const preview = { name: "t3-file-find-r1", parent: webContents.mainFrame };
+        const press = (frame: typeof webContents.focusedFrame, meta = true) => {
+          let prevented = false;
+          webContents.focusedFrame = frame;
+          beforeInput(
+            { preventDefault: () => (prevented = true) },
+            { type: "keyDown", key: "f", meta, control: false, alt: false, shift: false },
+          );
+          return prevented;
+        };
+
+        assert.isFalse(press(webContents.mainFrame));
+        assert.isFalse(press({ name: "page-frame", parent: webContents.mainFrame }));
+        assert.isFalse(press(preview, false));
+        assert.isTrue(press({ name: "", parent: preview }));
+        assert.deepEqual(
+          fakeWindow.send.mock.calls.filter(([channel]) => channel === FRAME_FIND_REQUEST_CHANNEL),
+          [[FRAME_FIND_REQUEST_CHANNEL, "t3-file-find-r1"]],
+        );
       }).pipe(Effect.provide(layer));
     }),
   );
