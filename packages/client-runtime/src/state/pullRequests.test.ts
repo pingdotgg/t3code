@@ -2404,12 +2404,15 @@ it.effect.each([false, true])(
             JSON.stringify(listResult([])),
           );
         }
+        const listRead = yield* Deferred.make<void>();
         const client = actionReplyClient({
           [WS_METHODS.pullRequestsList]: () =>
             Effect.sync(() => {
               reads++;
-              return listResult([{ ...actionReference, state: "open", isDraft: false }]);
-            }),
+            }).pipe(
+              Effect.andThen(Deferred.succeed(listRead, undefined)),
+              Effect.as(listResult([{ ...actionReference, state: "open", isDraft: false }])),
+            ),
         });
         const { atoms, registry, supervisor } = yield* makeTestRuntime(
           client,
@@ -2439,7 +2442,7 @@ it.effect.each([false, true])(
           ...state,
           phase: "connected" as const,
         }));
-        yield* Effect.yieldNow;
+        if (!alreadySaved) yield* Deferred.await(listRead);
         yield* AtomRegistry.getResult(registry, warm, { suspendOnWaiting: true });
         expect(reads > 0).toBe(!alreadySaved);
         // The page's own read of the same key then paints at once from what the warm-up saved.
