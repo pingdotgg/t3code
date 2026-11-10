@@ -891,7 +891,7 @@ function useChatMarkdownState({
         }
         revealLabel={revealInFileManagerLabel}
         onSave={
-          threadRef && canReadFiles && !isAppBundle
+          threadRef && canReadFiles && !isAppBundle && !/[\\/]$/.test(fileLinkMeta.filePath)
             ? () =>
                 void saveFileAs({
                   environmentId: threadRef.environmentId,
