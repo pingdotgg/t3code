@@ -1,5 +1,9 @@
 import { ComposerContextId } from "@t3tools/contracts";
-import type { ComposerContextClipboardFragment } from "@t3tools/contracts";
+import type {
+  ComposerContextClipboardFragment,
+  ComposerContextRecord,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
@@ -9,8 +13,12 @@ import {
   collectComposerContextReferences,
   formatComposerContextReference,
   replaceComposerContextReferences,
+  threadLinkContextReferences,
 } from "@t3tools/shared/composerContextReferences";
 import { isClosingFence, parseOpeningFence } from "~/composer-rich-text-doc";
+import { readThreadShell } from "~/state/entities";
+
+const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
 
 /**
  * Code ranges by the composer's rules: fences open and close only on their own line, and a
@@ -89,6 +97,7 @@ function codeOffsetTest(text: string): (offset: number) => boolean {
   };
 }
 
+/** Pasted thread links count as context too, so they become chips like a copied chip does. */
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
 ): ComposerContextClipboardFragment | null {
@@ -96,14 +105,23 @@ export function readPastedComposerContext(
   const decodedFragment =
     decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
     decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
-  if (decodedFragment === null) return null;
-  const inCode = codeOffsetTest(pastedText);
+  const threads = threadLinkContextReferences(
+    pastedText,
+    decodedFragment?.records ?? [],
+    threadTitle,
+  );
+  const source =
+    decodedFragment?.source ??
+    (threads.records[0] ? { environmentId: threads.records[0].environmentId } : null);
+  if (source === null) return null;
+  const inCode = codeOffsetTest(threads.text);
   const pastedIds = new Set<string>(
-    collectComposerContextReferences(pastedText)
+    collectComposerContextReferences(threads.text)
       .filter((occurrence) => !inCode(occurrence.start))
       .map((occurrence) => occurrence.contextId),
   );
-  for (const record of decodedFragment.records) {
+  const records = new Map<string, ComposerContextRecord>();
+  for (const record of [...(decodedFragment?.records ?? []), ...threads.records]) {
     if (
       record.kind === "preview-annotation" &&
       !("payload" in record) &&
@@ -112,10 +130,12 @@ export function readPastedComposerContext(
     ) {
       pastedIds.add(record.screenshotContextId);
     }
+    records.set(record.contextId, record);
   }
   return {
-    ...decodedFragment,
-    records: decodedFragment.records.filter((record) => pastedIds.has(record.contextId)),
+    version: 1,
+    source,
+    records: [...records.values()].filter((record) => pastedIds.has(record.contextId)),
   };
 }
 
@@ -134,19 +154,28 @@ export function importPastedComposerText(
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
   const rewrittenIds =
     fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
+  const nextId = (contextId: string) => {
+    const id = rewrittenIds?.get(contextId);
+    return id ? ComposerContextId.make(id) : undefined;
+  };
   const inCode = codeOffsetTest(pastedText);
-  return replaceComposerContextReferences(pastedText, (occurrence) => {
+  const text = replaceComposerContextReferences(pastedText, (occurrence) => {
     if (inCode(occurrence.start)) return occurrence.source;
-    const nextId = rewrittenIds?.get(occurrence.contextId);
-    if (nextId) {
+    const contextId = nextId(occurrence.contextId);
+    if (contextId) {
       return formatComposerContextReference({
         ...occurrence,
-        contextId: ComposerContextId.make(nextId),
+        contextId,
         kind: occurrence.kind === "element" ? "preview-annotation" : occurrence.kind,
       });
     }
-    return nextId !== null && heldContextIds.has(occurrence.contextId)
+    return rewrittenIds?.get(occurrence.contextId) !== null &&
+      heldContextIds.has(occurrence.contextId)
       ? occurrence.source
       : occurrence.label;
   });
+  // A thread the import refused, on a machine this agent cannot read, stays the link it was.
+  return threadLinkContextReferences(text, fragment?.records ?? [], threadTitle, (record) =>
+    nextId(record.contextId),
+  ).text;
 }
