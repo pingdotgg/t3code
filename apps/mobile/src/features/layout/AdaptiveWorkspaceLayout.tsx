@@ -362,8 +362,7 @@ function AdaptiveWorkspaceLayoutContent(
     floatingTabs.row,
     floatingTabsEnabled,
   ]);
-  // A floating sidebar brings the rail with it.
-  const width = viewportWidth - (sidebarFloats ? 0 : navigationRailWidth);
+  const width = viewportWidth - navigationRailWidth;
   // The sidebar stays mounted under a workspace page, so its list is ready on the way back.
   const shouldRenderPrimarySidebar = layout.usesSplitView;
   const inspectorSizing = Platform.OS === "android" ? "android" : undefined;
@@ -740,12 +739,11 @@ function AdaptiveWorkspaceLayoutContent(
   // against the edge that stays put while the other one slides, so nothing reflows after the
   // panes land. A sliding sidebar uncovers the strip it is about to fill, or covers the content
   // until it is gone.
-  const contentLeftTarget = sidebarFloats
-    ? 0
-    : navigationRailWidth +
-      (shouldRenderPrimarySidebar && !workspacePage && panes.primarySidebarVisible
-        ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
-        : 0);
+  const contentLeftTarget =
+    navigationRailWidth +
+    (!sidebarFloats && shouldRenderPrimarySidebar && !workspacePage && panes.primarySidebarVisible
+      ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+      : 0);
   const [contentAnchor, setContentAnchor] = useState({
     viewportWidth,
     left: contentLeftTarget,
@@ -878,7 +876,7 @@ function AdaptiveWorkspaceLayoutContent(
     Math.max(
       0,
       viewportWidth -
-        (sidebarFloats ? 0 : renderedRailWidth.value) -
+        renderedRailWidth.value -
         (workspacePage || sidebarFloats ? 0 : renderedSidebarWidth.value) -
         renderedInspectorWidth.value -
         inspectorGap,
@@ -1018,10 +1016,7 @@ function AdaptiveWorkspaceLayoutContent(
     >
       <AndroidHingeObserver onChange={handleHingeChange} />
       {shouldRenderNavigationRail ? (
-        <Animated.View
-          className={sidebarFloats ? "absolute inset-y-0 left-0" : "shrink self-stretch"}
-          style={railAnimatedStyle}
-        />
+        <Animated.View className="shrink self-stretch" style={railAnimatedStyle} />
       ) : null}
       {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
         <Animated.View
