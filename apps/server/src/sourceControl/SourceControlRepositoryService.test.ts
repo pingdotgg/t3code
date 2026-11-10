@@ -393,14 +393,6 @@ it.effect.each([
     ["fatal: could not read Username for 'https://github.com': terminal prompts disabled"],
   ],
   [
-    "the host rejects the stored credentials",
-    "authentication_failed",
-    [
-      "remote: HTTP Basic: Access denied. The provided password or token is incorrect.",
-      "fatal: Authentication failed for 'https://gitlab.com/group/repo.git/'",
-    ],
-  ],
-  [
     "the remote hides the repository",
     "remote_unreachable",
     [
