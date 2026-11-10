@@ -82,28 +82,24 @@ describe("resolveSidebarLayout", () => {
     for (const sidebarVariant of variants) {
       for (const boringSidebarEnabled of flags) {
         for (const boringSidebarMultilineRows of flags) {
-          for (const legacySidebarEnabled of flags) {
-            for (const sidebarWorkingShelfEnabled of flags) {
-              const layout = resolveSidebarLayout({
-                sidebarVariant,
-                boringSidebarEnabled,
-                boringSidebarMultilineRows,
-                legacySidebarEnabled,
-                sidebarWorkingShelfEnabled,
-              });
-              const boring = boringSidebarEnabled || legacySidebarEnabled;
-              expect(layout.locked).toBe(sidebarVariant !== "default");
-              expect(layout.folders).toBe(sidebarVariant !== "default" || boring);
-              expect(layout.workingSection).toBe(
-                sidebarVariant === "default" && !boring && sidebarWorkingShelfEnabled,
-              );
-              expect(layout.twoLineRows).toBe(
-                sidebarVariant === "default"
-                  ? boringSidebarMultilineRows
-                  : sidebarVariant === "detailed",
-              );
-              expect(layout.folders && layout.workingSection).toBe(false);
-            }
+          for (const sidebarWorkingShelfEnabled of flags) {
+            const layout = resolveSidebarLayout({
+              sidebarVariant,
+              boringSidebarEnabled,
+              boringSidebarMultilineRows,
+              sidebarWorkingShelfEnabled,
+            });
+            expect(layout.locked).toBe(sidebarVariant !== "default");
+            expect(layout.folders).toBe(sidebarVariant !== "default" || boringSidebarEnabled);
+            expect(layout.workingSection).toBe(
+              sidebarVariant === "default" && !boringSidebarEnabled && sidebarWorkingShelfEnabled,
+            );
+            expect(layout.twoLineRows).toBe(
+              sidebarVariant === "default"
+                ? boringSidebarMultilineRows
+                : sidebarVariant === "detailed",
+            );
+            expect(layout.folders && layout.workingSection).toBe(false);
           }
         }
       }

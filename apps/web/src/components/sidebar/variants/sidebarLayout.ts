@@ -7,12 +7,11 @@ export function resolveSidebarLayout(
     | "sidebarVariant"
     | "boringSidebarEnabled"
     | "boringSidebarMultilineRows"
-    | "legacySidebarEnabled"
     | "sidebarWorkingShelfEnabled"
   >,
 ) {
   const locked = settings.sidebarVariant !== "default";
-  const folders = locked || settings.boringSidebarEnabled || settings.legacySidebarEnabled;
+  const folders = locked || settings.boringSidebarEnabled;
   return {
     locked,
     folders,
