@@ -571,6 +571,21 @@ it.effect("steers a working main agent by queueing, then interrupting only its t
   }).pipe(Effect.scoped),
 );
 
+it.effect("keeps a steer's abort from counting as a cancel when a subagent starts", () =>
+  Effect.gen(function* () {
+    const fakes = makeFakes();
+    const runtime = yield* makeCopilotSdkRuntime({ cwd: "/repo", client: fakes.client });
+    const prompt = yield* startPrompt(runtime);
+    fakes.emit(event("assistant.turn_start"));
+    yield* runtime.request(COPILOT_SDK_STEER_METHOD, { text: "change course" });
+
+    fakes.emit(event("assistant.turn_start", {}, "agent-1"));
+    fakes.emit(event("session.idle", { aborted: true }));
+
+    assert.strictEqual((yield* Fiber.join(prompt)).stopReason, "end_turn");
+  }).pipe(Effect.scoped),
+);
+
 // regression: interrupting after the main agent finished loses the queued message
 it.effect("applies a reasoning level when Copilot reports no current one", () =>
   Effect.gen(function* () {
