@@ -328,7 +328,7 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
   "ThreadManagementBackgroundWaitError",
   {
     threadId: ThreadId,
-    reason: Schema.Literals(["unsupported", "unavailable", "failed"]),
+    reason: Schema.Literals(["unsupported", "unavailable", "timed-out", "failed"]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -338,6 +338,8 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
         return "This provider cannot mark background work as awaited.";
       case "unavailable":
         return "This thread has no live provider session.";
+      case "timed-out":
+        return "The provider session timed out; it may be busy. Try again with the same task IDs.";
       case "failed":
         return "Failed to update the awaited background work.";
     }
@@ -1451,7 +1453,6 @@ const make = Effect.gen(function* () {
     const { matched } = yield* runtime.value
       .awaitBackgroundTasks({ providerThread, taskIds: input.taskIds, awaited: input.awaited })
       .pipe(
-        Effect.timeout("15 seconds"),
         Effect.mapError(
           (cause) =>
             new ThreadManagementBackgroundWaitError({
@@ -1460,6 +1461,16 @@ const make = Effect.gen(function* () {
               cause,
             }),
         ),
+        Effect.timeoutOrElse({
+          duration: "15 seconds",
+          orElse: () =>
+            Effect.fail(
+              new ThreadManagementBackgroundWaitError({
+                threadId: input.threadId,
+                reason: "timed-out",
+              }),
+            ),
+        }),
       );
     const matchedIds = new Set(matched);
     return { matched, unmatched: input.taskIds.filter((taskId) => !matchedIds.has(taskId)) };
