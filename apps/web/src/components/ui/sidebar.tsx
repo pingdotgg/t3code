@@ -638,6 +638,7 @@ function SidebarInset({
         // and from the sidebar's content, centered on the chrome row at the top.
         // It stretches in the flex wrapper, so the route's own height yields.
         "md:peer-data-[variant=inset]:h-auto md:peer-data-[variant=inset]:overflow-hidden md:peer-data-[variant=inset]:mt-(--workspace-pane-inset-top) md:peer-data-[variant=inset]:me-(--workspace-pane-inset) md:peer-data-[variant=inset]:mb-(--workspace-pane-inset) md:peer-data-[variant=inset]:ms-(--workspace-sidebar-edge-inset) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-(--workspace-pane-inset)",
+        "[[data-panel-animations=true]_&]:transition-[margin-inline-start,border-end-start-radius] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
         variant === "pane" && "md:peer-data-[variant=inset]:rounded-pane",
         className,
       )}
