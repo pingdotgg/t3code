@@ -17,7 +17,7 @@ pnpm mcp-tool-use --model claude-opus-5-5 --out runs/opus
 - `--shell-model` picks the model that plays the shell: `claude-haiku-5-5` by default, or `gpt-6.1-terra` / `gpt-6-luna` through the same proxy, so Codex runs need no Anthropic key. Prefer Terra: Luna often contradicts the case's world (it calls named checkouts missing or files empty). Compare runs only when they used the same shell model.
 - Flags: `--case <ids>`, `--cases <file.ndjson>`, `--samples <n>` (default 2, and a 3rd when the first 2 disagree), `--concurrency <n>` (samples in flight, default 8), `--max-steps <n>`, `--effort <level>`, `--dry-run` (prints request bodies, no model calls), and `--context` (prints the size of T3's text and schemas, no key needed).
 - `--baseline <results.jsonl> --stop-on-regression` stops as soon as a case that passed every baseline sample fails. Use it to test one copy change against a baseline run.
-- Cost: the existing non-device suite costs about $9 on Sonnet and $17 on Opus. The 16 device cases at 3 samples each cost about $5.70–5.90 on Opus and $2.90–3.40 on Sonnet (main's text–#25661), including the Haiku shell simulator; dry runs cost $0. Results record token costs for the agent and shell simulator. Codex proxy charges are outside that total; only its shell simulator is priced here, about $0.60–0.70 for the device cases.
+- Cost: a full run of all cases at 3 samples cost $25 on Sonnet and $45 on Opus on 2026-11-10. The 16 device cases at 3 samples each cost about $5.70–5.90 on Opus and $2.90–3.40 on Sonnet (main's text–#25661), including the Haiku shell simulator; dry runs cost $0. Results record token costs for the agent and shell simulator. Codex proxy charges are outside that total; only its shell simulator is priced here, about $0.60–0.70 for the device cases.
 - A rate limit or overload (429, 529 or another 5xx) is retried with backoff for up to about 4 minutes. A sample that still fails gets an `error` in `results.jsonl`, is left out of every pass rate, and is listed in the summary; the tokens it spent still count toward the cost.
 
 ## Add a case
@@ -223,6 +223,25 @@ Passes per case, main's text → the request_secret guidance change stacked on t
 | ctrl-sudo (guard)            | 3/3 → 3/3                   | 6/6 → 6/6           | 6/6 → 6/6                             |
 | ctrl-oauth (guard)           | 3/3 → 3/3                   | 6/6 → 6/6           | 6/6 → 6/6                             |
 | other guards and controls    | all pass → all pass         | all pass → all pass | all pass → all pass (prod-config 5/6) |
+
+## File links cases
+
+`cases/file-links.ndjson` checks the file references in an agent's final answer. Chat turns every file-shaped Markdown link and inline code span into a pill, resolves it against the thread's cwd, and opens that path. `expect.fileLinks` replays the final answer through the same shared resolver (`file-link-grading.ts`) and fails on any pill that lands on no `world.files` entry, except a bare basename that the client's on-click lookup finds exactly once. `minWorking` sets how many working pills the answer needs, so an answer that cites no files cannot pass. Paths outside the thread cwd, `/home` and `/Users` are ignored.
+
+The three `bad` cases reproduce the most common broken pills from a 2026-11-10 audit of 14,000 pills on three machines: package-relative paths (`cloud/http.ts`), basenames that several packages share (`index.ts:5`), and relative paths into a checkout outside the thread cwd. Recent Claude answers broke about a quarter of their pills; Codex, which already writes absolute Markdown links, broke about 1%. The control asks a general git question that needs no file references.
+
+### Results
+
+Passes per case, main's runtime text (3 samples) → this branch's "Link every other file you cite or produce by its absolute path" (6 samples over two runs).
+
+| Case                          | Opus 5.5  | Sonnet 5.5 |
+| ----------------------------- | --------- | ---------- |
+| file-links-package-relative   | 1/3 → 5/6 | 2/3 → 6/6  |
+| file-links-ambiguous-basename | 0/3 → 1/6 | 0/3 → 1/6  |
+| file-links-other-checkout     | 1/3 → 6/6 | 0/3 → 3/6  |
+| file-links-no-files-control   | 3/3 → 6/6 | 3/3 → 6/6  |
+
+After the change, the first reference to a file is an absolute link. The remaining failures come from two other kinds of span. Some repeat the file later as relative inline code (Sonnet's other-checkout failures). Others quote values rather than cite files, such as `main` set to `src/index.ts` or the import `./ws`. Chat still turns those spans into pills.
 
 ## Where T3's text lives
 
