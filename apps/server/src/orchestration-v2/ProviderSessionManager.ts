@@ -2440,7 +2440,7 @@ export const layerWithOptions = (
                 if (
                   probedRuntime.hasPendingBackgroundWork !== undefined &&
                   (yield* probedRuntime.hasPendingBackgroundWork.pipe(
-                    Effect.catchCause(() => Effect.succeed(false)),
+                    Effect.catchCause(() => Effect.succeed(true)),
                   ))
                 ) {
                   return yield* new ProviderSessionBackgroundWorkBlocksModeChangeError({

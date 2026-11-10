@@ -262,6 +262,8 @@ export const layer: Layer.Layer<
         providerSessionId: providerThread.providerSessionId,
         modelSelection,
         runtimePolicy: resolvedRuntimePolicy,
+        // A pending permission-mode change waits for the next user turn.
+        preserveRuntimeMode: true,
         ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
         ...(providerThread.nativeThreadRef?.nativeId == null
           ? {}
