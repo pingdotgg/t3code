@@ -1,4 +1,10 @@
-import { PluginRpcName, type PluginId } from "@t3tools/contracts";
+import {
+  PluginRpcName,
+  ProjectListEntriesInput,
+  ProjectReadFileInput,
+  ThreadId,
+  type PluginId,
+} from "@t3tools/contracts";
 import type { PluginApi, PluginRpcAccess, PluginRpcHandler } from "@t3tools/plugin-sdk/server";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -12,10 +18,20 @@ import { makeMcpApi } from "./api/mcp.ts";
 import type * as PluginMcpTools from "./PluginMcpTools.ts";
 import type * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import type * as PluginStorage from "./PluginStorage.ts";
+import type * as PluginWorkspace from "./PluginWorkspace.ts";
 
 const isJson = Schema.is(Schema.Json);
 const isPluginRpcName = Schema.is(PluginRpcName);
 const isPluginRpcAccess = Schema.is(Schema.Literals(["read", "write"]));
+const isListEntriesInput = Schema.is(
+  Schema.Struct({
+    threadId: ThreadId,
+    directoryPath: ProjectListEntriesInput.fields.directoryPath,
+  }),
+);
+const isReadFileInput = Schema.is(
+  Schema.Struct({ threadId: ThreadId, relativePath: ProjectReadFileInput.fields.relativePath }),
+);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 const utf8 = new TextEncoder();
 
@@ -60,6 +76,7 @@ export interface PluginApiServices {
   readonly settings: PluginSettingsStore.PluginSettingsStore["Service"];
   readonly storage: PluginStorage.PluginStorage["Service"];
   readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
+  readonly workspace: PluginWorkspace.PluginWorkspace["Service"];
 }
 
 /**
@@ -95,8 +112,27 @@ export const makePluginApi = (input: {
     list: (prefix) => call(services.storage.list(id, prefix)),
   };
 
+  const workspace: PluginApi["workspace"] = {
+    listEntries: (input) => {
+      if (!isListEntriesInput(input)) {
+        return refused(
+          new TypeError("listEntries needs a threadId and an optional trimmed directoryPath."),
+        );
+      }
+      return call(
+        services.workspace.listEntries(input).pipe(Effect.map(({ entries }) => ({ entries }))),
+      );
+    },
+    readFile: (input) => {
+      if (!isReadFileInput(input)) {
+        return refused(new TypeError("readFile needs a threadId and a trimmed relativePath."));
+      }
+      return call(services.workspace.readFile(input));
+    },
+  };
+
   return {
-    version: 1,
+    version: 2,
     id,
     rootDir: input.rootDir,
     log: { debug: log("Debug"), info: log("Info"), warn: log("Warn"), error: log("Error") },
@@ -150,5 +186,6 @@ export const makePluginApi = (input: {
       activation.cleanups.push(cleanup);
     },
     mcp: makeMcpApi(facade, services),
+    workspace,
   };
 };
