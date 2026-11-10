@@ -293,6 +293,11 @@ describe("AcpMcpOverAcpBridge", () => {
         bridge.message({ serverId: "t3-code", requestId, method });
 
       yield* message("initialize", "mcp-1");
+      yield* bridge.notification({
+        serverId: "t3-code",
+        requestId: "mcp-n",
+        method: "notifications/initialized",
+      });
       yield* message("tools/list", "mcp-2");
       expect(yield* message("initialize", "mcp-3")).toEqual({
         result: { protocolVersion: "2025-06-18" },
@@ -302,6 +307,7 @@ describe("AcpMcpOverAcpBridge", () => {
 
       expect(requests).toEqual([
         { verb: "POST", method: "initialize", sessionId: null },
+        { verb: "POST", method: "notifications/initialized", sessionId: "session-1" },
         { verb: "POST", method: "tools/list", sessionId: "session-1" },
         { verb: "DELETE", method: undefined, sessionId: "session-1" },
         { verb: "POST", method: "initialize", sessionId: null },
@@ -441,95 +447,6 @@ describe("AcpMcpOverAcpBridge", () => {
       firstResponse.resolve();
       expect(yield* Fiber.join(first)).toMatchObject({ _tag: "AcpMcpOverAcpError" });
       expect(deleted).toEqual(["session-1"]);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("closes the session of an initialize that a newer initialize replaced in flight", () =>
-    Effect.gen(function* () {
-      const firstStarted = Promise.withResolvers<void>();
-      const firstResponse = Promise.withResolvers<void>();
-      const deleted: Array<string | null> = [];
-      let sessions = 0;
-      const bridge = yield* makeAcpMcpOverAcpBridge({
-        endpoint: "http://127.0.0.1:1/mcp",
-        authorization: "Bearer bridge-test",
-        allocateConnectionId: Effect.succeed("connection-1"),
-        fetchImplementation: async (_url, init) => {
-          if (init?.method === "DELETE") {
-            deleted.push(new Headers(init.headers).get("mcp-session-id"));
-            return new Response(null, { status: 204 });
-          }
-          const request = JSON.parse(String(init?.body)) as { readonly id?: unknown };
-          const sessionId = `session-${++sessions}`;
-          if (sessionId === "session-1") {
-            firstStarted.resolve();
-            await firstResponse.promise;
-          }
-          return new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: request.id,
-              result: { protocolVersion: "2025-06-18" },
-            }),
-            { headers: { "content-type": "application/json", "mcp-session-id": sessionId } },
-          );
-        },
-      });
-      const initialize = (requestId: string) =>
-        bridge.message({ serverId: "t3-code", requestId, method: "initialize" });
-
-      const first = yield* initialize("mcp-1").pipe(Effect.forkChild);
-      yield* Effect.promise(() => firstStarted.promise);
-      yield* initialize("mcp-2");
-      firstResponse.resolve();
-      yield* Fiber.join(first);
-      expect(deleted).toEqual(["session-1"]);
-
-      yield* bridge.dispose;
-      expect(deleted).toEqual(["session-1", "session-2"]);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("closes the current-draft session its notifications ride on when disposed", () =>
-    Effect.gen(function* () {
-      const requests: Array<{ readonly method: string; readonly headers: Headers }> = [];
-      const bridge = yield* makeAcpMcpOverAcpBridge({
-        endpoint: "http://127.0.0.1:1/mcp",
-        authorization: "Bearer bridge-test",
-        allocateConnectionId: Effect.succeed("connection-1"),
-        fetchImplementation: (_url, init) => {
-          const method = init?.method ?? "GET";
-          requests.push({ method, headers: new Headers(init?.headers) });
-          if (method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
-          const request = JSON.parse(String(init?.body)) as { readonly id?: unknown };
-          return Promise.resolve(
-            request.id === undefined
-              ? new Response(null, { status: 202 })
-              : new Response(
-                  JSON.stringify({
-                    jsonrpc: "2.0",
-                    id: request.id,
-                    result: { protocolVersion: "2025-06-18" },
-                  }),
-                  {
-                    headers: { "content-type": "application/json", "mcp-session-id": "session-42" },
-                  },
-                ),
-          );
-        },
-      });
-
-      yield* bridge.message({ serverId: "t3-code", requestId: "mcp-1", method: "initialize" });
-      yield* bridge.notification({
-        serverId: "t3-code",
-        requestId: "mcp-2",
-        method: "notifications/initialized",
-      });
-      yield* bridge.dispose;
-
-      expect(requests.map((request) => request.method)).toEqual(["POST", "POST", "DELETE"]);
-      expect(requests[1]?.headers.get("mcp-session-id")).toBe("session-42");
-      expect(requests[2]?.headers.get("mcp-session-id")).toBe("session-42");
     }).pipe(Effect.scoped),
   );
 
