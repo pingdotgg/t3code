@@ -240,6 +240,86 @@ describe("preview guest input", () => {
     },
   );
 
+  it("screenshots the guest's surface once the app paints it, and leaves clips to Chromium", async () => {
+    vi.useFakeTimers();
+    try {
+      const guest = makeGuest({ focused: false });
+      const painted = { isEmpty: () => false, toPNG: () => Buffer.from("png") };
+      const capturePage = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("UnknownVizError"))
+        .mockResolvedValueOnce({ isEmpty: () => true })
+        .mockResolvedValueOnce(painted);
+      Object.assign(guest.webContents, { capturePage, isDestroyed: () => false });
+      const screenshot = guest.send("Page.captureScreenshot", { format: "png" });
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(screenshot).resolves.toEqual({ data: Buffer.from("png").toString("base64") });
+      expect(capturePage).toHaveBeenCalledTimes(3);
+      await guest.send("Page.captureScreenshot", { format: "png", clip: { x: 0, y: 0 } });
+      expect(capturePage).toHaveBeenCalledTimes(3);
+      expect(guest.sendCommand).toHaveBeenCalledWith("Page.captureScreenshot", {
+        format: "png",
+        clip: { x: 0, y: 0 },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails a screenshot of a guest that never paints instead of leaving it unanswered", async () => {
+    vi.useFakeTimers();
+    try {
+      const guest = makeGuest({ focused: false });
+      const capturePage = vi.fn(() => new Promise<never>(() => {}));
+      Object.assign(guest.webContents, { capturePage, isDestroyed: () => false });
+      const screenshot = guest.send("Page.captureScreenshot", { format: "png" });
+      const failed = expect(screenshot).rejects.toThrow(/did not paint within 5 seconds/);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await failed;
+      expect(capturePage).toHaveBeenCalledTimes(1);
+      expect(guest.sendCommand).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shares an unanswered copy across timeouts and captures again after it settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const guest = makeGuest({ focused: false });
+      const painted = { isEmpty: () => false, toPNG: () => Buffer.from("png") };
+      let finish: ((image: typeof painted) => void) | undefined;
+      const capturePage = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = resolve;
+            }),
+        )
+        .mockResolvedValue(painted);
+      Object.assign(guest.webContents, { capturePage, isDestroyed: () => false });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const screenshot = guest.send("Page.captureScreenshot", { format: "png" });
+        const failed = expect(screenshot).rejects.toThrow(/did not paint within 5 seconds/);
+        await vi.advanceTimersByTimeAsync(5_000);
+        await failed;
+      }
+      expect(capturePage).toHaveBeenCalledTimes(1);
+      const fresh = guest.send("Page.captureScreenshot", { format: "png" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(capturePage).toHaveBeenCalledTimes(1);
+      finish!({ isEmpty: () => false, toPNG: () => Buffer.from("old frame") });
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(fresh).resolves.toEqual({
+        data: Buffer.from("png").toString("base64"),
+      });
+      expect(capturePage).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("refuses input when a cross-site frame holds the unfocused page's focus", async () => {
     const guest = makeGuest({ focused: false, focusedDocument: false });
     await expect(guest.send("Input.insertText", { text: "secret" })).rejects.toThrow(

@@ -73,6 +73,14 @@ const makeDebuggee = (
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
+    isDestroyed: () => false,
+    // A viewport screenshot copies the guest's surface; it waits like a debugger command.
+    capturePage: () =>
+      new Promise((resolve) => {
+        sent.push(undefined);
+        pending.push(() => resolve({ isEmpty: () => false, toPNG: () => Buffer.from("png") }));
+        sendWaiters.shift()?.();
+      }),
   });
   return {
     tab: {
