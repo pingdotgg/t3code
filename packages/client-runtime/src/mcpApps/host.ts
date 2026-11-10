@@ -119,11 +119,11 @@ export interface McpAppHost {
   readonly dispose: () => void;
 }
 
-function jsonBytes(value: unknown): number {
+function stringifyJson(value: unknown): string | undefined {
   try {
-    return encoder.encode(JSON.stringify(value) ?? "").byteLength;
+    return JSON.stringify(value);
   } catch {
-    return Number.POSITIVE_INFINITY;
+    return undefined;
   }
 }
 
@@ -247,11 +247,10 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
           fail(id, -32602, "tools/call needs a tool name and object arguments.");
           return;
         }
-        // postMessage keeps undefined, which the RPC's JSON codec rejects; receive already
-        // refused messages JSON cannot encode, so this round trip cannot throw.
-        const jsonArgs: Record<string, unknown> = JSON.parse(JSON.stringify(args));
         answer(id, () =>
-          options.callTool({ name, arguments: jsonArgs }).then(normalizeMcpAppToolResult),
+          options
+            .callTool({ name, arguments: args as Record<string, unknown> })
+            .then(normalizeMcpAppToolResult),
         );
         return;
       }
@@ -396,7 +395,8 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   const hostHandle: McpAppHost = {
     receive: (data) => {
       if (disposed || !Predicate.isObject(data) || data.jsonrpc !== "2.0") return;
-      if (jsonBytes(data) > MAX_MESSAGE_BYTES) {
+      const json = stringifyJson(data);
+      if (json === undefined || encoder.encode(json).byteLength > MAX_MESSAGE_BYTES) {
         if (isId(data.id) && typeof data.method === "string") {
           fail(data.id, -32600, "Message too large.");
         }
@@ -407,7 +407,9 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         if (isId(data.id) && ("result" in data || "error" in data)) handleResponse(data.id);
         return;
       }
-      const params = Predicate.isObject(data.params) ? data.params : {};
+      // postMessage keeps undefined, which the RPC's JSON codec rejects; pass on the JSON form.
+      const { params: jsonParams }: { params?: unknown } = JSON.parse(json);
+      const params = Predicate.isObject(jsonParams) ? jsonParams : {};
       if (isId(data.id)) handleRequest(data.id, method, params);
       else handleNotification(method, params);
     },

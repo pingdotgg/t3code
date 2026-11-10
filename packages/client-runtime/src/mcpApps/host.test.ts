@@ -353,7 +353,10 @@ describe("makeMcpAppHost", () => {
       jsonrpc: "2.0",
       id: 1,
       method: "ui/update-model-context",
-      params: { content: [{ type: "text", text: "2 overdue" }], structuredContent: { overdue: 2 } },
+      params: {
+        content: [{ type: "text", text: "2 overdue" }],
+        structuredContent: { overdue: 2, since: undefined },
+      },
     });
     const embedded = {
       type: "resource",
@@ -375,7 +378,7 @@ describe("makeMcpAppHost", () => {
     });
     host.receive({ jsonrpc: "2.0", id: 4, method: "ui/download-file", params: { contents: [{}] } });
     await flush();
-    expect(contexts).toEqual([
+    expect(contexts).toStrictEqual([
       { content: [{ type: "text", text: "2 overdue" }], structuredContent: { overdue: 2 } },
     ]);
     expect(downloads[0]).toEqual([
