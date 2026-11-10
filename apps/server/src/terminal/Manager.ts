@@ -627,7 +627,7 @@ function posixShellCandidateWithInitialCommand(
       : shellName === "bash"
         ? `history -s -- ${quotedCommand}; history -a\n`
         : shellName === "zsh"
-          ? `print -s -- ${quotedCommand}; fc -AI\n`
+          ? `print -sr -- ${quotedCommand}; fc -AI\n`
           : "";
   return {
     shell: candidate.shell,
