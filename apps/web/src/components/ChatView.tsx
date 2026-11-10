@@ -47,6 +47,7 @@ import {
 } from "./ChatView.logic";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
 import { useStableCallback } from "../hooks/useStableCallback";
+import { DeferredChatContext } from "../layout/chatRenderGate";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
@@ -1599,6 +1600,17 @@ export default function ChatView(props: ChatViewProps) {
   );
   const timelineEmpty = timelineEntries.length === 0 && !hasStreamedTimelineRows;
   const displayedTimelineKey = activeThreadKey ?? routeThreadKey;
+  const deferredChat = use(DeferredChatContext);
+  const [timelineInstance, setTimelineInstance] = useState({
+    threadKey: displayedTimelineKey,
+    revision: 0,
+  });
+  if (timelineInstance.threadKey !== displayedTimelineKey) {
+    setTimelineInstance({
+      threadKey: displayedTimelineKey,
+      revision: timelineInstance.revision + (deferredChat ? 1 : 0),
+    });
+  }
   const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
   const {
     worktreeSetup,
@@ -3497,6 +3509,7 @@ export default function ChatView(props: ChatViewProps) {
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline
+                  key={timelineInstance.revision}
                   pendingApprovals={pendingApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}
