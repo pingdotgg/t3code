@@ -17,6 +17,7 @@ vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => mocks.refres
 vi.mock("../state/server", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
+    environmentServerConfigsAtom: Atom.make(new Map()),
     serverEnvironment: {
       refreshProviders: {},
       configValueAtom: () => Atom.make({ usageLimitSources: [] }),
