@@ -738,8 +738,6 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
 });
 
 it.effect("reports a token Bitbucket accepts without account scope as authenticated", () => {
-  // Bitbucket answers 401 for a credential it rejects; 403 means it accepted the credential but
-  // that credential cannot read the account, as with repository, project, or workspace tokens.
   const { layer } = makeLayer({
     response: () => new Response(null, { status: 403 }),
     env: { T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0" },
