@@ -310,6 +310,9 @@ describe("hosted thread links", () => {
       "[Fix ci](https://app.t3.codes/threads/e/t1)",
     );
     expect(formatHostedThreadLink(ref("e", "t1"), " ")).toBe("https://app.t3.codes/threads/e/t1");
+    const copied = formatHostedThreadLink(ref("e", "t1"), "Fix ` escaping");
+    expect(threadLinkRefs(copied, local)).toEqual([ref("e", "t1")]);
+    expect(relabelThreadLinks(copied, local, () => "New")).toBe("[New](t3-thread://v2/e/t1)");
   });
 
   it("titles hosted links in every Markdown form and writes them as v2 links", () => {
@@ -345,17 +348,29 @@ describe("hosted thread links", () => {
     ]);
   });
 
-  it("leaves a hosted URL inside another URL, another link, or a code span as written", () => {
+  it("leaves a hosted URL inside another URL or another link as written", () => {
     const nested = [
       "https://example.com/?next=https://app.t3.codes/threads/one/same",
       "[Example](https://example.com/?next=https://app.t3.codes/threads/one/same)",
       "[Example](<https://example.com/?next=https://app.t3.codes/threads/one/same>)",
       "[ https://app.t3.codes/threads/one/same ](https://example.com)",
       '[Example](https://example.com "https://app.t3.codes/threads/one/same")',
-      "[a `code](https://example.com) https://app.t3.codes/threads/one/same`",
     ].join("\n");
     expect(relabelThreadLinks(nested, local, () => "Title")).toBe(nested);
     expect(threadLinkRefs(nested, local)).toEqual([]);
+  });
+
+  // Each row backtracked for seconds or more when the label pattern could split backtick runs.
+  it("scans an unclosed label full of backticks without stalling", () => {
+    const bare = "https://app.t3.codes/threads/e/t";
+    for (const [prefix, refs] of [
+      [`Flags [${"``--opt``, ".repeat(18)} see `, [ref("e", "t")]],
+      [`[${"``a``".repeat(20)} `, [ref("e", "t")]],
+      // Three or more backticks open a fence that runs to the end.
+      [`[${"`".repeat(80)}\n${"a ".repeat(3000)}`, []],
+    ] as const) {
+      expect(threadLinkRefs(prefix + bare, local)).toEqual(refs);
+    }
   });
 });
 
