@@ -66,6 +66,16 @@ describe("resolveUserMessageGrouping", () => {
       expect(resolveUserMessageGrouping(own, steer, undefined).continuesSteer).toBe(false);
     }
   });
+
+  it("keeps a steer's own label when its delivery differs from the previous steer's", () => {
+    const steer = { ...own, inputIntent: "steer" as const };
+    const waiting = { ...steer, steerDelivery: "waiting" as const };
+    const unread = { ...steer, steerDelivery: "unread" as const };
+    expect(resolveUserMessageGrouping(waiting, steer, undefined).continuesSteer).toBe(false);
+    expect(resolveUserMessageGrouping(unread, steer, undefined).continuesSteer).toBe(false);
+    expect(resolveUserMessageGrouping(unread, waiting, undefined).continuesSteer).toBe(false);
+    expect(resolveUserMessageGrouping(waiting, waiting, undefined).continuesSteer).toBe(true);
+  });
 });
 
 describe("resolveUserMessageFileCards", () => {

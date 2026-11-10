@@ -12,6 +12,7 @@ import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
 import {
   IDLE_COMPACTING_LABELS,
   IDLE_COMPACTION_TITLES,
+  steerContinuesPrevious,
 } from "@t3tools/client-runtime/user-message";
 import type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
 import { renderCodexDirectivesForCopy } from "@t3tools/shared/codexMarkdownDirectives";
@@ -2273,7 +2274,7 @@ export function deriveMessagesTimelineRows(input: {
     const groupedWithNext = timelineRowIsOwnUserMessage(result[index + 1]);
     const groupedWithPrevious = timelineRowIsOwnUserMessage(previous);
     const continuesSteer =
-      groupedWithPrevious && messageIsSteer(row.message) && messageIsSteer(previous.message);
+      groupedWithPrevious && steerContinuesPrevious(row.message, previous.message);
     if (!groupedWithNext && !groupedWithPrevious) return row;
     return { ...row, groupedWithNext, groupedWithPrevious, continuesSteer };
   });
@@ -2287,10 +2288,6 @@ function timelineRowIsOwnUserMessage(
     row.message.role === "user" &&
     resolveUserMessagePresentation(row.message).attribution === null
   );
-}
-
-function messageIsSteer(message: ChatMessage): boolean {
-  return message.inputIntent === "steer" || message.inputIntent === "promoted_queued_to_steer";
 }
 
 function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {

@@ -415,6 +415,7 @@ interface PiPromptSend {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly kind: "turn_start" | "steer";
   readonly record: PiRpcRecord;
+  readonly steerMessageId?: MessageId;
 }
 
 interface PiThreadState {
@@ -2250,6 +2251,22 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (pendingPrompt?.kind === "steer" && responseTurn?.settleWhenIdle === true) {
               yield* scheduleSettleProbe(responseTurn, true);
             }
+            const steerIndex =
+              pendingPrompt?.steerMessageId === undefined || responseTurn === null
+                ? -1
+                : responseTurn.unreadSteers.findIndex(
+                    (steer) => steer.messageId === pendingPrompt.steerMessageId,
+                  );
+            // A handled steer (an extension command) or a rejected one never starts a user message.
+            const steerQueuedNothing =
+              event["success"] === false ||
+              recordString(recordField(event, "data"), "disposition") === "handled";
+            if (responseTurn !== null && steerIndex !== -1 && steerQueuedNothing) {
+              const [steer] = responseTurn.unreadSteers.splice(steerIndex, 1);
+              if (steer !== undefined && event["success"] === true) {
+                yield* emitSteerDelivered(responseTurn, steer.messageId);
+              }
+            }
             if (event["success"] === true) {
               // Command-only prompts emit no agent_settled; probe idle and re-queue behind preceding native events.
               if (
@@ -2953,6 +2970,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   yield* sendPrompt({
                     providerTurnId: turn.providerTurn.id,
                     kind: "steer",
+                    steerMessageId: steerInput.message.messageId,
                     record: {
                       type: "prompt",
                       message: payload.message,

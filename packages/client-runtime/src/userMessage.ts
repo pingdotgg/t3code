@@ -129,9 +129,26 @@ export const STEER_DELIVERY_COPY = {
   unread: { label: "Steer not read", description: "The turn ended before the agent read this" },
 } satisfies Record<SteerDelivery | "read", { label: string; description: string }>;
 
-type GroupableUserMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
-  readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
-};
+interface SteerableUserMessage {
+  readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;
+  readonly steerDelivery?: SteerDelivery | undefined;
+}
+
+type GroupableUserMessage = Parameters<typeof resolveUserMessagePresentation>[0] &
+  SteerableUserMessage;
+
+const isSteer = (value: SteerableUserMessage | undefined) =>
+  value?.inputIntent === "steer" || value?.inputIntent === "promoted_queued_to_steer";
+
+/** A steer shares the previous steer's marker only when both are in the same delivery state. */
+export function steerContinuesPrevious(
+  message: SteerableUserMessage | undefined,
+  previous: SteerableUserMessage | undefined,
+): boolean {
+  return (
+    isSteer(message) && isSteer(previous) && message?.steerDelivery === previous?.steerDelivery
+  );
+}
 
 export function resolveUserMessageGrouping(
   message: GroupableUserMessage | undefined,
@@ -140,12 +157,10 @@ export function resolveUserMessageGrouping(
 ) {
   const isOwnMessage = (value: GroupableUserMessage | undefined) =>
     value?.role === "user" && resolveUserMessagePresentation(value).attribution === null;
-  const isSteer = (value: GroupableUserMessage | undefined) =>
-    value?.inputIntent === "steer" || value?.inputIntent === "promoted_queued_to_steer";
   const groupedWithPrevious = isOwnMessage(message) && isOwnMessage(previous);
   return {
     groupedWithPrevious,
     groupedWithNext: isOwnMessage(message) && isOwnMessage(next),
-    continuesSteer: groupedWithPrevious && isSteer(message) && isSteer(previous),
+    continuesSteer: groupedWithPrevious && steerContinuesPrevious(message, previous),
   };
 }

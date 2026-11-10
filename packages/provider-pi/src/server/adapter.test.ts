@@ -5156,6 +5156,48 @@ describe("PiAdapterV2", () => {
         runId: RunId.make("run:thread-pi-test:1"),
         messageId: steerMessageId,
       });
+
+      // An extension command Pi handles queues no user message; a later expanded skill must not be taken for it.
+      const steer = (messageId: string, text: string) =>
+        runtime.steerTurn({
+          threadId: THREAD_ID,
+          runId: RunId.make("run:thread-pi-test:1"),
+          providerThread,
+          providerTurnId: providerTurnId!,
+          message: {
+            messageId: messageId as never,
+            text,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        });
+      const ack = (disposition?: string) =>
+        fake.emit({
+          type: "response",
+          command: "prompt",
+          success: true,
+          ...(disposition === undefined ? {} : { data: { disposition } }),
+        });
+      yield* ack();
+      yield* ack("queued");
+      yield* steer("message:thread-pi-test:notify", "/notify");
+      yield* fake.takeRequest("prompt");
+      yield* ack("handled");
+      const notified = yield* takeEvent((event) => event.type === "user_message.delivered");
+      assert.deepInclude(notified, { messageId: "message:thread-pi-test:notify" as never });
+      yield* steer("message:thread-pi-test:skill", "/skill:review");
+      yield* fake.takeRequest("prompt");
+      yield* ack("queued");
+      yield* fake.emit({
+        type: "message_start",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "<skill>Review the diff</skill>" }],
+        },
+      });
+      const skill = yield* takeEvent((event) => event.type === "user_message.delivered");
+      assert.deepInclude(skill, { messageId: "message:thread-pi-test:skill" as never });
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
