@@ -74,6 +74,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   private var placeholder: Task<Void, Never>?
   private var openError: Error?
   private var dismissRequested = false
+  private var dismissAnimated = !UIAccessibility.isReduceMotionEnabled
   private var finished = false
 
   init(identifier: String, sources: T3PresentationSources, sourceIdentifiers: [String],
@@ -231,7 +232,8 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     loadNext()
   }
 
-  func dismiss() {
+  func dismiss(animated: Bool? = nil) {
+    if let animated { dismissAnimated = animated }
     dismissRequested = true
     download?.task.cancel()
     guard !finished else { return }
@@ -239,7 +241,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     // Drain Close from viewDidAppear after opening or cancelling an interactive dismissal.
     // Starting a second modal transition while UIKit is settling the first can strand it.
     guard !controller.isBeingPresented, !controller.isBeingDismissed else { return }
-    controller.dismiss(animated: !UIAccessibility.isReduceMotionEnabled) { [self] in finish() }
+    controller.dismiss(animated: dismissAnimated) { [self] in finish() }
   }
 
   private func resumePendingDismissal() {
@@ -294,8 +296,57 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     items.removeAll()
     urls.removeAll()
     states.removeAll()
-    let result = error ?? openError
-    DispatchQueue.main.async { [completion] in completion(result) }
+    // Sync so a queued reopen can take the slot as soon as teardown finishes, instead of
+    // waiting an extra turn and racing UIKit's presenter readiness.
+    completion(error ?? openError)
+  }
+
+  /// One retry covers a brief tunnel/Wi‑Fi blip without surfacing "Could not open preview".
+  nonisolated private static func downloadRemoteFile(from url: URL, to download: URL) async throws {
+    guard ["https", "http"].contains(url.scheme?.lowercased() ?? "") else {
+      throw URLError(.unsupportedURL)
+    }
+    var lastError: Error?
+    for attempt in 0..<2 {
+      if attempt > 0 {
+        try Task.checkCancellation()
+        try await Task.sleep(for: .milliseconds(200))
+      }
+      do {
+        let (temporaryFile, response) = try await URLSession.shared.download(from: url)
+        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode)
+        else {
+          throw URLError(.badServerResponse)
+        }
+        try FileManager.default.moveItem(at: temporaryFile, to: download)
+        return
+      } catch {
+        lastError = error
+        try? FileManager.default.removeItem(at: download)
+      }
+    }
+    throw lastError ?? URLError(.cannotLoadFromNetwork)
+  }
+
+  /// Detect images and PDFs by content; preserve other extensions so Quick Look can decide support.
+  nonisolated private static func previewFileExtension(for download: URL, title: String) -> String {
+    let filename = URL(fileURLWithPath: title).lastPathComponent as NSString
+    let originalExtension = filename.pathExtension
+    let type: UTType?
+    if let image = CGImageSourceCreateWithURL(download as CFURL, nil),
+      CGImageSourceGetCount(image) > 0, let imageType = CGImageSourceGetType(image),
+      let detectedType = UTType(imageType as String) {
+      type = detectedType
+    } else if CGPDFDocument(download as CFURL) != nil {
+      type = .pdf
+    } else if originalExtension.lowercased() == "svg" {
+      type = .svg
+    } else {
+      type = nil
+    }
+    guard let type else { return originalExtension }
+    return UTType(filenameExtension: originalExtension) == type
+      ? originalExtension : type.preferredFilenameExtension ?? originalExtension
   }
 
   /// Copy original bytes so preview and sharing do not mutate a draft or workspace file.
@@ -310,36 +361,11 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
       } else if url.scheme == "data" {
         try Data(contentsOf: url).write(to: download, options: .atomic)
       } else {
-        guard ["https", "http"].contains(url.scheme?.lowercased() ?? "") else {
-          throw URLError(.unsupportedURL)
-        }
-        let (temporaryFile, response) = try await URLSession.shared.download(from: url)
-        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-          throw URLError(.badServerResponse)
-        }
-        try FileManager.default.moveItem(at: temporaryFile, to: download)
+        try await downloadRemoteFile(from: url, to: download)
       }
       try Task.checkCancellation()
-      // Detect images and PDFs by content; preserve other extensions so Quick Look can decide support.
       let filename = URL(fileURLWithPath: title).lastPathComponent as NSString
-      let originalExtension = filename.pathExtension
-      var type: UTType?
-      if let image = CGImageSourceCreateWithURL(download as CFURL, nil),
-        CGImageSourceGetCount(image) > 0, let imageType = CGImageSourceGetType(image),
-        let detectedType = UTType(imageType as String) {
-        type = detectedType
-      } else if CGPDFDocument(download as CFURL) != nil {
-        type = .pdf
-      } else if originalExtension.lowercased() == "svg" {
-        type = .svg
-      }
-      let fileExtension: String
-      if let type {
-        fileExtension = UTType(filenameExtension: originalExtension) == type
-          ? originalExtension : type.preferredFilenameExtension ?? originalExtension
-      } else {
-        fileExtension = originalExtension
-      }
+      let fileExtension = previewFileExtension(for: download, title: title)
       let stem = filename.deletingPathExtension
       var name = String(stem.prefix(60)).components(separatedBy: .controlCharacters).joined(separator: "_")
       while name.utf8.count > 200 { name.removeLast() }

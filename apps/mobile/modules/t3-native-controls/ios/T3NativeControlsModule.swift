@@ -10,6 +10,18 @@ public final class T3NativeControlsModule: Module {
   private let presentationSources = T3PresentationSources()
   private var videoPresentation: T3NativeVideoPresentation?
   private var filePresentation: T3NativeFilePresentation?
+  /// Serializes file presents so a quick reopen waits out the previous dismiss instead of failing.
+  private var filePresentSequence: Task<Void, Never> = Task {}
+  private var presentationWaiters: [CheckedContinuation<Void, Never>] = []
+  private var pendingFilePresentations: [String: PendingFilePresentation] = [:]
+  /// URLs that arrived through updateFile before a queued present started.
+  private var pendingFileUpdates: [String: [Int: URL?]] = [:]
+
+  private final class PendingFilePresentation {
+    var cancelled = false
+    let promise: Promise
+    init(promise: Promise) { self.promise = promise }
+  }
 
   public func definition() -> ModuleDefinition {
     Events("videoPlaybackChange")
@@ -74,8 +86,11 @@ public final class T3NativeControlsModule: Module {
     }.runOnQueue(.main)
 
     AsyncFunction("presentFile") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
-      try self.presentFile(url: url, title: title, sourceIdentifier: sourceIdentifier,
-                           identifier: identifier, promise: promise)
+      self.enqueueFilePresentation(identifier: identifier, promise: promise) { presenter in
+        let file = try self.makeFilePresentation(sourceIdentifiers: [sourceIdentifier], identifier: identifier,
+                                                 promise: promise)
+        file.present(url: url, title: title, from: presenter)
+      }
     }.runOnQueue(.main)
 
     // A nil URL is still resolving in JS and arrives later through updateFile.
@@ -85,23 +100,32 @@ public final class T3NativeControlsModule: Module {
       else {
         throw URLError(.badURL)
       }
-      let file = try self.makeFilePresentation(sourceIdentifiers: sourceIdentifiers, identifier: identifier,
-                                               promise: promise)
-      guard let presenter = self.appContext?.utilities?.currentViewController() else {
-        file.dismiss()
-        return
+      self.enqueueFilePresentation(identifier: identifier, promise: promise) { presenter in
+        let file = try self.makeFilePresentation(sourceIdentifiers: sourceIdentifiers, identifier: identifier,
+                                                 promise: promise)
+        file.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
       }
-      file.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
     }.runOnQueue(.main)
 
     // A nil URL marks the item as one that could not be resolved.
     AsyncFunction("updateFile") { (identifier: String, index: Int, url: URL?) in
-      if self.filePresentation?.identifier == identifier { self.filePresentation?.update(index: index, url: url) }
+      if self.filePresentation?.identifier == identifier {
+        self.filePresentation?.update(index: index, url: url)
+      } else if self.pendingFilePresentations[identifier] != nil {
+        self.pendingFileUpdates[identifier, default: [:]][index] = url
+      }
     }.runOnQueue(.main)
 
     OnDestroy {
       let presentation = self.videoPresentation
       let file = self.filePresentation
+      let pending = self.pendingFilePresentations
+      self.pendingFilePresentations.removeAll()
+      self.pendingFileUpdates.removeAll()
+      for item in pending.values {
+        item.cancelled = true
+        item.promise.resolve(nil)
+      }
       DispatchQueue.main.async {
         presentation?.dismiss()
         file?.dismiss()
@@ -165,6 +189,7 @@ public final class T3NativeControlsModule: Module {
   @JS
   @MainActor
   func dismissFile(identifier: String) async {
+    if cancelPendingFilePresentation(identifier: identifier) { return }
     dismissFilePresentation(identifier: identifier)
   }
 
@@ -278,6 +303,7 @@ public final class T3NativeControlsModule: Module {
       },
       completion: { [weak self] error in
         self?.videoPresentation = nil
+        self?.releasePresentationSlot()
         if let error { promise.reject(error) } else { promise.resolve(nil) }
       }
     )
@@ -289,6 +315,96 @@ public final class T3NativeControlsModule: Module {
     if videoPresentation?.identifier == identifier { videoPresentation?.dismiss() }
   }
 
+  private func enqueueFilePresentation(
+    identifier: String,
+    promise: Promise,
+    start: @escaping @MainActor (UIViewController) throws -> Void,
+  ) {
+    let pending = PendingFilePresentation(promise: promise)
+    pendingFilePresentations[identifier] = pending
+    // Closing then immediately opening another image hits present while UIKit is still
+    // dismissing; wait for that slot instead of rejecting with a load error.
+    filePresentation?.dismiss(animated: false)
+    videoPresentation?.dismiss()
+    let previous = filePresentSequence
+    filePresentSequence = Task { @MainActor in
+      await previous.value
+      await self.waitForPresentationSlot()
+      guard self.pendingFilePresentations[identifier] === pending, !pending.cancelled else { return }
+      guard let presenter = await self.readyPresenter() else {
+        self.pendingFilePresentations.removeValue(forKey: identifier)
+        self.pendingFileUpdates.removeValue(forKey: identifier)
+        // Resolve quietly: a transient presenter gap is not a file-load failure.
+        promise.resolve(nil)
+        return
+      }
+      guard self.pendingFilePresentations[identifier] === pending, !pending.cancelled else { return }
+      self.pendingFilePresentations.removeValue(forKey: identifier)
+      do {
+        try start(presenter)
+        self.applyPendingFileUpdates(identifier: identifier)
+      } catch {
+        self.pendingFileUpdates.removeValue(forKey: identifier)
+        promise.reject(error)
+      }
+    }
+  }
+
+  private func applyPendingFileUpdates(identifier: String) {
+    guard let updates = pendingFileUpdates.removeValue(forKey: identifier),
+      filePresentation?.identifier == identifier
+    else { return }
+    for (index, url) in updates {
+      filePresentation?.update(index: index, url: url)
+    }
+  }
+
+  private func cancelPendingFilePresentation(identifier: String) -> Bool {
+    guard let pending = pendingFilePresentations.removeValue(forKey: identifier) else { return false }
+    pending.cancelled = true
+    pendingFileUpdates.removeValue(forKey: identifier)
+    pending.promise.resolve(nil)
+    return true
+  }
+
+  private func waitForPresentationSlot() async {
+    while filePresentation != nil || videoPresentation != nil {
+      await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        presentationWaiters.append(continuation)
+      }
+    }
+  }
+
+  /// After the previous Quick Look finishes, UIKit may still be tearing it down; presenting
+  /// into that gap is what produced the "Could not open preview" dialog on fast reopen.
+  private func readyPresenter() async -> UIViewController? {
+    for _ in 0..<60 {
+      if Task.isCancelled { return nil }
+      if filePresentation != nil || videoPresentation != nil {
+        filePresentation?.dismiss(animated: false)
+        videoPresentation?.dismiss()
+        await waitForPresentationSlot()
+        continue
+      }
+      if let presenter = appContext?.utilities?.currentViewController(),
+        presenter.presentedViewController == nil,
+        presenter.transitionCoordinator == nil,
+        !presenter.isBeingPresented,
+        !presenter.isBeingDismissed {
+        return presenter
+      }
+      try? await Task.sleep(for: .milliseconds(16))
+    }
+    guard filePresentation == nil, videoPresentation == nil else { return nil }
+    return appContext?.utilities?.currentViewController()
+  }
+
+  private func releasePresentationSlot() {
+    let waiters = presentationWaiters
+    presentationWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+  }
+
   private func makeFilePresentation(sourceIdentifiers: [String], identifier: String,
                                     promise: Promise) throws -> T3NativeFilePresentation {
     guard filePresentation == nil, videoPresentation == nil,
@@ -297,17 +413,11 @@ public final class T3NativeControlsModule: Module {
     let file = T3NativeFilePresentation(identifier: identifier, sources: presentationSources,
                                         sourceIdentifiers: sourceIdentifiers) { [weak self] error in
       self?.filePresentation = nil
+      self?.releasePresentationSlot()
       if let error { promise.reject(error) } else { promise.resolve(nil) }
     }
     filePresentation = file
     return file
-  }
-
-  private func presentFile(url: URL, title: String, sourceIdentifier: String,
-                           identifier: String, promise: Promise) throws {
-    let file = try makeFilePresentation(sourceIdentifiers: [sourceIdentifier], identifier: identifier, promise: promise)
-    guard let presenter = appContext?.utilities?.currentViewController() else { file.dismiss(); return }
-    file.present(url: url, title: title, from: presenter)
   }
 
   private func dismissFilePresentation(identifier: String) {

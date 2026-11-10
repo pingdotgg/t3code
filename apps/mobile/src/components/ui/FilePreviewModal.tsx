@@ -43,41 +43,49 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
   const delivered = useRef<(string | null | undefined)[]>([]);
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onOpenError = useEffectEvent((error: unknown) => {
-    if (props.onOpenError) props.onOpenError(error);
-    else Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
+    if (props.onOpenError) {
+      props.onOpenError(error);
+      return;
+    }
+    Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
+    onRequestClose();
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- presents the native file preview and dismisses it on cleanup
   useEffect(() => {
     let canceled = false;
-    let presentation: Promise<void>;
     // Images open while still loading; other files must download first so Quick Look can refuse them.
-    if (presented.kind === "image") {
-      const { images, selectedIndex } = presented;
-      delivered.current = images.map((image) => image.uri);
-      presentation = NativeControls.presentFiles(
-        images.map((image) => image.uri ?? null),
-        images.map((image) => image.name ?? "Preview"),
-        selectedIndex,
-        images.map((image) => image.sourceIdentifier ?? ""),
-        identifier,
-      );
-    } else {
-      const { uri, name, sourceIdentifier } = presented;
-      presentation = NativeControls.presentFile(
-        uri,
-        name ?? "Preview",
-        sourceIdentifier ?? "",
-        identifier,
-      );
-    }
-    void presentation
-      .catch((error: unknown) => {
-        if (!canceled) onOpenError(error);
-      })
-      .finally(() => {
+    // Native serializes Quick Look presents and buffers updateFile until this call is enqueued.
+    const presentation =
+      presented.kind === "image"
+        ? (() => {
+            const { images, selectedIndex } = presented;
+            delivered.current = images.map((image) => image.uri);
+            return NativeControls.presentFiles(
+              images.map((image) => image.uri ?? null),
+              images.map((image) => image.name ?? "Preview"),
+              selectedIndex,
+              images.map((image) => image.sourceIdentifier ?? ""),
+              identifier,
+            );
+          })()
+        : NativeControls.presentFile(
+            presented.uri,
+            presented.name ?? "Preview",
+            presented.sourceIdentifier ?? "",
+            identifier,
+          );
+
+    void (async () => {
+      try {
+        await presentation;
         if (!canceled) onRequestClose();
-      });
+      } catch (error: unknown) {
+        // Custom handlers own dismissal so Cancel / Try again can keep the modal mounted.
+        if (!canceled) onOpenError(error);
+      }
+    })();
+
     return () => {
       canceled = true;
       void NativeControls.dismissFile(identifier).catch(() => undefined);

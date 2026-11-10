@@ -13,6 +13,7 @@ const harness = vi.hoisted(() => ({
     vi.fn<(environmentId: string, resource: { url: string }) => Promise<string | null>>(),
   alert: vi.fn(),
   previews: [] as unknown[],
+  openErrors: [] as (((error: unknown) => void) | undefined)[],
   mounts: 0,
 }));
 
@@ -32,6 +33,7 @@ import { FilePreviewSession } from "./FilePreviewSession";
 function Viewer(props: FilePreviewViewerProps) {
   useState(() => harness.mounts++);
   harness.previews.push(props.source);
+  harness.openErrors.push(props.onOpenError);
   return null;
 }
 
@@ -49,6 +51,7 @@ async function openGallery(
 ) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   harness.previews.length = 0;
+  harness.openErrors.length = 0;
   harness.mounts = 0;
   harness.alert.mockClear();
   const root = createRoot(document.createElement("div"));
@@ -104,6 +107,8 @@ it.each([true, false])(
 it.each([true, false])(
   "handles a failed sibling without leaving a pending page (progressive: %s)",
   async (progressiveGallery) => {
+    vi.useFakeTimers();
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
     harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) => {
       if (resource.url.endsWith("missing.png")) throw new Error("not found");
       return `https://signed.test/${resource.url.split("/").pop()}`;
@@ -114,11 +119,17 @@ it.each([true, false])(
       [selected, image("https://github.com/missing.png"), image("https://github.com/c.png")],
       progressiveGallery,
     );
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
 
     if (!progressiveGallery) {
-      expect(preview.onRequestClose).toHaveBeenCalledOnce();
+      expect(preview.onRequestClose).not.toHaveBeenCalled();
       expect(harness.alert).toHaveBeenCalledOnce();
       expect(harness.previews).toEqual([]);
+      const buttons = harness.alert.mock.calls[0]?.[2] as { text: string; onPress?: () => void }[];
+      await act(async () => buttons.find((button) => button.text === "Cancel")?.onPress?.());
+      expect(preview.onRequestClose).toHaveBeenCalledOnce();
       return;
     }
 
@@ -135,7 +146,9 @@ it.each([true, false])(
   },
 );
 
-it("closes the preview when the selected image cannot be resolved", async () => {
+it("offers try again when the selected image cannot be resolved", async () => {
+  vi.useFakeTimers();
+  using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
   harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) => {
     if (resource.url.endsWith("missing.png")) throw new Error("not found");
     return `https://signed.test/${resource.url.split("/").pop()}`;
@@ -146,12 +159,60 @@ it("closes the preview when the selected image cannot be resolved", async () => 
     [image("https://github.com/a.png"), selected],
     true,
   );
+  await act(async () => {
+    await vi.runAllTimersAsync();
+  });
 
-  expect(preview.onRequestClose).toHaveBeenCalledOnce();
+  expect(preview.onRequestClose).not.toHaveBeenCalled();
   expect(harness.alert).toHaveBeenCalledOnce();
+  const buttons = harness.alert.mock.calls[0]?.[2] as { text: string; onPress?: () => void }[];
+  expect(buttons.map((button) => button.text)).toEqual(["Cancel", "Try again"]);
+  await act(async () => buttons.find((button) => button.text === "Cancel")?.onPress?.());
+  expect(preview.onRequestClose).toHaveBeenCalledOnce();
+});
+
+it("retries a transient asset URL miss before opening", async () => {
+  vi.useFakeTimers();
+  using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+  let calls = 0;
+  harness.refreshAssetUrl.mockImplementation(async () => {
+    calls += 1;
+    if (calls === 1) return null;
+    return "https://signed.test/a.png";
+  });
+  const selected = image("https://github.com/a.png");
+  await using _preview = await openGallery(selected, [selected], true);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(200);
+  });
+
+  expect(harness.alert).not.toHaveBeenCalled();
+  expect(calls).toBeGreaterThan(1);
+  expect(harness.previews.at(-1)).toMatchObject({
+    kind: "image",
+    images: [{ uri: "https://signed.test/a.png" }],
+  });
+});
+
+it("offers try again when native open fails after the URL resolves", async () => {
+  harness.refreshAssetUrl.mockResolvedValue("https://signed.test/a.png");
+  const selected = image("https://github.com/a.png");
+  await using preview = await openGallery(selected, [selected], true);
+
+  expect(harness.openErrors.at(-1)).toEqual(expect.any(Function));
+  await act(async () => harness.openErrors.at(-1)?.(new Error("download failed")));
+
+  expect(preview.onRequestClose).not.toHaveBeenCalled();
+  expect(harness.alert).toHaveBeenCalledOnce();
+  const buttons = harness.alert.mock.calls[0]?.[2] as { text: string; onPress?: () => void }[];
+  expect(buttons.map((button) => button.text)).toEqual(["Cancel", "Try again"]);
+  await act(async () => buttons.find((button) => button.text === "Try again")?.onPress?.());
+  expect(harness.mounts).toBe(2);
 });
 
 it("names the checked path when the server cannot find the file", async () => {
+  vi.useFakeTimers();
+  using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
   const resource = {
     _tag: "media-file" as const,
     threadId: ThreadId.make("thread"),
@@ -163,11 +224,19 @@ it("names the checked path when the server cannot find the file", async () => {
   );
   const selected: FilePreviewItem = { kind: "image", environmentId, resource };
   await using preview = await openGallery(selected, [selected], false);
+  await act(async () => {
+    await vi.runAllTimersAsync();
+  });
 
-  expect(preview.onRequestClose).toHaveBeenCalledOnce();
+  expect(preview.onRequestClose).not.toHaveBeenCalled();
   expect(harness.alert).toHaveBeenCalledWith(
     "Could not open preview",
     expect.stringContaining(checkedPath),
+    expect.any(Array),
   );
   expect(harness.alert.mock.calls[0]?.[1]).not.toMatch(/reconnect/i);
+  const buttons = harness.alert.mock.calls[0]?.[2] as { text: string; onPress?: () => void }[];
+  expect(buttons.map((button) => button.text)).toEqual(["Cancel", "Try again"]);
+  await act(async () => buttons.find((button) => button.text === "Cancel")?.onPress?.());
+  expect(preview.onRequestClose).toHaveBeenCalledOnce();
 });

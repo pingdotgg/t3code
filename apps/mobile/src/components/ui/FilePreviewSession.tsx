@@ -52,9 +52,68 @@ interface ResolvedPreviewUri {
   readonly dispose?: () => void;
 }
 
+const PREVIEW_URL_RETRY_DELAYS_MS = [0, 200, 500] as const;
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException("The preview was cancelled.", "AbortError");
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (typeof DOMException !== "undefined" &&
+      error instanceof DOMException &&
+      error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
+}
+
+async function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) throw abortError(signal);
+  if (ms <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function resolveRemotePreviewUri(
+  item: Extract<FilePreviewItem, { readonly resource: unknown }>,
+  signal: AbortSignal,
+  retries: boolean,
+): Promise<ResolvedPreviewUri> {
+  const delays = retries ? PREVIEW_URL_RETRY_DELAYS_MS : ([0] as const);
+  let lastError: unknown;
+  for (const [attempt, delay] of delays.entries()) {
+    if (attempt > 0) await waitForRetry(delay, signal);
+    try {
+      // Refresh expired URLs before handing them to Quick Look or ACTION_VIEW, which retain them.
+      const url = await refreshAssetUrl(item.environmentId, item.resource, signal);
+      if (url) return { uri: url + (item.srcFragment ?? "") };
+      lastError = new Error("Reconnect to this environment and try again.");
+    } catch (error: unknown) {
+      if (signal.aborted || isAbortError(error)) throw abortError(signal);
+      lastError = error;
+    }
+  }
+  throw new PreviewResolutionError({
+    cause: lastError,
+    fallbackMessage: remotePreviewFailureMessage(lastError),
+  });
+}
+
 async function resolvePreviewUri(
   item: FilePreviewItem,
   signal: AbortSignal,
+  retries = false,
 ): Promise<ResolvedPreviewUri | null> {
   if ("uri" in item) return { uri: item.uri };
   if ("attachment" in item) {
@@ -65,19 +124,7 @@ async function resolvePreviewUri(
       });
     });
   }
-  // Refresh expired URLs before handing them to Quick Look or ACTION_VIEW, which retain them.
-  const url = await refreshAssetUrl(item.environmentId, item.resource, signal)
-    .then((value) => {
-      if (!value) throw new Error("Reconnect to this environment and try again.");
-      return value;
-    })
-    .catch((error: unknown) => {
-      throw new PreviewResolutionError({
-        cause: error,
-        fallbackMessage: remotePreviewFailureMessage(error),
-      });
-    });
-  return { uri: url + (item.srcFragment ?? "") };
+  return resolveRemotePreviewUri(item, signal, retries);
 }
 
 // Shares from the unresolved item so remote URLs refresh and draft files take their own lease.
@@ -99,6 +146,48 @@ function ResolvedFilePreview(
     readonly onOpenError?: (error: unknown) => void;
   },
 ) {
+  const [attempt, setAttempt] = useState(0);
+  const [resolutionFailed, setResolutionFailed] = useState(false);
+  const onResolutionError = useEffectEvent((error: PreviewResolutionError) => {
+    if (props.onOpenError) {
+      props.onOpenError(error.cause);
+      props.onRequestClose();
+      return;
+    }
+    setResolutionFailed(true);
+    Dialog.alert("Could not open preview", error.fallbackMessage, [
+      { text: "Cancel", style: "cancel", onPress: props.onRequestClose },
+      {
+        text: "Try again",
+        onPress: () => {
+          setResolutionFailed(false);
+          setAttempt((count) => count + 1);
+        },
+      },
+    ]);
+  });
+  if (resolutionFailed) return null;
+  return (
+    <ResolvedFilePreviewAttempt
+      key={attempt}
+      source={props.source}
+      onRequestClose={props.onRequestClose}
+      onResolutionError={onResolutionError}
+      progressiveGallery={props.progressiveGallery}
+      Viewer={props.Viewer}
+      {...(props.onOpenError ? { onOpenError: props.onOpenError } : {})}
+    />
+  );
+}
+
+function ResolvedFilePreviewAttempt(
+  props: FilePreviewSessionOptions & {
+    readonly source: FilePreviewSource;
+    readonly onRequestClose: () => void;
+    readonly onOpenError?: (error: unknown) => void;
+    readonly onResolutionError: (error: PreviewResolutionError) => void;
+  },
+) {
   const { progressiveGallery, Viewer } = props;
   // Freeze the group at opening; streaming messages and URL refreshes must not reopen the viewer.
   const [items] = useState(() => filePreviewGallery(props.source, []));
@@ -108,11 +197,7 @@ function ResolvedFilePreview(
   const [uris, setUris] = useState<readonly (string | null | undefined)[]>(() =>
     items.map((item) => ("uri" in item ? item.uri : undefined)),
   );
-  const onResolutionError = useEffectEvent((error: PreviewResolutionError) => {
-    if (props.onOpenError) props.onOpenError(error.cause);
-    else Dialog.alert("Could not open preview", error.fallbackMessage);
-    props.onRequestClose();
-  });
+  const onResolutionError = useEffectEvent(props.onResolutionError);
   // Resolves once per presentation and holds local file leases until it closes.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resolves preview files and holds their local file leases until the preview closes
   useEffect(() => {
@@ -122,14 +207,14 @@ function ResolvedFilePreview(
       setUris((current) => current.map((value, at) => (at === index ? uri : value)));
     items.forEach((item, index) => {
       if ("uri" in item) return;
-      void resolvePreviewUri(item, controller.signal).then(
+      void resolvePreviewUri(item, controller.signal, index === selectedIndex).then(
         (resolved) => {
           if (controller.signal.aborted) return resolved?.dispose?.();
           if (resolved?.dispose) leases.push(resolved.dispose);
           settle(index, resolved?.uri ?? null);
         },
         (error: unknown) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || isAbortError(error)) return;
           if (progressiveGallery && index !== selectedIndex) return settle(index, null);
           controller.abort();
           onResolutionError(
@@ -157,20 +242,38 @@ function ResolvedFilePreview(
         ...(uri ? { uri } : uri === null ? { failed: true } : {}),
       };
     });
+    const onOpenError = (error: unknown) => {
+      if (props.onOpenError) {
+        props.onOpenError(error);
+        props.onRequestClose();
+        return;
+      }
+      // Native download can still fail after the signed URL resolves; reuse Cancel / Try again.
+      onResolutionError(
+        new PreviewResolutionError({
+          cause: error,
+          fallbackMessage: "The file could not be loaded. Please try again.",
+        }),
+      );
+    };
     return (
       <Viewer
         source={{ kind: "image", images, selectedIndex }}
         onRequestClose={props.onRequestClose}
-        {...(props.onOpenError ? { onOpenError: props.onOpenError } : {})}
+        onOpenError={onOpenError}
       />
     );
   }
   const uri = uris[selectedIndex];
   if (!uri) return null;
   const onOpenError = (error: unknown) => {
-    if (props.onOpenError) return props.onOpenError(error);
+    if (props.onOpenError) {
+      props.onOpenError(error);
+      props.onRequestClose();
+      return;
+    }
     Dialog.alert("Could not open preview", nativeViewerErrorMessage(error), [
-      { text: "Cancel", style: "cancel" },
+      { text: "Cancel", style: "cancel", onPress: props.onRequestClose },
       ...(selected.kind === "document"
         ? [
             {
@@ -192,6 +295,7 @@ function ResolvedFilePreview(
           ]
         : []),
     ]);
+    props.onRequestClose();
   };
   const actionsSource =
     selected.kind === "pdf" ? (selected.actionsSource ?? pdfActionsSource(selected)) : undefined;
