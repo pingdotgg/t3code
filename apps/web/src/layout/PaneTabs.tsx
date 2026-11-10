@@ -579,7 +579,7 @@ export function useLayoutTabLabel(tab: LayoutTab): {
       tooltip: [
         title,
         terminal?.state.summary?.label,
-        surface?.kind === "preview" ? "Browser" : null,
+        surface?.kind === "preview" && title !== "Browser" ? "Browser" : null,
         threadTitle,
         path,
         url,

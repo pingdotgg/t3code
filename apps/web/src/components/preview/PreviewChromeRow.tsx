@@ -178,7 +178,7 @@ export function PreviewChromeRow({
                   aria-label="Search or enter URL"
                   data-workspace-focus-default
                   spellCheck={false}
-                  disabled={inputDisabled}
+                  readOnly={inputDisabled}
                   data-preview-url-input
                   size="sm"
                 />
