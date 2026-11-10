@@ -154,7 +154,7 @@ function AutocompleteGroup({ className, ...props }: AutocompletePrimitive.Group.
   );
 }
 
-const GROUP_LABEL_CLASS_NAME = "px-2 py-1.5 text-meta text-dim-foreground";
+const GROUP_LABEL_CLASS_NAME = "px-2 py-1.5 text-meta text-muted-foreground";
 
 function AutocompleteGroupLabel({ className, ...props }: AutocompletePrimitive.GroupLabel.Props) {
   return (

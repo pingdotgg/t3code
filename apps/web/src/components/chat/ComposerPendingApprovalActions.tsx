@@ -118,7 +118,7 @@ export function ComposerPendingApprovalActions({
           <Menu>
             <MenuTrigger
               disabled={disabled}
-              render={<Button size="icon-sm" variant="ghost" aria-label="More approval options" />}
+              render={<Button size="sm" variant="ghost" aria-label="More approval options" />}
             >
               More
             </MenuTrigger>
