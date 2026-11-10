@@ -1208,22 +1208,45 @@ it.live.each([
           expect(yield* Queue.take(continued)).toEqual(expected);
         }
 
-        // A popup's first request predates interception; only this server's file links reload.
+        // A popup's first request predates interception and has failed by adoption;
+        // only this server's file links load again.
+        const failedPopup = (unreachableUrl: string) => {
+          const popup = makeContext(undefined, "chrome-error://chromewebdata/");
+          const newCDPSession = popup.newCDPSession;
+          popup.newCDPSession = async (target) => {
+            const popupSession = await newCDPSession(target);
+            const popupSend = popupSession.send.getMockImplementation()!;
+            popupSession.send.mockImplementation(async (method, input) =>
+              method === "Page.getFrameTree"
+                ? { frameTree: { frame: { id: "main", unreachableUrl } } }
+                : popupSend(method, input),
+            );
+            return popupSession;
+          };
+          return popup.page;
+        };
+        const childUrl = publicUrl.replace("report.html", "child.html");
         const browser = yield* ServerBrowser.ServerBrowser;
         const popups = [
-          publicUrl.replace("report.html", "child.html"),
-          publicUrl.replace(token!, `${token}x`),
-          "https://accounts.example.com/sign-in",
-        ].map((url) => makeContext(undefined, url).page);
+          failedPopup(childUrl),
+          failedPopup(publicUrl.replace(token!, `${token}x`)),
+          failedPopup("https://accounts.example.com/sign-in"),
+          makeContext(undefined, childUrl).page,
+        ];
         for (const popup of popups) {
           contexts[0]!.page.emit("popup", popup);
           let opened;
           do opened = yield* PubSub.take(events);
           while (opened.type !== "opened");
           yield* browser.attachViewer(viewerInput(opened.snapshot.tabId, false));
-          expect(popup.goto).not.toHaveBeenCalled();
         }
-        expect(popups.map((popup) => popup.reload.mock.calls.length)).toEqual([1, 0, 0]);
+        expect(popups.map((popup) => popup.goto.mock.calls.map(([url]) => url))).toEqual([
+          [childUrl],
+          [],
+          [],
+          [],
+        ]);
+        expect(popups.map((popup) => popup.reload.mock.calls.length)).toEqual([0, 0, 0, 0]);
       }),
     ).pipe(
       Effect.provide(

@@ -1060,20 +1060,28 @@ const make = Effect.gen(function* () {
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
-    // Existing desktop and popup PDFs, and popups on this server's file links, can start loading
-    // before interception attaches.
-    if (
-      snapshot.navStatus._tag === "Loading" &&
-      ((!adopted && !desktop) ||
-        isPdfAssetUrl(snapshot.navStatus.url) ||
-        (adopted !== undefined &&
-          (await loadAssetsFromListenOrigin?.(snapshot.navStatus.url)) !== undefined))
-    ) {
+    // A popup's first request predates interception, so one on this server's file links can
+    // show an error page; it loads again now that interception is attached.
+    const failedUrl = adopted
+      ? (await cdp.send("Page.getFrameTree")).frameTree.frame.unreachableUrl
+      : undefined;
+    const failedAssetUrl =
+      failedUrl !== undefined && (await loadAssetsFromListenOrigin?.(failedUrl)) !== undefined
+        ? failedUrl
+        : undefined;
+    // Existing desktop and popup PDFs can start loading before interception attaches.
+    const initialUrl =
+      failedAssetUrl ??
+      (snapshot.navStatus._tag === "Loading" &&
+      ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
+        ? snapshot.navStatus.url
+        : undefined);
+    if (initialUrl !== undefined) {
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (
-        (desktop || adopted) && page.url() === snapshot.navStatus.url
+        (desktop || adopted) && page.url() === initialUrl
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
+          : page.goto(initialUrl, options)
       ).then(constVoid, (cause: unknown) => {
         throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
       });
