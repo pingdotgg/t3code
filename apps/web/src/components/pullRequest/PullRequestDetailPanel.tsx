@@ -1247,6 +1247,10 @@ export function PullRequestDetailPanel({
           mergeMethod: selectedMergeMethod,
           stale: !nativeStackQuery.isFresh,
           canMerge: supportsStackActions && can("merge") && allowedMergeMethods.length > 0,
+          conflictsWith:
+            detail.state === "open" && detail.mergeability === "conflicting"
+              ? detail.baseBranch
+              : null,
           canRebase: supportsStackActions && detail.viewerPermissions.stackRebase === true,
           onActed: () => {
             refreshDetail();
@@ -1278,7 +1282,7 @@ export function PullRequestDetailPanel({
     />
   ) : null;
   const stackMergeButton =
-    stackMenuProps !== null && stackMenuProps.canMerge ? (
+    stackMenuProps !== null && stackMenuProps.canMerge && stackMenuProps.conflictsWith === null ? (
       <PullRequestStackMenu {...stackMenuProps} display="merge-button" />
     ) : null;
   const showsArmedNote = autoMergeArmed && primaryAction !== "auto-merge-armed";
