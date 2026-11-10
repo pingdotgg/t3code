@@ -29,7 +29,7 @@ export function buildTranscriptionPostProcessingPrompt(
 ${transcript}
 </transcript>
 
-${placement} Use the composer draft and insertion position to resolve ambiguity and correct likely recognition errors in the transcript. The draft can clarify the topic, references, terminology, and how the new speech fits with nearby text. Prefer an interpretation supported by the draft when the speech plausibly matches it. Do not invent content, change clear speech, or include existing composer text in the result. Return only the cleaned transcript.
+${placement} Use the composer draft and insertion position to resolve ambiguity and correct likely recognition errors in the transcript. The draft can clarify the topic, references, terminology, and how the new speech fits with nearby text. Prefer an interpretation supported by the draft when the speech plausibly matches it. Do not invent content, change clear speech, or include existing composer text in the result. Return only the cleaned transcript. Return a JSON object with one key, "transcription", holding the cleaned transcript.
 <composer_before>
 ${draft.text.slice(0, cursor)}
 </composer_before>${selectionBlock}
