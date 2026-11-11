@@ -79,8 +79,9 @@ vi.mock("react", () => ({
 vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
 vi.mock("@t3tools/client-runtime/state/context-window", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/context-window")>()),
-  shouldCompactBeforeSend: () => state.compactDue,
+  compactBeforeSendTokens: () => (state.compactDue ? 248_000 : null),
 }));
+vi.mock("../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
 vi.mock("./queued-run-edit", () => ({
@@ -288,7 +289,7 @@ describe("mobile task permissions", () => {
     expect(state.setFreshPending).toHaveBeenCalledWith("secondary:thread", false);
   });
 
-  it("compacts a stale thread before sending unless a fresh session is armed", async () => {
+  it("compacts a stale thread before sending unless kept or a fresh session is armed", async () => {
     state.grantedEnvironments.add("secondary");
     state.projection = {
       thread: {
@@ -316,10 +317,20 @@ describe("mobile task permissions", () => {
     } as unknown as OrchestrationV2ThreadProjection;
     state.compactDue = true;
     const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(composer.compactBeforeSend?.tokens).toBe(248_000);
     await composer.onSendMessage();
     expect(state.enqueue).toHaveBeenLastCalledWith(
       expect.objectContaining({ compactBeforeSend: true }),
     );
+    composer.compactBeforeSend?.keepFullHistory();
+    const kept = useThreadComposerState(NO_SIDE_CHATS);
+    expect(kept.compactBeforeSend).toBeNull();
+    await kept.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ compactBeforeSend: true }),
+    );
+    // Keeping covers one send, as on web.
+    expect(useThreadComposerState(NO_SIDE_CHATS).compactBeforeSend?.tokens).toBe(248_000);
     state.freshPending = true;
     await composer.onSendMessage();
     expect(state.enqueue).toHaveBeenLastCalledWith(
