@@ -6,7 +6,6 @@ import {
   SourceControlProviderKind,
   type PullRequestDetailView,
   type PullRequestDiffResult,
-  type PullRequestFilesViewedResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -14,7 +13,7 @@ import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, pagedDiffAtom, filesViewedAtom } = await vi.hoisted(async () => {
+const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -54,36 +53,51 @@ const { diffAtom, pagedDiffAtom, filesViewedAtom } = await vi.hoisted(async () =
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() => AsyncResult.success(pages[cursor]!)),
     ),
-    filesViewedAtom: Atom.make(() =>
-      AsyncResult.success<PullRequestFilesViewedResult>({
-        files: [
-          { path: "early-0.ts", state: "viewed" },
-          { path: "early-2.ts", state: "dismissed" },
-          { path: "a.ts", state: "viewed" },
-        ],
-        truncated: false,
-      }),
-    ),
   };
-});
-
-const noFilesViewedAtom = await vi.hoisted(async () => {
-  const { AsyncResult, Atom } = await import("effect/reactivity");
-  return Atom.make(() =>
-    AsyncResult.success<PullRequestFilesViewedResult>({ files: [], truncated: false }),
-  );
 });
 
 const mocks = vi.hoisted(() => ({
   paged: false,
-  noFilesViewed: false,
   diffCommits: [] as Array<string | undefined>,
+  viewedPaths: null as ReadonlySet<string> | null,
+  viewedListeners: new Set<() => void>(),
 }));
+
+function deliverViewedPaths(paths: ReadonlySet<string> | null) {
+  mocks.viewedPaths = paths;
+  for (const listener of mocks.viewedListeners) listener();
+}
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => vi.fn()) as never,
 }));
+vi.mock(import("./usePullRequestFilesViewed"), async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    mocks.viewedListeners.add(listener);
+    return () => mocks.viewedListeners.delete(listener);
+  };
+  return {
+    usePullRequestFilesViewed: () => {
+      const viewedPaths = useSyncExternalStore(subscribe, () => mocks.viewedPaths);
+      return {
+        enabled: viewedPaths !== null,
+        isViewed: (path: string) => viewedPaths?.has(path) === true,
+        isStale: () => false,
+        setViewed: (path: string, viewed: boolean) => {
+          const next = new Set(mocks.viewedPaths);
+          if (viewed) next.add(path);
+          else next.delete(path);
+          deliverViewedPaths(next);
+        },
+        truncated: false,
+        error: null,
+        refresh: () => {},
+      };
+    },
+  };
+});
 vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
   return {
@@ -94,7 +108,6 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
         mocks.diffCommits.push(input.commit);
         return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
       }) as never,
-      filesViewed: (() => (mocks.noFilesViewed ? noFilesViewedAtom : filesViewedAtom)) as never,
     },
   };
 });
@@ -154,11 +167,12 @@ const detail: PullRequestDetailView = {
   },
 };
 
-function setup({ paged, noFilesViewed = false }: { paged: boolean; noFilesViewed?: boolean }) {
+function setup({ paged }: { paged: boolean }) {
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
-  mocks.noFilesViewed = noFilesViewed;
   mocks.diffCommits = [];
+  mocks.viewedPaths = null;
+  mocks.viewedListeners.clear();
   localStorage.clear();
 }
 
@@ -197,6 +211,30 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+// regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it
+it("keeps a revealed file open when its Viewed mark loads afterwards", async () => {
+  setup({ paged: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  mocks.viewedPaths = new Set();
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0, { path: "a.ts", nonce: 1 }), { container });
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+
+  deliverViewedPaths(new Set(["a.ts"]));
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
+
+  await expect
+    .element(screen.getByRole("button", { name: "Collapse diff" }))
+    .toHaveAttribute("aria-expanded", "true");
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
 });
 
 function pagedContainer() {
@@ -255,15 +293,10 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "late.test.ts");
 });
 
-it("hides viewed files but keeps one pushed to since it was viewed", async () => {
+it("hides viewed files and shows them again", async () => {
   setup({ paged: true });
-  const viewedDetail = {
-    ...detail,
-    capabilities: { ...detail.capabilities, viewedFiles: "host" as const },
-  };
-  await using screen = await render(tab(0, null, undefined, undefined, viewedDetail), {
-    container: pagedContainer(),
-  });
+  mocks.viewedPaths = new Set(["early-0.ts"]);
+  await using screen = await render(tab(0), { container: pagedContainer() });
   await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
   const hideViewed = screen.getByRole("button", { name: "Hide viewed files" });
 
@@ -276,15 +309,10 @@ it("hides viewed files but keeps one pushed to since it was viewed", async () =>
 });
 
 it("keeps the Hide viewed files toggle while its saved filter is on and nothing is viewed", async () => {
-  setup({ paged: true, noFilesViewed: true });
+  setup({ paged: true });
+  mocks.viewedPaths = new Set();
   localStorage.setItem("t3code.pullRequestHideViewedFiles", "true");
-  const viewedDetail = {
-    ...detail,
-    capabilities: { ...detail.capabilities, viewedFiles: "host" as const },
-  };
-  await using screen = await render(tab(0, null, undefined, undefined, viewedDetail), {
-    container: pagedContainer(),
-  });
+  await using screen = await render(tab(0), { container: pagedContainer() });
   await screen.getByRole("button", { name: "Hide viewed files" }).click();
 
   await vi.waitFor(() =>
@@ -294,15 +322,10 @@ it("keeps the Hide viewed files toggle while its saved filter is on and nothing 
 
 it("marks a Shift-clicked range viewed after the first file of it was hidden", async () => {
   setup({ paged: true });
-  const viewedDetail = {
-    ...detail,
-    capabilities: { ...detail.capabilities, viewedFiles: "host" as const },
-  };
+  mocks.viewedPaths = new Set(["early-0.ts"]);
   const container = document.createElement("div");
   container.className = "h-[500px] w-[400px]";
-  await using screen = await render(tab(0, null, undefined, undefined, viewedDetail), {
-    container,
-  });
+  await using screen = await render(tab(0), { container });
   await screen.getByRole("button", { name: "Hide viewed files" }).click();
   await expect.element(screen.getByText("early-10.ts", { exact: true }).first()).toBeVisible();
 
@@ -318,9 +341,9 @@ it("marks a Shift-clicked range viewed after the first file of it was hidden", a
 
 it("keeps conversations reachable when every file is hidden", async () => {
   setup({ paged: false });
+  mocks.viewedPaths = new Set(["a.ts"]);
   const threadDetail: PullRequestDetailView = {
     ...detail,
-    capabilities: { ...detail.capabilities, viewedFiles: "host" },
     reviewThreads: [
       {
         id: "thread",
