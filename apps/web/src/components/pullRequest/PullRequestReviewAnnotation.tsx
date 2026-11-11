@@ -479,14 +479,11 @@ export function PullRequestThreadReplyForm({
 
   if (!replying) {
     return (
-      <Button
-        size="xs"
-        variant="ghost"
-        className={cn("mt-2", className)}
-        onClick={() => setReplying(true)}
-      >
-        <T context="verb, button">Reply</T>
-      </Button>
+      <div className={cn("mt-2", className)}>
+        <Button size="xs" variant="ghost" onClick={() => setReplying(true)}>
+          <T context="verb, button">Reply</T>
+        </Button>
+      </div>
     );
   }
   return (
