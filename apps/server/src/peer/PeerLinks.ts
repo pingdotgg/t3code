@@ -26,6 +26,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -222,6 +223,12 @@ const make = Effect.gen(function* () {
   const describe = (origin: string) =>
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
+      // A brief network drop must not list a live peer as down; the timeout still bounds both tries.
+      Effect.retry({
+        times: 1,
+        schedule: Schedule.spaced("1 second"),
+        while: (error) => certificateErrorCode(error) === undefined,
+      }),
       Effect.timeout(probeTimeout(origin)),
       Effect.asSome,
       Effect.catch((error) => {
