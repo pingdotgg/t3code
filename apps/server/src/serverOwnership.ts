@@ -21,15 +21,15 @@ import {
   BOOT_SERVICE_PLIST_FILE,
   BOOT_SERVICE_UNIT_FILE,
   bootServiceBaseDirOf,
-} from "./cloud/bootService.ts";
-import { ServiceLauncherHostProcess } from "./cloud/serviceLauncherClient.ts";
+} from "./service/bootService.ts";
+import { ServiceLauncherHostProcess } from "./service/serviceLauncherClient.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
   compareExactServiceVersions,
   serviceStateActiveVersion,
-} from "./cloud/serviceProtocol.ts";
+} from "./service/serviceProtocol.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,

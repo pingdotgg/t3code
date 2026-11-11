@@ -12,7 +12,7 @@ import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import * as ServiceLauncherClient from "./service/serviceLauncherClient.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as Keybindings from "./keybindings.ts";

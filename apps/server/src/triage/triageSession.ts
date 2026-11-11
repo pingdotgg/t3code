@@ -9,7 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import * as BootService from "../cloud/bootService.ts";
+import * as BootService from "../service/bootService.ts";
 import * as ManagedEndpointRuntime from "../cloud/ManagedEndpointRuntime.ts";
 import type * as ServerConfig from "../config.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";

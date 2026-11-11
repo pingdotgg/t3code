@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
-import * as BootService from "../cloud/bootService.ts";
+import * as BootService from "../service/bootService.ts";
 import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";

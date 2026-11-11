@@ -23,7 +23,7 @@ import {
   SERVICE_STATE_FILE,
   SERVICE_STOP_MARKER_FILE,
   type ServiceUpdateRecord,
-} from "./serviceProtocol.ts";
+} from "../service/serviceProtocol.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
@@ -42,7 +42,7 @@ import {
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import { consumeCloudReplayGuards } from "./CloudLink.ts";
-import { pendingServiceUpdateExists } from "./updateHandoff.ts";
+import { pendingServiceUpdateExists } from "../service/updateHandoff.ts";
 import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";

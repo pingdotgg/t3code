@@ -178,7 +178,7 @@ import * as CloudHttp from "./cloud/http.ts";
 import * as GuestHttp from "./guest/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import * as ConnectReachability from "./cloud/ConnectReachability.ts";
-import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
+import { pendingServiceUpdateExists } from "./service/updateHandoff.ts";
 import * as RelayTracing from "./cloud/relayTracing.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import {
@@ -190,9 +190,9 @@ import {
 } from "./cloud/managedTunnelStartup.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
-import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as ServerSelfUpdate from "./service/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
-import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import * as ServiceLauncherClient from "./service/serviceLauncherClient.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";

@@ -75,7 +75,7 @@ interface ServiceLauncherProcess {
 }
 
 export const ServiceLauncherHostProcess = Context.Reference<ServiceLauncherProcess>(
-  "t3/cloud/serviceLauncherHostProcess",
+  "t3/service/serviceLauncherHostProcess",
   {
     defaultValue: () => ({
       connected: process.connected && process.send !== undefined,
@@ -106,7 +106,7 @@ export class ServiceLauncherClient extends Context.Service<
       ServiceLauncherClientError
     >;
   }
->()("t3/cloud/serviceLauncherClient") {}
+>()("t3/service/serviceLauncherClient") {}
 
 const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup")(
   function* (options?: { readonly currentVersion?: string }) {

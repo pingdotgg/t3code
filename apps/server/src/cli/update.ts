@@ -21,7 +21,7 @@ import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import packageJson from "../../package.json" with { type: "json" };
-import * as BootService from "../cloud/bootService.ts";
+import * as BootService from "../service/bootService.ts";
 import {
   ensurePinnedRuntimeInstalled,
   launcherOwnsVersionsDir,
@@ -33,8 +33,8 @@ import {
   prunePinnedRuntimes,
   recordPinnedRuntimeLauncher,
   windowsShimTarget,
-} from "../cloud/pinnedRuntime.ts";
-import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
+} from "../service/pinnedRuntime.ts";
+import { compareExactServiceVersions, isExactServiceVersion } from "../service/serviceProtocol.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";

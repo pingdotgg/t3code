@@ -16,8 +16,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
-import * as BootService from "../cloud/bootService.ts";
-import { pinnedRuntimePaths, prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import * as BootService from "../service/bootService.ts";
+import { pinnedRuntimePaths, prunePinnedRuntimes } from "../service/pinnedRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {

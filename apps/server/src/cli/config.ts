@@ -24,7 +24,7 @@ import { Argument, Flag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
-import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
+import { resolveServiceLauncherMode } from "../service/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";

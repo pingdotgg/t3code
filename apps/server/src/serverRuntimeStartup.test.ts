@@ -27,7 +27,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import * as ServiceLauncherClient from "./service/serviceLauncherClient.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";

@@ -31,7 +31,7 @@ import {
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
-} from "./cloud/serviceProtocol.ts";
+} from "./service/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
 

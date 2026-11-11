@@ -10,11 +10,11 @@ import * as CliError from "effect/cli/CliError";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as BootService from "../cloud/bootService.ts";
+import * as BootService from "../service/bootService.ts";
 import * as CliState from "../cloud/CliState.ts";
 import { CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINK_REVOKED } from "../cloud/config.ts";
 import { hasCloudPublicConfig } from "../cloud/publicConfig.ts";
-import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
+import { compareExactServiceVersions } from "../service/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";

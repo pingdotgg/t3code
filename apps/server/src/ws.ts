@@ -187,8 +187,8 @@ import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/s
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as ProviderInstallation from "./provider/providerInstallation.ts";
-import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
-import * as NpmRelease from "./cloud/npmRelease.ts";
+import * as ServerSelfUpdate from "./service/selfUpdate.ts";
+import * as NpmRelease from "./service/npmRelease.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";

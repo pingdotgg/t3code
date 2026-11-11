@@ -33,7 +33,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as BootService from "../cloud/bootService.ts";
+import * as BootService from "../service/bootService.ts";
 import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { formatReachabilityFailure } from "../cloud/ConnectReachability.ts";

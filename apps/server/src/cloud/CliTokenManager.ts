@@ -32,9 +32,9 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
 import {
   cloudCliOAuthConfig,
-  hostedAppUrlConfig,
   type CloudCliOAuthConfig,
 } from "./publicConfig.ts";
+import { hostedAppUrlConfig } from "../environment/hostedAppUrl.ts";
 import { renderLoopbackAuthorizationCompleteHtml } from "./cliAuthHtml.ts";
 
 const CLOUD_CLI_OAUTH_TOKEN_SECRET = "cloud-cli-oauth-token";

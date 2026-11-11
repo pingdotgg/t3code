@@ -15,7 +15,7 @@ import type {
   ServiceLauncherParentMessage,
   ServiceState,
   ServiceUpdateRecord,
-} from "./cloud/serviceProtocol.ts";
+} from "./service/serviceProtocol.ts";
 import {
   compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
@@ -27,7 +27,7 @@ import {
   SERVICE_STATE_FILE,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
-} from "./cloud/serviceProtocol.ts";
+} from "./service/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 /**

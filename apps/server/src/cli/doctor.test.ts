@@ -3,7 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as BootService from "../cloud/bootService.ts";
+import * as BootService from "../service/bootService.ts";
 import { runDoctor } from "./doctor.ts";
 import { DatabaseMaintenance } from "../persistence/DatabaseMaintenance.ts";
 

@@ -1,4 +1,4 @@
-import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/hostedApp";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import appleAppSiteAssociation from "../web/public/.well-known/apple-app-site-association.json";
