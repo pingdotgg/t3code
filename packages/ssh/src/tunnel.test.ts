@@ -893,7 +893,7 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
         `the launcher kept ${kind} as its running server`,
       );
       assert.isTrue(yield* isRunning(pid));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.live.each(staleIds)("disconnecting does not signal %s named by the managed pid file", (kind) =>
@@ -915,7 +915,7 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
         manager.disconnectEnvironment(target),
       ).pipe(Effect.provide(layer));
       assert.isTrue(yield* isRunning(holder.pid), `disconnecting signalled ${kind}`);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
 
