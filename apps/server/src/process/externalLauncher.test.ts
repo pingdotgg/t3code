@@ -517,7 +517,7 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
     ] as const) {
       yield* fs.makeDirectory(dir, { recursive: true });
       const executable = path.join(dir, name);
-      yield* fs.writeFileString(executable, "#!/bin/sh\n");
+      yield* fs.writeFileString(executable, "#!/bin/sh\necho 'Zed 0.200.0'\n");
       yield* fs.chmod(executable, 0o755);
     }
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
@@ -541,6 +541,83 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
     assert.deepEqual(
       yield* resolve,
       Option.some({ command: path.join(localBin, "zed"), baseArgs: [] }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)("does not offer the OpenZFS zed daemon as Zed on Linux", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-zfs-" });
+    const binDir = path.join(home, "bin");
+    const systemBin = path.join(home, "system-bin");
+    yield* fs.makeDirectory(binDir, { recursive: true });
+    yield* fs.makeDirectory(systemBin, { recursive: true });
+    const zfsZed = path.join(binDir, "zed");
+    // OpenZFS zed only takes short options: `--version` is rejected with usage on stderr.
+    yield* fs.writeFileString(
+      zfsZed,
+      "#!/bin/sh\necho \"Invalid option '--'\" >&2\necho 'Usage: zed [OPTION]...' >&2\nexit 1\n",
+    );
+    yield* fs.chmod(zfsZed, 0o755);
+    const editor = EDITORS.find((editor) => editor.id === "zed")!;
+    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: binDir }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(Path.Path, {
+        ...path,
+        join: (...parts) =>
+          path.join(
+            ...parts.map((part) =>
+              ["/usr/local/bin", "/usr/bin", "/snap/bin"].includes(part) ? systemBin : part,
+            ),
+          ),
+      }),
+    );
+    assert.deepEqual(yield* resolve, Option.none());
+
+    const zedEditor = path.join(home, ".local/bin/zed");
+    yield* fs.makeDirectory(path.dirname(zedEditor), { recursive: true });
+    yield* fs.writeFileString(zedEditor, "#!/bin/sh\necho 'Zed 0.200.0'\n");
+    yield* fs.chmod(zedEditor, 0o755);
+    assert.deepEqual(yield* resolve, Option.some({ command: zedEditor, baseArgs: [] }));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)("does not open Zed with the OpenZFS zed daemon on Linux", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-zfs-launch-" });
+    const binDir = path.join(home, "bin");
+    yield* fs.makeDirectory(binDir, { recursive: true });
+    yield* fs.writeFileString(path.join(binDir, "zed"), "#!/bin/sh\nexit 1\n");
+    yield* fs.chmod(path.join(binDir, "zed"), 0o755);
+
+    const spawned: ChildProcess.StandardCommand[] = [];
+    const exit = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace" }).pipe(Effect.exit);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { HOME: home, PATH: binDir },
+          onSpawn: (command) => spawned.push(command),
+          spawnResult: (command) => (command.args[0] === "--version" ? { exitCode: 1 } : undefined),
+        }),
+      ),
+    );
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      assert.instanceOf(
+        Cause.squash(exit.cause),
+        ExternalLauncher.ExternalLauncherCommandNotFoundError,
+      );
+    }
+    assert.deepEqual(
+      spawned.map((command) => command.args),
+      [["--version"]],
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

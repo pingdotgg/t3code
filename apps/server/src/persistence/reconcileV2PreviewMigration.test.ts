@@ -60,9 +60,10 @@ describe("V2 preview upgrade", () => {
         [78, "DropOrchestrationEventCorrelationIndex"],
         [79, "DelegatedRecoveryIndexes"],
         [80, "ScheduledTaskThreadMode"],
-        [81, "FleetPeerEnvironments"],
-        [82, "OpenShellFleetState"],
-        [83, "FleetDrainImports"],
+        [81, "ProjectionMessageSearchText"],
+        [82, "FleetPeerEnvironments"],
+        [83, "OpenShellFleetState"],
+        [84, "FleetDrainImports"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -166,9 +167,10 @@ describe("V2 preview upgrade", () => {
         [78, "DropOrchestrationEventCorrelationIndex"],
         [79, "DelegatedRecoveryIndexes"],
         [80, "ScheduledTaskThreadMode"],
-        [81, "FleetPeerEnvironments"],
-        [82, "OpenShellFleetState"],
-        [83, "FleetDrainImports"],
+        [81, "ProjectionMessageSearchText"],
+        [82, "FleetPeerEnvironments"],
+        [83, "OpenShellFleetState"],
+        [84, "FleetDrainImports"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

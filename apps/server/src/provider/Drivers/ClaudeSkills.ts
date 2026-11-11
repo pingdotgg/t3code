@@ -472,6 +472,17 @@ export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function
   return settingsEnv;
 });
 
+/** The host of an `ANTHROPIC_BASE_URL` that is not Anthropic's own API. */
+export function customClaudeApiEndpointHost(baseUrl: string | undefined): string | undefined {
+  const endpoint = URL.parse(baseUrl?.trim() ?? "");
+  return endpoint !== null &&
+    (endpoint.protocol === "http:" || endpoint.protocol === "https:") &&
+    endpoint.hostname !== "" &&
+    endpoint.hostname !== "api.anthropic.com"
+    ? endpoint.hostname
+    : undefined;
+}
+
 // Claude's --add-dir is repeatable and variadic; parseCliArgs keeps only one value.
 export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<string> {
   const directories: string[] = [];

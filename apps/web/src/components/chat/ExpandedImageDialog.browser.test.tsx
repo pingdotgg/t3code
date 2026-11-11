@@ -1,6 +1,7 @@
+import { useState } from "react";
 import type { SnapShotSource } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -19,7 +20,45 @@ const snapShotSource: SnapShotSource = {
 const D2_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1174 920"><rect width="1174" height="920"/></svg>';
 
+function ImagePreviewOpener() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open preview
+      </button>
+      {open && (
+        <ExpandedImageDialog
+          preview={{ images: [{ src: PIXEL, name: "shot.png", source: snapShotSource }], index: 0 }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
 describe("ExpandedImageDialog", () => {
+  it.each([
+    { opener: "mouse", focusVisible: false },
+    { opener: "keyboard", focusVisible: true },
+  ])("returns $opener focus to the opener on close", async (c) => {
+    await using screen = await render(<ImagePreviewOpener />, {
+      // The opener renders no links and reads no route.
+      router: false,
+    });
+    const opener = screen.getByRole("button", { name: "Open preview" });
+    if (c.opener === "mouse") {
+      await userEvent.click(opener);
+    } else {
+      await userEvent.keyboard("{Tab}");
+      await userEvent.keyboard("{Enter}");
+    }
+    await expect.element(page.getByRole("button", { name: "Close image preview" })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(opener).toHaveFocus();
+    expect(opener.element().matches(":focus-visible")).toBe(c.focusVisible);
+  });
+
   it.each(["/work/pipeline.svg", "/work/diagram#v2.svg", "/work/diagram?v2.svg"])(
     "fits a markdown SVG without intrinsic size to the viewer: %s",
     async (path) => {

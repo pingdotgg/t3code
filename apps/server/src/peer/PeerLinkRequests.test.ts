@@ -471,14 +471,14 @@ it.live("the agent asks without waiting, and the user links the box after its tu
       // The call returns at once: no tool call outlives a provider's timeout.
       expect(asked.isError).toBe(false);
       expect(asked.structuredContent).toEqual({ status: "pending", turnItemId: card.id });
-      // The card names the box, found by asking its address.
       expect(card).toMatchObject({
         url: b.url,
         reason: "Run the suite on the box.",
-        environmentId: box.environmentId,
-        label: "Box",
         requestedAccess: "approval-required",
       });
+      // Anything can answer at an address as the box, so the card names no machine.
+      expect(card.environmentId).toBeUndefined();
+      expect(card.label).toBeUndefined();
       // The agent waits on the user, so the thread asks for input.
       expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toMatchObject(
         { kind: "user_input" },
@@ -677,7 +677,7 @@ it.live("a declined request links nothing and tells the agent", () =>
       const { messages } = yield* outcomeMessages(a);
       expect(messages).toHaveLength(1);
       expect(messages[0]).toMatchObject({
-        notification: { outcome: "cancelled", summary: "Declined to link Box" },
+        notification: { outcome: "cancelled", summary: `Declined to link ${b.url}` },
       });
       expect(messages[0]!.text).toContain("declined");
     }),
@@ -902,6 +902,45 @@ it.live("a code the box refuses fails the request with its reason, and links not
       expect(messages[0]!.text).toContain(reason);
       expect(Option.isNone(yield* a.links.get(box.environmentId))).toBe(true);
       expect(yield* storedText(a)).not.toContain("not-a-real-code");
+    }),
+  ),
+);
+
+it.live("a card an older server left naming a machine beside its address links no machine", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      yield* a.orchestrator.dispatch({
+        type: "link_request.record",
+        commandId: CommandId.make("command:pending:older"),
+        threadId,
+        runId,
+        nodeId: rootNode,
+        turnItemId: TurnItemId.make("turn-item:link-request:older"),
+        url: b.url,
+        environmentId: box.environmentId,
+        label: "Box",
+        reason: "",
+        linkStatus: "pending",
+      });
+      const card = yield* pendingCard(a);
+      // An older client takes the machine from the card and mints a code on it.
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.requests.answer({
+        threadId,
+        turnItemId: card.id,
+        answer: {
+          type: "link",
+          environmentId: box.environmentId,
+          label: "Box",
+          urls: [b.url],
+          access: "auto",
+          pairingCode: pairing.credential,
+        },
+      });
+      expect(yield* cardOf(a)).toMatchObject({ linkStatus: "failed" });
+      expect(Option.isNone(yield* a.links.get(box.environmentId))).toBe(true);
+      expect(yield* b.linkedSessions).toEqual([]);
     }),
   ),
 );

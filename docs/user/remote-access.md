@@ -333,14 +333,17 @@ off, its result arrives once it is back on.
 On the machine you will work from, open **Settings → Environments → Linked environments**,
 choose **Link**, and pick the other machine or enter its address. The list
 holds the machines this app knows and those on your T3 Connect account. If this
-app is connected to that machine with a session that manages access there, it
-makes the pairing code itself; otherwise paste one from that machine's
-**Settings → Sharing & access**. From a terminal, use
+app has an address for that machine and is connected to it with a session that
+manages access there, it makes the pairing code itself; otherwise paste one
+from that machine's **Settings → Sharing & access**. An address you type always
+needs a pasted code. From a terminal, use
 `t3 environment link <address> --pairing-code <code> --access <mode>`.
 
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way
-and the access, then approve.
+and the access, then approve. An address the agent gives that this app does
+not know for one of your machines also needs a pasted code. Paste one only for
+an address you trust: the code is sent there.
 
 - The access you pick is the most agents from this machine may do there. An
   agent also never gets more there than its own mode here.
@@ -462,6 +465,9 @@ desktop app, open **Settings → Environments** and switch off **Local
 environment**. T3 Code restarts without a local server: no local agents or terminals run, WSL
 backends stay off, and other devices can no longer connect to this computer. Your projects,
 history, and saved connections are kept, and you keep working through pairing, T3 Connect, or SSH.
+If a [background service](./background-service.md) on this computer uses the same T3 home, the
+app still treats it as this computer: **Open in** and file reveal for its projects run here,
+whichever connection you reach it through.
 
 Switch **Local environment** back on in the same place to restart with your previous local
 settings.

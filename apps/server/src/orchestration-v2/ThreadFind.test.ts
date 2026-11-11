@@ -1,4 +1,5 @@
 import { assert, it, describe } from "@effect/vitest";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import {
   EventId,
   MessageId,
@@ -19,6 +20,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -30,6 +33,8 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+
+vi.mock("@t3tools/shared/threadFindText", { spy: true });
 
 const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -457,6 +462,40 @@ describe("V2 thread find", () => {
       assert.equal(first.totalMatches, 2);
       assert.equal(first.match?.entryId, "message:8");
       assert.equal(last.match?.entryId, "message:510");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps its caches while Find is in use and drops them after one idle minute", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([item("one", 1, "idle needle one"), item("two", 2, "idle needle two")]);
+      const parses = () =>
+        vi
+          .mocked(searchableMessageSegments)
+          .mock.calls.filter(([message]) => message.text.startsWith("idle needle")).length;
+      const search = (query: string) => projection.searchThread({ threadId, query });
+      // One idle minute passes inside this search. The later counts fail if it let the caches go.
+      yield* projection.searchThreadStream({ threadId, query: "needle" }).pipe(
+        Stream.tap((frame) =>
+          frame.complete === false ? TestClock.adjust("1 minute") : Effect.void,
+        ),
+        Stream.runDrain,
+      );
+      assert.equal(parses(), 2);
+      yield* TestClock.adjust("40 seconds");
+      yield* search("idle");
+      yield* TestClock.adjust("40 seconds");
+      // A repeated query is answered from the completed scan and still counts as use.
+      const repeated = yield* projection
+        .searchThreadStream({ threadId, query: "needle" })
+        .pipe(Stream.runCollect);
+      assert.equal(repeated.length, 1);
+      yield* TestClock.adjust("40 seconds");
+      yield* search("one");
+      assert.equal(parses(), 2);
+      yield* TestClock.adjust("1 minute");
+      yield* search("needle");
+      assert.equal(parses(), 4);
     }).pipe(Effect.provide(layerTest)),
   );
 
