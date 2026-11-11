@@ -18815,13 +18815,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const cases = [
           {
             name: "delivered",
-            refused: false,
+            handback: "ran",
             isError: false,
             text: pointer,
             expected: "## Report",
           },
-          { name: "failed", refused: false, isError: true, text: "Boom.", expected: "Boom." },
-          { name: "refused", refused: true, isError: false, text: "Final.", expected: "Final." },
+          { name: "failed", handback: "ran", isError: true, text: "Boom.", expected: "Boom." },
+          {
+            name: "refused",
+            handback: "refused",
+            isError: false,
+            text: "Final.",
+            expected: "Final.",
+          },
+          {
+            name: "cancelled",
+            handback: "cancelled",
+            isError: false,
+            text: "Final.",
+            expected: "Final.",
+          },
         ];
         for (const [index, testCase] of cases.entries()) {
           const harness = yield* makeWakeHarness;
@@ -18866,7 +18879,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               },
             }),
           );
-          if (testCase.refused) {
+          if (testCase.handback !== "ran") {
             yield* harness.offerAndWait(
               claudeSdkFrame({
                 type: "user",
@@ -18877,10 +18890,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                       type: "tool_result",
                       tool_use_id: `toolu-handback-${testCase.name}`,
                       content: "Permission denied.",
-                      is_error: true,
+                      ...(testCase.handback === "refused" ? { is_error: true } : {}),
                     },
                   ],
                 },
+                ...(testCase.handback === "cancelled"
+                  ? {
+                      tool_result_meta: [
+                        { id: `toolu-handback-${testCase.name}`, non_execution_kind: "cancelled" },
+                      ],
+                    }
+                  : {}),
                 parent_tool_use_id: launchId,
                 uuid: uuid(3),
                 session_id: WAKE_NATIVE_SESSION,
