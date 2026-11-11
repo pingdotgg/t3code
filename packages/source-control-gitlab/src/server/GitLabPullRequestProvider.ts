@@ -58,12 +58,14 @@ const UNAVAILABLE_REQUIREMENT = {
  * The actions `user.can_merge` answers for. Rebasing writes to the source branch rather than to
  * the target, so it is not literally the same permission — but GitLab reports nothing narrower,
  * and someone it will not let land this change has no business rewriting its branch either.
+ * Reverting pushes a branch to the target project, which the same permission covers.
  */
 const MERGE_ACTIONS: ReadonlySet<string> = new Set([
   "merge",
   "update-branch",
   "enable-auto-merge",
   "disable-auto-merge",
+  "revert",
 ]);
 
 /** Authors may close/reopen/change draft state regardless of role; REST omits authorship. */
