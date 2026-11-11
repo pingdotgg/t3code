@@ -12,8 +12,7 @@ REQUIRED_FILES = {
     "server/dist/client/index.html",
     "desktop/dist-electron/main.cjs",
 }
-# The current bundle is about 32 MiB compressed. Bound extraction on the
-# trusted runner even when the PR replaces the uploader entirely.
+# Bound trusted-runner extraction even when a PR replaces the uploader.
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024
 MAX_ENTRIES = 50_000
@@ -58,9 +57,7 @@ def stage_bundle(archive: Path, destination: Path):
                 files.add(name)
         if not REQUIRED_FILES <= files:
             raise ValueError("Preview bundle is missing required entry points")
-        # Validate all names before writing anything. This is a fresh directory
-        # outside the checkout; neither pre-existing links nor trusted files
-        # can be followed or overwritten. ZIP permissions are never restored.
+        # Validate before writing into a fresh directory so existing links/files cannot be followed or overwritten.
         destination.mkdir(parents=True, exist_ok=False)
         for entry in entries:
             target = destination / entry.filename
