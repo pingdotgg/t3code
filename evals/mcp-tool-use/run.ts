@@ -2308,6 +2308,24 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         )
       );
     };
+    // Mirrors the adapter's stripLessonNarration.
+    const stripLessonNarration = (value: string) =>
+      value
+        .split("\n")
+        .map((line) =>
+          line
+            .split(/(?<=[.!?])\s+/u)
+            .filter(
+              (sentence) =>
+                !/^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u.test(
+                  sentence.trimStart(),
+                ),
+            )
+            .join(" "),
+        )
+        .join("\n")
+        .replace(/\n{3,}/gu, "\n\n")
+        .trim();
     const leadRemainder = (use: typeof ToolUse.Type, text: string) => {
       const reply = isRecord(use.input) ? use.input.reply : undefined;
       if (typeof reply !== "string") return undefined;
@@ -2349,6 +2367,11 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       }
       if (isToolUse(block)) {
         const held = sample.heldLessonText.splice(0);
+        const heldBefore = held.join("\n");
+        if (lesson && normalizeToolName(block.name) === "ToolSearch") {
+          sample.heldLessonText.push(...held);
+          continue;
+        }
         const isCard =
           normalizeToolName(block.name) === "quiz_card" ||
           normalizeToolName(block.name) === "question_card";
@@ -2376,12 +2399,25 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
             isRecord(block.input) && typeof block.input.reply === "string" ? block.input.reply : "",
           );
         }
+        const thinking = response.content[index - 1];
+        if (isThinking(thinking) && isThinking(response.content[index - 2])) {
+          if (lesson) {
+            if (!isCard) continue;
+            const words = (value: string) => value.replace(/\s+/gu, " ").trim();
+            let lead = thinking.thinking;
+            if (heldBefore && replyCoverage(lead, heldBefore) >= 0.6) continue;
+            if (heldBefore && words(lead).includes(words(heldBefore)))
+              lead = lead.includes(heldBefore.trim())
+                ? lead.replace(heldBefore.trim(), "").trim()
+                : words(lead).replace(words(heldBefore), "").trim();
+            const shown = stripLessonNarration(leadRemainder(block, lead) ?? lead);
+            if (shown !== "") texts.push(shown);
+          } else if (!repeats(block, thinking.thinking)) {
+            texts.push(thinking.thinking);
+          }
+        }
         continue;
       }
-      if (lesson || !isThinking(block) || !isThinking(response.content[index - 1])) continue;
-      const next = response.content[index + 1];
-      if (!isToolUse(next)) continue;
-      if (!repeats(next, block.thinking)) texts.push(block.thinking);
     }
     if (lesson && response.stop_reason !== "tool_use" && sample.heldLessonText.length > 0) {
       const joined = sample.heldLessonText.join("\n");

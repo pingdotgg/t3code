@@ -3606,6 +3606,80 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       tool: "mcp__t3-code__quiz_card",
       reply: "Try it.",
       lesson: true,
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__quiz_card",
+      reply: "The repo review found three task families. Try it.",
+      lesson: true,
+      expected: ["reasoning", "reasoning"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Good. Yes, it is. Try it.",
+      lesson: true,
+      thinking: "Yes, it is.",
+      expected: ["reasoning", "reasoning"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Which temperature is fully liquid?",
+      lesson: true,
+      thinking:
+        "Melting begins at the solidus, but wetting needs the liquidus. I'm applying the same idea next.",
+      shownText: ["Melting begins at the solidus, but wetting needs the liquidus."],
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Which pin do you heat first?",
+      lesson: true,
+      thinking: "They got it right. Let me give them a harder case.",
+      expected: ["reasoning", "reasoning"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Which width?",
+      lesson: true,
+      thinking:
+        "Keep the trace 2.5 mm wide; Ohm's law says V = I × R.\nI = V / R, so doubling R halves the current. I'm moving on next.",
+      shownText: [
+        "Keep the trace 2.5 mm wide; Ohm's law says V = I × R.\nI = V / R, so doubling R halves the current.",
+      ],
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Which goes on first?",
+      lesson: true,
+      thinking: "Let's say the pad is at 20 °C.\n\n- Flux\n- Solder\n\nI'll ask which comes first.",
+      shownText: ["Let's say the pad is at 20 °C.\n\n- Flux\n- Solder"],
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Try it.",
+      lesson: true,
+      heldText: "Melting begins at the solidus.",
+      thinking:
+        "Melting begins at the solidus.\n\n- Wetting needs the liquidus.\n- Reflow aims 15–30 °C above it.",
+      shownText: [
+        "Melting begins at the solidus.",
+        "- Wetting needs the liquidus.\n- Reflow aims 15–30 °C above it.",
+      ],
+      expected: ["reasoning", "assistant_message", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Try it.",
+      lesson: true,
+      heldText: "The repo review found three task families.",
+      expected: ["reasoning", "reasoning", "assistant_message"],
+    },
+    {
+      tool: "Bash",
+      reply: undefined,
+      lesson: true,
       expected: ["reasoning", "reasoning"],
     },
     {
@@ -3625,7 +3699,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     },
   ] as const)(
     "shows a second thinking block before $tool (reply $reply) as $expected",
-    ({ tool, reply, expected, lesson }) =>
+    ({
+      tool,
+      reply,
+      expected,
+      lesson,
+      thinking = "The repo review found three task families.",
+      heldText,
+      shownText,
+    }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         yield* harness.runtime.startTurn(
@@ -3647,14 +3729,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             parent_tool_use_id: null,
             message: { id: "reply-message", model: "claude-sonnet-5-5", content },
           });
-        for (const frame of [
+        const frames = [
+          ...(heldText === undefined
+            ? []
+            : [
+                snapshot("held-root", [{ type: "text", text: heldText }]),
+                snapshot("held-tool-search", [
+                  { type: "tool_use", id: "tool-search", name: "ToolSearch", input: {} },
+                ]),
+              ]),
           snapshot("00000000-0000-4000-8000-000000000901", [
             { type: "thinking", thinking: "Planning the check", signature: "sig" },
           ]),
           snapshot("00000000-0000-4000-8000-000000000902", [
             {
               type: "thinking",
-              thinking: "The repo review found three task families.",
+              thinking,
               signature: "sig",
             },
           ]),
@@ -3667,7 +3757,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             },
           ]),
           makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000904", result: "" }),
-        ]) {
+        ];
+        for (const frame of frames) {
           yield* Queue.offer(harness.sdkMessages, frame);
         }
         yield* Queue.take(harness.terminalReceipts);
@@ -3680,6 +3771,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         );
         assert.deepEqual([...latest.values()], [...expected]);
+        if (shownText !== undefined) {
+          const shown = new Map(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+                ? [[event.turnItem.id, event.turnItem.text] as const]
+                : [],
+            ),
+          );
+          assert.deepEqual([...shown.values()], [...shownText]);
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(

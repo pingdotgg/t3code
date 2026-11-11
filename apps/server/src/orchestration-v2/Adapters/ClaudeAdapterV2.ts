@@ -2141,6 +2141,23 @@ function isLessonStatusLine(text: string) {
   );
 }
 
+// Thinking summaries narrate as "I'll…"/"They got it…"; drop those sentences, keep the teaching and its line breaks.
+function stripLessonNarration(text: string) {
+  const narration =
+    /^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u;
+  return text
+    .split("\n")
+    .map((line) =>
+      line
+        .split(/(?<=[.!?])\s+/u)
+        .filter((sentence) => !narration.test(sentence.trimStart()))
+        .join(" "),
+    )
+    .join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
 // In SDK mode, /goal appears only in transcripts: command output names it and Stop hooks report unmet checks.
 const CLAUDE_GOAL_SET_PREFIX = "Goal set: ";
 const CLAUDE_GOAL_ACTIVE = /^Goal active: ([\s\S]+?) \((?:not yet evaluated|(\d+) turns?)\)/u;
@@ -9301,6 +9318,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // The SDK snapshots each completed block; count thinking blocks separately to preserve streamed ids.
             for (const block of message.message.content) {
               if (block.type !== "thinking") {
+                const heldBefore =
+                  block.type === "tool_use" &&
+                  isLessonTurn(context.input) &&
+                  isLessonCardTool(block.name)
+                    ? context.assistant.heldText.map((item) => item.text).join("\n")
+                    : "";
                 if (block.type === "tool_use" && message.parent_tool_use_id === null) {
                   yield* flushHeldAssistantTextForTool(context, block);
                 }
@@ -9311,14 +9334,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   update !== null &&
                   update.messageId === message.message.id &&
                   update.followsThinking &&
-                  !isLessonTurn(context.input) &&
-                  claudeWritesUpdatesAsThinking(message.message.model) &&
-                  !cardReplyRepeats(block, update.text)
+                  claudeWritesUpdatesAsThinking(message.message.model)
                 ) {
+                  const lessonTurn = isLessonTurn(context.input);
+                  if (lessonTurn && !isLessonCardTool(block.name)) continue;
+                  if (cardReplyRepeats(block, update.text)) continue;
+                  let text = update.text;
+                  if (lessonTurn) {
+                    // Text held before the card was just shown; don't show it again from thinking.
+                    const words = (value: string) => value.replace(/\s+/gu, " ").trim();
+                    if (heldBefore && replyCoverage(text, heldBefore) >= 0.6) continue;
+                    if (heldBefore && words(text).includes(words(heldBefore)))
+                      text = text.includes(heldBefore.trim())
+                        ? text.replace(heldBefore.trim(), "").trim()
+                        : words(text).replace(words(heldBefore), "").trim();
+                    text = stripLessonNarration(cardReplyCoversLead(block, text) ?? text);
+                    if (text === "") continue;
+                  }
                   yield* emitAssistantTextArtifacts({
                     context,
                     nativeItemId: update.itemId,
-                    text: update.text,
+                    text,
                   });
                 }
                 continue;
