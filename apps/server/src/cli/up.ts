@@ -20,6 +20,7 @@ import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import {
+  betaFlag,
   connectSubcommands,
   disconnectCloud,
   headlessFlag,
@@ -58,7 +59,7 @@ export const connectEnabled = (link: {
   readonly revoked: boolean;
 }) =>
   // The server starts no tunnel for a CLI publish-only link, even with an old tunnel config.
-  !link.revoked && (link.cliDesired ? link.cliMode === "managed" : link.managedTunnel);
+  !link.revoked && (link.cliDesired ? link.cliMode !== "publish_only" : link.managedTunnel);
 
 const readSetup = Effect.fn("cli.up.read_setup")(function* () {
   const { baseDir } = yield* ServerConfig.ServerConfig;
@@ -204,6 +205,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   readonly lan: Option.Option<boolean>;
   readonly yes: boolean;
   readonly headless: boolean;
+  readonly beta?: boolean;
 }) {
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* BootService.BootService;
@@ -228,6 +230,13 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   }
 
   const current = { connect: before.connect === true, lan: before.lan };
+  if (flags.beta && current.connect && (yield* CliState.readCliDesiredLinkMode) !== "beta") {
+    return yield* new CliError.UserError({
+      cause: "connect",
+      userMessage:
+        "This environment uses regular T3 Connect. Run `t3 connect unlink` before choosing the beta.",
+    });
+  }
   // A publish-only link is not "on", but a rollback must put it back.
   const priorPublishOnly =
     hasCloudPublicConfig &&
@@ -307,6 +316,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     const linked = yield* linkEnvironmentForConnect({
       headless: flags.headless,
       installRelayClient: true,
+      beta: flags.beta === true,
     });
     if (linked === null) return;
     yield* Console.log(
@@ -476,6 +486,7 @@ export const upCommand = Command.make("up", {
 
 export const connectCommand = Command.make("connect", {
   ...projectLocationFlags,
+  beta: betaFlag,
   headless: headlessFlag,
 }).pipe(
   Command.withDescription("Set up T3 Connect for this machine. Same as `t3 up --connect`."),

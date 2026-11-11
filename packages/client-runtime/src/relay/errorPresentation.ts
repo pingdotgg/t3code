@@ -63,6 +63,10 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
     case "RelayEnvironmentLinkFailedError":
       return `Relay could not link the environment (${error.reason}).`;
     case "RelayEnvironmentLinkUnavailableError":
+      if (error.reason === "beta_gateway_not_configured")
+        return "T3 Connect Unlimited (beta) is not enabled for this account.";
+      if (error.reason === "unlink_before_switching_transport")
+        return "Unlink this environment before switching between regular T3 Connect and the beta.";
       return `Relay cannot provision the managed endpoint (${error.reason}).${
         error.provisioningStage ? ` Failed stage: ${error.provisioningStage}.` : ""
       }`;

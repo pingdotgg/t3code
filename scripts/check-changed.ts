@@ -562,6 +562,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     "full test suites": outputs.test || outputs.test_web || outputs.test_server,
     build: outputs.build,
     rust: outputs.rust,
+    "Connect gateway Go tests": outputs.gateway,
     "mobile native lint": outputs.mobile_native,
     "release smoke": outputs.release_smoke,
   }).flatMap(([job, runs]) => (runs ? [job] : []));

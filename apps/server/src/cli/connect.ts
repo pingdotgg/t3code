@@ -1,3 +1,4 @@
+import * as NodeSqlite from "node:sqlite";
 import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
@@ -9,6 +10,7 @@ import {
   type RelayClientInstallProgressStage,
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
+import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
@@ -26,6 +28,7 @@ import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
+import * as CliError from "effect/cli/CliError";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
@@ -39,6 +42,7 @@ import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { formatReachabilityFailure } from "../cloud/ConnectReachability.ts";
 import { filterRelayResponse } from "../cloud/relayResponse.ts";
 import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   isAgentActivityPublishingEnabledValue,
@@ -61,6 +65,11 @@ const jsonFlag = Flag.Boolean("json").pipe(
 );
 
 const isCloudCliTokenManagerError = Schema.is(CliTokenManager.CloudCliTokenManagerError);
+
+export const betaFlag = Flag.Boolean("beta").pipe(
+  Flag.withDescription("Use T3 Connect Unlimited (beta) for a new environment."),
+  Flag.withDefault(false),
+);
 
 export const headlessFlag = Flag.Boolean("headless").pipe(
   Flag.withDescription(
@@ -149,7 +158,7 @@ interface CloudCliStatus {
   readonly cloudUserId: string | null;
   readonly relayUrl: string | null;
   readonly publishAgentActivity: boolean;
-  readonly relayClient: RelayClient.RelayClientStatus;
+  readonly relayClient: RelayClient.RelayClientStatus | null;
   readonly linkMode: CliState.CliDesiredLinkMode;
   /** `null` when no server answered the live check, or none ran because no tunnel is wanted. */
   readonly reachability: EnvironmentConnectReachability | null;
@@ -209,8 +218,10 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
     `  Environment link: ${provisioned}`,
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
-    ...formatRelayClientStatus(status.relayClient),
-    ...(!status.desired || status.linkMode !== "managed"
+    ...(status.relayClient
+      ? formatRelayClientStatus(status.relayClient)
+      : ["  Connector: T3 Connect Unlimited (beta)"]),
+    ...(!status.desired || status.linkMode === "publish_only"
       ? []
       : status.reachability === null
         ? [
@@ -416,7 +427,9 @@ const logCloudDisconnectFailure = (
     }),
   );
 
-const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(function* () {
+const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(function* (
+  betaRelay: Option.Option<Uint8Array>,
+) {
   const tokens = yield* CliTokenManager.CloudCliTokenManager;
   const token = yield* tokens.getExisting;
   if (Option.isNone(token)) {
@@ -425,12 +438,30 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
 
   const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* environment.getEnvironmentId;
-  const relayUrl = yield* relayUrlConfig;
+  const stored = Option.isSome(betaRelay) ? bytesToString(betaRelay.value) : null;
+  const attempt =
+    stored === null ? null : Option.getOrNull(CliState.decodeBetaEnrollmentAttempt(stored));
+  const relayUrl =
+    stored === null ? yield* relayUrlConfig : normalizeSecureRelayUrl(attempt?.relayUrl ?? stored);
+  if (!relayUrl)
+    return yield* new CliError.UserError({
+      cause: "connect-beta",
+      userMessage:
+        "The saved beta relay address is invalid. Remove the environment from the T3 Connect account page.",
+    });
   const httpClient = yield* HttpClient.HttpClient;
   const response = yield* HttpClientRequest.delete(
     `${relayUrl}/v1/client/environment-links/${encodeURIComponent(environmentId)}`,
   ).pipe(
     HttpClientRequest.bearerToken(token.value.accessToken),
+    HttpClientRequest.setHeaders(
+      attempt
+        ? {
+            "x-t3-beta-enrollment-id": attempt.attemptId,
+            ...(attempt.owner ? { "x-t3-beta-enrollment-owner": attempt.owner } : {}),
+          }
+        : {},
+    ),
     httpClient.execute,
     Effect.flatMap(filterRelayResponse),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
@@ -495,10 +526,15 @@ const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_resu
 export const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (options: {
   readonly clearAuthorization: boolean;
 }) {
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   yield* CliState.setCliDesiredCloudLink(false);
   const liveResult = yield* runLiveCloudUnlink();
-  const relayResult = yield* Effect.exit(unlinkRelayEnvironment());
+  const betaRelay = yield* secrets.get(CliState.CLOUD_CLI_BETA_ENROLLMENT_RELAY);
   yield* CliState.clearPersistedCloudLink;
+  const relayResult = yield* Effect.exit(unlinkRelayEnvironment(betaRelay));
+  if (Exit.isSuccess(relayResult) && relayResult.value.status !== "not-authenticated") {
+    yield* secrets.remove(CliState.CLOUD_CLI_BETA_ENROLLMENT_RELAY);
+  }
 
   if (options.clearAuthorization) {
     const tokens = yield* CliTokenManager.CloudCliTokenManager;
@@ -517,6 +553,36 @@ export const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (opti
     );
   }
   return liveResult;
+});
+
+// SQLite releases the OS lock even if the CLI dies while waiting for the relay.
+export const withConnectCliLock = Effect.fn("cloud.cli.with_connect_lock")(function* <A, E, R>(
+  lockPath: string,
+  operation: Effect.Effect<A, E, R>,
+) {
+  return yield* Effect.acquireUseRelease(
+    Effect.try({
+      try: () => new NodeSqlite.DatabaseSync(lockPath, { timeout: 0 }),
+      catch: (cause) =>
+        new CliError.UserError({
+          cause,
+          userMessage: "Could not open the T3 Connect settings lock.",
+        }),
+    }),
+    (db) =>
+      Effect.try({
+        try: () => db.exec("BEGIN IMMEDIATE"),
+        catch: (cause) =>
+          new CliError.UserError({
+            cause,
+            userMessage:
+              cause instanceof Error && "errcode" in cause && cause.errcode === 5
+                ? "Another command is already changing T3 Connect settings. Retry after it exits."
+                : "Could not lock the T3 Connect settings directory.",
+          }),
+      }).pipe(Effect.andThen(operation)),
+    (db) => Effect.sync(() => db.close()),
+  );
 });
 
 export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E>(
@@ -540,6 +606,7 @@ export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function
   >,
   options?: {
     readonly quietLogs?: boolean;
+    readonly readOnly?: boolean;
   },
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -560,7 +627,11 @@ export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function
     Layer.provideMerge(ServerConfig.layer(config)),
     Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
   );
-  return yield* run.pipe(Effect.provide(layerRuntime));
+  const path = yield* Path.Path;
+  const action = options?.readOnly
+    ? run
+    : withConnectCliLock(path.join(config.stateDir, "connect-cli.sqlite"), run);
+  return yield* action.pipe(Effect.provide(layerRuntime));
 });
 
 /** Status, unlink, and logout stay available so a machine can leave Connect the policy turned off. */
@@ -580,11 +651,49 @@ function formatRelayClientReady(version: string): string {
 const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(function* (options: {
   readonly headless: boolean;
   readonly publishOnly?: boolean;
+  readonly beta?: boolean;
   /** For `t3 up`, where the user already chose T3 Connect: install it quietly, without asking. */
   readonly installRelayClient?: boolean;
 }) {
   const publishOnly = options.publishOnly ?? false;
-  if (!publishOnly) {
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const savedMode = yield* CliState.readCliDesiredLinkMode;
+  if (
+    Option.isSome(yield* secrets.get(CliState.CLOUD_CLI_BETA_ENROLLMENT_RELAY)) &&
+    Option.isNone(yield* secrets.get(CLOUD_LINK_REVOKED)) &&
+    (savedMode !== "beta" || Option.isNone(yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG)))
+  ) {
+    return yield* new CliError.UserError({
+      cause: "connect-beta",
+      userMessage:
+        "Run `t3 connect unlink` to finish the previous beta enrollment before linking again.",
+    });
+  }
+  if (publishOnly && (options.beta || savedMode === "beta")) {
+    return yield* new CliError.UserError({
+      cause: "connect-beta",
+      userMessage:
+        "Publish-only and beta are separate link modes. Unlink an existing beta environment before changing modes.",
+    });
+  }
+  const beta = !publishOnly && (options.beta === true || savedMode === "beta");
+  if (beta) {
+    if (
+      savedMode !== "beta" &&
+      Option.isNone(yield* secrets.get(CLOUD_LINK_REVOKED)) &&
+      (Option.isSome(yield* secrets.get(CLOUD_LINKED_USER_ID)) ||
+        Option.isSome(yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG)) ||
+        (yield* CliState.readCliDesiredCloudLink))
+    ) {
+      return yield* new CliError.UserError({
+        cause: "connect-beta",
+        userMessage:
+          "This environment uses regular T3 Connect. Run `t3 connect unlink` before choosing the beta.",
+      });
+    }
+    if (!options.beta)
+      yield* Console.log("Keeping this environment on T3 Connect Unlimited (beta).");
+  } else if (!publishOnly) {
     const relayClient = yield* RelayClient.RelayClient;
     const installed = yield* acquireRelayClientForLink(
       relayClient,
@@ -606,12 +715,12 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
   }
 
   const identity = yield* authorizeCli(options);
-  yield* CliState.setCliDesiredCloudLink(true, publishOnly ? "publish_only" : "managed");
+  if (beta) yield* CliState.setCliDesiredBetaLink();
+  else yield* CliState.setCliDesiredCloudLink(true, publishOnly ? "publish_only" : "managed");
   if (yield* CliState.dropRevokedCloudLink) {
     yield* Console.log("Replacing the link T3 Connect revoked.");
   }
   if (publishOnly) {
-    const secrets = yield* ServerSecretStore.ServerSecretStore;
     yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, stringToBytes("true"));
   }
   return { identity } as const;
@@ -638,6 +747,7 @@ const connectLoginCommand = Command.make("login", {
 
 const connectLinkCommand = Command.make("link", {
   ...projectLocationFlags,
+  beta: betaFlag,
   headless: headlessFlag,
   publishOnly: Flag.Boolean("publish-only").pipe(
     Flag.withDescription(
@@ -688,7 +798,6 @@ const connectStatusCommand = Command.make("status", {
           relayUrl,
           publishAgentActivity,
           revoked,
-          executable,
           linkMode,
         ] = yield* Effect.all(
           [
@@ -698,14 +807,13 @@ const connectStatusCommand = Command.make("status", {
             secrets.get(RELAY_URL_SECRET),
             secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
             secrets.get(CLOUD_LINK_REVOKED),
-            relayClient.resolve,
             CliState.readCliDesiredLinkMode,
           ],
           { concurrency: "unbounded" },
         );
         // A publish-only link has no tunnel for other devices to reach.
         const reachability =
-          desired && linkMode === "managed" ? yield* checkLiveReachability() : null;
+          desired && linkMode !== "publish_only" ? yield* checkLiveReachability() : null;
         const status: CloudCliStatus = {
           desired,
           authenticated,
@@ -716,7 +824,7 @@ const connectStatusCommand = Command.make("status", {
           publishAgentActivity: isAgentActivityPublishingEnabledValue(
             Option.isSome(publishAgentActivity) ? bytesToString(publishAgentActivity.value) : null,
           ),
-          relayClient: executable,
+          relayClient: linkMode === "beta" ? null : yield* relayClient.resolve,
           linkMode,
           reachability,
         };
@@ -724,6 +832,7 @@ const connectStatusCommand = Command.make("status", {
       }),
       {
         quietLogs: flags.json,
+        readOnly: true,
       },
     ),
   ),

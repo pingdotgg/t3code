@@ -1,8 +1,11 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import { managedCapabilityDenial } from "@t3tools/contracts";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { isElectron } from "~/env";
+import { relayEnvironmentDiscovery } from "~/state/relay";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
@@ -23,6 +26,8 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <PromptSuggestionsRow />
+        {/* Only the desktop app links a machine from Settings; elsewhere use `t3 connect --beta`. */}
+        {isElectron && hasCloudPublicConfig() ? <ConnectBetaGatewayRow /> : null}
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
       </SettingsSection>
@@ -184,6 +189,41 @@ function PromptSuggestionsRow() {
             updateSettings({ promptSuggestionsEnabled: Boolean(checked) })
           }
           aria-label="Suggest next prompt"
+        />
+      }
+    />
+  );
+}
+
+function ConnectBetaGatewayRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const linkLimit = useAtomValue(relayEnvironmentDiscovery.stateValueAtom).betaGatewayLinkLimit;
+  // The relay offers the beta only to listed testers. A leftover "on" does nothing without it.
+  if (linkLimit === undefined) return null;
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("t3-connect-unlimited")}
+      settingKeys={["connectBetaGatewayEnabled"]}
+      description={
+        <>
+          Link through T3&apos;s own gateway instead of a Cloudflare tunnel, free for up to{" "}
+          {linkLimit} machines. Applies when you next turn on T3 Connect in{" "}
+          <Link to="/settings/access" className="underline underline-offset-2">
+            Sharing & access
+          </Link>
+          .
+        </>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["connectBetaGatewayEnabled"]}
+          checked={settings.connectBetaGatewayEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ connectBetaGatewayEnabled: Boolean(checked) })
+          }
+          aria-label="T3 Connect Unlimited (beta)"
         />
       }
     />

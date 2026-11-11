@@ -22,13 +22,14 @@ export class HookInbox extends Context.Service<
       readonly endpointKey: string;
       readonly baseUrl: string;
       readonly hook: HeldHook;
-    }) => Effect.Effect<boolean, HookInboxError>;
+    }) => Effect.Effect<boolean | "retired", HookInboxError>;
     readonly wake: (input: {
       readonly endpointKey: string;
       readonly baseUrl: string;
     }) => Effect.Effect<boolean, HookInboxError>;
     readonly clear: (input: {
       readonly endpointKey: string;
+      readonly retire?: boolean;
     }) => Effect.Effect<void, HookInboxError>;
   }
 >()("t3code-relay/hooks/HookInbox") {}

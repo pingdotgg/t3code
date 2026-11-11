@@ -13,6 +13,7 @@ import {
   type RelayEnvironmentLinkChallengeResponse,
   type RelayEnvironmentLinkRequest,
   type RelayEnvironmentLinkResponse,
+  type RelayListEnvironmentsResponse,
   type RelayEnvironmentStatusResponse,
   RelayExchangeDpopAccessTokenEndpoint,
   RelayGetEnvironmentStatusEndpoint,
@@ -266,7 +267,7 @@ export class ManagedRelayClient extends Context.Service<
     readonly relayUrl: string;
     readonly listEnvironments: (input: {
       readonly clerkToken: string;
-    }) => Effect.Effect<ReadonlyArray<RelayClientEnvironmentRecord>, ManagedRelayClientError>;
+    }) => Effect.Effect<RelayListEnvironmentsResponse, ManagedRelayClientError>;
     readonly listDevices: (input: {
       readonly clerkToken: string;
     }) => Effect.Effect<ReadonlyArray<RelayClientDeviceRecord>, ManagedRelayClientError>;
@@ -274,9 +275,11 @@ export class ManagedRelayClient extends Context.Service<
       readonly clerkToken: string;
       readonly payload: RelayEnvironmentLinkChallengeRequest;
     }) => Effect.Effect<RelayEnvironmentLinkChallengeResponse, ManagedRelayClientError>;
+    /** `beta` links through T3 Connect Unlimited (beta) instead of a Cloudflare tunnel. */
     readonly linkEnvironment: (input: {
       readonly clerkToken: string;
       readonly payload: RelayEnvironmentLinkRequest;
+      readonly beta?: boolean;
     }) => Effect.Effect<RelayEnvironmentLinkResponse, ManagedRelayClientError>;
     readonly unlinkEnvironment: (input: {
       readonly clerkToken: string;
@@ -743,7 +746,6 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
         return yield* client.client
           .listEnvironments({ headers: bearerHeaders(input.clerkToken) })
           .pipe(
-            Effect.map((response) => response.environments),
             Effect.mapError(relayRequestError("list relay-managed environments")),
             timeoutRelayRequest("Relay environment listing"),
           );
@@ -783,15 +785,15 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     ),
     linkEnvironment: Effect.fnUntraced(
       function* (input) {
-        return yield* client.client
-          .linkEnvironment({
-            headers: bearerHeaders(input.clerkToken),
-            payload: input.payload,
-          })
-          .pipe(
-            Effect.mapError(relayRequestError("link relay environment")),
-            timeoutRelayRequest("Relay environment linking"),
-          );
+        const request = { headers: bearerHeaders(input.clerkToken), payload: input.payload };
+        return yield* (
+          input.beta
+            ? client.client.linkBetaEnvironment(request)
+            : client.client.linkEnvironment(request)
+        ).pipe(
+          Effect.mapError(relayRequestError("link relay environment")),
+          timeoutRelayRequest("Relay environment linking"),
+        );
       },
       Effect.withSpan("clientRuntime.managedRelay.linkEnvironment"),
       withRelayClientTracing,

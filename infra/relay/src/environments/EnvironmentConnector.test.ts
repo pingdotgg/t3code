@@ -235,6 +235,37 @@ function makeLinks(
 }
 
 describe("EnvironmentConnector", () => {
+  it.effect("uses the reserved beta hostname and rejects a substituted endpoint", () =>
+    Effect.gen(function* () {
+      const endpointKey = "1234567890abcdef";
+      const endpoint = {
+        providerKind: "t3_relay" as const,
+        httpBaseUrl: "https://1234567890abcdef.beta.example.test/",
+        wsBaseUrl: "wss://1234567890abcdef.beta.example.test/ws",
+      };
+      const link = yield* makeLinks({ endpoint, betaEndpointKey: endpointKey }).getForUser({
+        environmentId: "env-connector-test",
+        userId: "user_123",
+      });
+      if (!link) throw new Error("Expected linked environment");
+      const input = {
+        link,
+        allocation: null,
+        baseDomain: undefined,
+        betaGatewayDomain: "beta.example.test",
+      };
+      expect(Result.isSuccess(EnvironmentConnector.validateManagedEndpoint(input))).toBe(true);
+      expect(
+        Result.isFailure(
+          EnvironmentConnector.validateManagedEndpoint({
+            ...input,
+            link: { ...link, endpoint: { ...endpoint, httpBaseUrl: "https://attacker.example/" } },
+          }),
+        ),
+      ).toBe(true);
+    }),
+  );
+
   it.effect("checks linked environment health through the managed endpoint", () => {
     const seenUrls: Array<string> = [];
     const seenProofs: Array<RelayCloudEnvironmentHealthProofPayload> = [];

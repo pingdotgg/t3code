@@ -17,6 +17,8 @@ outputs:
     value: ${{ steps.detect.outputs.test_server }}
   rust:
     value: ${{ steps.detect.outputs.rust }}
+  gateway:
+    value: ${{ steps.detect.outputs.gateway }}
   release_smoke:
     value: ${{ steps.detect.outputs.release_smoke }}
   mobile_native:

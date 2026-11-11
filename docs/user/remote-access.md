@@ -64,6 +64,21 @@ opens and approve. The new limit applies the next time you add a machine. If you
 cancel or downgrade T3 Chat, machines you already linked stay linked, but you
 cannot add more until you are under the limit again.
 
+### T3 Connect Unlimited (beta)
+
+T3 Connect Unlimited links a machine through T3's own gateway instead of a
+Cloudflare tunnel. Each account can link up to 100 machines this way, separate
+from the regular limit. Nothing extra to install. The beta is invite-only for
+now; the Labs option appears only on invited accounts.
+
+- **Desktop app:** turn on **Settings → Labs → T3 Connect Unlimited (beta)**,
+  then turn on T3 Connect in **Sharing & access**.
+- **Terminal:** run `t3 connect --beta`.
+
+A machine that is already linked keeps its current connection. To switch, unlink
+it and link it again. To go back to regular T3 Connect, turn the Labs option off
+first. An offline machine keeps its slot until you unlink it.
+
 ## Pair over a LAN or private network
 
 Use direct pairing when the other device can reach the host's network address.

@@ -33,6 +33,7 @@ jobs:
       test_web: ${{ steps.detect.outputs.test_web }}
       test_server: ${{ steps.detect.outputs.test_server }}
       rust: ${{ steps.detect.outputs.rust }}
+      gateway: ${{ steps.detect.outputs.gateway }}
       release_smoke: ${{ steps.detect.outputs.release_smoke }}
       mobile_native: ${{ steps.detect.outputs.mobile_native }}
     steps:
@@ -523,6 +524,26 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  gateway:
+    name: Connect gateway
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.gateway != 'false' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/connect-gateway
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: infra/connect-gateway
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: infra/connect-gateway/go.mod
+          cache-dependency-path: infra/connect-gateway/go.sum
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./... && go test -race ./...
+
   # Split out of Check and Test: both paid ~7-9s to install a Rust toolchain
   # for checks that take under 3s, on the critical path of every PR.
   rust:
@@ -632,6 +653,7 @@ jobs:
         test_web,
         test_server,
         rust,
+        gateway,
         mobile_native_static_analysis,
         release_smoke,
       ]

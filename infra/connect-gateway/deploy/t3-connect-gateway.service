@@ -1,0 +1,42 @@
+[Unit]
+Description=T3 Connect gateway
+Documentation=https://github.com/pingdotgg/t3code/tree/main/infra/connect-gateway
+Requires=t3-connect-gateway.socket
+After=network-online.target t3-connect-gateway.socket
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/t3-connect-gateway serve
+EnvironmentFile=/etc/t3-connect-gateway/env
+Restart=always
+RestartSec=2
+TimeoutStopSec=30
+# Each linked host holds one connection, plus one per public request.
+LimitNOFILE=1048576
+
+DynamicUser=yes
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

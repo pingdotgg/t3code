@@ -104,7 +104,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
         if (failure) {
           return yield* failure;
         }
-        return yield* Ref.get(listedEnvironments);
+        return { environments: yield* Ref.get(listedEnvironments) };
       }),
     getEnvironmentStatus: ({ environmentId }) =>
       Ref.get(statusRequests).pipe(

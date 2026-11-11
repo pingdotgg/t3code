@@ -115,6 +115,7 @@ export function isAllowedEndpointOrigin(input: {
 export function isSupportedLinkProviderKind(request: RelayLinkProofRequest): boolean {
   return (
     request.endpoint.providerKind === "cloudflare_tunnel" ||
+    request.endpoint.providerKind === "t3_relay" ||
     request.endpoint.providerKind === "manual"
   );
 }
@@ -122,7 +123,7 @@ export function isSupportedLinkProviderKind(request: RelayLinkProofRequest): boo
 export function linkProofScopes(
   request: RelayLinkProofRequest,
 ): RelayEnvironmentLinkProofPayload["scopes"] {
-  return request.endpoint.providerKind === "cloudflare_tunnel"
+  return request.endpoint.providerKind !== "manual"
     ? ["agent_activity_notifications", "managed_tunnels"]
     : ["agent_activity_notifications"];
 }
@@ -154,6 +155,10 @@ export function managedEndpointRuntimeConfigsMatch(
     left.providerKind === right.providerKind &&
     left.connectorToken === right.connectorToken &&
     left.tunnelId === right.tunnelId &&
-    left.tunnelName === right.tunnelName
+    left.tunnelName === right.tunnelName &&
+    (left.providerKind !== "t3_relay" ||
+      (right.providerKind === "t3_relay" &&
+        left.hostname === right.hostname &&
+        left.gatewayUrl === right.gatewayUrl))
   );
 }

@@ -15,6 +15,7 @@ import {
   relayManagedTunnelLimits,
 } from "../persistence/schema.ts";
 import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
+import { BetaGatewayLinkConflict } from "./EnvironmentLinks.ts";
 
 // Reserve-to-tunnel takes two Cloudflare calls capped at 8 seconds each; a reservation older than this was abandoned.
 const MANAGED_TUNNEL_PENDING_WINDOW_MINUTES = 15;
@@ -98,6 +99,9 @@ export const countedAllocations = (input: {
     ),
   );
 
+export const tunnelAccountLock = (userId: string) =>
+  sql`select pg_advisory_xact_lock(hashtextextended(${`managed-tunnel-limit:${userId}`}, 0))`;
+
 export class ManagedTunnelLimits extends Context.Service<
   ManagedTunnelLimits,
   {
@@ -105,7 +109,11 @@ export class ManagedTunnelLimits extends Context.Service<
     readonly withCapacity: <A, E, R>(
       input: { readonly userId: string; readonly environmentId: string },
       reserve: Effect.Effect<A, E, R>,
-    ) => Effect.Effect<A, E | ManagedTunnelLimitExceeded | ManagedTunnelLimitPersistenceError, R>;
+    ) => Effect.Effect<
+      A,
+      E | BetaGatewayLinkConflict | ManagedTunnelLimitExceeded | ManagedTunnelLimitPersistenceError,
+      R
+    >;
     /** The user's manual cap, which replaces the default and any T3 Chat plan cap. */
     readonly getOverride: (input: {
       readonly userId: string;
@@ -151,24 +159,23 @@ const make = Effect.gen(function* () {
     withCapacity: Effect.fn("relay.managed_tunnel_limits.with_capacity")(function* <A, E, R>(
       input: { readonly userId: string; readonly environmentId: string },
       reserve: Effect.Effect<A, E, R>,
-    ): Effect.fn.Return<A, E | ManagedTunnelLimitExceeded | ManagedTunnelLimitPersistenceError, R> {
+    ): Effect.fn.Return<
+      A,
+      E | BetaGatewayLinkConflict | ManagedTunnelLimitExceeded | ManagedTunnelLimitPersistenceError,
+      R
+    > {
       const checkAndReserve = Effect.gen(function* () {
         // Held until commit, so the count below sees every reservation that took the lock first.
-        yield* db
-          .execute(
-            sql`select pg_advisory_xact_lock(hashtextextended(${`managed-tunnel-limit:${input.userId}`}, 0))`,
-          )
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ManagedTunnelLimitPersistenceError({
-                  operation: "lock-user",
-                  userId: input.userId,
-                  cause,
-                }),
-            ),
-          );
-
+        yield* db.execute(tunnelAccountLock(input.userId)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ManagedTunnelLimitPersistenceError({
+                operation: "lock-user",
+                ...input,
+                cause,
+              }),
+          ),
+        );
         const override = yield* loadOverride(input.userId);
         const baseMaxTunnels = override ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
 
@@ -177,13 +184,29 @@ const make = Effect.gen(function* () {
             minutes: MANAGED_TUNNEL_PENDING_WINDOW_MINUTES,
           }),
         );
+        const betaLink = exists(
+          new QueryBuilder()
+            .select({ id: relayEnvironmentLinks.environmentId })
+            .from(relayEnvironmentLinks)
+            .where(
+              and(
+                eq(relayEnvironmentLinks.userId, input.userId),
+                eq(relayEnvironmentLinks.environmentId, input.environmentId),
+                eq(relayEnvironmentLinks.endpointProviderKind, "t3_relay"),
+                or(
+                  isNull(relayEnvironmentLinks.revokedAt),
+                  isNotNull(relayEnvironmentLinks.betaConnectorHash),
+                ),
+              ),
+            ),
+        );
         const countSlots = (environment: typeof eq) =>
           db
-            .select({ slots: count() })
+            .select({ slots: count(), betaLink })
             .from(allocation)
             .where(countedAllocations({ ...input, pendingCutoff, environment }))
             .pipe(
-              Effect.map((rows) => rows[0]?.slots ?? 0),
+              Effect.map(([row]) => row),
               Effect.mapError(
                 (cause) =>
                   new ManagedTunnelLimitPersistenceError({
@@ -193,12 +216,14 @@ const make = Effect.gen(function* () {
                   }),
               ),
             );
-        const activeTunnels = yield* countSlots(ne);
+        const usage = yield* countSlots(ne);
+        if (usage?.betaLink) return yield* new BetaGatewayLinkConflict(input);
+        const activeTunnels = usage?.slots ?? 0;
         if (activeTunnels < baseMaxTunnels) return yield* reserve;
 
         // An environment that already holds a counted slot relinks without asking T3 Chat,
         // so a downgrade or a T3 Chat outage only blocks new environments.
-        if ((yield* countSlots(eq)) > 0) return yield* reserve;
+        if (((yield* countSlots(eq))?.slots ?? 0) > 0) return yield* reserve;
 
         // A manual override is the exact cap; a T3 Chat plan raises only the default.
         // Runs under the user lock, bounded by the T3 Chat request timeout.

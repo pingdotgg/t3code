@@ -1,0 +1,177 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "e1e2af14-84c7-4fef-8f14-c29883a79d9f",
+  "prevIds": ["4413755a-63f1-4f93-bdc9-d1357283c23e"],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_environment_links", "beta_enrollment_id"],
+      "writes": [
+        "s|col|public.relay_environment_links.beta_enrollment_id",
+        "n|col|public.relay_environment_links.beta_enrollment_id",
+        "e|col|public.relay_environment_links.beta_enrollment_id"
+      ],
+      "reads": ["n|tbl|public.relay_environment_links", "n|sch|public"]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_environment_links", "beta_endpoint_key"],
+      "writes": [
+        "s|col|public.relay_environment_links.beta_endpoint_key",
+        "n|col|public.relay_environment_links.beta_endpoint_key",
+        "e|col|public.relay_environment_links.beta_endpoint_key"
+      ],
+      "reads": ["n|tbl|public.relay_environment_links", "n|sch|public"]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_environment_links", "beta_connector_hash"],
+      "writes": [
+        "s|col|public.relay_environment_links.beta_connector_hash",
+        "n|col|public.relay_environment_links.beta_connector_hash",
+        "e|col|public.relay_environment_links.beta_connector_hash"
+      ],
+      "reads": ["n|tbl|public.relay_environment_links", "n|sch|public"]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_environment_links",
+        "idx_relay_environment_links_beta_key"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_environment_links_beta_key",
+        "n|idx|public.idx_relay_environment_links_beta_key",
+        "e|idx|public.idx_relay_environment_links_beta_key",
+        "n|rel|public.idx_relay_environment_links_beta_key"
+      ],
+      "reads": [
+        "n|tbl|public.relay_environment_links",
+        "n|sch|public",
+        "n|col|public.relay_environment_links.beta_endpoint_key"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_environment_links",
+        "idx_relay_environment_links_beta_hash"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_environment_links_beta_hash",
+        "n|idx|public.idx_relay_environment_links_beta_hash",
+        "e|idx|public.idx_relay_environment_links_beta_hash",
+        "n|rel|public.idx_relay_environment_links_beta_hash"
+      ],
+      "reads": [
+        "n|tbl|public.relay_environment_links",
+        "n|sch|public",
+        "n|col|public.relay_environment_links.beta_connector_hash"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_environment_links",
+        "name": "beta_enrollment_id",
+        "type": "varchar(255)",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_environment_links",
+        "name": "beta_endpoint_key",
+        "type": "varchar(16)",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_environment_links",
+        "name": "beta_connector_hash",
+        "type": "varchar(64)",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_environment_links",
+        "name": "idx_relay_environment_links_beta_key",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "beta_endpoint_key",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": "(\"beta_endpoint_key\" is not null)",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_environment_links",
+        "name": "idx_relay_environment_links_beta_hash",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "beta_connector_hash",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": "(\"beta_connector_hash\" is not null)",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}

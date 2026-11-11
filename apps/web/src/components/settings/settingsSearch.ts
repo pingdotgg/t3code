@@ -71,6 +71,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
+  readonly betaGatewayOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -89,6 +90,7 @@ export interface SettingsSearchAvailability {
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
+  readonly betaGatewayOffered?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -511,6 +513,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/labs",
     scope: "environment",
     searchTerms: ["beta tab autocomplete predict next message claude codex ghost text"],
+  },
+  {
+    id: "t3-connect-unlimited",
+    title: "T3 Connect Unlimited (beta)",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: ["beta t3 connect tunnel gateway unlimited free link remote cloudflare"],
+    desktopOnly: true,
+    cloudOnly: true,
+    betaGatewayOnly: true,
   },
   {
     id: "simlock-hosts",
@@ -1484,7 +1496,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
-      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),
+      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
+      (!item.betaGatewayOnly || availability.betaGatewayOffered === true),
   );
 }
 

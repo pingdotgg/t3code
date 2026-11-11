@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
+import * as BetaGatewayLinks from "./BetaGatewayLinks.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as RelayConfiguration from "../Config.ts";
@@ -119,6 +120,7 @@ function layerTest(input?: {
     Layer.provide(
       Layer.mergeAll(
         RelayConfiguration.layer(config),
+        Layer.mock(BetaGatewayLinks.BetaGatewayLinks, {}),
         Layer.succeed(DpopProofs.DpopProofReplay, {
           verifyAndConsume: () => Effect.die("unexpected DPoP proof verification"),
           consume: input?.consume ?? (() => Effect.succeed(true)),
@@ -252,6 +254,31 @@ describe("EnvironmentLinker", () => {
       ),
     );
   });
+
+  it.effect("requires the signed transport to match the enrollment endpoint", () =>
+    Effect.gen(function* () {
+      const linker = yield* EnvironmentLinker.EnvironmentLinker;
+      const { payload, request } = yield* makeRequest;
+      for (const beta of [false, true]) {
+        const signed = {
+          ...payload,
+          endpoint: { ...payload.endpoint, providerKind: beta ? "cloudflare_tunnel" : "t3_relay" },
+        };
+        const proof = signTestJwt(signed, RELAY_LINK_PROOF_TYP, environmentKeyPair.privateKey);
+        const error = yield* linker
+          .link({
+            userId: "user_123",
+            request: { ...request, managedTunnelsEnabled: true, proof },
+            beta,
+          })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "EnvironmentLinkProofInvalid",
+          stage: "authorize_capabilities",
+        });
+      }
+    }).pipe(Effect.provide(layerTest())),
+  );
 
   it.effect("rejects a tampered compact proof before persistence", () => {
     let persisted = false;

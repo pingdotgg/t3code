@@ -21,6 +21,8 @@ const testState = vi.hoisted(() => ({
   snapshot: null as EnvironmentCloudLinkStateResult | null,
   renderedSnapshot: null as EnvironmentCloudLinkStateResult | null,
   relayProviderKind: null as RelayManagedEndpointProviderKind | null,
+  betaOffered: false,
+  betaChosen: false,
   getToken: vi.fn<() => Promise<string | null>>(),
   link: vi.fn(),
   unlink: vi.fn(),
@@ -30,6 +32,7 @@ const testState = vi.hoisted(() => ({
   toast: vi.fn(),
 }));
 
+// One value serves both atoms the controller reads: relay discovery and the server configs.
 vi.mock(import("@effect/atom-react"), async (original) => ({
   ...(await original()),
   useAtomValue: (() => ({
@@ -43,6 +46,8 @@ vi.mock(import("@effect/atom-react"), async (original) => ({
             ],
           ],
     ),
+    ...(testState.betaOffered ? { betaGatewayLinkLimit: 100 } : {}),
+    get: () => ({ settings: { connectBetaGatewayEnabled: testState.betaChosen } }),
   })) as never,
 }));
 vi.mock(import("@clerk/react"), async (original) => ({
@@ -150,6 +155,8 @@ function setup() {
   testState.snapshot = linkedState;
   testState.renderedSnapshot = linkedState;
   testState.relayProviderKind = null;
+  testState.betaOffered = false;
+  testState.betaChosen = false;
   testState.getToken.mockReset().mockResolvedValue("clerk-token");
   for (const command of [
     testState.link,
@@ -224,6 +231,59 @@ describe("useCloudLinkController", () => {
     expect(testState.unlink).toHaveBeenCalledExactlyOnceWith({ target, clerkToken: null });
     expect(testState.link).not.toHaveBeenCalled();
     expect(testState.preferences).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "a beta link to publish-only",
+      from: "t3_relay",
+      tunnel: true,
+      chosen: true,
+      desired: false,
+      mode: "publish_only",
+    },
+    {
+      name: "publish-only to the beta",
+      from: "manual",
+      tunnel: false,
+      chosen: true,
+      desired: true,
+      mode: "beta",
+    },
+    {
+      name: "publish-only to a tunnel when Labs is off",
+      from: "manual",
+      tunnel: false,
+      chosen: false,
+      desired: true,
+      mode: "managed",
+    },
+  ] as const)("switches $name", async ({ from, tunnel, chosen, desired, mode }) => {
+    using _setup = setup();
+    testState.relayProviderKind = from;
+    testState.betaOffered = true;
+    testState.betaChosen = chosen;
+    testState.snapshot = {
+      ...linkedState,
+      managedTunnelActive: tunnel,
+      holdWebhooksWhileOffline: true,
+    };
+    await using screen = await mountController();
+
+    expect(await screen.reconcile({ managedTunnel: desired, publish: true })).toBe(true);
+    // Only a change to or from the beta replaces the link, which keeps the hold preference.
+    expect(testState.link).toHaveBeenCalledExactlyOnceWith({
+      target,
+      clerkToken: "clerk-token",
+      mode,
+      ...(mode === "managed" ? {} : { replaceLink: true }),
+    });
+    expect(testState.unlink).not.toHaveBeenCalled();
+    expect(testState.preferences).toHaveBeenCalledExactlyOnceWith({
+      target,
+      publishAgentActivity: true,
+      ...(mode === "managed" ? {} : { holdWebhooksWhileOffline: true }),
+    });
   });
 
   it("reports a relay tunnel cap refusal as tunnelLimit instead of an error", async () => {

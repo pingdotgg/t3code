@@ -1,5 +1,6 @@
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import { sql as drizzleSql } from "drizzle-orm";
+import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -24,7 +25,10 @@ import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as HttpObservability from "@t3tools/shared/httpObservability";
 
 import {
+  BETA_GATEWAY_LINK_LIMIT,
   RelayApi,
+  RelayGatewayAuth,
+  type RelayEnvironmentLinkRequest,
   RelayAgentActivityPublishProofExpiredError,
   RelayAgentActivityPublishProofInvalidError,
   RelayClientAuth,
@@ -65,6 +69,7 @@ import * as Devices from "../agentActivity/Devices.ts";
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
+import * as BetaGatewayLinks from "../environments/BetaGatewayLinks.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
@@ -458,6 +463,47 @@ export const layerMetadataApi = HttpApiBuilder.group(
   }),
 );
 
+export const layerGatewayAuth = Layer.effect(
+  RelayGatewayAuth,
+  Effect.gen(function* () {
+    const { betaGatewaySecret } = yield* RelayConfiguration.RelayConfiguration;
+    const encoder = new TextEncoder();
+    const expected = betaGatewaySecret && encoder.encode(Redacted.value(betaGatewaySecret));
+    return {
+      gatewayBearer: Effect.fn("relay.auth.gateway")(function* (httpEffect, { credential }) {
+        if (
+          !expected ||
+          !Mac.timingSafeEqual(
+            expected,
+            encoder.encode(readHttpAuthorizationCredential(credential)),
+          )
+        ) {
+          return yield* relayAuthInvalidError("invalid_bearer");
+        }
+        return yield* httpEffect;
+      }),
+    };
+  }),
+);
+
+export const layerGatewayApi = HttpApiBuilder.group(
+  RelayApi,
+  "gateway",
+  Effect.fnUntraced(function* (handlers) {
+    const links = yield* BetaGatewayLinks.BetaGatewayLinks;
+    return handlers.handle(
+      "authorizeConnectors",
+      Effect.fn("relay.api.gateway.authorizeConnectors")(
+        function* ({ payload }) {
+          yield* appendRelayCredentialResponseHeaders;
+          return { routes: yield* links.authorizeBetaConnectors(payload.tokenHashes) };
+        },
+        Effect.catch(() => relayInternalErrorResponse("database_unavailable")),
+      ),
+    );
+  }),
+);
+
 export const layerHealthApi = HttpApiBuilder.group(
   RelayApi,
   "health",
@@ -507,18 +553,27 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
   function* (input: {
     readonly userId: string;
     readonly environmentId: string;
+    readonly betaAttemptId?: string;
     readonly managedEndpointNamespace?: string | undefined;
   }) {
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-    const deprovisionTarget = yield* managedEndpointProvider.prepareDeprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
-    });
-    const link = yield* links.getForUser({
-      userId: input.userId,
-      environmentId: input.environmentId,
-    });
+    const key = { userId: input.userId, environmentId: input.environmentId };
+    const deprovisionTarget = input.betaAttemptId
+      ? null
+      : yield* managedEndpointProvider.prepareDeprovision(key);
+    const link = input.betaAttemptId
+      ? null
+      : yield* links.getForUser({ ...key, includeRetiringBeta: true });
+    if (input.betaAttemptId || link?.endpoint.providerKind === "t3_relay") {
+      const beta = yield* BetaGatewayLinks.BetaGatewayLinks;
+      yield* beta.unlink({
+        ...key,
+        ...(input.betaAttemptId ? { attemptId: input.betaAttemptId } : {}),
+        ...(link?.betaEndpointKey ? { endpointKey: link.betaEndpointKey } : {}),
+      });
+      return true;
+    }
     const unlinked =
       link === null
         ? false
@@ -529,8 +584,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
           });
     // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
     const deprovisioned = yield* managedEndpointProvider.deprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
+      ...key,
       target: deprovisionTarget,
     });
     const endpointKey =
@@ -552,7 +606,6 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       );
     }
     if (!deprovisioned) {
-      const key = { userId: input.userId, environmentId: input.environmentId };
       const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
       if (retryTarget !== null && (yield* links.getForUser(key)) === null) {
         yield* managedEndpointProvider.deprovision({ ...key, target: retryTarget });
@@ -814,13 +867,114 @@ export const layerClientApi = HttpApiBuilder.group(
     const devices = yield* Devices.Devices;
     const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
     const tunnelLimits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
+    const linkEnvironment = (beta: boolean) =>
+      Effect.fn(beta ? "relay.api.client.linkBetaEnvironment" : "relay.api.client.linkEnvironment")(
+        function* ({ payload }: { readonly payload: RelayEnvironmentLinkRequest }) {
+          yield* appendRelayCredentialResponseHeaders;
+          const { userId } = yield* RelayClientPrincipal;
+          const result = yield* linker.link({
+            userId,
+            request: payload,
+            ...(beta ? { beta: true } : {}),
+          });
+          return {
+            ok: true as const,
+            cloudUserId: userId,
+            environmentId: result.environmentId,
+            endpoint: result.endpoint,
+            endpointRuntime: result.endpointRuntime,
+            relayIssuer: config.relayIssuer,
+            environmentCredential: result.environmentCredential,
+            cloudMintPublicKey: config.cloudMintPublicKey,
+          };
+        },
+        Effect.tapError(appendCloudflareRetryAfter),
+        mapErrorTags({
+          EnvironmentLinkProofExpired: (_error, traceId) =>
+            new RelayEnvironmentLinkProofExpiredError({
+              code: "environment_link_proof_expired",
+              traceId,
+            }),
+          EnvironmentLinkProofInvalid: (linkError, traceId) =>
+            new RelayEnvironmentLinkProofInvalidError({
+              code: "environment_link_proof_invalid",
+              reason: linkError.reason,
+              traceId,
+            }),
+          BetaGatewayUnavailable: (_error, traceId) =>
+            new RelayEnvironmentLinkUnavailableError({
+              code: "environment_link_unavailable",
+              reason: "beta_gateway_not_configured",
+              traceId,
+            }),
+          BetaGatewayLinkConflict: (_error, traceId) =>
+            new RelayEnvironmentLinkUnavailableError({
+              code: "environment_link_unavailable",
+              reason: "unlink_before_switching_transport",
+              traceId,
+            }),
+          BetaGatewayPersistenceError: (_error, traceId) =>
+            new RelayEnvironmentLinkFailedError({
+              code: "environment_link_failed",
+              reason: "link_persistence_failed",
+              traceId,
+            }),
+          ManagedEndpointProvisioningNotConfigured: (_error, traceId) =>
+            new RelayEnvironmentLinkUnavailableError({
+              code: "environment_link_unavailable",
+              reason: "managed_endpoint_not_configured",
+              traceId,
+            }),
+          ManagedEndpointProvisioningFailed: (error, traceId) =>
+            new RelayEnvironmentLinkUnavailableError({
+              code: "environment_link_unavailable",
+              reason: "managed_endpoint_provisioning_failed",
+              provisioningStage: error.stage,
+              traceId,
+            }),
+          ManagedEndpointOriginNotAllowed: (_error, traceId) =>
+            new RelayEnvironmentLinkProofInvalidError({
+              code: "environment_link_proof_invalid",
+              reason: "origin_not_allowed",
+              traceId,
+            }),
+          ManagedTunnelLimitExceeded: (limitError, traceId) =>
+            new RelayEnvironmentLinkLimitExceededError({
+              code: "environment_link_limit_exceeded",
+              maxTunnels: limitError.maxTunnels,
+              traceId,
+            }),
+          EnvironmentLinkUpsertPersistenceError: (_error, traceId) =>
+            new RelayEnvironmentLinkFailedError({
+              code: "environment_link_failed",
+              reason: "link_persistence_failed",
+              traceId,
+            }),
+          EnvironmentCredentialCreatePersistenceError: (_error, traceId) =>
+            new RelayEnvironmentLinkFailedError({
+              code: "environment_link_failed",
+              reason: "credential_persistence_failed",
+              traceId,
+            }),
+          DpopProofReplayPersistenceError: (_error, traceId) =>
+            new RelayEnvironmentLinkFailedError({
+              code: "environment_link_failed",
+              reason: "replay_persistence_failed",
+              traceId,
+            }),
+        }),
+        mapRelayCommonApiErrors("not_authorized"),
+      );
     return handlers
       .handle(
         "listEnvironments",
         Effect.fn("relay.api.client.listEnvironments")(function* () {
           const { userId } = yield* RelayClientPrincipal;
           const environments = yield* links.listForUser({ userId });
-          return { environments };
+          // Clients show the beta's Labs switch only when this is set.
+          return BetaGatewayLinks.offersBetaGateway(config, userId)
+            ? { environments, betaGatewayLinkLimit: BETA_GATEWAY_LINK_LIMIT }
+            : { environments };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
@@ -846,85 +1000,8 @@ export const layerClientApi = HttpApiBuilder.group(
           return { devices: yield* devices.listForUser({ userId }) };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
-      .handle(
-        "linkEnvironment",
-        Effect.fn("relay.api.client.linkEnvironment")(
-          function* (args) {
-            const { payload } = args;
-            yield* appendRelayCredentialResponseHeaders;
-            const { userId } = yield* RelayClientPrincipal;
-            const result = yield* linker.link({ userId, request: payload });
-            return {
-              ok: true,
-              cloudUserId: userId,
-              environmentId: result.environmentId,
-              endpoint: result.endpoint,
-              endpointRuntime: result.endpointRuntime,
-              relayIssuer: config.relayIssuer,
-              environmentCredential: result.environmentCredential,
-              cloudMintPublicKey: config.cloudMintPublicKey,
-            };
-          },
-          Effect.tapError(appendCloudflareRetryAfter),
-          mapErrorTags({
-            EnvironmentLinkProofExpired: (_error, traceId) =>
-              new RelayEnvironmentLinkProofExpiredError({
-                code: "environment_link_proof_expired",
-                traceId,
-              }),
-            EnvironmentLinkProofInvalid: (linkError, traceId) =>
-              new RelayEnvironmentLinkProofInvalidError({
-                code: "environment_link_proof_invalid",
-                reason: linkError.reason,
-                traceId,
-              }),
-            ManagedEndpointProvisioningNotConfigured: (_error, traceId) =>
-              new RelayEnvironmentLinkUnavailableError({
-                code: "environment_link_unavailable",
-                reason: "managed_endpoint_not_configured",
-                traceId,
-              }),
-            ManagedEndpointProvisioningFailed: (error, traceId) =>
-              new RelayEnvironmentLinkUnavailableError({
-                code: "environment_link_unavailable",
-                reason: "managed_endpoint_provisioning_failed",
-                provisioningStage: error.stage,
-                traceId,
-              }),
-            ManagedEndpointOriginNotAllowed: (_error, traceId) =>
-              new RelayEnvironmentLinkProofInvalidError({
-                code: "environment_link_proof_invalid",
-                reason: "origin_not_allowed",
-                traceId,
-              }),
-            ManagedTunnelLimitExceeded: (limitError, traceId) =>
-              new RelayEnvironmentLinkLimitExceededError({
-                code: "environment_link_limit_exceeded",
-                maxTunnels: limitError.maxTunnels,
-                traceId,
-              }),
-            EnvironmentLinkUpsertPersistenceError: (_error, traceId) =>
-              new RelayEnvironmentLinkFailedError({
-                code: "environment_link_failed",
-                reason: "link_persistence_failed",
-                traceId,
-              }),
-            EnvironmentCredentialCreatePersistenceError: (_error, traceId) =>
-              new RelayEnvironmentLinkFailedError({
-                code: "environment_link_failed",
-                reason: "credential_persistence_failed",
-                traceId,
-              }),
-            DpopProofReplayPersistenceError: (_error, traceId) =>
-              new RelayEnvironmentLinkFailedError({
-                code: "environment_link_failed",
-                reason: "replay_persistence_failed",
-                traceId,
-              }),
-          }),
-          mapRelayCommonApiErrors("not_authorized"),
-        ),
-      )
+      .handle("linkEnvironment", linkEnvironment(false))
+      .handle("linkBetaEnvironment", linkEnvironment(true))
       .handle(
         "createEnvironmentLinkChallenge",
         Effect.fn("relay.api.client.createEnvironmentLinkChallenge")(function* (args) {
@@ -942,7 +1019,7 @@ export const layerClientApi = HttpApiBuilder.group(
               expiresAtEpochSeconds: Math.floor(expiresAt.epochMilliseconds / 1_000),
             })
             .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
-          return { challenge, expiresAt: DateTime.formatIso(expiresAt) };
+          return { challenge, cloudUserId: userId, expiresAt: DateTime.formatIso(expiresAt) };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
@@ -950,7 +1027,12 @@ export const layerClientApi = HttpApiBuilder.group(
         Effect.fn("relay.api.client.unlinkEnvironment")(function* (args) {
           const { params } = args;
           const { userId } = yield* RelayClientPrincipal;
+          const attemptId = args.headers["x-t3-beta-enrollment-id"];
+          const owner = args.headers["x-t3-beta-enrollment-owner"];
+          if (attemptId && owner && owner !== userId)
+            return yield* relayAuthInvalidError("not_authorized");
           const unlinked = yield* unlinkEnvironmentRecord({
+            ...(attemptId ? { betaAttemptId: attemptId } : {}),
             userId,
             environmentId: params.environmentId,
             managedEndpointNamespace: config.managedEndpointNamespace,
@@ -1365,6 +1447,7 @@ export const layerServerApi = HttpApiBuilder.group(
           },
           Effect.tapError(appendCloudflareRetryAfter),
           Effect.catchTags({
+            BetaGatewayLinkConflict: () => Effect.fail(new HttpApiError.Unauthorized({})),
             ManagedEndpointOriginNotAllowed: () => Effect.fail(new HttpApiError.Unauthorized({})),
             ManagedEndpointProvisioningNotConfigured: () =>
               relayInternalErrorResponse("upstream_unavailable"),
@@ -1401,6 +1484,7 @@ export const layerServerApi = HttpApiBuilder.group(
           },
           Effect.tapError(appendCloudflareRetryAfter),
           Effect.catchTags({
+            BetaGatewayLinkConflict: () => Effect.fail(new HttpApiError.Unauthorized({})),
             ManagedEndpointOriginNotAllowed: () => Effect.fail(new HttpApiError.Unauthorized({})),
             ManagedEndpointProvisioningNotConfigured: () =>
               relayInternalErrorResponse("upstream_unavailable"),
@@ -1461,6 +1545,7 @@ const currentTraceId = Effect.currentParentSpan.pipe(
 );
 
 const RelayCommonPersistenceError = Schema.Union([
+  BetaGatewayLinks.BetaGatewayPersistenceError,
   Devices.DeviceRegistrationPersistenceError,
   Devices.DeviceUnregistrationPersistenceError,
   Devices.DeviceListPersistenceError,

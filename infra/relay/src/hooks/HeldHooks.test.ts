@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
 import * as RelayConfiguration from "../Config.ts";
+import * as BetaGatewayLinks from "../environments/BetaGatewayLinks.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as HeldHooks from "./HeldHooks.ts";
@@ -68,6 +69,7 @@ const withService = <A, E>(
   ];
   const layerDependencies = Layer.mergeAll(
     Layer.succeed(RelayConfiguration.RelayConfiguration, settings),
+    Layer.mock(BetaGatewayLinks.BetaGatewayLinks, {}),
     Layer.mock(EnvironmentLinks.EnvironmentLinks, {
       findActiveManagedForEnvironment: (input) =>
         Effect.succeed(

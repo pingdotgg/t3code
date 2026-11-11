@@ -76,6 +76,18 @@ describe("HookInboxStore", () => {
       ),
   );
 
+  it.effect("rejects a delayed hold after the beta hostname is retired", () =>
+    withInbox(
+      Effect.gen(function* () {
+        const late = yield* hook("late");
+        yield* HookInboxStore.retire;
+        yield* HookInboxStore.clear;
+        expect(yield* HookInboxStore.hold(late, BASE_URL)).toBe("retired");
+        expect(yield* HookInboxStore.wake(BASE_URL)).toBe(false);
+      }),
+    ),
+  );
+
   it.effect("delivers held requests oldest first, byte for byte", () =>
     withInbox(
       Effect.gen(function* () {

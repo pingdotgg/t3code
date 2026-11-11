@@ -5,7 +5,10 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "../..");
 
+const GATEWAY = /^infra\/connect-gateway\//;
+
 const INERT = [
+  GATEWAY,
   /^docs\//,
   /^\.(agents|cursor|vscode|devcontainer|macroscope|repos)\//,
   /^[^/]+\.md$/,
@@ -184,6 +187,7 @@ function decide(files, packages, full) {
       test_web: has("@t3tools/web"),
       test_server: has("t3"),
       rust: everything || rust,
+      gateway: everything || (files ?? []).some((file) => GATEWAY.test(file)),
       release_smoke: scriptsChanged,
       mobile_native: files === null || files.some((file) => MOBILE_NATIVE.test(file)),
     },

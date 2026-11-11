@@ -39,6 +39,8 @@ export interface RelayEnvironmentDiscoveryState {
   readonly refreshing: boolean;
   readonly offline: boolean;
   readonly error: Option.Option<ConnectionAttemptError>;
+  /** Set when the account's relay offers T3 Connect Unlimited (beta): its free link limit. */
+  readonly betaGatewayLinkLimit?: number;
 }
 
 export class RelayEnvironmentDiscovery extends Context.Service<
@@ -267,7 +269,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       }
       yield* Ref.set(activeAccountId, accountId);
 
-      const environments = yield* relay
+      const { environments, betaGatewayLinkLimit } = yield* relay
         .listEnvironments({ clerkToken })
         .pipe(Effect.mapError(mapManagedRelayError));
       if ((yield* Ref.get(accountGeneration)) !== generation) {
@@ -282,10 +284,11 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
           error: Option.none(),
         });
       }
-      yield* SubscriptionRef.update(state, (current) => ({
+      yield* SubscriptionRef.update(state, ({ betaGatewayLinkLimit: _, ...current }) => ({
         ...current,
         environments: next,
         listed: true,
+        ...(betaGatewayLinkLimit === undefined ? {} : { betaGatewayLinkLimit }),
       }));
 
       yield* Effect.forEach(

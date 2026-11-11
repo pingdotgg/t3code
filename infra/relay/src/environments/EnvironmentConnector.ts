@@ -1,3 +1,4 @@
+import { betaGatewayEndpoint } from "./betaGatewayEndpoint.ts";
 import {
   EnvironmentHttpBadRequestError,
   EnvironmentHttpConflictError,
@@ -299,8 +300,20 @@ export function validateManagedEndpoint(input: {
   readonly link: EnvironmentLinks.RelayLinkedEnvironmentRecord;
   readonly allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
   readonly baseDomain: string | undefined;
+  readonly betaGatewayDomain?: string | undefined;
 }): Result.Result<RelayManagedEndpoint, ManagedEndpointValidationFailure> {
   const { link, allocation, baseDomain } = input;
+  if (link.endpoint.providerKind === "t3_relay") {
+    const endpoint = betaGatewayEndpoint(
+      input.betaGatewayDomain,
+      link.betaEndpointKey,
+      link.endpoint,
+    );
+    if (!endpoint) {
+      return Result.fail({ reason: "managed_endpoint_mismatch" });
+    }
+    return Result.succeed(endpoint);
+  }
   if (link.endpoint.providerKind !== "cloudflare_tunnel") {
     return Result.fail({
       reason: "endpoint_provider_not_managed",
@@ -391,6 +404,7 @@ const make = Effect.gen(function* () {
         link: input.link,
         allocation: input.allocation,
         baseDomain: settings.managedEndpointBaseDomain,
+        betaGatewayDomain: settings.betaGatewayDomain,
       });
       if (Result.isSuccess(result)) {
         return result.success;

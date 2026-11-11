@@ -63,6 +63,7 @@ import * as ApnsDeliveryQueue from "./agentActivity/ApnsDeliveryQueue.ts";
 import * as ApnsDeliveries from "./agentActivity/ApnsDeliveries.ts";
 import * as CloudflareApiPause from "./environments/CloudflareApiPause.ts";
 import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
+import * as BetaGatewayLinks from "./environments/BetaGatewayLinks.ts";
 import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
 import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublishSignatures.ts";
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
@@ -98,6 +99,7 @@ const layerHttpPlatformNotSupported = Layer.succeed(HttpPlatform.HttpPlatform, {
 
 const layerRelayApi = Layer.mergeAll(
   RelayHttpApi.layerHealthApi,
+  RelayHttpApi.layerGatewayApi,
   RelayHttpApi.layerMetadataApi,
   RelayHttpApi.layerMobileApi,
   RelayHttpApi.layerClientApi,
@@ -164,6 +166,36 @@ export const layer = Api.make(
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
+    // An unset GitHub variable arrives as "", which leaves the beta off.
+    const betaGatewayDomain = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.String("RELAY_BETA_GATEWAY_DOMAIN")),
+        (value) => value.trim().length > 0,
+      ),
+    );
+    if (
+      betaGatewayDomain !== undefined &&
+      (betaGatewayDomain.length > 236 ||
+        !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u.test(betaGatewayDomain))
+    ) {
+      return yield* Effect.die(
+        new Error("RELAY_BETA_GATEWAY_DOMAIN must be a lowercase DNS name."),
+      );
+    }
+    const betaGatewaySecret = betaGatewayDomain
+      ? yield* Config.Redacted("RELAY_BETA_GATEWAY_SECRET")
+      : undefined;
+    if (betaGatewaySecret && Redacted.value(betaGatewaySecret).length < 32) {
+      return yield* Effect.die(
+        new Error("RELAY_BETA_GATEWAY_SECRET must contain at least 32 characters."),
+      );
+    }
+    // Clerk user IDs separated by commas or whitespace. Unset offers the beta to nobody.
+    const betaGatewayTesters = new Set(
+      Option.getOrElse(yield* Config.option(Config.String("RELAY_BETA_GATEWAY_TESTERS")), () => "")
+        .split(/[\s,]+/u)
+        .filter((userId) => userId.length > 0),
+    );
     const t3ChatLinkSecret = Option.getOrUndefined(
       Option.filter(
         yield* Config.option(Config.Redacted("T3CHAT_LINK_SECRET")),
@@ -240,6 +272,9 @@ export const layer = Api.make(
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
         managedEndpointNamespace: stage,
+        ...(betaGatewayDomain && betaGatewaySecret
+          ? { betaGatewayDomain, betaGatewaySecret, betaGatewayTesters }
+          : {}),
         managedEndpointCleanupMode,
         legacyManagedEndpointCleanupMode,
         ...(legacyTunnelGraceMinutes === undefined ? {} : { legacyTunnelGraceMinutes }),
@@ -277,8 +312,11 @@ export const layer = Api.make(
           .wake(baseUrl)
           .pipe(inboxCall("wake", endpointKey));
       }),
-      clear: Effect.fn("HookInbox.clear")(function ({ endpointKey }) {
-        return hookInboxes.getByName(endpointKey).clear().pipe(inboxCall("clear", endpointKey));
+      clear: Effect.fn("HookInbox.clear")(function ({ endpointKey, retire }) {
+        return hookInboxes
+          .getByName(endpointKey)
+          .clear(retire ?? false)
+          .pipe(inboxCall("clear", endpointKey));
       }),
     });
 
@@ -329,7 +367,14 @@ export const layer = Api.make(
       Layer.provideMerge(
         ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender, alchemyRuntimeContext),
       ),
-      Layer.provideMerge(Layer.mergeAll(AgentActivityRows.layer, Devices.layer, layerHookInbox)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          AgentActivityRows.layer,
+          Devices.layer,
+          layerHookInbox,
+          BetaGatewayLinks.layer.pipe(Layer.provide(layerHookInbox)),
+        ),
+      ),
       Layer.provideMerge(EnvironmentCredentials.layer),
       Layer.provideMerge(
         Layer.mergeAll(
@@ -433,6 +478,7 @@ export const layer = Api.make(
       MobileTelemetry.layerApi.pipe(Layer.provide(layerMobileTelemetry)),
     ).pipe(
       Layer.provideMerge(RelayHttpApi.layerClientAuth),
+      Layer.provideMerge(RelayHttpApi.layerGatewayAuth),
       Layer.provideMerge(RelayHttpApi.layerDpopClientAuth),
       Layer.provideMerge(RelayHttpApi.layerEnvironmentAuth),
       Layer.provide(layerRuntime),

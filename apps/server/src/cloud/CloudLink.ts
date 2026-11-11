@@ -72,6 +72,8 @@ import { makeRelayEnvironmentClient } from "../relay/relayEnvironmentClient.ts";
 import { loopbackUrlHostForAddress } from "../startupAccess.ts";
 import {
   type CliDesiredLinkMode,
+  CLOUD_CLI_BETA_ENROLLMENT_RELAY,
+  encodeBetaEnrollmentAttempt,
   readCliDesiredCloudLink,
   readCliDesiredLinkMode,
   setCliDesiredCloudLink,
@@ -101,9 +103,9 @@ import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
 import {
+  RelayRequestError,
   filterRelayResponse,
   relayRequestError,
-  type RelayRequestError,
   shouldRetryRelayRequest,
 } from "./relayResponse.ts";
 import {
@@ -119,6 +121,8 @@ import {
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
 
+const BETA_ALREADY_ATTEMPTED =
+  "A beta enrollment was already sent. Run `t3 connect unlink` and then `t3 connect link --beta` to enroll again.";
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
 const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
@@ -580,6 +584,7 @@ const make = Effect.gen(function* () {
     request: RelayLinkProofRequest,
     requestUrl: string,
     allowNonLoopbackRequestHost = false,
+    attemptId?: string,
   ) {
     if (
       !isSupportedLinkProviderKind(request) ||
@@ -599,7 +604,7 @@ const make = Effect.gen(function* () {
       iss: `t3-env:${descriptor.environmentId}`,
       aud: normalizeRelayIssuer(request.relayIssuer),
       sub: descriptor.environmentId,
-      jti: yield* random.uuidV4(),
+      jti: attemptId ?? (yield* random.uuidV4()),
       iat: nowSeconds,
       exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
       challenge: request.challenge,
@@ -719,6 +724,18 @@ const make = Effect.gen(function* () {
         ]);
         if (Option.isNone(runtimeBytes)) return false;
         const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeBytes.value)));
+        if (config?.providerKind === "t3_relay") {
+          // A beta route follows this server's listener, so it needs no confirmed origin.
+          if (Option.isSome(yield* secrets.get(CLOUD_LINK_REVOKED))) return false;
+          const status = yield* endpointRuntime.applyConfig(config, localOrigin);
+          if (status.status !== "running") {
+            return yield* new CloudLinkEndpointUnavailableError({
+              reason: "runtime-not-started",
+              endpointRuntimeStatus: status,
+            });
+          }
+          return true;
+        }
         if (config === null || config.providerKind !== "cloudflare_tunnel") return false;
         // Require the relay-confirmed port unless falling back after the relay stayed unreachable.
         if (requireConfirmedOrigin) {
@@ -745,6 +762,14 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // The gateway must use this server's current listener, even after a restart on a different port.
+  const betaOrigin = () => {
+    const address = httpServer.address;
+    return typeof address !== "string" && "port" in address
+      ? `http://${loopbackUrlHostForAddress(address)}:${address.port}`
+      : undefined;
+  };
+
   const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(function* (
     payload: RelayEnvironmentConfigRequest,
     options?: {
@@ -757,10 +782,7 @@ const make = Effect.gen(function* () {
       yield* validateLinkedCloudUser(payload.cloudUserId);
       yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
       // Reject unsupported runtimes before they can stop a healthy tunnel.
-      if (
-        payload.endpointRuntime !== null &&
-        payload.endpointRuntime.providerKind !== "cloudflare_tunnel"
-      ) {
+      if (payload.endpointRuntime?.providerKind === "manual") {
         return yield* new CloudLinkEndpointUnavailableError({
           reason: "runtime-not-started",
           endpointRuntimeStatus: {
@@ -793,18 +815,26 @@ const make = Effect.gen(function* () {
       if (endpointRuntimeJson !== null) {
         yield* secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(endpointRuntimeJson));
       }
-      if (payload.endpointRuntime === null || options?.confirmedOrigin === undefined) {
+      const beta = payload.endpointRuntime?.providerKind === "t3_relay";
+      // A Cloudflare tunnel waits for the relay to confirm its origin; a beta route needs none.
+      if (payload.endpointRuntime === null || (!beta && options?.confirmedOrigin === undefined)) {
         return {
           ok: true,
           endpointRuntimeStatus: { status: "disabled" },
         } satisfies EnvironmentCloudRelayConfigResult;
       }
-      const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(payload.endpointRuntime);
+      const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(
+        payload.endpointRuntime,
+        beta ? betaOrigin() : undefined,
+      );
       if (endpointRuntimeStatus.status !== "running") {
         return yield* new CloudLinkEndpointUnavailableError({
           reason: "runtime-not-started",
           endpointRuntimeStatus,
         });
+      }
+      if (beta || options?.confirmedOrigin === undefined) {
+        return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
       }
       const marker = yield* encodeConfirmedOriginJson({
         config: payload.endpointRuntime,
@@ -822,12 +852,23 @@ const make = Effect.gen(function* () {
     readonly payload: unknown;
     readonly schema: Schema.Decoder<A>;
     readonly timeout?: Duration.Input;
+    readonly unavailableOnOldRelay?: boolean;
   }) =>
     HttpClientRequest.post(input.url).pipe(
       HttpClientRequest.bearerToken(input.token),
       HttpClientRequest.bodyJson(input.payload),
       Effect.flatMap(httpClient.execute),
-      Effect.flatMap(filterRelayResponse),
+      Effect.flatMap((response) =>
+        input.unavailableOnOldRelay && response.status === 404
+          ? Effect.fail(
+              new RelayRequestError({
+                rejection: "rejected",
+                description:
+                  "This relay does not support T3 Connect Unlimited (beta). Use a beta-enabled relay.",
+              }),
+            )
+          : filterRelayResponse(response),
+      ),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(input.schema)),
       Effect.timeout(input.timeout ?? "10 seconds"),
       Effect.mapError(relayRequestError),
@@ -850,6 +891,12 @@ const make = Effect.gen(function* () {
       );
       const mode = yield* readCliDesiredLinkMode.pipe(withSecrets);
       const managedTunnelsEnabled = mode !== "publish_only";
+      if (mode === "beta" && Option.isSome(yield* secrets.get(CLOUD_CLI_BETA_ENROLLMENT_RELAY))) {
+        return yield* new RelayRequestError({
+          rejection: "rejected",
+          description: BETA_ALREADY_ATTEMPTED,
+        });
+      }
       const relayUrl = yield* requireRelayUrl;
       const challenge = yield* relayClientRequest({
         url: `${relayUrl}/v1/client/environment-link-challenges`,
@@ -861,6 +908,7 @@ const make = Effect.gen(function* () {
         },
         schema: RelayEnvironmentLinkChallengeResponse,
       });
+      const attemptId = mode === "beta" ? yield* random.uuidV4() : undefined;
       const proof = yield* makeCloudLinkProof(
         {
           challenge: challenge.challenge,
@@ -868,14 +916,36 @@ const make = Effect.gen(function* () {
           endpoint: {
             httpBaseUrl: parsedOrigin.httpBaseUrl,
             wsBaseUrl: parsedOrigin.wsBaseUrl,
-            providerKind: managedTunnelsEnabled ? "cloudflare_tunnel" : "manual",
+            providerKind:
+              mode === "beta" ? "t3_relay" : managedTunnelsEnabled ? "cloudflare_tunnel" : "manual",
           },
           origin: parsedOrigin.origin,
         },
         parsedOrigin.httpBaseUrl,
+        false,
+        attemptId,
       );
+      // After this POST, a missing response is indistinguishable from a committed and then revoked link.
+      if (attemptId !== undefined) {
+        const claimed = yield* consumeCloudReplayGuards({
+          secrets,
+          names: [CLOUD_CLI_BETA_ENROLLMENT_RELAY],
+          value: stringToBytes(
+            yield* encodeBetaEnrollmentAttempt({
+              relayUrl,
+              attemptId,
+              ...(challenge.cloudUserId ? { owner: challenge.cloudUserId } : {}),
+            }).pipe(Effect.catch(internalError("persist-desired-link"))),
+          ),
+        });
+        if (!claimed || (yield* readCliDesiredLinkMode.pipe(withSecrets)) !== "beta")
+          return yield* new RelayRequestError({
+            rejection: "rejected",
+            description: BETA_ALREADY_ATTEMPTED,
+          });
+      }
       const link = yield* relayClientRequest({
-        url: `${relayUrl}/v1/client/environment-links`,
+        url: `${relayUrl}/v1/client/environment-links${mode === "beta" ? "/beta" : ""}`,
         token: token.accessToken,
         payload: {
           proof,
@@ -885,8 +955,21 @@ const make = Effect.gen(function* () {
         },
         schema: RelayEnvironmentLinkResponse,
         timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
+        unavailableOnOldRelay: mode === "beta",
       });
-      yield* setCliDesiredCloudLink(true, mode).pipe(withSecrets);
+      if (mode === "beta") {
+        const runtime = link.endpointRuntime;
+        if (
+          runtime?.providerKind !== "t3_relay" ||
+          link.endpoint.providerKind !== "t3_relay" ||
+          link.endpoint.httpBaseUrl !== `https://${runtime.hostname}/` ||
+          link.endpoint.wsBaseUrl !== `wss://${runtime.hostname}/ws`
+        ) {
+          return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
+        }
+      } else {
+        yield* setCliDesiredCloudLink(true, mode).pipe(withSecrets);
+      }
       yield* applyCloudRelayConfig(
         {
           relayUrl,
@@ -913,6 +996,25 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         if (!(yield* readCliDesiredCloudLink.pipe(withSecrets))) {
           return null;
+        }
+        if ((yield* readCliDesiredLinkMode.pipe(withSecrets)) === "beta") {
+          if (Option.isSome(yield* secrets.get(CLOUD_LINK_REVOKED))) return null;
+          const stored = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+          if (Option.isSome(stored)) {
+            const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(stored.value)));
+            if (config?.providerKind !== "t3_relay") {
+              return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
+            }
+            // Restart the saved route. Re-enrolling on boot could resurrect an unlinked environment.
+            const status = yield* endpointRuntime.applyConfig(config, betaOrigin());
+            if (status.status !== "running") {
+              return yield* new CloudLinkEndpointUnavailableError({
+                reason: "runtime-not-started",
+                endpointRuntimeStatus: status,
+              });
+            }
+            return "beta" as const;
+          }
         }
         return yield* reconcileDesiredCloudLinkWith(localOrigin);
       }),

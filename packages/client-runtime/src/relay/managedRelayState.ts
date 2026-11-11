@@ -334,7 +334,9 @@ export function createManagedRelayQueryManager(
           const relay = yield* ManagedRelay.ManagedRelayClient;
           return yield* observe(
             { ...base, stage: "relay-request" },
-            relay.listEnvironments({ clerkToken }),
+            relay
+              .listEnvironments({ clerkToken })
+              .pipe(Effect.map((response) => response.environments)),
           );
         }).pipe(logListingFailure("environment")),
       )

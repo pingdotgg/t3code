@@ -3,24 +3,39 @@ import * as NodeHttp from "node:http";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
+import { EnvironmentId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { makeCli } from "../binCli.ts";
+import * as CliState from "../cloud/CliState.ts";
+import * as CliTokenManager from "../cloud/CliTokenManager.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { acquireRelayClientForLink } from "./connect.ts";
+import {
+  acquireRelayClientForLink,
+  disconnectCloud,
+  linkEnvironmentForConnect,
+  withConnectCliLock,
+} from "./connect.ts";
 
 const managedExecutable = {
   status: "available",
@@ -161,4 +176,118 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       }),
     );
   },
+);
+
+it.effect("preserves publish-only intent when beta enrollment is refused", () =>
+  Effect.gen(function* () {
+    const result = yield* linkEnvironmentForConnect({ headless: true, beta: true }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ServerSecretStore.ServerSecretStore, {
+            get: (name) =>
+              Effect.succeed(
+                name === CliState.CLOUD_CLI_DESIRED_LINK_SECRET
+                  ? Option.some(new TextEncoder().encode("publish_only"))
+                  : Option.none(),
+              ),
+          }),
+          Layer.mock(RelayClient.RelayClient, {}),
+          Layer.mock(CliTokenManager.CloudCliTokenManager, {}),
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("unexpected network request")),
+          ),
+          Layer.succeed(HostProcess.Environment, {}),
+          NodeServices.layer,
+        ),
+      ),
+      Effect.flip,
+    );
+    assert.isTrue(result._tag === "UserError" && result.userMessage?.includes("unlink") === true);
+  }),
+);
+
+it.effect(
+  "retries unlink on the relay that received beta enrollment after the configured relay changes",
+  () => {
+    const deleted: string[] = [];
+    const attemptId = "b7a4ec52-819c-409a-b377-680565691bf8";
+    return Effect.gen(function* () {
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      yield* secrets.set(
+        CliState.CLOUD_CLI_BETA_ENROLLMENT_RELAY,
+        new TextEncoder().encode(
+          JSON.stringify({ relayUrl: "https://owner.example.test", attemptId, owner: "user" }),
+        ),
+      );
+      yield* disconnectCloud({ clearAuthorization: false });
+      assert.isTrue(Option.isSome(yield* secrets.get(CliState.CLOUD_CLI_BETA_ENROLLMENT_RELAY)));
+      yield* disconnectCloud({ clearAuthorization: false });
+      assert.isTrue(Option.isNone(yield* secrets.get(CliState.CLOUD_CLI_BETA_ENROLLMENT_RELAY)));
+      assert.deepEqual(
+        deleted,
+        Array(2).fill("https://owner.example.test/v1/client/environment-links/env-1"),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSecretStore.layer,
+          Layer.mock(EnvironmentAuth.EnvironmentAuth, {}),
+          Layer.mock(ServerEnvironment.ServerEnvironmentIdentity, {
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("env-1")),
+          }),
+          Layer.mock(CliTokenManager.CloudCliTokenManager, {
+            getExisting: Effect.succeedSome({
+              accessToken: "fixture",
+              refreshToken: "fixture",
+              expiresAtEpochMs: 1,
+            }),
+          }),
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.sync(() => {
+                assert.equal(request.headers["x-t3-beta-enrollment-id"], attemptId);
+                assert.equal(request.headers["x-t3-beta-enrollment-owner"], "user");
+                deleted.push(request.url);
+                return HttpClientResponse.fromWeb(
+                  request,
+                  deleted.length === 1
+                    ? new Response(null, { status: 503 })
+                    : Response.json({ ok: true }),
+                );
+              }),
+            ),
+          ),
+        ).pipe(
+          Layer.provideMerge(ServerConfig.layerTest("/", { prefix: "t3-cli-beta-unlink-" })),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          Layer.provideMerge(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { T3CODE_RELAY_URL: "https://wrong.example.test" } }),
+            ),
+          ),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect("another Connect change cannot remove an enrollment while unlink is in flight", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-exclusive-" });
+    const file = path.join(dir, "connect-cli.sqlite");
+    yield* withConnectCliLock(
+      file,
+      Effect.gen(function* () {
+        const collision = yield* Effect.flip(
+          withConnectCliLock(file, Effect.die("overlapping link change ran")),
+        );
+        assert.include(collision.userMessage ?? "", "already changing");
+      }),
+    );
+    yield* withConnectCliLock(file, Effect.void);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

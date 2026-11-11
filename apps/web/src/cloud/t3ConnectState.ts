@@ -10,11 +10,7 @@ export function isManagedTunnelActive(
   relayProviderKind: RelayManagedEndpointProviderKind | undefined,
 ) {
   const localManagedTunnel = linkState.managedTunnelActive ?? linkState.linked;
-  return (
-    linkState.linkRevoked !== true &&
-    localManagedTunnel &&
-    (relayProviderKind === undefined || relayProviderKind === "cloudflare_tunnel")
-  );
+  return linkState.linkRevoked !== true && localManagedTunnel && relayProviderKind !== "manual";
 }
 
 // The URL ends up in commands people paste into a shell, so only plain DNS names pass.
@@ -32,7 +28,7 @@ export function t3ConnectMcpUrl(input: {
 }): string | null {
   const url = input.thisMachine
     ? URL.parse(`https://${input.tunnelHostname ?? ""}`)
-    : input.relayEndpoint?.providerKind === "cloudflare_tunnel"
+    : input.relayEndpoint !== undefined && input.relayEndpoint.providerKind !== "manual"
       ? URL.parse(input.relayEndpoint.httpBaseUrl)
       : null;
   return url?.protocol === "https:" && TUNNEL_HOSTNAME.test(url.hostname)

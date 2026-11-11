@@ -26,7 +26,11 @@ import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
-import { readCloudLinkState, unlinkEnvironmentFromCloud } from "./linkEnvironment";
+import {
+  linkEnvironmentToCloud,
+  readCloudLinkState,
+  unlinkEnvironmentFromCloud,
+} from "./linkEnvironment";
 
 const TARGET = {
   environmentId: "environment-1",
@@ -238,6 +242,65 @@ describe("web cloud link environment client", () => {
         expect(request.headers.get("authorization")).toBe(`Bearer ${token}`);
       }
     }),
+  );
+
+  it.effect.each([true, false])(
+    "unlinks a link it replaces only after the environment signs the proof (signed: %s)",
+    (signed) =>
+      Effect.gen(function* () {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+          const { pathname } = new URL(String(input));
+          if (pathname === "/v1/client/environment-link-challenges")
+            return Response.json({ challenge: "challenge", expiresAt: "2026-11-08T13:00:00.000Z" });
+          if (pathname === "/api/connect/link-proof")
+            return signed ? Response.json("signed-proof") : new Response(null, { status: 400 });
+          if (pathname === "/v1/client/environment-links")
+            return Response.json({
+              ok: true,
+              cloudUserId: "user-1",
+              environmentId: TARGET.environmentId,
+              endpoint: {
+                httpBaseUrl: `${TARGET.httpBaseUrl}/`,
+                wsBaseUrl: `${TARGET.wsBaseUrl}/ws`,
+                providerKind: "manual",
+              },
+              endpointRuntime: null,
+              relayIssuer: "https://relay.example.test",
+              environmentCredential: "credential",
+              cloudMintPublicKey: "mint-key",
+            });
+          return Response.json({ ok: true, endpointRuntimeStatus: null });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+        vi.stubGlobal("window", {
+          location: { origin: "t3code://app" },
+          desktopBridge: {
+            getLocalEnvironmentBearerToken: vi.fn().mockResolvedValue("desktop-bearer-token"),
+          } as unknown as DesktopBridge,
+        });
+
+        yield* withServices(
+          linkEnvironmentToCloud({
+            target: { environmentId: EnvironmentId.make(TARGET.environmentId) },
+            clerkToken: "clerk-token",
+            mode: "publish_only",
+            replaceLink: true,
+          }),
+        ).pipe(Effect.exit);
+
+        expect(fetchMock.mock.calls.map(([input]) => new URL(String(input)).pathname)).toEqual([
+          "/v1/client/environment-link-challenges",
+          "/api/connect/link-proof",
+          ...(signed
+            ? [
+                "/api/connect/unlink",
+                "/v1/client/environment-links/environment-1",
+                "/v1/client/environment-links",
+                "/api/connect/relay-config",
+              ]
+            : []),
+        ]);
+      }),
   );
 
   it.effect("reports why the relay kept the environment after a local unlink", () =>

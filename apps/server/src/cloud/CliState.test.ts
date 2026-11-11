@@ -111,6 +111,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CliState", (it) 
 
       yield* CliState.setCliDesiredCloudLink(false);
       assert.equal(yield* CliState.readCliDesiredLinkMode, "managed");
+
+      yield* CliState.setCliDesiredBetaLink();
+      assert.isTrue(yield* CliState.readCliDesiredCloudLink);
+      assert.equal(yield* CliState.readCliDesiredLinkMode, "beta");
+      assert.isTrue(Option.isNone(yield* secrets.get(CliState.CLOUD_CLI_DESIRED_LINK_SECRET)));
+      yield* CliState.clearPersistedCloudLink;
+      assert.isFalse(yield* CliState.readCliDesiredCloudLink);
     }).pipe(Effect.provide(layerTest())),
   );
 });
