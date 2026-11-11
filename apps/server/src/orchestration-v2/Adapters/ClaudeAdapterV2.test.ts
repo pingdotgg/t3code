@@ -3943,9 +3943,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { lesson: true, combined: false, expected: ["reasoning", "assistant_message"] },
     { lesson: true, combined: true, expected: ["reasoning", "assistant_message"] },
     { lesson: false, combined: false, expected: ["assistant_message", "assistant_message"] },
+    { lesson: true, combined: false, toolSearch: true, expected: ["assistant_message"] },
   ] as const)(
     "lesson filters short pre-Read text but keeps final answers (combined $combined)",
-    ({ lesson, combined, expected }) =>
+    ({ lesson, combined, toolSearch, expected }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         yield* harness.runtime.startTurn(
@@ -3980,10 +3981,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   { type: "text", text: "I'll check the run code before teaching it." },
                 ]),
                 snapshot("read-tool", [
-                  { type: "tool_use", id: "read-1", name: "Read", input: {} },
+                  {
+                    type: "tool_use",
+                    id: "read-1",
+                    name: toolSearch === true ? "ToolSearch" : "Read",
+                    input: {},
+                  },
                 ]),
+                ...(toolSearch === true
+                  ? [
+                      snapshot("read-preview", [
+                        {
+                          type: "tool_use",
+                          id: "preview-1",
+                          name: "mcp__t3-code__html_preview",
+                          input: {},
+                        },
+                      ]),
+                    ]
+                  : []),
               ]),
-          snapshot("read-final", [{ type: "text", text: "The run code confirms it." }]),
+          ...(toolSearch === true
+            ? []
+            : [snapshot("read-final", [{ type: "text", text: "The run code confirms it." }])]),
           makeResultFrame({ uuid: "read-result", result: "" }),
         ]) {
           yield* Queue.offer(harness.sdkMessages, frame);

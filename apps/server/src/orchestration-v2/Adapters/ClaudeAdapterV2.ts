@@ -8032,6 +8032,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           context: ActiveClaudeTurnContext,
           block: { readonly name: string; readonly input: unknown },
         ) {
+          // ToolSearch only loads the next tool; keep lesson text held until that tool decides.
+          if (
+            isLessonTurn(context.input) &&
+            context.assistant.heldText.length > 0 &&
+            /ToolSearch$/u.test(block.name)
+          )
+            return;
           if (!isLessonTurn(context.input) || context.assistant.heldText.length === 0) {
             yield* flushHeldAssistantText(context);
             return;
