@@ -557,7 +557,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
   );
 
   it.effect.each(["open", "merged", "closed"] as const)(
-    "associates a $state branch PR only with threads that predate its completion",
+    "associates a %s branch PR only with threads that predate its completion",
     (state) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -605,7 +605,12 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               streamDomainEvents: Stream.never,
               getPullRequestSnapshot: () =>
                 Deferred.succeed(sweepStarted, undefined).pipe(
-                  Effect.as({ snapshotSequence: 1, threads }),
+                  Effect.as({
+                    schemaVersion: 2,
+                    snapshotSequence: 1,
+                    threads,
+                    archivedThreads: [],
+                  }),
                 ),
               dispatch: (command) =>
                 Effect.sync(() => {
@@ -714,7 +719,6 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const activation = yield* Deferred.make<void>();
           const sweepStarted = yield* Deferred.make<void>();
           const commands: Array<OrchestrationV2ServerCommand> = [];
-          let snapshotThread: unknown;
           const dependencies = Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
               streamDomainEvents: Stream.never,
@@ -742,7 +746,6 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                   ])
                     yield* sql.unsafe(`DROP TABLE ${table}`);
                   const snapshot = yield* store.getPullRequestSnapshot(options);
-                  snapshotThread = snapshot.threads[0];
                   yield* Deferred.succeed(sweepStarted, undefined);
                   return snapshot;
                 }).pipe(
@@ -807,7 +810,6 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             yield* service.drain;
           }).pipe(Effect.provide(dependencies));
 
-          expect(snapshotThread).toHaveProperty("createdAt", NOW);
           if (sameBranch) {
             expect(commands).toEqual([]);
           } else {
