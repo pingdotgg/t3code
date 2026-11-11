@@ -34,7 +34,8 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
     row.projectedItem?.item.id,
   );
   const text = liveText ?? row.message.text;
-  const messageText = text || (row.message.streaming ? "" : "(empty response)");
+  const messageText =
+    text || (row.message.streaming || row.suppressEmptyResponse ? "" : "(empty response)");
   const visualizationParts = splitInlineVisualizations(messageText);
   const hasInlineVisualization = visualizationParts.some((part) => part.kind === "visualization");
   const lineBreaks = shouldPreserveAssistantLineBreaks(messageText);

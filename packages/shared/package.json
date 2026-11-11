@@ -7,6 +7,10 @@
       "types": "./src/munimComputerUse.ts",
       "import": "./src/munimComputerUse.ts"
     },
+    "./pullRequestAnchor": {
+      "types": "./src/pullRequestAnchor.ts",
+      "import": "./src/pullRequestAnchor.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
