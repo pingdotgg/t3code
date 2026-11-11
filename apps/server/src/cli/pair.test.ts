@@ -635,26 +635,38 @@ describe("auth session list", () => {
     }).pipe(Effect.provide(layerCliRuntime)),
   );
 
-  it.effect("explains on stderr when the running server cannot be reached", () =>
+  it.effect("still lists sessions, with a warning, when the running server cannot be reached", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(
         NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-unreachable-test-"),
       );
       const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
+      // A live server without the clients endpoint (an older release) fails the same way.
       yield* persistServerRuntimeState({
         path: config.serverRuntimeStatePath,
         state: { ...baseState, pid: process.pid, origin: "http://127.0.0.1:1" },
       });
+      const issued = JSON.parse(
+        yield* captureStdout(runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"])),
+      ) as { readonly sessionId: string };
 
-      const stderr = yield* provideCliTestLayers(
+      const { stdout, stderr } = yield* provideCliTestLayers(
         Effect.gen(function* () {
-          yield* Effect.flip(runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]));
-          return yield* TestConsole.errorLines;
+          yield* runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]);
+          return {
+            stdout: yield* TestConsole.logLines,
+            stderr: yield* TestConsole.errorLines,
+          };
         }),
       );
 
+      const listed = JSON.parse(String(stdout.at(-1))) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly connected: boolean;
+      }>;
+      assert.isFalse(listed.find((entry) => entry.sessionId === issued.sessionId)?.connected);
       expect(stderr).toContain(
-        "Could not ask the T3 Code server at http://127.0.0.1:1 which sessions are connected.",
+        "Could not ask the T3 Code server at http://127.0.0.1:1 which sessions are connected; listing every session as disconnected.",
       );
     }).pipe(Effect.provide(layerCliRuntime)),
   );

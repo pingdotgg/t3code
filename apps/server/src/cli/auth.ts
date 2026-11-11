@@ -14,7 +14,6 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
-import * as Runtime from "effect/Runtime";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
@@ -38,9 +37,8 @@ class AuthServerUnreachableError extends Schema.TaggedError<AuthServerUnreachabl
   "AuthServerUnreachableError",
   { origin: Schema.String, cause: Schema.Defect() },
 ) {
-  override readonly [Runtime.errorReported] = false;
   override get message(): string {
-    return `Could not ask the T3 Code server at ${this.origin} which sessions are connected.`;
+    return `Could not ask the T3 Code server at ${this.origin} which sessions are connected; listing every session as disconnected.`;
   }
 }
 
@@ -271,8 +269,11 @@ const sessionListCommand = Command.make("list", {
       (environmentAuth) =>
         Effect.gen(function* () {
           const connected = yield* connectedSessionIds(environmentAuth).pipe(
-            // Runtime.errorReported is off, so this line is the whole report.
-            Effect.tapError((error) => Console.error(error.message)),
+            // Servers older than the clients endpoint answer 404; still list the sessions.
+            Effect.catchTags({
+              AuthServerUnreachableError: (error) =>
+                Console.error(error.message).pipe(Effect.as(new Set<AuthSessionId>())),
+            }),
           );
           const sessions = yield* environmentAuth.listSessions();
           yield* Console.log(
