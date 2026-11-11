@@ -134,6 +134,7 @@ export const CourseReferenceFetchTool = Tool.make("course_reference_fetch", {
   parameters: Schema.Struct({
     url: Schema.String,
     pages: Schema.optional(Schema.Array(Schema.Int)),
+    courseId: Schema.optional(CourseId),
   }),
   success: Schema.Unknown,
   failure: OrchestratorMcpFailure,

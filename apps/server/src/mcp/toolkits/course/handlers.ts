@@ -69,6 +69,7 @@ const courseReferenceFetchHandler = McpToolAccess.readsAsCaller(
       return yield* fetchCourseReference({
         url: input.url,
         ...(input.pages === undefined ? {} : { pages: input.pages }),
+        courseId: input.courseId,
         audit: {
           stateDir: config.stateDir,
           threadId: thread.threadId,

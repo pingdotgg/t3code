@@ -219,6 +219,7 @@ const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<number>) =
 export const fetchCourseReference = Effect.fn("course.fetchReference")(function* (input: {
   readonly url: string;
   readonly pages?: ReadonlyArray<number>;
+  readonly courseId?: string | null;
   readonly fetchImpl?: typeof fetch;
   readonly lookup?: typeof NodeDnsPromises.lookup;
   readonly audit?: DownloadAuditContext;
