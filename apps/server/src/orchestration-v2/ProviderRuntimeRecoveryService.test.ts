@@ -770,6 +770,8 @@ it.effect(
       assert.equal(summary.terminalizedRuns, 1);
       assert.equal(summary.stoppedSessions, 1);
       assert.equal(summary.retiredEffects, 2);
+      // A starting run without a restart continuation is not a resume candidate.
+      assert.deepEqual(summary.restoreCheck, { total: 0, ready: 0, notReady: 0, threads: [] });
       assert.deepEqual(committedInput?.cancelUnsettledEffects?.effectTypes, [
         "provider-session.apply-model-selection",
         "provider-turn.start",

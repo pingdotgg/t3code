@@ -3,7 +3,6 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   isOrchestrationV2WorkActive,
-  latestProviderTurnForAttempt,
   MessageId,
   type OrchestrationV2Run,
   type RunId,
@@ -11,176 +10,27 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
-  awaitingProviderThreadId,
-  cancelledRosterTaskWork,
-  cancelledTurnItemWork,
   continuationFailedBeforePrompt,
-  isAwaitedWork,
   isRestartContinuationSource,
   cancelledBeforeStart,
   isRestartNoteSource,
-  neverStarted,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
+import { logRestartRestoreOutcome, restartContinuationBlocked } from "./RestartRestoreCheck.ts";
+
+export { restartContinuationRun } from "./RestartRestoreCheck.ts";
 
 const CONTINUE_PROMPT =
   "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.";
 
 const MAX_CONTINUATION_CHAIN = 3;
 const CONTINUATION_LOOP_WINDOW_MS = 5 * 60 * 1_000;
-
-function restartContinuationBlocked(
-  projection: Pick<
-    ProjectionRuntimeRecoveryState,
-    "thread" | "runtimeRequests" | "providerTurns" | "turnItems"
-  >,
-  source: OrchestrationV2Run,
-  now: DateTime.Utc,
-  settled: boolean,
-): boolean {
-  const { thread } = projection;
-  if (
-    thread.archivedAt !== null ||
-    thread.deletedAt !== null ||
-    thread.settledOverride === "settled" ||
-    (thread.snoozedUntil != null && DateTime.isGreaterThan(thread.snoozedUntil, now))
-  )
-    return true;
-  const turn = latestProviderTurnForAttempt(projection.providerTurns, source.activeAttemptId);
-  if (
-    !settled &&
-    turn !== undefined &&
-    (turn.status === "completed" || turn.status === "failed" || turn.status === "interrupted")
-  )
-    return true;
-  const waitingRequest = projection.runtimeRequests.some(
-    (request) =>
-      request.kind !== "dynamic_tool_call" &&
-      request.kind !== "auth_refresh" &&
-      request.responseCapability.type !== "message" &&
-      (request.status === "pending" ||
-        ((request.status === "expired" || request.status === "cancelled") &&
-          request.responseCapability.type === "not_resumable" &&
-          turn !== undefined &&
-          turn.id === request.providerTurnId)),
-  );
-  if (waitingRequest) return true;
-  return projection.turnItems.some(
-    (item) =>
-      item.type === "secret_request" &&
-      item.runId === source.id &&
-      (item.secretStatus === "pending" ||
-        (item.secretStatus === "cancelled" &&
-          item.completedAt !== null &&
-          source.completedAt !== null &&
-          DateTime.Equivalence(item.completedAt, source.completedAt))),
-  );
-}
-
-/** App-owned delegations continue in their own threads and report back. */
-function hasOpenAwaitedWork(
-  projection: Pick<ProjectionRuntimeRecoveryState, "runs" | "turnItems">,
-  providerThread: ProjectionRuntimeRecoveryState["providerThreads"][number],
-): boolean {
-  const openItem = projection.turnItems.some((item) => {
-    if (item.status !== "pending" && item.status !== "running" && item.status !== "waiting")
-      return false;
-    if (item.type === "subagent" && item.origin === "app_owned" && item.childThreadId !== null)
-      return false;
-    const work = cancelledTurnItemWork(item);
-    return (
-      work !== undefined &&
-      isAwaitedWork(work) &&
-      awaitingProviderThreadId(item, projection.runs) === providerThread.id
-    );
-  });
-  return (
-    openItem ||
-    (providerThread.ownerNodeId === null &&
-      (providerThread.pendingBackgroundTasks ?? []).some((task) =>
-        isAwaitedWork(cancelledRosterTaskWork(task)),
-      ))
-  );
-}
-
-/** Settled runs require a live session so stale crash records cannot wake them. */
-export function restartContinuationRun(
-  projection: Pick<
-    ProjectionRuntimeRecoveryState,
-    | "thread"
-    | "runs"
-    | "providerThreads"
-    | "providerSessions"
-    | "providerTurns"
-    | "runtimeRequests"
-    | "turnItems"
-  >,
-  now: DateTime.Utc,
-): OrchestrationV2Run | undefined {
-  const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
-    (latest, candidate) =>
-      candidate.status !== "queued" &&
-      !neverStarted(candidate) &&
-      (!latest || runRanAfter(candidate, latest))
-        ? candidate
-        : latest,
-    undefined,
-  );
-  if (!run) return;
-  const preparedContinuation =
-    run.status === "starting" && run.restartContinuationOfRunId !== undefined;
-  const settled = run.status === "completed" || run.status === "waiting";
-  if (run.status !== "running" && !preparedContinuation && !settled) return;
-  if (restartContinuationBlocked(projection, run, now, settled)) return;
-  const liveTurnRequired = !preparedContinuation && !settled;
-  if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
-  const providerThread = projection.providerThreads.find(
-    (thread) => thread.id === run.providerThreadId,
-  );
-  if (
-    !providerThread ||
-    providerThread.appThreadId !== projection.thread.id ||
-    providerThread.ownerNodeId !== null ||
-    providerThread.providerInstanceId !== run.providerInstanceId ||
-    providerThread.nativeThreadRef?.nativeId == null ||
-    providerThread.nativeThreadRef.strength !== "strong" ||
-    providerThread.nativeThreadRef.driver !== providerThread.driver ||
-    (liveTurnRequired && providerThread.status !== "active") ||
-    providerThread.status === "closed" ||
-    providerThread.status === "archived"
-  )
-    return;
-  const session = projection.providerSessions.find(
-    (candidate) => candidate.id === providerThread.providerSessionId,
-  );
-  // Adapters remain ready during turns; only stopped or failed sessions rule out liveness.
-  if (
-    session === undefined ||
-    session.providerInstanceId !== run.providerInstanceId ||
-    session.driver !== providerThread.driver ||
-    (!preparedContinuation && (session.status === "stopped" || session.status === "error"))
-  )
-    return;
-  if (settled) return hasOpenAwaitedWork(projection, providerThread) ? run : undefined;
-  if (
-    liveTurnRequired &&
-    !projection.providerTurns.some(
-      (turn) =>
-        turn.providerThreadId === providerThread.id &&
-        turn.runAttemptId === run.activeAttemptId &&
-        turn.status === "running",
-    )
-  )
-    return;
-  return run;
-}
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
   function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
@@ -315,9 +165,10 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         notification: {
           source: { kind: "system" },
           outcome: "updated",
+          // Do not claim "resumed" here; native resume vs fresh is decided when the turn starts.
           summary: note.settled
             ? "T3 Code restarted and stopped background work"
-            : "T3 Code restarted and resumed this turn",
+            : "T3 Code restarted; continuing this turn",
           detail: text,
         },
         attachments: [],
@@ -337,12 +188,32 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
               sourceRunId: input.sourceRunId,
               projectId: error.projectId,
               instanceId: error.instanceId,
-            }),
+            }).pipe(
+              Effect.andThen(
+                logRestartRestoreOutcome({
+                  threadId: input.threadId,
+                  runId: input.sourceRunId,
+                  sourceRunId: input.sourceRunId,
+                  outcome: "failed",
+                  reason: "provider_instance_disabled",
+                }),
+              ),
+            ),
           OrchestratorRuntimeModeAboveCeilingError: () =>
             Effect.logInfo("orchestration-v2.restart-continuation.above-ceiling", {
               threadId: input.threadId,
               sourceRunId: input.sourceRunId,
-            }),
+            }).pipe(
+              Effect.andThen(
+                logRestartRestoreOutcome({
+                  threadId: input.threadId,
+                  runId: input.sourceRunId,
+                  sourceRunId: input.sourceRunId,
+                  outcome: "failed",
+                  reason: "runtime_mode_above_ceiling",
+                }),
+              ),
+            ),
         }),
       );
   },

@@ -66,6 +66,7 @@ it.effect.each([
         closedRequests: 0,
         retiredEffects: 0,
         requeuedEffects: 0,
+        restoreCheck: { total: 0, ready: 0, notReady: 0, threads: [] },
       };
       const imports = { importedThreadCount: 0, importedMessageCount: 0 };
       const dependencies = Layer.mergeAll(

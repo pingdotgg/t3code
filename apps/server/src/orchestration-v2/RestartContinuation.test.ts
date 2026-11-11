@@ -234,6 +234,8 @@ it.effect.each(["completed", "waiting", "cancelled"] as const)(
       assert.equal(command.restartContinuationOfRunId, runId);
       assert.include(command.text, "- monitor: Watch CI run 42");
       assert.include(command.text, "- shell: vp run dev");
+      assert.equal(command.notification?.summary, "T3 Code restarted and stopped background work");
+      assert.notInclude(command.notification?.summary ?? "", "resumed");
     }),
 );
 
@@ -281,19 +283,26 @@ it.effect.each([
           ),
         ),
       );
-      yield* recovery.reconcile("startup");
+      const summary = yield* recovery.reconcile("startup");
       assert.isDefined(committed);
       assert.isTrue(
         committed!.events.some(
           (event) => event.type === "run.updated" && event.payload.status === "cancelled",
         ),
       );
-      assert.lengthOf(committed!.effects, (projectOverride ?? enabled) ? 1 : 0);
-      if (projectOverride ?? enabled)
+      const wouldContinue = (projectOverride ?? enabled) === true;
+      assert.lengthOf(committed!.effects, wouldContinue ? 1 : 0);
+      if (wouldContinue)
         assert.deepEqual(committed!.effects[0]?.request, {
           type: "provider-runtime.continue",
           sourceRunId: runId,
         });
+      assert.equal(summary.restoreCheck.total, 1);
+      assert.equal(summary.restoreCheck.ready, wouldContinue ? 1 : 0);
+      assert.equal(summary.restoreCheck.notReady, wouldContinue ? 0 : 1);
+      assert.equal(summary.restoreCheck.threads[0]?.status, wouldContinue ? "ready" : "not_ready");
+      if (!wouldContinue)
+        assert.equal(summary.restoreCheck.threads[0]?.reason, "continuation_disabled");
     }),
 );
 

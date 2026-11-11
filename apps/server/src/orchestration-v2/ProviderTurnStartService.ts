@@ -63,6 +63,7 @@ import {
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
+import { logRestartRestoreOutcome } from "./RestartRestoreCheck.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
@@ -537,6 +538,15 @@ export const layer: Layer.Layer<
           readonly error: Error;
           readonly message?: string;
         }) {
+          if (run.restartContinuationOfRunId !== undefined) {
+            yield* logRestartRestoreOutcome({
+              threadId: projection.thread.id,
+              runId: run.id,
+              sourceRunId: run.restartContinuationOfRunId,
+              outcome: "failed",
+              reason: failed.signal,
+            });
+          }
           yield* settleRunBeforeStart({
             signal: failed.signal,
             status: "failed",
@@ -1468,7 +1478,10 @@ export const layer: Layer.Layer<
             placement: "run_start",
           }),
           status: "completed",
-          title: "Recovered context",
+          title:
+            run.restartContinuationOfRunId !== undefined
+              ? "Started a fresh provider session"
+              : "Recovered context",
           startedAt: createdAt,
           completedAt: createdAt,
           updatedAt: createdAt,
@@ -1528,6 +1541,20 @@ export const layer: Layer.Layer<
       if (loadedProviderThread === undefined) return;
       if (!(yield* isCurrentAttemptInStatus("starting"))) {
         return;
+      }
+      if (run.restartContinuationOfRunId !== undefined) {
+        const hadNativeRef = providerThread.nativeThreadRef?.nativeId != null;
+        yield* logRestartRestoreOutcome({
+          threadId: projection.thread.id,
+          runId: run.id,
+          sourceRunId: run.restartContinuationOfRunId,
+          outcome: resumeFellBack || !hadNativeRef ? "fresh" : "resumed",
+          ...(resumeFellBack
+            ? { reason: "resume_fallback" }
+            : hadNativeRef
+              ? {}
+              : { reason: "no_native_thread_ref" }),
+        });
       }
       const now = yield* DateTime.now;
       const handoffContext = resumedHandoffContext ?? handoffContextForThread(loadedProviderThread);

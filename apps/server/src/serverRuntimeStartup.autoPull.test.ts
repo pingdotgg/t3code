@@ -68,6 +68,7 @@ it.effect("parks automatic pull until activation without delaying command readin
         closedRequests: 0,
         retiredEffects: 0,
         requeuedEffects: 0,
+        restoreCheck: { total: 0, ready: 0, notReady: 0, threads: [] },
       };
       const importSummary = { importedThreadCount: 0, importedMessageCount: 0 };
       const dependencies: Layer.Layer<
