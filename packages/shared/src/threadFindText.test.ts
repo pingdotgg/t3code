@@ -110,10 +110,11 @@ it("indexes a citation by its comment, not its quote or link text", () => {
   };
   const text = `Please fix ${serializeAssistantCitation(citation)} thanks`;
   expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([
-    "Please fix  thanks",
+    "Please fix ",
+    " thanks",
   ]);
   const commented = serializeAssistantCitation({ ...citation, comment: "my\nnote" });
-  expect(searchableMessageSegments({ role: "user", text: commented, streaming: false })).toEqual([
-    "my note",
-  ]);
+  expect(
+    searchableMessageSegments({ role: "user", text: `fix ${commented} thanks`, streaming: false }),
+  ).toEqual(["fix ", "my note thanks"]);
 });

@@ -2651,9 +2651,9 @@ function visibleUserMessageText(text: string): string {
   let visible = "";
   let cursor = 0;
   for (const match of collectAssistantCitations(text)) {
-    // A quote shows as a two-line card with its comment under it.
+    // A quote shows as a two-line card, counted here as a mark, with its comment under it.
     visible += linkLabels(text.slice(cursor, match.start));
-    visible += "\n\n" + (match.citation.comment ?? "") + "\n";
+    visible += "\n\u275D\n" + (match.citation.comment ?? "") + "\n";
     cursor = match.end;
   }
   return visible + linkLabels(text.slice(cursor));
