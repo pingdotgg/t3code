@@ -8,9 +8,7 @@ import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 const repoEnv = loadRepoEnv();
 
-// The packaged app then installs just those externals, instead of a full
-// production install of apps/desktop's dependency tree next to a server bundle
-// that already carries its own copy of the same libraries.
+// Install only bundle externals; the server bundle already carries its dependency tree.
 const isMainProcessExternal = (id: string) =>
   id === "electron" || id.startsWith("electron/") || isDesktopRuntimeExternalDependency(id);
 const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
@@ -36,6 +34,12 @@ export default defineConfig({
         dependsOn: ["t3#build"],
         cache: false,
       },
+      // CI bundle jobs skip the Linux browser secret helper; packaging stages one per arch.
+      "build:bundle": {
+        command: "node scripts/build-preview-annotation-css.mjs && vp pack",
+        dependsOn: ["t3#build"],
+        cache: false,
+      },
       dev: {
         command:
           "node scripts/build-browser-secret.mjs && node scripts/build-preview-annotation-css.mjs && cross-env T3CODE_DESKTOP_DEV=1 vp pack --watch",
@@ -52,9 +56,9 @@ export default defineConfig({
         dependsOn: ["t3#build"],
         cache: false,
       },
-      // tsc (tsc-rs) rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+      // A local tsbuildinfo is leftover build state, not a typecheck input.
       typecheck: {
-        command: "tsc --noEmit",
+        command: "effect-tsgo tsrs --noEmit",
         cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
       },
     },
@@ -104,7 +108,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      entry: ["src/boot.ts", "src/compileCache.ts"],
+      entry: ["src/boot.ts", "src/compileCache.ts", "src/serverCompileCache.ts"],
       clean: false,
       deps: {
         neverBundle: (id) => id === "./main.cjs" || id === "./compileCache.cjs",
@@ -119,9 +123,7 @@ export default defineConfig({
       define: publicConfigDefine,
       entry: ["src/preload.ts"],
       deps: {
-        // Sandboxed Electron preloads cannot reliably resolve package imports
-        // from inside the packaged ASAR. Bundle Clerk's preload bridge into the
-        // preload artifact instead of leaving a runtime require() behind.
+        // Sandboxed preloads cannot resolve imports inside ASAR; bundle Clerk's bridge.
         alwaysBundle: (id) => id === "@clerk/electron" || id.startsWith("@clerk/electron/"),
       },
     },
@@ -133,7 +135,10 @@ export default defineConfig({
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/preview-pick-preload.ts"],
       deps: {
-        alwaysBundle: (id) => id === "react-grab" || id.startsWith("react-grab/"),
+        alwaysBundle: (id) =>
+          id === "react-grab" ||
+          id.startsWith("react-grab/") ||
+          id === "@t3tools/shared/keybindingMatching",
       },
     },
     {
