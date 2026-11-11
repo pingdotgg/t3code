@@ -1670,35 +1670,33 @@ it.effect("dispatch records the command outcome and its duration", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-// A file database serves projection reads from a reader worker, so the
-// subagent-lineage read a user dispatch makes before taking the thread lock
-// can yield. These gates hold that read open deterministically instead.
-const lineageReadEntered = Deferred.makeUnsafe<void>();
-const lineageReadRelease = Deferred.makeUnsafe<void>();
-let gatedLineageThreadId: ThreadId | undefined;
-const layerGatedLineageRead = ProviderReplayHarness.layerWithRegistry(
-  { name: "dispatch-order" },
-  ProviderAdapterRegistry.layerFromAdapters([adapter]),
-  {
-    runEffectWorker: false,
-    wrapProjectionStore: (store) => ({
-      ...store,
-      getThread: (threadId) => {
-        if (threadId !== gatedLineageThreadId) return store.getThread(threadId);
-        gatedLineageThreadId = undefined;
-        return Deferred.succeed(lineageReadEntered, undefined).pipe(
-          Effect.andThen(Deferred.await(lineageReadRelease)),
-          Effect.andThen(store.getThread(threadId)),
-        );
-      },
-    }),
-  },
-);
-
-it.effect("a user message dispatched first stays run 1 when its lineage read is slow", () =>
-  Effect.gen(function* () {
+it.effect("a user message dispatched first stays run 1 when its lineage read is slow", () => {
+  const threadId = ThreadId.make("thread:dispatch-order");
+  // A file database serves projection reads from a reader worker, so the lineage read a user
+  // dispatch makes before taking the thread lock can yield. This gate holds it open instead.
+  const lineageReadEntered = Deferred.makeUnsafe<void>();
+  const lineageReadRelease = Deferred.makeUnsafe<void>();
+  let gateArmed = false;
+  const layerGatedLineageRead = ProviderReplayHarness.layerWithRegistry(
+    { name: "dispatch-order" },
+    ProviderAdapterRegistry.layerFromAdapters([adapter]),
+    {
+      runEffectWorker: false,
+      wrapProjectionStore: (store) => ({
+        ...store,
+        getThread: (id) => {
+          if (!gateArmed || id !== threadId) return store.getThread(id);
+          gateArmed = false;
+          return Deferred.succeed(lineageReadEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(lineageReadRelease)),
+            Effect.andThen(store.getThread(id)),
+          );
+        },
+      }),
+    },
+  );
+  return Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const threadId = ThreadId.make("thread:dispatch-order");
     yield* orchestrator.dispatch({
       type: "thread.create",
       commandId: CommandId.make("create-dispatch-order"),
@@ -1726,11 +1724,10 @@ it.effect("a user message dispatched first stays run 1 when its lineage read is 
         creationSource: createdBy === "user" ? "web" : "server",
       });
 
-    gatedLineageThreadId = threadId;
+    gateArmed = true;
     const user = yield* message("message:user-first", "user").pipe(Effect.forkChild);
     yield* Deferred.await(lineageReadEntered);
-    // Agent-queued messages skip the lineage read, as in queued_cancelled_while_active.
-    // Starting immediately lets it take any free thread lock before the read resumes.
+    // Agent messages skip the lineage read, so this one would take a free thread lock first.
     const agent = yield* message("message:agent-second", "agent").pipe(
       Effect.forkChild({ startImmediately: true }),
     );
@@ -1743,5 +1740,5 @@ it.effect("a user message dispatched first stays run 1 when its lineage read is 
       runs.toSorted((left, right) => left.ordinal - right.ordinal).map((run) => run.userMessageId),
       [MessageId.make("message:user-first"), MessageId.make("message:agent-second")],
     );
-  }).pipe(Effect.provide(layerGatedLineageRead)),
-);
+  }).pipe(Effect.provide(layerGatedLineageRead));
+});
