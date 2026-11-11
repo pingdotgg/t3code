@@ -257,6 +257,9 @@ export const layerExecutor: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 providerTurnId: effect.request.providerTurnId,
                 messageId: effect.request.messageId,
+                ...(effect.request.modelSelection === undefined
+                  ? {}
+                  : { modelSelection: effect.request.modelSelection }),
               })
               .pipe(
                 Effect.tap(() =>
@@ -523,8 +526,19 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          // Archive and delete queue this one per-thread teardown, so it also releases the
+          // thread's device claims; the devices stay booted for other threads.
           case "terminal.cleanup":
-            return resourceCleanup.cleanupTerminals(effect.threadId).pipe(
+            return Effect.partition(
+              [
+                resourceCleanup.cleanupTerminals(effect.threadId),
+                resourceCleanup.cleanupDevices(effect.threadId),
+              ],
+              (cleanup) => cleanup,
+            ).pipe(
+              Effect.flatMap(([, [failure]]) =>
+                failure === undefined ? Effect.void : Effect.fail(failure),
+              ),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({

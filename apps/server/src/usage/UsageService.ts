@@ -341,19 +341,29 @@ export const make = Effect.gen(function* () {
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
+    awaitRefresh: boolean,
   ) {
     const dirs: Array<TranscriptSource> = [];
-    const seen = new Map<string, TranscriptSource>();
+    const pending: Array<ScannedDir> = [];
+    // Null marks a directory still refreshing, which has no source yet.
+    const seen = new Map<string, TranscriptSource | null>();
     for (const { driver, reader } of transcriptReaders) {
       const { provider, format } = reader;
       const directories = yield* Effect.forEach(
         yield* usageInstances(driver, settings),
         (instance) =>
-          Effect.map(reader.directories(instance), (found) =>
+          Effect.map(reader.directories(instance, { awaitRefresh }), (found) =>
             found.map((entry) => ({ ...entry, instanceId: instance.instanceId })),
           ),
       );
-      for (const { dir: directory, fileName, instanceId } of directories.flat()) {
+      for (const { dir: directory, fileName, refreshing, instanceId } of directories.flat()) {
+        if (refreshing) {
+          const key = `${provider}\0${directory}`;
+          if (seen.has(key)) continue;
+          seen.set(key, null);
+          pending.push({ provider, dir: directory, volumeId: "", files: [], refreshing });
+          continue;
+        }
         const sourceKey = provider + "\0" + directory;
         const previous = sourceCache.get(sourceKey);
         const dir = yield* fileSystem
@@ -380,7 +390,7 @@ export const make = Effect.gen(function* () {
         const key = `${provider}\0${dir}`;
         const shared = seen.get(key);
         if (shared !== undefined) {
-          if (shared.instanceId !== instanceId) shared.instanceId = null;
+          if (shared !== null && shared.instanceId !== instanceId) shared.instanceId = null;
           continue;
         }
         const source: TranscriptSource = {
@@ -395,7 +405,7 @@ export const make = Effect.gen(function* () {
         dirs.push(source);
       }
     }
-    return dirs;
+    return { dirs, pending };
   });
 
   // Share first loads so concurrent readers cannot scan against a still-empty cache.
@@ -712,9 +722,11 @@ export const make = Effect.gen(function* () {
     retentionCutoffMs: number,
     awaitRefresh: boolean,
   ) {
-    const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
-      Effect.provideContext(readerContext),
-    );
+    const { dirs, pending } = yield* resolveTranscriptDirs(
+      settings,
+      retentionCutoffMs,
+      awaitRefresh,
+    ).pipe(Effect.provideContext(readerContext));
 
     const scans = Effect.forEach(
       scanReaders,
@@ -748,7 +760,7 @@ export const make = Effect.gen(function* () {
       [Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)), scans],
       { concurrency: "unbounded" },
     );
-    const scanned: readonly ScannedDir[] = [...transcripts, ...scanDirs.flat()];
+    const scanned: readonly ScannedDir[] = [...transcripts, ...pending, ...scanDirs.flat()];
     return scanned;
   });
 

@@ -611,6 +611,8 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       .map((tool) => `mcp__t3-code__${tool.name}`)
       .sort();
 
+    // regression: #32022 Claude Plan mode asks before every non-read-only MCP call
+    assert.include(readOnlyToolNames, "mcp__t3-code__t3_background_wait");
     assert.deepEqual(
       [...ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS].sort(),
       readOnlyToolNames,
@@ -6361,6 +6363,120 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // regression: #34549 a model change sent with a steer was shown but never applied to the turn.
+  it.effect("applies a model change sent with a steer to the running turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const opus = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "claude-opus-5-5",
+        } satisfies ModelSelection;
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-steer-model-change"),
+          text: "Run the slow build.",
+          attachments: [],
+          modelSelection: opus,
+        });
+        yield* harness.runtime.startTurn(input);
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${input.attemptId}`,
+          }),
+          modelSelection: { ...opus, model: "claude-sonnet-4-6" },
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("steer-model-change"),
+            text: "Which model are you?",
+            attachments: [],
+          },
+        });
+        assert.deepEqual(harness.liveSelectionChanges, [
+          { model: "claude-sonnet-4-6" },
+          { effortLevel: "high", fastMode: null, ultracode: null },
+        ]);
+        assert.lengthOf(harness.offeredMessages, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("fails a model-changing steer when the turn ends during the selection change", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let duringFlags: Effect.Effect<void> = Effect.void;
+        const harness = yield* makeWakeHarnessWithOptions({
+          applyFlagSettings: () => Effect.suspend(() => duringFlags),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const opus = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "claude-opus-5-5",
+        } satisfies ModelSelection;
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-steer-model-change-race"),
+          text: "Run the slow build.",
+          attachments: [],
+          modelSelection: opus,
+        });
+        yield* harness.runtime.startTurn(input);
+        duringFlags = harness
+          .offerAndWait(turnOneResult)
+          .pipe(Effect.andThen(Queue.take(harness.terminalReceipts)), Effect.asVoid);
+        const steer = yield* harness.runtime
+          .steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${input.attemptId}`,
+            }),
+            modelSelection: { ...opus, model: "claude-sonnet-4-6" },
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("steer-model-change-race"),
+              text: "Which model are you?",
+              attachments: [],
+            },
+          })
+          .pipe(Effect.result);
+        assert.equal(steer._tag, "Failure");
+        assert.lengthOf(harness.offeredMessages, 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("re-sends the model on the turn after a live selection change fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -6553,7 +6669,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   // regression: #15892 non-execution metadata is carried through, not guessed from result text
-  it.effect.each(["cancelled", "denied", "permission_denied", undefined])(
+  it.effect.each(["cancelled", "interrupted", "denied", "permission_denied", undefined])(
     "preserves native tool non-execution metadata %s without inferring a denial from text",
     (kind) =>
       Effect.scoped(
@@ -6608,7 +6724,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               : [],
           );
           const failed = items.findLast((item) => item.nativeItemRef?.nativeId === "tool-error")!;
-          assert.equal(failed.status, kind === "cancelled" ? "cancelled" : "failed");
+          assert.equal(
+            failed.status,
+            kind === "cancelled" || kind === "interrupted" ? kind : "failed",
+          );
           assert.equal(failed.toolNonExecutionKind, kind);
           const ok = items.findLast((item) => item.nativeItemRef?.nativeId === "tool-ok")!;
           assert.equal(ok.status, "completed");
@@ -6742,6 +6861,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           });
           assert.equal(harness.offeredMessages[1]?.priority, "now");
         }
+        const partialText = "The audit covers the `integ";
+        if (!queryExits)
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000000900",
+              text: partialText,
+            }),
+          );
         yield* harness.offerAndWait(
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000901",
@@ -6778,6 +6906,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           terminal.status,
           queryExits ? "failed" : steered ? "completed" : "interrupted",
         );
+        if (steered && !queryExits && terminalReason === "aborted_streaming") {
+          // The steer cut this reply off mid-stream; it must not read as a finished answer.
+          const partial = harness.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.text === partialText,
+          );
+          assert.equal(
+            partial?.type === "turn_item.updated" ? partial.turnItem.status : undefined,
+            "interrupted",
+          );
+        }
         if (steered) {
           if (!queryExits)
             assert.isTrue(
