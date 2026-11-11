@@ -3706,7 +3706,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("cancels a steer held for compaction when the turn is stopped", () =>
+  it.effect("sends a steer held for compaction before the turn is stopped", () =>
     Effect.gen(function* () {
       let offeredAtInterrupt: number | undefined;
       const harness = yield* makeWakeHarnessWithOptions({
@@ -3721,15 +3721,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         providerThread: harness.providerThread,
         providerTurnId: turn.providerTurnId,
       });
-      assert.equal(offeredAtInterrupt, 1);
-      const steerExit = yield* Fiber.await(steer);
-      assert.match(
-        Exit.isFailure(steerExit) ? Cause.pretty(steerExit.cause) : "steer succeeded",
-        /was stopped before the steer was sent/,
-      );
+      assert.equal(offeredAtInterrupt, 2);
+      yield* Fiber.join(steer);
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "interrupted");
-      assert.lengthOf(harness.offeredMessages, 1);
+      assert.match(encodeJsonString(harness.offeredMessages[1]?.message.content), /Then stop/);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

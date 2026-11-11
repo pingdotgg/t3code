@@ -12170,14 +12170,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies PendingOrchestrationEffectV2,
       ...otherProviderInterrupts,
     ]);
-    // A steer still waiting to reach the provider is cancelled, so the interrupt never queues behind it.
-    return {
-      effectTypes: ["provider-turn.steer"],
-      reason: `Run ${run.id} was interrupted before its steer was sent.`,
-    } satisfies {
-      readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
-      readonly reason: string;
-    };
+    return undefined;
   });
 
   /** Writes a parent's app-owned task, and sets its node and turn items to the task's status. */

@@ -7994,21 +7994,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
           );
         });
-        const steerNotSent = (
-          providerTurnId: OrchestrationV2ProviderTurn["id"],
-          reason: "ended" | "was stopped",
-        ) =>
+        const steerNotSent = (providerTurnId: OrchestrationV2ProviderTurn["id"]) =>
           new ProviderAdapter.ProviderAdapterProtocolError({
             driver: CLAUDE_PROVIDER,
-            detail: `Claude provider turn ${providerTurnId} ${reason} before the steer was sent.`,
+            detail: `Claude provider turn ${providerTurnId} ended before the steer was sent.`,
           });
         // Never offered once their turn ended: that would start a turn nobody asked for.
-        const dropHeldSteers = Effect.fnUntraced(function* (
-          context: ActiveClaudeTurnContext,
-          reason: "ended" | "was stopped",
-        ) {
+        const dropHeldSteers = Effect.fnUntraced(function* (context: ActiveClaudeTurnContext) {
           for (const steer of context.heldSteers.splice(0)) {
-            yield* Deferred.fail(steer.sent, steerNotSent(context.providerTurnId, reason));
+            yield* Deferred.fail(steer.sent, steerNotSent(context.providerTurnId));
           }
         });
         // Callers hold sdkMessageLock, so a newer steer cannot overtake the held ones.
@@ -8020,7 +8014,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (yield* Ref.get(activeTurn)) !== context ||
               (yield* Ref.get(queryContext)) !== steer.live
             ) {
-              return yield* dropHeldSteers(context, "ended");
+              return yield* dropHeldSteers(context);
             }
             context.heldSteers.shift();
             yield* Deferred.done(
@@ -8334,7 +8328,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
           // After the turn is cleared, so a steer cannot be held on it once this runs.
-          yield* dropHeldSteers(input.context, "ended");
+          yield* dropHeldSteers(input.context);
           if (input.status === "completed") {
             settledTurnByNativeThread.set(input.context.nativeThreadId, input.context);
           } else {
@@ -11647,9 +11641,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
-            // Stop cancels steers still held for compaction instead of sending them.
+            // Like an unheld steer, a held one reaches Claude before the interrupt.
             if (currentTurn.heldSteers.length > 0) {
-              yield* sdkMessageLock.withPermits(1)(dropHeldSteers(currentTurn, "was stopped"));
+              yield* sdkMessageLock.withPermits(1)(releaseHeldSteers(currentTurn));
             }
             yield* Ref.update(interruptedTurns, (current) => {
               const next = new Set(current);
@@ -11835,13 +11829,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             );
             if (delivery === "ended") {
-              return yield* steerNotSent(turnInput.providerTurnId, "ended");
+              return yield* steerNotSent(turnInput.providerTurnId);
             }
             if (delivery === "held") {
               yield* Effect.logInfo("orchestration-v2.claude-steer-held-for-compaction", {
                 providerTurnId: turnInput.providerTurnId,
               });
-              // Stop cancels this effect rather than queueing behind the compaction it waits for.
               return yield* Deferred.await(held.sent).pipe(
                 Effect.onInterrupt(() =>
                   sdkMessageLock.withPermits(1)(

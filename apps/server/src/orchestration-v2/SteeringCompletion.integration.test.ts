@@ -489,7 +489,6 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   interruptTurn: Effect.Effect<void> = Effect.void,
   steeringAcceptsAttachments = true,
   nativeGoals?: boolean,
-  steerTurn?: (turn: ProviderAdapter.ProviderAdapterV2SteerInput) => Effect.Effect<void>,
 ) {
   const driver = ProviderDriverKind.make(nativeGoals === undefined ? "codex" : "opencode");
   const cwd = yield* checkpointWorkspace(name);
@@ -581,12 +580,10 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
           resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
           startTurn,
           compactThread: startTurn,
-          steerTurn:
-            steerTurn ??
-            ((turn) =>
-              Effect.sync(() => {
-                steered.push(turn.message.text);
-              })),
+          steerTurn: (turn) =>
+            Effect.sync(() => {
+              steered.push(turn.message.text);
+            }),
           interruptTurn: ({ providerTurnId }) =>
             Effect.sync(() => {
               interrupted.push(providerTurnId);
@@ -1519,20 +1516,11 @@ it.effect(
     ),
 );
 
-// regression: #25796 Stop must not wait behind a steer the provider is still holding
-it.effect("Stop cancels a steer still waiting to reach the provider", () =>
+it.effect("sends a pending steer before the Stop that follows it", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const steerWaiting = yield* Deferred.make<void>();
-      const { interrupted, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-        "stop-cancels-waiting-steer",
-        false,
-        true,
-        Effect.void,
-        true,
-        undefined,
-        () => Deferred.succeed(steerWaiting, undefined).pipe(Effect.andThen(Effect.never)),
-      );
+      const { steered, interrupted, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("steer-before-stop");
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -1549,18 +1537,15 @@ it.effect("Stop cancels a steer still waiting to reach the provider", () =>
           createdBy: "user",
           creationSource: "web",
         });
-        const steering = yield* worker.runOnce.pipe(Effect.forkScoped);
-        yield* Deferred.await(steerWaiting);
         yield* orchestrator.dispatch({
           type: "thread.stop",
-          commandId: CommandId.make("stop-waiting-steer"),
+          commandId: CommandId.make("stop-after-steer"),
           threadId,
         });
-        // The steer effect is cancelled, which ends its never-returning steerTurn.
-        yield* Fiber.join(steering);
         yield* worker.drain();
 
         const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        assert.deepEqual(steered, ["steer"]);
         assert.deepEqual(interrupted, [turn.id]);
       }).pipe(Effect.provide(layer));
     }),
