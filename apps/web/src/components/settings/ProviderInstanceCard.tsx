@@ -97,7 +97,9 @@ function ProviderStatusDiagnostic({
 }
 
 let environmentVariableDraftId = 0;
-const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
+const DRAFT_ROW_ID_PREFIX = "provider-env-";
+const nextEnvironmentVariableDraftId = () =>
+  `${DRAFT_ROW_ID_PREFIX}${environmentVariableDraftId++}`;
 
 type EnvironmentDraftRow = {
   readonly id: string;
@@ -346,12 +348,23 @@ export function ProviderEnvironmentSection(props: {
   const [storedDraft, setDraft] = useState(() =>
     seedRowsDraft(props.environment, toEnvironmentDraftRows),
   );
-  const draft = reconcileRowsDraft(
+  let draft = reconcileRowsDraft(
     storedDraft,
     props.environment,
     providerEnvironmentsEqual,
     toEnvironmentDraftRows,
   );
+  if (draft.rows !== storedDraft.rows) {
+    // Keep rows the server never acknowledged, even across an external reseed.
+    const acknowledged = new Set(storedDraft.seen.map((variable) => variable.name));
+    const unpublished = storedDraft.rows.filter(
+      (row) =>
+        row.id.startsWith(DRAFT_ROW_ID_PREFIX) &&
+        !acknowledged.has(row.name) &&
+        !draft.rows.some((incoming) => incoming.name === row.name),
+    );
+    if (unpublished.length > 0) draft = { ...draft, rows: [...draft.rows, ...unpublished] };
+  }
   if (draft !== storedDraft) setDraft(draft);
   const rows = draft.rows;
   const setRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) =>
@@ -453,6 +466,7 @@ export function ProviderEnvironmentSection(props: {
                 className="min-w-0 flex-1"
                 value={variable.name}
                 onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
+                disabled={variable.valueRedacted === true}
                 placeholder="VARIABLE_NAME"
                 spellCheck={false}
                 aria-label={`Environment variable name ${index + 1}`}
@@ -478,6 +492,7 @@ export function ProviderEnvironmentSection(props: {
                         type="button"
                         size="icon-micro"
                         variant="ghost-muted"
+                        disabled={variable.valueRedacted === true}
                         onClick={() => {
                           const sensitive = !variable.sensitive;
                           updateVariable(variable.id, {
@@ -558,6 +573,9 @@ export function ProviderEnvironmentSection(props: {
           })}
           <p className="text-xs text-muted-foreground">
             Sensitive values are stored separately and never returned to the app.
+            {rows.some((row) => row.valueRedacted === true)
+              ? " Enter a new value to rename a saved one or make it plain text."
+              : null}
           </p>
         </div>
       ) : null}
