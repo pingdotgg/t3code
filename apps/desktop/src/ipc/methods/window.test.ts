@@ -93,7 +93,7 @@ const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopB
 describe("getLocalEnvironmentBootstraps", () => {
   it.effect("hands out the current window's token to a backend launched with the secret", () =>
     Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
+      const result = yield* getLocalEnvironmentBootstraps.handler(undefined);
 
       assert.deepEqual(result, [
         {
@@ -145,7 +145,7 @@ describe("getLocalEnvironmentBootstraps", () => {
     };
 
     return Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
+      const result = yield* getLocalEnvironmentBootstraps.handler(undefined);
       assert.deepEqual(result, [
         {
           id: "wsl:default",
@@ -179,7 +179,7 @@ describe("getLocalEnvironmentBootstraps", () => {
     };
 
     return Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
+      const result = yield* getLocalEnvironmentBootstraps.handler(undefined);
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(bootstrapsLayer([stoppedInstance])));
   });

@@ -8,13 +8,24 @@ import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod, makeSyncIpcMethod } from "../DesktopIpc.ts";
 
-export const getLocalEnvironmentEnabled = makeSyncIpcMethod({
-  channel: IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL,
-  result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.localEnvironment.getEnabled")(function* () {
+const readLocalEnvironmentEnabled = Effect.fn("desktop.ipc.localEnvironment.getEnabled")(
+  function* () {
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     return (yield* appSettings.get).localEnvironmentEnabled;
-  }),
+  },
+);
+
+export const getLocalEnvironmentEnabled = makeIpcMethod({
+  channel: IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Boolean,
+  handler: () => readLocalEnvironmentEnabled(),
+});
+
+export const getLocalEnvironmentEnabledSync = makeSyncIpcMethod({
+  channel: IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_SYNC_CHANNEL,
+  result: Schema.Boolean,
+  handler: () => readLocalEnvironmentEnabled(),
 });
 
 export const setLocalEnvironmentEnabled = makeIpcMethod({

@@ -8,6 +8,7 @@ import { getConnectionCatalog, setConnectionCatalog } from "./methods/connection
 import {
   getHostEnvironmentId,
   getLocalEnvironmentEnabled,
+  getLocalEnvironmentEnabledSync,
   setLocalEnvironmentEnabled,
 } from "./methods/localEnvironment.ts";
 import {
@@ -36,6 +37,7 @@ import {
 import {
   getAppBranding,
   getLocalEnvironmentBootstraps,
+  getLocalEnvironmentBootstrapsSync,
   getLocalEnvironmentBearerToken,
   installRelayTelemetryEnabled,
   getSystemLocale,
@@ -100,8 +102,11 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);
   yield* ipc.handleSync(getWindowFullscreenState);
-  yield* ipc.handleSync(getLocalEnvironmentBootstraps);
-  yield* ipc.handleSync(getLocalEnvironmentEnabled);
+  // Topology polls answer from the renderer's snapshot; sync serves only its first, pre-reply read.
+  yield* ipc.handle(getLocalEnvironmentBootstraps);
+  yield* ipc.handle(getLocalEnvironmentEnabled);
+  yield* ipc.handleSync(getLocalEnvironmentBootstrapsSync);
+  yield* ipc.handleSync(getLocalEnvironmentEnabledSync);
   yield* ipc.handle(setLocalEnvironmentEnabled);
   yield* ipc.handle(getHostEnvironmentId);
   yield* ipc.handle(getLocalEnvironmentBearerToken);

@@ -86,6 +86,65 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
   return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
 }
 
+/**
+ * Every topology poll used to run sendSync, so a busy main process stalled the renderer's
+ * UI thread and dropped keystrokes. Reads answer from the last snapshot and refresh it in
+ * the background; sendSync survives only for the first read, which lands before the first
+ * reply and must still see the real value.
+ */
+function makeSnapshotReader<T>(
+  asyncChannel: string,
+  syncChannel: string,
+  decode: (value: unknown) => T | undefined,
+): () => T | undefined {
+  let snapshot: T | undefined;
+  let refreshing = false;
+  const refresh = () => {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      void ipcRenderer
+        .invoke(asyncChannel)
+        .then((value) => {
+          const next = decode(value);
+          if (next !== undefined) snapshot = next;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          refreshing = false;
+        });
+    } catch {
+      refreshing = false;
+    }
+  };
+  // Warm the snapshot before the page's first read, so that read usually skips sendSync too.
+  refresh();
+  return () => {
+    if (snapshot === undefined) {
+      try {
+        const cold = decode(ipcRenderer.sendSync(syncChannel));
+        if (cold !== undefined) snapshot = cold;
+      } catch {}
+    }
+    refresh();
+    return snapshot;
+  };
+}
+
+const readLocalEnvironmentBootstraps = makeSnapshotReader(
+  IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
+  IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_SYNC_CHANNEL,
+  (value) =>
+    Array.isArray(value)
+      ? (value as ReturnType<DesktopBridge["getLocalEnvironmentBootstraps"]>)
+      : undefined,
+);
+const readLocalEnvironmentEnabled = makeSnapshotReader(
+  IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL,
+  IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_SYNC_CHANNEL,
+  (value) => (typeof value === "boolean" ? value : undefined),
+);
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
@@ -126,17 +185,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     );
     return Array.isArray(result) ? result.filter((tag) => typeof tag === "string") : [];
   },
-  getLocalEnvironmentBootstraps: () => {
-    const result = ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL);
-    if (!Array.isArray(result)) {
-      return [];
-    }
-    return result as ReturnType<DesktopBridge["getLocalEnvironmentBootstraps"]>;
-  },
+  getLocalEnvironmentBootstraps: () => readLocalEnvironmentBootstraps() ?? [],
   getLocalEnvironmentBearerToken: () =>
     ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL),
-  getLocalEnvironmentEnabled: () =>
-    ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL) !== false,
+  getLocalEnvironmentEnabled: () => readLocalEnvironmentEnabled() ?? true,
   setLocalEnvironmentEnabled: (enabled) =>
     ipcRenderer.invoke(IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL, enabled),
   getHostEnvironmentId: () => ipcRenderer.invoke(IpcChannels.GET_HOST_ENVIRONMENT_ID_CHANNEL),
