@@ -1,6 +1,6 @@
 ---
 title: Process DynamoDB Streams
-description: Enable a DynamoDB Stream on your table and consume change records as a typed Effect Stream from the same Lambda.
+description: Enable a DynamoDB Stream on your table and consume each batch of change records from the same Lambda.
 sidebar:
   order: 2
 ---
@@ -19,31 +19,33 @@ Add it alongside the existing bindings:
 
 ```diff lang="typescript"
 // src/api.ts
-import * as AWS from "alchemy/AWS";
-import * as DynamoDB from "alchemy/AWS/DynamoDB";
+import * as AWS from "@alchemy.run/aws";
+import * as DynamoDB from "@alchemy.run/aws/DynamoDB";
 +import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-+import * as Stream from "effect/Stream";
 // ...
 
 const table = yield* DynamoDB.Table("Items", { /* ... */ });
 const putItem = yield* DynamoDB.PutItem(table);
 const getItem = yield* DynamoDB.GetItem(table);
 
-+yield* DynamoDB.consumeTableChanges(table, (stream) =>
-+  stream.pipe(
-+    Stream.runForEach((record) =>
-+      Console.log(`${record.eventName}: ${record.dynamodb.Keys?.id?.S}`),
-+    ),
-+  ),
++yield* DynamoDB.consumeTableChanges(
++  table,
++  Effect.fn(function* (event) {
++    for (const record of event.Records) {
++      yield* Console.log(`${record.eventName}: ${record.dynamodb.Keys?.id?.S}`);
++    }
++  }),
 +);
 ```
 
 That single `consumeTableChanges(...)` call enables a stream on the table,
 creates a Lambda `EventSourceMapping` that polls it, and adds
 the IAM grants for `dynamodb:GetRecords`, `GetShardIterator`,
-`DescribeStream`, and `ListStreams` — all from the call site.
+`DescribeStream`, and `ListStreams` — all from the call site. The
+handler gets each batch Lambda delivers; when it succeeds, Lambda
+checkpoints past the batch.
 
 ## Pick the view type
 
@@ -52,11 +54,14 @@ full row before and after the change — set `streamViewType` to
 `NEW_AND_OLD_IMAGES`:
 
 ```diff lang="typescript"
--yield* DynamoDB.consumeTableChanges(table, (stream) =>
-+yield* DynamoDB.consumeTableChanges(table, {
-+  streamViewType: "NEW_AND_OLD_IMAGES",
-+}, (stream) =>
-  stream.pipe(/* ... */),
+yield* DynamoDB.consumeTableChanges(
+  table,
++  { streamViewType: "NEW_AND_OLD_IMAGES" },
+  Effect.fn(function* (event) {
+    for (const record of event.Records) {
+      yield* Console.log(`${record.eventName}: ${record.dynamodb.Keys?.id?.S}`);
+    }
+  }),
 );
 ```
 
@@ -73,12 +78,18 @@ replay everything currently in the stream's 24-hour retention
 window:
 
 ```diff lang="typescript"
-yield* DynamoDB.consumeTableChanges(table, {
-  streamViewType: "NEW_AND_OLD_IMAGES",
-+  startingPosition: "TRIM_HORIZON",
-+  batchSize: 10,
-}, (stream) =>
-  stream.pipe(/* ... */),
+yield* DynamoDB.consumeTableChanges(
+  table,
+  {
+    streamViewType: "NEW_AND_OLD_IMAGES",
++    startingPosition: "TRIM_HORIZON",
++    batchSize: 10,
+  },
+  Effect.fn(function* (event) {
+    for (const record of event.Records) {
+      yield* Console.log(`${record.eventName}: ${record.dynamodb.Keys?.id?.S}`);
+    }
+  }),
 );
 ```
 
@@ -89,26 +100,30 @@ fail in smaller blast radii.
 ## Type the row payload
 
 DynamoDB stream records use the same attribute-value shape as
-`GetItem`/`PutItem`. Describe the row inline as a generic on
-`consumeTableChanges` and TypeScript will help you destructure
+`GetItem`/`PutItem`. Annotate the handler's `event` with the row
+shape and TypeScript will help you destructure
 `NewImage`/`OldImage`:
 
 ```diff lang="typescript"
--yield* DynamoDB.consumeTableChanges(table, {
-+yield* DynamoDB.consumeTableChanges<{ id: { S: string }; content: { S: string } }>(table, {
-  streamViewType: "NEW_AND_OLD_IMAGES",
-  startingPosition: "TRIM_HORIZON",
-  batchSize: 10,
-}, (stream) =>
-  stream.pipe(
-    Stream.runForEach((record) =>
--      Console.log(`${record.eventName}: ${record.dynamodb.Keys?.id?.S}`),
-+      Console.log(
+yield* DynamoDB.consumeTableChanges(
+  table,
+  {
+    streamViewType: "NEW_AND_OLD_IMAGES",
+    startingPosition: "TRIM_HORIZON",
+    batchSize: 10,
+  },
+-  Effect.fn(function* (event) {
++  Effect.fn(function* (
++    event: DynamoDB.StreamEvent<{ id: { S: string }; content: { S: string } }>,
++  ) {
+    for (const record of event.Records) {
+-      yield* Console.log(`${record.eventName}: ${record.dynamodb.Keys?.id?.S}`);
++      yield* Console.log(
 +        `${record.eventName}: ${record.dynamodb.Keys?.id?.S} -> ` +
 +          `${record.dynamodb.NewImage?.content.S ?? "(deleted)"}`,
-+      ),
-    ),
-  ),
++      );
+    }
+  }),
 );
 ```
 
@@ -169,24 +184,31 @@ You'll see three `MODIFY`/`INSERT` log lines stream past — one
 per write. Stream records typically arrive within 1–2 seconds of
 the originating change.
 
-## Why a Stream instead of a callback?
+## Checkpoint at the first failure
 
-The `consumeTableChanges(table, handler)` signature mirrors the S3
-events helper for a reason — once your event source is a typed `Stream<Record>`,
-back-pressure, batching, retries, parallel side effects, and
-in-order processing are all just composition:
+Change records in a shard are ordered, so when one fails, report
+it. Lambda checkpoints every record before it and retries from
+there, instead of replaying the whole batch:
 
 ```typescript
-stream.pipe(
-  Stream.groupedWithin(50, "5 seconds"),
-  Stream.mapEffect((batch) => writeToWarehouse(batch), { concurrency: 4 }),
-  Stream.runDrain,
+yield* DynamoDB.consumeTableChanges(
+  table,
+  { streamViewType: "NEW_AND_OLD_IMAGES" },
+  Effect.fn(function* (event) {
+    for (const record of event.Records) {
+      const ok = yield* writeToWarehouse(record).pipe(
+        Effect.as(true),
+        Effect.catchCause(() => Effect.succeed(false)),
+      );
+      if (!ok) {
+        return { batchItemFailures: [{ itemIdentifier: record.dynamodb.SequenceNumber! }] };
+      }
+    }
+  }),
 );
 ```
 
-The same operators work for DynamoDB Streams, S3 events, SQS
-messages, and Kinesis records — the only thing that changes is
-the element type.
+If the handler fails instead, Lambda retries the whole batch.
 
 Next we'll add an [SQS Queue](/aws/messaging/sqs) so the Lambda
 can fan changes (or anything else) out to a different consumer

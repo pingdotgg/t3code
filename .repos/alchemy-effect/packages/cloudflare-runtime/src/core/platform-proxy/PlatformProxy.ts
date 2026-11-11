@@ -1,5 +1,3 @@
-import { DEFAULT_COMPATIBILITY_DATE } from "../internal/constants.ts";
-import { loadInternalWorker } from "../internal/internal-worker.ts";
 /**
  * Node-side platform proxy: our reimplementation of wrangler's
  * `getPlatformProxy()` semantics on top of `cloudflare-runtime`.
@@ -46,24 +44,22 @@ import { loadInternalWorker } from "../internal/internal-worker.ts";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
+import { DEFAULT_COMPATIBILITY_DATE } from "../internal/constants.ts";
+import { loadInternalWorker } from "../internal/internal-worker.ts";
 const ProxyWorker = {
   worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-core-worker/platform-proxy/PlatformProxy.worker",
-    ),
+    loadInternalWorker("#cloudflare-runtime-core-worker/platform-proxy/PlatformProxy.worker"),
 };
 import * as Text from "../bindings/Text.ts";
 import type { BindingHook } from "../PluginContext.ts";
 import * as Runtime from "../Runtime.ts";
-import {
-  ConfigError,
-  type RuntimeError,
-  SystemError,
-} from "../RuntimeError.shared.ts";
+import { ConfigError, type RuntimeError, SystemError } from "../RuntimeError.shared.ts";
 import type {
+  Assets,
   BindingHooks,
   DurableObjectNamespace,
   Module,
+  WorkerdOptions,
 } from "../RuntimeWorker.ts";
 import type { ConnectedPlatformProxy, ConnectInfo } from "./connect.ts";
 import { connect } from "./connect.ts";
@@ -107,6 +103,14 @@ export interface PlatformProxyOptions<B extends BindingHooks = BindingHooks> {
   readonly modules?: ReadonlyArray<Module>;
   /** Durable Object namespaces implemented by `modules`. */
   readonly durableObjectNamespaces?: ReadonlyArray<DurableObjectNamespace>;
+  /**
+   * Static assets an `Assets.local` binding serves, e.g. a framework's
+   * public directory: `{ directory: "static" }`. The proxy worker still
+   * answers every request made to the proxy itself.
+   */
+  readonly assets?: Assets;
+  /** Overrides for the `workerd` process hosting the proxy. */
+  readonly workerd?: WorkerdOptions;
 }
 
 export interface PlatformProxyInstance<
@@ -127,9 +131,7 @@ export interface PlatformProxyInstance<
 // Worker assembly
 // ---------------------------------------------------------------------------
 
-const makeModules = Effect.fnUntraced(function* (
-  options: PlatformProxyOptions,
-) {
+const makeModules = Effect.fnUntraced(function* (options: PlatformProxyOptions) {
   const proxyWorker = yield* Effect.promise(ProxyWorker.worker);
   const userModules = options.modules ?? [];
   const classNames = (options.durableObjectNamespaces ?? []).map(
@@ -137,7 +139,7 @@ const makeModules = Effect.fnUntraced(function* (
   );
   const userEntry = userModules[0]?.name;
   if (classNames.length > 0 && userEntry === undefined) {
-    return yield* new ConfigError({
+    return yield* ConfigError.make({
       subtag: "PlatformProxyMissingModules",
       message: "Durable Object namespaces were configured without any modules.",
       hint: "Pass `modules` whose first module exports every configured Durable Object class.",
@@ -166,20 +168,15 @@ const connectToInstance = <Env>(info: ConnectInfo) =>
   Effect.tryPromise({
     try: () => connect<Env>(info),
     catch: (cause) =>
-      new SystemError({
+      SystemError.make({
         subtag: "PlatformProxyEnvDescriptor",
-        message:
-          "Failed to read the environment descriptor from the platform-proxy worker.",
+        message: "Failed to read the environment descriptor from the platform-proxy worker.",
         cause,
       }),
   }).pipe(Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 10 }));
 
 type BindingRequirements<B extends BindingHooks> =
-  B extends Array<never>
-    ? never
-    : B extends ReadonlyArray<BindingHook<infer R>>
-      ? R
-      : never;
+  B extends Array<never> ? never : B extends ReadonlyArray<BindingHook<infer R>> ? R : never;
 
 /**
  * Start a workerd instance hosting `options.bindings` and return Node-side
@@ -204,6 +201,8 @@ export const open = Effect.fn("PlatformProxy.open")(function* <
     ] as unknown as B,
     modules,
     durableObjectNamespaces: options.durableObjectNamespaces,
+    assets: options.assets && { ...options.assets, runWorkerFirst: true },
+    workerd: options.workerd,
   });
   const connectInfo: ConnectInfo = { url: url.href, token };
   const connected = yield* connectToInstance<Env>(connectInfo);
