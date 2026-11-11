@@ -847,6 +847,108 @@ it.effect("sends a selected held message once and preserves the remaining queue 
   ),
 );
 
+it.effect.each(
+  (["preparing", "starting", "running"] as const).flatMap((status) =>
+    [false, true].map((direct) => ({ status, direct })),
+  ),
+)("delivers a deferred steer for a $status run (direct: $direct)", ({ status, direct }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn, events } = yield* nextTurnSelectionHarness(
+        `deferred-steer-${status}-${direct}`,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const run = before.runs[0]!;
+        const turn = before.providerTurns[0]!;
+        const now = yield* DateTime.now;
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("setup-run"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status },
+            },
+            {
+              id: EventId.make("setup-turn"),
+              type: "provider-turn.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...turn, status: "pending" },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queue"),
+          threadId,
+          messageId: MessageId.make("message:steer-after-setup"),
+          text: "steer after setup",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          ...(direct ? { deliveryIntent: "steer" as const } : {}),
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (candidate) => candidate.status === "queued",
+        )!;
+        const command = {
+          type: "queued-message.promote-to-steer" as const,
+          commandId: CommandId.make("promote"),
+          threadId,
+          queuedRunId: queued.id,
+          targetRunId: run.id,
+        };
+        if (!direct) {
+          yield* orchestrator.dispatch(command);
+          yield* orchestrator.dispatch(command);
+        }
+        yield* worker.drain();
+        assert.deepEqual(steered, []);
+        const promoted = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === queued.id &&
+              event.payload.status === "cancelled",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("ready-run"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: run,
+            },
+          ],
+        });
+        yield* Queue.offer(events, { type: "provider_turn.updated", driver, providerTurn: turn });
+        yield* Fiber.join(promoted);
+        yield* worker.drain();
+        assert.deepEqual(steered, ["steer after setup"]);
+        assert.lengthOf(started, 1);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          after.messages.find((message) => message.id === queued.userMessageId)?.runId,
+          run.id,
+        );
+        assert.equal(after.runs.find((candidate) => candidate.id === run.id)?.status, "running");
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 it.effect("force sends multiple queued messages and can force send a requeued message again", () =>
   Effect.scoped(
     Effect.gen(function* () {
