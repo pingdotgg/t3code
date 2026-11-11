@@ -134,6 +134,22 @@ function persistedLink(
   };
 }
 
+function mergedLink(): NonNullable<SettlementShell["pullRequests"]>[number] {
+  return {
+    ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
+    snapshot: {
+      state: "merged",
+      title: "Pull request",
+      headBranch: "feature",
+      baseBranch: "main",
+      isDraft: false,
+      updatedAt: NOW,
+      syncedAt: NOW,
+      mergedAt: NOW,
+    },
+  };
+}
+
 describe("isAutoSettlementCandidate", () => {
   it("settles a thread whose only background work is a command left running", () => {
     expect(
@@ -1124,21 +1140,8 @@ describe("ThreadSettlementServiceV2 worker", () => {
         const releasePeriodicLookup = yield* Deferred.make<void>();
         const settled = yield* Deferred.make<void>();
         const branchLookupCount = yield* Ref.make(0);
-        const mergedLink: NonNullable<SettlementShell["pullRequests"]>[number] = {
-          ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
-          snapshot: {
-            state: "merged",
-            title: "Pull request",
-            headBranch: "feature",
-            baseBranch: "main",
-            isDraft: false,
-            updatedAt: NOW,
-            syncedAt: NOW,
-            mergedAt: NOW,
-          },
-        };
         const waiting = makeThread("waiting-on-subagent", {
-          pullRequests: [mergedLink],
+          pullRequests: [mergedLink()],
           pendingBackgroundTasks: [{ taskId: "child", kind: "subagent", description: "Review" }],
         });
         const slow = makeThread("slow-periodic-lookup", {
@@ -1199,21 +1202,8 @@ describe("ThreadSettlementServiceV2 worker", () => {
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(NOW));
           const settled = yield* Deferred.make<void>();
-          const mergedLink: NonNullable<SettlementShell["pullRequests"]>[number] = {
-            ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
-            snapshot: {
-              state: "merged",
-              title: "Pull request",
-              headBranch: "feature",
-              baseBranch: "main",
-              isDraft: false,
-              updatedAt: NOW,
-              syncedAt: NOW,
-              mergedAt: NOW,
-            },
-          };
           const waiting = makeThread("awaiting-deploy", {
-            pullRequests: [mergedLink],
+            pullRequests: [mergedLink()],
             pendingBackgroundTasks: [
               { taskId: "deploy", kind: "command", description: "Wait for deploy", awaited: true },
             ],
@@ -1288,21 +1278,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         yield* TestClock.setTime(Date.parse(NOW));
         const settled = yield* Deferred.make<void>();
         const waiting = makeThread("second-subagent", {
-          pullRequests: [
-            {
-              ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
-              snapshot: {
-                state: "merged",
-                title: "Pull request",
-                headBranch: "feature",
-                baseBranch: "main",
-                isDraft: false,
-                updatedAt: NOW,
-                syncedAt: NOW,
-                mergedAt: NOW,
-              },
-            },
-          ],
+          pullRequests: [mergedLink()],
           pendingBackgroundTasks: [
             { taskId: "deploy", kind: "command", description: "Wait for deploy", awaited: true },
           ],
@@ -1383,21 +1359,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         yield* TestClock.setTime(Date.parse(NOW));
         const settled = yield* Deferred.make<void>();
         const waiting = makeThread("stopped-deploy", {
-          pullRequests: [
-            {
-              ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
-              snapshot: {
-                state: "merged",
-                title: "Pull request",
-                headBranch: "feature",
-                baseBranch: "main",
-                isDraft: false,
-                updatedAt: NOW,
-                syncedAt: NOW,
-                mergedAt: NOW,
-              },
-            },
-          ],
+          pullRequests: [mergedLink()],
           pendingBackgroundTasks: [
             { taskId: "deploy", kind: "command", description: "Wait for deploy", awaited: true },
           ],
