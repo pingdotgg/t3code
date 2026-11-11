@@ -819,7 +819,6 @@ describe("MessagesTimeline turn folds", () => {
         ],
         {
           isWorking: true,
-          activeTurnInProgress: true,
           latestRun: { runId: secondRun, status: "running", startedAt: at(21), completedAt: null },
         },
       ),
@@ -853,7 +852,6 @@ describe("MessagesTimeline turn folds", () => {
     await using screen = await renderElement(
       timeline(settled, {
         isWorking: true,
-        activeTurnInProgress: true,
         latestRun: { runId: firstRun, status: "running", startedAt: at(0), completedAt: null },
       }),
     );
@@ -876,7 +874,6 @@ describe("MessagesTimeline turn folds", () => {
         ],
         {
           isWorking: true,
-          activeTurnInProgress: true,
           latestRun: { runId: secondRun, status: "running", startedAt: at(21), completedAt: null },
         },
       ),
@@ -926,7 +923,6 @@ describe("MessagesTimeline turn folds", () => {
     await using screen = await renderElement(
       timeline(settled, {
         isWorking: true,
-        activeTurnInProgress: true,
         latestRun: { runId: firstRun, status: "running", startedAt: at(0), completedAt: null },
       }),
     );
@@ -949,7 +945,6 @@ describe("MessagesTimeline turn folds", () => {
         ],
         {
           isWorking: true,
-          activeTurnInProgress: true,
           latestRun: { runId: secondRun, status: "running", startedAt: at(21), completedAt: null },
         },
       ),
