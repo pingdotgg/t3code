@@ -621,7 +621,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const client = HttpClient.make((request) =>
         Effect.gen(function* () {
           if (request.url.endsWith("/api/oauth/usage")) {
-            const redeemed = yield* fs.exists(marker).pipe(Effect.orDie);
+            const redeemed = yield* fs.exists(marker);
             if (redeemed && claim.usageFailsAfterClaim) {
               return HttpClientResponse.fromWeb(request, new Response(null, { status: 500 }));
             }
@@ -638,11 +638,11 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             );
           }
           if (request.url.endsWith("/reset_rate_limits")) {
-            yield* fs.writeFileString(marker, "redeemed").pipe(Effect.orDie);
+            yield* fs.writeFileString(marker, "redeemed");
             return HttpClientResponse.fromWeb(request, Response.json({ result: claim.result }));
           }
           return HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }));
-        }),
+        }).pipe(Effect.orDie),
       );
       const instanceId = ProviderInstanceId.make("claude_reset");
       const { registry } = yield* makeProviderInstanceRegistry({
