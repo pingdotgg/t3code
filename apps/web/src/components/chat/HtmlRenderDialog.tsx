@@ -27,7 +27,8 @@ export function HtmlRenderDialog(props: {
   const measureBox = (box: HTMLDivElement) => {
     setWidth(box.clientWidth);
     return observeResize(box, ([entry]) => {
-      if (entry) setWidth(entry.contentRect.width);
+      // Rounded like clientWidth, so the two writes agree at fractional widths.
+      if (entry) setWidth(Math.round(entry.contentRect.width));
     });
   };
   const [contentHeight, setContentHeight] = useState<number>();
