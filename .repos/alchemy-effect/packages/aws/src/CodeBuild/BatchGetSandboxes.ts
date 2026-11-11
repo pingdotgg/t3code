@@ -1,0 +1,32 @@
+import type * as SVC from "@distilled.cloud/aws/codebuild";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Project } from "./Project.ts";
+
+/**
+ * Runtime binding for `codebuild:BatchGetSandboxes` — reads the status of
+ * one or more sandboxes of the bound project by sandbox id.
+ * ### Sandboxes
+ * **Example:** Poll a Sandbox
+ * ```typescript
+ * const batchGetSandboxes = yield* AWS.CodeBuild.BatchGetSandboxes(project);
+ *
+ * const { sandboxes } = yield* batchGetSandboxes({ ids: [sandboxId] });
+ * ```
+ *
+ * @binding
+ */
+export interface BatchGetSandboxes extends Binding.Service<
+  BatchGetSandboxes,
+  "AWS.CodeBuild.BatchGetSandboxes",
+  <P extends Project>(
+    project: P,
+  ) => Effect.Effect<
+    (
+      request: SVC.BatchGetSandboxesInput,
+    ) => Effect.Effect<SVC.BatchGetSandboxesOutput, SVC.BatchGetSandboxesError>
+  >
+> {}
+export const BatchGetSandboxes = Binding.Service<BatchGetSandboxes>(
+  "AWS.CodeBuild.BatchGetSandboxes",
+);
