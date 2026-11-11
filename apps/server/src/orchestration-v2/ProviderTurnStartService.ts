@@ -1374,11 +1374,14 @@ export const layer: Layer.Layer<
         resumeFellBack = true;
         const previousRun = projection.runs.findLast(
           (candidate) =>
-            candidate.providerThreadId === providerThread.id && candidate.ordinal < run.ordinal,
+            candidate.providerThreadId === providerThread.id &&
+            candidate.ordinal < run.ordinal &&
+            candidate.startedAt !== null,
         );
+        // Stable per run so a retried start reuses the reserved run-start position.
         const handoffTurnItemId = idAllocator.derive.runSignalTurnItem({
           runId,
-          signal: `context-handoff:${handoff.id}`,
+          signal: "resume-fallback-handoff",
         });
         const handoffTurnItem: OrchestrationV2TurnItem = {
           id: handoffTurnItemId,
