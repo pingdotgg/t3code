@@ -258,6 +258,7 @@ export function startThreadNotifications(
         status === "input" ||
         status === "request" ||
         status === "approval" ||
+        status === "stalled" ||
         status === "failed" ||
         status === "limited";
       const requestId = needsAttention ? resolveBackgroundThreadRequest(thread).requestId : null;

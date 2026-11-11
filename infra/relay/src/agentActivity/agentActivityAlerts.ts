@@ -42,7 +42,7 @@ export function rowPhasesChanged(
 }
 
 function isAttentionPhase(phase: string): boolean {
-  return phase === "waiting_for_approval" || phase === "waiting_for_input";
+  return phase === "waiting_for_approval" || phase === "waiting_for_input" || phase === "stale";
 }
 
 function alertAllowedForPhase(
@@ -55,6 +55,9 @@ function alertAllowedForPhase(
       return preferences.notifyOnApproval;
     case "waiting_for_input":
       return preferences.notifyOnInput;
+    case "stale":
+      // Same opt-in as failures: quiet open work needs the owner.
+      return preferences.notifyOnFailure;
     case "completed":
       return preferences.notifyOnCompletion;
     case "failed":

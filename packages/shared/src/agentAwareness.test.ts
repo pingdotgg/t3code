@@ -9,9 +9,11 @@ import type {
 import { ProviderInstanceId, RuntimeRequestId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { DEFAULT_THREAD_STALL_AFTER_MS } from "./threadStall.ts";
 import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
 
 const NOW = "2026-05-22T12:00:00.000Z";
+const NOW_MS = Date.parse(NOW);
 
 const project = {
   title: "t3code",
@@ -24,13 +26,19 @@ describe("projectThreadAwarenessV2", () => {
       Pick<
         OrchestrationV2ThreadShell,
         | "activityRunStatus"
+        | "archivedAt"
+        | "blockedOnThreadWait"
+        | "deletedAt"
         | "latestRunBackgroundWake"
         | "latestRunStopRequested"
         | "status"
         | "pendingBackgroundTasks"
+        | "pendingGuestMessageCount"
         | "pendingRuntimeRequest"
         | "lineage"
         | "settledOverride"
+        | "snoozedUntil"
+        | "updatedAt"
       >
     > = {},
   ) => ({
@@ -43,8 +51,15 @@ describe("projectThreadAwarenessV2", () => {
     title: "Integrate orchestration",
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     status: "running" as const,
+    activityRunStatus: null,
+    archivedAt: null,
+    blockedOnThreadWait: false,
+    deletedAt: null,
+    pendingBackgroundTasks: [],
+    pendingGuestMessageCount: 0,
     pendingRuntimeRequest: null,
     settledOverride: null,
+    snoozedUntil: null,
     updatedAt,
     ...overrides,
   });
@@ -264,5 +279,28 @@ describe("projectThreadAwarenessV2", () => {
         }),
       }),
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
+  });
+
+  it("reports quiet open work as Update delayed when nowMs is past the stall age", () => {
+    const staleUpdatedAt = DateTime.makeUnsafe(NOW_MS - DEFAULT_THREAD_STALL_AFTER_MS - 1_000);
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({ updatedAt: staleUpdatedAt }),
+        nowMs: NOW_MS,
+      }),
+    ).toMatchObject({
+      phase: "stale",
+      headline: "Update delayed",
+      detail: "This thread still has open work but has not updated recently.",
+    });
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({ updatedAt: staleUpdatedAt }),
+      })?.phase,
+    ).toBe("running");
   });
 });

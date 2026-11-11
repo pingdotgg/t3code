@@ -224,7 +224,7 @@ const CreateThreadsTool = Tool.make("create_threads", {
 
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
-    "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
+    "List threads newest first, in one project or with `allProjects`. Page with `cursor`. `stalled:true` is a stuck-work sweep: open agent work with no update for ~30m.",
   parameters: OrchestratorMcpThreadListInput,
   success: OrchestratorMcpThreadListResult,
   failure: OrchestratorMcpFailure,

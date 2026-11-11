@@ -63,6 +63,10 @@
       "types": "./src/agentAwareness.ts",
       "import": "./src/agentAwareness.ts"
     },
+    "./threadStall": {
+      "types": "./src/threadStall.ts",
+      "import": "./src/threadStall.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"

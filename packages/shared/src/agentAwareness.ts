@@ -13,6 +13,7 @@ import {
   backgroundWorkHoldsCompletion,
   monitorHoldsWakeCompletion,
 } from "./orchestrationV2PendingBackgroundWork.ts";
+import { DEFAULT_THREAD_STALL_AFTER_MS, isThreadStalled } from "./threadStall.ts";
 
 export type AgentAwarenessPhase =
   | "starting"
@@ -74,20 +75,28 @@ export interface ProjectThreadAwarenessV2Input {
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
     | "activityRunStatus"
+    | "archivedAt"
+    | "blockedOnThreadWait"
+    | "deletedAt"
     | "id"
     | "lineage"
     | "latestRunBackgroundWake"
     | "latestRunStopRequested"
     | "modelSelection"
     | "pendingBackgroundTasks"
+    | "pendingGuestMessageCount"
     | "pendingRuntimeRequest"
     | "settledOverride"
+    | "snoozedUntil"
     | "status"
     | "title"
     | "updatedAt"
   >;
   /** The approval a live subagent below this thread is waiting on. */
   readonly pendingSubagentRequest?: SubagentRequestAwareness | null;
+  /** Wall clock for stall detection. Omit to skip the stale phase. */
+  readonly nowMs?: number;
+  readonly stallAfterMs?: number;
 }
 
 export function projectThreadAwarenessV2(
@@ -96,7 +105,7 @@ export function projectThreadAwarenessV2(
   const { environmentId, project, thread } = input;
   if (!isListedThreadLineage(thread.lineage)) return null;
   const subagentRequest = input.pendingSubagentRequest ?? null;
-  const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest !== null);
+  const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest !== null, input);
   if (phase === null) {
     return null;
   }
@@ -117,7 +126,9 @@ export function projectThreadAwarenessV2(
       ? "Review the completed task."
       : phase === "failed"
         ? "The agent run failed."
-        : undefined;
+        : phase === "stale"
+          ? "This thread still has open work but has not updated recently."
+          : undefined;
   return {
     environmentId,
     threadId: thread.id,
@@ -141,6 +152,7 @@ export function projectThreadAwarenessV2(
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
   childAwaitsApproval: boolean,
+  input: Pick<ProjectThreadAwarenessV2Input, "nowMs" | "stallAfterMs">,
 ): AgentAwarenessPhase | null {
   if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
   if (
@@ -152,27 +164,43 @@ function resolveThreadAwarenessPhaseV2(
   // The parent can finish its own turn while a delegated child keeps working,
   // so a child's request outranks the parent's run status.
   if (childAwaitsApproval) return "waiting_for_approval";
+  let phase: AgentAwarenessPhase | null;
   switch (thread.activityRunStatus ?? thread.status) {
     case "preparing":
     case "starting":
-      return "starting";
+      phase = "starting";
+      break;
     case "running":
     case "waiting":
-      return "running";
+      phase = "running";
+      break;
     case "completed":
-      return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
+      phase =
+        backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
         monitorHoldsWakeCompletion(thread)
-        ? "running"
-        : "completed";
+          ? "running"
+          : "completed";
+      break;
     case "failed":
-      return "failed";
+      phase = "failed";
+      break;
     case "idle":
     case "queued":
     case "interrupted":
     case "cancelled":
     case "rolled_back":
-      return null;
+      phase = null;
+      break;
   }
+  // Owner waits already returned. Quiet open agent work becomes Update delayed.
+  if (
+    (phase === "running" || phase === "starting") &&
+    input.nowMs !== undefined &&
+    isThreadStalled(thread, input.nowMs, input.stallAfterMs ?? DEFAULT_THREAD_STALL_AFTER_MS)
+  ) {
+    return "stale";
+  }
+  return phase;
 }
 
 function headlineForPhase(phase: AgentAwarenessPhase): string {

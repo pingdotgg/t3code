@@ -28,6 +28,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { DEFAULT_THREAD_STALL_AFTER_MS } from "@t3tools/shared/threadStall";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -37,6 +38,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -3850,6 +3852,66 @@ describe("OrchestratorMcpService thread list", () => {
       assert.include(error.message, "allProjects");
     }).pipe(Effect.provide(service)),
   );
+
+  it.effect("lists stalled threads with quiet open agent work", () => {
+    const updatedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    const stalledShells = [
+      {
+        ...liveThreadShell(ThreadId.make("thread:stalled")),
+        projectId: ProjectId.make("project:a"),
+        status: "running" as const,
+        updatedAt,
+      },
+      {
+        ...liveThreadShell(ThreadId.make("thread:fresh")),
+        projectId: ProjectId.make("project:a"),
+        status: "running" as const,
+        updatedAt: DateTime.makeUnsafe("2026-01-01T01:00:00.000Z"),
+      },
+      {
+        ...liveThreadShell(ThreadId.make("thread:idle")),
+        projectId: ProjectId.make("project:a"),
+        status: "completed" as const,
+        activityRunStatus: null,
+        activeRunId: null,
+        updatedAt,
+      },
+    ];
+    const stalledService = layerOrchestratorService.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            listProjectThreads: () => Effect.succeed(stalledShells),
+          }),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+            list: () => Effect.succeed([]),
+          }),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(updatedAt) + DEFAULT_THREAD_STALL_AFTER_MS + 60_000,
+      );
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const listed = yield* mcp.listThreads(client, {
+        allProjects: true,
+        stalled: true,
+      });
+      assert.deepStrictEqual(
+        listed.threads.map((thread) => [thread.threadId, thread.stalled]),
+        [["thread:stalled", true]],
+      );
+    }).pipe(Effect.provide(stalledService));
+  });
 });
 
 describe("OrchestratorMcpService thread stop", () => {

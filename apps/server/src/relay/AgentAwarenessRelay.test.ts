@@ -133,6 +133,7 @@ describe("startup agent activity", () => {
     const ids = AgentAwarenessRelay.resolveAgentAwarenessRelayActiveThreadIds({
       environmentId: EnvironmentId.make("relay-env"),
       startedAt,
+      nowMs: startedAt,
       projects: [{ id: PROJECT_ID, title: "Project" }],
       threads: [
         shell(),

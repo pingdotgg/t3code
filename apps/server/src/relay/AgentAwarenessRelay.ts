@@ -317,6 +317,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly thread: Option.Option<AgentAwarenessThread>;
   readonly project: Option.Option<Project>;
   readonly pendingSubagentRequest: SubagentRequestAwareness | null;
+  readonly nowMs: number;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -344,6 +345,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
     environmentId: input.environmentId,
     project: input.project.value,
     thread: input.thread.value,
+    nowMs: input.nowMs,
   };
   const state = projectThreadAwarenessV2({
     ...awarenessInput,
@@ -370,6 +372,7 @@ function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number)
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
   readonly startedAt: number;
+  readonly nowMs: number;
   readonly projects: ReadonlyArray<Pick<Project, "id" | "title">>;
   readonly threads: ReadonlyArray<AgentAwarenessThread>;
 }): ReadonlyArray<ThreadId> {
@@ -386,6 +389,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
         environmentId: input.environmentId,
         project,
         thread,
+        nowMs: input.nowMs,
       });
       return (
         state !== null &&
@@ -571,11 +575,13 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
+    const nowMs = (yield* DateTime.now).epochMilliseconds;
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       thread,
       project,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
+      nowMs,
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
@@ -607,7 +613,6 @@ export const make = Effect.gen(function* () {
     const requiresConfirmation = snapshot.state === null || snapshot.state?.phase === "completed";
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
-      const nowMs = (yield* DateTime.now).epochMilliseconds;
       const deadline = publishConfirmDeadlines.get(threadId);
       if (deadline === undefined) {
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
@@ -643,6 +648,7 @@ export const make = Effect.gen(function* () {
               thread: Option.some({ ...thread.value, settledOverride: null }),
               project,
               pendingSubagentRequest: null,
+              nowMs,
             })
           : null;
       if (unsettled?.state?.phase === "completed") {
@@ -854,6 +860,7 @@ export const make = Effect.gen(function* () {
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
       startedAt,
+      nowMs: (yield* DateTime.now).epochMilliseconds,
       projects: projectSnapshot.projects,
       threads: [...activitySnapshot.threads, ...liveChildren.filter((thread) => thread !== null)],
     });

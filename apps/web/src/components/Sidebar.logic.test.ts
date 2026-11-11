@@ -310,6 +310,27 @@ describe("resolveSidebarThreadStatus", () => {
       }),
     ).toBe("waiting");
   });
+
+  it("surfaces stalled open work below owner waits and above ordinary working", () => {
+    expect(resolveSidebarThreadStatus({ ...idle, stalled: true, runtime })).toBe("stalled");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasPendingUserInput: true,
+        stalled: true,
+        runtime,
+      }),
+    ).toBe("input");
+    expect(
+      shouldRecedeSidebarThread({
+        status: "stalled",
+        isUnread: false,
+        isWoke: false,
+        isActive: false,
+        isSelected: false,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("searchSidebarThreads", () => {
