@@ -65,6 +65,7 @@ import {
   orchestrationV2WorktreePending,
   ProviderInstanceId,
   ProviderInteractionMode,
+  isPermissionApprovalKind,
   isRuntimeModeAbove,
   resolveProviderInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
@@ -197,6 +198,8 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as PermissionRouting from "./PermissionRouting.ts";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -650,6 +653,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.edit":
     case "runtime-request.respond":
     case "runtime-request.delivery.fail":
+    case "permission-routing.consider":
     case "thread.user-input.dismiss":
     case "checkpoint.rollback":
     case "checkpoint.rollback.fail":
@@ -10161,6 +10165,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...runtimeRequest,
         status: "resolved" as const,
         resolvedAt: now,
+        resolvedBy: command.resolvedBy ?? ({ source: "human" } as const),
         ...(command.decision === undefined ? {} : { decision: command.decision }),
         ...(command.feedback === undefined ? {} : { feedback: command.feedback }),
         ...(answers === undefined ? {} : { answers }),
@@ -10382,6 +10387,77 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     },
   );
+
+  const dispatchPermissionRoutingConsider = Effect.fn(
+    "Orchestrator.dispatchPermissionRoutingConsider",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "permission-routing.consider" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runtimeRequests"])
+      .pipe(mapDispatchError(command));
+    const pending = projection.runtimeRequests.filter((request) => {
+      if (request.status !== "pending") return false;
+      if (!isPermissionApprovalKind(request.kind)) return false;
+      if (command.requestId !== undefined && request.id !== command.requestId) return false;
+      return true;
+    });
+    if (pending.length === 0) return;
+
+    const auth = yield* Effect.serviceOption(EnvironmentAuth.EnvironmentAuth);
+    const sessions = Option.isNone(auth)
+      ? null
+      : yield* auth.value.listSessions().pipe(
+          Effect.map((listed) =>
+            listed.map((session) => ({
+              subject: session.subject,
+              connected: session.connected,
+              scopes: session.scopes,
+              permissions: session.permissions,
+              authenticated: true as const,
+            })),
+          ),
+          Effect.orElseSucceed(() => null),
+        );
+
+    const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    const policy = PermissionRouting.permissionRoutingPolicyOf(settings);
+    const now = yield* DateTime.now;
+
+    for (const request of pending) {
+      const routed = PermissionRouting.stampPendingApprovalRouting({ request, policy, now });
+      if (routed.routing !== undefined && request.routing === undefined) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "runtime-request.updated",
+          threadId: command.threadId,
+          payload: routed,
+          nodeId: routed.nodeId,
+        });
+      }
+      const resolvedBy = PermissionRouting.resolveNobodyPermit({ request: routed, sessions });
+      if (resolvedBy === null) continue;
+      yield* dispatchRuntimeRequestRespond(
+        {
+          type: "runtime-request.respond",
+          commandId: CommandId.make(`${command.commandId}:${request.id}`),
+          threadId: command.threadId,
+          requestId: request.id,
+          decision: "accept",
+          resolvedBy,
+        },
+        events,
+        effects,
+      );
+    }
+  });
 
   /**
    * Respond resolves the request before delivery, and a failed delivery cannot
@@ -14237,6 +14313,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "runtime-request.respond":
         yield* dispatchRuntimeRequestRespond(command, events, effects);
         break;
+      case "permission-routing.consider":
+        yield* dispatchPermissionRoutingConsider(command, events, effects);
+        break;
       case "thread.user-input.dismiss":
         yield* dispatchThreadUserInputDismiss(command, events, effects);
         break;
@@ -14532,6 +14611,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
+          // Nobody-permit may find nothing to change.
+          command.type === "permission-routing.consider" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),

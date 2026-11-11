@@ -305,6 +305,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "permission-routing-when-nobody",
+    title: "When nobody can approve",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["permission routing approval assignee permit when nobody openrig wait audit"],
+    environmentOnly: true,
+  },
+  {
     id: "color-scheme",
     title: "Color scheme",
     to: "/settings/appearance",

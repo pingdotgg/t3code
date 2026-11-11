@@ -1,6 +1,8 @@
 import {
+  DEFAULT_PERMISSION_ROUTING_POLICY,
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
+  type PermissionRoutingWhenNobody,
   type WorktreeSubmodules,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
@@ -99,7 +101,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     fallbackSelection?.model,
   );
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
+  const mixedPermissionRouting = useScopedSettingsMixed(["permissionRouting"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
+  const permissionRouting = settings.permissionRouting ?? DEFAULT_PERMISSION_ROUTING_POLICY;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
@@ -401,6 +405,71 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                       </SelectItem>
                     );
                   })}
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["permissionRouting"]}
+            mixed={mixedPermissionRouting}
+            {...searchableSetting("permission-routing-when-nobody")}
+            title="When nobody can approve"
+            description="If no connected operator matches the approval route, wait for someone or permit the ask and record that the policy did it."
+            resetAction={
+              permissionRouting.whenNobody !== DEFAULT_PERMISSION_ROUTING_POLICY.whenNobody ? (
+                <SettingResetButton
+                  label="when nobody can approve"
+                  onClick={() =>
+                    updateSettings({
+                      permissionRouting: {
+                        ...permissionRouting,
+                        whenNobody: DEFAULT_PERMISSION_ROUTING_POLICY.whenNobody,
+                      },
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={mixedPermissionRouting ? null : permissionRouting.whenNobody}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  updateSettings({
+                    permissionRouting: {
+                      ...permissionRouting,
+                      whenNobody: value as PermissionRoutingWhenNobody,
+                    },
+                  });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="When nobody can approve">
+                  <SelectValue>
+                    {mixedPermissionRouting
+                      ? "Mixed"
+                      : permissionRouting.whenNobody === "permit"
+                        ? "Permit and audit"
+                        : "Wait"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="wait" className="min-w-64">
+                    <div className="grid gap-0.5">
+                      <span className="font-medium">Wait</span>
+                      <span className="text-xs leading-4 text-muted-foreground">
+                        Keep the approval pending until an operator answers.
+                      </span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="permit" className="min-w-64">
+                    <div className="grid gap-0.5">
+                      <span className="font-medium">Permit and audit</span>
+                      <span className="text-xs leading-4 text-muted-foreground">
+                        Accept the ask and record that nobody was available.
+                      </span>
+                    </div>
+                  </SelectItem>
                 </SelectPopup>
               </Select>
             }

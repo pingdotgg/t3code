@@ -35,6 +35,7 @@ import {
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
+import { DEFAULT_PERMISSION_ROUTING_POLICY, PermissionRoutingPolicy } from "./permissionRouting.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   BrowserRecordingFrameRate,
@@ -1404,6 +1405,10 @@ export const ServerSettings = Schema.Struct({
   defaultRuntimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
+  /** Who should answer approval asks, and what to do when nobody matching is online. */
+  permissionRouting: PermissionRoutingPolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PERMISSION_ROUTING_POLICY)),
+  ),
 
   projectSettingsOverrides: Schema.Record(
     ProjectId,
@@ -1837,6 +1842,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
+  permissionRouting: Schema.optionalKey(PermissionRoutingPolicy),
   fallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   /** Replaces each project's override set; null removes it. Omitted providerInstances retains its stored value. */
   projectSettingsOverrides: Schema.optionalKey(

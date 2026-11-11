@@ -81,6 +81,11 @@ import {
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import {
+  PermissionRequestResolvedBy,
+  PermissionRequestRouting,
+  PermissionRoutingApprover,
+} from "./permissionRouting.ts";
+import {
   TurnTokenUsage,
   ToolActivitySurface,
   ToolActivityIcon,
@@ -1261,6 +1266,10 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   decision: Schema.optional(ProviderApprovalDecision),
   feedback: Schema.optional(Schema.String),
   answers: Schema.optional(ProviderUserInputAnswers),
+  /** Absent on older events and non-approval requests. */
+  routing: Schema.optionalKey(PermissionRequestRouting),
+  /** Who closed the ask; absent on older events. */
+  resolvedBy: Schema.optionalKey(PermissionRequestResolvedBy),
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
@@ -2111,6 +2120,8 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   /** False for async questions the run keeps working past. Absent from older servers. */
   blocking: Schema.optional(Schema.Boolean),
+  /** Soft routing target for approval attention; absent when unrouted or older. */
+  assignee: Schema.optionalKey(PermissionRoutingApprover),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
@@ -2456,11 +2467,17 @@ export const OrchestrationV2ProviderTurnJson = OrchestrationV2ProviderTurn.mapFi
 }));
 export type OrchestrationV2ProviderTurnJson = typeof OrchestrationV2ProviderTurnJson.Type;
 
+const PermissionRequestRoutingJson = PermissionRequestRouting.mapFields((fields) => ({
+  ...fields,
+  routedAt: Schema.DateTimeUtcFromString,
+}));
+
 export const OrchestrationV2RuntimeRequestJson = OrchestrationV2RuntimeRequest.mapFields(
   (fields) => ({
     ...fields,
     createdAt: Schema.DateTimeUtcFromString,
     resolvedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    routing: Schema.optionalKey(PermissionRequestRoutingJson),
   }),
 );
 export type OrchestrationV2RuntimeRequestJson = typeof OrchestrationV2RuntimeRequestJson.Type;
@@ -3387,6 +3404,8 @@ export const OrchestrationV2Command = Schema.Union([
     feedback: Schema.optional(Schema.String),
     answers: Schema.optional(ProviderUserInputAnswers),
     attachmentsByQuestionId: Schema.optional(UserInputAttachments),
+    /** Policy auto-permit sets this; human responds default to source "human". */
+    resolvedBy: Schema.optionalKey(PermissionRequestResolvedBy),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.user-input.dismiss"),
@@ -3480,6 +3499,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** Re-check pending approvals for audited permit-when-nobody. */
+  Schema.Struct({
+    type: Schema.Literal("permission-routing.consider"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** When set, only this pending approval is considered. */
+    requestId: Schema.optionalKey(RuntimeRequestId),
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),

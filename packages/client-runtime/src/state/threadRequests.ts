@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2UserInputQuestion,
+  PermissionRequestRouting,
   ProviderApprovalFullAccessOverride,
   ProviderApprovalOption,
   ProviderApprovalDecision,
@@ -60,6 +61,8 @@ export interface ThreadPendingApproval {
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
   readonly supportsFeedback?: boolean;
+  /** Soft routing target from environment permission-routing policy. */
+  readonly routing?: PermissionRequestRouting;
 }
 
 export const FULL_ACCESS_OVERRIDE_QUESTION = "Why am I being asked this?";
@@ -285,6 +288,7 @@ export function derivePendingThreadRequests(
       ...(request.responseCapability.type === "live" && request.responseCapability.supportsFeedback
         ? { supportsFeedback: true }
         : {}),
+      ...(request.routing === undefined ? {} : { routing: request.routing }),
     });
   }
 

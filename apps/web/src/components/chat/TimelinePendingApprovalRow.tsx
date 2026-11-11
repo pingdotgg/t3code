@@ -71,6 +71,11 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
         {approval.reason ? (
           <span className="text-muted-foreground select-text wrap-anywhere">{approval.reason}</span>
         ) : null}
+        {approval.routing?.assignee.type === "subject" ? (
+          <span className="text-muted-foreground wrap-anywhere">
+            Routed to {approval.routing.assignee.subject}
+          </span>
+        ) : null}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {canRespond ? (
             <>

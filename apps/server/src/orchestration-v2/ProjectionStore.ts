@@ -1520,6 +1520,7 @@ function pendingRuntimeRequestSummary(
     kind: request.kind,
     createdAt: request.createdAt,
     blocking: request.responseCapability.type !== "message",
+    ...(request.routing === undefined ? {} : { assignee: request.routing.assignee }),
   };
 }
 
