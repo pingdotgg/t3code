@@ -280,6 +280,7 @@ describe("hosted thread links", () => {
       relabelThreadLinks(
         [
           "See https://app.t3.codes/threads/there/t1.",
+          "~~https://app.t3.codes/threads/there/t1~~",
           "[old](https://app.t3.codes/threads/there/t1)",
           '[`old`](https://app.t3.codes/threads/there/t1 "title")',
           "[draft \\[old](https://app.t3.codes/threads/there/t1)",
@@ -293,6 +294,7 @@ describe("hosted thread links", () => {
     ).toBe(
       [
         "See [There](t3-thread://v2/there/t1).",
+        "~~[There](t3-thread://v2/there/t1)~~",
         "[There](t3-thread://v2/there/t1)",
         '[`old`](https://app.t3.codes/threads/there/t1 "title")',
         "[There](t3-thread://v2/there/t1)",
