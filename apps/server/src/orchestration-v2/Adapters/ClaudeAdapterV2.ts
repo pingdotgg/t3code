@@ -2144,7 +2144,7 @@ function isLessonStatusLine(text: string) {
 // Thinking summaries narrate as "I'll…"/"They got it…"; drop those sentences, keep the teaching and its line breaks.
 function stripLessonNarration(text: string) {
   const narration =
-    /^(?:I(?:['’](?:m|ll|ve|d))?\b|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u;
+    /^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u;
   return text
     .split("\n")
     .map((line) =>
@@ -9345,7 +9345,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     const words = (value: string) => value.replace(/\s+/gu, " ").trim();
                     if (heldBefore && replyCoverage(text, heldBefore) >= 0.6) continue;
                     if (heldBefore && words(text).includes(words(heldBefore)))
-                      text = words(text).replace(words(heldBefore), "").trim();
+                      text = text.includes(heldBefore.trim())
+                        ? text.replace(heldBefore.trim(), "").trim()
+                        : words(text).replace(words(heldBefore), "").trim();
                     text = stripLessonNarration(cardReplyCoversLead(block, text) ?? text);
                     if (text === "") continue;
                   }

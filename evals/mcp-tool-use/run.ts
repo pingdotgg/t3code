@@ -2317,7 +2317,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
             .split(/(?<=[.!?])\s+/u)
             .filter(
               (sentence) =>
-                !/^(?:I(?:['’](?:m|ll|ve|d))?\b|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u.test(
+                !/^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u.test(
                   sentence.trimStart(),
                 ),
             )
@@ -2407,7 +2407,9 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
             let lead = thinking.thinking;
             if (heldBefore && replyCoverage(lead, heldBefore) >= 0.6) continue;
             if (heldBefore && words(lead).includes(words(heldBefore)))
-              lead = words(lead).replace(words(heldBefore), "").trim();
+              lead = lead.includes(heldBefore.trim())
+                ? lead.replace(heldBefore.trim(), "").trim()
+                : words(lead).replace(words(heldBefore), "").trim();
             const shown = stripLessonNarration(leadRemainder(block, lead) ?? lead);
             if (shown !== "") texts.push(shown);
           } else if (!repeats(block, thinking.thinking)) {

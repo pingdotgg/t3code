@@ -3627,7 +3627,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       lesson: true,
       thinking:
         "Melting begins at the solidus, but wetting needs the liquidus. I'm applying the same idea next.",
-      shownText: "Melting begins at the solidus, but wetting needs the liquidus.",
+      shownText: ["Melting begins at the solidus, but wetting needs the liquidus."],
       expected: ["reasoning", "assistant_message"],
     },
     {
@@ -3641,8 +3641,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       tool: "mcp__t3-code__question_card",
       reply: "Which width?",
       lesson: true,
-      thinking: "Keep the trace 2.5 mm wide; Ohm's law says V = I × R. I'm moving on next.",
-      shownText: "Keep the trace 2.5 mm wide; Ohm's law says V = I × R.",
+      thinking:
+        "Keep the trace 2.5 mm wide; Ohm's law says V = I × R.\nI = V / R, so doubling R halves the current. I'm moving on next.",
+      shownText: [
+        "Keep the trace 2.5 mm wide; Ohm's law says V = I × R.\nI = V / R, so doubling R halves the current.",
+      ],
       expected: ["reasoning", "assistant_message"],
     },
     {
@@ -3650,7 +3653,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       reply: "Which goes on first?",
       lesson: true,
       thinking: "Let's say the pad is at 20 °C.\n\n- Flux\n- Solder\n\nI'll ask which comes first.",
-      shownText: "Let's say the pad is at 20 °C.\n\n- Flux\n- Solder",
+      shownText: ["Let's say the pad is at 20 °C.\n\n- Flux\n- Solder"],
       expected: ["reasoning", "assistant_message"],
     },
     {
@@ -3659,8 +3662,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       lesson: true,
       heldText: "Melting begins at the solidus.",
       thinking:
-        "Melting begins at the solidus. Wetting needs the liquidus, so reflow aims 15–30 °C above the liquidus.",
-      shownText: "Wetting needs the liquidus, so reflow aims 15–30 °C above the liquidus.",
+        "Melting begins at the solidus.\n\n- Wetting needs the liquidus.\n- Reflow aims 15–30 °C above it.",
+      shownText: [
+        "Melting begins at the solidus.",
+        "- Wetting needs the liquidus.\n- Reflow aims 15–30 °C above it.",
+      ],
       expected: ["reasoning", "assistant_message", "assistant_message"],
     },
     {
@@ -3766,16 +3772,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual([...latest.values()], [...expected]);
         if (shownText !== undefined) {
-          assert.equal(
-            harness.events
-              .flatMap((event) =>
-                event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
-                  ? [event.turnItem.text]
-                  : [],
-              )
-              .at(-1),
-            shownText,
+          const shown = new Map(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+                ? [[event.turnItem.id, event.turnItem.text] as const]
+                : [],
+            ),
           );
+          assert.deepEqual([...shown.values()], [...shownText]);
         }
       }).pipe(
         Effect.scoped,
