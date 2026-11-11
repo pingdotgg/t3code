@@ -520,7 +520,7 @@ describe("createOlderSettledThreadAtoms", () => {
       yield* Queue.offer(replies, Effect.succeed({ ...found, snapshotSequence: 8 }));
       yield* until(
         search,
-        (result) => Option.getOrNull(AsyncResult.value(result))?.snapshotSequence === 8,
+        (result) => AsyncResult.getOrElse(result, () => null)?.snapshotSequence === 8,
       );
       expect(requests).toEqual([input, input]);
     }),

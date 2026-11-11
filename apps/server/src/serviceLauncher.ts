@@ -162,6 +162,8 @@ const GIB = 1024 ** 3;
 // Cloned backups still need headroom for trial writes and migrations to diverge.
 const CLONED_BACKUP_MIN_HEADROOM_BYTES = GIB;
 const CLONED_BACKUP_HEADROOM_FRACTION = 0.1;
+// While the online backup holds its snapshot, the live WAL and its copy can each reach the server's 128 MiB gate.
+const ONLINE_BACKUP_WAL_HEADROOM_BYTES = 2 * 128 * 1024 ** 2;
 
 async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.Stats>> {
   const stats: Array<NodeFS.Stats> = [];
@@ -219,6 +221,17 @@ const filesystemBackupSpaceProbe: BackupSpaceProbe = {
   canClone: backupCanClone,
 };
 
+// A killed launcher skips the backup's cleanup, and retries only clear their own update's copy.
+// Update requests are refused while one is pending, so no staging directory is still in use here.
+async function removeAbandonedBackupCopies(backupRoot: string): Promise<void> {
+  for (const entry of await NodeFSP.readdir(backupRoot)) {
+    if (!entry.endsWith(".staging")) continue;
+    await NodeFSP.rm(NodePath.join(backupRoot, entry), { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+  }
+}
+
 /** Check before stopping the server so full disks refuse updates without an outage. */
 export async function databaseBackupBlocker(
   baseDir: string,
@@ -228,9 +241,10 @@ export async function databaseBackupBlocker(
   const { readFreeBytes, canClone } = { ...filesystemBackupSpaceProbe, ...probe };
   const backupRoot = NodePath.join(baseDir, "runtime", "db-backup");
   await NodeFSP.mkdir(backupRoot, { recursive: true, mode: 0o700 });
+  await removeAbandonedBackupCopies(backupRoot);
   const [files, free] = await Promise.all([statDatabaseFiles(dbPath), readFreeBytes(backupRoot)]);
   const size = files.reduce((total, file) => total + file.size, 0);
-  const fullCopyBytes = size * 1.05;
+  const fullCopyBytes = size * 1.05 + ONLINE_BACKUP_WAL_HEADROOM_BYTES;
   if (free >= fullCopyBytes) return undefined;
   const clonedBytes = Math.max(
     CLONED_BACKUP_MIN_HEADROOM_BYTES,
@@ -240,6 +254,83 @@ export async function databaseBackupBlocker(
   if (free >= needed) return undefined;
   const gb = (bytes: number) => (bytes / GIB).toFixed(1);
   return `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
+}
+
+// A child-process copy: closing any descriptor this process opens on the database drops the snapshot's POSIX locks.
+async function copyWithoutOpening(source: string, destination: string): Promise<void> {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  if (process.platform === "win32") return NodeFSP.copyFile(source, destination);
+  if (!(await runCp([source, destination]))) throw new Error(`cp ${source} failed.`);
+}
+
+// Copies the main file while the server runs; an open read transaction stops SQLite resetting the WAL,
+// which `finish` copies after the stop and which overrides any page the copy caught mid-checkpoint.
+// `-shm` is left out: its backfill count would make SQLite trust those pages. Past the WAL size gate,
+// a write-heavy server's new writes wait, uncommitted, until the server stops.
+async function startOnlineDatabaseBackup(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+  probe: Partial<BackupSpaceProbe> = {},
+): Promise<(() => Promise<void>) | undefined> {
+  const backupDir = databaseBackupDir(baseDir, pending.id);
+  if (await pathExists(backupDir)) return undefined;
+  const { canClone } = { ...filesystemBackupSpaceProbe, ...probe };
+  if (await canClone(pending.dbPath, NodePath.dirname(backupDir)).catch(() => true))
+    return undefined;
+  const NodeSqlite = await import("node:sqlite").catch(() => undefined);
+  if (NodeSqlite === undefined) return undefined;
+
+  const stagingDir = `${backupDir}.staging`;
+  const discardStaging = () =>
+    NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+  const fallBack = async (cause: unknown) => {
+    await discardStaging();
+    process.stderr.write(
+      `[service-launcher] Copying the database while the server runs failed; backing it up offline: ${cause instanceof Error ? cause.message : String(cause)}\n`,
+    );
+    return undefined;
+  };
+  let snapshot: InstanceType<typeof NodeSqlite.DatabaseSync> | undefined;
+  // SQLite keeps -wal beside the resolved file, not beside a symlink to it.
+  let dbPath = pending.dbPath;
+  const release = () => {
+    try {
+      snapshot?.close();
+    } catch {}
+    snapshot = undefined;
+  };
+  try {
+    await discardStaging();
+    await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+    dbPath = await NodeFSP.realpath(pending.dbPath);
+    snapshot = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
+    const mode = String(snapshot.prepare("PRAGMA journal_mode").get()?.journal_mode);
+    if (mode.toLowerCase() !== "wal") throw new Error(`journal_mode is ${mode}, not wal.`);
+    snapshot.exec("BEGIN");
+    snapshot.prepare("SELECT count(*) FROM sqlite_schema").get();
+    const mainCopy = databaseBackupFile(stagingDir, "");
+    await copyWithoutOpening(dbPath, mainCopy);
+    await syncFile(mainCopy);
+  } catch (cause) {
+    release();
+    return fallBack(cause);
+  }
+  return async () => {
+    try {
+      const wal = `${dbPath}-wal`;
+      if (!(await pathExists(wal)))
+        throw new Error("the WAL disappeared while the snapshot was open.");
+      const walCopy = databaseBackupFile(stagingDir, "-wal");
+      await copyWithoutOpening(wal, walCopy);
+      await syncFile(walCopy);
+      release();
+      await NodeFSP.rename(stagingDir, backupDir);
+      await syncDirectory(NodePath.dirname(backupDir));
+    } catch (cause) {
+      release();
+      await fallBack(cause);
+    }
+  };
 }
 
 // Preserve completed backups; restarted trials may already have changed the live database.
@@ -318,8 +409,13 @@ async function restoreDatabaseBackup(
 
   await markDatabaseRestorePending(backupDir);
   const directories = new Set([NodePath.dirname(pending.dbPath)]);
+  // SQLite keeps -wal and -shm beside the resolved database file, not beside a symlink to it.
+  const mainTarget = await restoreTarget(pending.dbPath);
   for (const suffix of DB_FILE_SUFFIXES) {
-    const livePath = `${pending.dbPath}${suffix}`;
+    const livePath = suffix === "" ? pending.dbPath : `${mainTarget}${suffix}`;
+    if (livePath !== `${pending.dbPath}${suffix}`) {
+      await NodeFSP.rm(`${pending.dbPath}${suffix}`, { force: true });
+    }
     const source = databaseBackupFile(backupDir, suffix);
     if (await pathExists(source)) {
       // Restore into the symlink target; cloning would replace the link.
@@ -696,8 +792,17 @@ export class Launcher {
       return;
     }
     this.#timer = undefined;
+    // Anything thrown outside its own fallback still leaves the offline backup to run.
+    const finishOnlineBackup = await startOnlineDatabaseBackup(
+      this.#baseDir,
+      pending,
+      this.#backupSpaceProbe,
+    ).catch(() => undefined);
     this.#child = null;
     await terminateChild(child.process);
+    await finishOnlineBackup?.();
+    // A stop during a minutes-long copy should not start a trial; restart resumes the pending update.
+    if (this.#stopRequested) return;
     await this.#startTrial(pending);
   }
 
