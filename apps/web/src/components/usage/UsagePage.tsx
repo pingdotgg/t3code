@@ -23,6 +23,7 @@ import {
 
 import {
   isCompatibleUsageContractVersion,
+  isModelCostUnknown,
   type DailyTotals,
   type HourlyTotals,
   type MergedUsage,
@@ -1018,12 +1019,7 @@ function UsageOverview({
                             metric === "cost" && "font-medium text-foreground",
                           )}
                         >
-                          <UsageCost
-                            exact={showExactValues}
-                            costUsd={row.costUsd}
-                            records={row.records}
-                            unpricedRecords={row.unpricedRecords}
-                          />
+                          <UsageCost exact={showExactValues} model={row} />
                           {metric === "cost" && share !== null ? (
                             <span className="block text-xs font-normal text-muted-foreground sm:hidden">
                               <span className="sr-only">Share of cost: </span>
@@ -1079,14 +1075,20 @@ function UsageOverview({
               </colgroup>
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="py-2 pl-2 font-normal">{shownHourly ? "Hour" : "Day"}</th>
+                  <th scope="col" className="py-2 pl-2 font-normal">
+                    {shownHourly ? "Hour" : "Day"}
+                  </th>
                   {activeProviders.map((provider) => (
-                    <th key={provider} className="py-2 pl-4 text-right font-normal">
+                    <th scope="col" key={provider} className="py-2 pl-4 text-right font-normal">
                       {PROVIDER_PRESENTATION[provider].label}
                     </th>
                   ))}
-                  <th className="py-2 pl-4 text-right font-normal">Total</th>
-                  <th className="py-2 pr-2 pl-4 text-right font-normal">Tokens</th>
+                  <th scope="col" className="py-2 pl-4 text-right font-normal">
+                    Total
+                  </th>
+                  <th scope="col" className="py-2 pr-2 pl-4 text-right font-normal">
+                    Tokens
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1105,11 +1107,11 @@ function UsageOverview({
                       key={"hourStart" in period ? period.hourStart : period.day}
                       className="border-b border-border/50 transition-colors hover:bg-muted/50"
                     >
-                      <td className="py-2 pl-2 text-foreground">
+                      <th scope="row" className="py-2 pl-2 text-left font-normal text-foreground">
                         {"hourStart" in period
                           ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12)
                           : formatDayShort(period.day)}
-                      </td>
+                      </th>
                       {activeProviders.map((provider) => (
                         <td
                           key={provider}
@@ -1267,27 +1269,27 @@ function UsageInfo({ label, children }: { readonly label: string; readonly child
 
 function UsageCost({
   exact,
-  costUsd,
-  records,
-  unpricedRecords,
+  model,
 }: {
   readonly exact: boolean;
-  readonly costUsd: number;
-  readonly records: number;
-  readonly unpricedRecords: number;
+  readonly model: MergedUsage["models"][number];
 }) {
-  const unknown = records > 0 && unpricedRecords >= records;
+  const unknown = isModelCostUnknown(model);
   return (
     <>
       {unknown ? (
         <span className="font-normal text-muted-foreground">Unpriced</span>
       ) : (
-        <UsageFigure value={formatUsd(costUsd)} precise={preciseUsd(costUsd)} exact={exact} />
+        <UsageFigure
+          value={formatUsd(model.costUsd)}
+          precise={preciseUsd(model.costUsd)}
+          exact={exact}
+        />
       )}
-      {!unknown && unpricedRecords > 0 ? (
+      {!unknown && model.unpricedRecords > 0 ? (
         <span className="flex items-center justify-end gap-1 text-xs font-normal text-muted-foreground">
           Partial
-          <UsageInfo label="About partially priced cost">{`Excludes ${formatCount(unpricedRecords)} of ${formatCount(records)} records with no price. Their tokens are included.`}</UsageInfo>
+          <UsageInfo label="About partially priced cost">{`Excludes ${formatCount(model.unpricedRecords)} of ${formatCount(model.records)} records with no price. Their tokens are included.`}</UsageInfo>
         </span>
       ) : null}
     </>
