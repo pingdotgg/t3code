@@ -52,6 +52,16 @@ function discovered(
   };
 }
 
+function saved(environmentId: EnvironmentId, label: string, connectionId: string) {
+  return {
+    environmentId,
+    entry: { target: new BearerConnectionTarget({ environmentId, label, connectionId }) },
+    connection: { phase: "connected", error: null, traceId: null },
+    relayManaged: false,
+    serverConfig: null,
+  } as const;
+}
+
 describe("CloudEnvironmentConnectRows", () => {
   it("does not offer a T3 Connect route for the desktop's own WSL backend", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
@@ -62,37 +72,13 @@ describe("CloudEnvironmentConnectRows", () => {
       discovered(wslEnvironmentId, "Ubuntu (WSL)"),
       discovered(laptopEnvironmentId, "Laptop"),
     ];
-    const wslBackend = {
-      environmentId: wslEnvironmentId,
-      entry: {
-        target: new BearerConnectionTarget({
-          environmentId: wslEnvironmentId,
-          label: "Ubuntu (WSL)",
-          connectionId: "local:wsl:Ubuntu",
-        }),
-      },
-      connection: { phase: "connected", error: null, traceId: null },
-      relayManaged: false,
-      serverConfig: null,
-    } as const;
-    const laptopOverLan = {
-      environmentId: laptopEnvironmentId,
-      entry: {
-        target: new BearerConnectionTarget({
-          environmentId: laptopEnvironmentId,
-          label: "Laptop",
-          connectionId: "lan-laptop",
-        }),
-      },
-      connection: { phase: "connected", error: null, traceId: null },
-      relayManaged: false,
-      serverConfig: null,
-    } as const;
-
     await using screen = await render(
       <CloudEnvironmentConnectRows
         primaryEnvironmentId={primaryEnvironmentId}
-        savedEnvironments={[wslBackend, laptopOverLan]}
+        savedEnvironments={[
+          saved(wslEnvironmentId, "Ubuntu (WSL)", "local:wsl:Ubuntu"),
+          saved(laptopEnvironmentId, "Laptop", "lan-laptop"),
+        ]}
       />,
     );
 
