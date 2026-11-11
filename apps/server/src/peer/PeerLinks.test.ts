@@ -440,7 +440,7 @@ it.effect("cancelling a descriptor probe aborts its request and leaves later res
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("one dropped descriptor request does not list a live peer as unreachable", () =>
+it.live("one dropped descriptor request does not list a live peer as unreachable", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const dropNext = yield* Ref.make(false);
