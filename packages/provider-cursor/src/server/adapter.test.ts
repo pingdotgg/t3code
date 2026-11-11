@@ -641,6 +641,9 @@ describe("CursorAdapterV2", () => {
       yield* sendUpdate!({ type: "text-delta", text: "!" });
       // Reasoning closes the assistant segment while its next flush is pending.
       yield* sendUpdate!({ type: "thinking-delta", text: "next" });
+      for (let index = 0; index < 100; index += 1) {
+        yield* sendUpdate!({ type: "thinking-delta", text: " step" });
+      }
       yield* TestClock.adjust("50 millis");
       yield* Deferred.succeed(finished, undefined);
       const streamed = yield* runtime.events.pipe(
@@ -676,6 +679,27 @@ describe("CursorAdapterV2", () => {
       assert.deepEqual(
         streamed.flatMap((event) =>
           event.type === "node.updated" && event.node.kind === "assistant_message"
+            ? [event.node.status]
+            : [],
+        ),
+        ["running", "completed"],
+      );
+      const thinking = `next${" step".repeat(100)}`;
+      assert.deepEqual(
+        streamed.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "reasoning"
+            ? [[event.turnItem.status, event.turnItem.text]]
+            : [],
+        ),
+        [
+          ["running", "next"],
+          ["running", thinking],
+          ["completed", thinking],
+        ],
+      );
+      assert.deepEqual(
+        streamed.flatMap((event) =>
+          event.type === "node.updated" && event.node.kind === "reasoning"
             ? [event.node.status]
             : [],
         ),
