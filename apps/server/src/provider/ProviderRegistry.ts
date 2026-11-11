@@ -27,6 +27,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
+import { rereadLoginShellPath } from "../os-jank.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
@@ -627,6 +628,24 @@ export const layer = Layer.effect(
       );
     });
 
+    // PATH is read from the login shell at startup and drivers copy it when built, so a CLI
+    // installed later needs a fresh read and a rebuild. Installed instances keep their sessions.
+    const rebuildMissingAfterPathChange = Effect.fn("rebuildMissingAfterPathChange")(function* (
+      instanceId?: ProviderInstanceId,
+    ) {
+      const instances = yield* instanceRegistry.listInstances;
+      const missing = yield* Effect.filter(instances, (instance) =>
+        // ACP also reports installed:false for setup states unrelated to executable discovery.
+        !instance.enabled ||
+        instance.driverKind === "acpRegistry" ||
+        (instanceId !== undefined && instance.instanceId !== instanceId)
+          ? Effect.succeed(false)
+          : instance.snapshot.getSnapshot.pipe(Effect.map((snapshot) => !snapshot.installed)),
+      );
+      if (missing.length === 0 || !(yield* rereadLoginShellPath())) return;
+      yield* instanceRegistryMutator.rebuild(missing);
+    });
+
     type RefreshAllCompletion = Deferred.Deferred<ReadonlyArray<ServerProvider>>;
     const refreshAllInFlightRef = yield* Ref.make<Option.Option<RefreshAllCompletion>>(
       Option.none(),
@@ -656,7 +675,8 @@ export const layer = Layer.effect(
         // Syncing first keeps a refresh right after a rebuild from probing the replaced instance.
         yield* manifestService.current.pipe(
           Effect.flatMap(({ updatedAt }) =>
-            syncLiveSourcesAndContinue.pipe(
+            rebuildMissingAfterPathChange().pipe(
+              Effect.andThen(syncLiveSourcesAndContinue),
               Effect.andThen(Ref.get(liveSubsRef)),
               Effect.flatMap((instances) =>
                 Effect.forEach(instances.values(), (instance) => refreshOneSource(instance), {
@@ -693,6 +713,7 @@ export const layer = Layer.effect(
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
     ) {
+      yield* rebuildMissingAfterPathChange(instanceId);
       yield* syncLiveSourcesAndContinue;
       const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
       if (!instance) {

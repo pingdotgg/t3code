@@ -1,6 +1,7 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   listLoginShellCandidates,
+  LoginShellEnvironment,
   mergePathEntries,
   readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
@@ -106,6 +107,27 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
       }),
     ),
   );
+});
+
+/** Re-reads the login shell PATH after startup; true when it added entries to PATH. */
+export const rereadLoginShellPath = Effect.fn("rereadLoginShellPath")(function* () {
+  const platform = yield* HostProcess.Platform;
+  if (platform !== "darwin" && platform !== "linux") return false;
+  const env = yield* HostProcess.Environment;
+  const readEnvironment = yield* LoginShellEnvironment;
+  for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
+    const shellEnvironment = yield* readEnvironment(shell, ["PATH", "__MISE_DIFF"]);
+    const shellPath = shellEnvironment.PATH;
+    if (!shellPath) continue;
+    const current = new Set((env.PATH ?? "").split(":"));
+    if (shellPath.split(":").every((entry) => !entry.trim() || current.has(entry.trim()))) {
+      return false;
+    }
+    env.PATH = mergePathEntries(shellPath, env.PATH, platform);
+    if (shellEnvironment.__MISE_DIFF) env.__MISE_DIFF = shellEnvironment.__MISE_DIFF;
+    return true;
+  }
+  return false;
 });
 
 export const expandHomePath = Effect.fn(function* (input: string) {

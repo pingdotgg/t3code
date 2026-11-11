@@ -43,6 +43,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import { LoginShellEnvironment } from "@t3tools/shared/shell";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
@@ -345,6 +346,8 @@ const layerTestNodeServices = Layer.mergeAll(
   Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
     getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000001")),
   }),
+  // Refreshes of uninstalled providers re-read the login shell; never spawn the developer's.
+  Layer.succeed(LoginShellEnvironment, () => Effect.succeed({})),
   // An empty home, so the developer's own Claude settings never reach provider probes.
   Layer.effect(
     HostProcess.HomeDirectory,
@@ -1295,6 +1298,104 @@ it.layer(
         ),
       );
     });
+
+    it.effect("rebuilds uninstalled instances when the login shell PATH gained entries", () =>
+      Effect.gen(function* () {
+        const makeInstance = (id: string, installed: boolean) => {
+          const provider = {
+            instanceId: ProviderInstanceId.make(id),
+            driver: ProviderDriverKind.make("claudeAgent"),
+            status: installed ? "ready" : "error",
+            enabled: true,
+            installed,
+            auth: { status: "unknown" },
+            checkedAt: "2026-11-11T00:00:00.000Z",
+            version: null,
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } satisfies ServerProvider;
+          return {
+            instanceId: provider.instanceId,
+            driverKind: provider.driver,
+            continuationIdentity: { driverKind: provider.driver, continuationKey: id },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: provider.driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(provider),
+              refresh: Effect.succeed(provider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+        };
+        const missing = makeInstance("claude-missing", false);
+        const installed = makeInstance("claude-installed", true);
+        const rebuilt: Array<ReadonlyArray<ProviderInstanceId>> = [];
+        const env: NodeJS.ProcessEnv = { SHELL: "/bin/bash", PATH: "/usr/bin" };
+        const shellPath = yield* Ref.make("/usr/bin");
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          yield* registry.refresh();
+          assert.deepStrictEqual(rebuilt, []);
+
+          yield* Ref.set(shellPath, "/home/test/.local/bin:/usr/bin");
+          yield* registry.refreshInstance(installed.instanceId);
+          assert.deepStrictEqual(rebuilt, []);
+          yield* registry.refresh();
+          assert.deepStrictEqual(rebuilt, [[missing.instanceId]]);
+          assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
+
+          yield* registry.refreshInstance(missing.instanceId);
+          assert.deepStrictEqual(rebuilt, [[missing.instanceId]]);
+        }).pipe(
+          Effect.provide(
+            ProviderRegistry.layer.pipe(
+              Layer.provide(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                  getInstance: (id) =>
+                    Effect.succeed([missing, installed].find((i) => i.instanceId === id)),
+                  listInstances: Effect.succeed([missing, installed]),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.empty,
+                  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+                }),
+              ),
+              Layer.provide(
+                Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({
+                  rebuild: (instances) =>
+                    Effect.sync(() => {
+                      rebuilt.push(instances.map((instance) => instance.instanceId));
+                    }),
+                }),
+              ),
+            ),
+          ),
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, env),
+          Effect.provideService(LoginShellEnvironment, () =>
+            Ref.get(shellPath).pipe(Effect.map((PATH) => ({ PATH }))),
+          ),
+          Effect.scoped,
+        );
+      }).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-login-shell-path-",
+          }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+        ),
+      ),
+    );
 
     describe("Antigravity model inventories", () => {
       const previousProvider = {

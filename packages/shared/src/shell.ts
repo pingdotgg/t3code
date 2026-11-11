@@ -21,6 +21,8 @@ const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const WINDOWS_SHELL_PROBE_TIMEOUT_MS = 5000;
 // A shell stuck in the kernel survives the kill and holds stdout, so execFile's callback never fires.
 const WINDOWS_SHELL_PROBE_DEADLINE = Duration.millis(WINDOWS_SHELL_PROBE_TIMEOUT_MS + 1000);
+const LOGIN_SHELL_PROBE_TIMEOUT_MS = 5000;
+const LOGIN_SHELL_PROBE_DEADLINE = Duration.millis(LOGIN_SHELL_PROBE_TIMEOUT_MS + 1000);
 
 type ExecFileSyncLike = (
   file: string,
@@ -330,6 +332,67 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
 
   return environment;
 };
+
+const execLoginShellProbe = (shell: string, args: ReadonlyArray<string>) =>
+  Effect.callback<Option.Option<string>>((resume) => {
+    let child: NodeChildProcess.ChildProcess;
+    try {
+      child = NodeChildProcess.spawn(shell, args, {
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: LOGIN_SHELL_PROBE_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+      });
+    } catch {
+      resume(Effect.succeedNone);
+      return;
+    }
+    let output = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      output += chunk;
+    });
+    child.once("error", () => resume(Effect.succeedNone));
+    child.once("close", (code) =>
+      resume(Effect.succeed(code === 0 ? Option.some(output) : Option.none())),
+    );
+    return Effect.sync(() => {
+      child.kill("SIGKILL");
+      child.stdout?.destroy();
+      child.unref();
+    });
+  });
+
+export type LoginShellEnvironmentReader = (
+  shell: string,
+  names: ReadonlyArray<string>,
+) => Effect.Effect<Partial<Record<string, string>>>;
+
+/** `readEnvironmentFromLoginShell` without blocking the event loop, for reads after startup. */
+const readEnvironmentFromLoginShellAsync: LoginShellEnvironmentReader = Effect.fn(
+  "shell.readEnvironmentFromLoginShellAsync",
+)(function* (shell, names) {
+  if (names.length === 0) return {};
+  const output = yield* execLoginShellProbe(shell, [
+    "-ilc",
+    buildEnvironmentCaptureCommand(shell, names),
+  ]).pipe(Effect.timeoutOption(LOGIN_SHELL_PROBE_DEADLINE), Effect.map(Option.flatten));
+  if (Option.isNone(output)) return {};
+
+  const environment: Partial<Record<string, string>> = {};
+  for (const name of names) {
+    const value = extractEnvironmentValue(output.value, name);
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
+});
+
+export const LoginShellEnvironment = Context.Reference<LoginShellEnvironmentReader>(
+  "@t3tools/shared/shell/LoginShellEnvironment",
+  {
+    defaultValue: () => readEnvironmentFromLoginShellAsync,
+  },
+);
 
 export type WindowsShellEnvironmentReader = (
   names: ReadonlyArray<string>,
