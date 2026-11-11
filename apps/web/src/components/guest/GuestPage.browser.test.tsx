@@ -246,7 +246,7 @@ describe("GuestPage", () => {
     expect(screen.container.querySelector('[aria-label="Fork from this response"]')).toBeNull();
     expect(socket).not.toHaveBeenCalled();
     // The composer names the thread's model, as the owner's does, with nothing to pick.
-    await expect.element(screen.getByLabelText("Model: 5.4")).toBeVisible();
+    await expect.element(screen.getByLabelText("Model: GPT-5.4")).toBeVisible();
   });
 
   it("sends attached files with the message, as form data", async () => {
@@ -341,13 +341,15 @@ describe("GuestPage", () => {
     node.dispatchEvent(new Event("scroll"));
     await expect.element(screen.getByRole("button", { name: /scroll to/i })).toBeVisible();
 
-    // The guest's own message waits at the end for the owner.
+    // The guest sends; their message waits at the end for the owner.
     const waiting = {
       id: GuestMessageId.make("guest-1"),
       text: "Can you also check the logout flow?",
       status: "pending" as const,
       submittedAt: "2026-10-23T10:01:00.000Z",
     };
+    await userEvent.type(screen.getByRole("textbox", { name: "Message" }), waiting.text);
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
     send({ type: "view", view: { ...view, messages: [waiting] } });
     await expect.element(screen.getByText(waiting.text)).toBeInTheDocument();
     await expectAtEnd();

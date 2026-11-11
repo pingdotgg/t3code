@@ -32,7 +32,3 @@ export function cacheTerminalGridSize(
   terminalGridSizeCache.set(terminalUiStateKey(target), normalized);
   return normalized;
 }
-
-export function resetTerminalUiStateCaches() {
-  terminalGridSizeCache.clear();
-}

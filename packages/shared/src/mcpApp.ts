@@ -5,6 +5,8 @@ export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
 export const MCP_APP_EXTENSION_ID = "io.modelcontextprotocol/ui";
 export const MCP_APP_RESOURCE_SCHEME = "ui://";
 export const MCP_APP_OUTPUT_KEY = "t3McpApp";
+/** Frame URL query parameter carrying the host's color scheme before `ui/initialize`. */
+export const MCP_APP_COLOR_SCHEME_PARAM = "t3-color-scheme";
 
 const MCP_APP_MIN_HEIGHT = 80;
 export const MCP_APP_DEFAULT_HEIGHT = 320;
@@ -131,11 +133,29 @@ export function mcpAppReferencesEqual(left: McpAppReference, right: McpAppRefere
   );
 }
 
-export function readMcpAppResourceUri(meta: unknown): string | undefined {
+/** Reads a tool's `_meta.ui.resourceUri`, or the deprecated flat `ui/resourceUri`. */
+export function mcpAppToolResourceUri(meta: unknown): string | undefined {
   if (!Predicate.isObject(meta)) return undefined;
-  const nested = Predicate.isObject(meta.ui) ? meta.ui.resourceUri : undefined;
-  const uri = nested ?? meta["ui/resourceUri"];
-  return typeof uri === "string" && uri.startsWith(MCP_APP_RESOURCE_SCHEME) ? uri : undefined;
+  const uri =
+    (Predicate.isObject(meta.ui) ? meta.ui.resourceUri : undefined) ?? meta["ui/resourceUri"];
+  return typeof uri === "string" &&
+    uri.length <= MAX_RESOURCE_URI_LENGTH &&
+    uri.startsWith(MCP_APP_RESOURCE_SCHEME)
+    ? uri
+    : undefined;
+}
+
+export const claudeMcpToolNamePart = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+/** Claude Code's `mcp__<server>__` prefix; it also collapses and trims `_` in `claude.ai ` connector names. */
+export function claudeMcpToolPrefix(server: string): string {
+  const part = claudeMcpToolNamePart(server);
+  return `mcp__${server.startsWith("claude.ai ") ? part.replace(/_+/g, "_").replace(/^_|_$/g, "") : part}__`;
+}
+
+/** Claude Code names MCP tools `mcp__<server>__<tool>`, replacing characters outside `[a-zA-Z0-9_-]`. */
+export function claudeMcpToolName(server: string, tool: string): string {
+  return `${claudeMcpToolPrefix(server)}${claudeMcpToolNamePart(tool)}`;
 }
 
 export function mcpAppToolCallableByApp(meta: unknown): boolean {
@@ -183,6 +203,16 @@ export function injectMcpAppCsp(html: string, csp: McpAppCsp | undefined): strin
 export function injectMcpAppThemeBootstrap(html: string): string {
   const script = `<script>
 (() => {
+  try {
+    const initial = new URLSearchParams(location.search).get(${JSON.stringify(MCP_APP_COLOR_SCHEME_PARAM)});
+    if (initial === "light" || initial === "dark") {
+      // A meta tag, unlike an inline style, survives the app's own <html style> attribute.
+      const meta = document.createElement("meta");
+      meta.name = "color-scheme";
+      meta.content = initial;
+      document.head.append(meta);
+    }
+  } catch {}
   window.addEventListener("message", (event) => {
     if (event.source !== window.parent) return;
     const message = event.data;

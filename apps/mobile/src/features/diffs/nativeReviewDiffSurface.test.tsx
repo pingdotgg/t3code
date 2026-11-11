@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   tokenCompletion: null as Promise<boolean> | null,
   onDebug: undefined as NativeReviewDiffViewProps["onDebug"],
   autoViewport: false,
+  contentResetKeyLandsLate: false,
   rows: vi.fn(),
   tokens: vi.fn(),
   highlight: vi.fn(),
@@ -30,22 +31,30 @@ function RawView({
   ref: nativeRef,
   onDebug,
   initialFileId,
-  contentResetKey,
+  contentResetKey = "",
 }: NativeReviewDiffViewProps & { ref: Ref<unknown> }) {
   const [content, setContent] = useState({ resetKey: contentResetKey, rows: "" });
-  const rows = content.resetKey === contentResetKey ? content.rows : "";
+  // Native setContentResetKey clears rows unless the key is unchanged.
+  const setContentResetKey = (resetKey: string) =>
+    setContent((current) => (current.resetKey === resetKey ? current : { resetKey, rows: "" }));
   const [tokenRowIds, setTokenRowIds] = useState<string[]>([]);
+  // Android Fabric can apply a prop update after an AsyncFunction call made later.
+  if (!mocks.contentResetKeyLandsLate && content.resetKey !== contentResetKey) {
+    setContentResetKey(contentResetKey);
+  }
   useLayoutEffect(() => {
     mocks.onDebug = onDebug;
   });
   useImperativeHandle(nativeRef, () => ({
-    async setRowsJson(value: string) {
+    async setRowsJson(value: string, resetKey?: string) {
       mocks.rows(value);
       if (mocks.registrationFailures > 0) {
         mocks.registrationFailures -= 1;
         throw new Error("Unable to find the 'T3ReviewDiffSurface' view for this native tag");
       }
-      setContent({ resetKey: contentResetKey, rows: value });
+      if (resetKey !== undefined) setContentResetKey(resetKey);
+      setContent((current) => ({ ...current, rows: value }));
+      setContentResetKey(contentResetKey);
       if (mocks.autoViewport) {
         const decoded = JSON.parse(value) as NativeReviewDiffData["rows"];
         onDebug?.({
@@ -79,7 +88,7 @@ function RawView({
   }));
   return (
     <div data-token-rows={tokenRowIds.join(",")}>
-      {rows ? "Rendered diff" : "Blank native surface"}
+      {content.rows ? "Rendered diff" : "Blank native surface"}
     </div>
   );
 }
@@ -141,6 +150,7 @@ function setup(integrated = false) {
   mocks.tokenCompletion = null;
   mocks.onDebug = undefined;
   mocks.autoViewport = false;
+  mocks.contentResetKeyLandsLate = false;
   mocks.rows.mockClear();
   mocks.tokens.mockClear();
   mocks.highlight
@@ -192,13 +202,14 @@ function setup(integrated = false) {
     rowIdByCommentLineId: new Map(),
   };
   const ids: string[] = [];
+  let collapsedFileIds: ReadonlyArray<string> = ids;
   function PullRequestDiff({ targetFileId }: { targetFileId?: string }) {
     const bridge = useNativeReviewDiffBridge({
       threadKey: null,
       sectionId: "pull-request:test:1:all",
       diff: "test diff",
       data,
-      collapsedFileIds: ids,
+      collapsedFileIds,
       viewedFileIds: ids,
       selectedRowIds: ids,
       canHighlight: true,
@@ -212,7 +223,10 @@ function setup(integrated = false) {
         focusIndex: -1,
         isIos: true,
         nativeView,
-        jumpStarted,
+        jumpStarted: () => jumpStarted.current,
+        setJumpStarted: (started) => {
+          jumpStarted.current = started;
+        },
         loadMore: () => {},
         onDebug: bridge.onDebug,
       });
@@ -246,6 +260,24 @@ function setup(integrated = false) {
     container,
     async mountPullRequest(targetFileId?: string) {
       await act(async () => root.render(<PullRequestDiff targetFileId={targetFileId} />));
+    },
+    async showSection(contentResetKey: string) {
+      await act(async () =>
+        root.render(
+          <NativeDiff
+            rowsJson='[{"kind":"line","id":"r0"}]'
+            contentResetKey={contentResetKey}
+            appearanceScheme="light"
+            themeJson="{}"
+            rowHeight={20}
+            contentWidth={300}
+          />,
+        ),
+      );
+    },
+    async collapseFiles(fileIds: ReadonlyArray<string>) {
+      collapsedFileIds = fileIds;
+      await act(async () => root.render(<PullRequestDiff />));
     },
     async updateComment() {
       data = {
@@ -309,6 +341,18 @@ it("retries transient native registration without replacing the diff with an err
   mocks.registrationFailures = 1;
   await screen.deliverPayloads();
   expect(screen.container.textContent).toBe("Blank native surface");
+  await screen.deliverPayloads();
+  expect(screen.container.textContent).toBe("Rendered diff");
+});
+
+it("renders identical rows after switching sections when the reset key prop lands late", async () => {
+  using screen = setup(true);
+  await screen.showSection("thread:git:changes");
+  await screen.deliverPayloads();
+  expect(screen.container.textContent).toBe("Rendered diff");
+
+  mocks.contentResetKeyLandsLate = true;
+  await screen.showSection("thread:git:working-tree");
   await screen.deliverPayloads();
   expect(screen.container.textContent).toBe("Rendered diff");
 });
@@ -402,4 +446,36 @@ it("recognizes registration races for the installed native view name", async () 
       ),
     ),
   ).toBe(true);
+});
+
+it("cancels stale collapse work and highlights expansion without resetting accepted tokens", async () => {
+  using screen = setup(true);
+  await screen.mountPullRequest();
+  await screen.jump(0);
+  await screen.deliverPayloads();
+  expect(screen.tokenRows).toBe("r0");
+
+  const response = Promise.withResolvers<void>();
+  const highlight = mocks.highlight.getMockImplementation()!;
+  mocks.highlight.mockImplementation(async (input: HighlightNativeReviewDiffVisibleRowsInput) => {
+    if (input.firstRowIndex === 400) {
+      await response.promise;
+      if (input.collapsedFileIds?.has("last-file")) {
+        return { tokensByRowId: {}, rowCount: 0, retryableRowIds: [], durationMs: 0 };
+      }
+    }
+    return highlight(input);
+  });
+  await screen.jump(400);
+  await screen.collapseFiles(["last-file"]);
+  await act(async () => response.resolve());
+  await screen.deliverPayloads();
+  expect(screen.tokenRows).toBe("r0");
+
+  await screen.collapseFiles([]);
+  await screen.deliverPayloads();
+  expect(screen.tokenRows).toBe("r0,r400");
+  await screen.jump(0);
+  await screen.deliverPayloads();
+  expect(screen.tokenRows).toBe("r0,r400");
 });
