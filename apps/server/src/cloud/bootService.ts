@@ -410,8 +410,9 @@ export const bootServiceUnitPath = Effect.fn("cloud.boot_service.unit_path")(fun
   if (homeDir === "") return undefined;
   if (platform === "darwin") return launchdPlistPath(path, homeDir);
   if (platform !== "linux") return undefined;
+  const runner = yield* ProcessRunner.ProcessRunner;
   const unitDir =
-    (yield* readSystemdUnitDirectory()) ??
+    (yield* readSystemdUnitDirectory(runner, path)) ??
     defaultSystemdUnitDir(path, homeDir, (yield* HostProcess.Environment).XDG_CONFIG_HOME ?? "");
   return path.join(unitDir, BOOT_SERVICE_UNIT_FILE);
 });

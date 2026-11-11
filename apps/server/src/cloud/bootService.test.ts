@@ -289,6 +289,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     timeouts,
     control,
     runtime,
+    runner,
   };
 });
 
@@ -546,7 +547,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           : setting === "manager-only"
             ? path.join(configRoot, "config root")
             : undefined;
-      const { service, makeService, home, statePath, timeouts, runtime, control } =
+      const { service, makeService, home, statePath, timeouts, runtime, control, runner } =
         yield* makeHarness("linux", undefined, xdgConfigHome, managerXdgConfigHome);
       const unitPath = path.join(
         setting === "relocated" || setting === "manager-only" || setting === "manager-unavailable"
@@ -563,6 +564,17 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         control.failCommand =
           "busctl --user --json=short get-property org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager UnitPath";
       }
+      expect(
+        yield* BootService.bootServiceUnitPath().pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, runner),
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+          Effect.provideService(
+            HostProcess.Environment,
+            xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: xdgConfigHome },
+          ),
+        ),
+      ).toBe(unitPath);
       const discoveredService = yield* makeService();
 
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
