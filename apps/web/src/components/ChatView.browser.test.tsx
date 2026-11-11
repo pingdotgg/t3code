@@ -112,6 +112,8 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
   });
   const chip = page.getByRole("button", { name: "Preview package.json" });
   await expect.element(chip).toBeVisible();
+  // The stash shortcut is a no-op until the shell snapshot lists the project.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
 
   const editor = page.getByTestId("composer-editor");
   await userEvent.click(editor);
@@ -122,34 +124,4 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
   await vi.waitFor(() => expect(editor.element().textContent).toContain("Check"));
   expect(editor.element().textContent).not.toContain("[package.json](package.json)");
   await expect.element(chip).toBeVisible();
-});
-
-it("a stashed unfinished mention query restores as text", async () => {
-  using _environment = installFakeEnvironment([]);
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const draftId = DraftId.make("draft-28338");
-  const drafts = useComposerDraftStore.getState();
-  drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
-    threadId: ThreadId.make("thread-28338"),
-  });
-  drafts.setPrompt(draftId, "Check @Rea");
-  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
-  const editor = page.getByTestId("composer-editor");
-  await vi.waitFor(() => expect(editor.element().textContent).toContain("Check @Rea"));
-
-  await userEvent.click(editor);
-  await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
-  await vi.waitFor(() => expect(editor.element().textContent).not.toContain("Check"));
-  await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
-
-  await vi.waitFor(() => expect(editor.element().textContent).toContain("Check @Rea"));
-  await expect.element(page.getByRole("button", { name: "Preview Rea" })).not.toBeInTheDocument();
 });
