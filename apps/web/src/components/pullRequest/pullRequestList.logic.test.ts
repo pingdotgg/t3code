@@ -37,6 +37,7 @@ import {
   pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
+  unlistedPullRequestEntries,
 } from "./pullRequestList.logic";
 import {
   readPullRequestListPreferences,
@@ -384,6 +385,19 @@ describe("remembered pull request list controls", () => {
 
 const ENV_1 = "env-1" as EnvironmentId;
 const ENV_2 = "env-2" as EnvironmentId;
+
+describe("continuing a listing", () => {
+  it("appends new pull requests but not one already listed under a repository's other name", () => {
+    const listed = entry({ number: 1, repository: "pingdotgg/old-name" });
+    const alias = entry({ number: 1 });
+    const otherEnvironment = entry({ number: 1, environmentId: ENV_2 });
+    const fresh = entry({ number: 2 });
+    expect(unlistedPullRequestEntries([listed], [alias, otherEnvironment, fresh])).toEqual([
+      otherEnvironment,
+      fresh,
+    ]);
+  });
+});
 
 describe("merging the environments' own listings", () => {
   const answer = (

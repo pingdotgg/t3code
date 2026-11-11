@@ -29,6 +29,7 @@ import {
   mergePullRequestDiffStats,
   pullRequestDiffStatKey,
   pullRequestEntryKey,
+  unlistedPullRequestEntries,
   rankPullRequestMatches,
   pullRequestStatsRefreshBatches,
   pullRequestStatsRequestBatches,
@@ -570,12 +571,7 @@ export function PullRequestsPage() {
         entries: rankPullRequestMatches(answered.entries, sentParsed.text),
       });
     } else if (sentCursors !== null) {
-      const held = new Set(ordered.entries.map(pullRequestEntryKey));
-      // A renamed repository's aliases can list one pull request under each name.
-      const heldUrls = new Set(ordered.entries.map((entry) => entry.url));
-      const arrived = answered.entries.filter(
-        (entry) => !held.has(pullRequestEntryKey(entry)) && !heldUrls.has(entry.url),
-      );
+      const arrived = unlistedPullRequestEntries(ordered.entries, answered.entries);
       const appended = rankPullRequestMatches(
         arrived.toSorted(comparePullRequestsByRecency),
         sentParsed.text,

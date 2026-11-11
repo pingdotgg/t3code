@@ -302,6 +302,19 @@ export function pullRequestEntryKey(entry: ScopedEntry): string {
   return `${scope}${entry.host}:${entry.repository}#${entry.number}`;
 }
 
+/** A continuation page's rows that are not listed yet. A renamed repository's aliases can each list one pull request. */
+export function unlistedPullRequestEntries<T extends ScopedEntry>(
+  held: readonly T[],
+  arrived: readonly T[],
+): T[] {
+  const urlKey = (entry: ScopedEntry) => `${entry.environmentId ?? ""} ${entry.url}`;
+  const keys = new Set(held.map(pullRequestEntryKey));
+  const urls = new Set(held.map(urlKey));
+  return arrived.filter(
+    (entry) => !keys.has(pullRequestEntryKey(entry)) && !urls.has(urlKey(entry)),
+  );
+}
+
 export interface PullRequestStatsTarget {
   readonly environmentId: EnvironmentId;
   readonly input: {
