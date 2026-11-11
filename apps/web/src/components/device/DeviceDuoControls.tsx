@@ -32,9 +32,8 @@ export function DeviceDuoControls(props: {
   if (settled && settledVertical !== reportedVertical) setSettledVertical(reportedVertical);
   const [standVertical, setStandVertical] = useState(settledVertical);
   const phoneVertical = stand ? standVertical : settledVertical;
-  // Folding out of a stand sends the rotation back, then the fold, and only one command can
-  // wait. Hold the fold buttons until a stand, or anything queued on one, has landed; the
-  // rotation must also be read in the frame of the display the stand settles on.
+  // Only one command can wait; defer fold controls until stand rotation and queued commands settle in the
+  // correct display frame.
   const foldWaits = props.state.pending && (stand || props.state.requested?.control === "pose");
   const foldLabels = {
     closed: "Closed",
