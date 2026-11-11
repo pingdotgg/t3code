@@ -24,6 +24,7 @@ import {
   followPreviewSessions,
   resetDeviceSessionBaselinesForTests,
   revealServerTabs,
+  settlePanelPreviewOnClose,
   startAgentOpenedPreviews,
 } from "./agentOpenedPreviews";
 
@@ -192,6 +193,53 @@ describe("floatDeviceSurface", () => {
     setup();
     floatDeviceSurface(ref, source, deviceState({ sessions: [] }));
     expect(miniPlayerSource()).toBeUndefined();
+  });
+});
+
+describe("settlePanelPreviewOnClose", () => {
+  const browser = browserMiniPlayerSource("tab_panel");
+  const pixel = {
+    kind: "device",
+    hostId: "local",
+    deviceId: "pixel",
+    platform: "android",
+    name: "Pixel 8",
+  } as const;
+  const otherBrowser = browserMiniPlayerSource("tab_other");
+
+  it.each([
+    { name: "floats a browser", source: browser, on: true, before: null, after: browser },
+    { name: "floats a device", source: pixel, on: true, before: null, after: pixel },
+    { name: "leaves nothing floating", source: browser, on: false, before: null, after: undefined },
+    {
+      name: "closes a browser hidden behind the panel",
+      source: browser,
+      on: false,
+      before: browser,
+      after: undefined,
+    },
+    {
+      name: "closes a device hidden behind the panel",
+      source: pixel,
+      on: false,
+      before: pixel,
+      after: undefined,
+    },
+    {
+      name: "keeps a float of another tab",
+      source: browser,
+      on: false,
+      before: otherBrowser,
+      after: otherBrowser,
+    },
+  ])("$name", ({ source, on, before, after }) => {
+    setup();
+    if (before) usePreviewMiniPlayerStore.getState().open(ref, before);
+    settlePanelPreviewOnClose(ref, source, {
+      floatOnClose: on,
+      deviceState: deviceState({ sessions: [session] }),
+    });
+    expect(miniPlayerSource()).toEqual(after);
   });
 });
 
