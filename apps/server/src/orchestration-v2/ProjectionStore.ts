@@ -6097,8 +6097,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       threadId: ThreadId,
       includePersistentOutput = false,
     ) {
+      // The full index reads a fork's runs and attempts itself, so do not load them here first.
+      if (inheritedRunFork((yield* getThreadRecords(threadId, [])).thread) !== null) return null;
       const records = yield* getThreadRecords(threadId, ["runs", "attempts"]);
-      if (inheritedRunFork(records.thread) !== null) return null;
       const superseded = records.attempts.filter((attempt) => attempt.status === "superseded");
       const stopRequests =
         superseded.length === 0
