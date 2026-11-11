@@ -100,7 +100,7 @@ function useThreadActionExecutor(
   ) => {
     if (!checkThreadOperationPermission(thread, actionFailureTitle(action))) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
-    // Only a repeat of the latest pending action is dropped; others queue behind it per thread.
+    // Drop only a repeat of the latest pending action; Settle → Un-settle → Settle must all send.
     if (latestPendingActions.current.get(key)?.action === action) {
       return false;
     }

@@ -409,6 +409,23 @@ describe("thread action undo", () => {
     expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
   });
 
+  it("sends a different action while one is pending for the same thread", async () => {
+    const actions = useThreadListActions();
+    const thread = makeThread();
+    const settleResponse = Promise.withResolvers<void>();
+    state.heldActions.set("settle", settleResponse.promise);
+
+    const pending = [
+      actions.settleThread(thread),
+      actions.unsettleThread(thread),
+      actions.settleThread(thread),
+    ];
+    settleResponse.resolve();
+
+    expect(await Promise.all(pending)).toEqual([true, true, true]);
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", "settle"]);
+  });
+
   it("restores pin placement and snooze after settling, only once", async () => {
     const thread = makeThread({
       pinnedAt: "2026-09-02T00:00:00.000Z",
@@ -541,41 +558,6 @@ describe("thread action undo", () => {
     await useThreadListActions().archiveThread(makeThread());
     expect(state.requests.map(({ action }) => action)).toEqual(["archive"]);
     expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
-  });
-});
-
-describe("thread actions while another action is pending", () => {
-  it("un-settles a thread whose settle is still pending", async () => {
-    const actions = useThreadListActions();
-    const thread = makeThread();
-    const settleResponse = Promise.withResolvers<void>();
-    state.heldActions.set("settle", settleResponse.promise);
-
-    const settled = actions.settleThread(thread);
-    const unsettled = actions.unsettleThread(thread);
-    settleResponse.resolve();
-
-    const results = await Promise.all([settled, unsettled]);
-
-    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle"]);
-    expect(results).toEqual([true, true]);
-  });
-
-  it("settles again after un-settling while the first settle is still pending", async () => {
-    const actions = useThreadListActions();
-    const thread = makeThread();
-    const settleResponse = Promise.withResolvers<void>();
-    state.heldActions.set("settle", settleResponse.promise);
-
-    const pending = [
-      actions.settleThread(thread),
-      actions.unsettleThread(thread),
-      actions.settleThread(thread),
-    ];
-    settleResponse.resolve();
-
-    expect(await Promise.all(pending)).toEqual([true, true, true]);
-    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", "settle"]);
   });
 });
 
