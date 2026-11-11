@@ -1476,6 +1476,40 @@ it.effect(
     }),
 );
 
+it.effect("re-reads checks after a rerun instead of serving the failed ones", () =>
+  Effect.gen(function* () {
+    let rerun = false;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestChecks: () =>
+            Effect.succeed({
+              state: "open" as const,
+              checks: [
+                {
+                  name: "Test",
+                  status: rerun ? ("pending" as const) : ("failure" as const),
+                  description: null,
+                  url: null,
+                },
+              ],
+            }),
+          rerunChecks: (input) =>
+            Effect.sync(() => {
+              rerun = true;
+              return input.checks.map((check) => ({ ...check, rerun: true, detail: null }));
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    assert.equal((yield* service.checks(reference))?.checks[0]?.status, "failure");
+    yield* service.rerunChecks(reference);
+    assert.equal((yield* service.checks(reference))?.checks[0]?.status, "pending");
+  }),
+);
+
 it.effect("refuses a merge whose head moved past expectedHeadSha and pins the host merge", () =>
   Effect.gen(function* () {
     const pinned: Array<string | undefined> = [];

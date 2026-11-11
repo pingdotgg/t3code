@@ -458,6 +458,9 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const isCheckFailure = (error: PullRequestProviderError) =>
+    error.reason === "not-found" || error.reason === "forbidden" || error.reason === "failed";
+
   const isForbidden = (error: PullRequestProviderError) =>
     isApiError(error.cause) && error.cause.status === 403;
 
@@ -1141,7 +1144,7 @@ export const make = Effect.gen(function* () {
       const base = yield* repositoryPath("getCheckLogs", input);
       return yield* Effect.forEach(
         input.checks,
-        (check): Effect.Effect<ProviderCheckLog> => {
+        (check): Effect.Effect<ProviderCheckLog, PullRequestProviderError> => {
           // GitCafe reads the log of a check its GitHub mirror ran.
           const checkId = gitHubActionsJobId(check.url);
           if (checkId === null) {
@@ -1167,7 +1170,8 @@ export const make = Effect.gen(function* () {
                 detail: null,
               };
             }),
-            Effect.catch((error) =>
+            // Sign-in and rate-limit failures fail the call; the rest are this check's.
+            Effect.catchIf(isCheckFailure, (error) =>
               Effect.succeed({ ...check, log: null, truncated: false, detail: error.detail }),
             ),
           );
@@ -1191,8 +1195,8 @@ export const make = Effect.gen(function* () {
             method: "POST",
             path: `${base}/actions/runs/${runId}/rerun`,
           }).pipe(
-            Effect.as(null),
-            Effect.catch((error) => Effect.succeed(error.detail)),
+            Effect.as<string | null>(null),
+            Effect.catchIf(isCheckFailure, (error) => Effect.succeed(error.detail)),
             Effect.map((detail) => outcomes.set(runId, detail)),
           ),
         { concurrency: 2, discard: true },

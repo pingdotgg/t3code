@@ -684,13 +684,25 @@ describe("GitCafePullRequestProvider", () => {
         truncated: true,
       },
       "POST /repos/owner/repo/actions/runs/actwfrun_abc/rerun": {},
+      "GET /repos/owner/repo/ci/github/checks/401/log": new Response("{}", { status: 401 }),
     });
     const mirrored = { name: "Test", url: "https://github.com/owner/repo/runs/555" };
+    const missing = { name: "Gone", url: "https://github.com/owner/repo/runs/404" };
+    const signedOut = { name: "Lint", url: "https://github.com/owner/repo/runs/401" };
     const native = { name: "Build", url: "https://git.cafe/owner/repo/actions/runs/actwfrun_abc" };
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
-      const logs = yield* provider.getCheckLogs!({ ...target, checks: [mirrored], tailLines: 1 });
+      const logs = yield* provider.getCheckLogs!({
+        ...target,
+        checks: [mirrored, missing],
+        tailLines: 1,
+      });
       assert.deepInclude(logs[0], { log: "FAIL a.test.ts", truncated: true, detail: null });
+      assert.isNotNull(logs[1]?.detail);
+      const refused = yield* Effect.flip(
+        provider.getCheckLogs!({ ...target, checks: [signedOut], tailLines: 1 }),
+      );
+      assert.strictEqual(refused.reason, "unauthenticated");
       const reruns = yield* provider.rerunChecks!({ ...target, checks: [mirrored, native] });
       assert.deepStrictEqual(
         reruns.map(({ name, rerun }) => [name, rerun]),
