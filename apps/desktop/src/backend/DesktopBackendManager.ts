@@ -1,5 +1,6 @@
 import * as Brand from "effect/Brand";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -41,10 +42,11 @@ const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 // Match the service launcher's grace period so backends can stop provider sessions.
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(5);
-// Allow SIGKILL and the spawner exit wait after the SIGTERM grace so quit cannot
-// orphan a backend whose shutdown hangs.
+const BACKEND_STOP_ACK_TIMEOUT = Duration.seconds(1);
+// Allow the stop ack, SIGKILL and the spawner exit wait around the SIGTERM grace so quit
+// cannot orphan a backend whose shutdown hangs.
 export const BACKEND_QUIT_STOP_TIMEOUT = Duration.sum(
-  DEFAULT_BACKEND_TERMINATE_GRACE,
+  Duration.sum(BACKEND_STOP_ACK_TIMEOUT, DEFAULT_BACKEND_TERMINATE_GRACE),
   Duration.seconds(2),
 );
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
@@ -457,6 +459,20 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       additionalFds[`fd${options.bootstrap.desktopBrowserControlFd}`] = { type: "output" };
     }
   }
+  const stopNotice = yield* Deferred.make<void>();
+  const stopFds =
+    options.bootstrapDelivery === "fd3" &&
+    options.bootstrap.desktopStopFd !== undefined &&
+    options.bootstrap.desktopStopAckFd !== undefined
+      ? { stop: options.bootstrap.desktopStopFd, ack: options.bootstrap.desktopStopAckFd }
+      : undefined;
+  if (stopFds !== undefined) {
+    additionalFds[`fd${stopFds.stop}`] = {
+      type: "input",
+      stream: Stream.fromEffectDrain(Deferred.await(stopNotice)),
+    };
+    additionalFds[`fd${stopFds.ack}`] = { type: "output" };
+  }
   const command = ChildProcess.make(options.executablePath, options.args, {
     cwd: options.cwd,
     env: options.env,
@@ -482,6 +498,19 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         }),
     ),
   );
+  if (stopFds !== undefined) {
+    // Added after spawn so it runs before the spawner's kill. Windows sends no signal, so the
+    // backend must hear of the stop before its providers die, or it records their exits as state.
+    yield* Effect.addFinalizer(() =>
+      Deferred.succeed(stopNotice, undefined).pipe(
+        Effect.andThen(
+          handle
+            .getOutputFd(stopFds.ack)
+            .pipe(Stream.runDrain, Effect.timeoutOption(BACKEND_STOP_ACK_TIMEOUT), Effect.ignore),
+        ),
+      ),
+    );
+  }
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
 
   yield* options.onStarted?.(handle.pid) ?? Effect.void;
