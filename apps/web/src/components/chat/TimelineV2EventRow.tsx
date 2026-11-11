@@ -51,9 +51,6 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   );
 }
 
-// Earlier avatars sit above later ones so each bottom-right account badge stays visible.
-const STACKED_AVATAR_Z_INDEX = ["z-3", "z-2", "z-1"] as const;
-
 const V2SubagentGroup = memo(function V2SubagentGroup({
   row,
 }: {
@@ -105,11 +102,10 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
               : "text-muted-foreground opacity-55",
           )}
         >
-          <span className="isolate flex shrink-0 items-center -space-x-1.5" aria-hidden>
-            {agents.slice(0, 3).map(({ item, status }, index) => (
+          <span className="isolate flex shrink-0 items-center -space-x-1" aria-hidden>
+            {agents.slice(0, 3).map(({ item, status }) => (
               <EnvironmentSubagentAvatar
                 key={item.id}
-                className={STACKED_AVATAR_Z_INDEX[index]}
                 environmentId={ctx.activeThreadEnvironmentId}
                 providerInstanceId={item.providerInstanceId}
                 driver={item.driver}

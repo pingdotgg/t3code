@@ -227,7 +227,7 @@ function SubagentAvatar({
   accentColor?: string | undefined;
   showBadge: boolean;
   status?: OrchestrationV2TurnItem["status"] | undefined;
-  className?: string | undefined;
+  className?: string;
 }) {
   return (
     <span
@@ -245,8 +245,10 @@ function SubagentAvatar({
           acpRegistryIconUrl={iconUrl}
           showBadge={showBadge}
           size="compact"
-          className="z-auto"
+          // Account badges are wider than an overlapped avatar edge, so they paint above every circle.
+          className="z-auto isolation-auto"
           iconClassName="size-3.5"
+          badgeClassName="z-1"
         />
       ) : (
         <BotIcon className="size-3.5 text-muted-foreground" />
@@ -278,7 +280,6 @@ export function EnvironmentSubagentAvatar({
   /** A task in a linked environment runs a provider instance there; its driver here is only a label. */
   remote?: OrchestrationV2RemoteTaskChild | undefined;
   status?: OrchestrationV2TurnItem["status"] | undefined;
-  className?: string | undefined;
 }) {
   const providerEnvironmentId = remote?.environmentId ?? environmentId;
   const providersAtom = serverEnvironment.providersValueAtom(providerEnvironmentId);
