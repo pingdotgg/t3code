@@ -701,6 +701,20 @@ function readableBody(raw: string): string | null {
   return readable === "" ? null : readable;
 }
 
+/** Moves collapsed `<details>` sections after the text a reader sees, so a bound keeps that text first. */
+function visibleTextFirst(body: string): string {
+  const shown: string[] = [];
+  const folded: string[] = [];
+  let depth = 0;
+  for (const line of body.split("\n")) {
+    const opens = /^\s*<details[\s>]/iu.test(line);
+    if (opens) depth += 1;
+    (depth > 0 ? folded : shown).push(line);
+    if (depth > 0 && /<\/details>\s*$/iu.test(line)) depth -= 1;
+  }
+  return folded.length === 0 ? body : [...shown, "", ...folded].join("\n").trim();
+}
+
 /**
  * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
  * merged pull request would misstate what happened.
@@ -1226,8 +1240,10 @@ export function buildPullRequestContext(input: PullRequestContextMetadata): Revi
   return pullRequestContextComment(input, []);
 }
 
-/** A remark the reader can bring into the chat: a conversation on a line, or one comment. */
-export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread" | "comment" }>;
+/** A remark the reader can bring into the chat: a whole conversation, or one comment. */
+export type PullRequestChatSubject =
+  | { readonly kind: "thread"; readonly thread: PullRequestConversationThread }
+  | { readonly kind: "comment"; readonly comment: PullRequestComment };
 
 /**
  * A remark or conversation brought into the chat to talk about, not to fix. Its id carries the
@@ -1238,30 +1254,40 @@ export function buildPullRequestCommentContext(
   subject: PullRequestChatSubject,
 ): ReviewCommentContext | null {
   const pullRequestNumber = pullRequest.number;
-  if (subject.kind === "thread") {
-    const context = reviewThreadContext(subject.thread, pullRequestNumber);
-    return context.text === ""
-      ? null
-      : { ...context, id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}` };
+  const comments = subject.kind === "thread" ? subject.thread.comments : [subject.comment];
+  // Bounded per comment so a long bot report cannot crowd the replies out of the thread.
+  const lines = comments.flatMap((comment) => {
+    const body = readableBody(comment.body);
+    return body === null
+      ? []
+      : [bounded(`${comment.author?.login ?? "ghost"}: ${visibleTextFirst(body)}`)];
+  });
+  const first = comments[0];
+  if (lines.length === 0 || first === undefined) return null;
+  const text = lines.join("\n");
+  if (subject.kind === "thread" && subject.thread.path !== null) {
+    return {
+      ...reviewThreadContext(subject.thread, pullRequestNumber),
+      id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
+      text,
+    };
   }
-  const comment = subject.comment;
-  const body = readableBody(comment.body);
-  if (body === null) return null;
-  const author = comment.author?.login ?? "ghost";
+  const path = subject.kind === "comment" ? subject.comment.path : null;
   return {
-    id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
+    id:
+      subject.kind === "thread"
+        ? `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`
+        : `pr-comment:${pullRequest.url}:comment:${subject.comment.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
     sectionTitle: `PR #${pullRequestNumber} conversation`,
-    // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
-    filePath: comment.path ?? `@${author}`,
+    // The chip wears `filePath rangeLabel`: the file a remark names, or who opened one that names none.
+    filePath: path ?? `@${first.author?.login ?? "ghost"}`,
     startIndex: 0,
     endIndex: 0,
-    rangeLabel: "comment",
-    text: bounded(`${author}: ${body}`),
+    rangeLabel: subject.kind === "thread" ? "thread" : "comment",
+    text,
     diff: "",
-    ...(comment.path === null
-      ? {}
-      : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
+    ...(path === null ? {} : { fenceLanguage: inferReviewCommentFenceLanguage(path) }),
   };
 }
 

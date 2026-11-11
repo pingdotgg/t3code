@@ -1072,6 +1072,61 @@ describe("adding a remark to the chat", () => {
     expect(context?.text).toBe("octocat: Why not reuse the existing parser?");
   });
 
+  it("brings an overview thread's replies along with its opening remark", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "thread",
+      thread: {
+        id: "t1",
+        path: null,
+        line: null,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          remark("c1", "Does this skip the prompt?"),
+          {
+            ...remark("c2", "One concern remains."),
+            author: { login: "coderabbit", name: null, avatarUrl: null },
+          },
+        ],
+      },
+    });
+
+    expect(context && reviewCommentContextLabel(context)).toBe("#42 @octocat thread");
+    expect(context?.text).toBe(
+      "octocat: Does this skip the prompt?\ncoderabbit: One concern remains.",
+    );
+  });
+
+  it("keeps a reply when the remark it answers runs past the length bound", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "thread",
+      thread: {
+        id: "t1",
+        path: "src/app.ts",
+        line: 3,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [remark("c1", "x".repeat(5_000)), remark("c2", "One concern remains.")],
+      },
+    });
+
+    expect(context?.text).toMatch(/\.\.\.\noctocat: One concern remains\.$/u);
+  });
+
+  it("puts a remark's visible text ahead of its collapsed details", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark(
+        "c1",
+        `<details>\n<summary>Analysis chain</summary>\n\n${"script ".repeat(400)}\n</details>\n\nOne concern remains.`,
+      ),
+    });
+
+    expect(context?.text).toMatch(/^octocat: One concern remains\.\n\n<details>/u);
+  });
+
   it("keeps every added remark when a later hand-off lands", () => {
     const added = ["c1", "c2"].flatMap(
       (id) =>
