@@ -1,7 +1,5 @@
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
-import { SearchField } from "../../components/ui/SearchField";
 import { Button } from "../../components/ui/Button";
-import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SelectionRow } from "../../components/ui/SelectionRow";
@@ -25,22 +23,18 @@ import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
-import {
-  createNativeMailSearchToolbarItem,
-  NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
-} from "../layout/native-mail-search-toolbar";
-import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
+import { useSearchToolbarInset } from "../../components/ui/useBarInset";
+import type { AppBarSearch } from "../../components/ui/AppBar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
 import { filterNewTaskBranches } from "./new-task-context-presentation";
@@ -188,19 +182,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
   const insets = useSafeAreaInsets();
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
-      <NativeStackScreenOptions
-        options={{
-          headerShown: Platform.OS !== "android",
-          title: "Environment",
-        }}
-      />
-      {Platform.OS === "android" ? (
-        <AndroidScreenHeader
-          title="Environment"
-          hideBottomBorder
-          onBack={() => navigation.goBack()}
-        />
-      ) : null}
+      <AppBar title="Environment" hideBottomBorder onBack={() => navigation.goBack()} />
       <ScreenContent>
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
@@ -369,18 +351,25 @@ export function BranchPickerScreen(props: {
     readonly onChangeStartFromOrigin: (value: boolean) => void;
   };
 }) {
-  const searchRef = useRef<import("react-native").TextInputInstance>(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
+  const search: AppBarSearch = {
+    value: props.query,
+    onChangeText: props.onQueryChange,
+    placeholder: "Find a branch",
+    clearAccessibilityLabel: "Clear branch search",
+    mode: "inline",
+    compactToolbar: true,
+  };
+  const searchToolbarInset = useSearchToolbarInset(search);
   const selectedBranchName =
     props.selectedBranchName ??
     props.branches.find((branch) => branch.current)?.name ??
     props.branches.find((branch) => branch.isDefault)?.name ??
     null;
   const branchListContentStyle = {
-    paddingBottom: usesNativeMailSearchToolbar
-      ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET + 16
+    paddingBottom: searchToolbarInset
+      ? searchToolbarInset + 16
       : Platform.OS === "ios"
         ? 16
         : Math.max(insets.bottom, 16) + 16,
@@ -429,9 +418,7 @@ export function BranchPickerScreen(props: {
         <View
           className="flex-1 items-center justify-center gap-3 px-4"
           style={{
-            marginBottom: usesNativeMailSearchToolbar
-              ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
-              : 0,
+            marginBottom: searchToolbarInset,
           }}
         >
           {props.loading ? <AppActivityIndicator /> : null}
@@ -453,7 +440,7 @@ export function BranchPickerScreen(props: {
       </ScrollView>
     ) : (
       <LegendList
-        renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+        renderScrollComponent={NativeScrollView}
         alwaysBounceVertical={false}
         automaticallyAdjustsScrollIndicatorInsets
         automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
@@ -481,70 +468,15 @@ export function BranchPickerScreen(props: {
       />
     );
 
-  if (Platform.OS === "android") {
-    return (
-      <View className="flex-1 bg-sheet" collapsable={false}>
-        <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader
-          title={props.title}
-          hideBottomBorder
-          onBack={() => navigation.goBack()}
-        />
-        <View className="bg-header px-4 pb-3 pt-1">
-          <SearchField
-            inputRef={searchRef}
-            autoFocus={false}
-            accessibilityLabel="Find a branch"
-            clearAccessibilityLabel="Clear branch search"
-            onChangeText={props.onQueryChange}
-            placeholder="Find a branch"
-            value={props.query}
-          />
-        </View>
-        <ScreenContent>{branchContent}</ScreenContent>
-      </View>
-    );
-  }
-
   return (
-    <>
-      <NativeStackScreenOptions
-        options={{
-          headerShown: true,
-          title: props.title,
-          unstable_headerToolbarItems: usesNativeMailSearchToolbar
-            ? () => [
-                createNativeMailSearchToolbarItem({
-                  onSearchTextChange: props.onQueryChange,
-                  placeholder: "Find a branch",
-                  searchTextChangeId: "new-task-branch-search-text",
-                  showsSearchDismissButton: true,
-                }),
-              ]
-            : undefined,
-          headerSearchBarOptions: usesNativeMailSearchToolbar
-            ? undefined
-            : {
-                allowToolbarIntegration: true,
-                autoCapitalize: "none",
-                hideNavigationBar: false,
-                obscureBackground: false,
-                placeholder: "Find a branch",
-                onChangeText: (event) => {
-                  props.onQueryChange(event.nativeEvent.text);
-                },
-                onCancelButtonPress: () => {
-                  props.onQueryChange("");
-                },
-              },
-        }}
+    <View className="flex-1 bg-sheet" collapsable={false}>
+      <AppBar
+        title={props.title}
+        hideBottomBorder
+        onBack={() => navigation.goBack()}
+        search={search}
       />
-      {usesNativeMailSearchToolbar ? null : (
-        <Toolbar placement="bottom">
-          <Toolbar.SearchBarSlot />
-        </Toolbar>
-      )}
-      {branchContent}
-    </>
+      <ScreenContent>{branchContent}</ScreenContent>
+    </View>
   );
 }

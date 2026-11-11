@@ -5,16 +5,18 @@ sidebar:
   order: 9.6
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `AWS.Website.Vinext` builds with the Vinext Vite API for production and runs native
-`vinext dev` locally. The React Server Components handler runs on a streaming Lambda Function URL.
-S3 stores assets and CloudFront routes asset requests to S3 and other requests
-to Lambda. This uses vinext, not OpenNext.
+`vinext dev` locally. The React Server Components handler runs on a
+[Lambda Web Function](/aws/compute/web-functions), a Node HTTP server that
+serves many requests per environment and streams responses. S3 stores assets
+and CloudFront routes asset requests to S3 and other requests to the server.
+This uses vinext, not OpenNext.
 
-The Lambda target supports **App Router** applications. Use a Node deployment
+The AWS target supports **App Router** applications. Use a Node deployment
 target such as [Prisma](/prisma/frontend/vinext) or [Fly](/fly/frontend/vinext)
 for Pages Router applications.
 
@@ -23,14 +25,9 @@ for Pages Router applications.
 Keep `vinext`, `react`, `react-dom`, and `react-server-dom-webpack` in your
 application dependencies, with `vite` and `@vitejs/plugin-rsc` for building.
 Use vinext **1.0.0-beta.10 or newer**. Alchemy uses its standalone packaging
-to include external runtime dependencies in the Lambda archive. Add the Alchemy integration:
+to include external runtime dependencies in the server archive. Add the Alchemy integration:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun"><Code code={`bun add -d ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="npm" icon="npm"><Code code={`npm install -D ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="pnpm" icon="pnpm"><Code code={`pnpm add -D ${devDeps}`} lang="sh" /></TabItem>
-  <TabItem label="yarn" icon="seti:yarn"><Code code={`yarn add -D ${devDeps}`} lang="sh" /></TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 ## Configure vinext
 
@@ -52,7 +49,7 @@ No Alchemy plugin is required in `vite.config.ts`; deployment settings belong on
 
 ```typescript
 // alchemy.run.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 export const Website = AWS.Website.Vinext("Website", {
   rootDir: ".",
@@ -109,8 +106,24 @@ page reflects its build-time inputs instead.
 ## Configure the data cache
 
 The Website provisions an S3 bucket for ISR and `"use cache"`, sets
-`CACHE_BUCKET_NAME`, and grants the Lambda access. The build selects the S3
+`CACHE_BUCKET_NAME`, and grants the server access. Every environment shares
+the bucket. The build selects the S3
 adapter. Local development uses memory and creates no bucket.
+
+## Run on a Lambda Function
+
+Web Functions run in a subset of Regions. Elsewhere, set
+`server: "function"` to run the handler on a Lambda Function behind a
+streaming Function URL, tuned with `memorySize`, `architecture`, and
+`runtime`:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Vinext("Website", {
++  server: "function",
++  memorySize: 2048,
+});
+```
 
 ## Local development
 
