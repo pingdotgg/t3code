@@ -4,8 +4,11 @@ import {
   pullRequestAnchorMatchesUrl,
   pullRequestDiffPathMatches,
   pullRequestLinkCommit,
+  resolvePullRequestAnchorRange,
   resolvePullRequestReviewAnchor,
 } from "./pullRequestAnchor.ts";
+
+const gitlab = "https://gitlab.com/group/repo/-/merge_requests/7";
 
 const url = "https://github.com/owner/repo/pull/7";
 it.each(["discussion_r123", "r123", "discussion-diff-123R5-L9", "discussion-diff-123"])(
@@ -53,19 +56,22 @@ it.each([
     "src/hello world.ts",
     "bcea8deb9d67b305e28c4a0b0d021615",
     "066802cf2cf056706e4e4951cb7dff2717a2ae32fd9797c1f1b41062d57db929",
+    "f3f78c2026bd34f4ad36bf36e9c557dd9df528fb",
   ],
   [
     "src/日本語.ts",
     "5c66d5d565666e46924cf80d7bbfdab3",
     "191b8ebf2241225db999eaf8b6ff44b07934d577f347d0ff684591eecad34944",
+    "2ec8ce696c4c6df9419ad640fbc0d6ef4d79ebad",
   ],
   [
     "old/path.ts",
     "f5d455478d496859b654884654393a61",
     "aa38d67014e2c59d51ea456a155e039f4e32f636a4c450714c3b517bb8bde7e7",
+    "ca0d69af01140f25bafd6ab7aec204ce52a9bbb3",
   ],
-])("matches GitHub path digests for %s", (path, legacy, current) => {
-  for (const digest of [legacy, current]) {
+])("matches GitHub and GitLab path digests for %s", (path, legacy, current, gitLab) => {
+  for (const digest of [legacy, current, gitLab, gitLab.slice(0, 9)]) {
     expect(pullRequestDiffPathMatches(digest, path)).toBe(true);
     expect(pullRequestDiffPathMatches(digest, "other.ts")).toBe(false);
   }
@@ -89,9 +95,45 @@ it("keeps the commit scope of a PR diff permalink", () => {
   const sha = "a".repeat(40);
   expect(pullRequestLinkCommit(`${url}/commits/${sha}#diff-abcR5`)).toBe(sha);
   expect(pullRequestLinkCommit(`${url}/files#diff-abcR5`)).toBeNull();
+  expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=${sha}#${"b".repeat(40)}`)).toBe(sha);
+  expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=main`)).toBeNull();
+  expect(pullRequestLinkCommit(`${gitlab}?commit_id=${sha}`)).toBeNull();
 });
 
-const gitlab = "https://gitlab.com/group/repo/-/merge_requests/7";
+it("reads GitLab file and line anchors, letting a removed old line win", () => {
+  const digest = "c".repeat(40);
+  const diff = (range: object | null, at = digest) => ({ kind: "diff", digest: at, range });
+  const line = (start: number, side: "left" | "right") => ({
+    start,
+    side,
+    end: start,
+    endSide: side,
+  });
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}`)).toEqual(diff(null));
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#diff-content-${digest}`)).toEqual(diff(null));
+  expect(parsePullRequestAnchor(`${gitlab}/diffs?file=${digest}`)).toEqual(diff(null));
+  expect(parsePullRequestAnchor(`${gitlab}/diffs?file=${digest}#note_5`)).toEqual({
+    kind: "timeline",
+    anchor: "note_5",
+  });
+  const code = parsePullRequestAnchor(`${gitlab}/diffs#${digest}_248_253`);
+  expect(code).toEqual(diff({ ...line(253, "right"), oldLine: 248 }));
+  const range = code?.kind === "diff" ? code.range : null;
+  expect(resolvePullRequestAnchorRange(range!, () => false)).toBe(range);
+  expect(resolvePullRequestAnchorRange(range!, (old) => old === 248)).toEqual(line(248, "left"));
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}_12_0`)).toEqual(diff(line(12, "left")));
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#line_${digest.slice(0, 9)}_A12`)).toEqual(
+    diff(line(12, "right"), digest.slice(0, 9)),
+  );
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#line_${digest.slice(0, 9)}_12`)).toEqual(
+    diff(line(12, "left"), digest.slice(0, 9)),
+  );
+  expect(parsePullRequestAnchor(`${gitlab}#${digest}_1_1`)).toEqual({
+    kind: "summary",
+    anchor: `${digest}_1_1`,
+  });
+});
+
 it.each([
   [`${url}/files`, "code"],
   [`${url}/files/`, "code"],
@@ -132,23 +174,4 @@ it("finds a review with no text of its own through the earliest comment it poste
     "pullrequestreview-8",
   );
   expect(resolvePullRequestReviewAnchor("issuecomment-9", [], threads)).toBe("issuecomment-9");
-});
-
-it("reads GitLab merge request file and line anchors", () => {
-  const path = "internal/commands/issuable/view/issuable_view_test.go";
-  const digest = "0cd3702f060909d3161d1095b8347d4d07671427";
-  expect(pullRequestDiffPathMatches(digest, path)).toBe(true);
-  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}`)).toEqual({
-    kind: "diff",
-    digest,
-    range: null,
-  });
-  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}_248_253`)).toEqual({
-    kind: "diff",
-    digest,
-    range: { start: 253, side: "right", end: 253, endSide: "right" },
-  });
-  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}_12_0`)).toMatchObject({
-    range: { start: 12, side: "left" },
-  });
 });
