@@ -59,9 +59,15 @@ export function cursorUsageResponseToLimits(
   }
   const total = windows.find((window) => window.id === "totalPercentUsed");
   const pools = windows.filter((window) => window !== total);
-  // Unified plans report their one allowance as both the total and a pool.
+  // Unified plans report their one allowance as both the total and the auto pool. Never drop
+  // the API pool: exhaustedUsageWindow reads it to fall back from Claude, GPT, and Gemini.
   const visibleWindows =
-    total && pools.length === 1 && pools[0]?.usedPercent === total.usedPercent ? [total] : windows;
+    total &&
+    pools.length === 1 &&
+    pools[0]?.id === "autoPercentUsed" &&
+    pools[0].usedPercent === total.usedPercent
+      ? [total]
+      : windows;
   return visibleWindows.length > 0
     ? makeUsageLimits({ checkedAt, windows: visibleWindows })
     : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });

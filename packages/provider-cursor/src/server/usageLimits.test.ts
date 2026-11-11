@@ -83,6 +83,12 @@ describe("Cursor usage limits", () => {
       checkedAt,
     ).windows;
     expect(windows).toHaveLength(1);
+    expect(
+      cursorUsageResponseToLimits(
+        { planUsage: { totalPercentUsed: 100, apiPercentUsed: 100 } },
+        checkedAt,
+      ).windows.map((window) => window.id),
+    ).toEqual(["apiPercentUsed", "totalPercentUsed"]);
   });
 
   it("does not invent unused allowance for absent buckets", () => {
