@@ -6603,9 +6603,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       UNION ALL
       SELECT i.thread_id, json_set(i.payload_json, '$.status', 'waiting') AS payload_json,
         NULL AS owning_provider_instance_id
+      -- Pinned: without stats the planner walks every turn item of the thread instead.
       FROM orchestration_v2_projection_subagents task
-      INNER JOIN orchestration_v2_projection_runs r ON r.run_id = task.run_id
-      INNER JOIN orchestration_v2_projection_turn_items i
+        INDEXED BY orchestration_v2_projection_subagents_settled_idx
+      CROSS JOIN orchestration_v2_projection_runs r ON r.run_id = task.run_id
+      CROSS JOIN orchestration_v2_projection_turn_items i
         ON i.node_id = task.subagent_id AND i.thread_id = task.thread_id AND i.type = 'subagent'
       WHERE task.status IN ('completed', 'interrupted', 'failed', 'cancelled')
         AND r.status <> 'rolled_back'
