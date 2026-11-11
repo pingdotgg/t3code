@@ -45,7 +45,7 @@ import {
   dismissThreadUserInput,
   revertThreadCheckpoint,
   setThreadInteractionMode,
-  setThreadMessagePin,
+  setThreadEntryPin,
   setThreadRuntimeMode,
   pinThread,
   reorderPinnedThread,
@@ -221,9 +221,9 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
-    setMessagePin: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:thread:set-message-pin",
-      execute: setThreadMessagePin,
+    setEntryPin: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-entry-pin",
+      execute: setThreadEntryPin,
       scheduler,
       concurrency,
     }),

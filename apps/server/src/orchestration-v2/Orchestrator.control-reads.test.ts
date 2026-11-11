@@ -2610,72 +2610,138 @@ it.effect("a running provider-turn update reads only the thread's queued and run
     );
   }),
 );
-it.effect("pins and unpins messages idempotently without counting as thread activity", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = ThreadId.make("thread:message-pins");
-    const messageId = MessageId.make("message-pins-prompt");
-    yield* orchestrator.dispatch({
-      type: "thread.create",
-      commandId: CommandId.make("create-message-pins"),
-      threadId,
-      projectId: ProjectId.make("project:message-pins"),
-      title: "Pinned messages",
-      modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      createdBy: "user",
-      creationSource: "web",
-    });
-    yield* orchestrator.dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make("dispatch-message-pins"),
-      threadId,
-      messageId,
-      text: `## **Remember**   [this](https://example.com)\n- \`detail\` ${"detail ".repeat(40)}`,
-      attachments: [],
-      dispatchMode: { type: "defer_start" },
-      createdBy: "user",
-      creationSource: "web",
-    });
-    const runId = (yield* projections.getThreadProjection(threadId)).runs[0]!.id;
-    yield* orchestrator.dispatch({
-      type: "run.interrupt",
-      commandId: CommandId.make("interrupt-message-pins"),
-      threadId,
-      runId,
-    });
-    const before = yield* projections.getThread(threadId);
-    yield* TestClock.adjust("1 minute");
 
-    const setPin = (step: string, pinned: boolean, target = messageId) =>
-      orchestrator.dispatch({
-        type: "thread.message-pin.set",
-        commandId: CommandId.make(`message-pin-${step}`),
+it.effect(
+  "pins messages, HTML renders and plans idempotently without counting as thread activity",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:entry-pins");
+      const messageId = MessageId.make("entry-pins-prompt");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-entry-pins"),
         threadId,
-        messageId: target,
-        pinned,
+        projectId: ProjectId.make("project:entry-pins"),
+        title: "Pinned entries",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
       });
-    yield* setPin("add", true);
-    yield* setPin("repeat", true);
-    const pinned = yield* projections.getThread(threadId);
-    assert.lengthOf(pinned.messagePins ?? [], 1);
-    const [pin] = pinned.messagePins ?? [];
-    assert.deepInclude(pin, { messageId, runId, role: "user" });
-    assert.isTrue(pin!.excerpt.startsWith("Remember this detail"));
-    assert.isAtMost(pin!.excerpt.length, 160);
-    assert.isTrue(pin!.excerpt.endsWith("…"));
-    // Pins are not activity, so the thread keeps its place in thread lists.
-    assert.deepEqual(pinned.updatedAt, before.updatedAt);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("dispatch-entry-pins"),
+        threadId,
+        messageId,
+        text: `## **Remember**   [this](https://example.com)\n- \`detail\` ${"detail ".repeat(40)}`,
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const runId = (yield* projections.getThreadProjection(threadId)).runs[0]!.id;
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("interrupt-entry-pins"),
+        threadId,
+        runId,
+      });
+      const now = yield* DateTime.now;
+      const itemBase = {
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      } as const;
+      const htmlRenderId = TurnItemId.make("entry-pins:html-render");
+      const planId = TurnItemId.make("entry-pins:plan");
+      const commandId = TurnItemId.make("entry-pins:command");
+      for (const payload of [
+        {
+          ...itemBase,
+          id: htmlRenderId,
+          ordinal: 10,
+          type: "dynamic_tool",
+          toolName: "mcp__t3-code__html_render",
+          input: {},
+          output: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                htmlRender: { attachmentId: "entry-pins-html", title: "Config types", height: 300 },
+              }),
+            },
+          ],
+        },
+        {
+          ...itemBase,
+          id: planId,
+          ordinal: 11,
+          type: "proposed_plan",
+          planId: PlanId.make("plan:entry-pins"),
+          markdown: "# Ship **pins**\n\n- step",
+          streaming: false,
+        },
+        { ...itemBase, id: commandId, ordinal: 12, type: "command_execution", input: "ls" },
+      ] as const) {
+        yield* projections.apply({
+          id: EventId.make(`entry-pins:item:${payload.id}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload,
+        });
+      }
+      const before = yield* projections.getThread(threadId);
+      yield* TestClock.adjust("1 minute");
 
-    const unknown = yield* setPin("unknown", true, MessageId.make("missing")).pipe(Effect.flip);
-    assert.instanceOf(unknown, Orchestrator.OrchestratorDispatchError);
+      const setPin = (step: string, entryId: string, pinned = true) =>
+        orchestrator.dispatch({
+          type: "thread.entry-pin.set",
+          commandId: CommandId.make(`entry-pin-${step}`),
+          threadId,
+          entryId,
+          pinned,
+        });
+      yield* setPin("message", messageId);
+      yield* setPin("repeat", messageId);
+      yield* setPin("html-render", htmlRenderId);
+      yield* setPin("plan", planId);
+      const pinned = yield* projections.getThread(threadId);
+      const [messagePin, ...otherPins] = pinned.entryPins ?? [];
+      assert.deepInclude(messagePin, { entryId: messageId, runId, kind: "user_message" });
+      assert.isTrue(messagePin!.label.startsWith("Remember this detail"));
+      assert.isAtMost(messagePin!.label.length, 160);
+      assert.isTrue(messagePin!.label.endsWith("…"));
+      assert.deepEqual(otherPins, [
+        { entryId: htmlRenderId, runId, kind: "html_render", label: "Config types" },
+        { entryId: planId, runId, kind: "proposed_plan", label: "Ship pins" },
+      ]);
+      // Pins are not activity, so the thread keeps its place in thread lists.
+      assert.deepEqual(pinned.updatedAt, before.updatedAt);
 
-    yield* setPin("remove", false);
-    yield* setPin("remove-again", false);
-    assert.deepEqual((yield* projections.getThread(threadId)).messagePins, []);
-  }).pipe(Effect.provide(layerTest)),
+      for (const target of ["missing", commandId]) {
+        const rejected = yield* setPin(`reject-${target}`, target).pipe(Effect.flip);
+        assert.instanceOf(rejected, Orchestrator.OrchestratorDispatchError);
+      }
+
+      for (const [index, target] of [messageId, htmlRenderId, planId, planId].entries()) {
+        yield* setPin(`remove-${index}`, target, false);
+      }
+      assert.deepEqual((yield* projections.getThread(threadId)).entryPins, []);
+    }).pipe(Effect.provide(layerTest)),
 );

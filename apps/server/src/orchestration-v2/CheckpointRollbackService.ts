@@ -417,18 +417,18 @@ export const layer: Layer.Layer<
           // Pins on rolled-back runs would point at hidden messages.
           const rolledBackRunIds = new Set(runsToRollback.map((run) => run.id));
           const thread = yield* projections.getThread(input.threadId);
-          const messagePins = thread.messagePins ?? [];
-          const keptPins = messagePins.filter(
+          const entryPins = thread.entryPins ?? [];
+          const keptPins = entryPins.filter(
             (pin) => pin.runId === null || !rolledBackRunIds.has(pin.runId),
           );
-          if (keptPins.length !== messagePins.length) {
+          if (keptPins.length !== entryPins.length) {
             events.push(
               yield* makeEvent({
-                type: "thread.message-pins-updated",
+                type: "thread.entry-pins-updated",
                 threadId: input.threadId,
                 providerInstanceId: thread.providerInstanceId,
                 occurredAt: now,
-                payload: { ...thread, messagePins: keptPins },
+                payload: { ...thread, entryPins: keptPins },
               }),
             );
           }

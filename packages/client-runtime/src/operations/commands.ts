@@ -128,8 +128,8 @@ export interface UnsnoozeThreadInput extends ThreadCommandInput {
   readonly reason: "user";
 }
 
-export interface SetThreadMessagePinInput extends ThreadCommandInput {
-  readonly messageId: MessageId;
+export interface SetThreadEntryPinInput extends ThreadCommandInput {
+  readonly entryId: string;
   readonly pinned: boolean;
 }
 
@@ -648,14 +648,14 @@ export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(functi
   });
 });
 
-export const setThreadMessagePin = Effect.fn("EnvironmentCommands.setThreadMessagePin")(function* (
-  input: SetThreadMessagePinInput,
+export const setThreadEntryPin = Effect.fn("EnvironmentCommands.setThreadEntryPin")(function* (
+  input: SetThreadEntryPinInput,
 ) {
   return yield* dispatch({
-    type: "thread.message-pin.set",
+    type: "thread.entry-pin.set",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
-    messageId: input.messageId,
+    entryId: input.entryId,
     pinned: input.pinned,
   });
 });

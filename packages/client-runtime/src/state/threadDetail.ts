@@ -1,7 +1,7 @@
 import {
   OrchestrationV2AppThread,
   OrchestrationV2TurnItem,
-  type OrchestrationV2ThreadMessagePin,
+  type OrchestrationV2ThreadEntryPin,
   type OrchestrationV2ThreadProjection,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -49,7 +49,7 @@ const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItem
 const EMPTY_THREAD_STRUCTURE_TURN_ITEMS: ReadonlyArray<ThreadStructureVisibleTurnItem> =
   Object.freeze([]);
 const EMPTY_CHECKPOINT_SUMMARIES: ReadonlyArray<ThreadCheckpointSummary> = Object.freeze([]);
-const EMPTY_MESSAGE_PINS: ReadonlyArray<OrchestrationV2ThreadMessagePin> = Object.freeze([]);
+const EMPTY_ENTRY_PINS: ReadonlyArray<OrchestrationV2ThreadEntryPin> = Object.freeze([]);
 
 /**
  * Changes when the agent may have changed the workspace, so file views and host images refresh.
@@ -526,12 +526,12 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-last-visited:${key}`)),
   );
   // Thread events replace the thread, so this holds through streamed text.
-  const messagePinsAtomFamily = Atom.family((key: string) =>
+  const entryPinsAtomFamily = Atom.family((key: string) =>
     Atom.make(
-      (get): ReadonlyArray<OrchestrationV2ThreadMessagePin> =>
-        Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.thread.messagePins ??
-        EMPTY_MESSAGE_PINS,
-    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-message-pins:${key}`)),
+      (get): ReadonlyArray<OrchestrationV2ThreadEntryPin> =>
+        Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.thread.entryPins ??
+        EMPTY_ENTRY_PINS,
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-entry-pins:${key}`)),
   );
   const updatedAtAtomFamily = Atom.family((key: string) =>
     Atom.make(
@@ -619,7 +619,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
       workspaceMutationIdAtomFamily(threadKey(ref)),
     updatedAtAtom: (ref: ScopedThreadRef) => updatedAtAtomFamily(threadKey(ref)),
     lastVisitedAtAtom: (ref: ScopedThreadRef) => lastVisitedAtAtomFamily(threadKey(ref)),
-    messagePinsAtom: (ref: ScopedThreadRef) => messagePinsAtomFamily(threadKey(ref)),
+    entryPinsAtom: (ref: ScopedThreadRef) => entryPinsAtomFamily(threadKey(ref)),
     pendingRequestsAtom: (ref: ScopedThreadRef) => pendingRequestsAtomFamily(threadKey(ref)),
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),

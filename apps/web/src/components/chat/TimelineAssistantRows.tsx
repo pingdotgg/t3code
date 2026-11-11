@@ -22,7 +22,7 @@ import {
   useThreadShell,
 } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { MessagePinButton } from "./MessagePinButton";
+import { EntryPinButton, useTimelineEntryPin } from "./EntryPinButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -232,7 +232,7 @@ function AssistantMessageMeta({
         streaming={copyStreaming}
       />
       {message.role === "assistant" && !message.streaming ? (
-        <MessagePinButton messageId={message.id} />
+        <EntryPinButton entryId={message.id} />
       ) : null}
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
@@ -336,6 +336,7 @@ export function ProposedPlanTimelineRow({
   row: Extract<TimelineRow, { kind: "proposed-plan" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const pin = useTimelineEntryPin(row.id);
 
   return (
     <div className="min-w-0 px-1 py-0.5">
@@ -346,6 +347,7 @@ export function ProposedPlanTimelineRow({
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
         findActive={ctx.findActive}
+        pin={pin}
       />
     </div>
   );
@@ -371,6 +373,7 @@ export function HtmlRenderTimelineRow({
         htmlRender={row.htmlRender}
         threadRef={ctx.threadRef ?? undefined}
         onFullscreenChange={onFullscreenChange}
+        actions={<EntryPinButton entryId={row.id} variant="glass" />}
       />
     </div>
   );

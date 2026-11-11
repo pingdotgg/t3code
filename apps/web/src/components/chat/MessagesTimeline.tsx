@@ -77,7 +77,7 @@ import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
-import { useMessageRevealRequest } from "./messageReveal";
+import { useEntryRevealRequest } from "./entryReveal";
 import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -639,8 +639,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
-  const messageReveal = useMessageRevealRequest(routeThreadKey);
-  const revealedMessageId = citationRequest?.citation.messageId ?? messageReveal?.messageId ?? null;
+  const entryReveal = useEntryRevealRequest(routeThreadKey);
+  const revealedMessageEntry = entryReveal
+    ? timelineEntries.find(
+        (entry) => entry.kind === "message" && entry.message.id === entryReveal.entryId,
+      )
+    : undefined;
+  const revealedMessageId =
+    citationRequest?.citation.messageId ??
+    (revealedMessageEntry?.kind === "message" ? revealedMessageEntry.message.id : null);
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
@@ -709,16 +716,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
       );
     }
   }
-  // A revealed pinned message opens the fold it sits in once per request, as a citation does.
+  // A revealed pinned entry opens the fold it sits in once per request, as a citation does.
   const [revealExpandedFor, setRevealExpandedFor] = useState<number | null>(null);
   const revealedEntry =
-    messageReveal && revealExpandedFor !== messageReveal.key
-      ? timelineEntries.find(
-          (entry) => entry.kind === "message" && entry.message.id === messageReveal.messageId,
-        )
+    entryReveal && revealExpandedFor !== entryReveal.key
+      ? timelineEntries.find((entry) => entry.id === entryReveal.entryId)
       : undefined;
-  if (messageReveal && revealedEntry) {
-    setRevealExpandedFor(messageReveal.key);
+  if (entryReveal && revealedEntry) {
+    setRevealExpandedFor(entryReveal.key);
     const revealedRunId = (
       findFoldRunIds ??
       timelineTurnFoldRunIdsByEntryId({
@@ -828,9 +833,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const listOpenedOn = nextOpening.mounted ? nextOpening.identity : null;
   const viewportRef = useRef<TimelineViewport | null>(null);
   const navigateTimeline = () => viewportRef.current?.navigate({ releasesFollow: true });
-  const revealRowIndex = messageReveal
-    ? rows.findIndex((row) => row.kind === "message" && row.message.id === messageReveal.messageId)
-    : -1;
+  const revealRowIndex = entryReveal ? rows.findIndex((row) => row.id === entryReveal.entryId) : -1;
   const scrolledRevealKeyRef = useRef<number | null>(null);
   const scrollToRevealedRow = useEffectEvent((key: number, index: number) => {
     if (scrolledRevealKeyRef.current === key) return;
@@ -842,11 +845,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       viewOffset: 24,
     });
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls LegendList imperatively once a revealed pinned message has a row
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls LegendList imperatively once a revealed pinned entry has a row
   useEffect(() => {
-    if (messageReveal && revealRowIndex >= 0)
-      scrollToRevealedRow(messageReveal.key, revealRowIndex);
-  }, [messageReveal, revealRowIndex]);
+    if (entryReveal && revealRowIndex >= 0) scrollToRevealedRow(entryReveal.key, revealRowIndex);
+  }, [entryReveal, revealRowIndex]);
   const restoreReady = restoringThreadPosition && rows.length > 0;
   // Z: syncs LegendList's scroll position with which thread it shows. The list
   // is not keyed per thread and reports no "new data" event, and the restore

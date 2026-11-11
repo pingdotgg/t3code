@@ -1,19 +1,28 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
-  type OrchestrationV2ThreadMessagePin,
+  type OrchestrationV2ThreadEntryPin,
+  type OrchestrationV2ThreadEntryPinKind,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { BotIcon, ChevronDownIcon, PinIcon, PinOffIcon, UserIcon } from "lucide-react";
+import {
+  BotIcon,
+  ChevronDownIcon,
+  ClipboardListIcon,
+  PanelsTopLeftIcon,
+  PinIcon,
+  PinOffIcon,
+  UserIcon,
+} from "lucide-react";
 
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
-import { useThreadMessagePins } from "../../state/entities";
+import { useThreadEntryPins } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useSetMessagePin } from "./MessagePinButton";
-import { revealThreadMessage } from "./messageReveal";
+import { useSetEntryPin } from "./EntryPinButton";
+import { revealThreadEntry } from "./entryReveal";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import {
@@ -22,16 +31,16 @@ import {
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "./threadDetailsPanelStyles";
 
-export function ThreadMessagePinsPanel(props: {
+export function ThreadEntryPinsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
   const threadRef = { environmentId: props.environmentId, threadId: props.threadId };
-  const pins = useThreadMessagePins(threadRef);
+  const pins = useThreadEntryPins(threadRef);
   const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
-  const setMessagePin = useSetMessagePin(threadRef);
+  const setEntryPin = useSetEntryPin(threadRef);
   const [expanded, setExpanded] = useLocalStorage(
-    "t3code:thread-details:message-pins-expanded",
+    "t3code:thread-details:entry-pins-expanded",
     false,
     Schema.Boolean,
   );
@@ -39,8 +48,8 @@ export function ThreadMessagePinsPanel(props: {
 
   return (
     <ThreadDetailsSection
-      headingId="thread-details-message-pins-heading"
-      title="Pinned messages"
+      headingId="thread-details-entry-pins-heading"
+      title="Pinned items"
       showHeading={false}
     >
       <div className="flex flex-col">
@@ -53,7 +62,7 @@ export function ThreadMessagePinsPanel(props: {
         >
           <PinIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
           <span className={cn("min-w-0 flex-1 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-            Pinned messages
+            Pinned items
           </span>
           <span className="text-xs text-muted-foreground tabular-nums">{pins.length}</span>
           <ChevronDownIcon
@@ -64,10 +73,10 @@ export function ThreadMessagePinsPanel(props: {
         {expanded ? (
           <ul className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0">
             {pins.map((pin) => (
-              <li key={pin.messageId} className="flex items-center gap-1">
-                <PinnedMessageRow
+              <li key={pin.entryId} className="flex items-center gap-1">
+                <PinnedEntryRow
                   pin={pin}
-                  onReveal={() => void revealThreadMessage(threadRef, pin.messageId)}
+                  onReveal={() => void revealThreadEntry(threadRef, pin.entryId)}
                 />
                 {canOperate ? (
                   <Tooltip>
@@ -77,8 +86,8 @@ export function ThreadMessagePinsPanel(props: {
                           size="icon-xs"
                           variant="ghost"
                           part="icon"
-                          aria-label="Unpin message"
-                          onClick={() => void setMessagePin(pin.messageId, false)}
+                          aria-label={`Unpin ${PIN_KIND_NAMES[pin.kind]}`}
+                          onClick={() => void setEntryPin(pin.entryId, false)}
                         >
                           <PinOffIcon className="size-3.5" />
                         </ThreadDetailsControl>
@@ -96,12 +105,26 @@ export function ThreadMessagePinsPanel(props: {
   );
 }
 
-function PinnedMessageRow(props: {
-  readonly pin: OrchestrationV2ThreadMessagePin;
+const PIN_KIND_ICONS = {
+  user_message: UserIcon,
+  assistant_message: BotIcon,
+  html_render: PanelsTopLeftIcon,
+  proposed_plan: ClipboardListIcon,
+} satisfies Record<OrchestrationV2ThreadEntryPinKind, unknown>;
+
+const PIN_KIND_NAMES: Record<OrchestrationV2ThreadEntryPinKind, string> = {
+  user_message: "your message",
+  assistant_message: "assistant message",
+  html_render: "visual",
+  proposed_plan: "plan",
+};
+
+function PinnedEntryRow(props: {
+  readonly pin: OrchestrationV2ThreadEntryPin;
   readonly onReveal: () => void;
 }) {
-  const RoleIcon = props.pin.role === "user" ? UserIcon : BotIcon;
-  const excerpt = props.pin.excerpt || "Empty message";
+  const KindIcon = PIN_KIND_ICONS[props.pin.kind];
+  const excerpt = props.pin.label || "Empty message";
   return (
     <Tooltip>
       <TooltipTrigger
@@ -111,10 +134,10 @@ function PinnedMessageRow(props: {
             variant="ghost"
             part="row"
             className="min-w-0 flex-1"
-            aria-label={`Go to ${props.pin.role === "user" ? "your" : "assistant"} message: ${excerpt}`}
+            aria-label={`Go to ${PIN_KIND_NAMES[props.pin.kind]}: ${excerpt}`}
             onClick={props.onReveal}
           >
-            <RoleIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+            <KindIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
             <span
               className={cn(
                 "min-w-0 flex-1 truncate font-normal",

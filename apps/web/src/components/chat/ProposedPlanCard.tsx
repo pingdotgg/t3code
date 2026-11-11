@@ -45,6 +45,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd,
   workspaceRoot,
   findActive = false,
+  pin = null,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
@@ -52,6 +53,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   findActive?: boolean;
+  pin?: { readonly pinned: boolean; readonly toggle: () => void } | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
@@ -178,6 +180,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               {isCopied ? "Copied!" : "Copy to clipboard"}
             </MenuItem>
             <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
+            {pin ? (
+              <MenuItem onClick={pin.toggle}>{pin.pinned ? "Unpin plan" : "Pin plan"}</MenuItem>
+            ) : null}
             <MenuItem
               onClick={openSaveDialog}
               disabled={!canWriteFiles || !workspaceRoot || isSavingToWorkspace}
