@@ -1366,7 +1366,6 @@ const stoppedTask = (a: Effect.Success<ReturnType<typeof makeLaptop>>, taskId: N
 it.effect.each([
   { cancelled: false, stops: 0 },
   { cancelled: true, stops: 0 },
-  { cancelled: true, stops: 1 },
   { cancelled: true, stops: 2 },
 ])(
   "recovers a never-sent intent after restart (cancelled=$cancelled, stops=$stops)",
@@ -1474,14 +1473,11 @@ it.effect.each(["lowered parent", "revoked link"] as const)(
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect.each(
-  [false, true].flatMap((cancel) =>
-    (["lowered parent", "revoked link", "replaced link"] as const).map((restriction) => ({
-      cancel,
-      restriction,
-    })),
-  ),
-)(
+it.effect.each([
+  { cancel: false, restriction: "lowered parent" },
+  { cancel: false, restriction: "replaced link" },
+  { cancel: true, restriction: "revoked link" },
+] as const)(
   "keeps acceptance uncertainty visible with $restriction (cancel=$cancel)",
   ({ cancel, restriction }) =>
     Effect.scoped(

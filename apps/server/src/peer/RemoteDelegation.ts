@@ -276,10 +276,7 @@ const make = Effect.gen(function* () {
       }
       // Keep the original inherited modes across recovery, even if the parent
       // is later raised. Forwarding still checks the current parent's limits.
-      const linkRuntimeMode =
-        link?.access === "read-only"
-          ? "approval-required"
-          : (link?.access ?? parent.thread.runtimeMode);
+      const linkRuntimeMode = link.access === "read-only" ? "approval-required" : link.access;
       const inheritedRuntimeMode =
         runtimeModeRank(linkRuntimeMode) < runtimeModeRank(parent.thread.runtimeMode)
           ? linkRuntimeMode
@@ -304,7 +301,7 @@ const make = Effect.gen(function* () {
       };
       const remoteChild: OrchestrationV2RemoteTaskChild = {
         environmentId: target.environmentId,
-        label: link?.label ?? target.environmentId,
+        label: link.label,
         title,
         launch,
       };
