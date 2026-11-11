@@ -3837,8 +3837,8 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
-  // regression: #34401 Stop killed a child's background command but its task read completed
-  it.effect("reports a child whose background work outlived a Stop as interrupted", () =>
+  // regression: #34401 a parent's Stop killed a child's background build but its task read completed
+  it.effect("reports a child its parent's Stop reached as interrupted", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -3857,7 +3857,8 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         deliveryState: "delivered",
         now,
       });
-      const seedStoppedChild = (name: string, commandEndedAt: DateTime.Utc) =>
+      // Background launches report their command finished at once; only the roster tracks the work.
+      const seedStoppedChild = (name: string, parentStopped: boolean) =>
         Effect.gen(function* () {
           const child = yield* seedRestartCancelledChild({
             parentThreadId: threadId,
@@ -3891,18 +3892,18 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
               {
                 ...scope,
                 id: EventId.make(`event:${name}:command`),
-                occurredAt: commandEndedAt,
+                occurredAt: now,
                 payload: {
                   ...item,
                   id: TurnItemId.make(`turn-item:${name}:command`),
                   type: "command_execution",
                   ordinal: 1,
-                  status: "interrupted",
+                  status: "completed",
                   title: "Run build",
                   input: "./build.sh",
                   startedAt: now,
-                  completedAt: commandEndedAt,
-                  updatedAt: commandEndedAt,
+                  completedAt: now,
+                  updatedAt: now,
                 },
               },
               {
@@ -3924,10 +3925,35 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
               },
             ],
           });
+          if (parentStopped) {
+            const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+              (row) => row.id === child.taskId,
+            )!;
+            yield* eventSink.write({
+              commandId: CommandId.make(`command:${name}:parent-stop`),
+              events: [
+                {
+                  id: EventId.make(`event:${name}:disposed`),
+                  type: "subagent.updated",
+                  threadId,
+                  runId,
+                  nodeId: task.id,
+                  driver,
+                  providerInstanceId: modelSelection.instanceId,
+                  occurredAt: stoppedAt,
+                  payload: {
+                    ...task,
+                    completionDelivery: { state: "disposed", observedByRunId: null },
+                    updatedAt: stoppedAt,
+                  },
+                },
+              ],
+            });
+          }
           return child;
         });
-      const cut = yield* seedStoppedChild("stop-background-cut", stoppedAt);
-      const finished = yield* seedStoppedChild("stop-background-finished", now);
+      const cut = yield* seedStoppedChild("stop-background-cut", true);
+      const finished = yield* seedStoppedChild("stop-background-finished", false);
 
       yield* orchestrator.recoverDelegatedTasks;
 

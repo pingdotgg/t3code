@@ -13238,14 +13238,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageRoles: ["assistant"],
           messageRunIds: [childRun.id],
           turnItemRunId: childRun.id,
-          turnItemTypes: [
-            "assistant_message",
-            "error",
-            "run_interrupt_request",
-            "command_execution",
-            "dynamic_tool",
-            "subagent",
-          ],
+          turnItemTypes: ["assistant_message", "error", "run_interrupt_request"],
         },
       );
       const childProjection = {
@@ -13277,22 +13270,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (task === undefined) {
         return;
       }
-      // A cancelled task's completed run ends it interrupted. So does one whose background work
-      // outlived a Stop: the run stays completed while Stop kills that work.
+      // A cancelled task's completed run ends it interrupted, as does one its parent's Stop
+      // reached: that run can finish its turn and leave background work Stop then kills.
       const cancelled = task.cancelledRunId === childRun.id;
-      const stopRequestedAt = childResult.turnItems.find(
-        (item) => item.runId === childRun.id && item.type === "run_interrupt_request",
-      )?.startedAt;
       const stopped =
-        stopRequestedAt != null &&
+        task.completionDelivery?.state === "disposed" &&
         childResult.turnItems.some(
-          (item) =>
-            item.runId === childRun.id &&
-            (item.type === "command_execution" ||
-              item.type === "dynamic_tool" ||
-              item.type === "subagent") &&
-            (item.completedAt === null ||
-              DateTime.isGreaterThanOrEqualTo(item.completedAt, stopRequestedAt)),
+          (item) => item.runId === childRun.id && item.type === "run_interrupt_request",
         );
       if ((cancelled || stopped) && terminalStatus === "completed")
         outcome = terminalStatus = "interrupted";
