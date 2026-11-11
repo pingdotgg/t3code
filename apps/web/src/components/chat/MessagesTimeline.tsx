@@ -99,8 +99,6 @@ import {
   ArrowRightIcon,
   BotIcon,
   Minimize2Icon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   CircleAlertIcon,
   Clock3Icon,
   MessageSquareIcon,
