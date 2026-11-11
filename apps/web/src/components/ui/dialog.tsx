@@ -112,11 +112,13 @@ function DialogPopup({
   showCloseButton = true,
   bottomStickOnMobile = true,
   variant = "default",
+  mediaControlsPlacement = "outside",
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   bottomStickOnMobile?: boolean;
   variant?: "default" | "media";
+  mediaControlsPlacement?: "inside" | "outside";
 }) {
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
   const popup = useRender({
@@ -158,7 +160,10 @@ function DialogPopup({
         className={cn(
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           variant === "media" &&
-            "z-[60] grid-rows-1 place-items-center px-4 max-[8rem]:px-0 pb-6 pt-[min(calc(var(--media-dialog-titlebar-height,0px)+1.5rem),50dvh)] [-webkit-app-region:no-drag]",
+            "z-[60] grid-rows-1 place-items-center px-4 max-[8rem]:px-0 pb-6 pt-[calc(var(--media-dialog-titlebar-height,0px)+1.5rem)] [-webkit-app-region:no-drag]",
+          variant === "media" &&
+            mediaControlsPlacement === "inside" &&
+            "pt-[min(calc(var(--media-dialog-titlebar-height,0px)+1.5rem),50dvh)]",
         )}
         style={
           variant === "media"
