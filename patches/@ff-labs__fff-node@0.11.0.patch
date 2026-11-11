@@ -1,16 +1,5 @@
-diff --git a/package.json b/package.json
---- a/package.json
-+++ b/package.json
-@@ -11,7 +11,7 @@
-     ".": {
-       "types": "./dist/index.d.ts",
-       "import": "./dist/index.js",
--      "require": "./dist/index.cjs",
-+      "require": "./dist/index.js",
-       "default": "./dist/index.js"
-     },
-     "./package.json": "./package.json"
 diff --git a/dist/fff-api.d.ts b/dist/fff-api.d.ts
+index 0f90eedca20655ccd30b8f28e433b2094341fbdf..c2ef86927d6e3ab0e8584330fa0ac3fdacc06cf5 100644
 --- a/dist/fff-api.d.ts
 +++ b/dist/fff-api.d.ts
 @@ -199,7 +199,7 @@ export type Location = {
@@ -40,7 +29,24 @@ diff --git a/dist/fff-api.d.ts b/dist/fff-api.d.ts
      scores: Score[];
      /** Total number of items (files + dirs) that matched */
      totalMatched: number;
+diff --git a/dist/finder.d.ts b/dist/finder.d.ts
+index 452102d720cc19b0560cfc9e2f1a320687047c92..312046cb4195000ef91f41ffd07cf127e79be232 100644
+--- a/dist/finder.d.ts
++++ b/dist/finder.d.ts
+@@ -242,6 +242,11 @@ export declare class FileFinder implements FileFinderApi {
+      * background watcher might have missed.
+      */
+     scanFiles(): Result<void>;
++    /**
++     * Trigger a rescan on a native thread so a contended picker lock never blocks the JS thread.
++     * Patched in T3 Code.
++     */
++    scanFilesAsync(): Promise<Result<void>>;
+     /**
+      * Check if a scan is currently in progress.
+      */
 diff --git a/dist/index.js b/dist/index.js
+index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..2dae1cc0ba3dc8b99f8104dde9c555b4fcb41d66 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -1,7 +1,7 @@
@@ -263,3 +269,92 @@ diff --git a/dist/index.js b/dist/index.js
    }
    load({
      library: LIBRARY_KEY,
+@@ -1167,6 +1183,29 @@ function ffiMultiGrep(handle, patternsJoined, constraints, maxFileSize, maxMatch
+ function ffiScanFiles(handle) {
+   return callVoidResult("fff_scan_files", [DataType.External], [handle]);
+ }
++async function ffiScanFilesAsync(handle) {
++  loadLibrary();
++  const rawPtr = await load({
++    library: LIBRARY_KEY,
++    funcName: "fff_scan_files",
++    retType: DataType.External,
++    paramsType: [DataType.External],
++    paramsValue: [handle],
++    freeResultMemory: false,
++    runInNewThread: true
++  });
++  const [structData] = restorePointer({
++    retType: [FFF_RESULT_STRUCT],
++    paramsValue: wrapPointer([rawPtr])
++  });
++  if (structData.success === 0) {
++    const errorStr = readCString(structData.error);
++    freeResult(rawPtr);
++    return err(errorStr || "Unknown error");
++  }
++  freeResult(rawPtr);
++  return { ok: true, value: void 0 };
++}
+ function ffiIsScanning(handle) {
+   loadLibrary();
+   return load({
+@@ -1429,6 +1468,7 @@ var FileFinder = class _FileFinder {
+   handle;
+   /** Native ids of this instance's active watch subscriptions. */
+   watchers = /* @__PURE__ */ new Set();
++  pendingScan = null;
+   constructor(handle) {
+     this.handle = handle;
+   }
+@@ -1485,6 +1525,16 @@ var FileFinder = class _FileFinder {
+   destroy() {
+     if (this.handle !== null) {
+       const handle = this.handle;
++      if (this.pendingScan) {
++        this.handle = null;
++        const watchers = this.watchers;
++        this.watchers = /* @__PURE__ */ new Set();
++        this.pendingScan.finally(() => {
++          ffiDestroy(handle);
++          ffiWatchCleanupAfterDestroy(handle, watchers);
++        });
++        return;
++      }
+       ffiDestroy(handle);
+       this.handle = null;
+       ffiWatchCleanupAfterDestroy(handle, this.watchers);
+@@ -1757,6 +1807,20 @@ var FileFinder = class _FileFinder {
+     if (!guard.ok) return guard;
+     return ffiScanFiles(guard.value);
+   }
++  /**
++   * Trigger a rescan without blocking the JS thread. Patched in T3 Code:
++   * `fff_scan_files` can wait on the picker lock, so it runs on a native thread.
++   */
++  scanFilesAsync() {
++    const guard = this.ensureAlive();
++    if (!guard.ok) return Promise.resolve(guard);
++    if (this.pendingScan) return this.pendingScan;
++    const scan = ffiScanFilesAsync(guard.value).catch((cause) => err(String(cause))).finally(() => {
++      if (this.pendingScan === scan) this.pendingScan = null;
++    });
++    this.pendingScan = scan;
++    return scan;
++  }
+   /**
+    * Check if a scan is currently in progress.
+    */
+diff --git a/package.json b/package.json
+index e000a78b3f79826200979ebb3fe297b599bcea67..84325461c2d963cb42cf72267079d36a419c1398 100644
+--- a/package.json
++++ b/package.json
+@@ -11,7 +11,7 @@
+     ".": {
+       "types": "./dist/index.d.ts",
+       "import": "./dist/index.js",
+-      "require": "./dist/index.cjs",
++      "require": "./dist/index.js",
+       "default": "./dist/index.js"
+     },
+     "./package.json": "./package.json"

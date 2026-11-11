@@ -756,10 +756,13 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           if (created.ok) {
             const finder = created.value;
             finders += 1;
-            const scanFiles = finder.scanFiles.bind(finder);
             finder.scanFiles = () => {
+              throw new Error("refresh must not rescan on the event loop");
+            };
+            const scanFilesAsync = finder.scanFilesAsync.bind(finder);
+            finder.scanFilesAsync = () => {
               rescans += 1;
-              return scanFiles();
+              return scanFilesAsync();
             };
             const waitForIndexReady = finder.waitForIndexReady.bind(finder);
             finder.waitForIndexReady = (timeoutMs) =>
