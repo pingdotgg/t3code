@@ -224,6 +224,7 @@ export class ProviderSessionManagerV2 extends Context.Service<
 >()("t3/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
 interface LiveSessionEntry {
+  readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /** null marks an unknown catalog; undefined means MCP refresh is not configured. */
@@ -2400,6 +2401,29 @@ export const layerWithOptions = (
         ),
       );
 
+      const otherWorkingThreads = Effect.fn("ProviderSessionManager.otherWorkingThreads")(
+        function* (input: Parameters<ProviderSessionManagerV2Shape["otherWorkingThreads"]>[0]) {
+          const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+          if (entry === undefined || !entry.supportsMultipleProviderThreads) return [];
+          return yield* Effect.filter(
+            [...entry.attachedThreadIds].filter((threadId) => threadId !== input.threadId),
+            (threadId) =>
+              // Runs, not the shell's activeRunId: the shell omits silent runs such as idle
+              // compaction. Background work outlives its run and still needs the process.
+              Effect.zipWith(
+                projectionStore.getThreadRecords(threadId, ["runs"]),
+                projectionStore.getThreadShell(threadId),
+                ({ runs }, shell) =>
+                  runs.some((run) => WORKING_RUN_STATUSES.has(run.status)) ||
+                  (shell?.pendingBackgroundTasks?.length ?? 0) > 0,
+              ).pipe(
+                // An unreadable thread may still be working; never kill it unseen.
+                Effect.orElseSucceed(() => true),
+              ),
+          );
+        },
+      );
+
       return ProviderSessionManagerV2.of({
         shutdown,
         open: (input) =>
@@ -2419,7 +2443,49 @@ export const layerWithOptions = (
                   });
                 }
               }
+              const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderSessionOpenError({
+                      instanceId: input.modelSelection.instanceId,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              );
               const key = sessionKey(input.providerSessionId);
+              const stale = (yield* Ref.get(sessions)).get(key);
+              if (stale !== undefined && stale.adapter !== adapter && stale.busyTurns.size === 0) {
+                const pending =
+                  stale.runtime.hasPendingBackgroundWork === undefined
+                    ? false
+                    : yield* stale.runtime.hasPendingBackgroundWork.pipe(
+                        Effect.catchCause((cause) =>
+                          Effect.logWarning(
+                            "orchestration-v2.provider-session-refresh-probe-failed",
+                            { providerSessionId: input.providerSessionId, cause },
+                          ).pipe(Effect.as(true)),
+                        ),
+                      );
+                if (!pending && (yield* otherWorkingThreads(input)).length === 0) {
+                  yield* releaseEntry({
+                    providerSessionId: input.providerSessionId,
+                    reason: "manual_shutdown",
+                    detail: "Provider configuration changed.",
+                    onlyIfIdleGeneration: stale.idleGeneration,
+                    keepIfBusyOtherThan: [],
+                  }).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause,
+                        }),
+                    ),
+                  );
+                }
+              }
               const live = (yield* Ref.get(sessions)).get(key);
               if (live !== undefined) yield* releaseForLinkedEnvironments(live);
               const existing = (yield* Ref.get(sessions)).get(key);
@@ -2442,16 +2508,6 @@ export const layerWithOptions = (
                 return existing.exposedRuntime;
               }
 
-              const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderSessionOpenError({
-                      instanceId: input.modelSelection.instanceId,
-                      providerSessionId: input.providerSessionId,
-                      cause,
-                    }),
-                ),
-              );
               const openedWithLinkedEnvironments = yield* readLinkedEnvironments;
               const prepared = yield* prepareMcpSession(
                 input.threadId,
@@ -2523,6 +2579,7 @@ export const layerWithOptions = (
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
               const entry: LiveSessionEntry = {
+                adapter,
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
                 openedWithLinkedEnvironments,
@@ -2662,28 +2719,7 @@ export const layerWithOptions = (
           // Identity, not presence: open can install a replacement under the same id meanwhile.
           return before !== undefined && (yield* Ref.get(sessions)).get(key) !== before;
         }),
-        otherWorkingThreads: Effect.fn("ProviderSessionManager.otherWorkingThreads")(
-          function* (input) {
-            const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
-            if (entry === undefined || !entry.supportsMultipleProviderThreads) return [];
-            return yield* Effect.filter(
-              [...entry.attachedThreadIds].filter((threadId) => threadId !== input.threadId),
-              (threadId) =>
-                // Runs, not the shell's activeRunId: the shell omits silent runs such as idle
-                // compaction. Background work outlives its run and still needs the process.
-                Effect.zipWith(
-                  projectionStore.getThreadRecords(threadId, ["runs"]),
-                  projectionStore.getThreadShell(threadId),
-                  ({ runs }, shell) =>
-                    runs.some((run) => WORKING_RUN_STATUSES.has(run.status)) ||
-                    (shell?.pendingBackgroundTasks?.length ?? 0) > 0,
-                ).pipe(
-                  // An unreadable thread may still be working; never kill it unseen.
-                  Effect.orElseSucceed(() => true),
-                ),
-            );
-          },
-        ),
+        otherWorkingThreads,
         detach: Effect.fn("ProviderSessionManager.detach")(
           function* (input) {
             const key = sessionKey(input.providerSessionId);
