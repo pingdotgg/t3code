@@ -1,5 +1,7 @@
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import type * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -79,6 +81,7 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
   return makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: "@openai/codex",
+    mise: { tool: "codex" },
     nativeUpdate: {
       args: ["update"],
       isCommandPath: (commandPath) => codexStandaloneHome(commandPath) !== null,
@@ -98,7 +101,9 @@ export type CodexDriverEnv =
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | ResetCreditCoordinator.ResetCreditCoordinator
-  | Crypto.Crypto
+  | Digest.Digest
+  | SecureRandom.SecureRandom
+  | Signature.Signature
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderLatestVersions.ProviderLatestVersions

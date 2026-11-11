@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpClient from "effect-acp/client";
@@ -117,6 +118,7 @@ export interface AcpSessionRuntimeOptions {
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
     readonly name: string;
+    readonly title?: string;
     readonly version: string;
   };
   readonly authMethodId?: string;
@@ -483,18 +485,18 @@ export function terminateLinuxCgroupLease(
     let lastRemovalFailure: { readonly cause: unknown } | null = null;
     for (let attempt = 0; attempt < 200; attempt += 1) {
       if (!lease.exists()) return;
-      const killed = yield* Effect.try(() => lease.kill()).pipe(Effect.result);
+      const killed = Result.try(() => lease.kill());
       if (Result.isFailure(killed)) {
-        const cause = killed.failure.cause;
+        const cause = killed.failure;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code !== "ENOENT") return yield* failure("kill", cause);
         if (!lease.exists()) return;
         yield* Effect.sleep("10 millis");
         continue;
       }
-      const populated = yield* Effect.try(() => lease.populated()).pipe(Effect.result);
+      const populated = Result.try(() => lease.populated());
       if (Result.isFailure(populated)) {
-        const cause = populated.failure.cause;
+        const cause = populated.failure;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code === "ENOENT") {
@@ -508,9 +510,9 @@ export function terminateLinuxCgroupLease(
         yield* Effect.sleep("10 millis");
         continue;
       }
-      const removed = yield* Effect.try(() => lease.remove()).pipe(Effect.result);
+      const removed = Result.try(() => lease.remove());
       if (Result.isFailure(removed)) {
-        const cause = removed.failure.cause;
+        const cause = removed.failure;
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code !== "EBUSY" && code !== "ENOTEMPTY" && code !== "ENOENT") {
@@ -1126,6 +1128,8 @@ export class AcpSessionRuntime extends Context.Service<
     readonly drainEvents: Effect.Effect<void>;
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
     readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
+    /** The current configuration options, then each later change. */
+    readonly configOptionChanges: Stream.Stream<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
     readonly loadSession: (
       sessionId: string,
       options?: AcpSessionActivationOptions,
@@ -1137,6 +1141,7 @@ export class AcpSessionRuntime extends Context.Service<
     readonly forkSession: (
       sessionId: string,
       options?: AcpSessionActivationOptions,
+      meta?: NonNullable<EffectAcpSchema.ForkSessionRequest["_meta"]>,
     ) => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
     readonly listSessions: (
       cursor?: string,
@@ -1236,16 +1241,16 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 ): Effect.fn.Return<
   AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
 > {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const runtimeScope = yield* Scope.fork(yield* Scope.Scope);
   const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
   const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
   const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
   const shownToolCallIds = new Set<string>();
-  const assistantItemRuntimeId = yield* crypto.randomUUIDv4().pipe(
+  const assistantItemRuntimeId = yield* random.uuidV4().pipe(
     Effect.mapError(
       (cause) =>
         new EffectAcpErrors.AcpTransportError({
@@ -1255,7 +1260,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     ),
   );
   const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
-  const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
+  const configOptionsRef = yield* SubscriptionRef.make(sessionConfigOptionsFromSetup(undefined));
   const initializeStateRef = yield* Ref.make<AcpInitializeState>({ _tag: "NotStarted" });
   const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
   const startupMetadataRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.SessionNotification>>(
@@ -1682,17 +1687,26 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
   const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
 
+  // Counts applied `config_option_update`s; see setConfigOption.
+  const configOptionUpdates = yield* Ref.make(0);
   const processSessionUpdate = (notification: EffectAcpSchema.SessionNotification) =>
-    handleSessionUpdate({
-      queue: eventQueue,
-      modeStateRef,
-      configOptionsRef,
-      toolCallsRef,
-      shownToolCallIds,
-      assistantSegmentRef,
-      assistantItemRuntimeId,
-      params: notification,
-    });
+    (notification.update.sessionUpdate === "config_option_update"
+      ? Ref.update(configOptionUpdates, (count) => count + 1)
+      : Effect.void
+    ).pipe(
+      Effect.andThen(
+        handleSessionUpdate({
+          queue: eventQueue,
+          modeStateRef,
+          configOptionsRef,
+          toolCallsRef,
+          shownToolCallIds,
+          assistantSegmentRef,
+          assistantItemRuntimeId,
+          params: notification,
+        }),
+      ),
+    );
 
   yield* acp.handleSessionUpdate((notification) =>
     notificationSemaphore.withPermit(
@@ -1807,7 +1821,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       value: string | boolean,
       allowUnlistedValue: boolean,
     ): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
-      const configOptions = yield* Ref.get(configOptionsRef);
+      const configOptions = yield* SubscriptionRef.get(configOptionsRef);
       const configOption = findSessionConfigOption(configOptions, configId);
       if (!configOption) {
         return;
@@ -1868,7 +1882,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       | EffectAcpSchema.ResumeSessionResponse,
   ) {
     const configOptions = sessionConfigOptionsFromSetup(response);
-    yield* Ref.set(configOptionsRef, configOptions);
+    yield* SubscriptionRef.set(configOptionsRef, configOptions);
     yield* Queue.offer(eventQueue, {
       _tag: "ConfigOptionsUpdated",
       configOptions,
@@ -1911,9 +1925,15 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       sessionSetupResult.configOptions !== undefined &&
       sessionSetupResult.configOptions !== null
     ) {
-      yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* SubscriptionRef.set(
+        configOptionsRef,
+        sessionConfigOptionsFromSetup(sessionSetupResult),
+      );
     } else if (!syntheticReplayIdle) {
-      yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* SubscriptionRef.set(
+        configOptionsRef,
+        sessionConfigOptionsFromSetup(sessionSetupResult),
+      );
     }
     const nextState = {
       sessionId,
@@ -2016,7 +2036,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     validateConfigOptionValue(configId, value, options?.allowUnlistedValue === true).pipe(
       Effect.andThen(getStartedState),
       Effect.flatMap((started) =>
-        Ref.get(configOptionsRef).pipe(
+        SubscriptionRef.get(configOptionsRef).pipe(
           Effect.flatMap((configOptions) => {
             const existing = findSessionConfigOption(configOptions, configId);
             if (existing && configOptionCurrentValueMatches(existing, value)) {
@@ -2037,11 +2057,27 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                     configId,
                     value: String(value),
                   } satisfies EffectAcpSchema.SetSessionConfigOptionRequest);
-            return runLoggedRequest(
-              "session/set_config_option",
-              requestPayload,
-              acp.agent.setSessionConfigOption(requestPayload),
-            ).pipe(Effect.tap((response) => updateConfigOptions(response)));
+            // An update the agent pushed while the write was in flight is
+            // newer than its result: Kiro 2.32 answers a `model` write
+            // without `model`, then advertises it, and that update can be
+            // handled before this fiber resumes. The result then stays out.
+            return Ref.get(configOptionUpdates).pipe(
+              Effect.flatMap((updatesBefore) =>
+                runLoggedRequest(
+                  "session/set_config_option",
+                  requestPayload,
+                  acp.agent.setSessionConfigOption(requestPayload),
+                ).pipe(
+                  Effect.tap((response) =>
+                    Ref.get(configOptionUpdates).pipe(
+                      Effect.flatMap((updatesNow) =>
+                        updatesNow === updatesBefore ? updateConfigOptions(response) : Effect.void,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
           }),
         ),
       ),
@@ -2249,7 +2285,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     );
 
     yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
-    yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+    yield* SubscriptionRef.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
 
     const nextState = {
       sessionId,
@@ -2406,7 +2442,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     getEvents: () => Stream.fromQueue(eventQueue),
     drainEvents,
     getModeState: Ref.get(modeStateRef),
-    getConfigOptions: Ref.get(configOptionsRef),
+    getConfigOptions: SubscriptionRef.get(configOptionsRef),
+    configOptionChanges: SubscriptionRef.changes(configOptionsRef),
     loadSession: (sessionId, activationOptions) =>
       start.pipe(
         Effect.flatMap((started) => {
@@ -2437,7 +2474,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         }),
         Effect.flatMap((response) => adoptSession(sessionId, response)),
       ),
-    forkSession: (sessionId, activationOptions) =>
+    forkSession: (sessionId, activationOptions, meta) =>
       start.pipe(
         Effect.flatMap((started) => {
           const requestPayload = {
@@ -2445,6 +2482,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             cwd: options.cwd,
             ...sessionSetupFields(started.initializeResult),
             mcpServers: sessionMcpServers(started.initializeResult, activationOptions),
+            ...(meta === undefined ? {} : { _meta: meta }),
           } satisfies EffectAcpSchema.ForkSessionRequest;
           return runLoggedRequest(
             "session/fork",
@@ -2639,7 +2677,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       if (modeState?.currentModeId === modeId) {
         return {} satisfies EffectAcpSchema.SetSessionModeResponse;
       }
-      const modeConfigOption = (yield* Ref.get(configOptionsRef))?.find(
+      const modeConfigOption = (yield* SubscriptionRef.get(configOptionsRef))?.find(
         (option) => option.category === "mode" && option.type === "select",
       );
       if (modeConfigOption === undefined && modeState !== undefined) {
@@ -2690,7 +2728,7 @@ export const layer = (
 ): Layer.Layer<
   AcpSessionRuntime,
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
 > => Layer.effect(AcpSessionRuntime, make(options));
 
 function sessionConfigOptionsFromSetup(
@@ -2742,7 +2780,9 @@ const handleSessionUpdate =
   }: {
     readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
     readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
-    readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
+    readonly configOptionsRef: SubscriptionRef.SubscriptionRef<
+      ReadonlyArray<EffectAcpSchema.SessionConfigOption>
+    >;
     readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
     readonly shownToolCallIds: Set<string>;
     readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
@@ -2751,7 +2791,7 @@ const handleSessionUpdate =
   }): Effect.fn.Return<void> {
     if (params.update.sessionUpdate === "config_option_update") {
       const configOptions = params.update.configOptions;
-      yield* Ref.set(configOptionsRef, configOptions);
+      yield* SubscriptionRef.set(configOptionsRef, configOptions);
       yield* Ref.update(
         modeStateRef,
         (current) => parseSessionModeState({ configOptions }) ?? current,

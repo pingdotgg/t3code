@@ -17,6 +17,7 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  mcpClientScopes,
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
@@ -36,6 +37,7 @@ import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { requestUrl } from "../requestUrl.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -56,7 +58,7 @@ const appendDpopChallengeOnUnauthorized =
     const request = yield* HttpServerRequest.HttpServerRequest;
     const usesDpop =
       (request.originalUrl.startsWith("/oauth/token") && request.headers.dpop !== undefined) ||
-      request.headers.authorization?.startsWith("DPoP ") === true;
+      /^DPoP /i.test(request.headers.authorization ?? "");
     if (usesDpop) {
       yield* appendDpopChallengeHeader;
     }
@@ -72,7 +74,7 @@ export const annotateEnvironmentRequest =
   /* Request instrumentation already owns the span; keep this helper in that context. */
   Effect.fnUntraced(function* (endpoint: string) {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
+    const url = requestUrl(request);
     const traceId = yield* currentEnvironmentTraceId;
 
     yield* Effect.addFinalizer((exit) =>
@@ -445,7 +447,9 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
-            const delegatedScopes = args.payload.scopes ?? AuthStandardClientScopes;
+            const delegatedScopes = args.payload.access
+              ? mcpClientScopes(args.payload.access)
+              : (args.payload.scopes ?? AuthStandardClientScopes);
             if (
               delegatedScopes.length === 0 ||
               new Set<AuthEnvironmentScope>(delegatedScopes).size !== delegatedScopes.length

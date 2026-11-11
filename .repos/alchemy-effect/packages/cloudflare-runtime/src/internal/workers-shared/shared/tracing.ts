@@ -13,18 +13,14 @@ export function mockJaegerBindingSpan(): Span {
 
 export function mockJaegerBinding(): JaegerTracing {
   return {
-    enterSpan: (_, span, ...args) => {
-      return span(mockJaegerBindingSpan(), ...args);
-    },
+    enterSpan: (_, span, ...args) => span(mockJaegerBindingSpan(), ...args),
     getSpanContext: () => ({
       traceId: "test-trace",
       spanId: "test-span",
       parentSpanId: "test-parent-span",
       traceFlags: 0,
     }),
-    runWithSpanContext: (_, callback, ...args) => {
-      return callback(...args);
-    },
+    runWithSpanContext: (_, callback, ...args) => callback(...args),
 
     traceId: "test-trace",
     spanId: "test-span",
