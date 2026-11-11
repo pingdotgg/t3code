@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as CourseService from "../../../course/CourseService.ts";
 import { CourseIngestError, ingestCourse } from "../../../course/ingest.ts";
+import { CourseReferenceFetchError, fetchCourseReference } from "../../../course/referenceFetch.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -16,9 +17,13 @@ import { CourseToolkit } from "./tools.ts";
 
 const PREP_BRIEF = `You are a course preparation thread. Work only on the requested units for course {{courseId}} (units: {{units}}). For each unit, call course_read with courseId and its unit number. Write 2–3 likely sticking points, ranked by what the unit needs that knowledge_map_read lacks, what the learner asked before, the transcript, and common misconceptions. Write a four-question quiz with answers first. Save both with course_update using courseId. Do not message, wake, or delegate into the lesson thread; this is background preparation.`;
 const isCourseIngestError = Schema.is(CourseIngestError);
+const isCourseReferenceFetchError = Schema.is(CourseReferenceFetchError);
 const fail = (e: { readonly message: string }) =>
   new OrchestratorMcpFailure({
-    code: isCourseIngestError(e) ? "invalid_request" : "orchestration_error",
+    code:
+      isCourseIngestError(e) || isCourseReferenceFetchError(e)
+        ? "invalid_request"
+        : "orchestration_error",
     message: e.message,
   });
 const atSeconds = (at: string | number | undefined) => {
@@ -208,6 +213,16 @@ const handlers = {
           ...(input.reveal === undefined ? {} : { reveal: input.reveal }),
         })
         .pipe(Effect.mapError(fail));
+    }),
+  ),
+  course_reference_fetch: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      yield* McpInvocationContext.requireThreadScope(scope, "course_reference_fetch");
+      return yield* fetchCourseReference({
+        url: input.url,
+        ...(input.pages === undefined ? {} : { pages: input.pages }),
+      }).pipe(Effect.mapError(fail));
     }),
   ),
 } satisfies McpToolAccess.Handlers<typeof CourseToolkit.tools>;

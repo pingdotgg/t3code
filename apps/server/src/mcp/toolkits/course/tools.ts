@@ -127,10 +127,29 @@ const CourseProblemsTool = Tool.make("course_problems", {
   .annotate(Tool.Title, "Course problems")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+const CourseReferenceFetchTool = Tool.make("course_reference_fetch", {
+  description:
+    "Fetch a public HTML or PDF solution reference. PDF results include text and readable page images for up to four requested pages.",
+  parameters: Schema.Struct({
+    url: Schema.String,
+    pages: Schema.optional(Schema.Array(Schema.Int)),
+  }),
+  success: Schema.Unknown,
+  failure: OrchestratorMcpFailure,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+  ],
+})
+  .annotate(Tool.Title, "Fetch course reference")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true);
 export const CourseToolkit = Toolkit.make(
   CourseAddTool,
   CourseReadTool,
   CourseUpdateTool,
   CoursePrepareTool,
   CourseProblemsTool,
+  CourseReferenceFetchTool,
 );
