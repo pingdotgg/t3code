@@ -27,6 +27,7 @@ import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/p
 import { scoreFilePathMatch, normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -122,6 +123,9 @@ const IGNORED_FILES_LIMIT = 200;
 /** Paths sent to one `git check-ignore` call when labelling a folder's children. */
 const IGNORE_CHECK_CHUNK_SIZE = 1000;
 
+/** Folders indexed per project search root; broad roots stop here. */
+const SEARCH_ROOT_FOLDER_LIMIT = 20_000;
+
 /** Children classified at once when listing a folder; each symlink costs a realpath and a stat. */
 const SYMLINK_RESOLVE_BATCH_SIZE = 64;
 
@@ -159,6 +163,7 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -206,50 +211,63 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const readChildFolders = (parent: string) =>
+    Effect.promise(() => NodeFSP.readdir(parent, { withFileTypes: true }).catch(() => [])).pipe(
+      Effect.map((entries) =>
+        entries.flatMap((entry) =>
+          entry.isDirectory() &&
+          !entry.name.startsWith(".") &&
+          entry.name !== "node_modules" &&
+          entry.name !== "vendor"
+            ? [path.join(parent, entry.name)]
+            : [],
+        ),
+      ),
+    );
+
+  // Breadth-first and never follows directory symlinks. Each readdir is an interruption
+  // point, so the cache stops the walk once no search is waiting on it.
   const folderIndex = yield* Cache.make({
     capacity: 32,
     timeToLive: "30 seconds",
-    lookup: (root: string) =>
-      Effect.promise(async () => {
-        const folders: string[] = [];
-        const queue = [root];
-        // Bound scans of broad roots and never follow directory symlinks.
-        for (let index = 0; index < queue.length && index < 20_000; index += 1) {
-          const parent = queue[index]!;
-          const entries = await NodeFSP.readdir(parent, { withFileTypes: true }).catch(() => []);
-          for (const entry of entries) {
-            if (
-              !entry.isDirectory() ||
-              entry.name.startsWith(".") ||
-              entry.name === "node_modules" ||
-              entry.name === "vendor" ||
-              queue.length >= 20_000
-            )
-              continue;
-            const fullPath = path.join(parent, entry.name);
-            folders.push(fullPath);
-            queue.push(fullPath);
-          }
-        }
-        return folders;
-      }),
+    lookup: Effect.fn("WorkspaceEntries.indexSearchRoot")(function* (root: string) {
+      const queue = [root];
+      for (
+        let index = 0;
+        index < queue.length && queue.length <= SEARCH_ROOT_FOLDER_LIMIT;
+        index += 1
+      ) {
+        for (const folder of yield* readChildFolders(queue[index]!)) queue.push(folder);
+      }
+      return queue.slice(1, SEARCH_ROOT_FOLDER_LIMIT + 1);
+    }),
   });
 
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
     function* (input) {
       const resolvedInputPath = yield* resolveBrowseTarget(input, path);
       if (input.searchQuery) {
-        const roots = [
-          ...new Set(input.searchRoots?.length ? input.searchRoots : [resolvedInputPath]),
-        ];
         const home = yield* HostProcess.HomeDirectory;
-        const folders = yield* Effect.forEach(
-          roots,
-          (root) => Cache.get(folderIndex, path.resolve(expandHomePath(root, home))),
-          { concurrency: 2 },
+        const configuredRoots = yield* serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.projectSearchDirectories),
+          Effect.orElseSucceed((): ReadonlyArray<string> => []),
         );
+        const roots = [
+          ...new Set(
+            configuredRoots
+              .filter((root) => root.length > 0)
+              .map((root) => path.resolve(home, expandHomePath(root, home))),
+          ),
+        ];
+        // Only configured roots are walked; otherwise match the browsed folder's children.
+        const folders =
+          roots.length > 0
+            ? (yield* Effect.forEach(roots, (root) => Cache.get(folderIndex, root), {
+                concurrency: 2,
+              })).flat()
+            : yield* readChildFolders(resolvedInputPath);
         const query = input.searchQuery.toLowerCase();
-        const ranked = [...new Set(folders.flat())]
+        const ranked = [...new Set(folders)]
           .flatMap((fullPath) => {
             const score = scoreFilePathMatch(path.basename(fullPath), query);
             return score === null ? [] : [{ fullPath, score }];

@@ -28,11 +28,6 @@ export type FilesystemGetMetadataResult = typeof FilesystemGetMetadataResult.Typ
 
 export const FilesystemBrowseInput = Schema.Struct({
   searchQuery: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
-  searchRoots: Schema.optionalKey(
-    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))).check(
-      Schema.isMaxLength(32),
-    ),
-  ),
   partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
 });

@@ -52,7 +52,6 @@ import {
 } from "@t3tools/client-runtime/state/projects";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
-  FILESYSTEM_PATH_MAX_LENGTH,
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   AuthFilesystemReadScope,
@@ -116,7 +115,6 @@ interface EnvironmentOption {
   readonly platform: string;
   readonly machine: EnvironmentMachineKind;
   readonly baseDirectory: string | null;
-  readonly searchDirectories?: ReadonlyArray<string>;
   readonly newProjectsRoot: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
@@ -412,7 +410,6 @@ function useEnvironmentOptions(
         platform: platformFromOs(config?.environment.platform.os ?? null),
         machine: resolveEnvironmentMachineKind(config ?? null),
         baseDirectory: config?.settings.addProjectBaseDirectory ?? null,
-        searchDirectories: config?.settings.projectSearchDirectories ?? [],
         newProjectsRoot: config?.newProjectsRoot ?? null,
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,
@@ -945,13 +942,7 @@ function FolderBrowser(props: {
           !isFilesystemBrowseQuery(props.pathInput, props.environment.platform) &&
           browsePath.filterQuery &&
           !browsePath.filterQuery.startsWith(".")
-            ? {
-                searchQuery: browsePath.filterQuery,
-                searchRoots:
-                  props.environment.searchDirectories?.filter(
-                    (root) => root.length > 0 && root.length <= FILESYSTEM_PATH_MAX_LENGTH,
-                  ) ?? [],
-              }
+            ? { searchQuery: browsePath.filterQuery }
             : {}),
         }
       : null;

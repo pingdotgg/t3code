@@ -46,7 +46,6 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   AuthFilesystemReadScope,
-  FILESYSTEM_PATH_MAX_LENGTH,
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
@@ -725,9 +724,7 @@ function OpenCommandPaletteDialog(props: {
   const folderSearchRoots =
     environments
       .find((environment) => environment.environmentId === browseEnvironmentId)
-      ?.serverConfig?.settings.projectSearchDirectories?.filter(
-        (root) => root.length > 0 && root.length <= FILESYSTEM_PATH_MAX_LENGTH,
-      ) ?? [];
+      ?.serverConfig?.settings.projectSearchDirectories?.filter((root) => root.length > 0) ?? [];
   const folderSearchQuery =
     !isRemoteProjectCloneFlow &&
     !isFilesystemBrowseQuery(query, browseEnvironmentPlatform) &&
@@ -740,9 +737,7 @@ function OpenCommandPaletteDialog(props: {
           environmentId: browseEnvironmentId,
           input: {
             partialPath: browsePath.directoryPath,
-            ...(folderSearchQuery
-              ? { searchQuery: folderSearchQuery, searchRoots: folderSearchRoots }
-              : {}),
+            ...(folderSearchQuery ? { searchQuery: folderSearchQuery } : {}),
             ...(currentProjectCwdForBrowse ? { cwd: currentProjectCwdForBrowse } : {}),
           },
         })

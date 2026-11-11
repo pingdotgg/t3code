@@ -15,6 +15,7 @@ import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -54,12 +55,22 @@ const layerKnownWorkspacesTest = Layer.mock(KnownWorkspaces.KnownWorkspaces)({
 const layerProject = WorkspaceFileSystem.layer.pipe(
   Layer.provide(layerKnownWorkspacesTest),
   Layer.provide(WorkspacePaths.layer),
-  Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provide(
+    WorkspaceEntries.layer.pipe(
+      Layer.provide(WorkspacePaths.layer),
+      Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+    ),
+  ),
 );
 
 const layerTest = Layer.empty.pipe(
   Layer.provideMerge(layerProject),
-  Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(
+    WorkspaceEntries.layer.pipe(
+      Layer.provide(WorkspacePaths.layer),
+      Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+    ),
+  ),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
   Layer.provideMerge(
