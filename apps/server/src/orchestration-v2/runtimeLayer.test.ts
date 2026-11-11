@@ -4437,6 +4437,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     "closed",
     "newer head",
     "comments then newer head",
+    "comment limit",
     "still watching",
     "closed notice",
     "closed notice unlinked and relinked",
@@ -4455,7 +4456,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         mode === "still watching" ||
         mode === "closed notice" ||
         mode === "reopened" ||
-        mode === "comments then newer head";
+        mode === "comments then newer head" ||
+        mode === "comment limit";
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         createdBy: "user",
@@ -4485,7 +4487,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             outcome: "updated",
             summary: finalNotice ? "#7: closed, stopped watching" : "#7: checks failed",
           },
-          ...(mode === "comments then newer head" ? { includesRemarks: true } : {}),
+          ...(mode === "comments then newer head" || mode === "comment limit"
+            ? { includesRemarks: true }
+            : {}),
         },
       });
       const userMessageId = MessageId.make(`${threadId}-user`);
@@ -4580,6 +4584,26 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             syncedAt: snapshotSyncedAt,
           },
           stack: null,
+        });
+      } else if (mode === "comment limit") {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`${threadId}-exhausted`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch: null,
+          endedWatch: recordedWatch,
+          wake: {
+            messageId: MessageId.make(`${threadId}-exhausted`),
+            text: "New comments, stopped watching",
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "updated",
+              summary: "#7: new comments, stopped watching",
+            },
+            includesRemarks: true,
+          },
         });
       } else if (mode === "newer head" || mode === "comments then newer head") {
         yield* orchestrator.dispatch({

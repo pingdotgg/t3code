@@ -923,8 +923,24 @@ function isStalePullRequestWatchWake(
     const latestWatch = link.watch ?? link.endedWatch;
     return latestWatch?.startedAt !== stamp.watchStartedAt;
   }
+  if (link.watch === undefined) {
+    // A watch the server ended with a final notice still owes the wakes it queued before it.
+    const endedWithNotice = projection.messages.some((message) => {
+      const ending = message.notification?.source;
+      return (
+        ending?.kind === "monitor" &&
+        ending.pullRequest?.watchEnded === true &&
+        ending.pullRequest.watchStartedAt === stamp.watchStartedAt &&
+        threadPullRequestKeysEqual(ending.pullRequest, stamp)
+      );
+    });
+    return (
+      !endedWithNotice ||
+      link.endedWatch?.startedAt !== stamp.watchStartedAt ||
+      pullRequestSnapshotEndsWatch(link.snapshot, stamp.watchStartedAt)
+    );
+  }
   return (
-    link.watch === undefined ||
     link.watch.startedAt !== stamp.watchStartedAt ||
     (stamp.headSha !== null && link.watch.headSha !== stamp.headSha) ||
     pullRequestSnapshotEndsWatch(link.snapshot, link.watch.startedAt)
