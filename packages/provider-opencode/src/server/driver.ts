@@ -43,6 +43,7 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import {
   makeOpenCodeRuntimeProbe,
   probeOpenCodeRuntime,
+  probeOpenCodeBinary,
   type ProbedOpenCode,
 } from "./versionProbe.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
@@ -73,6 +74,18 @@ import {
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
+
+// A loopback server runs on this environment, but can outlive its CLI installation.
+// Its reported version may therefore differ from the installed executable after an update.
+export function isLocalOpenCodeServerUrl(serverUrl: string): boolean {
+  const url = URL.parse(serverUrl.trim());
+  if (url?.protocol !== "http:" && url?.protocol !== "https:") return false;
+  return (
+    url.hostname === "localhost" ||
+    url.hostname === "[::1]" ||
+    /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(url.hostname)
+  );
+}
 
 function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -286,7 +299,17 @@ export const OpenCodeDriver: ProviderDriver<
         Effect.provideService(Path.Path, pathService),
       );
     const cachedMaintenance = yield* makeCachedProviderMaintenanceResolution(
-      maintenanceFor(runtimeProbe.get),
+      maintenanceFor(
+        isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
+          ? probeOpenCodeBinary(
+              effectiveConfig.binaryPath,
+              providerProbeEnvironment(processEnv),
+            ).pipe(
+              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+              Effect.catch(() => runtimeProbe.get),
+            )
+          : runtimeProbe.get,
+      ),
     );
     const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
       !effectiveConfig.enabled
@@ -400,6 +423,19 @@ export const OpenCodeDriver: ProviderDriver<
     );
     const checkProvider = Effect.all(
       {
+        // A configured loopback server reports its running version. Probe the local
+        // CLI separately so a completed npm update is not mistaken for a failure
+        // while that independently managed server still runs the previous binary.
+        installedVersion:
+          effectiveConfig.enabled && isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
+            ? probeOpenCodeBinary(
+                effectiveConfig.binaryPath,
+                providerProbeEnvironment(processEnv),
+              ).pipe(
+                Effect.map((probed) => probed.version),
+                Effect.orElseSucceed(() => undefined),
+              )
+            : Effect.void,
         provider: checkOpenCodeProviderStatus(
           effectiveConfig,
           host.paths.cwd,
@@ -413,7 +449,11 @@ export const OpenCodeDriver: ProviderDriver<
       },
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
+      Effect.map(({ provider, usageLimits, installedVersion }) => ({
+        ...provider,
+        usageLimits,
+        ...(installedVersion === undefined ? {} : { installedVersion }),
+      })),
       Effect.map(stampIdentity),
       Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),

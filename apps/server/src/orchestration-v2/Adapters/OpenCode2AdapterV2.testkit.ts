@@ -54,7 +54,7 @@ const operationOf = (
   query: Record<string, unknown>,
   body: unknown,
 ) => {
-  if (method === "GET" && path === "/api/experimental/job")
+  if (method === "GET" && path === "/api/experimental/job" && query.kind === "image")
     return { type: "imageJobs", input: query };
   if (method === "GET" && path.startsWith("/api/fs/read/"))
     return { type: "image.read", input: { path, ...query } };
@@ -64,6 +64,16 @@ const operationOf = (
       type: "rpc.call",
       input: { rpcID: rpc[1], method: rpc[2], ...query, ...(body as object) },
     };
+  if (method === "GET" && path === "/api/experimental/job")
+    return { type: "job.list", input: query };
+  const shell = /^\/api\/shell(?:\/([^/]+)(\/output)?)?$/.exec(path);
+  if (shell !== null) {
+    const input = { ...(shell[1] === undefined ? {} : { id: shell[1] }), ...query };
+    return {
+      type: `shell.${method === "DELETE" ? "remove" : shell[2] ? "output" : shell[1] ? "get" : "list"}`,
+      input,
+    };
+  }
   const session = /^\/api\/session\/([^/]+)(\/.*)?$/.exec(path);
   if (method === "GET" && path === "/api/event") return { type: "event.subscribe" };
   if (method === "GET" && path === "/api/model") return { type: "model.list", input: query };
