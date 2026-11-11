@@ -330,7 +330,9 @@ export const workflow = <P, PI, A = void, AI = void>(
   version: options.version,
   // Erased here, once: the registry holds workflows of every payload and result type.
   payload: options.payload as Schema.Codec<unknown, unknown>,
-  returns: (options.returns ?? Schema.Void) as Schema.Codec<unknown, unknown>,
+  // Without a schema the result is whatever JSON the body returned: dropping it would be a
+  // surprise, and a value that is not JSON pauses the run with the reason.
+  returns: (options.returns ?? Schema.UndefinedOr(Schema.Json)) as Schema.Codec<unknown, unknown>,
   resumeAfter: options.resumeAfter ?? DEFAULT_RESUME_AFTER,
   triggers: options.triggers ?? [],
   body,
