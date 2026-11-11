@@ -62,14 +62,11 @@ struct FeatureKeyboardShortcut {
     let input: String
     let modifiers: UIKeyModifierFlags
 
-    static func available(
-        in context: FeatureKeyboardContext,
-        isPad: Bool
-    ) -> [Self] {
+    static func available(in context: FeatureKeyboardContext) -> [Self] {
         var shortcuts: [Self] = [
             .init(command: .newTask, input: "n", modifiers: .command),
             .init(command: .focusSearch, input: "f", modifiers: .command),
-            .init(command: isPad ? .commandPalette : .focusSearch, input: "k", modifiers: .command),
+            .init(command: .commandPalette, input: "k", modifiers: .command),
             .init(command: .back, input: "[", modifiers: .command),
             .init(command: .files, input: "f", modifiers: [.command, .shift]),
             .init(command: .terminal, input: "t", modifiers: [.command, .shift]),
@@ -78,10 +75,8 @@ struct FeatureKeyboardShortcut {
             .init(command: .toggleSidebar, input: "\\", modifiers: .command),
             .init(command: .cycleHost, input: "h", modifiers: [.command, .shift]),
         ]
-        if isPad {
-            shortcuts += (1...9).map {
-                .init(command: .threadJump($0), input: String($0), modifiers: .command)
-            }
+        shortcuts += (1...9).map {
+            .init(command: .threadJump($0), input: String($0), modifiers: .command)
         }
         return shortcuts.filter { context.allows($0.command) }
     }

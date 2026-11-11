@@ -6,7 +6,7 @@ private enum UsageMetric: String, CaseIterable, Identifiable {
     case tokens
 
     var id: Self { self }
-    var label: String { rawValue.uppercased() }
+    var title: String { self == .cost ? "Cost" : "Tokens" }
 }
 
 private enum UsageBreakdown {
@@ -19,12 +19,21 @@ private enum UsageTab: String {
     case limits
 }
 
+private let usageWindowOptions: [(days: Int, short: String, title: String)] = [
+    (1, "24h", "Last 24 hours"),
+    (7, "7d", "Last 7 days"),
+    (30, "30d", "Last 30 days"),
+    (90, "90d", "Last 90 days"),
+]
+
 public struct UsageView: View {
     private let client: any FeatureClient
 
     @State private var loadState = UsageLoadState()
+    /// The state shown while the user scrolls. Streamed results wait here until
+    /// the scroll settles, so rows never shift under a moving finger.
+    @State private var heldState: UsageLoadState?
     @State private var metric = UsageMetric.cost
-    @State private var breakdown = UsageBreakdown.model
     @State private var tab = UsageTab.usage
     @State private var hasActivatedUsage = false
     @State private var resetCreditStates: [UsageResetCreditTarget: UsageResetCreditState] = [:]
@@ -34,12 +43,6 @@ public struct UsageView: View {
         _tab = State(initialValue: initiallyShowsLimits ? .limits : .usage)
     }
 
-    private var windowInput: UsageSummaryInput { loadState.windowInput }
-    private var environments: [FeatureEnvironmentUsage] { loadState.environments }
-    private var merged: MergedUsage { loadState.merged }
-    private var presentation: UsagePresentation { loadState.presentation }
-    private var isLoading: Bool { loadState.isLoading }
-    private var errorMessage: String? { loadState.errorMessage }
     private var windowDays: Binding<Int> {
         Binding(
             get: { loadState.windowDays },
@@ -48,46 +51,52 @@ public struct UsageView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            Picker("Usage view", selection: $tab) {
-                Text("Usage").tag(UsageTab.usage)
-                Text("Limits").tag(UsageTab.limits)
+        // Both tabs stay mounted. Switching only toggles visibility, so the
+        // usage load and every limit subscription survive a tab change.
+        ZStack {
+            ScrollView {
+                UsageSummaryContent(state: heldState ?? loadState, metric: metric)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    .padding(.bottom, 32)
             }
-            .pickerStyle(.segmented)
-            .tint(T3Colors.textPrimary)
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
+            .scrollIndicators(.hidden)
+            .refreshable { await load() }
+            .modifier(UsageScrollActivity { isScrolling in
+                if isScrolling, heldState == nil {
+                    heldState = loadState
+                } else if !isScrolling, heldState != nil {
+                    heldState = nil
+                }
+            })
+            .opacity(tab == .usage ? 1 : 0)
+            .allowsHitTesting(tab == .usage)
+            .accessibilityHidden(tab != .usage)
 
-            // Both tabs stay mounted. Switching only toggles visibility, so the
-            // usage load and every limit subscription survive a tab change.
-            ZStack {
-                usageContent
-                    .opacity(tab == .usage ? 1 : 0)
-                    .allowsHitTesting(tab == .usage)
-                    .accessibilityHidden(tab != .usage)
-                UsageLimitsView(
-                    client: client,
-                    resetCreditStates: $resetCreditStates,
-                    isActive: tab == .limits
-                )
-                .opacity(tab == .limits ? 1 : 0)
-                .allowsHitTesting(tab == .limits)
-                .accessibilityHidden(tab != .limits)
-            }
+            UsageLimitsView(
+                client: client,
+                resetCreditStates: $resetCreditStates,
+                isActive: tab == .limits
+            )
+            .opacity(tab == .limits ? 1 : 0)
+            .allowsHitTesting(tab == .limits)
+            .accessibilityHidden(tab != .limits)
         }
         .background(T3Colors.background)
         .navigationTitle("Usage")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbar {
-            if tab == .usage {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Refresh prices", systemImage: "arrow.clockwise") {
-                        Task { await load(refreshPricing: true) }
-                    }
-                    .disabled(isLoading)
+            ToolbarItem(placement: .principal) {
+                Picker("Usage view", selection: $tab) {
+                    Text("Usage").tag(UsageTab.usage)
+                    Text("Limits").tag(UsageTab.limits)
                 }
+                .pickerStyle(.segmented)
+                .fixedSize()
+            }
+            if tab == .usage {
+                ToolbarItem(placement: .topBarTrailing) { usageOptions }
             }
         }
         .t3NavigationChrome()
@@ -100,86 +109,181 @@ public struct UsageView: View {
         }
     }
 
-    private var usageContent: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20) {
-                Picker("Usage window", selection: windowDays) {
-                    Text("24h").tag(1)
-                    Text("7d").tag(7)
-                    Text("30d").tag(30)
-                    Text("90d").tag(90)
+    /// Window, chart metric, and price refresh share one bar button. The label
+    /// shows the window because the content no longer does.
+    private var usageOptions: some View {
+        let window = usageWindowOptions.first { $0.days == loadState.windowDays }
+        return Menu {
+            Section("Window") {
+                Picker("Window", selection: windowDays) {
+                    ForEach(usageWindowOptions, id: \.days) { option in
+                        Text(option.title).tag(option.days)
+                    }
                 }
-                .pickerStyle(.segmented)
-                .tint(T3Colors.textPrimary)
-
-                coverageNotice
-
-                if isLoading, !hasCompatibleSummary,
-                   environments.isEmpty || environments.contains(where: \.isPending) {
-                    Text("Scanning provider transcripts")
-                        .font(T3Typography.supporting)
-                        .foregroundStyle(T3Colors.textTertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 64)
-                } else if let errorMessage, environments.isEmpty {
-                    ContentUnavailableView {
-                        Label("Couldn’t load usage", systemImage: "exclamationmark.circle")
-                    } description: {
-                        Text(errorMessage)
-                    } actions: {
-                        Button("Try again") { Task { await load() } }
-                    }
-                } else if environments.isEmpty {
-                    ContentUnavailableView {
-                        Label("No environments", systemImage: "chart.bar.xaxis")
-                    } description: {
-                        Text("Connect an environment to see usage.")
-                    }
-                } else if !hasCompatibleSummary {
-                    ContentUnavailableView {
-                        Label("Couldn’t load usage", systemImage: "exclamationmark.circle")
-                    } description: {
-                        Text(hasDailyOnlySummary
-                            ? "This server reports daily usage. Select 7d or 30d to see it."
-                            : "No compatible usage data is available.")
-                    } actions: {
-                        Button("Try again") { Task { await load() } }
-                    }
-                } else {
-                    chartSection
-                    usageDivider
-                    providersSection
-                    usageDivider
-                    totalsSection
-                    usageDivider
-                    breakdownSection
-                }
+                .pickerStyle(.inline)
+                .labelsHidden()
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 32)
+            Section("Chart") {
+                Picker("Chart", selection: $metric) {
+                    ForEach(UsageMetric.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+            Section {
+                Button("Refresh prices", systemImage: "arrow.clockwise") {
+                    Task { await load(refreshPricing: true) }
+                }
+                .disabled(loadState.isLoading)
+            }
+        } label: {
+            Text(window?.short ?? "\(loadState.windowDays)d")
+                .monospacedDigit()
         }
-        .scrollIndicators(.hidden)
-        .refreshable { await load() }
+        .accessibilityLabel("Usage options")
+        .accessibilityValue("\(window?.title ?? ""), \(metric.title)")
     }
 
-    @ViewBuilder
-    private var coverageNotice: some View {
+    private func load(refreshPricing: Bool = false) async {
+        let request = loadState.begin(days: loadState.windowDays)
+        defer { loadState.finish(request) }
+        do {
+            for try await result in client.usageSummaryUpdates(request.input, refreshPricing: refreshPricing) {
+                try Task.checkCancellation()
+                loadState.receive(result, for: request)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            loadState.fail(error, for: request)
+        }
+    }
+}
+
+/// Reports when the user starts and stops scrolling. iOS 17 has no scroll
+/// phase, so there results always apply at once.
+private struct UsageScrollActivity: ViewModifier {
+    let onChange: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.onScrollPhaseChange { _, phase in onChange(phase.isScrolling) }
+        } else {
+            content
+        }
+    }
+}
+
+/// Everything below the toolbar. It is a plain stack on purpose: the screen
+/// has a few heavy sections and at most 90 short rows, so laying them out once
+/// is cheaper than a lazy stack that rebuilds the chart on every scroll pass.
+private struct UsageSummaryContent: View {
+    let state: UsageLoadState
+    let metric: UsageMetric
+
+    private var windowInput: UsageSummaryInput { state.windowInput }
+    private var environments: [FeatureEnvironmentUsage] { state.environments }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            UsageCoverageNotice(state: state, hasCompatibleSummary: hasCompatibleSummary)
+
+            if state.isLoading, !hasCompatibleSummary,
+               environments.isEmpty || environments.contains(where: \.isPending) {
+                Text("Scanning provider transcripts")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textTertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 64)
+            } else if let errorMessage = state.errorMessage, environments.isEmpty {
+                ContentUnavailableView {
+                    Label("Couldn’t load usage", systemImage: "exclamationmark.circle")
+                } description: {
+                    Text(errorMessage)
+                } actions: {
+                    UsageRetryButton()
+                }
+            } else if environments.isEmpty {
+                ContentUnavailableView {
+                    Label("No environments", systemImage: "chart.bar.xaxis")
+                } description: {
+                    Text("Connect an environment to see usage.")
+                }
+            } else if !hasCompatibleSummary {
+                ContentUnavailableView {
+                    Label("Couldn’t load usage", systemImage: "exclamationmark.circle")
+                } description: {
+                    Text(hasDailyOnlySummary
+                        ? "This server reports daily usage. Select 7d or 30d to see it."
+                        : "No compatible usage data is available.")
+                } actions: {
+                    UsageRetryButton()
+                }
+            } else {
+                let merged = state.merged
+                let presentation = state.presentation
+                let isHourly = windowInput.resolution == .hour
+                UsageChartSection(merged: merged, presentation: presentation, metric: metric)
+                UsageDivider()
+                UsageProvidersSection(
+                    providers: metric == .cost ? presentation.providersByCost : presentation.providersByTokens,
+                    metric: metric
+                )
+                UsageDivider()
+                UsageTotalsSection(merged: merged, presentation: presentation, isHourly: isHourly)
+                UsageDivider()
+                UsageBreakdownSection(models: merged.models, periods: presentation.periods, isHourly: isHourly)
+            }
+        }
+    }
+
+    private var hasCompatibleSummary: Bool {
+        environments.contains {
+            $0.summary.map {
+                isCompatibleUsageContractVersion($0.contractVersion, resolution: windowInput.resolution)
+            } == true
+        }
+    }
+
+    private var hasDailyOnlySummary: Bool {
+        windowInput.resolution == .hour
+            && environments.contains { $0.summary?.contractVersion == 3 }
+    }
+}
+
+/// Runs the scroll view's refresh action, which reloads usage.
+private struct UsageRetryButton: View {
+    @SwiftUI.Environment(\.refresh) private var refresh
+
+    var body: some View {
+        Button("Try again") { Task { await refresh?() } }
+    }
+}
+
+private struct UsageCoverageNotice: View {
+    let state: UsageLoadState
+    let hasCompatibleSummary: Bool
+
+    var body: some View {
+        let environments = state.environments
+        let merged = state.merged
         let failed = environments.filter { $0.errorMessage != nil }
         let stale = environments.filter { merged.staleEnvironments.contains($0.environmentID) }
-        let hasRefreshError = errorMessage != nil && hasCompatibleSummary
+        let hasRefreshError = state.errorMessage != nil && hasCompatibleSummary
         if hasRefreshError
-            || loadState.isPartial
-            || loadState.hasPendingCachedTotals
+            || state.isPartial
+            || state.hasPendingCachedTotals
             || !failed.isEmpty
             || !stale.isEmpty
             || !merged.duplicateSources.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                if loadState.hasPendingCachedTotals {
-                    Text(loadState.isPartial
+                if state.hasPendingCachedTotals {
+                    Text(state.isPartial
                         ? "Updating usage. Totals are partial and include the last scan."
                         : "Updating usage. Some totals are from the last scan.")
-                } else if loadState.isPartial {
+                } else if state.isPartial {
                     Text("Some environments are still reporting. Totals are partial.")
                 }
                 if hasRefreshError {
@@ -189,7 +293,7 @@ public struct UsageView: View {
                     Text("\(environment.label): \(environment.errorMessage ?? "Could not report usage.")")
                 }
                 ForEach(stale) { environment in
-                    if windowInput.resolution == .hour, environment.summary?.contractVersion == 3 {
+                    if state.windowInput.resolution == .hour, environment.summary?.contractVersion == 3 {
                         Text("\(environment.label) reports daily usage only. Select 7d or 30d to include it.")
                     } else {
                         Text("\(environment.label) uses an unsupported usage format and is excluded from totals.")
@@ -207,50 +311,46 @@ public struct UsageView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+}
 
-    private var chartSection: some View {
+private struct UsageChartSection: View {
+    let merged: MergedUsage
+    let presentation: UsagePresentation
+    let metric: UsageMetric
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(metric == .cost ? "Raw token cost" : "Processed tokens")
-                        .font(T3Typography.supporting)
-                        .foregroundStyle(T3Colors.textSecondary)
-                    Text(
-                        metric == .cost
-                            ? "\(UsageFormat.usd(merged.costUsd))*"
-                            : UsageFormat.tokens(merged.totalTokens)
-                    )
-                    .font(.system(.largeTitle, design: .default, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundStyle(T3Colors.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.55)
-                    Text(
-                        metric == .cost
-                            ? "* if billed at full API rate"
-                                + (merged.costQuality.unpricedShare > 0
-                                    ? ". Excludes \(UsageFormat.percent(merged.costQuality.unpricedShare)) unpriced records."
-                                    : "")
-                            : "Across \(UsageFormat.count(merged.sessions)) sessions"
-                    )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(metric == .cost ? "Raw token cost" : "Processed tokens")
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textSecondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Picker("Chart metric", selection: $metric) {
-                    ForEach(UsageMetric.allCases) { option in
-                        Text(option.label).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .fixedSize()
-                .tint(T3Colors.textPrimary)
+                Text(
+                    metric == .cost
+                        ? "\(UsageFormat.usd(merged.costUsd))*"
+                        : UsageFormat.tokens(merged.totalTokens)
+                )
+                .font(.system(.largeTitle, design: .default, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(T3Colors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+                Text(
+                    metric == .cost
+                        ? "* if billed at full API rate"
+                            + (merged.costQuality.unpricedShare > 0
+                                ? ". Excludes \(UsageFormat.percent(merged.costQuality.unpricedShare)) unpriced records."
+                                : "")
+                        : "Across \(UsageFormat.count(merged.sessions)) sessions"
+                )
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textSecondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if metric == .cost ? presentation.hasCostActivity : presentation.hasTokenActivity {
                 UsagePeriodChart(
-                    segments: metric == .cost ? presentation.costSegments : presentation.tokenSegments
+                    segments: metric == .cost ? presentation.costSegments : presentation.tokenSegments,
+                    periods: presentation.chartPeriods
                 )
                 .frame(height: 180)
             } else {
@@ -283,222 +383,226 @@ public struct UsageView: View {
             .foregroundStyle(T3Colors.textTertiary)
         }
     }
+}
 
-    @ViewBuilder
-    private var providersSection: some View {
-        let ordered = metric == .cost ? presentation.providersByCost : presentation.providersByTokens
-        if !ordered.isEmpty {
+private struct UsageProvidersSection: View {
+    let providers: [UsageProviderTotals]
+    let metric: UsageMetric
+
+    var body: some View {
+        if !providers.isEmpty {
             UsageSection(title: "Providers") {
                 VStack(spacing: 0) {
-                    ForEach(Array(ordered.enumerated()), id: \.element.id) { index, provider in
-                        if index > 0 { usageDivider }
-                        let share = metric == .cost ? provider.costShare : provider.tokenShare
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                Circle()
-                                    .fill(provider.provider.color)
-                                    .frame(width: 10, height: 10)
-                                Text(provider.provider.displayName)
-                                    .font(.title3)
-                                    .foregroundStyle(T3Colors.textPrimary)
-                                Spacer(minLength: 8)
-                                Text(
-                                    metric == .cost
-                                        ? UsageFormat.usd(provider.costUsd)
-                                        : UsageFormat.tokens(provider.totalTokens)
-                                )
-                                .font(.title3)
-                                .monospacedDigit()
-                                .foregroundStyle(T3Colors.textPrimary)
-                            }
-                            UsageProgressBar(value: share, color: provider.provider.color)
-                            Text(
-                                metric == .cost
-                                    ? "\(UsageFormat.percent(share)) of cost · "
-                                        + "\(UsageFormat.tokens(provider.totalTokens)) tokens"
-                                    : "\(UsageFormat.percent(share)) of tokens · \(UsageFormat.usd(provider.costUsd))"
-                            )
-                            .font(T3Typography.supporting)
-                            .foregroundStyle(T3Colors.textSecondary)
-                        }
-                        .padding(.vertical, 10)
+                    ForEach(providers.enumerated(), id: \.element.id) { index, provider in
+                        UsageProviderRow(provider: provider, metric: metric)
+                            .usageRowDivider(index > 0)
                     }
                 }
             }
         }
     }
+}
 
-    private var totalsSection: some View {
+private struct UsageProviderRow: View {
+    let provider: UsageProviderTotals
+    let metric: UsageMetric
+
+    var body: some View {
+        let share = metric == .cost ? provider.costShare : provider.tokenShare
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Circle()
+                    .fill(provider.provider.color)
+                    .frame(width: 10, height: 10)
+                Text(provider.provider.displayName)
+                    .font(.title3)
+                    .foregroundStyle(T3Colors.textPrimary)
+                Spacer(minLength: 8)
+                Text(
+                    metric == .cost
+                        ? UsageFormat.usd(provider.costUsd)
+                        : UsageFormat.tokens(provider.totalTokens)
+                )
+                .font(.title3)
+                .monospacedDigit()
+                .foregroundStyle(T3Colors.textPrimary)
+            }
+            UsageProgressBar(value: share, color: provider.provider.color)
+            Text(
+                metric == .cost
+                    ? "\(UsageFormat.percent(share)) of cost · "
+                        + "\(UsageFormat.tokens(provider.totalTokens)) tokens"
+                    : "\(UsageFormat.percent(share)) of tokens · \(UsageFormat.usd(provider.costUsd))"
+            )
+            .font(T3Typography.supporting)
+            .foregroundStyle(T3Colors.textSecondary)
+        }
+        .padding(.vertical, 10)
+    }
+}
+
+private struct UsageTotalsSection: View {
+    let merged: MergedUsage
+    let presentation: UsagePresentation
+    let isHourly: Bool
+
+    var body: some View {
         UsageSection(title: "Totals") {
-            let isHourly = windowInput.resolution == .hour
-            LazyVGrid(
-                columns: [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)],
-                alignment: .leading,
-                spacing: 0
-            ) {
-                UsageMetricCell(
-                    label: "Processed tokens",
-                    value: UsageFormat.tokens(merged.totalTokens),
-                    detail: "\(UsageFormat.tokens(presentation.periodAverageTokens)) per active \(isHourly ? "hour" : "day")"
-                )
-                UsageMetricCell(
-                    label: "Cache savings",
-                    value: UsageFormat.usd(merged.costQuality.cacheSavingsUsd),
-                    detail: merged.costUsd > 0
-                        ? String(format: "%.1fx the raw cost", merged.costQuality.cacheSavingsUsd / merged.costUsd)
-                        : "vs full input rates"
-                )
-                UsageMetricCell(
-                    label: "Cached input",
-                    value: UsageFormat.tokens(merged.cachedInputTokens),
-                    detail: "\(UsageFormat.percent(presentation.cachedInputShare)) of observed input"
-                )
-                UsageMetricCell(
-                    label: "Uncached input",
-                    value: UsageFormat.tokens(merged.uncachedInputTokens),
-                    detail: "\(UsageFormat.tokens(merged.cacheCreationTokens)) cache writes"
-                )
-                UsageMetricCell(
-                    label: "Output",
-                    value: UsageFormat.tokens(merged.outputTokens),
-                    detail: "incl. \(UsageFormat.tokens(merged.reasoningTokens)) reasoning"
-                )
-                UsageMetricCell(
-                    label: "Unpriced",
-                    value: UsageFormat.percent(merged.costQuality.unpricedShare),
-                    detail: "of records, excluded from cost"
-                )
+            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    UsageMetricCell(
+                        label: "Processed tokens",
+                        value: UsageFormat.tokens(merged.totalTokens),
+                        detail: "\(UsageFormat.tokens(presentation.periodAverageTokens)) per active \(isHourly ? "hour" : "day")"
+                    )
+                    UsageMetricCell(
+                        label: "Cache savings",
+                        value: UsageFormat.usd(merged.costQuality.cacheSavingsUsd),
+                        detail: merged.costUsd > 0
+                            ? String(format: "%.1fx the raw cost", merged.costQuality.cacheSavingsUsd / merged.costUsd)
+                            : "vs full input rates"
+                    )
+                }
+                GridRow {
+                    UsageMetricCell(
+                        label: "Cached input",
+                        value: UsageFormat.tokens(merged.cachedInputTokens),
+                        detail: "\(UsageFormat.percent(presentation.cachedInputShare)) of observed input"
+                    )
+                    UsageMetricCell(
+                        label: "Uncached input",
+                        value: UsageFormat.tokens(merged.uncachedInputTokens),
+                        detail: "\(UsageFormat.tokens(merged.cacheCreationTokens)) cache writes"
+                    )
+                }
+                GridRow {
+                    UsageMetricCell(
+                        label: "Output",
+                        value: UsageFormat.tokens(merged.outputTokens),
+                        detail: "incl. \(UsageFormat.tokens(merged.reasoningTokens)) reasoning"
+                    )
+                    UsageMetricCell(
+                        label: "Unpriced",
+                        value: UsageFormat.percent(merged.costQuality.unpricedShare),
+                        detail: "of records, excluded from cost"
+                    )
+                }
             }
         }
     }
+}
 
-    private var breakdownSection: some View {
+private struct UsageBreakdownSection: View {
+    let models: [UsageModelTotals]
+    let periods: [UsagePeriodRow]
+    let isHourly: Bool
+
+    @State private var breakdown = UsageBreakdown.model
+
+    var body: some View {
         UsageSection(title: "Breakdown") {
             VStack(spacing: 4) {
                 Picker("Breakdown", selection: $breakdown) {
                     Text("Model").tag(UsageBreakdown.model)
-                    Text(windowInput.resolution == .hour ? "Hour" : "Day")
-                        .tag(UsageBreakdown.time)
+                    Text(isHourly ? "Hour" : "Day").tag(UsageBreakdown.time)
                 }
                 .pickerStyle(.segmented)
 
-                if breakdown == .model {
-                    modelBreakdown
+                if breakdown == .model ? models.isEmpty : periods.isEmpty {
+                    Text("No activity in this window.")
+                        .font(T3Typography.threadBody)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                } else if breakdown == .model {
+                    VStack(spacing: 0) {
+                        ForEach(models.enumerated(), id: \.element.id) { index, model in
+                            UsageModelRow(model: model)
+                                .usageRowDivider(index > 0)
+                        }
+                    }
                 } else {
-                    timeBreakdown
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var modelBreakdown: some View {
-        if merged.models.isEmpty {
-            noActivity
-        } else {
-            VStack(spacing: 0) {
-                ForEach(Array(merged.models.enumerated()), id: \.element.id) { index, model in
-                    if index > 0 { usageDivider }
-                    HStack(spacing: 12) {
-                        Circle()
-                            .fill(model.provider.color)
-                            .frame(width: 10, height: 10)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(model.model)
-                                .font(T3Typography.threadBody)
-                                .foregroundStyle(T3Colors.textPrimary)
-                                .lineLimit(1)
-                            Text(
-                                "\(model.costShareLabel) · "
-                                    + "\(UsageFormat.tokens(model.totalTokens)) tokens"
-                            )
-                            .font(T3Typography.supporting)
-                            .foregroundStyle(T3Colors.textSecondary)
-                        }
-                        Spacer(minLength: 8)
-                        Text(model.costLabel)
-                            .font(T3Typography.threadBody)
-                            .monospacedDigit()
-                            .foregroundStyle(T3Colors.textPrimary)
-                    }
-                    .padding(.vertical, 10)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var timeBreakdown: some View {
-        if presentation.periods.isEmpty {
-            noActivity
-        } else {
-            LazyVStack(spacing: 0) {
-                ForEach(Array(presentation.periods.enumerated()), id: \.element.id) { index, period in
-                    if index > 0 { usageDivider }
-                    HStack(spacing: 12) {
-                        Text(period.label)
-                            .font(T3Typography.threadBody)
-                            .foregroundStyle(T3Colors.textPrimary)
-                        Spacer(minLength: 8)
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(UsageFormat.usd(period.costUsd))
-                                .font(T3Typography.threadBody)
-                                .monospacedDigit()
-                                .foregroundStyle(T3Colors.textPrimary)
-                            Text(UsageFormat.tokens(period.totalTokens))
-                                .font(T3Typography.supporting)
-                                .foregroundStyle(T3Colors.textSecondary)
+                    VStack(spacing: 0) {
+                        ForEach(periods.enumerated(), id: \.element.id) { index, period in
+                            UsagePeriodRowView(period: period)
+                                .usageRowDivider(index > 0)
                         }
                     }
-                    .padding(.vertical, 10)
                 }
             }
         }
     }
+}
 
-    private var noActivity: some View {
-        Text("No activity in this window.")
-            .font(T3Typography.threadBody)
-            .foregroundStyle(T3Colors.textSecondary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 24)
+private struct UsageModelRow: View {
+    let model: UsageModelTotals
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Circle()
+                .fill(model.provider.color)
+                .frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.model)
+                    .font(T3Typography.threadBody)
+                    .foregroundStyle(T3Colors.textPrimary)
+                    .lineLimit(1)
+                Text("\(model.costShareLabel) · \(UsageFormat.tokens(model.totalTokens)) tokens")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+            }
+            Spacer(minLength: 8)
+            Text(model.costLabel)
+                .font(T3Typography.threadBody)
+                .monospacedDigit()
+                .foregroundStyle(T3Colors.textPrimary)
+        }
+        .padding(.vertical, 10)
     }
+}
 
-    private var usageDivider: some View {
+private struct UsagePeriodRowView: View {
+    let period: UsagePeriodRow
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(period.label)
+                .font(T3Typography.threadBody)
+                .foregroundStyle(T3Colors.textPrimary)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(UsageFormat.usd(period.costUsd))
+                    .font(T3Typography.threadBody)
+                    .monospacedDigit()
+                    .foregroundStyle(T3Colors.textPrimary)
+                Text(UsageFormat.tokens(period.totalTokens))
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+            }
+        }
+        .padding(.vertical, 10)
+    }
+}
+
+private struct UsageDivider: View {
+    var body: some View {
         Divider().overlay(T3Colors.separator)
     }
+}
 
-    private var hasCompatibleSummary: Bool {
-        environments.contains {
-            $0.summary.map {
-                isCompatibleUsageContractVersion($0.contractVersion, resolution: windowInput.resolution)
-            } == true
-        }
-    }
-
-    private var hasDailyOnlySummary: Bool {
-        windowInput.resolution == .hour
-            && environments.contains { $0.summary?.contractVersion == 3 }
-    }
-
-    private func load(refreshPricing: Bool = false) async {
-        let request = loadState.begin(days: loadState.windowDays)
-        defer { loadState.finish(request) }
-        do {
-            for try await result in client.usageSummaryUpdates(request.input, refreshPricing: refreshPricing) {
-                try Task.checkCancellation()
-                loadState.receive(result, for: request)
-            }
-        } catch is CancellationError {
-            return
-        } catch {
-            loadState.fail(error, for: request)
+private extension View {
+    /// Draws the separator inside the row, so each row stays one view.
+    func usageRowDivider(_ isVisible: Bool) -> some View {
+        overlay(alignment: .top) {
+            if isVisible { UsageDivider() }
         }
     }
 }
 
 private struct UsagePeriodChart: View {
     let segments: [UsageChartSegment]
+    /// Every period in the window, so empty days or hours keep their slot.
+    let periods: [String]
 
     var body: some View {
         Chart(segments) { segment in
@@ -509,6 +613,7 @@ private struct UsagePeriodChart: View {
             )
             .foregroundStyle(segment.provider.color)
         }
+        .chartXScale(domain: periods)
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
         .chartLegend(.hidden)

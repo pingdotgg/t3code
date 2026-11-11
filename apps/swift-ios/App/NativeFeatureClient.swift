@@ -7356,7 +7356,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 wireID: requestID
             )
         case "approval.resolved":
-            cache.closedApprovalRequestIDs.insert(requestID)
+            // A V2 row re-renders from current state, and Codex sends the item
+            // before its runtime request. Latching that first render would hide
+            // the request once it turns pending.
+            if activity.v2Timeline == nil { cache.closedApprovalRequestIDs.insert(requestID) }
             cache.approvals.removeAll { $0.id == uiRequestID }
             approvalRoutes[uiRequestID] = nil
         case "provider.approval.respond.failed":
@@ -7405,7 +7408,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 wireID: requestID
             )
         case "user-input.resolved":
-            cache.closedUserInputRequestIDs.insert(requestID)
+            // V2 rows are current state, not a log; see applyApprovalActivity.
+            if activity.v2Timeline == nil { cache.closedUserInputRequestIDs.insert(requestID) }
             cache.userInputs.removeAll { $0.id == uiRequestID }
             inputRoutes[uiRequestID] = nil
         case "provider.user-input.respond.failed":

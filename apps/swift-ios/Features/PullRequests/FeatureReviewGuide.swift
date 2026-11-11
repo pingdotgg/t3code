@@ -409,8 +409,10 @@ private struct FeatureReviewGuideExcerpts: View {
         .task(id: retryID) { await load() }
     }
 
+    /// Excerpts are short, and a lazy stack inside a horizontal scroll view
+    /// cannot skip off-screen rows, so a plain stack costs less.
     private func code(_ lines: [PullRequestDiffLine]) -> some View {
-        LazyVStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(lines) { line in
                 HStack(alignment: .top, spacing: 10) {
                     Text(line.oldLine.map(String.init) ?? " ").frame(width: 36, alignment: .trailing)

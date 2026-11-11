@@ -31,6 +31,7 @@ enum FeatureThreadUsageLimits {
 }
 
 struct FeatureThreadUsageLimitsView: View {
+    @SwiftUI.Environment(\.featureThreadViewportHeight) private var viewportHeight
     let client: any FeatureClient
     let report: FeatureEnvironmentUsageLimits
     let onClose: () -> Void
@@ -74,7 +75,7 @@ struct FeatureThreadUsageLimitsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.bottom, 12)
             }
-            .frame(maxHeight: 230)
+            .frame(maxHeight: FeatureThreadViewport.panelHeight(230, in: viewportHeight))
         }
         .padding(.horizontal, 18)
         .foregroundStyle(T3Colors.textPrimary)

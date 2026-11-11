@@ -323,6 +323,68 @@ final class NativeThreadCatchUpTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    /// Codex emits the request turn item before its runtime request, so the
+    /// first render cannot know that the request is pending yet.
+    func testV2RequestItemsStreamedBeforeTheirRuntimeRequestsBecomeAnswerable() async throws {
+        let fixture = try await CatchUpFixture.make()
+        defer { fixture.cleanUp() }
+        var requests = fixture.requests.makeAsyncIterator()
+        var events = fixture.client.events().makeAsyncIterator()
+        let initial = try await fixture.client.loadThread(id: fixture.firstID)
+        XCTAssertTrue(initial.approvals.isEmpty)
+        let stream = try await nextThreadRequest(&requests)
+        try await stream.synchronize()
+        _ = try await requestsBeforeLive(&events, threadID: fixture.firstID)
+        let approval = V2Fixture.item("approval", type: "approval_request", ordinal: 1, fields: [
+            "threadId": .string("first"), "status": .string("waiting"),
+            "requestId": .string("approval"), "requestKind": .string("command"),
+            "prompt": .string("/bin/zsh -lc 'cat README.md'"),
+        ])
+        let question = V2Fixture.item("question", type: "user_input_request", ordinal: 2, fields: [
+            "threadId": .string("first"), "status": .string("waiting"),
+            "requestId": .string("question"), "questions": .array([.object([
+                "id": .string("answer"), "header": .string("Answer"),
+                "question": .string("What next?"), "options": .array([]),
+                "allowCustomAnswer": .bool(true),
+            ])]),
+        ])
+        // A trailing message marks the end of each batch, so every wait ends.
+        func send(_ values: [JSONValue], marker sequence: Int) async throws -> FeatureThreadDetail {
+            try await stream.socket.chunk(id: stream.id, values: values)
+            try await stream.sendMessage(text: "marker \(sequence)", sequence: sequence)
+            while let event = await events.next(isolation: #isolation) {
+                if case let .detail(detail) = event, detail.thread.id == fixture.firstID,
+                   detail.messages.contains(where: { $0.text == "marker \(sequence)" }) { return detail }
+                if case let .detailDelta(detail, _) = event, detail.thread.id == fixture.firstID,
+                   detail.messages.contains(where: { $0.text == "marker \(sequence)" }) { return detail }
+            }
+            throw CancellationError()
+        }
+        let unknown = try await send([
+            v2StreamEvent(threadID: "first", type: "turn-item.updated", payload: approval, sequence: 3),
+            v2StreamEvent(threadID: "first", type: "turn-item.updated", payload: question, sequence: 4),
+        ], marker: 5)
+        XCTAssertTrue(unknown.approvals.isEmpty, "A request with no runtime record is not answerable yet.")
+
+        let pending = try await send([
+            v2StreamEvent(threadID: "first", type: "runtime-request.updated", payload: V2Fixture.request("approval"), sequence: 6),
+            v2StreamEvent(threadID: "first", type: "runtime-request.updated", payload: V2Fixture.request("question", kind: "user_input"), sequence: 7),
+        ], marker: 8)
+        let pendingApproval = try XCTUnwrap(pending.approvals.first)
+        XCTAssertEqual(pendingApproval.wireID, "approval")
+        XCTAssertEqual(pendingApproval.detail, "/bin/zsh -lc 'cat README.md'")
+        XCTAssertTrue(pendingApproval.canRespond)
+        XCTAssertEqual(pending.userInputs.compactMap(\.wireID), ["question"])
+
+        let resolved = try await send([
+            v2StreamEvent(threadID: "first", type: "runtime-request.updated", payload: V2Fixture.request("approval", status: "resolved"), sequence: 9),
+            v2StreamEvent(threadID: "first", type: "runtime-request.updated", payload: V2Fixture.request("question", kind: "user_input", status: "resolved"), sequence: 10),
+        ], marker: 11)
+        XCTAssertTrue(resolved.approvals.isEmpty)
+        XCTAssertTrue(resolved.userInputs.isEmpty)
+        await fixture.client.disconnect()
+    }
+
     private func requestActivity(
         _ kind: String, id: String, detail: String? = nil, requestType: String? = nil,
         responseMode: String? = nil

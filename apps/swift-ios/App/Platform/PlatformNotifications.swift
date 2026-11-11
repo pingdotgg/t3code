@@ -306,6 +306,13 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
 final class T3PlatformAppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
+        supportedInterfaceOrientationsFor window: UIWindow?
+    ) -> UIInterfaceOrientationMask {
+        PlatformWorkspaceOrientation.supportedOrientations(in: window)
+    }
+
+    func application(
+        _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         PlatformBackgroundRefreshCoordinator.shared.register()

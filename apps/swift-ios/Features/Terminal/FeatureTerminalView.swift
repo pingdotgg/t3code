@@ -226,7 +226,6 @@ public struct FeatureTerminalView: View {
                 }
             )
             .id(terminalTaskID)
-            .padding(.top, 48)
 
             if isLoading, terminal == nil {
                 ProgressView("Opening terminal…")
@@ -255,8 +254,8 @@ public struct FeatureTerminalView: View {
                 }
             }
 
-            terminalHeader
         }
+        .safeAreaInset(edge: .top, spacing: 0) { terminalHeader }
         .background(T3Colors.background.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .alert("Script could not start", isPresented: Binding(
@@ -327,33 +326,29 @@ public struct FeatureTerminalView: View {
     }
 
     private var terminalHeader: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                Text("Terminal")
-                    .font(T3Typography.navigationTitle)
-                    .foregroundStyle(T3Colors.textPrimary)
+        ZStack {
+            Text("Terminal")
+                .font(T3Typography.navigationTitle)
+                .foregroundStyle(T3Colors.textPrimary)
 
-                HStack {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .frame(width: 44, height: 44)
-                    }
-                    .foregroundStyle(T3Colors.textPrimary)
-                    .accessibilityLabel("Close terminal")
-
-                    Spacer()
-
-                    terminalMenu
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
                         .frame(width: 44, height: 44)
                 }
-            }
-            .frame(height: 48)
-            .background(T3Colors.background)
+                .foregroundStyle(T3Colors.textPrimary)
+                .accessibilityLabel("Close terminal")
 
-            Spacer(minLength: 0)
+                Spacer()
+
+                terminalMenu
+                    .frame(width: 44, height: 44)
+            }
         }
+        .frame(minHeight: 48)
+        .background(T3Colors.background)
     }
 
     private var terminalMenu: some View {

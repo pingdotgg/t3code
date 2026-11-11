@@ -536,6 +536,21 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var usageLimitResetAt: Date? { inboxFacts?.usageLimitResetAt }
 }
 
+extension FeatureThread {
+    /// This row without the fields a streamed delta rewrites several times a
+    /// second. The open thread screen draws none of them, and Home rows can
+    /// take them at a lower rate (`FeatureRootModel.upsertStreamedRow`).
+    func withoutStreamingFields() -> FeatureThread {
+        var row = self
+        row.preview = nil
+        row.updatedAt = .distantPast
+        row.rawUpdatedAt = nil
+        row.lastActivityAt = nil
+        row.inboxFacts = nil
+        return row
+    }
+}
+
 /// The thread-list section a drag reorder arranges. Pinned threads write
 /// `pinOrderKey`; active threads write `activeOrderKey`.
 public enum FeatureThreadOrderSection: String, Sendable, Equatable {
@@ -1006,6 +1021,22 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         result.userInputs = Self.replacingChangedSuffix(userInputs, with: incoming.userInputs)
         result.isCompacting = incoming.isCompacting == true
         return result
+    }
+
+    /// True when everything the thread screen reads outside its transcript is
+    /// unchanged. Streamed text changes only message content, so it fails this
+    /// only when the transcript itself is the thing to redraw.
+    func hasSameChrome(as other: FeatureThreadDetail) -> Bool {
+        var lhs = self
+        var rhs = other
+        lhs.messages = []
+        rhs.messages = []
+        lhs.thread = thread.withoutStreamingFields()
+        rhs.thread = other.thread.withoutStreamingFields()
+        return lhs == rhs
+            && thread.inboxFacts?.latestRunID == other.thread.inboxFacts?.latestRunID
+            && messages.isEmpty == other.messages.isEmpty
+            && messages.last(where: { $0.role == .user })?.id == other.messages.last(where: { $0.role == .user })?.id
     }
 
     private static func replacingChangedSuffix<Element: Equatable>(

@@ -92,6 +92,25 @@ struct FeatureFileBrowserTests {
     }
 
     @Test
+    func handoffStartsNewLoadBeforeCancelledLoadFinishes() async {
+        let browser = FeatureFileBrowserState()
+        let suspended = SuspendedDirectoryLoad()
+        let outgoing = Task {
+            await browser.load(root) { try await suspended.fetch() }
+        }
+        await suspended.waitUntilRequested()
+        outgoing.cancel()
+
+        await browser.load(root) { [readme] }
+        suspended.finish(.success([]))
+        await outgoing.value
+
+        #expect(browser.listing(for: root).entries == [readme])
+        #expect(browser.listing(for: root).errorMessage == nil)
+        #expect(!browser.listing(for: root).isLoading)
+    }
+
+    @Test
     func cachesAreSeparateForEachEnvironmentAndWorktree() async {
         let browser = FeatureFileBrowserState()
         let remote = FeatureFileBrowserState.Directory(

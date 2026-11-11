@@ -2004,6 +2004,7 @@ private struct NewTaskProjectPicker: View {
 
     var body: some View {
         NavigationStack {
+            let filteredGroups = self.filteredGroups
             let presentation = NewTaskProjectPickerPresentation(
                 groups: groups,
                 filteredGroups: filteredGroups,

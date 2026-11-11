@@ -128,7 +128,12 @@ struct FeatureAttachmentPickerPresenter: UIViewControllerRepresentable {
             currentController = controller
             controller.overrideUserInterfaceStyle = .dark
             controller.view.tintColor = .white
-            controller.presentationController?.delegate = self
+            // The source dialog reports every exit through its Cancel action,
+            // which UIKit also runs for an outside tap. Its presentation
+            // controller must keep UIKit's delegate: iOS 18 asserts on replacement.
+            if !(controller is UIAlertController) {
+                controller.presentationController?.delegate = self
+            }
             isTransitioning = true
             present(controller, animated: true) {
                 self.isTransitioning = false

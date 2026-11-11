@@ -608,8 +608,12 @@ struct UsagePeriodRow: Identifiable, Equatable {
 struct UsagePresentation: Equatable {
     var providersByCost: [UsageProviderTotals] = []
     var providersByTokens: [UsageProviderTotals] = []
+    /// Only non-empty segments. A 90-day window with six zero segments per day
+    /// would otherwise lay out hundreds of invisible bars.
     var costSegments: [UsageChartSegment] = []
     var tokenSegments: [UsageChartSegment] = []
+    /// Every period in the window, oldest first. The chart's x domain.
+    var chartPeriods: [String] = []
     var hasCostActivity = false
     var hasTokenActivity = false
     /// Newest period first.
@@ -657,6 +661,7 @@ struct UsagePresentation: Equatable {
             }
             result.activePeriodCount = merged.daily.filter { $0.totalTokens > 0 }.count
         }
+        result.chartPeriods = periodKeys
         result.costSegments = segments(periodKeys, byPeriod: byPeriod) { $0.costUsd }
         result.tokenSegments = segments(periodKeys, byPeriod: byPeriod) { Double($0.totalTokens) }
         result.periodAverageTokens = result.activePeriodCount == 0
@@ -677,8 +682,9 @@ struct UsagePresentation: Equatable {
         periods.flatMap { period in
             let totals = byPeriod[period] ?? [:]
             var start = 0.0
-            return UsageProviderKind.allCases.map { provider in
+            return UsageProviderKind.allCases.compactMap { provider -> UsageChartSegment? in
                 let amount = totals[provider].map(value) ?? 0
+                guard amount > 0 else { return nil }
                 defer { start += amount }
                 return UsageChartSegment(period: period, provider: provider, start: start, end: start + amount)
             }

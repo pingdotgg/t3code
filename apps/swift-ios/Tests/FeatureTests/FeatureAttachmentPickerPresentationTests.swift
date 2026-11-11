@@ -82,6 +82,22 @@ struct FeatureAttachmentPickerPresentationTests {
         try controller.completeDismissal()
     }
 
+    @Test
+    func sourceDialogKeepsUIKitPresentationDelegate() throws {
+        let controller = ControlledPresenter()
+        let window = mount(controller)
+        defer { window.rootViewController = nil }
+        controller.configuration = configuration { _ in }
+        controller.updatePresentation()
+
+        // iOS 18 asserts when an alert's presentation delegate is replaced.
+        let dialog = try #require(controller.presented as? UIAlertController)
+        #expect(dialog.presentationController?.delegate !== controller)
+        try controller.completePresentation()
+        controller.cancel()
+        try controller.completeDismissal()
+    }
+
     private func configuration(
         onChange: @escaping (Bool) -> Void
     ) -> FeatureAttachmentPickerPresenter {
@@ -104,6 +120,7 @@ struct FeatureAttachmentPickerPresentationTests {
     private final class ControlledPresenter: FeatureAttachmentPickerPresenter.Controller {
         var presentations = 0
         var dismissals = 0
+        var presented: UIViewController?
         var presentationCompletion: (() -> Void)?
         var dismissalCompletion: (() -> Void)?
 
@@ -113,6 +130,7 @@ struct FeatureAttachmentPickerPresentationTests {
             completion: (() -> Void)? = nil
         ) {
             presentations += 1
+            presented = viewControllerToPresent
             presentationCompletion = completion
         }
 
