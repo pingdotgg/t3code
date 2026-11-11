@@ -1,5 +1,5 @@
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
-import type { KnownComposerContextKind, ServerProviderSkill } from "@t3tools/contracts";
+import type { ServerProviderSkill } from "@t3tools/contracts";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { fileBasename } from "@t3tools/shared/path";
@@ -16,6 +16,11 @@ import {
 import type { ReactElement } from "react";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
+import { composerFileNeedsReattach } from "~/composerDraftStore";
+import type {
+  ComposerDraftContextRecord,
+  ComposerDraftContextRecords,
+} from "../composerContextPresentation";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { ContextChipShell } from "../contextChipParts";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -23,26 +28,30 @@ import { SkillChipIcon } from "./SkillInlineText";
 
 type Theme = "light" | "dark";
 
-// Draft records (PR state, upload progress) live with the editor, so the row shows each
-// reference by its kind alone.
+// Upload progress and PR state stay with the editor, so the row shows each reference by kind.
 const CONTEXT_REFERENCE_ICONS: Record<
-  KnownComposerContextKind,
+  ComposerDraftContextRecord["kind"],
   (label: string, theme: Theme) => ReactElement
 > = {
   image: () => <ImageIcon />,
   file: (label, theme) => <PierreEntryIcon pathValue={label} kind="file" theme={theme} />,
   terminal: () => <TerminalIcon />,
-  element: () => <MousePointerClickIcon />,
   "preview-annotation": () => <MousePointerClickIcon />,
   "review-comment": () => <MessageCircleIcon />,
-  mention: (label, theme) => <PierreEntryIcon pathValue={label} kind="file" theme={theme} />,
-  skill: () => <SkillChipIcon />,
   thread: () => <MessagesSquareIcon />,
   environment: () => <MonitorIcon />,
 };
 
-function isKnownContextKind(kind: string): kind is KnownComposerContextKind {
-  return Object.hasOwn(CONTEXT_REFERENCE_ICONS, kind);
+// Mirrors the editor's chip: only a draft record of the same kind resolves a reference.
+function resolvedContextRecord(
+  records: ComposerDraftContextRecords,
+  kind: string,
+  contextId: string,
+): ComposerDraftContextRecord | null {
+  const entry = records.get(contextId);
+  if (entry === undefined || entry.kind !== kind) return null;
+  if (entry.kind === "file" && composerFileNeedsReattach(entry.record)) return null;
+  return entry;
 }
 
 /**
@@ -52,6 +61,7 @@ function isKnownContextKind(kind: string): kind is KnownComposerContextKind {
 export function CollapsedComposerPromptPreview(props: {
   prompt: string;
   skills: ReadonlyArray<ServerProviderSkill>;
+  contextRecords: ComposerDraftContextRecords;
   theme: Theme;
 }) {
   let offset = 0;
@@ -82,12 +92,13 @@ export function CollapsedComposerPromptPreview(props: {
             label={fileBasename(segment.path)}
           />
         );
-      case "context-reference":
-        return isKnownContextKind(segment.kind) ? (
+      case "context-reference": {
+        const entry = resolvedContextRecord(props.contextRecords, segment.kind, segment.contextId);
+        return entry ? (
           <ContextChipShell
             key={key}
-            kind={segment.kind}
-            icon={CONTEXT_REFERENCE_ICONS[segment.kind](segment.label, props.theme)}
+            kind={entry.kind}
+            icon={CONTEXT_REFERENCE_ICONS[entry.kind](segment.label, props.theme)}
             label={segment.label}
           />
         ) : (
@@ -98,6 +109,7 @@ export function CollapsedComposerPromptPreview(props: {
             label={segment.label}
           />
         );
+      }
       case "skill": {
         const skill = props.skills.find(
           (candidate) => candidate.name === segment.name && isProviderSkillUserInvocable(candidate),

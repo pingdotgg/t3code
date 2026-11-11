@@ -3328,6 +3328,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <CollapsedComposerPromptPreview
                       prompt={prompt}
                       skills={selectedProviderSkills}
+                      contextRecords={composerContextRecords}
                       theme={resolvedTheme}
                     />
                   ) : showProviderUnavailable ? (
