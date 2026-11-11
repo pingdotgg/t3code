@@ -5,7 +5,7 @@ import {
   type OrchestrationV2GetNativeChildWorkResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -33,7 +33,7 @@ const NO_CHILDREN: OrchestrationV2GetNativeChildWorkResult = { children: [] };
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const { stateDir } = yield* ServerConfig.ServerConfig;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const path = yield* Path.Path;
 
   const getNativeChildWork = Effect.fn("NativeChildWorkQuery.getNativeChildWork")(
@@ -85,7 +85,7 @@ const make = Effect.gen(function* () {
       const directories = yield* resolveAntigravityInstanceDirectories(
         stateDir,
         subagent.providerInstanceId,
-      ).pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.provideService(Path.Path, path));
+      ).pipe(Effect.provideService(Digest.Digest, digest), Effect.provideService(Path.Path, path));
       const children = yield* readAntigravityChildWork({
         profileDirectory: directories.profile,
         rootSessionId,

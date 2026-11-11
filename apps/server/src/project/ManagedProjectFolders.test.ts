@@ -1,14 +1,18 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, ProjectId, ThreadId, VcsProcessSpawnError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import { ChildProcessSpawner } from "effect/process";
 import * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
@@ -52,7 +56,7 @@ const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
   readonly vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>;
-  readonly git?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
+  readonly git?: typeof layerRealGit;
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
   ) => ProjectService.ProjectService["Service"];
@@ -76,7 +80,7 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 const withScratch = <A, E>(
@@ -96,7 +100,7 @@ const withScratch = <A, E>(
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-managed-folders-" });
     return yield* body({ baseDir }).pipe(Effect.provide(layer(baseDir, options)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   ProcessRunner.ProcessRunner.pipe(
@@ -109,23 +113,38 @@ const requireRoot = Effect.gen(function* () {
   return Option.getOrThrow(yield* scratch.scratchRoot);
 });
 
-it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
-  Effect.gen(function* () {
+it.effect("offers nothing, and says why once, when the data dir sits inside a Git checkout", () => {
+  const warnings: string[] = [];
+  const logger = Logger.make(({ logLevel, message }) => {
+    if (logLevel === "Warn") warnings.push(String(message));
+  });
+  return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-repo-" });
     yield* git(checkout, ["init", "--quiet"]);
     const baseDir = path.join(checkout, ".t3");
     yield* fileSystem.makeDirectory(baseDir);
+    const repositoryRoot = (yield* git(baseDir, ["rev-parse", "--show-toplevel"])).stdout.trim();
     yield* Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
       assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
       assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");
-    }).pipe(Effect.provide(layer(baseDir)));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
+      assert.include(failure.message, baseDir);
+      // The root prefixes the data dir, so it must appear on its own.
+      assert.include(failure.message.replaceAll(baseDir, ""), repositoryRoot);
+      yield* Effect.flip(scratch.ensureScratchProject);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layer(baseDir), Logger.layer([logger], { mergeWithExisting: false })),
+      ),
+    );
+    assert.equal(warnings.length, 1);
+    assert.include(warnings[0], baseDir);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+});
 
 it.effect("offers a Scratch folder when Git is not installed", () =>
   withScratch(
@@ -305,25 +324,15 @@ const withGitEnv = <A, E, R>(
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const emptyConfig = yield* fileSystem.makeTempFileScoped({ prefix: "t3-gitconfig-" });
-    return yield* Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const saved = GIT_IDENTITY_KEYS.map((key) => [key, process.env[key]] as const);
-        for (const key of GIT_IDENTITY_KEYS) delete process.env[key];
-        Object.assign(process.env, {
-          GIT_CONFIG_GLOBAL: emptyConfig,
-          GIT_CONFIG_NOSYSTEM: "1",
-          ...env,
-        });
-        return saved;
+    const hostEnv: NodeJS.ProcessEnv = { ...(yield* HostProcess.Environment) };
+    for (const key of GIT_IDENTITY_KEYS) delete hostEnv[key];
+    return yield* effect.pipe(
+      Effect.provideService(HostProcess.Environment, {
+        ...hostEnv,
+        GIT_CONFIG_GLOBAL: emptyConfig,
+        GIT_CONFIG_NOSYSTEM: "1",
+        ...env,
       }),
-      () => effect,
-      (saved) =>
-        Effect.sync(() => {
-          for (const [key, value] of saved) {
-            if (value === undefined) delete process.env[key];
-            else process.env[key] = value;
-          }
-        }),
     );
   });
 
@@ -348,6 +357,12 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         const path = yield* Path.Path;
         const root = path.resolve(baseDir, "projects");
         assert.equal(folders.namedProjectsRoot, root);
+        const attributes = path.join(baseDir, "crlf.gitattributes");
+        const crlfConfig = path.join(baseDir, "crlf.gitconfig");
+        yield* fileSystem.writeFileString(attributes, "* text=auto eol=crlf\n");
+        yield* git(baseDir, ["config", "--file", crlfConfig, "core.safecrlf", "true"]);
+        yield* git(baseDir, ["config", "--file", crlfConfig, "core.attributesFile", attributes]);
+        (yield* HostProcess.Environment).GIT_CONFIG_GLOBAL = crlfConfig;
 
         const first = yield* folders.createNamedProject({ name: "Pinball Stats" });
         const second = yield* folders.createNamedProject({ name: "pinball stats" });
@@ -420,7 +435,10 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
           path.join(baseDir, "no-identity.gitconfig"),
           "[user]\n\tuseConfigOnly = true\n",
         );
-        process.env.GIT_CONFIG_GLOBAL = path.join(baseDir, "no-identity.gitconfig");
+        (yield* HostProcess.Environment).GIT_CONFIG_GLOBAL = path.join(
+          baseDir,
+          "no-identity.gitconfig",
+        );
 
         const result = yield* folders.createNamedProject({ name: "No Identity" });
 
@@ -430,6 +448,41 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
         assert.isTrue(yield* fileSystem.exists(path.join(result.workspaceRoot, ".git")));
       }),
     ),
+  ),
+);
+
+it.effect("says Git is not installed when a named project cannot start Git", () =>
+  withScratch(
+    () =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+
+        const failure = yield* Effect.flip(folders.createNamedProject({ name: "T3Code Test" }));
+
+        assert.strictEqual(
+          failure.message,
+          "Git isn't installed on this machine. Install Git to create a project.",
+        );
+      }),
+    {
+      git: GitVcsDriver.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                  syscall: "spawn git",
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    },
   ),
 );
 
