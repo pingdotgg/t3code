@@ -81,6 +81,8 @@ import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import { checkOutput, outputRequestProblem } from "./runOutput.ts";
 import { routineSpan } from "@t3tools/shared/observability";
 
+const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
+
 const decodeDelegationBinding = Schema.decodeOption(
   Schema.fromJsonString(OrchestratorMcpTaskReceiptBinding),
 );
@@ -2072,11 +2074,12 @@ const make = Effect.gen(function* () {
             runIds: [runId],
           })
           .pipe(
-            Effect.catchTag("OrchestratorProjectionError", (error) =>
-              Schema.is(ProjectionStoreThreadNotFoundError)(error.cause)
-                ? Effect.succeed(null)
-                : Effect.fail(error),
-            ),
+            Effect.catchTags({
+              OrchestratorProjectionError: (error) =>
+                isProjectionStoreThreadNotFoundError(error.cause)
+                  ? Effect.succeed(null)
+                  : Effect.fail(error),
+            }),
           );
         return records?.runs.find((run) => run.id === runId) ?? null;
       },
