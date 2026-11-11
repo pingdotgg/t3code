@@ -25,6 +25,7 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
   const { regionRef, announce, clear } = useLiveRegion();
   const memoryRef = useRef<{ threadKey: string; memory: ThreadAnnouncementMemory } | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes thread status changes to the aria-live region after commit
   useEffect(() => {
     if (threadKey === null) {
       memoryRef.current = null;

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   compactDynamicToolOutput,
   MAX_TOOL_OUTPUT_IMAGES,
+  mcpToolResultOutput,
   toolOutputImages,
   toolOutputIndicatesFailure,
 } from "./toolOutput.ts";
@@ -29,11 +30,16 @@ describe("compactDynamicToolOutput", () => {
       scheduledTaskId: "scheduled-1",
       status: "failed",
       summary: "A child failed; the tool itself succeeded.",
+      unlinked: [{ repository: "acme/app", state: "merged", numbers: [1] }],
+      unlinkedCount: 1,
+      linkedCount: 2,
     };
     expect(compactDynamicToolOutput(output)).toEqual({
       thread: { threadId: "thread-1" },
       taskId: "task-1",
       scheduledTaskId: "scheduled-1",
+      linkedCount: 2,
+      unlinkedCount: 1,
     });
     expect(output.thread.messages).toEqual(["Private message"]);
   });
@@ -182,6 +188,13 @@ describe("toolOutputImages", () => {
     ]);
     expect(toolOutputImages([mcpImage])).toEqual([{ mimeType: "image/png", data: "AAAA" }]);
     expect(toolOutputImages(mcpImage)).toEqual([{ mimeType: "image/png", data: "AAAA" }]);
+    const structuredContent = { screenshot: { mimeType: "image/png", width: 728, height: 354 } };
+    const content = [text, mcpImage];
+    const output = mcpToolResultOutput({ content, structuredContent });
+    expect(toolOutputImages(output)).toEqual([{ mimeType: "image/png", data: "AAAA" }]);
+    expect(output).toEqual({ content, structuredContent });
+    expect(mcpToolResultOutput({ content: [text], structuredContent })).toBe(structuredContent);
+    expect(mcpToolResultOutput({ content })).toBe(content);
   });
 
   it("skips types the server must not serve inline", () => {

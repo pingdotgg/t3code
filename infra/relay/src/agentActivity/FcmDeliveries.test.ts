@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import type * as Cloudflare from "alchemy/Cloudflare";
+import type * as Cloudflare from "@alchemy.run/cloudflare";
 import * as FcmDeliveryQueueConsumer from "./FcmDeliveryQueueConsumer.ts";
 
 import * as RelayConfiguration from "../Config.ts";
@@ -126,8 +126,7 @@ function harness() {
           marked.push(input);
           current.target.last_aggregate_json = input.aggregate ? encodeJson(input.aggregate) : null;
         }),
-      markStartQueued: () => Effect.void,
-      clearStartQueued: () => Effect.void,
+
       invalidateDeliveryToken: () => Effect.void,
     }),
     Layer.succeed(AgentActivityRows.AgentActivityRows, {
@@ -509,25 +508,31 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
-  it.effect("honors disabled alert preferences while continuing ongoing activity", () => {
-    const h = harness();
-    h.current.state = { ...state, phase: "waiting_for_approval" };
-    h.current.target.preferences_json = encodeJson({ ...preferences, notifyOnApproval: false });
-    return Effect.gen(function* () {
-      const delivery = yield* FcmDeliveries.FcmDeliveries;
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent[0]?.data.active).toBe("true");
-      expect(h.sent[0]?.data.alert_id).toBeUndefined();
+  it.effect(
+    "continues ongoing activity when alerts are disabled, with or without a previous card",
+    () => {
+      const h = harness();
+      h.current.state = { ...state, phase: "waiting_for_approval" };
       h.current.target.preferences_json = encodeJson({
         ...preferences,
         notificationsEnabled: false,
       });
-      h.current.target.last_aggregate_json = encodeJson(aggregateFor([state]));
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent[1]?.data.active).toBe("false");
-      expect(h.sent[1]?.data.alert_id).toBeUndefined();
-    }).pipe(Effect.provide(h.layer));
-  });
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent).toHaveLength(1);
+        expect(h.sent[0]?.data.active).toBe("true");
+        expect(h.sent[0]?.alert).toBe(false);
+        expect(h.sent[0]?.data.alert_id).toBeUndefined();
+        h.current.target.preferences_json = encodeJson({ ...preferences, notifyOnApproval: false });
+        h.current.target.last_aggregate_json = encodeJson(aggregateFor([state]));
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent[1]?.data.active).toBe("true");
+        expect(h.sent[1]?.data.alert_id).toBeUndefined();
+        expect(h.marked.at(-1)?.kind).toBe("live_activity_update");
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
 
   it.effect("replays an empty card to repair an orphan without a delivery baseline", () => {
     const h = harness();
