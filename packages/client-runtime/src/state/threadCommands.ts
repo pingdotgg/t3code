@@ -42,6 +42,7 @@ import {
   revertThreadCheckpoint,
   setThreadInteractionMode,
   setThreadRuntimeMode,
+  setThreadSpecialist,
   pinThread,
   reorderPinnedThread,
   reorderActiveThread,
@@ -201,6 +202,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAutoSettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-auto-settle",
       execute: setThreadAutoSettle,
+      scheduler,
+      concurrency,
+    }),
+    setSpecialist: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-specialist",
+      execute: setThreadSpecialist,
       scheduler,
       concurrency,
     }),
