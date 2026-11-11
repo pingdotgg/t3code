@@ -649,8 +649,11 @@ it.effect.each([
             input: { url: heavy, timeoutMs: 4_000 },
           })
           .pipe(Effect.forkScoped);
-        yield* Effect.promise(() => titleRequested.promise);
-        if (renderer === "busy") {
+        const titleRead = yield* Effect.raceFirst(
+          Effect.promise(() => titleRequested.promise).pipe(Effect.as(true)),
+          Fiber.await(result).pipe(Effect.as(false)),
+        );
+        if (titleRead && renderer === "busy") {
           yield* Effect.promise(() => vi.advanceTimersByTimeAsync(250));
         }
         const status = yield* Fiber.join(result);
