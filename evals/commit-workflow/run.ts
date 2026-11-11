@@ -33,6 +33,7 @@ if (!Number.isInteger(samples) || samples < 1) throw new Error("--samples must b
 const fixtures = [
   { id: "missing-instructions", instructions: false },
   { id: "present-instructions", instructions: true },
+  { id: "omitted-unit-correction", instructions: false },
 ].filter((fixture) => values.case === undefined || fixture.id === values.case);
 if (fixtures.length === 0) throw new Error("Unknown case.");
 const output = NodePath.resolve(values.out);
@@ -94,6 +95,22 @@ for (const fixture of fixtures) {
           generation.generateCommitPlan({
             cwd: generationCwd,
             branch: "feature/eval",
+            ...(fixture.id === "omitted-unit-correction"
+              ? {
+                  correction: {
+                    error: `The generated commit plan omitted 1 change unit(s): ${units[1]?.id} beta.txt.`,
+                    previousPlan: {
+                      commits: [
+                        {
+                          subject: "Preserve alpha behavior",
+                          body: "",
+                          hunkIds: [units[0]?.id ?? ""],
+                        },
+                      ],
+                    },
+                  },
+                }
+              : {}),
             modelSelection: {
               instanceId: ProviderInstanceId.make("codex"),
               model,
@@ -124,7 +141,13 @@ for (const fixture of fixtures) {
         ) &&
         JSON.stringify(ids.toSorted()) ===
           JSON.stringify(units.map((unit) => unit.id).toSorted()) &&
-        (!fixture.instructions || subjects.every((subject) => subject.startsWith("EVAL:")));
+        (!fixture.instructions || subjects.every((subject) => subject.startsWith("EVAL:"))) &&
+        (fixture.id !== "omitted-unit-correction" ||
+          generated.commits.some(
+            (commit) =>
+              commit.subject === "Preserve alpha behavior" &&
+              commit.hunkIds.includes(units[0]?.id ?? ""),
+          ));
       await NodeFSP.writeFile(
         NodePath.join(output, `${fixture.id}-${sample}.json`),
         JSON.stringify(generated, null, 2),
