@@ -64,6 +64,11 @@ s/^( *)runs-on: blacksmith-[0-9]+vcpu-macos-26$/\1runs-on: macos-26/
 # The Azure runner DNS stopped resolving every *.ubuntu.com name on 2026-11-11
 # (REL-68) while other hosts resolved, so apt hung until the step timed out.
 s#^( *)(sudo sed -i (-e )?'\''s\|http://\|https://\|g'\'')#\1sudo resolvectl dns eth0 1.1.1.1 8.8.8.8\n\1\2#
+# The package Test job runs on 8 vCPU upstream. On a 4 vCPU runner the ssh
+# concurrent-launch test (#32587) needs ~5 s per row; the vitest default is 5 s.
+/^  test:$/,/^  [a-z_]+:$/{
+  s/^( *vp run --parallel --concurrency-limit 4 "\$\{filters\[@\]\}" test)( 2>&1)/\1 --testTimeout=30000\2/
+}
 /^      - name: Reject repository-owned PR assets$/i\
       - name: Require ominax-ci.yml to match ci.yml\
         run: bash .github/scripts/ominax-ci.sh && git diff --exit-code -- .github/workflows/ominax-ci.yml\
@@ -109,6 +114,8 @@ count() { grep -c "$1" <<<"$generated" || true; }
   fail "Chromium steps not widened for server-only changes"
 [[ $(count '^ *sudo resolvectl dns eth0 1.1.1.1 8.8.8.8$') -eq 2 ]] ||
   fail "public DNS not set before both apt installs"
+[[ $(count '"\${filters\[@\]}" test --testTimeout=30000 2>&1') -eq 1 ]] ||
+  fail "Test job timeout not applied"
 # Any runner label, including one set through a matrix or an input.
 if grep -nE 'blacksmith-[0-9]+vcpu-' <<<"$generated" >&2; then
   fail "unmapped Blacksmith runner"
