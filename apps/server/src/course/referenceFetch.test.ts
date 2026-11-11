@@ -31,6 +31,17 @@ describe("course reference fetch", () => {
     }),
   );
 
+  it.effect("rejects URL userinfo", () =>
+    Effect.gen(function* () {
+      const failure = yield* fetchCourseReference({
+        url: "https://user:password@example.com/solution.pdf",
+        lookup,
+        fetchImpl: () => Promise.resolve(new Response("", { status: 200 })),
+      }).pipe(Effect.flip);
+      assert.include(failure.message, "userinfo");
+    }),
+  );
+
   it.effect.each(["text/html", "application/pdf"])("rejects final 404 %s", (contentType) =>
     Effect.gen(function* () {
       const failure = yield* fetchCourseReference({
