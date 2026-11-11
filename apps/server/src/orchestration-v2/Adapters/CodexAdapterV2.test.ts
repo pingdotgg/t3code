@@ -4237,10 +4237,50 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const transcript = finalAnswerTranscript("codex-partial-then-final", [
-            { id: "partial", text: "CODEX_RECOVERY_OK", phase: "partial_answer", streamed },
-            { id: "final", text: "CODEX_RECOVERY_OK", phase: "final_answer", streamed },
+            {
+              id: "status",
+              text: "Checking the files",
+              phase: "commentary",
+              streamed,
+            },
+            {
+              id: "partial",
+              text: "CODEX_RECOVERY_OK",
+              phase: "partial_answer",
+              streamed,
+            },
+            {
+              id: "final",
+              text: "CODEX_RECOVERY_OK",
+              phase: "final_answer",
+              streamed,
+            },
           ]);
-          const harness = yield* makeCodexReplayHarness(transcript);
+          const gates = yield* Effect.forEach(["status", "partial", "final"], (id) =>
+            Effect.gen(function* () {
+              return {
+                id,
+                ready: yield* Deferred.make<void>(),
+                release: yield* Deferred.make<void>(),
+              };
+            }),
+          );
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            undefined,
+            undefined,
+            undefined,
+            (entry) => {
+              const gate = streamed
+                ? gates.find((gate) => entry.label === `item/completed/${gate.id}`)
+                : undefined;
+              return gate === undefined
+                ? Effect.void
+                : Deferred.succeed(gate.ready, undefined).pipe(
+                    Effect.andThen(Deferred.await(gate.release)),
+                  );
+            },
+          );
           const now = yield* DateTime.now;
           yield* harness.runtime.startTurn(
             makeCodexTestTurnInput({
@@ -4251,11 +4291,41 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               text: "Reply with the requested recovery marker.",
             }),
           );
+          if (streamed) {
+            for (const gate of gates) {
+              yield* Deferred.await(gate.ready);
+              yield* TestClock.adjust("50 millis");
+              yield* harness.until(() =>
+                harness.events.some(
+                  (event) =>
+                    event.type === "turn_item.updated" &&
+                    event.turnItem.type === "assistant_message" &&
+                    event.turnItem.nativeItemRef?.nativeId === gate.id &&
+                    event.turnItem.streaming,
+                ),
+              );
+              yield* Deferred.succeed(gate.release, undefined);
+            }
+          }
           yield* harness.awaitTerminal(1);
           assert.deepEqual(
             assistantMessages(harness.events).map((event) => event.message.text),
-            ["CODEX_RECOVERY_OK", "CODEX_RECOVERY_OK"],
+            ["Checking the files", "CODEX_RECOVERY_OK", "CODEX_RECOVERY_OK"],
           );
+          const updates = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem]
+              : [],
+          );
+          for (const [text, phase] of [
+            ["Checking the files", "commentary"],
+            ["CODEX_RECOVERY_OK", "partial_answer"],
+            ["CODEX_RECOVERY_OK", "final_answer"],
+          ]) {
+            const matching = updates.filter((item) => item.text === text && item.phase === phase);
+            assert.isTrue(matching.some((item) => !item.streaming));
+            if (streamed) assert.isTrue(matching.some((item) => item.streaming));
+          }
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
