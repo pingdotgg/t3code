@@ -297,8 +297,8 @@ it.effect(
           }),
         );
 
-        // Provider sandboxes reject writable roots with a symlink component.
         assert.equal(folder, yield* fileSystem.realPath(folder));
+        assert.isTrue(yield* scratch.isScratchThreadFolder(folder));
       }),
     ),
 );

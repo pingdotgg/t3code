@@ -9,7 +9,6 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { threadHasUnfinishedWork } from "../orchestration-v2/Orchestrator.ts";
@@ -49,7 +48,6 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const random = yield* SecureRandom.SecureRandom;
-  const path = yield* Path.Path;
 
   const fail = (reason: string) => (cause: unknown) =>
     new ScratchThreadPromotionError({ reason, cause });
@@ -68,15 +66,13 @@ const make = Effect.gen(function* () {
       .getById(thread.projectId)
       .pipe(Effect.mapError(fail("Could not read the thread's project.")));
     const folder = thread.worktreePath ?? Option.getOrUndefined(project)?.workspaceRoot;
-    const scratchRoot = Option.getOrUndefined(yield* managedFolders.scratchRoot);
     const isScratch = yield* managedFolders.isScratchProject(thread.projectId);
     // A thread already rooted at its folder is a partial earlier promotion; finish it.
     const alreadyPromoted =
       Option.isSome(project) && project.value.workspaceRoot === folder && !isScratch;
     if (
       folder === undefined ||
-      scratchRoot === undefined ||
-      path.dirname(folder) !== scratchRoot ||
+      !(yield* managedFolders.isScratchThreadFolder(folder)) ||
       !(isScratch || alreadyPromoted)
     ) {
       return yield* new ScratchThreadPromotionError({
