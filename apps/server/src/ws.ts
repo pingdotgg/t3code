@@ -98,7 +98,6 @@ import {
   ThreadId,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
-  UsageReadError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -2680,22 +2679,7 @@ export const layerWsRpc = (
           processResourceMonitor.readHistory(input),
         [WS_METHODS.serverGetResourceTelemetryHistory]: (input) =>
           resourceTelemetry.readHistory(input),
-        [WS_METHODS.serverGetUsageSummary]: ({ threadId, ...input }) =>
-          threadId === undefined
-            ? usage.readSummary(input)
-            : threadManagement.getThreadRecords(threadId, ["providerThreads"]).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new UsageReadError({
-                      reason: "scanFailed",
-                      detail: "Could not read the thread's provider sessions",
-                      cause,
-                    }),
-                ),
-                Effect.flatMap((records) =>
-                  usage.readSummary(input, UsageService.threadUsageSessions(records)),
-                ),
-              ),
+        [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),

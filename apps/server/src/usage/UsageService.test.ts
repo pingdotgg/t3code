@@ -18,6 +18,7 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadId,
   UsageDay,
   type UsageSource,
   type UsageSummary,
@@ -48,6 +49,7 @@ import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAcco
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
@@ -195,6 +197,7 @@ const layerService = (input: {
   readonly platform?: NodeJS.Platform;
   readonly hostname?: string;
   readonly secretStore?: Partial<ServerSecretStore.ServerSecretStore["Service"]>;
+  readonly projectionStore?: Partial<ProjectionStore.ProjectionStoreV2["Service"]>;
 }) =>
   layerCursorUsageAccounts(CursorAccountReader.layer).pipe(
     Layer.provideMerge(AntigravityUsage.layer),
@@ -202,6 +205,7 @@ const layerService = (input: {
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
+    Layer.provideMerge(Layer.mock(ProjectionStore.ProjectionStoreV2)({ ...input.projectionStore })),
     Layer.provideMerge(
       Layer.mock(ServerSecretStore.ServerSecretStore)({
         get: () => Effect.succeedNone,
@@ -2736,33 +2740,50 @@ describe("UsageService", () => {
             claudeLine(3, 7, "orbit-1", "fork").replace("T10:00:00Z", "T12:00:00Z"),
         ),
       );
-      // The thread was forked at 11:00 and has started no conversation on its second provider.
-      const forkSessions = UsageService.threadUsageSessions({
-        thread: { createdAt: DateTime.makeUnsafe("2026-08-01T11:00:00Z") },
-        providerThreads: [
-          {
-            nativeThreadRef: {
-              driver: ProviderDriverKind.make("claudeAgent"),
-              nativeId: "fork",
-              strength: "strong",
-            },
-          },
-          { nativeThreadRef: null },
-        ],
+      const claudeThread = (nativeId: string | null) => ({
+        nativeThreadRef:
+          nativeId === null
+            ? null
+            : {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                nativeId,
+                strength: "strong" as const,
+              },
       });
+      const threads: Record<string, { createdAt: string; providerThreads: unknown[] }> = {
+        source: { createdAt: "2026-08-01T09:00:00Z", providerThreads: [claudeThread("source")] },
+        // Forked at 11:00, with no conversation yet on its second provider.
+        fork: {
+          createdAt: "2026-08-01T11:00:00Z",
+          providerThreads: [claudeThread("fork"), claudeThread(null)],
+        },
+        unstarted: { createdAt: "2026-08-01T09:00:00Z", providerThreads: [] },
+      };
+      const getThreadRecords = ((threadId: ThreadId) => {
+        const thread = threads[threadId];
+        return thread === undefined
+          ? Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }))
+          : Effect.succeed({
+              thread: { createdAt: DateTime.makeUnsafe(thread.createdAt) },
+              providerThreads: thread.providerThreads,
+            });
+      }) as ProjectionStore.ProjectionStoreV2["Service"]["getThreadRecords"];
       const outputTokens = (summary: UsageSummary) =>
         summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
 
       yield* Effect.gen(function* () {
         const service = yield* UsageService.make;
+        const ofThread = (id: string) =>
+          service.readSummary({ ...WINDOW, threadId: ThreadId.make(id) });
         // Same service, concurrent reads: the in-flight key must keep these scans apart.
-        const [all, source, fork, none] = yield* Effect.all(
+        const [all, source, fork, unstarted, missing] = yield* Effect.all(
           [
             service.readSummary(WINDOW),
-            service.readSummary(WINDOW, { ids: new Set(["source"]), sinceTimeMs: 0 }),
-            service.readSummary(WINDOW, forkSessions),
+            ofThread("source"),
+            ofThread("fork"),
             // A thread with no conversation yet has no usage, not everyone's.
-            service.readSummary(WINDOW, { ids: new Set(), sinceTimeMs: 0 }),
+            ofThread("unstarted"),
+            ofThread("deleted").pipe(Effect.flip),
           ],
           { concurrency: "unbounded" },
         );
@@ -2771,11 +2792,26 @@ describe("UsageService", () => {
         assert.strictEqual(outputTokens(source), 3);
         assert.strictEqual(outputTokens(fork), 7);
         assert.strictEqual(fork.sources[0]?.distinctSessions, 1);
-        assert.strictEqual(outputTokens(none), 0);
+        assert.strictEqual(outputTokens(unstarted), 0);
+        assert.strictEqual(missing.reason, "scanFailed");
+
+        // A first load asks for the last scan's answer, which is narrowed the same way.
+        const saved = yield* service.readSummary({
+          ...WINDOW,
+          provisional: true,
+          threadId: ThreadId.make("fork"),
+        });
+        assert.strictEqual(outputTokens(saved), 7);
+        assert.isTrue(saved.sources[0]?.refreshing);
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          layerService({ prefix: "usage-service-session-filter-test", home, settings }),
+          layerService({
+            prefix: "usage-service-thread-filter-test",
+            home,
+            settings,
+            projectionStore: { getThreadRecords },
+          }),
         ),
       );
     }).pipe(Effect.scoped),

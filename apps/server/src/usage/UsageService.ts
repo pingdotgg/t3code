@@ -32,6 +32,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { formatMalformedUsageWarning } from "@t3tools/shared/usageFormat";
 import * as ServerConfig from "../config.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
 import type { ProviderDriver } from "@t3tools/provider-core/server/driver";
@@ -151,10 +152,10 @@ const decodeCachedSources = Schema.decodeUnknownOption(
 );
 
 /** A summary request once its thread, if any, is resolved to sessions. */
-export type UsageScanInput = Omit<UsageSummaryInput, "threadId">;
+type UsageScanInput = Omit<UsageSummaryInput, "threadId">;
 
 /** Where a thread's usage is recorded: the native conversations of its provider threads. */
-export function threadUsageSessions(records: {
+function threadUsageSessions(records: {
   readonly thread: Pick<OrchestrationV2ThreadProjection["thread"], "createdAt">;
   readonly providerThreads: ReadonlyArray<Pick<OrchestrationV2ProviderThread, "nativeThreadRef">>;
 }): UsageSessions {
@@ -169,10 +170,7 @@ export function threadUsageSessions(records: {
 export class UsageService extends Context.Service<
   UsageService,
   {
-    readonly readSummary: (
-      input: UsageScanInput,
-      sessions?: UsageSessions,
-    ) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
   }
 >()("t3/usage/UsageService") {}
@@ -185,6 +183,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcess.Environment;
   const hostname = yield* HostProcess.Hostname;
+  const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
@@ -1138,10 +1137,23 @@ export const make = Effect.gen(function* () {
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (
-    requested: UsageScanInput,
-    sessions?: UsageSessions,
+    requested: UsageSummaryInput,
   ) {
-    const { modelFilter: requestedFilter, ...unfiltered } = requested;
+    const { modelFilter: requestedFilter, threadId, ...unfiltered } = requested;
+    const sessions =
+      threadId === undefined
+        ? undefined
+        : yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]).pipe(
+            Effect.map(threadUsageSessions),
+            Effect.mapError(
+              (cause) =>
+                new UsageReadError({
+                  reason: "scanFailed",
+                  detail: "Could not read the thread's provider sessions",
+                  cause,
+                }),
+            ),
+          );
     const modelFilter = canonicalModelFilter(requestedFilter);
     const input = modelFilter === undefined ? unfiltered : { ...unfiltered, modelFilter };
     const settings = yield* readSettings;

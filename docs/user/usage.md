@@ -156,7 +156,7 @@ Hover the row to see the cost by token type. It covers the thread's own conversa
 subagents the provider runs inside them, but not other threads it started. The row appears once
 the provider's usage for the thread is recorded, and updates when a turn ends. If the provider had
 to start a fresh conversation in the thread, such as after a failed resume, usage before it is left
-out. The row stays hidden when the saved usage does not name the thread's conversation, when your
+out. The row stays hidden when the saved usage does not name the thread's conversation, as with Pi, when your
 session cannot read usage, and on a server too old to narrow usage to a thread.
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in

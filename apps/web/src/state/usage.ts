@@ -258,7 +258,7 @@ const threadUsageAtom = Atom.family((key: string) => {
   const ref = parseThreadKey(key);
   const { environmentId, threadId } = ref;
   const shouldRefresh = makeTurnEndRefresh();
-  // Stays on screen while a changed query, such as a new day's, has no answer yet.
+  // Stays on screen while a changed query, such as a new day's, is still being read.
   let answered: MergedUsage | null = null;
   return Atom.make((get): MergedUsage | null => {
     if (
@@ -293,6 +293,11 @@ const threadUsageAtom = Atom.family((key: string) => {
       0,
     );
     if (shouldRefresh(lastTurnEndMs, result.waiting)) get.refresh(query);
+    // A failed read has no figure; the one before it would pass for current.
+    if (AsyncResult.isFailure(result) && !AsyncResult.isInterrupted(result)) {
+      answered = null;
+      return null;
+    }
     const summary = AsyncResult.getOrElse(result, () => null);
     if (summary === null) return answered;
     const merged = mergeUsage([{ environmentId, label: "", summary }], USAGE_CONTRACT_VERSION);
