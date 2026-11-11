@@ -1,4 +1,5 @@
 import type { PullRequestChangeBreakdown } from "@t3tools/contracts";
+import { RE2JS } from "re2js";
 
 export type ChangedFileKind = keyof NonNullable<PullRequestChangeBreakdown>;
 
@@ -71,6 +72,31 @@ const NOT_DOCS_NAME = /^(requirements.*|constraints.*|CMakeLists|robots|llms)\.t
 export function isTestChangedFile(path: string): boolean {
   const kind = classifyChangedFile(path);
   return kind === "tests" || kind === "mocks";
+}
+
+export function compileDiffHideFilePatterns(input: string) {
+  const patterns: RE2JS[] = [];
+  const errors: { line: number; message: string }[] = [];
+  for (const [index, line] of input.split("\n").entries()) {
+    const source = line.trim();
+    if (!source) continue;
+    try {
+      // User patterns must not trigger exponential backtracking on the UI thread.
+      patterns.push(RE2JS.compile(source));
+    } catch (error) {
+      errors.push({
+        line: index + 1,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { patterns, errors };
+}
+
+export function matchesDiffHideFile(path: string, patterns: ReadonlyArray<RE2JS>): boolean {
+  if (isTestChangedFile(path)) return true;
+  const normalizedPath = path.replaceAll("\\", "/");
+  return patterns.some((pattern) => pattern.test(normalizedPath));
 }
 
 export function classifyChangedFile(path: string): ChangedFileKind {
