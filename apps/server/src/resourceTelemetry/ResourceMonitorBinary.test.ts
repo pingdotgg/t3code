@@ -53,7 +53,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HostProcess.Architecture, "x64"),
-        Effect.provideService(ResourceMonitorBinary.ResourceMonitorHostLinuxLibc, "gnu"),
+        Effect.provideService(HostProcess.LinuxLibc, "gnu"),
         Effect.provideService(HostProcess.Environment, {
           T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
         }),
@@ -143,7 +143,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HostProcess.Architecture, "x64"),
-        Effect.provideService(ResourceMonitorBinary.ResourceMonitorHostLinuxLibc, "musl"),
+        Effect.provideService(HostProcess.LinuxLibc, "musl"),
         Effect.provideService(HostProcess.Environment, {}),
       );
       const error = yield* Effect.flip(service.resolve);

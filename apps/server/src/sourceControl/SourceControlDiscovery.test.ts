@@ -20,6 +20,8 @@ import {
   fakeDiscovery,
   fakeSourceControlProvider,
 } from "@t3tools/source-control-testing/fakeSourceControlDriver";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as ServerConfig from "../config.ts";
@@ -100,7 +102,10 @@ const defaultDiscoveries = [
   }),
 ];
 
-const layerDiscovery = (discoveries: ReadonlyArray<SourceControlProviderDiscoverySpec>) =>
+const layerDiscovery = (
+  runProcess = run,
+  discoveries: ReadonlyArray<SourceControlProviderDiscoverySpec> = defaultDiscoveries,
+) =>
   Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     SourceControlProviderRegistry.makeWithProviders(
@@ -111,10 +116,10 @@ const layerDiscovery = (discoveries: ReadonlyArray<SourceControlProviderDiscover
       })),
     ),
   ).pipe(
-    Layer.provideMerge(TestSourceControlHost.layer({ process: { run } })),
+    Layer.provideMerge(TestSourceControlHost.layer({ process: { run: runProcess } })),
     Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
     Layer.provideMerge(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
-    Layer.provideMerge(Layer.mock(VcsProcess.VcsProcess)({ run })),
+    Layer.provideMerge(Layer.mock(VcsProcess.VcsProcess)({ run: runProcess })),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-discovery-" }),
     ),
@@ -165,11 +170,7 @@ it.effect("reports every hosting integration in registry order with its sign-in"
         ["jj", "available"],
       ],
     );
-  }).pipe(
-    Effect.provide(
-      SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery(defaultDiscoveries))),
-    ),
-  ),
+  }).pipe(Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery())))),
 );
 
 it.effect("explains a hosting CLI whose version probe failed instead of advising an install", () =>
@@ -196,7 +197,7 @@ it.effect("explains a hosting CLI whose version probe failed instead of advising
     Effect.provide(
       SourceControlDiscovery.layer.pipe(
         Layer.provide(
-          layerDiscovery([
+          layerDiscovery(run, [
             cliDiscovery("slow", "slow-cli"),
             cliDiscovery("broken", "broken-cli"),
             cliDiscovery("absent", "absent-cli"),
@@ -205,4 +206,43 @@ it.effect("explains a hosting CLI whose version probe failed instead of advising
       ),
     ),
   ),
+);
+
+it.effect.each(["darwin", "linux"] as const)(
+  "names incompatible executables only on macOS (%s)",
+  (platform) => {
+    const runProcess: typeof run = (input) =>
+      Effect.fail(
+        new VcsProcessSpawnError({
+          operation: input.operation,
+          command: input.command,
+          cwd: input.cwd,
+          cause:
+            input.command === "missing-cli"
+              ? new Error("not found")
+              : Object.assign(new Error("spawn Unknown system error -86"), { errno: -86 }),
+        }),
+      );
+    return Effect.gen(function* () {
+      const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const result = yield* discovery.discover;
+      for (const item of [...result.versionControlSystems, ...result.sourceControlProviders]) {
+        if (item.kind === kind("gamma")) continue;
+        assert.strictEqual(item.status, "missing");
+        if (platform === "darwin" && item.executable !== "missing-cli") {
+          assert.include(
+            item.installHint,
+            `\`/usr/local/bin/${item.executable}\` is built for another CPU architecture, so this arm64 machine cannot run it. Remove or replace it.`,
+          );
+        } else {
+          assert.notInclude(item.installHint, "CPU architecture");
+        }
+      }
+    }).pipe(
+      Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery(runProcess)))),
+      Effect.provideService(SpawnExecutableResolution, (command) => `/usr/local/bin/${command}`),
+      Effect.provideService(HostProcess.Platform, platform),
+      Effect.provideService(HostProcess.Architecture, "arm64"),
+    );
+  },
 );
