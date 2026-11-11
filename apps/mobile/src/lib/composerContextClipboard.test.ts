@@ -29,13 +29,22 @@ vi.mock("expo-file-system", () => ({
 }));
 vi.mock("../state/atom-registry", () => ({
   appAtomRegistry: {
-    get: () => ({ _tag: "Some", value: { httpBaseUrl: "https://source.example" } }),
+    get: (atom: unknown) =>
+      atom === "environments"
+        ? []
+        : { _tag: "Some", value: { httpBaseUrl: "https://source.example" } },
   },
+}));
+vi.mock("../state/workspace", () => ({
+  workspaceConnections: { environmentsAtom: "environments" },
 }));
 vi.mock("../state/session", () => ({
   environmentSession: { preparedConnectionValueAtom: vi.fn() },
 }));
 vi.mock("../state/assets", () => ({ assetEnvironment: { createUrl: (value: unknown) => value } }));
+vi.mock("../state/threads", () => ({
+  environmentThreadShells: { threadShellAtom: (value: unknown) => value },
+}));
 vi.mock("../state/use-composer-drafts", () => ({
   waitForComposerDraftsLoaded: async () => {},
   findLocalComposerClipboardAttachment: mocks.local,
@@ -295,6 +304,22 @@ describe("mobile context clipboard imports", () => {
     expect(result!.text).toMatch(/^Compare these findings: .* before changing anything\.$/);
   });
 
+  it("keeps a thread from a machine the destination links to", async () => {
+    const result = await importComposerContextClipboard(
+      mixedClipboard,
+      0,
+      new AbortController().signal,
+      0,
+      EnvironmentId.make("destination"),
+      new Map([[foreignThread.environmentId, "Source"]]),
+    );
+    expect(result!.skippedThreads).toEqual([]);
+    expect(result!.context.records.filter((record) => record.kind === "thread")).toEqual([
+      { ...foreignThread, contextId: expect.any(String) },
+      { ...localThread, contextId: expect.any(String) },
+    ]);
+  });
+
   it("preserves both machines' thread references when pasting without a destination", async () => {
     const result = await importComposerContextClipboard(
       mixedClipboard,
@@ -313,5 +338,35 @@ describe("mobile context clipboard imports", () => {
     expect(
       collectComposerContextReferences(result!.text).map((reference) => reference.contextId),
     ).toEqual(result!.context.records.map((record) => record.contextId));
+  });
+
+  it("pastes a thread link as a chip only where the destination's agent reads its machine", async () => {
+    const text = [
+      "https://app.t3.codes/threads/destination/local-thread",
+      "<t3-thread://v2/source/foreign-thread>",
+    ].join(" ");
+    const result = await importComposerContextClipboard(
+      { text, fragment: "", html: "" },
+      0,
+      new AbortController().signal,
+      0,
+      EnvironmentId.make("destination"),
+    );
+    const [record] = result!.context.records;
+    expect(record).toMatchObject({
+      kind: "thread",
+      environmentId: "destination",
+      threadId: "local-thread",
+    });
+    expect(result!.text).toBe(
+      `[Thread](t3-context://v1/thread/${record!.contextId}) <t3-thread://v2/source/foreign-thread>`,
+    );
+    expect(
+      await importComposerContextClipboard(
+        { text: "plain text", fragment: "", html: "" },
+        0,
+        new AbortController().signal,
+      ),
+    ).toBeNull();
   });
 });
