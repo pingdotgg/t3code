@@ -519,7 +519,7 @@ describe("serverSettings helpers", () => {
     );
   });
 
-  it("replaces providerInstances maps so omitted instance fields are cleared", () => {
+  it("replaces providerInstances maps and the provider order whole", () => {
     const codexId = ProviderInstanceId.make("codex");
     const current = {
       ...DEFAULT_SERVER_SETTINGS,
@@ -551,6 +551,12 @@ describe("serverSettings helpers", () => {
       enabled: true,
       config: { homePath: "~/.codex" },
     });
+    expect(
+      applyServerSettingsPatch(
+        { ...current, providerOrder: [codexId, ProviderInstanceId.make("grok")] },
+        { providerOrder: [ProviderInstanceId.make("grok")] },
+      ).providerOrder,
+    ).toEqual([ProviderInstanceId.make("grok")]);
   });
 
   it("keeps a project's providerInstances override when a patch entry omits the key", () => {

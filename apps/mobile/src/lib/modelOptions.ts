@@ -22,6 +22,7 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { sortByProviderOrder } from "@t3tools/shared/providerOrder";
 
 export type ModelOption = {
   readonly key: string;
@@ -266,12 +267,17 @@ export function resolveNewTaskModelSelection(input: {
   readonly stickySelection: ModelSelection | null;
   readonly modelOptions: ReadonlyArray<ModelOption>;
 }): ModelSelection | null {
+  // Like web, the first available provider wins before its default model.
+  const first = input.modelOptions.find((option) => !option.isUnavailable);
+  const providerDefault = input.modelOptions.find(
+    (option) =>
+      option.providerKey === first?.providerKey && option.isDefault && !option.isUnavailable,
+  );
   return (
     input.draftSelection ??
     input.projectDefaultSelection ??
     input.stickySelection ??
-    input.modelOptions.find((option) => option.isDefault && !option.isUnavailable)?.selection ??
-    input.modelOptions.find((option) => !option.isUnavailable)?.selection ??
+    (providerDefault ?? first)?.selection ??
     null
   );
 }
@@ -336,7 +342,12 @@ export function buildModelOptions(
     };
   };
 
-  for (const provider of config?.providers ?? []) {
+  const orderedProviders = sortByProviderOrder(
+    config?.providers ?? [],
+    config?.settings?.providerOrder ?? [],
+    (provider) => provider.instanceId,
+  );
+  for (const provider of orderedProviders) {
     if (
       !matchesLockedProvider(provider) ||
       isDriverDisallowed(config, provider.driver) ||

@@ -279,7 +279,7 @@ export function useTextGenerationTargets(input: {
   readonly environmentId: EnvironmentId | null;
   readonly settings: Pick<
     ServerSettings,
-    "providerInstances" | "projectSettingsOverrides" | "textGenerators"
+    "providerInstances" | "projectSettingsOverrides" | "textGenerators" | "providerOrder"
   >;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly projectId: ProjectId | null;

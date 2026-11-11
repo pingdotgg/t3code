@@ -19,6 +19,7 @@ import { act, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider>>,
+  config: null as unknown as Atom.Writable<unknown>,
   providerAuthQuery: null as unknown,
   providerAuth: null as ProviderAuthState | null,
   settings: null as unknown as UnifiedSettings,
@@ -44,7 +45,8 @@ vi.mock(import("../../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const providers = Atom.make<ReadonlyArray<ServerProvider>>([]).pipe(Atom.keepAlive);
   state.providers = providers;
-  const config = Atom.make(null);
+  const config = Atom.make<unknown>(null).pipe(Atom.keepAlive);
+  state.config = config;
   const providerAuth = Atom.make(null);
   state.providerAuthQuery = providerAuth;
   const commandLabels = {
@@ -246,9 +248,47 @@ async function setup() {
   state.uninstall.mockReset().mockResolvedValue(AsyncResult.success({}));
   state.acceptUrlAuth.mockReset().mockResolvedValue(AsyncResult.success({ accepted: true }));
   await setProviders([]);
+  await act(async () => appAtomRegistry.set(state.config, null));
 }
 
 describe("EnvironmentProviderSettings routing", () => {
+  it("offers reordering only where the server keeps the order, building on pending moves", async () => {
+    await setup();
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: { driver: ProviderDriverKind.make("codex"), enabled: true, config: {} },
+      },
+    };
+    await setProviders([provider()]);
+    await using _screen = await render(panel());
+    await expect.element(page.getByRole("button", { name: "Select Claude" })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: /^Reorder / }).first())
+      .not.toBeInTheDocument();
+
+    await act(async () =>
+      appAtomRegistry.set(state.config, { environment: { capabilities: { providerOrder: true } } }),
+    );
+    const grips = page.getByRole("button", { name: /^Reorder / });
+    await expect.element(grips.nth(2)).toBeVisible();
+    const moved = (await grips.nth(2).element().getAttribute("aria-label"))!.replace(
+      "Reorder ",
+      "",
+    );
+    (grips.nth(2).element() as HTMLElement).focus();
+    await userEvent.keyboard("{ArrowUp}{ArrowUp}");
+
+    const orders = state.updateSettings.mock.calls.map(
+      ([patch]) => (patch as { providerOrder: string[] }).providerOrder,
+    );
+    expect(orders).toHaveLength(2);
+    expect(orders[1]![0]).toBe(orders[0]![1]);
+    await expect
+      .element(page.getByRole("button", { name: /^Reorder / }).first())
+      .toHaveAccessibleName(`Reorder ${moved}`);
+  });
+
   it("does not substitute another account when the requested instance was removed", async () => {
     await setup();
     await setProviders([provider()]);

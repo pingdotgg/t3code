@@ -1,4 +1,12 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { UsageProviderKind } from "@t3tools/contracts";
+import {
+  firstProviderOrderSettings,
+  providerDriverOrder,
+  sortByProviderOrder,
+} from "@t3tools/shared/providerOrder";
+
+import { environmentPresentations } from "../../state/presentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
@@ -15,6 +23,24 @@ export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
 export function usageProviderKind(driver: string): UsageProviderKind | null {
   if (driver === "claudeAgent") return "claude";
   return PROVIDER_ORDER.find((kind) => kind === driver) ?? null;
+}
+
+/** Driver kinds from the first environment with a saved order in Settings → Providers. */
+export function useSavedDriverOrder(): readonly string[] {
+  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const settings = firstProviderOrderSettings(
+    [...presentations.values()].map((presentation) => presentation.serverConfig?.settings),
+  );
+  return settings === null ? [] : providerDriverOrder(settings);
+}
+
+/** Null until an environment saves an order; each section then keeps its own ranking. */
+export function useSavedUsageProviderOrder(): readonly UsageProviderKind[] | null {
+  const driverOrder = useSavedDriverOrder();
+  if (driverOrder.length === 0) return null;
+  return sortByProviderOrder(PROVIDER_ORDER, driverOrder, (kind) =>
+    kind === "claude" ? "claudeAgent" : kind,
+  );
 }
 
 export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {

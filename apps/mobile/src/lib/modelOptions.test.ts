@@ -164,6 +164,13 @@ describe("mobile model options", () => {
         (option) => option.providerKey === "codex",
       ),
     );
+    const reordered = {
+      providers,
+      settings: { ...DEFAULT_SERVER_SETTINGS, providerOrder: ["claudeAgent"] },
+    } as unknown as ServerConfig;
+    expect(
+      buildModelOptions(reordered, selection, undefined, null).map((option) => option.providerKey),
+    ).toEqual(["claudeAgent", "codex"]);
   });
 
   it("keeps accounts in the continuation group and excludes other providers", () => {
@@ -569,6 +576,22 @@ describe("mobile model options", () => {
         modelOptions: [unavailable],
       }),
     ).toBeNull();
+
+    const option = (providerKey: string, model: string, isDefault = false) =>
+      ({
+        providerKey,
+        selection: { instanceId: ProviderInstanceId.make(providerKey), model },
+        isDefault,
+      }) as ModelOption;
+    const firstVisible = option("claudeAgent", "visible");
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        stickySelection: null,
+        modelOptions: [firstVisible, option("codex", "default", true)],
+      }),
+    ).toBe(firstVisible.selection);
   });
 
   describe("project-aware enablement", () => {

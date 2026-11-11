@@ -541,6 +541,8 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
+    // deepMerge merges arrays by index and would keep stale tail entries.
+    ...(patch.providerOrder !== undefined ? { providerOrder: patch.providerOrder } : {}),
     ...(patch.worktreesDirectory !== undefined &&
     patch.worktreesDirectory !== current.worktreesDirectory
       ? {
