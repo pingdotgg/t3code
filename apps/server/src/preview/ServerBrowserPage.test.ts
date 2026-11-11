@@ -20,6 +20,8 @@ import {
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 
+const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
+
 describe("server browser element refs", () => {
   let browser: Browser;
   let context: BrowserContext;
@@ -291,7 +293,7 @@ describe("server browser element refs", () => {
   });
 
   it("returns object contents even when a legacy caller asks for a remote reference", async () => {
-    const input = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput)({
+    const input = decodeEvaluateInput({
       expression: "({ answer: 42, nested: { ready: true } })",
       returnByValue: false,
     });
