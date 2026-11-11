@@ -161,6 +161,7 @@ function AnnotationEditor({
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const draftOpRef = useRef<AnnotationOp | null>(null);
   const dragStartRef = useRef<AnnotationPoint | null>(null);
+  const mountedRef = useRef(false);
 
   const size = source ? { width: source.naturalWidth, height: source.naturalHeight } : null;
   const scale = size ? annotationScale(size.width, size.height) : null;
@@ -302,6 +303,7 @@ function AnnotationEditor({
       image.name,
       pendingText ? [...ops, pendingText] : ops,
     );
+    if (!mountedRef.current) return;
     setSaving(false);
     if (typeof result === "string") setSaveError(result);
     else onSave(result);
@@ -314,10 +316,10 @@ function AnnotationEditor({
     const key = event.key.toLowerCase();
     if (key === "z" && !event.shiftKey) {
       event.preventDefault();
-      undo();
+      if (!saving) undo();
     } else if ((key === "z" && event.shiftKey) || key === "y") {
       event.preventDefault();
-      redo();
+      if (!saving) redo();
     } else if (key === "enter") {
       event.preventDefault();
       void save();
@@ -329,9 +331,13 @@ function AnnotationEditor({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clicking the canvas focuses the dialog root, above any element handler, so shortcuts listen on the document
   useEffect(() => {
+    mountedRef.current = true;
     const listener = (event: globalThis.KeyboardEvent) => handleShortcut(event);
     document.addEventListener("keydown", listener, true);
-    return () => document.removeEventListener("keydown", listener, true);
+    return () => {
+      mountedRef.current = false;
+      document.removeEventListener("keydown", listener, true);
+    };
   }, []);
 
   return (
@@ -342,7 +348,7 @@ function AnnotationEditor({
           Draw, point, label or crop before sending. The original is replaced when you apply.
         </DialogDescription>
       </DialogHeader>
-      <div className="flex flex-wrap items-center gap-2 px-6 pb-3">
+      <div inert={saving} className="flex flex-wrap items-center gap-2 px-6 pb-3">
         <ToggleGroup
           aria-label="Annotation tool"
           variant="default"
@@ -412,7 +418,7 @@ function AnnotationEditor({
           </Button>
         </div>
       </div>
-      <div className="flex min-h-0 justify-center px-6 pb-2">
+      <div inert={saving} className="flex min-h-0 justify-center px-6 pb-2">
         {loadFailed ? (
           <p role="alert" className="py-12 text-sm text-muted-foreground">
             This image can't be edited.
