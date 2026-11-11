@@ -10,6 +10,7 @@ import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../atta
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 
@@ -47,6 +48,7 @@ export const layer = Layer.effect(
     const terminals = yield* TerminalManager.TerminalManager;
     const previews = yield* PreviewManager.PreviewManager;
     const devices = yield* DeviceService.DeviceService;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const fileSystem = yield* FileSystem.FileSystem;
     const config = yield* ServerConfig.ServerConfig;
     const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
@@ -88,8 +90,13 @@ export const layer = Layer.effect(
       cleanupDevices: Effect.fn("ResourceCleanupService.cleanupDevices")(function (
         threadId: ThreadId,
       ) {
+        // Queued cleanup can run after an unarchive; sessions opened since then stay.
+        const inactive = projections.getThread(threadId).pipe(
+          Effect.map((thread) => thread.archivedAt !== null || thread.deletedAt !== null),
+          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(true) }),
+        );
         return devices
-          .close({ threadId })
+          .close({ threadId }, { when: inactive })
           .pipe(
             Effect.mapError(
               (cause) => new ResourceCleanupError({ operation: "device", threadId, cause }),

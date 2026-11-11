@@ -426,6 +426,7 @@ const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
     Layer.mergeAll(
       Layer.mock(PreviewManager.PreviewManager)({ close: () => Effect.void }),
       Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
+      ProjectionStore.layer,
     ),
   ),
 );
@@ -650,6 +651,46 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         assert.deepEqual(yield* devices.sessionsForThread(otherThreadId), otherSessions);
         assert.isTrue((yield* devices.state).devices[0]?.booted);
       }),
+  );
+
+  it.effect("keeps a device reopened after unarchive when archive cleanup runs late", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const devices = yield* DeviceService.DeviceService;
+      yield* devices.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("device-unarchive-thread");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("device-unarchive-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("device-unarchive-project"),
+        title: "Device user",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("device-unarchive-archive"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("device-unarchive-unarchive"),
+        threadId,
+      });
+      yield* devices.open({ threadId, deviceId: "phone", platform: "ios" });
+      const reopened = yield* devices.sessionsForThread(threadId);
+      yield* worker.drain();
+
+      assert.lengthOf(reopened, 1);
+      assert.deepEqual(yield* devices.sessionsForThread(threadId), reopened);
+    }),
   );
 
   it.effect("waits for an in-flight thread update before planning deletion", () =>
