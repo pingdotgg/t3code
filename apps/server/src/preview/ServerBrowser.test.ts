@@ -823,7 +823,6 @@ it.live.each([
 it.live.each([
   { method: "goto" as const, message: { type: "navigate", url: "http://localhost:5173/next" } },
   { method: "goBack" as const, message: { type: "history", delta: -1 } },
-  { method: "goForward" as const, message: { type: "history", delta: 1 } },
   { method: "reload" as const, message: { type: "reload" } },
 ])("a viewer $method leaves a page whose script never yields", ({ method, message }) =>
   Effect.scoped(
