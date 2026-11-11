@@ -260,9 +260,31 @@ layer("CommandPolicyV2", (it) => {
         hasStrongNativeSource: true,
         sourceRunStatus: "completed",
         fromSpecificTurn: true,
+        sourceBusy: false,
       });
 
       assert.equal(result, "portable_context");
+    }),
+  );
+
+  it.effect("forks a busy source through portable context", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicy.CommandPolicyV2;
+      const decide = (sourceBusy: boolean) =>
+        policy.decideForkExecution({
+          commandId,
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: CodexProviderCapabilitiesV2,
+          sameProvider: true,
+          hasStrongNativeSource: true,
+          sourceRunStatus: "completed",
+          fromSpecificTurn: true,
+          sourceBusy,
+        });
+
+      assert.equal(yield* decide(false), "native_fork");
+      assert.equal(yield* decide(true), "portable_context");
     }),
   );
 });
