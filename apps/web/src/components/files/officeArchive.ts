@@ -225,6 +225,7 @@ function boundedWorksheet(
   let dataStart = 0;
   let dataTag = 0;
   let dataPrefix = "";
+  let dataNamespace = "";
   let dataEnd = 0;
   let defaultWidth: number | undefined;
   let gridlines: boolean | undefined;
@@ -304,6 +305,10 @@ function boundedWorksheet(
       dataStart = parser.position;
       dataTag = xml.lastIndexOf("<", parser.position - 1);
       dataPrefix = tag.prefix ? `${tag.prefix}:` : "";
+      dataNamespace = tag.uri
+        .replaceAll("&", "&amp;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("<", "&lt;");
       emptyData = tag.isSelfClosing;
     }
     // A dimension past the limits loses nothing by itself; the cells past them say whether content is lost.
@@ -460,7 +465,8 @@ function boundedWorksheet(
     }
     if (next <= OFFICE_PREVIEW_MAX_COLUMNS)
       defaultColumns += `<${dataPrefix}col min="${next}" max="${OFFICE_PREVIEW_MAX_COLUMNS}" width="${defaultWidth}"/>`;
-    if (defaultColumns) defaultColumns = `<${dataPrefix}cols>${defaultColumns}</${dataPrefix}cols>`;
+    if (defaultColumns)
+      defaultColumns = `<${dataPrefix}cols xmlns${dataPrefix ? `:${dataPrefix.slice(0, -1)}` : ""}="${dataNamespace}">${defaultColumns}</${dataPrefix}cols>`;
   }
   const head = (part: string) =>
     metadata(part.slice(0, dataTag) + defaultColumns + part.slice(dataTag));

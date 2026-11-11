@@ -1038,79 +1038,90 @@ it.each(["utf-16le", "utf-16be", "windows-1252"])(
 );
 
 it.each([
-  ["", "worksheets/./sheet1.xml", false],
-  ["x:", "../xl/worksheets/sheet1.xml", false],
-  ["", "/xl/worksheets/sheet1.xml", true],
-])("preserves %sworksheet metadata with relationship target %s", async (prefix, target, empty) => {
-  const { default: JSZip } = await import("jszip");
-  const archive = new JSZip();
-  const ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-  archive.file(
-    "xl/workbook.xml",
-    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Chart" sheetId="2" r:id="c"/><sheet name="Sheet" sheetId="1" r:id="s"/></sheets></workbook>',
-  );
-  archive.file(
-    "xl/_rels/workbook.xml.rels",
-    `<Relationships><Relationship Id="s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${target}"/><Relationship Id="c" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet" Target="chartsheets/sheet1.xml"/></Relationships>`,
-  );
-  archive.file(
-    "xl/worksheets/sheet1.xml",
-    `<${prefix}worksheet xmlns${prefix ? ":x" : ""}="${ns}"><${prefix}dimension ref="XFD1048576"/><${prefix}sheetViews><${prefix}sheetView showGridLines="0"/></${prefix}sheetViews><${prefix}sheetFormatPr defaultColWidth="30"/><${prefix}cols><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS - 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 10}" width="20"/><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS + 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 30}" hidden="1"/></${prefix}cols><${prefix}sheetData><${prefix}row ht="42" customHeight="1" hidden="1"><${prefix}c r="A50" t="inlineStr"><${prefix}is><${prefix}t>${"value".repeat(1000)}</${prefix}t></${prefix}is></${prefix}c></${prefix}row></${prefix}sheetData><${prefix}mergeCells><${prefix}mergeCell ref="XFD1048576"/></${prefix}mergeCells></${prefix}worksheet>`
-      .replace(/<((?:x:)?(?:col|dimension|mergeCell))\b([^>]*)\/>/g, prefix ? "<$1$2></$1>" : "$&")
-      .replace(/<sheetData>[\s\S]*?<\/sheetData>/, (data) => (empty ? "<sheetData/>" : data))
-      .replace(/="([^"]*)"/g, (attribute, value: string) =>
-        prefix || empty
-          ? ` = '${value.replace(/\d/g, (digit) => `&#${digit.charCodeAt(0)};`)}'`
-          : attribute,
-      ),
-  );
-  const bytes = await archive.generateAsync({ type: "arraybuffer" });
-  const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
-    type: "module",
-  });
-  try {
-    const result = await new Promise<OfficeWorkerResult>((resolve) => {
-      worker.addEventListener(
-        "message",
-        (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
-        { once: true },
-      );
-      worker.postMessage({ type: "open", kind: "xlsx", bytes }, [bytes]);
+  ["", "worksheets/./sheet1.xml", false, false],
+  ["x:", "../xl/worksheets/sheet1.xml", false, false],
+  ["", "/xl/worksheets/sheet1.xml", true, false],
+  ["", "worksheets/sheet1.xml", false, true],
+  ["", "worksheets/sheet1.xml", true, true],
+])(
+  "preserves %sworksheet metadata with relationship target %s",
+  async (prefix, target, empty, localPrefix) => {
+    const { default: JSZip } = await import("jszip");
+    const archive = new JSZip();
+    const ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    archive.file(
+      "xl/workbook.xml",
+      '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Chart" sheetId="2" r:id="c"/><sheet name="Sheet" sheetId="1" r:id="s"/></sheets></workbook>',
+    );
+    archive.file(
+      "xl/_rels/workbook.xml.rels",
+      `<Relationships><Relationship Id="s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${target}"/><Relationship Id="c" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet" Target="chartsheets/sheet1.xml"/></Relationships>`,
+    );
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      `<${prefix}worksheet xmlns${prefix ? ":x" : ""}="${ns}"><${prefix}dimension ref="XFD1048576"/><${prefix}sheetViews><${prefix}sheetView showGridLines="0"/></${prefix}sheetViews><${prefix}sheetFormatPr defaultColWidth="30"/><${prefix}cols><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS - 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 10}" width="20"/><${prefix}col min="${OFFICE_PREVIEW_MAX_COLUMNS + 1}" max="${OFFICE_PREVIEW_MAX_COLUMNS + 30}" hidden="1"/></${prefix}cols><${prefix}sheetData><${prefix}row ht="42" customHeight="1" hidden="1"><${prefix}c r="A50" t="inlineStr"><${prefix}is><${prefix}t>${"value".repeat(1000)}</${prefix}t></${prefix}is></${prefix}c></${prefix}row></${prefix}sheetData><${prefix}mergeCells><${prefix}mergeCell ref="XFD1048576"/></${prefix}mergeCells></${prefix}worksheet>`
+        .replace(
+          /<((?:x:)?(?:col|dimension|mergeCell))\b([^>]*)\/>/g,
+          prefix ? "<$1$2></$1>" : "$&",
+        )
+        .replace(/<sheetData>[\s\S]*?<\/sheetData>/, (data) => (empty ? "<sheetData/>" : data))
+        .replace(/<(\/?)sheetData\b/g, (tag, closing: string) =>
+          localPrefix ? `<${closing}x:sheetData${closing ? "" : ` xmlns:x="${ns}"`}` : tag,
+        )
+        .replace(/="([^"]*)"/g, (attribute, value: string) =>
+          prefix || empty
+            ? ` = '${value.replace(/\d/g, (digit) => `&#${digit.charCodeAt(0)};`)}'`
+            : attribute,
+        ),
+    );
+    const bytes = await archive.generateAsync({ type: "arraybuffer" });
+    const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
+      type: "module",
     });
-    expect(result.type).toBe("xlsx");
-    if (result.type !== "xlsx") throw new Error("Expected bounded workbook");
-    // The engine counts the chart sheet before it.
-    expect(result.view?.hiddenGridlines).toEqual([1]);
-    const bounded = await JSZip.loadAsync(result.bytes);
-    const sheet = new DOMParser().parseFromString(
-      await bounded.file("xl/worksheets/sheet1.xml")!.async("string"),
-      "application/xml",
-    );
-    expect(sheet.querySelector("parsererror")).toBeNull();
-    const row = sheet.getElementsByTagNameNS(ns, "row")[0];
-    if (empty) expect(row).toBeUndefined();
-    else {
-      expect(row!.getAttribute("ht")).toBe("42");
-      expect(row!.getAttribute("hidden")).toBe("1");
-      expect(row!.getElementsByTagNameNS(ns, "c")[0]!.getAttribute("r")).toBe("A50");
-      expect(row!.getElementsByTagNameNS(ns, "t")[0]!.textContent).toHaveLength(4096);
+    try {
+      const result = await new Promise<OfficeWorkerResult>((resolve) => {
+        worker.addEventListener(
+          "message",
+          (event: MessageEvent<OfficeWorkerResult>) => resolve(event.data),
+          { once: true },
+        );
+        worker.postMessage({ type: "open", kind: "xlsx", bytes }, [bytes]);
+      });
+      expect(result.type).toBe("xlsx");
+      if (result.type !== "xlsx") throw new Error("Expected bounded workbook");
+      // The engine counts the chart sheet before it.
+      expect(result.view?.hiddenGridlines).toEqual([1]);
+      const bounded = await JSZip.loadAsync(result.bytes);
+      const sheet = new DOMParser().parseFromString(
+        await bounded.file("xl/worksheets/sheet1.xml")!.async("string"),
+        "application/xml",
+      );
+      expect(sheet.querySelector("parsererror")).toBeNull();
+      const row = sheet.getElementsByTagNameNS(ns, "row")[0];
+      if (empty) expect(row).toBeUndefined();
+      else {
+        expect(row!.getAttribute("ht")).toBe("42");
+        expect(row!.getAttribute("hidden")).toBe("1");
+        expect(row!.getElementsByTagNameNS(ns, "c")[0]!.getAttribute("r")).toBe("A50");
+        expect(row!.getElementsByTagNameNS(ns, "t")[0]!.textContent).toHaveLength(4096);
+      }
+      expect(sheet.getElementsByTagNameNS(ns, "dimension")).toHaveLength(0);
+      expect(sheet.getElementsByTagNameNS(ns, "mergeCell")).toHaveLength(0);
+      const columns = [...sheet.getElementsByTagNameNS(ns, "col")].map((column) =>
+        ["min", "max", "width"].map((name) => column.getAttribute(name)),
+      );
+      // The engine ignores `defaultColWidth`, so the columns it sizes are spelled out.
+      expect(columns).toEqual([
+        [String(OFFICE_PREVIEW_MAX_COLUMNS - 1), String(OFFICE_PREVIEW_MAX_COLUMNS), "20"],
+        // Hidden columns keep their span past the limit, so they stay hidden.
+        [String(OFFICE_PREVIEW_MAX_COLUMNS + 1), String(OFFICE_PREVIEW_MAX_COLUMNS + 30), null],
+        ["1", String(OFFICE_PREVIEW_MAX_COLUMNS - 2), "30"],
+      ]);
+    } finally {
+      worker.terminate();
     }
-    expect(sheet.getElementsByTagNameNS(ns, "dimension")).toHaveLength(0);
-    expect(sheet.getElementsByTagNameNS(ns, "mergeCell")).toHaveLength(0);
-    const columns = [...sheet.getElementsByTagNameNS(ns, "col")].map((column) =>
-      ["min", "max", "width"].map((name) => column.getAttribute(name)),
-    );
-    // The engine ignores `defaultColWidth`, so the columns it sizes are spelled out.
-    expect(columns).toEqual([
-      [String(OFFICE_PREVIEW_MAX_COLUMNS - 1), String(OFFICE_PREVIEW_MAX_COLUMNS), "20"],
-      // Hidden columns keep their span past the limit, so they stay hidden.
-      [String(OFFICE_PREVIEW_MAX_COLUMNS + 1), String(OFFICE_PREVIEW_MAX_COLUMNS + 30), null],
-      ["1", String(OFFICE_PREVIEW_MAX_COLUMNS - 2), "30"],
-    ]);
-  } finally {
-    worker.terminate();
-  }
-});
+  },
+);
 
 it("reports the final slide at maximum scroll after page visibility changes", async () => {
   const { OfficePages } = await import("./office/OfficePages");
