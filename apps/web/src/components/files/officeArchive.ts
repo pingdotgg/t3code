@@ -18,8 +18,8 @@ export const WORD_LIMITS = {
   bodyTags: 1_000_000,
   /** A table is laid out in one go: 100,000 tags is a 4,000-row table, about 2 s. */
   elementTags: 100_000,
-  /** Line breaking grows with the square of a paragraph's text: 32K characters take about 1.5 s. */
-  paragraphText: 32 * 1024,
+  /** Line breaking grows with the square of a paragraph's text: 40K characters take about 2 s. */
+  paragraphText: 128 * 1024,
   styles: 8_192,
   styleBytes: 16 * 1024 * 1024,
   styleUnits: 400_000,

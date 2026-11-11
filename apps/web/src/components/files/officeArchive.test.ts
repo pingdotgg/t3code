@@ -91,7 +91,7 @@ describe("Word preview limits", () => {
     expect(await result.part("word/document.xml")).toContain("Item 5999");
   });
 
-  const text = "x".repeat(40_000);
+  const text = "x".repeat(140_000);
   it.each([
     ["on its own", `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`],
     [
@@ -110,7 +110,7 @@ describe("Word preview limits", () => {
   });
 
   it("counts only the text a paragraph lays out", async () => {
-    const formatted = `<w:p>${" ".repeat(40_000)}<w:r><w:instrText>${"x".repeat(40_000)}</w:instrText></w:r><w:r><w:t>Short</w:t></w:r></w:p>`;
+    const formatted = `<w:p>${" ".repeat(140_000)}<w:r><w:instrText>${"x".repeat(140_000)}</w:instrText></w:r><w:r><w:t>${"x".repeat(40_000)}</w:t></w:r></w:p>`;
     const result = await prepared(await wordFile(formatted + paragraph("After")));
     expect(result.truncated).toBe(false);
     expect(await result.part("word/document.xml")).toContain("After");
