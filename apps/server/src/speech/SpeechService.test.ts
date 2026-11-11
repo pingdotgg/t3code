@@ -533,6 +533,24 @@ it.effect("unloads after the chosen idle period and reloads on the next recordin
 );
 
 it.effect.each([
+  {
+    cue: undefined,
+    remove: true,
+    text: "First paragraph.\n\nSecond paragraph.",
+    expected: "First paragraph.\n\nSecond paragraph.",
+  },
+  {
+    cue: undefined,
+    remove: true,
+    text: "First um\n\nuh Second.",
+    expected: "First\n\nSecond.",
+  },
+  {
+    cue: undefined,
+    remove: true,
+    text: "First um\r\n\r\nuh Second.",
+    expected: "First\r\n\r\nSecond.",
+  },
   { cue: "um", remove: true, text: "Make it red, um, blue.", expected: "Make it red, um, blue." },
   {
     cue: "uh no",
