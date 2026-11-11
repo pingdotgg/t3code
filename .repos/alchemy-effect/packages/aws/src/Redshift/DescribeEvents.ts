@@ -1,0 +1,37 @@
+import type * as redshift from "@distilled.cloud/aws/redshift";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for the `DescribeEvents` operation (IAM action
+ * `redshift:DescribeEvents`).
+ *
+ * Lists recent events (maintenance, resizes, snapshots, security changes)
+ * for the account's Redshift clusters and related resources over the last 14
+ * days — the audit trail for operational tooling. For push delivery of the
+ * same events see {@link EventSubscription}. Provide the implementation with
+ * `Effect.provide(AWS.Redshift.DescribeEventsHttp)`.
+ * ### Monitoring Clusters
+ * **Example:** List a Cluster's Recent Events
+ * ```typescript
+ * const describeEvents = yield* AWS.Redshift.DescribeEvents();
+ *
+ * const page = yield* describeEvents({
+ *   SourceIdentifier: clusterId,
+ *   SourceType: "cluster",
+ * });
+ * const messages = page.Events?.map((e) => e.Message);
+ * ```
+ *
+ * @binding
+ */
+export interface DescribeEvents extends Binding.Service<
+  DescribeEvents,
+  "AWS.Redshift.DescribeEvents",
+  () => Effect.Effect<
+    (
+      request?: redshift.DescribeEventsMessage,
+    ) => Effect.Effect<redshift.EventsMessage, redshift.DescribeEventsError>
+  >
+> {}
+export const DescribeEvents = Binding.Service<DescribeEvents>("AWS.Redshift.DescribeEvents");

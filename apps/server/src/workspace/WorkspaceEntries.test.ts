@@ -108,6 +108,14 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, "node_modules/pkg/index.js");
         yield* writeTextFile(cwd, "src/index.ts");
         yield* fileSystem.makeDirectory(path.join(cwd, "empty"));
+        yield* git(cwd, ["init", "sub"]);
+        yield* writeTextFile(cwd, "sub/.gitignore", "dist/\n");
+        yield* writeTextFile(cwd, "sub/dist/out.js");
+        const gitlink = yield* git(cwd, ["hash-object", "tracked.txt"]);
+        yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${gitlink},sub`]);
+        // A nested clone that isn't a submodule keeps the outer repository's ignore rules.
+        yield* git(cwd, ["init", "node_modules/pkg"]);
+        yield* git(cwd, ["init", "sub/dist"]);
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
@@ -125,6 +133,17 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(root.truncated).toBe(false);
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "node_modules/pkg" })).toEqual({
           entries: [{ path: "node_modules/pkg/index.js", kind: "file", ignored: true }],
+          truncated: false,
+        });
+        // Git refuses pathspecs inside a submodule from the outer repository.
+        expect((yield* workspaceEntries.list({ cwd, directoryPath: "sub" })).entries).toEqual(
+          expect.arrayContaining([
+            { path: "sub/.gitignore", kind: "file" },
+            { path: "sub/dist", kind: "directory", ignored: true },
+          ]),
+        );
+        expect(yield* workspaceEntries.list({ cwd, directoryPath: "sub/dist" })).toEqual({
+          entries: [{ path: "sub/dist/out.js", kind: "file", ignored: true }],
           truncated: false,
         });
         expect(yield* workspaceEntries.list({ cwd, directoryPath: "empty" })).toEqual({
@@ -653,6 +672,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("searches an invalid regex literally without matching case", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-invalid-regex-" });
+        yield* writeTextFile(cwd, "src/calls.ts", "call(Foo(bar));\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "foo(",
+          limit: 100,
+          caseSensitive: false,
+          wholeWord: false,
+          useRegex: true,
+        });
+
+        expect(result.regexFallbackError).toBeDefined();
+        expect(result.matches).toEqual([
+          expect.objectContaining({
+            path: "src/calls.ts",
+            lineNumber: 1,
+            matchRanges: [{ start: 5, end: 9 }],
+          }),
+        ]);
+      }),
+    );
+
     it.effect("maps multi-byte lines to string-indexed ranges", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-multibyte-" });
@@ -767,6 +812,31 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(hiddenPrefixResult).toEqual({
           parentPath: cwd,
           entries: [{ name: ".config", fullPath: path.join(cwd, ".config") }],
+        });
+      }),
+    );
+
+    it.effect("marks only a missing directory as missing when browsing fails", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-missing-" });
+        yield* writeTextFile(cwd, "file.txt", "");
+
+        const missing = yield* workspaceEntries
+          .browse({ partialPath: `${path.join(cwd, "absent", "nested")}${path.sep}` })
+          .pipe(Effect.flip);
+        const underFile = yield* workspaceEntries
+          .browse({ partialPath: `${path.join(cwd, "file.txt")}${path.sep}` })
+          .pipe(Effect.flip);
+
+        expect(missing).toMatchObject({
+          _tag: "WorkspaceEntriesReadDirectoryError",
+          pathMissing: true,
+        });
+        expect(underFile).toMatchObject({
+          _tag: "WorkspaceEntriesReadDirectoryError",
+          pathMissing: false,
         });
       }),
     );

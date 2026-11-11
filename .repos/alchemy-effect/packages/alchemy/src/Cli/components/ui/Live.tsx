@@ -1,12 +1,13 @@
+/** @jsxRuntime automatic */
 /** @jsxImportSource @alchemy.run/sigil */
-import type { ReactNode } from "react";
 import { useSyncExternalStore } from "@alchemy.run/sigil/react";
+import type { ReactNode } from "react";
+import { theme } from "../../../Util/Theme.ts";
 import { useGlyphs } from "./Environment.tsx";
 import { SpinnerGlyph } from "./Feedback.tsx";
-import { ProgressBar } from "./ProgressBar.tsx";
 import { Box, Row, Stack } from "./Layout.tsx";
+import { ProgressBar } from "./ProgressBar.tsx";
 import { Text } from "./Typography.tsx";
-import { theme } from "../../../Util/Theme.ts";
 
 export interface TaskRowProps {
   /** Status glyph. Ignored while `spinning`; defaults to the bullet glyph. */
@@ -68,11 +69,7 @@ type ProgressGroupProps = {
   readonly labelWidth?: number;
 };
 
-export function ProgressGroup({
-  rows,
-  width = 20,
-  labelWidth,
-}: ProgressGroupProps) {
+export function ProgressGroup({ rows, width = 20, labelWidth }: ProgressGroupProps) {
   return (
     <Stack>
       {rows.map((row) => {
@@ -96,12 +93,8 @@ export function ProgressGroup({
             <Text bold tone={variant === "error" ? "danger" : variant}>
               {row.completed}/{row.total}
             </Text>
-            {row.failed ? (
-              <Text tone="danger">({row.failed} failed)</Text>
-            ) : null}
-            {row.detail === undefined ? null : (
-              <Text tone="muted">{row.detail}</Text>
-            )}
+            {row.failed ? <Text tone="danger">({row.failed} failed)</Text> : null}
+            {row.detail === undefined ? null : <Text tone="muted">{row.detail}</Text>}
           </Row>
         );
       })}

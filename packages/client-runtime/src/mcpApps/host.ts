@@ -3,6 +3,7 @@ import { MCP_APP_PROTOCOL_VERSION, type McpAppReference } from "@t3tools/shared/
 import * as Base64 from "effect/encoding/Base64";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const MAX_PENDING_REQUESTS = 16;
@@ -71,7 +72,12 @@ export interface McpAppCallToolResult {
   readonly _meta?: unknown;
 }
 
-export class McpAppHostRefusal extends Error {}
+export class McpAppHostRefusal extends Schema.TaggedError<McpAppHostRefusal>()(
+  "McpAppHostRefusal",
+  { message: Schema.String },
+) {}
+
+const isMcpAppHostRefusal = Schema.is(McpAppHostRefusal);
 
 export interface McpAppHostOptions {
   readonly app: McpAppReference;
@@ -141,7 +147,7 @@ function normalizeMcpAppToolResult(result: McpAppCallToolResult): McpAppCallTool
 }
 
 const errorMessage = (error: unknown) =>
-  error instanceof McpAppHostRefusal
+  isMcpAppHostRefusal(error)
     ? error.message
     : error instanceof Error && error.message.trim() !== ""
       ? error.message
@@ -342,7 +348,7 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
           options.downloadFile(files).then(
             () => ({}),
             (error: unknown) =>
-              error instanceof McpAppHostRefusal ? { isError: true } : Promise.reject(error),
+              isMcpAppHostRefusal(error) ? { isError: true } : Promise.reject(error),
           ),
         );
         return;
