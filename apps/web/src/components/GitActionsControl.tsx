@@ -1067,9 +1067,23 @@ export default function GitActionsControl({
   const ignoreWhitespace =
     useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? ignoreWhitespaceSetting;
   const { canReadFiles } = useFilesystemReadAccess(activeEnvironmentId);
-  // Same input and revision as the Diff panel's branch query, so both read one cached result.
+  // Same input as the Diff panel's branch query, so both read one cached result. Status
+  // totals join the revision because edits made outside a turn leave the mutation id as is.
+  const changesRevision = gitStatusForActions
+    ? JSON.stringify([
+        workspaceMutationId,
+        gitStatusForActions.refName,
+        gitStatusForActions.workingTree.insertions,
+        gitStatusForActions.workingTree.deletions,
+      ])
+    : null;
   const changesPreview = useEnvironmentQuery(
-    showChanges && isRepo && canReadFiles && activeEnvironmentId !== null && gitCwd !== null
+    showChanges &&
+      isRepo &&
+      canReadFiles &&
+      changesRevision !== null &&
+      activeEnvironmentId !== null &&
+      gitCwd !== null
       ? revisionedQuery(
           reviewEnvironment.diffPreview({
             environmentId: activeEnvironmentId,
@@ -1081,7 +1095,7 @@ export default function GitActionsControl({
               sourceKind: "branch-range",
             },
           }),
-          workspaceMutationId,
+          changesRevision,
         )
       : null,
   );
