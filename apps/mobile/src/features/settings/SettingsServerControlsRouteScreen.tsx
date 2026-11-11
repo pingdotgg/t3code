@@ -402,7 +402,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       "nadirRouting",
                       projectSelected
                         ? "Environment-wide setting. Select All projects to change it."
-                        : "Nadir picks each turn's model from the selected provider's list, never above yours unless your Nadir organization pins one. Sends the message text to getnadir.com.",
+                        : "Nadir picks each turn's model from the selected provider's list, never above yours unless your Nadir organization pins one. Sends the message text to getnadir.com and can delay a send by up to 2.5 seconds.",
                     )}
                     value={uniform("nadirRouting")}
                     disabled={disabledFor("nadirRouting")}

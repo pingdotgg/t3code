@@ -5047,32 +5047,39 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       if (path.dirname(directory) === directory) return cwd;
     }
   });
-  const resolveNadirCompactionHooks = Effect.gen(function* () {
-    if (Option.isNone(serverSettings)) return undefined;
-    const enabled = yield* serverSettings.value.getSettings.pipe(
-      Effect.map((settings) => settings.nadirCompaction),
-      Effect.orElseSucceed(() => false),
-    );
-    if (!enabled) return undefined;
-    const script = yield* findNadirCompactionScript({
-      fileSystem,
-      path,
-      claudeHome: homePath,
-      hostHome,
-      userSettingsLoaded: !customHome,
-    });
-    if (script === undefined) {
-      yield* Effect.logDebug("Nadir compaction skipped: not installed, or Claude Code runs it");
-      return undefined;
-    }
-    // Every hook would fail on a host without python3, so skip rather than add them.
-    const resolveExecutable = yield* SpawnExecutableResolution;
-    if (resolveExecutable("python3", hostPlatform, adapterOptions.environment) === undefined) {
-      yield* Effect.logDebug("Nadir compaction skipped: python3 is not on PATH");
-      return undefined;
-    }
-    return nadirCompactionHooks(script, nadirStateDir);
-  });
+  const resolveNadirCompactionHooks = Effect.fn("ClaudeAdapterV2.resolveNadirCompactionHooks")(
+    function* (cwd: string | null) {
+      if (Option.isNone(serverSettings)) return undefined;
+      const enabled = yield* serverSettings.value.getSettings.pipe(
+        Effect.map((settings) => settings.nadirCompaction),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!enabled) return undefined;
+      // A separate Claude home skips user settings; project and local settings always load.
+      const userSettings = path.join(homePath, "settings.json");
+      const settingsFiles = (yield* settingsFilesByPrecedence(cwd)).filter(
+        (file) => !customHome || file !== userSettings,
+      );
+      const script = yield* findNadirCompactionScript({
+        fileSystem,
+        path,
+        claudeHome: homePath,
+        hostHome,
+        settingsFiles,
+      });
+      if (script === undefined) {
+        yield* Effect.logDebug("Nadir compaction skipped: not installed, or Claude Code runs it");
+        return undefined;
+      }
+      // Every hook would fail on a host without python3, so skip rather than add them.
+      const resolveExecutable = yield* SpawnExecutableResolution;
+      if (resolveExecutable("python3", hostPlatform, adapterOptions.environment) === undefined) {
+        yield* Effect.logDebug("Nadir compaction skipped: python3 is not on PATH");
+        return undefined;
+      }
+      return nadirCompactionHooks(script, nadirStateDir);
+    },
+  );
 
   const settingsFilesByPrecedence = Effect.fn("ClaudeAdapterV2.settingsFilesByPrecedence")(
     function* (cwd: string | null) {
@@ -11072,7 +11079,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
           );
-          const extraHooks = yield* resolveNadirCompactionHooks;
+          const extraHooks = yield* resolveNadirCompactionHooks(turnInput.runtimePolicy.cwd);
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog,

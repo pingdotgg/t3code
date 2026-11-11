@@ -86,6 +86,19 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
   return { ...command, attachments: message?.attachments ?? [] };
 });
 
+/** A retried command replays its first receipt; routing again would record a model it never ran. */
+const hasReceipt = Effect.fn("ThreadMessageIntake.hasReceipt")(function* (
+  commandId: ThreadLaunch.ThreadLaunchInput["commandId"],
+) {
+  const receipts = yield* Effect.serviceOption(CommandReceiptStore.CommandReceiptStoreV2);
+  if (Option.isNone(receipts)) return false;
+  // A lookup that fails cannot rule a replay out, so the turn keeps its model.
+  return yield* receipts.value.getByCommandId(commandId).pipe(
+    Effect.map(Option.isSome),
+    Effect.orElseSucceed(() => true),
+  );
+});
+
 /**
  * A user's own new turn gets Nadir's model pick. Steering into a running turn, continuations,
  * compactions, and scheduled, delegated or guest sends keep the model they came with.
@@ -105,16 +118,14 @@ const withNadirModel = Effect.fn("ThreadMessageIntake.withNadirModel")(function*
     command.deliveryIntent !== "steer" &&
     command.deliveryIntent !== "restart" &&
     command.dispatchMode.type === "start_immediately";
-  if (!plainUserTurn || !(yield* NadirRouting.isEnabled)) return command;
-  // A retried command replays its first receipt; routing again would record a model it never ran.
-  const receipts = yield* Effect.serviceOption(CommandReceiptStore.CommandReceiptStoreV2);
-  if (Option.isSome(receipts)) {
-    // A lookup that fails cannot rule a replay out, so the turn keeps its model.
-    const replayed = yield* receipts.value.getByCommandId(command.commandId).pipe(
-      Effect.map(Option.isSome),
-      Effect.orElseSucceed(() => true),
-    );
-    if (replayed) return command;
+  // The cheap checks go first, so most short follow-ups skip the reads below.
+  if (
+    !plainUserTurn ||
+    !NadirRouting.isJudgeable(command.text) ||
+    !(yield* NadirRouting.isEnabled) ||
+    (yield* hasReceipt(command.commandId))
+  ) {
+    return command;
   }
   const threads = yield* ThreadManagement.ThreadManagementService;
   const shell = yield* threads
@@ -271,26 +282,39 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
   );
 });
 
+/** A new thread has no warm cache, so its first turn is the cheapest place to pick a model. */
+const withNadirLaunchModel = Effect.fn("ThreadMessageIntake.withNadirLaunchModel")(function* (
+  input: ThreadLaunch.ThreadLaunchInput,
+) {
+  const message = input.initialMessage;
+  const threadId = input.threadId;
+  if (
+    message === undefined ||
+    threadId === undefined ||
+    input.importedNativeThread !== undefined ||
+    input.delegatedFrom !== undefined ||
+    !NadirRouting.isJudgeable(message.text) ||
+    !(yield* NadirRouting.isEnabled) ||
+    (yield* hasReceipt(input.commandId))
+  ) {
+    return input;
+  }
+  const modelSelection = yield* NadirRouting.chooseModelSelection({
+    threadId,
+    commandId: input.commandId,
+    text: message.text,
+    selection: input.modelSelection,
+  });
+  return modelSelection === input.modelSelection ? input : { ...input, modelSelection };
+});
+
 export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(function* (
   launchInput: ThreadLaunch.ThreadLaunchInput,
 ) {
-  // A new thread has no warm cache, so its first turn is the cheapest place to pick a model.
-  const input =
-    launchInput.initialMessage === undefined ||
-    launchInput.threadId === undefined ||
-    launchInput.importedNativeThread !== undefined ||
-    launchInput.delegatedFrom !== undefined
-      ? launchInput
-      : {
-          ...launchInput,
-          modelSelection: yield* NadirRouting.chooseModelSelection({
-            threadId: launchInput.threadId,
-            text: launchInput.initialMessage.text,
-            selection: launchInput.modelSelection,
-          }),
-        };
+  // A launch these limits reject never sends its text to Nadir.
+  yield* AttachmentClaims.validateAttachmentLimits(launchInput.initialMessage?.attachments ?? []);
+  const input = yield* withNadirLaunchModel(launchInput);
   const launches = yield* ThreadLaunch.ThreadLaunchService;
-  yield* AttachmentClaims.validateAttachmentLimits(input.initialMessage?.attachments ?? []);
   if (!input.initialMessage?.attachments.some(AttachmentClaims.attachmentIsPendingUpload)) {
     return yield* launches.launch(input);
   }

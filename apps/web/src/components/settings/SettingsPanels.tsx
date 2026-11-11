@@ -1529,7 +1529,7 @@ const NADIR_SETTING_ROWS = {
     label: "Nadir model routing",
     searchId: "nadir-routing",
     description:
-      "Before each message you send, Nadir picks the model from the selected provider's list, never above the one you chose unless your Nadir organization pins a model, and the model picker shows what ran. Sends the message text to getnadir.com. Set NADIR_API_KEY on the host to use your Nadir account.",
+      "Before each message you send, Nadir picks the model from the selected provider's list, never above the one you chose unless your Nadir organization pins a model, and the model picker shows what ran. Sends the message text to getnadir.com, and a message can wait up to 2.5 seconds for its answer. Set NADIR_API_KEY on the host to use your Nadir account.",
   },
   nadirCompaction: {
     label: "Nadir compaction",

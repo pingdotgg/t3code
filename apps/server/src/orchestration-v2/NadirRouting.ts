@@ -276,6 +276,16 @@ export function pickModel(
   return selected;
 }
 
+/** Whether a prompt is worth asking Nadir about. Short follow-ups and slash commands are not. */
+export function isJudgeable(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    trimmed.length <= MAX_PROMPT_CHARS &&
+    !trimmed.startsWith("/") &&
+    trimmed.split(/\s+/).length >= MIN_PROMPT_WORDS
+  );
+}
+
 /** True when Nadir routing is on in Settings. */
 export const isEnabled = ServerSettings.ServerSettingsService.pipe(
   Effect.flatMap((service) => service.getSettings),
@@ -314,6 +324,8 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
     readonly selection: ModelSelection;
     readonly cache?: NadirCacheState | undefined;
   }) {
+    // A short follow-up or a slash command continues on the thread's model; the ceiling stays.
+    if (!isJudgeable(input.text)) return input.selection;
     // Optional so callers outside the client intake (MCP tools, tests) need not provide them.
     const client = yield* Effect.serviceOption(HttpClient.HttpClient);
     const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
@@ -333,17 +345,12 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
         if (earlier !== undefined) return earlier;
         const baseline = yield* baselineFor(store, input.threadId, input.selection);
         const text = input.text.trim();
-        const judgeable =
-          text.length <= MAX_PROMPT_CHARS &&
-          !text.startsWith("/") &&
-          text.split(/\s+/).length >= MIN_PROMPT_WORDS;
         const providers = yield* registry.value.getProviders;
         const provider = providers.find(
           (candidate) => candidate.instanceId === baseline.instanceId,
         );
         const menu = modelMenu(provider);
-        // A short follow-up or a slash command continues on the thread's model; the ceiling stays.
-        if (!judgeable || !menu.includes(baseline.model)) return input.selection;
+        if (!menu.includes(baseline.model)) return input.selection;
         const current = input.cache?.model ?? input.selection.model;
         const answer = yield* askNadir(
           client.value,

@@ -41,7 +41,7 @@ function runsNadirCompaction(settings: unknown): boolean {
 
 /**
  * The compaction script to run, or undefined when Nadir is not installed or Claude Code already
- * runs it from the user settings it loads, so the hooks never run twice. Looks in the
+ * runs it from a settings file it loads, so the hooks never run twice. Looks in the
  * `npx nadir-labs` install first, then the `nadir-route` plugin.
  */
 export const findNadirCompactionScript = Effect.fn("NadirCompaction.findScript")(function* (input: {
@@ -49,13 +49,12 @@ export const findNadirCompactionScript = Effect.fn("NadirCompaction.findScript")
   readonly path: Path.Path;
   readonly claudeHome: string;
   readonly hostHome: string;
-  /** False when T3 runs Claude with its own home, which skips the user's settings. */
-  readonly userSettingsLoaded: boolean;
+  /** The user, project and local settings files Claude Code loads for this session. */
+  readonly settingsFiles: ReadonlyArray<string>;
 }) {
   const { fileSystem, path, claudeHome } = input;
-  if (input.userSettingsLoaded) {
-    const userSettings = yield* readJson(fileSystem, path.join(claudeHome, "settings.json"));
-    if (runsNadirCompaction(userSettings)) return undefined;
+  for (const file of input.settingsFiles) {
+    if (runsNadirCompaction(yield* readJson(fileSystem, file))) return undefined;
   }
   const homes = [claudeHome, path.join(input.hostHome, ".claude")];
   const pluginScripts: string[] = [];

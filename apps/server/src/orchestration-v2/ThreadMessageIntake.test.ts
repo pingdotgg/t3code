@@ -10,6 +10,7 @@ import {
   EventId,
   GuestMessageId,
   MessageId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
@@ -462,6 +463,7 @@ describe("Nadir routing at intake", () => {
   // Only the fields the launch path reads; the launch service is a stub.
   const launch = (overrides: Record<string, unknown> = {}) =>
     ({
+      commandId: CommandId.make("launch-routed"),
       threadId: ThreadId.make("thread-launched"),
       modelSelection: opus,
       initialMessage: { text: prompt, attachments: [] },
@@ -485,6 +487,9 @@ describe("Nadir routing at intake", () => {
     slashCommands: [],
     skills: [],
   };
+
+  // Counts the thread reads routing does, so a test can show the cheap checks skip them.
+  let shellReads = 0;
 
   const layerMockReceipts = Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({
     getByCommandId: (commandId) =>
@@ -523,13 +528,19 @@ describe("Nadir routing at intake", () => {
                 ),
               // Only these shell and snapshot fields are read.
               getThreadShell: () =>
-                Effect.succeed({
-                  activeRunId,
-                  modelSelection: opus,
-                  activeProviderThreadId: null,
-                } as unknown as Effect.Success<
-                  ReturnType<ThreadManagementService.ThreadManagementServiceShape["getThreadShell"]>
-                >),
+                Effect.sync(() => {
+                  shellReads += 1;
+                }).pipe(
+                  Effect.as({
+                    activeRunId,
+                    modelSelection: opus,
+                    activeProviderThreadId: null,
+                  } as unknown as Effect.Success<
+                    ReturnType<
+                      ThreadManagementService.ThreadManagementServiceShape["getThreadShell"]
+                    >
+                  >),
+                ),
               getThreadSnapshotWindow: () =>
                 Effect.succeed({
                   projection: {
@@ -698,10 +709,36 @@ describe("Nadir routing at intake", () => {
       for (const [label, input] of [
         ["an imported thread", launch({ importedNativeThread: {} })],
         ["a delegated thread", launch({ delegatedFrom: {} })],
+        // The launch service replays a retried launch's first receipt.
+        ["a retried launch", launch({ commandId: CommandId.make("send-replayed") })],
+        ["a receipt lookup that fails", launch({ commandId: CommandId.make("send-lookup-fails") })],
       ] as const) {
         const result = yield* run(launchThread(input), null);
         expect(result, label).toEqual({ requests: 0, dispatched: ["claude-opus-5-5"] });
       }
+      // A launch over the attachment limit is rejected before its text reaches Nadir.
+      const overLimit = launch({
+        initialMessage: {
+          text: prompt,
+          attachments: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS + 1 }, () => ({
+            type: "file",
+          })),
+        },
+      });
+      expect(yield* run(launchThread(overLimit), null)).toEqual({ requests: 0, dispatched: [] });
+    }).pipe(Effect.provide(layerIntakeTest)),
+  );
+
+  it.effect("skips the thread reads for a follow-up too short to judge", () =>
+    Effect.gen(function* () {
+      shellReads = 0;
+      expect(yield* run(dispatchCommand(send({ text: "thanks, ship it" })), null)).toEqual({
+        requests: 0,
+        dispatched: [undefined],
+      });
+      expect(shellReads).toBe(0);
+      yield* run(dispatchCommand(send()), null);
+      expect(shellReads).toBe(1);
     }).pipe(Effect.provide(layerIntakeTest)),
   );
 });

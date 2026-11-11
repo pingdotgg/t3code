@@ -18,8 +18,9 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
         const path = yield* Path.Path;
         const claudeHome = yield* fileSystem.makeTempDirectoryScoped();
         const hostHome = yield* fileSystem.makeTempDirectoryScoped();
-        const find = (userSettingsLoaded = true) =>
-          findNadirCompactionScript({ fileSystem, path, claudeHome, hostHome, userSettingsLoaded });
+        const userSettings = path.join(claudeHome, "settings.json");
+        const find = (settingsFiles: ReadonlyArray<string> = [userSettings]) =>
+          findNadirCompactionScript({ fileSystem, path, claudeHome, hostHome, settingsFiles });
         const touch = (file: string) =>
           fileSystem
             .makeDirectory(path.dirname(file), { recursive: true })
@@ -66,7 +67,12 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
         });
         expect(yield* find()).toBeUndefined();
         // A separate T3 Claude home skips user settings, so T3 must add the hooks itself.
-        expect(yield* find(false)).toBe(labsScript);
+        expect(yield* find([])).toBe(labsScript);
+        // Project and local settings load either way, and a repo can enable Nadir there.
+        const projectSettings = path.join(hostHome, "repo", ".claude", "settings.local.json");
+        yield* touch(projectSettings);
+        yield* writeJson(projectSettings, { enabledPlugins: { "nadir-route@nadir": true } });
+        expect(yield* find([projectSettings])).toBeUndefined();
 
         // A plugin installed only under the host's own Claude home is found from a separate one.
         const separateHome = yield* fileSystem.makeTempDirectoryScoped();
@@ -88,11 +94,11 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
             path,
             claudeHome: separateHome,
             hostHome,
-            userSettingsLoaded: false,
+            settingsFiles: [],
           }),
         ).toBe(hostPluginScript);
 
-        yield* writeJson(path.join(claudeHome, "settings.json"), {
+        yield* writeJson(userSettings, {
           enabledPlugins: { "nadir-route@nadir": true },
         });
         expect(yield* find()).toBeUndefined();
