@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
-import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { ThreadDetailsSection, useThreadDetailsSectionCollapsed } from "./ThreadDetailsSection";
 import { SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
@@ -271,6 +271,7 @@ export function ThreadChildChatsPanel(props: {
   const navigate = useNavigate();
   const threadShells = useThreadShells();
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
+  const [collapsed, setCollapsed] = useThreadDetailsSectionCollapsed("children");
   // Shells from every environment: a child on another machine nests here too.
   const children = threadChildChats(threadShells, {
     environmentId: props.environmentId,
@@ -287,6 +288,8 @@ export function ThreadChildChatsPanel(props: {
     <ThreadDetailsSection
       headingId="thread-details-children-heading"
       title={working > 0 ? `Children · ${working} working` : `Children · ${children.length}`}
+      collapsed={collapsed}
+      onCollapsedChange={setCollapsed}
       data-thread-children-panel
     >
       <ThreadLineageRowList
@@ -477,6 +480,7 @@ export function ThreadRelationshipsPanel(props: {
   readonly showSideChats: boolean;
 }) {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
+  const [lineageCollapsed, setLineageCollapsed] = useThreadDetailsSectionCollapsed("lineage");
   const projection = useThreadProjection(ref)?.projection ?? null;
   const providersByEnvironment = useEnvironmentProviders();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
@@ -670,6 +674,9 @@ export function ThreadRelationshipsPanel(props: {
       delegatedFrom !== undefined ||
       // Disconnect lives in this heading, so a thread with only side chats still shows it.
       (canDetach && sideChats.length > 0));
+  const lineageCount =
+    groups.reduce((count, group) => count + group.rows.length, 0) +
+    (delegatedFrom === undefined ? 0 : 1);
   const sideChatsVisible = props.showSideChats && sideChats.length > 0;
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
 
@@ -1021,16 +1028,15 @@ export function ThreadRelationshipsPanel(props: {
       {lineageVisible ? (
         <ThreadDetailsSection
           headingId="thread-details-lineage-heading"
-          title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
-          // A lone "Previous subagents" row names itself; the heading returns for status or actions.
-          showHeading={
-            runningCount > 0 ||
-            canDetach ||
-            related.length > 0 ||
-            active.length > 0 ||
-            remoteActive.length > 0 ||
-            delegatedFrom !== undefined
+          title={
+            runningCount > 0
+              ? `Lineage · ${runningCount} running`
+              : lineageCount > 0
+                ? `Lineage · ${lineageCount}`
+                : "Lineage"
           }
+          collapsed={lineageCollapsed}
+          onCollapsedChange={setLineageCollapsed}
           data-thread-relationships-panel
           actions={
             canDetach ? (
