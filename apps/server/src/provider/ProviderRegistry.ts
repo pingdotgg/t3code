@@ -27,6 +27,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
+import { WorkspaceScanRunsHooks } from "./WorkspaceScanHooks.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
@@ -164,6 +165,9 @@ export function upsertProviderWorkspaceSnapshot(
       ? (previousSnapshot?.slashCommands ?? scopedSnapshot.slashCommands)
       : scopedSnapshot.slashCommands,
     ...(scopedSnapshot.slashCommandsPending ? { slashCommandsPending: true } : {}),
+    ...(scopedSnapshot.hooksSkipped === undefined
+      ? {}
+      : { hooksSkipped: scopedSnapshot.hooksSkipped }),
     skills: scopedSnapshot.skills,
     ...(optionDescriptors === undefined ? {} : { optionDescriptors }),
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
@@ -441,7 +445,10 @@ export const layer = Layer.effect(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
     const workspaceRefreshesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
+      ReadonlyMap<
+        ProviderInstance,
+        ReadonlyMap<string, { readonly done: Deferred.Deferred<void>; readonly runHooks: boolean }>
+      >
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
@@ -970,13 +977,22 @@ export const layer = Layer.effect(
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
+      const runHooks = yield* WorkspaceScanRunsHooks;
       const now = yield* DateTime.now;
       if (
         !provider ||
         !provider.enabled ||
+        // A hook-free scan would replace commands that hooks registered with
+        // fewer, so a read-only caller keeps the full inventory, even stale.
+        // Only drivers whose scans run hooks report `hooksSkipped: false`.
+        (!runHooks &&
+          scannedFrom &&
+          !scannedFrom.slashCommandsPending &&
+          scannedFrom.hooksSkipped === false) ||
         (!input.fresh &&
           scannedFrom &&
           !scannedFrom.slashCommandsPending &&
+          !(runHooks && scannedFrom.hooksSkipped) &&
           isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
       ) {
         return providers;
@@ -985,14 +1001,18 @@ export const layer = Layer.effect(
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
-      const token = yield* Deferred.make<void>();
+      const token = { done: yield* Deferred.make<void>(), runHooks };
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
             Effect.andThen(refreshInstance(input.instanceId)),
           )
         : Effect.void;
       const runScan = refreshMachineSnapshot.pipe(
-        Effect.andThen(instance.snapshotForCwd(input.scanCwd ?? input.cwd)),
+        Effect.andThen(
+          instance
+            .snapshotForCwd(input.scanCwd ?? input.cwd)
+            .pipe(Effect.provideService(WorkspaceScanRunsHooks, runHooks)),
+        ),
         // Scans fail on error; returned inventory remains valid even when provider health reports an error.
         Effect.flatMap((scopedSnapshot) =>
           instanceRegistry.getInstance(input.instanceId).pipe(
@@ -1029,7 +1049,7 @@ export const layer = Layer.effect(
             if (nextCwds.size) next.set(instance, nextCwds);
             else next.delete(instance);
             return next;
-          }).pipe(Effect.andThen(Deferred.succeed(token, undefined))),
+          }).pipe(Effect.andThen(Deferred.succeed(token.done, undefined))),
         ),
       );
       // The claim and the fork happen together, so the token is always completed. The scan is
@@ -1039,7 +1059,10 @@ export const layer = Layer.effect(
           const inFlight = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
             const current = refreshes.get(instance);
             const running = current?.get(input.cwd);
-            if (!input.fresh && running) return [running, refreshes] as const;
+            // Join a scan unless it skips hooks this caller may run. A hook-free caller never
+            // replaces a scan that runs hooks, even when fresh.
+            const joins = running?.runHooks ? !input.fresh || !runHooks : !input.fresh && !runHooks;
+            if (running && joins) return [running.done, refreshes] as const;
             const next = new Map(refreshes);
             next.set(instance, new Map(current).set(input.cwd, token));
             return [undefined, next] as const;

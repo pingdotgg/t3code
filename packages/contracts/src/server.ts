@@ -127,6 +127,11 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   checkedAt: IsoDateTime,
   slashCommands: Schema.Array(ServerProviderSlashCommand),
   slashCommandsPending: Schema.optional(Schema.Boolean),
+  /**
+   * A read-only client's scan skips session hooks, which can register
+   * commands. Clients that may operate the environment rescan such a snapshot.
+   */
+  hooksSkipped: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
 });

@@ -224,14 +224,16 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
+  readonly runHooks?: boolean;
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
-    // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
-    settings: { disableAllHooks: true },
+    // Health checks fire every few minutes, so they must not run SessionStart hooks. Workspace
+    // command discovery for operators runs them because mods register commands from one.
+    ...(input.runHooks ? {} : { settings: { disableAllHooks: true } }),
     allowedTools: [],
     // Exclude filesystem MCP servers; omit strict mode when managed-mcp.json already excludes them and forbids the flag.
     mcpServers: {},
@@ -371,6 +373,7 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   includeUsage = true,
+  runHooks = false,
 ) => {
   const abort = new AbortController();
   const abortProbe = Effect.sync(() => {
@@ -403,8 +406,10 @@ const probeClaudeCapabilities = (
             environment: claudeEnvironment,
             cwd,
             managedMcpConfig,
+            runHooks,
           }),
         });
+        // Claude Code answers initialize after SessionStart hooks finish, so init lists mod commands.
         const init = await q.initializationResult();
         return { q, init, graceMs };
       },
@@ -492,16 +497,20 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   claudeSettings: ClaudeSettings,
   machineSnapshot: ServerProvider,
   cwd: string,
-  environment?: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv | undefined,
+  runHooks: boolean,
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
   const fileSystem = yield* FileSystem.FileSystem;
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
-  const probeResult = cwdExists
-    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(Effect.result)
-    : undefined;
+  const probe = (hooks: boolean) =>
+    probeClaudeCapabilities(claudeSettings, environment, cwd, false, hooks).pipe(Effect.result);
+  let probeResult = cwdExists ? yield* probe(runHooks) : undefined;
+  // A hook can outlast the probe deadline. Probing again without hooks still lists the
+  // project's own commands; a failure of both stays pending so clients retry.
+  if (runHooks && probeResult && Result.isFailure(probeResult)) probeResult = yield* probe(false);
   const capabilities =
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   return {
@@ -512,6 +521,7 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
       ...(capabilities?.slashCommands ?? []),
     ]),
     slashCommandsPending: cwdExists && !capabilities,
+    hooksSkipped: !runHooks,
   };
 });
 

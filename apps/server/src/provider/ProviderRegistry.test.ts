@@ -56,6 +56,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
+import { WorkspaceScanRunsHooks } from "./WorkspaceScanHooks.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHydration.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
@@ -1949,6 +1950,151 @@ it.layer(
           assert.deepStrictEqual(recovered?.skills, laterSkills);
           assert.deepStrictEqual(recovered?.slashCommands, [COMPACT_SLASH_COMMAND]);
           assert.strictEqual(recovered?.slashCommandsPending, undefined);
+
+          // Codex scans run no hooks, so a read-only caller still refreshes
+          // an expired scan an operator published.
+          yield* TestClock.adjust(PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS);
+          yield* registry
+            .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" })
+            .pipe(Effect.provideService(WorkspaceScanRunsHooks, true));
+          yield* TestClock.adjust(PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS);
+          yield* Ref.set(scanResult, { ...healthyProvider, skills: firstSkills });
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          assert.deepStrictEqual((yield* workspaceOf)?.skills, firstSkills);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("a hook-free workspace scan does not stand in for one that may run hooks", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("claudeAgent");
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const provider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [COMPACT_SLASH_COMMAND],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const modCommand = { name: "handoffs" };
+        const hookScans = yield* Ref.make(0);
+        const hookFreeScans = yield* Ref.make(0);
+        const hookScanStarted = yield* Deferred.make<void>();
+        const releaseHookScan = yield* Deferred.make<void>();
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: "claude:instance" },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.succeed(provider),
+            refresh: Effect.succeed(provider),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          snapshotForCwd: () =>
+            Effect.gen(function* () {
+              if (!(yield* WorkspaceScanRunsHooks)) {
+                yield* Ref.update(hookFreeScans, (count) => count + 1);
+                return { ...provider, slashCommandsPending: false, hooksSkipped: true };
+              }
+              yield* Ref.update(hookScans, (count) => count + 1);
+              yield* Deferred.succeed(hookScanStarted, undefined);
+              yield* Deferred.await(releaseHookScan);
+              return {
+                ...provider,
+                slashCommands: [COMPACT_SLASH_COMMAND, modCommand],
+                slashCommandsPending: false,
+                hooksSkipped: false,
+              };
+            }),
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(requestedId === instanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-hook-scan-",
+              }),
+            ),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const scan = registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          const operatorScan = scan.pipe(Effect.provideService(WorkspaceScanRunsHooks, true));
+          const workspaceSnapshot = Effect.map(
+            registry.getProviders,
+            (providers) => providers[0]?.workspaceSnapshots?.[0],
+          );
+          const commandNames = Effect.map(workspaceSnapshot, (snapshot) =>
+            snapshot?.slashCommands.map((command) => command.name),
+          );
+
+          // A read-only caller scans without hooks; another reuses that scan.
+          yield* scan;
+          yield* scan;
+          assert.strictEqual(yield* Ref.get(hookFreeScans), 1);
+          assert.deepStrictEqual(yield* commandNames, ["compact"]);
+          // Clients read this to ask an operator's server for a hook scan.
+          assert.strictEqual((yield* workspaceSnapshot)?.hooksSkipped, true);
+
+          // An operator does not reuse it inside the TTL, and a read-only
+          // caller arriving meanwhile joins the scan instead of starting one.
+          const operator = yield* Effect.forkChild(operatorScan);
+          yield* Effect.raceFirst(Deferred.await(hookScanStarted), Fiber.join(operator));
+          assert.strictEqual(yield* Ref.get(hookScans), 1);
+          const reader = yield* Effect.forkChild(scan, { startImmediately: true });
+          yield* Deferred.succeed(releaseHookScan, undefined);
+          yield* Fiber.join(operator);
+          yield* Fiber.join(reader);
+          assert.strictEqual(yield* Ref.get(hookFreeScans), 1);
+          assert.deepStrictEqual(yield* commandNames, ["compact", "handoffs"]);
+          assert.strictEqual((yield* workspaceSnapshot)?.hooksSkipped, false);
+
+          // The full inventory then serves both kinds of caller.
+          yield* scan;
+          yield* operatorScan;
+          assert.strictEqual(yield* Ref.get(hookScans), 1);
+          assert.strictEqual(yield* Ref.get(hookFreeScans), 1);
+
+          // Once stale, a read-only caller still does not swap it for fewer commands.
+          yield* TestClock.adjust(PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS);
+          yield* scan;
+          assert.strictEqual(yield* Ref.get(hookFreeScans), 1);
+          assert.deepStrictEqual(yield* commandNames, ["compact", "handoffs"]);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

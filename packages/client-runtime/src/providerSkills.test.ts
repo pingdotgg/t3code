@@ -267,6 +267,19 @@ describe("provider workspace snapshot refresh atom", () => {
     unmount();
   });
 
+  it("rescans a current snapshot that a read-only client scanned without hooks", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:01:00.000Z") });
+    const [scanned] = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { run, unmount } = setup([
+      {
+        ...scanned!,
+        workspaceSnapshots: [{ ...scanned!.workspaceSnapshots![0]!, hooksSkipped: true }],
+      },
+    ]);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
   it("cools down a failed scan, then retries on its own while the scan stays pending", async () => {
     vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
     const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z", true));

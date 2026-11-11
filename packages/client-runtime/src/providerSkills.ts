@@ -114,6 +114,10 @@ function hasCurrentProviderWorkspaceSnapshot(
   return Boolean(
     snapshot &&
     !snapshot.slashCommandsPending &&
+    // A read-only client's scan may lack hook commands. Asking again is
+    // cheap: the server answers read-only callers from this snapshot and
+    // rescans with hooks only for callers that may operate.
+    !snapshot.hooksSkipped &&
     isProviderWorkspaceSnapshotCurrent(snapshot, nowMs),
   );
 }
