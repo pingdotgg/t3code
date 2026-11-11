@@ -41,6 +41,7 @@ import { serverEnvironment } from "../../state/server";
 import { assetImageSource } from "../../lib/assetImageSource";
 import {
   prepareQueuedRunEditDraft,
+  restoreQueuedEditAttachments,
   queuedEditDraftKey,
   recoverQueuedRunEdit,
   watchQueuedRunEdit,
@@ -225,7 +226,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
               )
             )
               throw new Error("This attachment cannot be edited.");
-            return await Promise.all(
+            return await restoreQueuedEditAttachments(
               entry.attachments
                 .filter(
                   (attachment): attachment is ChatImageAttachment | ChatFileAttachment =>

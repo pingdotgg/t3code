@@ -6356,7 +6356,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const editingQueueRun =
       dispatchMode.type === "queue_after_active" &&
       projection.runs.some((run) => run.status === "queued" && run.queueEditId != null)
-        ? nextQueuedRun(projection)
+        ? queuedRunsInDeliveryOrder(projection)[0]
         : undefined;
     const queueBehindRun = activeRun ?? worktreeMissingRun ?? editingQueueRun;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
@@ -13774,6 +13774,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? undefined
             : projection.runs.find((run) => run.id === selectedRunId && run.status === "queued");
         if (selectedRunId !== undefined) {
+          if (selectedRun?.queueEditId != null) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Finish editing this queued message before sending it now.",
+            });
+          }
           const selectedMessage = projection.messages.find(
             (message) => message.id === selectedRun?.userMessageId,
           );

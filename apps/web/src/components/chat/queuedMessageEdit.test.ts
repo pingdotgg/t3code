@@ -85,6 +85,34 @@ const uploadedFile = {
 };
 
 describe("queued message file edits", () => {
+  it("records stashed attachments as intentional removals", async () => {
+    const store = useComposerDraftStore.getState();
+    await prepareQueuedMessageEditDraft({
+      editTarget,
+      edit,
+      environmentId,
+      text: "Original message",
+      attachments: [uploadedFile],
+      readImage: async () => {
+        throw new Error("Unexpected image");
+      },
+    });
+    store.clearComposerPromptAndImages(editTarget);
+    store.setPrompt(editTarget, "Replacement text");
+    const draft = store.getComposerDraft(editTarget)!;
+    expect(draft.queuedEdit?.removedAttachmentIds).toEqual([uploadedFile.id]);
+    await expect(
+      prepareQueuedEditPayload({
+        edit: draft.queuedEdit!,
+        content: draft,
+        readImage: async () => {
+          throw new Error("Unexpected image");
+        },
+        uploadFiles: async () => [],
+      }),
+    ).resolves.toMatchObject({ attachments: [] });
+  });
+
   beforeEach(() => {
     useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
   });

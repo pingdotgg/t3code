@@ -9332,6 +9332,42 @@ const pauseQueueTerminalListener = Effect.fnUntraced(function* (threadId: Thread
 });
 
 it.layer(layerTest)("queued edit holds", (it) => {
+  it.effect("queues new messages behind an edit even when Stop held the entire queue", () =>
+    Effect.gen(function* () {
+      const q = yield* editableQueue("send-after-stop");
+      yield* q.orchestrator.dispatch(q.begin);
+      yield* q.orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make(`${q.threadId}:stop`),
+        threadId: q.threadId,
+        runId: q.active.id,
+        holdQueue: true,
+      });
+      yield* q.orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${q.threadId}:new-message`),
+        threadId: q.threadId,
+        messageId: MessageId.make(`${q.threadId}:new-message`),
+        text: "Wait behind the edit",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const after = yield* q.orchestrator.getThreadProjection(q.threadId);
+      assert.deepEqual(
+        after.runs.slice(1).map((run) => run.status),
+        ["queued", "queued", "queued"],
+      );
+      assert.isAbove(after.runs.at(-1)!.queuePosition!, q.later.queuePosition ?? q.later.ordinal);
+      yield* q.orchestrator.dispatch(q.finish("save"));
+      const resumed = yield* q.orchestrator.getThreadProjection(q.threadId);
+      assert.equal(resumed.runs.find((run) => run.id === q.queued.id)?.status, "starting");
+      assert.equal(resumed.runs.at(-1)?.status, "queued");
+    }),
+  );
+
   it.effect("lets an explicit Resume release a missing-worktree pause", () =>
     Effect.gen(function* () {
       const q = yield* editableQueue("resume-missing-worktree", null);
@@ -9385,12 +9421,18 @@ it.layer(layerTest)("queued edit holds", (it) => {
           commandId: CommandId.make(`${q.threadId}:resume-while-editing`),
           threadId: q.threadId,
         });
-        yield* q.orchestrator.dispatch({
-          type: "queued-run.start",
-          commandId: CommandId.make(`${q.threadId}:send-now-while-editing`),
-          threadId: q.threadId,
-          runId: q.queued.id,
-        });
+        assert.isTrue(
+          Exit.isFailure(
+            yield* Effect.exit(
+              q.orchestrator.dispatch({
+                type: "queued-run.start",
+                commandId: CommandId.make(`${q.threadId}:send-now-while-editing`),
+                threadId: q.threadId,
+                runId: q.queued.id,
+              }),
+            ),
+          ),
+        );
         const held = yield* q.orchestrator.getThreadProjection(q.threadId);
         const shell = (yield* q.orchestrator.getShellSnapshot()).threads.find(
           (thread) => thread.id === q.threadId,
@@ -9599,6 +9641,18 @@ it.layer(layerTest)("queued edit holds", (it) => {
           const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
           yield* recovery.reconcile("startup");
         }
+        assert.isTrue(
+          Exit.isFailure(
+            yield* Effect.exit(
+              q.orchestrator.dispatch({
+                type: "queued-run.start",
+                commandId: CommandId.make(`${q.threadId}:stale-send-now`),
+                threadId: q.threadId,
+                runId: q.queued.id,
+              }),
+            ),
+          ),
+        );
         assert.equal(
           (yield* q.orchestrator.getThreadProjection(q.threadId)).runs.find(
             (run) => run.id === q.queued.id,

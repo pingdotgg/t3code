@@ -23,6 +23,7 @@ import {
 
 import { uploadedComposerContext } from "../lib/composerContext";
 import type { DraftComposerAttachment } from "../lib/composerImages";
+import { removePersistedComposerAttachmentFile } from "../lib/composerImages";
 import { appAtomRegistry } from "./atom-registry";
 import { abortComposerDraftOperations } from "./composerDraftOperations";
 import { queuedEditDraftKey } from "./queued-edit-draft-key";
@@ -49,6 +50,38 @@ export interface QueuedRunEdit {
 }
 
 export { queuedEditDraftKey } from "./queued-edit-draft-key";
+
+export function getQueuedRecoverySendDraft(threadKey: string, draftKey: string) {
+  const content = getComposerDraftSnapshot(draftKey);
+  const settings = getComposerDraftSnapshot(threadKey);
+  return {
+    ...content,
+    modelSelection: settings.modelSelection,
+    runtimeMode: settings.runtimeMode,
+    interactionMode: settings.interactionMode,
+  };
+}
+
+export async function restoreQueuedEditAttachments(
+  imports: ReadonlyArray<Promise<DraftComposerAttachment>>,
+): Promise<ReadonlyArray<DraftComposerAttachment>> {
+  const results = await Promise.allSettled(imports);
+  const restored = results.flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure) {
+    await Promise.allSettled(
+      restored.map((attachment) =>
+        attachment.fileUri
+          ? removePersistedComposerAttachmentFile(attachment.fileUri)
+          : Promise.resolve(),
+      ),
+    );
+    throw failure.reason;
+  }
+  return restored;
+}
 
 const queuedRunEdits = makeQueuedRunEditStore<QueuedRunEditDraft>({
   registry: appAtomRegistry,

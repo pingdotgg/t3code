@@ -27,6 +27,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   grantedEnvironments: new Set<string>(),
   connectionState: "connected",
+  recoveryText: null as string | null,
   draft: {
     text: "Keep my draft",
     attachments: [] as DraftComposerImageAttachment[],
@@ -83,13 +84,15 @@ vi.mock("@t3tools/client-runtime/state/context-window", async (importOriginal) =
 }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
-vi.mock("./queued-run-edit", () => ({
+vi.mock("./queued-run-edit", async (importOriginal) => ({
+  getQueuedRecoverySendDraft: (await importOriginal<typeof import("./queued-run-edit")>())
+    .getQueuedRecoverySendDraft,
   useQueuedRunEdit: () => null,
   useQueuedRunEditSaving: () => false,
   getQueuedRunEdit: () => null,
   useSavedQueuedEditDrafts: () => [],
-  useQueuedEditRecovery: () => null,
-  getQueuedEditRecovery: () => null,
+  useQueuedEditRecovery: () => (state.recoveryText === null ? null : "secondary:thread:recovery"),
+  getQueuedEditRecovery: () => (state.recoveryText === null ? null : "secondary:thread:recovery"),
 }));
 vi.mock("./preferences", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
@@ -157,7 +160,10 @@ vi.mock("./use-composer-drafts", async () => {
   return {
     composerDraftsAtom: Atom.make({}),
     composerContextImportsAtom: Atom.make({}),
-    getComposerDraftSnapshot: () => state.draft,
+    getComposerDraftSnapshot: (key: string) =>
+      key === "secondary:thread:recovery"
+        ? { ...state.draft, text: state.recoveryText }
+        : state.draft,
     isFreshSessionPending: () => state.freshPending,
     setFreshSessionPending: state.setFreshPending,
     clearComposerDraftContent: state.clearDraft,
@@ -201,6 +207,7 @@ const NO_SIDE_CHATS = { startSideChat: async () => false };
 beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
   state.connectionState = "connected";
+  state.recoveryText = null;
   state.draft = {
     text: "Keep my draft",
     attachments: [],
@@ -233,6 +240,27 @@ beforeEach(() => {
 });
 
 describe("mobile task permissions", () => {
+  it.each(["/clear", "/side explain this", "approval"])(
+    "clears only the selected recovery draft for %s",
+    async (text) => {
+      state.grantedEnvironments.add("secondary");
+      state.recoveryText = text;
+      state.thread.latestRun = { runId: "run" };
+      state.serverConfig = {
+        ...state.serverConfig,
+        environment: { capabilities: { freshContext: true, sideChats: true } },
+      } as ServerConfig;
+      const composer = useThreadComposerState({ startSideChat: async () => true });
+      await composer.onSendMessage(
+        undefined,
+        text === "approval" ? async () => "responded" : undefined,
+      );
+      expect(state.clearDraft).toHaveBeenCalledExactlyOnceWith("secondary:thread:recovery");
+      expect(state.draft.text).toBe("Keep my draft");
+      expect(state.enqueue).not.toHaveBeenCalled();
+    },
+  );
+
   it("consumes an approval reply without queueing a parent message", async () => {
     state.grantedEnvironments.add("secondary");
     const composer = useThreadComposerState(NO_SIDE_CHATS);

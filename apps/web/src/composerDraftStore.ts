@@ -4137,6 +4137,23 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...current.environmentContexts.map(environmentContextReference),
                 ...current.previewAnnotations.map(previewAnnotationContextReference),
               ]),
+              ...(current.queuedEdit
+                ? {
+                    queuedEdit: {
+                      ...current.queuedEdit,
+                      removedAttachmentIds: [
+                        ...new Set([
+                          ...(current.queuedEdit.removedAttachmentIds ?? []),
+                          ...[...current.images, ...current.files]
+                            .filter((attachment) =>
+                              current.queuedEdit?.originalAttachmentIds.includes(attachment.id),
+                            )
+                            .map((attachment) => attachment.id),
+                        ]),
+                      ],
+                    },
+                  }
+                : {}),
               images: [],
               files: [],
               nonPersistedImageIds: [],

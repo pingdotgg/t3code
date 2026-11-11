@@ -17,6 +17,7 @@ import {
   ComposerContextId,
   MessageId,
   RunId,
+  ProviderInstanceId,
   type ChatAttachment,
 } from "@t3tools/contracts";
 
@@ -28,6 +29,8 @@ import {
   watchQueuedRunEdit,
   startQueuedRunEditSave,
   prepareQueuedRunEditDraft,
+  restoreQueuedEditAttachments,
+  getQueuedRecoverySendDraft,
   canReuseQueuedRunEditDraft,
   recoverQueuedRunEdit,
   getQueuedRunEdit,
@@ -44,7 +47,9 @@ import {
   replaceComposerDraftAttachments,
   removeComposerDraftAttachment,
   setComposerDraftText,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
+import * as composerImages from "../lib/composerImages";
 
 vi.mock("expo-file-system", () => ({
   Directory: class {
@@ -485,5 +490,55 @@ describe("activeComposerDraftKey", () => {
 
   it("falls back to the thread's draft once the edit has ended", () => {
     expect(activeComposerDraftKey(threadKey, editKey, null)).toBe(threadKey);
+  });
+});
+
+describe("queued edit recovery", () => {
+  it("sends recovered content with the settings displayed by the thread controls", () => {
+    const threadKey = "env:recovery-settings";
+    const recoveryKey = queuedEditDraftKey(threadKey, "run-1");
+    setComposerDraftText(threadKey, "Unrelated draft");
+    setComposerDraftText(recoveryKey, "Recovered message");
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "selected-model",
+    };
+    updateComposerDraftSettings(threadKey, {
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+    expect(getQueuedRecoverySendDraft(threadKey, recoveryKey)).toMatchObject({
+      text: "Recovered message",
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+    updateComposerDraftSettings(threadKey, { modelSelection: undefined });
+    expect(getQueuedRecoverySendDraft(threadKey, recoveryKey).modelSelection).toBeUndefined();
+    expect(getComposerDraftSnapshot(threadKey).text).toBe("Unrelated draft");
+  });
+
+  it("waits for late imports and removes their local files when another import fails", async () => {
+    const cleanup = vi
+      .spyOn(composerImages, "removePersistedComposerAttachmentFile")
+      .mockResolvedValue();
+    try {
+      const late = Promise.withResolvers<composerImages.DraftComposerAttachment>();
+      const error = new Error("Download failed");
+      const result = restoreQueuedEditAttachments([Promise.reject(error), late.promise]);
+      const rejected = expect(result).rejects.toBe(error);
+      await Promise.resolve();
+      expect(cleanup).not.toHaveBeenCalled();
+      late.resolve({
+        ...image("late"),
+        previewUri: "file:///late.png",
+        fileUri: "file:///late.png",
+      });
+      await rejected;
+      expect(cleanup).toHaveBeenCalledExactlyOnceWith("file:///late.png");
+    } finally {
+      cleanup.mockRestore();
+    }
   });
 });

@@ -100,6 +100,7 @@ import { environmentThreadDetails, useEnvironmentThread } from "./threads";
 import {
   endQueuedRunEdit,
   recoverQueuedRunEdit,
+  getQueuedRecoverySendDraft,
   useSavedQueuedEditDrafts,
   useQueuedEditRecovery,
   selectQueuedEditRecovery,
@@ -594,7 +595,7 @@ export function useThreadComposerState(input: {
 
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const draftKey = activeComposerDraftKey(selectedThreadShell);
-    const draft = getComposerDraftSnapshot(draftKey);
+    const draft = getQueuedRecoverySendDraft(threadKey, draftKey);
     if (appAtomRegistry.get(composerContextImportsAtom)[draftKey]) return null;
     const thread = selectedThreadShell;
     const text = draft.text.trim();
@@ -654,14 +655,14 @@ export function useThreadComposerState(input: {
             startingSideChatRef.current = false;
           });
         // Clear only what was sent; the draft may have changed while the side chat started.
-        const current = getComposerDraftSnapshot(threadKey);
+        const current = getComposerDraftSnapshot(draftKey);
         if (
           started &&
           current.text === draft.text &&
           current.attachments.length === 0 &&
           (current.context?.records.length ?? 0) === 0
         ) {
-          clearComposerDraftContent(threadKey);
+          clearComposerDraftContent(draftKey);
         }
       }
       return null;
@@ -676,7 +677,7 @@ export function useThreadComposerState(input: {
       isClearComposerCommand(text)
     ) {
       setFreshSessionPending(threadKey, true);
-      clearComposerDraftContent(threadKey);
+      clearComposerDraftContent(draftKey);
       return null;
     }
     // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
@@ -749,8 +750,8 @@ export function useThreadComposerState(input: {
       if (!response) return null;
       // A context paste still landing, or any draft or settings change while approvals were
       // declined, means this snapshot is no longer what the user sent.
-      if (appAtomRegistry.get(composerContextImportsAtom)[threadKey]) return null;
-      const current = getComposerDraftSnapshot(threadKey);
+      if (appAtomRegistry.get(composerContextImportsAtom)[draftKey]) return null;
+      const current = getQueuedRecoverySendDraft(threadKey, draftKey);
       if (
         current.text !== draft.text ||
         JSON.stringify(current.context) !== JSON.stringify(draft.context) ||
@@ -762,7 +763,7 @@ export function useThreadComposerState(input: {
       )
         return null;
       if (response === "responded") {
-        clearComposerDraftContent(threadKey);
+        clearComposerDraftContent(draftKey);
         return null;
       }
     }
