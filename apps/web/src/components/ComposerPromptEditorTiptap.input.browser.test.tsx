@@ -19,6 +19,7 @@ import { act, fakeTimers, render } from "../../test/render";
 
 import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-text-doc";
 import { isMacPlatform } from "~/lib/utils";
+import { registerCommands } from "~/shortcuts/dispatcher";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
   type ComposerPromptEditorHandle,
@@ -210,6 +211,46 @@ it.each([
     // Whether the selection spans shown markers or not, Mod+B removes the bold.
     await userEvent.keyboard(modB);
     await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(value));
+  },
+);
+
+it.each(["e", "i"])(
+  "leaves Mod+%s to an app command bound to it instead of formatting",
+  async (key) => {
+    const openUsage = vi.fn((event: KeyboardEvent) => {
+      event.preventDefault();
+    });
+    using _commands = {
+      [Symbol.dispose]: registerCommands(
+        { "usage.open": openUsage },
+        {
+          keybindings: () => [
+            {
+              command: "usage.open",
+              shortcut: {
+                key,
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+            },
+          ],
+        },
+      ),
+    };
+    await using screen = await mountEditor("word");
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus();
+      editor.commands.setTextSelection({ from: 1, to: 5 });
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await userEvent.keyboard(`{${modifier}>}${key}{/${modifier}}`);
+    expect(openUsage).toHaveBeenCalledOnce();
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("word");
   },
 );
 
