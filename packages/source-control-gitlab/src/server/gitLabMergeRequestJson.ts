@@ -2071,6 +2071,7 @@ export const MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY = `query($fullPath: I
         failed: jobs(retried: false, statuses: [FAILED]) { count }
         stopped: jobs(retried: false, statuses: [CANCELED, SKIPPED]) { count }
         jobs(jobKind: BRIDGE, retried: false, first: 100) {
+          pageInfo { hasNextPage }
           nodes { name status downstreamPipeline { id status } }
         }
       }
@@ -2084,6 +2085,8 @@ export const MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY = `query($fullPath: I
 
 const PipelineIdentitySchema = Schema.Struct({ id: Schema.String, status: Schema.String });
 const JobCountSchema = Schema.NullOr(Schema.Struct({ count: Schema.Int }));
+// GitLab's connection `count` stops at its default limit and answers `limit + 1` above it.
+const JOB_COUNT_LIMIT = 1000;
 
 const decodeMergeRequestWatchFingerprint = decodeJsonResult(
   Schema.Struct({
@@ -2105,6 +2108,7 @@ const decodeMergeRequestWatchFingerprint = decodeJsonResult(
                   stopped: JobCountSchema,
                   jobs: Schema.NullOr(
                     Schema.Struct({
+                      pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
                       nodes: Schema.Array(
                         Schema.NullOr(
                           Schema.Struct({
@@ -2155,6 +2159,13 @@ export function decodeMergeRequestWatchFingerprintJson(
     return editedAt !== null && editedAt > newest ? editedAt : newest;
   }, "");
   const pipeline = mr.headPipeline;
+  const jobCounts = [pipeline?.succeeded, pipeline?.failed, pipeline?.stopped].map(
+    (jobs) => jobs?.count ?? null,
+  );
+  // Past a capped count or the first bridge page, a job can settle without moving the status.
+  const seesEveryJob =
+    pipeline?.jobs?.pageInfo.hasNextPage !== true &&
+    jobCounts.every((count) => count === null || count <= JOB_COUNT_LIMIT);
   const bridges = (pipeline?.jobs?.nodes ?? [])
     .flatMap((job) =>
       job === null
@@ -2175,18 +2186,17 @@ export function decodeMergeRequestWatchFingerprintJson(
       mr.diffHeadSha ?? "",
       pipeline?.id ?? "",
       pipeline?.status ?? "",
-      [pipeline?.succeeded, pipeline?.failed, pipeline?.stopped]
-        .map((jobs) => jobs?.count ?? "")
-        .join("/"),
+      jobCounts.map((count) => count ?? "").join("/"),
       bridges,
     ].join(" "),
     remarks: [mr.userNotesCount ?? "", newestEdit].join(" "),
     // GraphQL never asks GitLab to recheck mergeability. The REST detail read does, but only for
     // viewers who can update the merge request, so only they keep detail reads going until it settles.
     coversDetail:
-      mr.conflicts ||
-      !mr.userPermissions.updateMergeRequest ||
-      mr.mergeStatusEnum === "CAN_BE_MERGED" ||
-      mr.mergeStatusEnum === "CANNOT_BE_MERGED",
+      seesEveryJob &&
+      (mr.conflicts ||
+        !mr.userPermissions.updateMergeRequest ||
+        mr.mergeStatusEnum === "CAN_BE_MERGED" ||
+        mr.mergeStatusEnum === "CANNOT_BE_MERGED"),
   });
 }

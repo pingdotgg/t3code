@@ -1235,13 +1235,14 @@ describe("decodeMergeMessagesJson", () => {
 });
 
 describe("decodeMergeRequestWatchFingerprintJson", () => {
-  const pipeline = (status: string, downstream: string, failed = 0) => ({
+  const pipeline = (status: string, downstream: string, failed = 0, moreBridges = false) => ({
     id: "gid://gitlab/Ci::Pipeline/9",
     status,
     succeeded: { count: 3 },
     failed: { count: failed },
     stopped: { count: 0 },
     jobs: {
+      pageInfo: { hasNextPage: moreBridges },
       nodes: [
         {
           name: "deploy",
@@ -1311,6 +1312,11 @@ describe("decodeMergeRequestWatchFingerprintJson", () => {
   // Only the REST read asks GitLab to recheck mergeability, and only for viewers who can update.
   it("covers the detail read once merge status has settled or no read could settle it", () => {
     expect(read({})?.coversDetail).toBe(true);
+    // A capped job count or a second bridge page can hide a job settling.
+    expect(read({ headPipeline: pipeline("RUNNING", "RUNNING", 1001) })?.coversDetail).toBe(false);
+    expect(read({ headPipeline: pipeline("RUNNING", "RUNNING", 0, true) })?.coversDetail).toBe(
+      false,
+    );
     expect(read({ mergeStatusEnum: "UNCHECKED" })?.coversDetail).toBe(false);
     expect(read({ mergeStatusEnum: "CHECKING", conflicts: true })?.coversDetail).toBe(true);
     expect(
