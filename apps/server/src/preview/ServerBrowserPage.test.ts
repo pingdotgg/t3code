@@ -429,6 +429,38 @@ describe("server browser snapshot screenshot", () => {
     }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
   });
 
+  it.each([
+    { maxWidth: 402, maxHeight: 700, size: [402, 251] },
+    { maxWidth: 4000, maxHeight: 4000, size: [2560, 1600] },
+  ])(
+    "fits a viewer's still within $maxWidth x $maxHeight without mirroring a backdrop-filter",
+    async ({ maxWidth, maxHeight, size }) => {
+      const page = await context.newPage();
+      await page.setContent(halves("backdrop-filter: blur(4px);"));
+      const still = await ServerBrowserPage.captureViewportWithin(
+        await context.newCDPSession(page),
+        { quality: 70, maxWidth, maxHeight },
+      );
+      const decoded = await page.evaluate(`(async () => {
+        const bytes = Uint8Array.from(atob(${JSON.stringify(still)}), (char) => char.charCodeAt(0));
+        const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const context = canvas.getContext("2d");
+        context.drawImage(bitmap, 0, 0);
+        const right = Array.from(context.getImageData(bitmap.width * 0.85, bitmap.height * 0.25, 1, 1).data);
+        return { size: [bitmap.width, bitmap.height], right };
+      })()`);
+      const { right, ...rest } = decoded as {
+        size: [number, number];
+        right: [number, number, number, number];
+      };
+
+      expect({ ...rest, right: colorOf(right) }).toEqual({ size, right: "red" });
+    },
+  );
+
   it("shrinks the screenshot of an XML document, whose createElement makes no canvas", async () => {
     const page = await context.newPage();
     await page.goto("data:text/xml,<a/>");

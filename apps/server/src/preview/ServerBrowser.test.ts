@@ -113,7 +113,11 @@ function makeSession(
         return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
       }
       // Snapshots shrink their screenshot in the page; the header stands in for the result.
-      if (method === "Runtime.callFunctionOn") return { result: { value: PNG_HEADER } };
+      // A viewer's still already fits its box, which the page reports as null.
+      if (method === "Runtime.callFunctionOn") {
+        const { arguments: args } = input as { arguments: ReadonlyArray<{ value: unknown }> };
+        return { result: { value: args[0]?.value === "ZnJhbWU=" ? null : PNG_HEADER } };
+      }
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
       if (method === "Page.createIsolatedWorld") {
         return {

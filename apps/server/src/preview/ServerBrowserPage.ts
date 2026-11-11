@@ -492,26 +492,69 @@ const SHRINK_PNG = `async function (png, width, height) {
   return canvas.toDataURL("image/png").slice("data:image/png;base64,".length);
 }`;
 
-const shrinkPng = async (cdp: CDPSession, png: string, scale: number) => {
-  const size = pngSize(png);
+/** Fits a JPEG within a box like a capped screencast frame does, or returns null if it fits. */
+const FIT_JPEG = `async function (jpeg, maxWidth, maxHeight, quality) {
+  const bytes = Uint8Array.from(atob(jpeg), (char) => char.charCodeAt(0));
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
+  const scale = Math.min(maxWidth / bitmap.width, maxHeight / bitmap.height);
+  if (scale >= 1) {
+    bitmap.close();
+    return null;
+  }
+  const canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d");
+  context.imageSmoothingQuality = "high";
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas.toDataURL("image/jpeg", quality / 100).slice("data:image/jpeg;base64,".length);
+}`;
+
+const callInScreenshotWorld = async (
+  cdp: CDPSession,
+  functionDeclaration: string,
+  args: ReadonlyArray<unknown>,
+) => {
   const { frameTree } = await cdp.send("Page.getFrameTree");
   const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
     frameId: frameTree.frame.id,
     worldName: "t3-preview-screenshot",
   });
   const { result, exceptionDetails } = await cdp.send("Runtime.callFunctionOn", {
-    functionDeclaration: SHRINK_PNG,
+    functionDeclaration,
     executionContextId,
-    arguments: [
-      { value: png },
-      { value: Math.round(size.width * scale) },
-      { value: Math.round(size.height * scale) },
-    ],
+    arguments: args.map((value) => ({ value })),
     awaitPromise: true,
     returnByValue: true,
   });
   if (exceptionDetails) throw new Error("The snapshot could not shrink its screenshot.");
-  return result.value as string;
+  return result.value as string | null;
+};
+
+const shrinkPng = async (cdp: CDPSession, png: string, scale: number) => {
+  const size = pngSize(png);
+  return (await callInScreenshotWorld(cdp, SHRINK_PNG, [
+    png,
+    Math.round(size.width * scale),
+    Math.round(size.height * scale),
+  ])) as string;
+};
+
+/** A JPEG of the viewport within the box a viewer's screencast is capped to. */
+export const captureViewportWithin = async (
+  cdp: CDPSession,
+  options: { readonly quality: number; readonly maxWidth: number; readonly maxHeight: number },
+) => {
+  const full = await captureViewport(cdp, { format: "jpeg", quality: options.quality });
+  // A page mid-navigation has no world to shrink in; an oversized still beats a blank viewer.
+  const fitted = await callInScreenshotWorld(cdp, FIT_JPEG, [
+    full,
+    options.maxWidth,
+    options.maxHeight,
+    options.quality,
+  ]).catch(() => null);
+  return fitted ?? full;
 };
 
 type SnapshotInput = {
