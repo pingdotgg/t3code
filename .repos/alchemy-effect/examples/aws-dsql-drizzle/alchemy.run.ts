@@ -1,5 +1,5 @@
+import * as AWS from "@alchemy.run/aws";
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
 import Api from "./src/Api.ts";
 import { BootstrapDatabase } from "./src/bootstrap.ts";
