@@ -4982,7 +4982,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     function* (cwd: string | null) {
       // resolveSettings does not initialize remote-cache eligibility in the SDK host.
       // Keep the payload intact so the SDK also honors managedSourcesBehavior.
-      const remote = yield* readBypassSettings(path.join(homePath, "remote-settings.json"));
+      // Claude CLI truncates remote-settings.json before rewriting it, so re-read a bad parse.
+      const remote = yield* Effect.suspend(() =>
+        readBypassSettings(path.join(homePath, "remote-settings.json")),
+      ).pipe(Effect.retry({ times: 3, while: (error) => error._tag === "SchemaError" }));
       const home = customHome
         ? yield* readBypassSettings(path.join(homePath, "settings.json"))
         : {};
