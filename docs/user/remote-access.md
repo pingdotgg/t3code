@@ -10,9 +10,25 @@ that machine and shown on connected devices. **Reset name** restores the origina
 Other devices reach the machine directly: over your local network, over
 Tailscale, or through SSH from the desktop app.
 
-T3 Connect has been removed. A machine you reached only through T3 Connect must
-be paired again directly; the app tells you once which machines need it. Mobile
-push notifications, Live Activities, and guest links went with it.
+T3 Connect has been removed. Mobile push notifications, Live Activities, and
+guest links went with it.
+
+### Coming from T3 Connect
+
+- **Machines you reached only through T3 Connect** are dropped from your saved
+  environments. The app tells you once which ones, so you can pair them again
+  directly over your network or Tailscale. Machines that also had a direct
+  route keep it and its sign-in.
+- **On the host,** the update deletes its local T3 Connect credentials and the
+  tunnel tool, and signs out devices that came in through T3 Connect. It does
+  not contact the T3 Connect service, so the machine stays listed there. To
+  release it, unlink T3 Connect in Settings on an older version before you
+  update.
+- **Webhook and MCP addresses** now work only from devices on your tailnet.
+  Services on the internet, such as GitHub or a hosted assistant, cannot reach
+  them.
+- **Going back to an older version** does not restore T3 Connect on that
+  machine. Link it again from the start there, and pair your phone again.
 
 ## Pair over a LAN or private network
 

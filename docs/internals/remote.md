@@ -111,36 +111,53 @@ Unlinking on the linking side only forgets the token.
 ### Tailnet devices
 
 [`TailnetDevices`](../../apps/server/src/peer/TailnetDevices.ts) makes the same
-kind of link without a pairing code between servers Tailscale says are the
-same user's untagged nodes. Requests arriving through Serve come from loopback
-with headers any local process can forge, so nothing inbound is trusted:
+kind of link without a pairing code, but only between members of the user's
+device network. **Same Tailscale account is never permission.** A machine joins
+only when a full-access member adds it. It refuses to join while linked
+environments is off, on a dev server, when it belongs to another network, or
+when it revoked the machine adding it. Requests arriving through Serve come
+from loopback with headers any local process can forge, so nothing inbound is
+trusted:
 
 - **The side giving access dials the other.** The issuer resolves the
   requester's address itself (a tailnet IP, or an https MagicDNS name, whose
   certificate only that node holds; plain http on a name is never used),
-  whoises it, and checks its descriptor. It then asks that address to confirm
-  the requester's pending challenge before minting anything, and delivers the
-  token there. A forged request naming a real device's address dies at the
-  confirmation, so no token is ever created for it.
+  whoises it, and checks its descriptor and its stable node id against the
+  roster. It then asks that address to confirm the requester's pending
+  challenge before minting anything, and delivers the token there. A forged
+  request naming a real device's address dies at the confirmation, so no token
+  is ever created for it.
 - **Each direction is its own handshake.** The issuer links back before
   answering, so one request yields a mutual link, each half proven by the side
-  granting it. Gossip between linked devices only adds addresses to try.
-- The requester stores the issuer address it proved, never one the grant names.
+  granting it. Gossip between linked members only adds addresses to try.
+- **A member is bound to its Tailscale node** (`StableID` from whois, `ID` in
+  status). The first proof binds it, and a different node answering for the
+  same environment id is refused. Only an explicit add can rebind a machine
+  that moved to a new node.
 
-What each device may do is a [policy](../../apps/server/src/peer/DevicePolicy.ts)
-every device replicates and merges last-writer-wins by hybrid logical clock, so
-revoking or restoring a device works from any machine. **A write counts only if
-its author is full access on the receiving side and is not the device it
-names**, so a revoked or limited device cannot widen itself, even relayed
-through another. Each `/mcp` request narrows a device session's token to its
-current entry, so a change applies without re-linking; widening past what the
-token was minted with takes a new handshake.
+The [roster](../../apps/server/src/peer/Membership.ts) of members and network
+apps is replicated and merged last-writer-wins by hybrid logical clock.
+`revoked` is a tombstone that never expires. **A roster write counts only from
+a member session (the signed `mbr` claim the handshake mints, never a
+pairing-code link) whose machine is full access on the receiving side, and
+never for an entry naming the sender**, so a revoked or limited machine cannot
+widen itself, even relayed through another. Each machine also keeps local
+limits that never replicate. Effective access is the narrower of the roster
+and the local limit. Each `/mcp` request narrows a member session's token to
+that, so a change applies without re-linking. Widening past what the token was
+minted with takes a new handshake. Agents may only narrow: widening and
+restoring are the user's.
 
-An app opens another of my devices through the server it is connected to, which
-asks that device over its device session for a one-time pairing credential. The
-app redeems it directly at the first address that answers as that device. App
-sessions carry no agent mode ceiling, so a device below full access opens
-read-only.
+An app opens another member through the server it is connected to, which asks
+that member over its member session for a one-time pairing credential. The
+credential is capped at the app's own grant. For an app of the network
+(session subject `network-app:<id>`), it is also capped at that app's roster
+access, not the access of the machine relaying for it. Narrowing or revoking a
+network app ends its sessions on every member, because sessions cannot be
+re-scoped in place, so it pairs again. App sessions carry no agent mode
+ceiling, so anything below full access opens read-only. A phone needs one
+reachable member to renew, and if every full-access member is lost, the
+network has to be started again from a fresh machine.
 
 **Work a link paired below full access starts stays within that link.** The
 receiving environment knows a session is a peer link because the linking side
