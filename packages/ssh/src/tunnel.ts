@@ -870,7 +870,11 @@ const TUNNEL_SESSION_READY_LINE = "t3-ssh-tunnel-session-ready";
 // Reading stdin until the connection drops keeps the session alive.
 const REMOTE_TUNNEL_SESSION_SCRIPT = `STATE_DIR="$HOME/.t3/ssh-launch/$1"
 if [ -n "\${SSH_AUTH_SOCK:-}" ] && [ -d "$STATE_DIR" ]; then
-  ln -s "$SSH_AUTH_SOCK" "$STATE_DIR/agent.sock.$$" && mv -f "$STATE_DIR/agent.sock.$$" "$STATE_DIR/agent.sock"
+  if ! { ln -sf "$SSH_AUTH_SOCK" "$STATE_DIR/agent.sock.$$" && mv -f "$STATE_DIR/agent.sock.$$" "$STATE_DIR/agent.sock"; }; then
+    rm -f "$STATE_DIR/agent.sock.$$"
+    printf '%s\\n' "Failed to publish the forwarded SSH agent for the T3 server." >&2
+    exit 1
+  fi
 fi
 printf '%s\\n' ${TUNNEL_SESSION_READY_LINE}
 exec cat >/dev/null
