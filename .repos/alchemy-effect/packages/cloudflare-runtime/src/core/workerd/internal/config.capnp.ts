@@ -207,19 +207,10 @@ export class LoggingOptions extends $.Struct {
    *
    */
   get structuredLogging(): boolean {
-    return $.utils.getBit(
-      0,
-      this,
-      LoggingOptions._capnp.defaultStructuredLogging,
-    );
+    return $.utils.getBit(0, this, LoggingOptions._capnp.defaultStructuredLogging);
   }
   set structuredLogging(value: boolean) {
-    $.utils.setBit(
-      0,
-      value,
-      this,
-      LoggingOptions._capnp.defaultStructuredLogging,
-    );
+    $.utils.setBit(0, value, this, LoggingOptions._capnp.defaultStructuredLogging);
   }
   /**
    * Set a custom prefix for process.stdout. Defaults to "stdout: ".
@@ -245,6 +236,22 @@ export class LoggingOptions extends $.Struct {
     return "LoggingOptions_" + super.toString();
   }
 }
+export const Socket_TcpTlsMode = {
+  /**
+   * Perform the TLS handshake as soon as a connection is accepted. The `connect()` handler sees
+   * only the decrypted stream, and its socket does not support `startTls()`.
+   *
+   */
+  IMPLICIT: 0,
+  /**
+   * Accept connections in plaintext. The `connect()` handler's socket has secureTransport set to
+   * "starttls" and the handler performs the TLS handshake as the server by calling `startTls()` at
+   * the point in its protocol where the upgrade belongs.
+   *
+   */
+  START_TLS: 1,
+} as const;
+export type Socket_TcpTlsMode = (typeof Socket_TcpTlsMode)[keyof typeof Socket_TcpTlsMode];
 export class Socket_Https extends $.Struct {
   static readonly _capnp = {
     displayName: "https",
@@ -296,6 +303,7 @@ export class Socket_Tcp extends $.Struct {
     displayName: "tcp",
     id: "b59d8ecf6886b64c",
     size: new $.ObjectSize(16, 5),
+    defaultTlsMode: $.getUint16Mask(0),
   };
   _adoptTlsOptions(value: $.Orphan<TlsOptions>): void {
     $.utils.adopt(value, $.utils.getPointer(2, this));
@@ -314,6 +322,16 @@ export class Socket_Tcp extends $.Struct {
   }
   set tlsOptions(value: TlsOptions) {
     $.utils.copyFrom(value, $.utils.getPointer(2, this));
+  }
+  /**
+   * How `tlsOptions` is applied to accepted connections. Ignored if `tlsOptions` is not set.
+   *
+   */
+  get tlsMode(): Socket_TcpTlsMode {
+    return $.utils.getUint16(4, this, Socket_Tcp._capnp.defaultTlsMode) as Socket_TcpTlsMode;
+  }
+  set tlsMode(value: Socket_TcpTlsMode) {
+    $.utils.setUint16(4, value, this, Socket_Tcp._capnp.defaultTlsMode);
   }
   toString(): string {
     return "Socket_Tcp_" + super.toString();
@@ -375,6 +393,7 @@ export class Socket extends $.Struct {
   static readonly HTTPS = Socket_Which.HTTPS;
   static readonly TCP = Socket_Which.TCP;
   static readonly UDP = Socket_Which.UDP;
+  static readonly TcpTlsMode = Socket_TcpTlsMode;
   static readonly _capnp = {
     displayName: "Socket",
     id: "9a0eba45530ee79f",
@@ -840,6 +859,132 @@ export class ServiceDesignator extends $.Struct {
     return "ServiceDesignator_" + super.toString();
   }
 }
+/**
+ * Minimal definition of a Workflow in the context of building a binding for it in `ctx.exports.*`
+ *
+ */
+export class WorkflowsEngine_Workflow extends $.Struct {
+  static readonly _capnp = {
+    displayName: "Workflow",
+    id: "82e47879abbb7e41",
+    size: new $.ObjectSize(0, 3),
+  };
+  /**
+   * The name of the class extending `WorkflowEntrypoint`
+   *
+   */
+  get className(): string {
+    return $.utils.getText(0, this);
+  }
+  set className(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  /**
+   * The name of the workflow
+   *
+   */
+  get name(): string {
+    return $.utils.getText(1, this);
+  }
+  set name(value: string) {
+    $.utils.setText(1, value, this);
+  }
+  _adoptBindingService(value: $.Orphan<ServiceDesignator>): void {
+    $.utils.adopt(value, $.utils.getPointer(2, this));
+  }
+  _disownBindingService(): $.Orphan<ServiceDesignator> {
+    return $.utils.disown(this.bindingService);
+  }
+  /**
+   * Reference to the service implementing the Workflows public API.
+   * This is used as the inner fetcher when building the Workflows binding
+   *
+   */
+  get bindingService(): ServiceDesignator {
+    return $.utils.getStruct(2, ServiceDesignator, this);
+  }
+  _hasBindingService(): boolean {
+    return !$.utils.isNull($.utils.getPointer(2, this));
+  }
+  _initBindingService(): ServiceDesignator {
+    return $.utils.initStructAt(2, ServiceDesignator, this);
+  }
+  set bindingService(value: ServiceDesignator) {
+    $.utils.copyFrom(value, $.utils.getPointer(2, this));
+  }
+  toString(): string {
+    return "WorkflowsEngine_Workflow_" + super.toString();
+  }
+}
+/**
+ * Defines an engine that allows running Workflows defined on this worker.
+ * These workflows are exposed through the `ctx.exports.*` mechanism
+ *
+ * Each Workflow gets assigned its own ActorNamespace, but all of them use the same underlying ActorClass
+ * to run the Workflows code.
+ *
+ * Additionally, a list of workflows can be given to specify which workflows can run or not,
+ * i.e., which workflows get a binding built for them.
+ *
+ */
+export class WorkflowsEngine extends $.Struct {
+  static readonly Workflow = WorkflowsEngine_Workflow;
+  static readonly _capnp = {
+    displayName: "WorkflowsEngine",
+    id: "a1ad8cc2170cdd0c",
+    size: new $.ObjectSize(0, 2),
+  };
+  static _Workflows: $.ListCtor<WorkflowsEngine_Workflow>;
+  _adoptActorClass(value: $.Orphan<ServiceDesignator>): void {
+    $.utils.adopt(value, $.utils.getPointer(0, this));
+  }
+  _disownActorClass(): $.Orphan<ServiceDesignator> {
+    return $.utils.disown(this.actorClass);
+  }
+  /**
+   * The actor class implementing the Workflows engine which all local Workflow-related ActorNamespaces
+   * use to instantiate actors
+   *
+   */
+  get actorClass(): ServiceDesignator {
+    return $.utils.getStruct(0, ServiceDesignator, this);
+  }
+  _hasActorClass(): boolean {
+    return !$.utils.isNull($.utils.getPointer(0, this));
+  }
+  _initActorClass(): ServiceDesignator {
+    return $.utils.initStructAt(0, ServiceDesignator, this);
+  }
+  set actorClass(value: ServiceDesignator) {
+    $.utils.copyFrom(value, $.utils.getPointer(0, this));
+  }
+  _adoptWorkflows(value: $.Orphan<$.List<WorkflowsEngine_Workflow>>): void {
+    $.utils.adopt(value, $.utils.getPointer(1, this));
+  }
+  _disownWorkflows(): $.Orphan<$.List<WorkflowsEngine_Workflow>> {
+    return $.utils.disown(this.workflows);
+  }
+  /**
+   * List of local workflows that can run for this worker. This controls which workflows get a binding built
+   * and placed on the `ctx.exports` object
+   *
+   */
+  get workflows(): $.List<WorkflowsEngine_Workflow> {
+    return $.utils.getList(1, WorkflowsEngine._Workflows, this);
+  }
+  _hasWorkflows(): boolean {
+    return !$.utils.isNull($.utils.getPointer(1, this));
+  }
+  _initWorkflows(length: number): $.List<WorkflowsEngine_Workflow> {
+    return $.utils.initList(1, WorkflowsEngine._Workflows, length, this);
+  }
+  set workflows(value: $.List<WorkflowsEngine_Workflow>) {
+    $.utils.copyFrom(value, $.utils.getPointer(1, this));
+  }
+  toString(): string {
+    return "WorkflowsEngine_" + super.toString();
+  }
+}
 export const Worker_Module_Which = {
   /**
    * An ES module file with imports and exports.
@@ -892,8 +1037,7 @@ export const Worker_Module_Which = {
    */
   OBSOLETE_PYTHON_REQUIREMENT: 8,
 } as const;
-export type Worker_Module_Which =
-  (typeof Worker_Module_Which)[keyof typeof Worker_Module_Which];
+export type Worker_Module_Which = (typeof Worker_Module_Which)[keyof typeof Worker_Module_Which];
 export class Worker_Module extends $.Struct {
   static readonly ES_MODULE = Worker_Module_Which.ES_MODULE;
   static readonly COMMON_JS_MODULE = Worker_Module_Which.COMMON_JS_MODULE;
@@ -903,8 +1047,7 @@ export class Worker_Module extends $.Struct {
   static readonly JSON = Worker_Module_Which.JSON;
   static readonly OBSOLETE = Worker_Module_Which.OBSOLETE;
   static readonly PYTHON_MODULE = Worker_Module_Which.PYTHON_MODULE;
-  static readonly OBSOLETE_PYTHON_REQUIREMENT =
-    Worker_Module_Which.OBSOLETE_PYTHON_REQUIREMENT;
+  static readonly OBSOLETE_PYTHON_REQUIREMENT = Worker_Module_Which.OBSOLETE_PYTHON_REQUIREMENT;
   static readonly _capnp = {
     displayName: "Module",
     id: "d9d87a63770a12f3",
@@ -1078,12 +1221,7 @@ export class Worker_Module extends $.Struct {
    *
    */
   get obsoletePythonRequirement(): string {
-    $.utils.testWhich(
-      "obsoletePythonRequirement",
-      $.utils.getUint16(0, this),
-      8,
-      this,
-    );
+    $.utils.testWhich("obsoletePythonRequirement", $.utils.getUint16(0, this), 8, this);
     return $.utils.getText(1, this);
   }
   get _isObsoletePythonRequirement(): boolean {
@@ -1166,18 +1304,15 @@ export class Worker_Binding_Type extends $.Struct {
   static readonly WASM = Worker_Binding_Type_Which.WASM;
   static readonly CRYPTO_KEY = Worker_Binding_Type_Which.CRYPTO_KEY;
   static readonly SERVICE = Worker_Binding_Type_Which.SERVICE;
-  static readonly DURABLE_OBJECT_NAMESPACE =
-    Worker_Binding_Type_Which.DURABLE_OBJECT_NAMESPACE;
+  static readonly DURABLE_OBJECT_NAMESPACE = Worker_Binding_Type_Which.DURABLE_OBJECT_NAMESPACE;
   static readonly KV_NAMESPACE = Worker_Binding_Type_Which.KV_NAMESPACE;
   static readonly R2BUCKET = Worker_Binding_Type_Which.R2BUCKET;
   static readonly OBSOLETE0 = Worker_Binding_Type_Which.OBSOLETE0;
   static readonly QUEUE = Worker_Binding_Type_Which.QUEUE;
   static readonly ANALYTICS_ENGINE = Worker_Binding_Type_Which.ANALYTICS_ENGINE;
   static readonly HYPERDRIVE = Worker_Binding_Type_Which.HYPERDRIVE;
-  static readonly DURABLE_OBJECT_CLASS =
-    Worker_Binding_Type_Which.DURABLE_OBJECT_CLASS;
-  static readonly WORKERD_DEBUG_PORT =
-    Worker_Binding_Type_Which.WORKERD_DEBUG_PORT;
+  static readonly DURABLE_OBJECT_CLASS = Worker_Binding_Type_Which.DURABLE_OBJECT_CLASS;
+  static readonly WORKERD_DEBUG_PORT = Worker_Binding_Type_Which.WORKERD_DEBUG_PORT;
   static readonly _capnp = {
     displayName: "Type",
     id: "8906a1296519bf8a",
@@ -1213,9 +1348,7 @@ export class Worker_Binding_Type extends $.Struct {
   set wasm(_: true) {
     $.utils.setUint16(0, 4, this);
   }
-  _adoptCryptoKey(
-    value: $.Orphan<$.List<Worker_Binding_CryptoKey_Usage>>,
-  ): void {
+  _adoptCryptoKey(value: $.Orphan<$.List<Worker_Binding_CryptoKey_Usage>>): void {
     $.utils.setUint16(0, 5, this);
     $.utils.adopt(value, $.utils.getPointer(0, this));
   }
@@ -1224,11 +1357,7 @@ export class Worker_Binding_Type extends $.Struct {
   }
   get cryptoKey(): $.List<Worker_Binding_CryptoKey_Usage> {
     $.utils.testWhich("cryptoKey", $.utils.getUint16(0, this), 5, this);
-    return $.utils.getList(
-      0,
-      $.Uint16List,
-      this,
-    ) as $.List<Worker_Binding_CryptoKey_Usage>;
+    return $.utils.getList(0, $.Uint16List, this) as $.List<Worker_Binding_CryptoKey_Usage>;
   }
   _hasCryptoKey(): boolean {
     return !$.utils.isNull($.utils.getPointer(0, this));
@@ -1324,7 +1453,7 @@ export class Worker_Binding_DurableObjectNamespaceDesignator extends $.Struct {
   static readonly _capnp = {
     displayName: "DurableObjectNamespaceDesignator",
     id: "804f144ff477aac7",
-    size: new $.ObjectSize(0, 2),
+    size: new $.ObjectSize(0, 3),
   };
   /**
    * Exported class name that implements the Durable Object.
@@ -1354,10 +1483,23 @@ export class Worker_Binding_DurableObjectNamespaceDesignator extends $.Struct {
   set serviceName(value: string) {
     $.utils.setText(1, value, this);
   }
+  _adoptObsolete2(value: $.Orphan<$.Pointer>): void {
+    $.utils.adopt(value, $.utils.getPointer(2, this));
+  }
+  _disownObsolete2(): $.Orphan<$.Pointer> {
+    return $.utils.disown(this.obsolete2);
+  }
+  get obsolete2(): $.Pointer {
+    return $.utils.getPointer(2, this);
+  }
+  _hasObsolete2(): boolean {
+    return !$.utils.isNull($.utils.getPointer(2, this));
+  }
+  set obsolete2(value: $.Pointer) {
+    $.utils.copyFrom(value, $.utils.getPointer(2, this));
+  }
   toString(): string {
-    return (
-      "Worker_Binding_DurableObjectNamespaceDesignator_" + super.toString()
-    );
+    return "Worker_Binding_DurableObjectNamespaceDesignator_" + super.toString();
   }
 }
 export const Worker_Binding_CryptoKey_Usage = {
@@ -1436,10 +1578,7 @@ export class Worker_Binding_CryptoKey_Algorithm extends $.Struct {
     return "Worker_Binding_CryptoKey_Algorithm_" + super.toString();
   }
   which(): Worker_Binding_CryptoKey_Algorithm_Which {
-    return $.utils.getUint16(
-      2,
-      this,
-    ) as Worker_Binding_CryptoKey_Algorithm_Which;
+    return $.utils.getUint16(2, this) as Worker_Binding_CryptoKey_Algorithm_Which;
   }
 }
 /**
@@ -1611,19 +1750,10 @@ export class Worker_Binding_CryptoKey extends $.Struct {
    *
    */
   get extractable(): boolean {
-    return $.utils.getBit(
-      32,
-      this,
-      Worker_Binding_CryptoKey._capnp.defaultExtractable,
-    );
+    return $.utils.getBit(32, this, Worker_Binding_CryptoKey._capnp.defaultExtractable);
   }
   set extractable(value: boolean) {
-    $.utils.setBit(
-      32,
-      value,
-      this,
-      Worker_Binding_CryptoKey._capnp.defaultExtractable,
-    );
+    $.utils.setBit(32, value, this, Worker_Binding_CryptoKey._capnp.defaultExtractable);
   }
   _adoptUsages(value: $.Orphan<$.List<Worker_Binding_CryptoKey_Usage>>): void {
     $.utils.adopt(value, $.utils.getPointer(2, this));
@@ -1636,11 +1766,7 @@ export class Worker_Binding_CryptoKey extends $.Struct {
    *
    */
   get usages(): $.List<Worker_Binding_CryptoKey_Usage> {
-    return $.utils.getList(
-      2,
-      $.Uint16List,
-      this,
-    ) as $.List<Worker_Binding_CryptoKey_Usage>;
+    return $.utils.getList(2, $.Uint16List, this) as $.List<Worker_Binding_CryptoKey_Usage>;
   }
   _hasUsages(): boolean {
     return !$.utils.isNull($.utils.getPointer(2, this));
@@ -1723,11 +1849,7 @@ export class Worker_Binding_WrappedBinding extends $.Struct {
    *
    */
   get entrypoint(): string {
-    return $.utils.getText(
-      1,
-      this,
-      Worker_Binding_WrappedBinding._capnp.defaultEntrypoint,
-    );
+    return $.utils.getText(1, this, Worker_Binding_WrappedBinding._capnp.defaultEntrypoint);
   }
   set entrypoint(value: string) {
     $.utils.setText(1, value, this);
@@ -1745,22 +1867,13 @@ export class Worker_Binding_WrappedBinding extends $.Struct {
    *
    */
   get innerBindings(): $.List<Worker_Binding> {
-    return $.utils.getList(
-      2,
-      Worker_Binding_WrappedBinding._InnerBindings,
-      this,
-    );
+    return $.utils.getList(2, Worker_Binding_WrappedBinding._InnerBindings, this);
   }
   _hasInnerBindings(): boolean {
     return !$.utils.isNull($.utils.getPointer(2, this));
   }
   _initInnerBindings(length: number): $.List<Worker_Binding> {
-    return $.utils.initList(
-      2,
-      Worker_Binding_WrappedBinding._InnerBindings,
-      length,
-      this,
-    );
+    return $.utils.initList(2, Worker_Binding_WrappedBinding._InnerBindings, length, this);
   }
   set innerBindings(value: $.List<Worker_Binding>) {
     $.utils.copyFrom(value, $.utils.getPointer(2, this));
@@ -2099,8 +2212,7 @@ export const Worker_Binding_Which = {
    */
   WORKERD_DEBUG_PORT: 21,
 } as const;
-export type Worker_Binding_Which =
-  (typeof Worker_Binding_Which)[keyof typeof Worker_Binding_Which];
+export type Worker_Binding_Which = (typeof Worker_Binding_Which)[keyof typeof Worker_Binding_Which];
 export class Worker_Binding extends $.Struct {
   static readonly UNSPECIFIED = Worker_Binding_Which.UNSPECIFIED;
   static readonly PARAMETER = Worker_Binding_Which.PARAMETER;
@@ -2110,10 +2222,8 @@ export class Worker_Binding extends $.Struct {
   static readonly WASM_MODULE = Worker_Binding_Which.WASM_MODULE;
   static readonly CRYPTO_KEY = Worker_Binding_Which.CRYPTO_KEY;
   static readonly SERVICE = Worker_Binding_Which.SERVICE;
-  static readonly DURABLE_OBJECT_CLASS =
-    Worker_Binding_Which.DURABLE_OBJECT_CLASS;
-  static readonly DURABLE_OBJECT_NAMESPACE =
-    Worker_Binding_Which.DURABLE_OBJECT_NAMESPACE;
+  static readonly DURABLE_OBJECT_CLASS = Worker_Binding_Which.DURABLE_OBJECT_CLASS;
+  static readonly DURABLE_OBJECT_NAMESPACE = Worker_Binding_Which.DURABLE_OBJECT_NAMESPACE;
   static readonly KV_NAMESPACE = Worker_Binding_Which.KV_NAMESPACE;
   static readonly R2BUCKET = Worker_Binding_Which.R2BUCKET;
   static readonly OBSOLETE0 = Worker_Binding_Which.OBSOLETE0;
@@ -2334,12 +2444,7 @@ export class Worker_Binding extends $.Struct {
    *
    */
   get durableObjectClass(): ServiceDesignator {
-    $.utils.testWhich(
-      "durableObjectClass",
-      $.utils.getUint16(0, this),
-      19,
-      this,
-    );
+    $.utils.testWhich("durableObjectClass", $.utils.getUint16(0, this), 19, this);
     return $.utils.getStruct(1, ServiceDesignator, this);
   }
   _hasDurableObjectClass(): boolean {
@@ -2375,35 +2480,20 @@ export class Worker_Binding extends $.Struct {
    *
    */
   get durableObjectNamespace(): Worker_Binding_DurableObjectNamespaceDesignator {
-    $.utils.testWhich(
-      "durableObjectNamespace",
-      $.utils.getUint16(0, this),
-      8,
-      this,
-    );
-    return $.utils.getStruct(
-      1,
-      Worker_Binding_DurableObjectNamespaceDesignator,
-      this,
-    );
+    $.utils.testWhich("durableObjectNamespace", $.utils.getUint16(0, this), 8, this);
+    return $.utils.getStruct(1, Worker_Binding_DurableObjectNamespaceDesignator, this);
   }
   _hasDurableObjectNamespace(): boolean {
     return !$.utils.isNull($.utils.getPointer(1, this));
   }
   _initDurableObjectNamespace(): Worker_Binding_DurableObjectNamespaceDesignator {
     $.utils.setUint16(0, 8, this);
-    return $.utils.initStructAt(
-      1,
-      Worker_Binding_DurableObjectNamespaceDesignator,
-      this,
-    );
+    return $.utils.initStructAt(1, Worker_Binding_DurableObjectNamespaceDesignator, this);
   }
   get _isDurableObjectNamespace(): boolean {
     return $.utils.getUint16(0, this) === 8;
   }
-  set durableObjectNamespace(
-    value: Worker_Binding_DurableObjectNamespaceDesignator,
-  ) {
+  set durableObjectNamespace(value: Worker_Binding_DurableObjectNamespaceDesignator) {
     $.utils.setUint16(0, 8, this);
     $.utils.copyFrom(value, $.utils.getPointer(1, this));
   }
@@ -2681,9 +2771,7 @@ export class Worker_Binding extends $.Struct {
     return $.utils.getUint16(0, this) as Worker_Binding_Which;
   }
 }
-export class Worker_DurableObjectNamespace_ContainerOptions_NamedImage
-  extends $.Struct
-{
+export class Worker_DurableObjectNamespace_ContainerOptions_NamedImage extends $.Struct {
   static readonly _capnp = {
     displayName: "NamedImage",
     id: "ab54a21a8a2ec0c0",
@@ -2702,10 +2790,7 @@ export class Worker_DurableObjectNamespace_ContainerOptions_NamedImage
     $.utils.setText(1, value, this);
   }
   toString(): string {
-    return (
-      "Worker_DurableObjectNamespace_ContainerOptions_NamedImage_" +
-      super.toString()
-    );
+    return "Worker_DurableObjectNamespace_ContainerOptions_NamedImage_" + super.toString();
   }
 }
 export class Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges_Device
@@ -2741,9 +2826,7 @@ export class Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges_
     );
   }
 }
-export class Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges
-  extends $.Struct
-{
+export class Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges extends $.Struct {
   static readonly Device =
     Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges_Device;
   static readonly _capnp = {
@@ -2838,15 +2921,11 @@ export class Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges
     $.utils.copyFrom(value, $.utils.getPointer(2, this));
   }
   toString(): string {
-    return (
-      "Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges_" +
-      super.toString()
-    );
+    return "Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges_" + super.toString();
   }
 }
 export class Worker_DurableObjectNamespace_ContainerOptions extends $.Struct {
-  static readonly NamedImage =
-    Worker_DurableObjectNamespace_ContainerOptions_NamedImage;
+  static readonly NamedImage = Worker_DurableObjectNamespace_ContainerOptions_NamedImage;
   static readonly ContainerPrivileges =
     Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges;
   static readonly _capnp = {
@@ -2900,21 +2979,15 @@ export class Worker_DurableObjectNamespace_ContainerOptions extends $.Struct {
       this,
     );
   }
-  set privileges(
-    value: Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges,
-  ) {
+  set privileges(value: Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges) {
     $.utils.copyFrom(value, $.utils.getPointer(1, this));
   }
   _adoptImages(
-    value: $.Orphan<
-      $.List<Worker_DurableObjectNamespace_ContainerOptions_NamedImage>
-    >,
+    value: $.Orphan<$.List<Worker_DurableObjectNamespace_ContainerOptions_NamedImage>>,
   ): void {
     $.utils.adopt(value, $.utils.getPointer(2, this));
   }
-  _disownImages(): $.Orphan<
-    $.List<Worker_DurableObjectNamespace_ContainerOptions_NamedImage>
-  > {
+  _disownImages(): $.Orphan<$.List<Worker_DurableObjectNamespace_ContainerOptions_NamedImage>> {
     return $.utils.disown(this.images);
   }
   /**
@@ -2925,18 +2998,12 @@ export class Worker_DurableObjectNamespace_ContainerOptions extends $.Struct {
    *
    */
   get images(): $.List<Worker_DurableObjectNamespace_ContainerOptions_NamedImage> {
-    return $.utils.getList(
-      2,
-      Worker_DurableObjectNamespace_ContainerOptions._Images,
-      this,
-    );
+    return $.utils.getList(2, Worker_DurableObjectNamespace_ContainerOptions._Images, this);
   }
   _hasImages(): boolean {
     return !$.utils.isNull($.utils.getPointer(2, this));
   }
-  _initImages(
-    length: number,
-  ): $.List<Worker_DurableObjectNamespace_ContainerOptions_NamedImage> {
+  _initImages(length: number): $.List<Worker_DurableObjectNamespace_ContainerOptions_NamedImage> {
     return $.utils.initList(
       2,
       Worker_DurableObjectNamespace_ContainerOptions._Images,
@@ -2944,9 +3011,7 @@ export class Worker_DurableObjectNamespace_ContainerOptions extends $.Struct {
       this,
     );
   }
-  set images(
-    value: $.List<Worker_DurableObjectNamespace_ContainerOptions_NamedImage>,
-  ) {
+  set images(value: $.List<Worker_DurableObjectNamespace_ContainerOptions_NamedImage>) {
     $.utils.copyFrom(value, $.utils.getPointer(2, this));
   }
   toString(): string {
@@ -2992,10 +3057,8 @@ export type Worker_DurableObjectNamespace_Which =
   (typeof Worker_DurableObjectNamespace_Which)[keyof typeof Worker_DurableObjectNamespace_Which];
 export class Worker_DurableObjectNamespace extends $.Struct {
   static readonly UNIQUE_KEY = Worker_DurableObjectNamespace_Which.UNIQUE_KEY;
-  static readonly EPHEMERAL_LOCAL =
-    Worker_DurableObjectNamespace_Which.EPHEMERAL_LOCAL;
-  static readonly ContainerOptions =
-    Worker_DurableObjectNamespace_ContainerOptions;
+  static readonly EPHEMERAL_LOCAL = Worker_DurableObjectNamespace_Which.EPHEMERAL_LOCAL;
+  static readonly ContainerOptions = Worker_DurableObjectNamespace_ContainerOptions;
   static readonly _capnp = {
     displayName: "DurableObjectNamespace",
     id: "b429dd547d15747d",
@@ -3074,9 +3137,7 @@ export class Worker_DurableObjectNamespace extends $.Struct {
   set enableSql(value: boolean) {
     $.utils.setBit(17, value, this);
   }
-  _adoptContainer(
-    value: $.Orphan<Worker_DurableObjectNamespace_ContainerOptions>,
-  ): void {
+  _adoptContainer(value: $.Orphan<Worker_DurableObjectNamespace_ContainerOptions>): void {
     $.utils.adopt(value, $.utils.getPointer(2, this));
   }
   _disownContainer(): $.Orphan<Worker_DurableObjectNamespace_ContainerOptions> {
@@ -3091,21 +3152,13 @@ export class Worker_DurableObjectNamespace extends $.Struct {
    *
    */
   get container(): Worker_DurableObjectNamespace_ContainerOptions {
-    return $.utils.getStruct(
-      2,
-      Worker_DurableObjectNamespace_ContainerOptions,
-      this,
-    );
+    return $.utils.getStruct(2, Worker_DurableObjectNamespace_ContainerOptions, this);
   }
   _hasContainer(): boolean {
     return !$.utils.isNull($.utils.getPointer(2, this));
   }
   _initContainer(): Worker_DurableObjectNamespace_ContainerOptions {
-    return $.utils.initStructAt(
-      2,
-      Worker_DurableObjectNamespace_ContainerOptions,
-      this,
-    );
+    return $.utils.initStructAt(2, Worker_DurableObjectNamespace_ContainerOptions, this);
   }
   set container(value: Worker_DurableObjectNamespace_ContainerOptions) {
     $.utils.copyFrom(value, $.utils.getPointer(2, this));
@@ -3200,7 +3253,7 @@ export class Worker_DurableObjectStorage extends $.Struct {
   static readonly _capnp = {
     displayName: "durableObjectStorage",
     id: "cc72b3faa57827d4",
-    size: new $.ObjectSize(8, 15),
+    size: new $.ObjectSize(8, 16),
   };
   get _isNone(): boolean {
     return $.utils.getUint16(2, this) === 0;
@@ -3265,7 +3318,7 @@ export class Worker_ContainerEngine extends $.Struct {
   static readonly _capnp = {
     displayName: "containerEngine",
     id: "82de68f58dc2eb24",
-    size: new $.ObjectSize(8, 15),
+    size: new $.ObjectSize(8, 16),
   };
   get _isNone(): boolean {
     return $.utils.getUint16(4, this) === 0;
@@ -3362,11 +3415,11 @@ export class Worker extends $.Struct {
   static readonly _capnp = {
     displayName: "Worker",
     id: "acfa77e88fd97d1c",
-    size: new $.ObjectSize(8, 15),
+    size: new $.ObjectSize(8, 16),
     defaultGlobalOutbound: $.readRawPointer(
       new Uint8Array([
-        16, 7, 80, 1, 3, 0, 0, 17, 9, 74, 0, 1, 255, 105, 110, 116, 101, 114,
-        110, 101, 116, 0, 0, 0,
+        16, 7, 80, 1, 3, 0, 0, 17, 9, 74, 0, 1, 255, 105, 110, 116, 101, 114, 110, 101, 116, 0, 0,
+        0,
       ]).buffer,
     ),
   };
@@ -3416,12 +3469,7 @@ export class Worker extends $.Struct {
    *
    */
   get serviceWorkerScript(): string {
-    $.utils.testWhich(
-      "serviceWorkerScript",
-      $.utils.getUint16(0, this),
-      1,
-      this,
-    );
+    $.utils.testWhich("serviceWorkerScript", $.utils.getUint16(0, this), 1, this);
     return $.utils.getText(0, this);
   }
   get _isServiceWorkerScript(): boolean {
@@ -3532,12 +3580,7 @@ export class Worker extends $.Struct {
    *
    */
   get globalOutbound(): ServiceDesignator {
-    return $.utils.getStruct(
-      4,
-      ServiceDesignator,
-      this,
-      Worker._capnp.defaultGlobalOutbound,
-    );
+    return $.utils.getStruct(4, ServiceDesignator, this, Worker._capnp.defaultGlobalOutbound);
   }
   _hasGlobalOutbound(): boolean {
     return !$.utils.isNull($.utils.getPointer(4, this));
@@ -3570,14 +3613,10 @@ export class Worker extends $.Struct {
   set cacheApiOutbound(value: ServiceDesignator) {
     $.utils.copyFrom(value, $.utils.getPointer(7, this));
   }
-  _adoptDurableObjectNamespaces(
-    value: $.Orphan<$.List<Worker_DurableObjectNamespace>>,
-  ): void {
+  _adoptDurableObjectNamespaces(value: $.Orphan<$.List<Worker_DurableObjectNamespace>>): void {
     $.utils.adopt(value, $.utils.getPointer(5, this));
   }
-  _disownDurableObjectNamespaces(): $.Orphan<
-    $.List<Worker_DurableObjectNamespace>
-  > {
+  _disownDurableObjectNamespaces(): $.Orphan<$.List<Worker_DurableObjectNamespace>> {
     return $.utils.disown(this.durableObjectNamespaces);
   }
   /**
@@ -3590,9 +3629,7 @@ export class Worker extends $.Struct {
   _hasDurableObjectNamespaces(): boolean {
     return !$.utils.isNull($.utils.getPointer(5, this));
   }
-  _initDurableObjectNamespaces(
-    length: number,
-  ): $.List<Worker_DurableObjectNamespace> {
+  _initDurableObjectNamespaces(length: number): $.List<Worker_DurableObjectNamespace> {
     return $.utils.initList(5, Worker._DurableObjectNamespaces, length, this);
   }
   set durableObjectNamespaces(value: $.List<Worker_DurableObjectNamespace>) {
@@ -3727,6 +3764,28 @@ export class Worker extends $.Struct {
   }
   set accessBindingService(value: ServiceDesignator) {
     $.utils.copyFrom(value, $.utils.getPointer(14, this));
+  }
+  _adoptWorkflowsEngine(value: $.Orphan<WorkflowsEngine>): void {
+    $.utils.adopt(value, $.utils.getPointer(15, this));
+  }
+  _disownWorkflowsEngine(): $.Orphan<WorkflowsEngine> {
+    return $.utils.disown(this.workflowsEngine);
+  }
+  /**
+   * the externally-supplied service responsible for running Workflows defined in this worker
+   *
+   */
+  get workflowsEngine(): WorkflowsEngine {
+    return $.utils.getStruct(15, WorkflowsEngine, this);
+  }
+  _hasWorkflowsEngine(): boolean {
+    return !$.utils.isNull($.utils.getPointer(15, this));
+  }
+  _initWorkflowsEngine(): WorkflowsEngine {
+    return $.utils.initStructAt(15, WorkflowsEngine, this);
+  }
+  set workflowsEngine(value: WorkflowsEngine) {
+    $.utils.copyFrom(value, $.utils.getPointer(15, this));
   }
   toString(): string {
     return "Worker_" + super.toString();
@@ -3871,8 +3930,7 @@ export const ExternalServer_Which = {
    */
   TCP: 2,
 } as const;
-export type ExternalServer_Which =
-  (typeof ExternalServer_Which)[keyof typeof ExternalServer_Which];
+export type ExternalServer_Which = (typeof ExternalServer_Which)[keyof typeof ExternalServer_Which];
 /**
  * Describes the ability to talk to a specific server, typically a back-end server available
  * on the internal network.
@@ -4017,9 +4075,7 @@ export class Network extends $.Struct {
     id: "fa42244f950c9b9c",
     size: new $.ObjectSize(0, 3),
     defaultAllow: $.readRawPointer(
-      new Uint8Array([
-        16, 3, 17, 1, 14, 17, 1, 58, 63, 112, 117, 98, 108, 105, 99,
-      ]).buffer,
+      new Uint8Array([16, 3, 17, 1, 14, 17, 1, 58, 63, 112, 117, 98, 108, 105, 99]).buffer,
     ),
   };
   _adoptAllow(value: $.Orphan<$.List<string>>): void {
@@ -4200,8 +4256,7 @@ export const HttpOptions_Style = {
    */
   PROXY: 1,
 } as const;
-export type HttpOptions_Style =
-  (typeof HttpOptions_Style)[keyof typeof HttpOptions_Style];
+export type HttpOptions_Style = (typeof HttpOptions_Style)[keyof typeof HttpOptions_Style];
 export class HttpOptions_Header extends $.Struct {
   static readonly _capnp = {
     displayName: "Header",
@@ -4249,11 +4304,7 @@ export class HttpOptions extends $.Struct {
   static _InjectRequestHeaders: $.ListCtor<HttpOptions_Header>;
   static _InjectResponseHeaders: $.ListCtor<HttpOptions_Header>;
   get style(): HttpOptions_Style {
-    return $.utils.getUint16(
-      0,
-      this,
-      HttpOptions._capnp.defaultStyle,
-    ) as HttpOptions_Style;
+    return $.utils.getUint16(0, this, HttpOptions._capnp.defaultStyle) as HttpOptions_Style;
   }
   set style(value: HttpOptions_Style) {
     $.utils.setUint16(0, value, this, HttpOptions._capnp.defaultStyle);
@@ -4288,9 +4339,7 @@ export class HttpOptions extends $.Struct {
   set cfBlobHeader(value: string) {
     $.utils.setText(1, value, this);
   }
-  _adoptInjectRequestHeaders(
-    value: $.Orphan<$.List<HttpOptions_Header>>,
-  ): void {
+  _adoptInjectRequestHeaders(value: $.Orphan<$.List<HttpOptions_Header>>): void {
     $.utils.adopt(value, $.utils.getPointer(2, this));
   }
   _disownInjectRequestHeaders(): $.Orphan<$.List<HttpOptions_Header>> {
@@ -4315,9 +4364,7 @@ export class HttpOptions extends $.Struct {
   set injectRequestHeaders(value: $.List<HttpOptions_Header>) {
     $.utils.copyFrom(value, $.utils.getPointer(2, this));
   }
-  _adoptInjectResponseHeaders(
-    value: $.Orphan<$.List<HttpOptions_Header>>,
-  ): void {
+  _adoptInjectResponseHeaders(value: $.Orphan<$.List<HttpOptions_Header>>): void {
     $.utils.adopt(value, $.utils.getPointer(3, this));
   }
   _disownInjectResponseHeaders(): $.Orphan<$.List<HttpOptions_Header>> {
@@ -4334,12 +4381,7 @@ export class HttpOptions extends $.Struct {
     return !$.utils.isNull($.utils.getPointer(3, this));
   }
   _initInjectResponseHeaders(length: number): $.List<HttpOptions_Header> {
-    return $.utils.initList(
-      3,
-      HttpOptions._InjectResponseHeaders,
-      length,
-      this,
-    );
+    return $.utils.initList(3, HttpOptions._InjectResponseHeaders, length, this);
   }
   set injectResponseHeaders(value: $.List<HttpOptions_Header>) {
     $.utils.copyFrom(value, $.utils.getPointer(3, this));
@@ -4407,8 +4449,7 @@ export const TlsOptions_Version = {
   TLS1DOT2: 4,
   TLS1DOT3: 5,
 } as const;
-export type TlsOptions_Version =
-  (typeof TlsOptions_Version)[keyof typeof TlsOptions_Version];
+export type TlsOptions_Version = (typeof TlsOptions_Version)[keyof typeof TlsOptions_Version];
 /**
  * Options that apply when using TLS. Can apply on either the client or the server side, depending
  * on the context.
@@ -4504,11 +4545,7 @@ export class TlsOptions extends $.Struct {
    *
    */
   get minVersion(): TlsOptions_Version {
-    return $.utils.getUint16(
-      2,
-      this,
-      TlsOptions._capnp.defaultMinVersion,
-    ) as TlsOptions_Version;
+    return $.utils.getUint16(2, this, TlsOptions._capnp.defaultMinVersion) as TlsOptions_Version;
   }
   set minVersion(value: TlsOptions_Version) {
     $.utils.setUint16(2, value, this, TlsOptions._capnp.defaultMinVersion);
@@ -4678,9 +4715,7 @@ export class FallbackServiceRequest extends $.Struct {
   set referrer(value: string) {
     $.utils.setText(3, value, this);
   }
-  _adoptAttributes(
-    value: $.Orphan<$.List<FallbackServiceRequest_Attribute>>,
-  ): void {
+  _adoptAttributes(value: $.Orphan<$.List<FallbackServiceRequest_Attribute>>): void {
     $.utils.adopt(value, $.utils.getPointer(4, this));
   }
   _disownAttributes(): $.Orphan<$.List<FallbackServiceRequest_Attribute>> {
@@ -4693,12 +4728,7 @@ export class FallbackServiceRequest extends $.Struct {
     return !$.utils.isNull($.utils.getPointer(4, this));
   }
   _initAttributes(length: number): $.List<FallbackServiceRequest_Attribute> {
-    return $.utils.initList(
-      4,
-      FallbackServiceRequest._Attributes,
-      length,
-      this,
-    );
+    return $.utils.initList(4, FallbackServiceRequest._Attributes, length, this);
   }
   set attributes(value: $.List<FallbackServiceRequest_Attribute>) {
     $.utils.copyFrom(value, $.utils.getPointer(4, this));
@@ -4710,24 +4740,20 @@ export class FallbackServiceRequest extends $.Struct {
 Config._Services = $.CompositeList(Service);
 Config._Sockets = $.CompositeList(Socket);
 Config._Extensions = $.CompositeList(Extension);
+WorkflowsEngine._Workflows = $.CompositeList(WorkflowsEngine_Workflow);
 Worker_Binding_WrappedBinding._InnerBindings = $.CompositeList(Worker_Binding);
-Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges._Devices =
-  $.CompositeList(
-    Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges_Device,
-  );
+Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges._Devices = $.CompositeList(
+  Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges_Device,
+);
 Worker_DurableObjectNamespace_ContainerOptions._Images = $.CompositeList(
   Worker_DurableObjectNamespace_ContainerOptions_NamedImage,
 );
 Worker._Modules = $.CompositeList(Worker_Module);
 Worker._Bindings = $.CompositeList(Worker_Binding);
-Worker._DurableObjectNamespaces = $.CompositeList(
-  Worker_DurableObjectNamespace,
-);
+Worker._DurableObjectNamespaces = $.CompositeList(Worker_DurableObjectNamespace);
 Worker._Tails = $.CompositeList(ServiceDesignator);
 Worker._StreamingTails = $.CompositeList(ServiceDesignator);
 HttpOptions._InjectRequestHeaders = $.CompositeList(HttpOptions_Header);
 HttpOptions._InjectResponseHeaders = $.CompositeList(HttpOptions_Header);
 Extension._Modules = $.CompositeList(Extension_Module);
-FallbackServiceRequest._Attributes = $.CompositeList(
-  FallbackServiceRequest_Attribute,
-);
+FallbackServiceRequest._Attributes = $.CompositeList(FallbackServiceRequest_Attribute);

@@ -1,5 +1,4 @@
 import * as Dialog from "../../components/ui/Dialog";
-import { useNavigation } from "@react-navigation/native";
 import { useCallback } from "react";
 
 import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
@@ -13,26 +12,30 @@ import {
 } from "../../state/use-thread-outbox";
 import { withThreadDismissal } from "./thread-dismissal";
 
-export function usePendingTaskListActions(): {
+export function usePendingTaskListActions(
+  selectThreadRoute: (params: ReactNavigation.RootParamList["Thread"]) => void,
+): {
   readonly openPendingTask: (pendingTask: PendingNewTask) => void;
   readonly confirmDeletePendingTask: (pendingTask: PendingNewTask) => void;
 } {
-  const navigation = useNavigation();
-
   const openPendingTask = useCallback(
     (pendingTask: PendingNewTask) => {
-      navigation.navigate("NewTaskSheet", {
-        screen: "NewTaskDraft",
-        params: {
-          environmentId: String(pendingTask.environmentId),
-          projectId: String(pendingTask.projectId),
-          ...(pendingTask.kind === "pending"
-            ? { pendingTaskId: String(pendingTask.message.messageId) }
-            : { draftId: pendingTask.draftKey }),
-        },
-      });
+      selectThreadRoute(
+        pendingTask.kind === "pending"
+          ? {
+              environmentId: String(pendingTask.environmentId),
+              threadId: String(pendingTask.message.threadId),
+            }
+          : {
+              draft: {
+                environmentId: String(pendingTask.environmentId),
+                projectId: String(pendingTask.projectId),
+                draftId: pendingTask.draftKey,
+              },
+            },
+      );
     },
-    [navigation],
+    [selectThreadRoute],
   );
 
   const confirmDeletePendingTask = useCallback((pendingTask: PendingNewTask) => {
@@ -66,11 +69,9 @@ export function usePendingTaskListActions(): {
           text: "Delete",
           style: "destructive",
           onPress: () => {
-            // The row animates out before removal runs, so hold delivery from
-            // confirmation on: a reconnect must not send a task being deleted.
-            // The hold is shared with the editor, which could release it
-            // mid-animation, so a task open in the editor is removed at once
-            // and keeps its hold unless removal succeeds.
+            // Hold delivery from confirmation so reconnects cannot send a task during removal.
+            // The editor can release the shared hold mid-animation; remove edited tasks at once.
+            // Keep an editor's hold unless removal succeeds.
             const messageId = pendingTask.message.messageId;
             const heldByEditor = appAtomRegistry.get(editingQueuedMessageIdsAtom)[messageId];
             holdEditingQueuedMessage(messageId);
