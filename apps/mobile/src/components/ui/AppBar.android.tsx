@@ -1,5 +1,5 @@
 import { type RefObject, use, useRef, useState } from "react";
-import { Keyboard, type TextInputInstance, View } from "react-native";
+import { Keyboard, Pressable, type TextInputInstance, View } from "react-native";
 import { useHardwareBack } from "../../lib/backHandler";
 import { useToolbarLayout } from "./useToolbarLayout";
 import { RoutedFormSheetContext } from "./RoutedFormSheetContext";
@@ -167,26 +167,36 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       shouldOpenOnLongPress
       onPressAction={({ nativeEvent }) => selectMenuItem(confirm.menu!.items, nativeEvent.event)}
     >
-      {confirm.showLabel || !confirm.icon ? (
-        <View className="self-center">
-          <Button
-            label={confirm.label}
-            icon={confirm.showLabel ? confirm.icon : undefined}
-            accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
-            tone="text"
-            loading={confirm.loading}
-            disabled={confirm.disabled}
-            onPress={confirm.onPress}
-          />
+      {/* Pressable owns tap + long-press; Menu clones onLongPress onto this child. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
+        accessibilityHint="Shows more actions on long press"
+        accessibilityState={{ disabled: Boolean(confirm.disabled), busy: Boolean(confirm.loading) }}
+        disabled={confirm.disabled || confirm.loading}
+        onPress={confirm.onPress}
+        className="self-center"
+      >
+        <View pointerEvents="none">
+          {confirm.showLabel || !confirm.icon ? (
+            <Button
+              label={confirm.label}
+              icon={confirm.showLabel ? confirm.icon : undefined}
+              accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
+              tone="text"
+              loading={confirm.loading}
+              disabled={confirm.disabled}
+              onPress={confirm.onPress}
+            />
+          ) : (
+            <AndroidHeaderIconButton
+              accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
+              icon={confirm.icon}
+              disabled={confirm.disabled}
+            />
+          )}
         </View>
-      ) : (
-        <AndroidHeaderIconButton
-          accessibilityLabel={confirm.accessibilityLabel ?? confirm.label}
-          icon={confirm.icon}
-          disabled={confirm.disabled}
-          onPress={confirm.onPress}
-        />
-      )}
+      </Pressable>
     </Menu>
   ) : null;
   const labeledConfirm =

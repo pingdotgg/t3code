@@ -44,9 +44,11 @@ export function ThreadHeader(props: {
           ],
         }
       : gitMenu;
-  const confirm =
-    gitPrimaryAction !== null ? { ...gitPrimaryAction, menu: gitMenuWithTerminal } : undefined;
-  const menus: AppBarMenu[] = gitPrimaryAction !== null ? [] : [gitMenuWithTerminal];
+  // Disabled pills drop their iOS long-press menu (V5StackHeader), so keep the
+  // standalone Git control whenever the pill cannot run the primary action.
+  const activePill = gitPrimaryAction !== null && !gitPrimaryAction.disabled;
+  const confirm = activePill ? { ...gitPrimaryAction, menu: gitMenuWithTerminal } : undefined;
+  const menus: AppBarMenu[] = activePill ? [] : [gitMenuWithTerminal];
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
