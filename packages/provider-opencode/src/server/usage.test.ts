@@ -1,5 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -9,7 +11,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { vi } from "vite-plus/test";
 
-import { readOpenCodeUsage } from "./usage.ts";
+import { openCodeUsageReader, readOpenCodeUsage } from "./usage.ts";
 
 const openDatabase = (filename: string) =>
   Layer.build(NodeSqliteClient.layer({ filename })).pipe(
@@ -23,6 +25,7 @@ describe("readOpenCodeUsage", () => {
       const path = yield* Path.Path;
       const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-large-test-" });
       const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe("PRAGMA journal_mode = WAL");
       yield* db.unsafe(
         "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT, time_created INTEGER)",
       );
@@ -32,7 +35,7 @@ describe("readOpenCodeUsage", () => {
         modelID: "claude-sonnet-4-5",
         time: { created: sinceMs },
         tokens: { input: 100, output: 20 },
-        body: "x".repeat(64 * 1024),
+        body: "x".repeat(256 * 1024),
       };
       const data = JSON.stringify(message);
       const insert = (rowId: number, id: string, payload: string, created = sinceMs) =>
@@ -45,9 +48,24 @@ describe("readOpenCodeUsage", () => {
       }
       yield* insert(300, "old", data, sinceMs - 1);
       yield* insert(301, "user", JSON.stringify({ ...message, role: "user" }));
+      for (let index = 0; index < 32; index++) {
+        yield* insert(
+          400 + index,
+          `user-${index}`,
+          JSON.stringify({
+            role: "user",
+            summary: { diffs: [{ patch: "x".repeat(1024 * 1024) }] },
+          }),
+        );
+      }
       yield* insert(302, "invalid", "{invalid");
       yield* insert(303, "msg-0", data);
 
+      const writer = yield* Effect.acquireRelease(
+        Effect.sync(() => new NodeSqlite.DatabaseSync(path.join(dir, "opencode.db"))),
+        (database) => Effect.sync(() => database.close()),
+      );
+      let changed = false;
       let largestRawResult = 0;
       const originalAll = NodeSqlite.StatementSync.prototype.all;
       yield* Effect.acquireRelease(
@@ -62,6 +80,12 @@ describe("readOpenCodeUsage", () => {
               0,
             );
             largestRawResult = Math.max(largestRawResult, rawSize);
+            if (!changed && rawSize > 0) {
+              changed = true;
+              writer
+                .prepare("UPDATE message SET data = ? WHERE id = ?")
+                .run(JSON.stringify({ ...message, tokens: { input: 900, output: 20 } }), "msg-129");
+            }
             return rows;
           }),
         ),
@@ -78,38 +102,45 @@ describe("readOpenCodeUsage", () => {
         records.reduce((total, record) => total + record.totals.uncachedInputTokens, 0),
         13000,
       );
+      assert.strictEqual(
+        (yield* readOpenCodeUsage(dir, sinceMs)).files
+          .flatMap((file) => file.records)
+          .find((record) => record.dedupeKey === "opencode:msg-129")?.totals.uncachedInputTokens,
+        900,
+      );
       assert.isAbove(largestRawResult, 0);
-      assert.isBelow(largestRawResult, 6 * 1024 * 1024);
+      assert.isBelow(largestRawResult, 64 * 1024);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reads at most 64 OpenCode rowids per statement however much history is older", () =>
+  it.effect("reads statements in proportion to the window despite sparse, unordered rowids", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-window-" });
       const db = yield* openDatabase(path.join(dir, "opencode.db"));
       yield* db.unsafe(
         "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT, time_created INTEGER)",
       );
+      yield* db.unsafe("CREATE INDEX message_time ON message(time_created)");
       const sinceMs = 1780000000000;
-      const data = JSON.stringify({
-        role: "assistant",
-        modelID: "claude-sonnet-4-5",
-        tokens: { input: 100, output: 20 },
-      });
-      yield* db.unsafe("BEGIN");
-      for (let index = 0; index < 305; index++) {
-        yield* db.unsafe("INSERT INTO message VALUES (?, ?, ?, ?)", [
-          `msg-${index}`,
-          "session-1",
-          data,
-          sinceMs + index - 300,
-        ]);
+      const data = JSON.stringify({ modelID: "m", tokens: { input: 1 } });
+      yield* db.unsafe(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5000)
+        INSERT INTO message SELECT 'old-' || i, 's', ?, ? FROM n`,
+        [data, sinceMs - 1],
+      );
+      for (const [rowid, id] of [
+        [-10, "a"],
+        [10000, "b"],
+        [20000, "c"],
+      ] as const) {
+        yield* db.unsafe(
+          "INSERT INTO message(rowid, id, session_id, data, time_created) VALUES (?, ?, 's', ?, ?)",
+          [rowid, id, data, sinceMs],
+        );
       }
-      yield* db.unsafe("COMMIT");
-
-      const spans: number[] = [];
+      let statements = 0;
       const originalAll = NodeSqlite.StatementSync.prototype.all;
       yield* Effect.acquireRelease(
         Effect.sync(() =>
@@ -117,12 +148,8 @@ describe("readOpenCodeUsage", () => {
             this: NodeSqlite.StatementSync,
             ...params
           ) {
-            const rows = originalAll.apply(this, params);
-            if (this.sourceSQL.includes("FROM message WHERE")) {
-              const range = /rowid > (-?[\d.]+) AND rowid <= (-?[\d.]+)/.exec(this.expandedSQL);
-              spans.push(range ? Number(range[2]) - Number(range[1]) : Infinity);
-            }
-            return rows;
+            statements++;
+            return originalAll.apply(this, params);
           }),
         ),
         (spy) => Effect.sync(() => spy.mockRestore()),
@@ -131,10 +158,9 @@ describe("readOpenCodeUsage", () => {
       assert.isFalse(result.error);
       assert.deepStrictEqual(
         result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
-        Array.from({ length: 5 }, (_, index) => `opencode:msg-${index + 300}`),
+        ["opencode:a", "opencode:b", "opencode:c"],
       );
-      assert.isNotEmpty(spans);
-      assert.isAtMost(Math.max(...spans), 64);
+      assert.isBelow(statements, 10);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -187,6 +213,61 @@ describe("readOpenCodeUsage", () => {
       );
       assert.isAbove(Number((yield* fileSystem.stat(path.join(dir, "opencode.db-wal"))).size), 0);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "projects both SQLite formats without changing malformed or optional field handling",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-formats-" });
+        const db = yield* openDatabase(path.join(dir, "opencode.db"));
+        const sinceMs = 1780000000000;
+        const message = { model: { id: "m" }, tokens: { input: 10 }, time: { created: sinceMs } };
+        const cases = [
+          ["assistant", JSON.stringify({ ...message, role: "assistant", cost: 0.25 }), true],
+          ["absent-role", JSON.stringify(message), true],
+          ["null-role", JSON.stringify({ ...message, role: null }), false],
+          ["user", JSON.stringify({ ...message, role: "user" }), false],
+          ["malformed", "{broken", false],
+          ["json5", "{role:'assistant'}", false],
+          ["null", null, false],
+          ["blob", new Uint8Array(Buffer.from(JSON.stringify(message))), false],
+          ["fallback", JSON.stringify({ modelID: "fallback-model", tokens: { output: 5 } }), true],
+        ] as const;
+        for (const table of ["message", "session_message"]) {
+          yield* db.unsafe(
+            `CREATE TABLE ${table} (id TEXT, session_id TEXT, data, type TEXT, time_created INTEGER)`,
+          );
+          for (const [id, data] of cases) {
+            yield* db.unsafe(`INSERT INTO ${table} VALUES (?, 's', ?, 'assistant', ?)`, [
+              `${table}-${id}`,
+              data,
+              sinceMs,
+            ]);
+          }
+          yield* db.unsafe(`INSERT INTO ${table} VALUES (?, 's', ?, 'user', ?)`, [
+            `${table}-type-user`,
+            JSON.stringify(message),
+            sinceMs,
+          ]);
+        }
+        const result = yield* readOpenCodeUsage(dir, sinceMs);
+        assert.isFalse(result.error);
+        const records = result.files.flatMap((file) => file.records);
+        assert.deepStrictEqual(
+          records.map((record) => record.dedupeKey),
+          [
+            ...cases.filter(([, , valid]) => valid).map(([id]) => `opencode:message-${id}`),
+            "opencode:message-type-user",
+            ...cases.filter(([, , valid]) => valid).map(([id]) => `opencode:session_message-${id}`),
+          ],
+        );
+        assert.strictEqual(records[0]?.reportedCostUsd, 0.25);
+        assert.strictEqual(records[2]?.model, "fallback-model");
+        assert.strictEqual(records[2]?.timestampMs, sinceMs);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads only legacy OpenCode messages written since the window opened", () =>
@@ -285,40 +366,60 @@ describe("readOpenCodeUsage", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+});
+import * as NodeSqlite from "node:sqlite";
 
-  it.effect("reads a large legacy OpenCode session in directory order", () =>
+describe("openCodeUsageReader", () => {
+  it.effect("scans canonical instance roots once, including XDG and home defaults", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
-      const session = path.join(dir, "storage", "message", "session-1");
-      yield* fileSystem.makeDirectory(session, { recursive: true });
-      yield* Effect.forEach(
-        Array.from({ length: 600 }, (_, index) => `msg-${index}`),
-        (id) =>
-          fileSystem.writeFileString(
-            path.join(session, `${id}.json`),
-            JSON.stringify({
-              id,
-              sessionID: "session-1",
-              role: "assistant",
-              modelID: "claude-sonnet-4-5",
-              time: { created: 1780000000000 },
-              tokens: { input: 100, output: 20 },
-            }),
-          ),
-        { concurrency: 16, discard: true },
-      );
-      const names = yield* fileSystem.readDirectory(session);
-
-      const result = yield* readOpenCodeUsage(dir, 0);
-      assert.isFalse(result.error);
+      const temp = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-instances-test-" });
+      const home = yield* fileSystem.realPath(temp);
+      const defaultRoot = path.join(home, ".local", "share", "opencode");
+      const instanceRoot = path.join(home, "instance");
+      const dataHome = path.join(home, "xdg");
+      const xdgRoot = path.join(dataHome, "opencode");
+      const alias = path.join(home, "default-alias");
+      for (const root of [defaultRoot, instanceRoot, xdgRoot]) {
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+      }
+      yield* fileSystem.symlink(defaultRoot, alias);
+      const instances = [
+        { id: "opencode", environment: {}, configured: false },
+        {
+          id: "opencode-list",
+          environment: { OPENCODE_DATA_DIR: ` ${instanceRoot}, ${alias}, ${defaultRoot}, , ` },
+          configured: true,
+        },
+        {
+          id: "opencode-xdg",
+          environment: { XDG_DATA_HOME: dataHome },
+          configured: true,
+        },
+      ];
+      if (openCodeUsageReader.kind !== "scan") throw new Error("Expected an OpenCode scan reader");
+      const sources = yield* openCodeUsageReader
+        .scan({
+          instances: instances.map(({ id, environment, configured }) => ({
+            instanceId: ProviderInstanceId.make(id),
+            config: undefined,
+            environment,
+            configured,
+          })),
+          settings: DEFAULT_SERVER_SETTINGS,
+          windowStartMs: 0,
+          retentionCutoffMs: 0,
+          awaitRefresh: true,
+        })
+        .pipe(
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+        );
       assert.deepStrictEqual(
-        result.files.map((file) => file.path),
-        names.map((name) => path.join(session, name)),
+        sources.map((source) => source.dir).sort(),
+        [defaultRoot, instanceRoot, xdgRoot].sort(),
       );
-      assert.strictEqual(result.files.flatMap((file) => file.records).length, 600);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
-import * as NodeSqlite from "node:sqlite";

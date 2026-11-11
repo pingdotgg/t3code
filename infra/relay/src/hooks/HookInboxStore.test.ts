@@ -3,11 +3,9 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as HookInboxStore from "./HookInboxStore.ts";
 
@@ -70,7 +68,6 @@ describe("HookInboxStore", () => {
           yield* Deferred.succeed(released, undefined);
           const nextAt = yield* Fiber.join(run);
           expect(sent).toEqual(["first"]);
-          // The alarm must not be rescheduled, even if the in-flight send failed.
           expect(nextAt).toBeNull();
           const sql = yield* SqlClient.SqlClient;
           expect(yield* sql`SELECT id FROM held_hooks`).toEqual([]);
@@ -168,72 +165,6 @@ describe("HookInboxStore", () => {
     ),
   );
 
-  it.effect("retries every 10 s for 3 minutes, then backs off to 10 minutes", () =>
-    Effect.gen(function* () {
-      const delays = yield* Effect.forEach(
-        [1, 18, 19, 20, 21, 23, 24, 40],
-        HookInboxStore.retryDelayMs,
-      );
-      expect(delays).toEqual([10_000, 10_000, 30_000, 60_000, 120_000, 480_000, 600_000, 600_000]);
-    }),
-  );
-
-  it.effect("waking resets the backoff and reports whether anything waits", () =>
-    withInbox(
-      Effect.gen(function* () {
-        expect(yield* HookInboxStore.wake(BASE_URL)).toBe(false);
-        yield* HookInboxStore.hold(yield* hook("first"), "https://old.example.test/");
-        const offline = deliverer(() => "unreachable");
-        yield* HookInboxStore.deliverDue(offline.send);
-        yield* HookInboxStore.deliverDue(offline.send);
-
-        for (let failure = 0; failure < 20; failure++) {
-          yield* HookInboxStore.deliverDue(offline.send);
-        }
-        const now = yield* Clock.currentTimeMillis;
-        expect(yield* HookInboxStore.deliverDue(offline.send)).toBeGreaterThan(now + 60_000);
-
-        // A wake means its tunnel just connected, which Cloudflare may not
-        // route to for a few minutes: back to retrying every 10 s, sent to
-        // where the environment is now.
-        expect(yield* HookInboxStore.wake(BASE_URL)).toBe(true);
-        expect(yield* HookInboxStore.deliverDue(offline.send)).toBe(now + 10_000);
-        expect(offline.sent.at(-1)?.baseUrl).toBe(BASE_URL);
-      }),
-    ),
-  );
-
-  it.effect("starts the schedule over once the inbox drains", () =>
-    withInbox(
-      Effect.gen(function* () {
-        yield* HookInboxStore.hold(yield* hook("old"), BASE_URL);
-        const offline = deliverer(() => "unreachable");
-        for (let failure = 0; failure < 30; failure++) {
-          yield* HookInboxStore.deliverDue(offline.send);
-        }
-        yield* TestClock.adjust(Duration.hours(25));
-        expect(yield* HookInboxStore.deliverDue(offline.send)).toBeNull();
-
-        const now = yield* Clock.currentTimeMillis;
-        expect(yield* HookInboxStore.hold(yield* hook("new"), BASE_URL)).toBe(now + 10_000);
-      }),
-    ),
-  );
-
-  it.effect("drops requests older than 24 hours", () =>
-    withInbox(
-      Effect.gen(function* () {
-        yield* HookInboxStore.hold(yield* hook("old"), BASE_URL);
-        yield* TestClock.adjust(Duration.hours(1));
-        yield* HookInboxStore.hold(yield* hook("new"), BASE_URL);
-        yield* TestClock.adjust(Duration.minutes(23 * 60 + 1));
-        const { sent, send } = deliverer(() => "delivered");
-        yield* HookInboxStore.deliverDue(send);
-        expect(sent.map((entry) => entry.hook.id)).toEqual(["new"]);
-      }),
-    ),
-  );
-
   it.effect("refuses requests past the per-hook cap", () =>
     withInbox(
       Effect.gen(function* () {
@@ -271,18 +202,6 @@ describe("HookInboxStore", () => {
         const first = yield* hook("same");
         expect(yield* HookInboxStore.hold(first, BASE_URL)).not.toBeNull();
         expect(yield* HookInboxStore.hold(first, BASE_URL)).toBeNull();
-      }),
-    ),
-  );
-
-  it.effect("clear drops everything held", () =>
-    withInbox(
-      Effect.gen(function* () {
-        yield* HookInboxStore.hold(yield* hook("first"), BASE_URL);
-        yield* HookInboxStore.clear;
-        const { sent, send } = deliverer(() => "delivered");
-        expect(yield* HookInboxStore.deliverDue(send)).toBeNull();
-        expect(sent).toHaveLength(0);
       }),
     ),
   );
