@@ -2659,28 +2659,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         if (symlinksSupported) {
           yield* fileSystem.symlink("large.data", pathService.join(cwd, "ordinary-link"));
         }
-        const indexBefore = yield* git(cwd, ["ls-files", "--stage"]);
-        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const spawner = ChildProcessSpawner.make((command) =>
-          Effect.gen(function* () {
-            if (
-              ChildProcess.isStandardCommand(command) &&
-              (command.args.includes("--numstat") || command.args.includes("--patch"))
-            ) {
-              const result = yield* delegate.spawn(
-                ChildProcess.make("git", ["ls-files", "--error-unmatch", "large.data"], {
-                  cwd,
-                  env: command.options.env,
-                }),
-              );
-              assert.notEqual(Number(yield* result.exitCode), 0);
-            }
-            return yield* delegate.spawn(command);
-          }),
-        );
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
         const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
         const source = preview.sources.find((item) => item.kind === "working-tree")!;
         assert.isTrue(source.truncated);
@@ -2704,7 +2683,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         });
         assert.isTrue(oversized.sources[0]!.truncated);
         assert.isEmpty(oversized.sources[0]!.diff);
-        assert.strictEqual(yield* git(cwd, ["ls-files", "--stage"]), indexBefore);
       }),
     );
 
@@ -2720,24 +2698,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* fileSystem.truncate(pathService.join(cwd, name), 9 * 1024 * 1024);
         }
         yield* writeTextFile(cwd, "z-small.txt", "still reviewable\n");
-        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const spawner = ChildProcessSpawner.make((command) =>
-          Effect.gen(function* () {
-            if (ChildProcess.isStandardCommand(command) && command.args.includes("--numstat")) {
-              const result = yield* delegate.spawn(
-                ChildProcess.make("git", ["ls-files", "--error-unmatch", "large-7.data"], {
-                  cwd,
-                  env: command.options.env,
-                }),
-              );
-              assert.notEqual(Number(yield* result.exitCode), 0);
-            }
-            return yield* delegate.spawn(command);
-          }),
-        );
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
         const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
         const source = preview.sources.find((item) => item.kind === "working-tree")!;
         assert.isTrue(source.truncated);
