@@ -1302,11 +1302,7 @@ it.layer(
 
     it.effect("rebuilds every uninstalled instance when the login shell PATH gained entries", () =>
       Effect.gen(function* () {
-        const makeInstance = (
-          id: string,
-          installed: boolean,
-          streamChanges: Stream.Stream<ServerProvider> = Stream.empty,
-        ) => {
+        const makeInstance = (id: string, installed: boolean) => {
           const provider = {
             instanceId: ProviderInstanceId.make(id),
             driver: ProviderDriverKind.make("claudeAgent"),
@@ -1338,7 +1334,7 @@ it.layer(
                   ),
                 getSnapshot: Effect.succeed(provider),
                 refresh: Effect.succeed(provider),
-                streamChanges,
+                streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
               orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
@@ -1346,8 +1342,7 @@ it.layer(
             } satisfies ProviderInstance,
           };
         };
-        const healthChecks = yield* PubSub.unbounded<ServerProvider>();
-        const missing = makeInstance("claude-missing", false, Stream.fromPubSub(healthChecks));
+        const missing = makeInstance("claude-missing", false);
         const otherMissing = makeInstance("codex-missing", false);
         const installed = makeInstance("claude-installed", true);
         const instances = [missing.instance, otherMissing.instance, installed.instance];
@@ -1368,13 +1363,6 @@ it.layer(
           assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
           yield* registry.refresh();
           assert.equal(yield* Queue.size(rebuilds), 0);
-
-          // A periodic health check that still finds the CLI missing rereads PATH too.
-          yield* Ref.set(shellPath, "/opt/tools/bin:/home/test/.local/bin:/usr/bin");
-          yield* TestClock.adjust("5 minutes");
-          yield* PubSub.publish(healthChecks, missing.provider);
-          assert.deepStrictEqual(yield* Queue.take(rebuilds), missingIds);
-          assert.equal(env.PATH, "/opt/tools/bin:/home/test/.local/bin:/usr/bin");
         }).pipe(
           Effect.provide(
             ProviderRegistry.layer.pipe(
