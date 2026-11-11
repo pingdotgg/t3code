@@ -112,6 +112,7 @@ const expandGlob = Effect.fnUntraced(function* (pattern: string) {
   const entries = yield* fs.readDirectory(directory);
   const matchedPaths: string[] = [];
   for (const entry of entries) {
+    if (entry.startsWith(".") && !basePattern.startsWith(".")) continue;
     if (!matcher.test(entry)) {
       continue;
     }
@@ -177,6 +178,7 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
     return;
   }
   if (!(yield* fs.exists(resolvedPath))) return;
+  if ((yield* fs.stat(resolvedPath)).type === "Directory") return;
   visited.add(resolvedPath);
 
   const directory = path.dirname(resolvedPath);
