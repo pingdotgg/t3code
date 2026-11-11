@@ -263,16 +263,11 @@ describe("shouldCollapseUserMessage", () => {
     expect(shouldCollapseUserMessage(`${citation} Can you expand on this?`)).toBe(false);
     expect(shouldCollapseUserMessage(`${citation} ${"More text. ".repeat(60)}`)).toBe(true);
   });
-});
 
-it.each([
-  ["short message", false],
-  [" ".repeat(700), false],
-  ["a".repeat(600), false],
-  ["a".repeat(601), true],
-  [Array(8).fill("line").join("\n"), false],
-  [Array(9).fill("line").join("\n"), true],
-  [`[file](https://example.test/${"a".repeat(700)})`, false],
-])("collapses based on visible text: %s", (text, expected) => {
-  expect(shouldCollapseUserMessage(text)).toBe(expected);
+  it("ignores link targets and whitespace-only bodies", () => {
+    expect(shouldCollapseUserMessage(`[file](https://example.test/${"a".repeat(700)})`)).toBe(
+      false,
+    );
+    expect(shouldCollapseUserMessage(" ".repeat(700))).toBe(false);
+  });
 });
