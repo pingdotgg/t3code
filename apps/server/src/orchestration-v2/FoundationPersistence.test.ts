@@ -663,8 +663,8 @@ it.effect.each([false, true])("groups shutdown commits with rollback=%s", (fail)
         EffectWorker.OrchestrationEffectWorkerV2.of({
           awaitWork: Effect.void,
           runRecoveryOnce: Effect.succeed(false),
-          runOnce: Effect.succeed(false),
-          nextClaimableAt: Effect.succeedNone,
+          runOnce: () => Effect.succeed(false),
+          nextClaimableAt: () => Effect.succeedNone,
           drain: () => Effect.succeed(0),
         }),
       ),
