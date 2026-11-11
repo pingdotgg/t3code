@@ -1,10 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type * as Stream from "effect/Stream";
 import type {
   PullRequestStackMembership,
   PullRequestAction,
   PullRequestStackHead,
   PullRequestActor,
+  PullRequestReferenceCandidate,
+  PullRequestReferenceSigil,
   PullRequestBaseComparison,
   PullRequestCapabilities,
   PullRequestChecksState,
@@ -395,6 +398,14 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, PullRequestProviderError>;
 
+  /**
+   * Emits whenever the host says the change request may have changed, and once on connecting.
+   * Ends where the host or account offers no such feed; readers then rely on polling alone.
+   */
+  readonly changeRequestEvents?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Stream.Stream<void>;
+
   readonly getChangeRequestStack?: (
     input: ProviderRepositoryRef & { readonly includeDetails?: boolean; readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestStack | null, PullRequestProviderError>;
@@ -521,7 +532,11 @@ export interface PullRequestProviderApi {
 
   /** Exclude the author using host-specific account identities. */
   readonly listReviewerCandidates: (
-    input: ProviderRepositoryRef & { readonly number: number },
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      /** Asks the host to search past its first page of candidates. */
+      readonly query?: string | undefined;
+    },
   ) => Effect.Effect<PullRequestReviewerCandidateList, PullRequestProviderError>;
 
   readonly setReviewerRequest: (
@@ -554,6 +569,20 @@ export interface PullRequestProviderApi {
   readonly searchRepositoryAuthors?: (
     input: ProviderRepositoryRef & { readonly query?: string | undefined },
   ) => Effect.Effect<ProviderFilterOptionPage<PullRequestActor>, PullRequestProviderError>;
+
+  /**
+   * Issues and change requests a composer can reference, recently updated first. A numeric
+   * `query` also finds that number exactly; other text matches titles as far as the host can.
+   */
+  readonly searchRepositoryReferences?: (
+    input: ProviderRepositoryRef & {
+      readonly query?: string | undefined;
+      readonly sigil?: PullRequestReferenceSigil | undefined;
+    },
+  ) => Effect.Effect<
+    ProviderFilterOptionPage<PullRequestReferenceCandidate>,
+    PullRequestProviderError
+  >;
 
   readonly setLabels?: (
     input: ProviderRepositoryRef & {

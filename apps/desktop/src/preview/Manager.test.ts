@@ -1,12 +1,15 @@
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
+  DesktopPreviewFindResultEvent,
   DesktopPreviewRecordingInputEvent,
   PreviewAnnotationPayload,
   PreviewAnnotationRect,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
+import { app, shell } from "electron";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -169,6 +172,7 @@ const {
 }));
 
 vi.mock("electron", () => ({
+  app: { getPath: vi.fn() },
   BrowserWindow: browserWindowConstructor,
   // oxlint-disable-next-line typescript/no-extraneous-class -- This constructor-only mock implements the browser ClipboardItem API.
   ClipboardItem: class {
@@ -571,6 +575,103 @@ describe("PreviewManager", () => {
     webviewSend.mockClear();
   });
 
+  effectIt.effect.each([false, true])(
+    "preserves simultaneous same-name downloads with an existing destination: %s",
+    (existing) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-download-test-" });
+        const downloads = `${dir}/downloads`;
+        yield* fs.makeDirectory(downloads);
+        using _downloads = vi.spyOn(app, "getPath").mockReturnValue(downloads);
+        if (existing) yield* fs.writeFileString(`${downloads}/report.txt`, "existing download");
+        const sources = [`${dir}/first`, `${dir}/second`];
+        yield* fs.writeFileString(sources[0]!, "first download");
+        yield* fs.writeFileString(sources[1]!, "second download");
+        const checked = yield* Deferred.make<void>();
+        const finished = makeChangeSignal();
+        let probes = 0;
+        let completions = 0;
+        using _reveal = vi.spyOn(shell, "showItemInFolder").mockImplementation(() => {
+          completions += 1;
+          finished.notify();
+        });
+        const raceTarget = `${downloads}/${existing ? "report (1).txt" : "report.txt"}`;
+        const exists = (target: string) =>
+          Effect.gen(function* () {
+            const found = yield* fs.exists(target);
+            if (target === raceTarget) {
+              if (++probes === 2) yield* Deferred.succeed(checked, undefined);
+              yield* Deferred.await(checked);
+            }
+            return found;
+          });
+        const manager = yield* PreviewManager.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, { ...fs, exists }),
+          Effect.provide(
+            Layer.mergeAll(
+              layerEnvironment,
+              layerBrowserSession,
+              Layer.mock(DesktopBrowserHost.DesktopBrowserHost)({
+                attach: () => {},
+                detach: () => {},
+                setShown: () => {},
+                humanStartedDownload: () => true,
+                placeDownload: () => true,
+              }),
+              Layer.mock(PreviewPasskeys.PreviewPasskeys)({
+                bridgeEnabled: false,
+                installSessionHandlers: () => {},
+                attachGuest: () => () => {},
+              }),
+              Layer.mock(DesktopRendererHistory.DesktopRendererHistory)({}),
+              Layer.succeed(HostProcess.Platform, "linux"),
+            ),
+          ),
+        );
+        yield* manager.getBrowserSession("downloads");
+        const listener = previewSession.on.mock.calls[0]![1] as (
+          event: unknown,
+          item: {
+            once: (event: string, done: (event: unknown, state: string) => void) => void;
+            getFilename: () => string;
+            getSavePath: () => string;
+          },
+          source: unknown,
+        ) => void;
+        for (const source of sources) {
+          listener(
+            {},
+            {
+              once: (_event, done) => done({}, "completed"),
+              getFilename: () => "report.txt",
+              getSavePath: () => source,
+            },
+            {},
+          );
+        }
+        yield* finished.until(() => completions === 2);
+        const names = yield* fs.readDirectory(downloads);
+        expect(names.toSorted()).toEqual(
+          existing
+            ? ["report (1).txt", "report (2).txt", "report.txt"]
+            : ["report (1).txt", "report.txt"],
+        );
+        const contents = yield* Effect.forEach(names, (name) =>
+          fs.readFileString(`${downloads}/${name}`),
+        );
+        expect(contents.toSorted()).toEqual(
+          (existing
+            ? ["existing download", "first download", "second download"]
+            : ["first download", "second download"]
+          ).toSorted(),
+        );
+        if (existing) {
+          expect(yield* fs.readFileString(`${downloads}/report.txt`)).toBe("existing download");
+        }
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
+
   effectIt.effect.each([
     ["linux", "ctrl+alt+[", "[", "BracketLeft", false],
     ["win32", "ctrl+alt+8", "[", "Digit8", false],
@@ -712,6 +813,135 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect.each([
+    ["darwin", true],
+    ["linux", false],
+    ["win32", false],
+  ] as const)(
+    "lets the page and its iframes claim the find shortcut before the host opens find on %s",
+    ([platform, usesMeta]) =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const preview = makeFaviconWebContents();
+            const send = vi.fn();
+            const mainFrame = { processId: 1, routingId: 1 };
+            Object.assign(preview.webContents, {
+              hostWebContents: { isDestroyed: () => false, send },
+              mainFrame,
+              focusedFrame: mainFrame,
+            });
+            fromId.mockReturnValue(preview.webContents);
+            yield* manager.createTab("tab_page_find");
+            yield* manager.registerWebview("tab_page_find", 42);
+            yield* manager.setForwardedShortcuts([
+              { command: "preview.find", shortcut: parseKeybindingShortcut("mod+f")! },
+            ]);
+            const beforeInput = preview.listeners.get("before-input-event")!;
+            const findKey = {
+              type: "keyDown",
+              key: "f",
+              code: "KeyF",
+              meta: usesMeta,
+              control: !usesMeta,
+            };
+            const preventDefault = vi.fn();
+
+            beforeInput(
+              { preventDefault } as never,
+              { ...findKey, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(send).not.toHaveBeenCalled();
+
+            const ipcOn = (preview.webContents as Electron.WebContents).ipc.on as ReturnType<
+              typeof vi.fn
+            >;
+            const pageUnhandledShortcut = ipcOn.mock.calls.find(
+              ([channel]) => channel === "preview:page-unhandled-shortcut",
+            )![1];
+            pageUnhandledShortcut(
+              {},
+              {
+                key: "f",
+                code: "KeyF",
+                metaKey: usesMeta,
+                ctrlKey: !usesMeta,
+                shiftKey: false,
+                altKey: false,
+              },
+            );
+            expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "preview.find");
+
+            Object.assign(preview.webContents, { focusedFrame: { processId: 1, routingId: 2 } });
+            beforeInput(
+              { preventDefault } as never,
+              { ...findKey, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(send).toHaveBeenCalledOnce();
+
+            Object.assign(preview.webContents, { focusedFrame: mainFrame });
+            yield* manager.setForwardedShortcuts([
+              { command: "preview.find", shortcut: parseKeybindingShortcut("ctrl+alt+8")! },
+            ]);
+            pageUnhandledShortcut(
+              {},
+              {
+                key: "[",
+                code: "Digit8",
+                metaKey: false,
+                ctrlKey: true,
+                shiftKey: false,
+                altKey: true,
+              },
+            );
+            expect(send).toHaveBeenCalledTimes(usesMeta ? 2 : 1);
+          }),
+        platform,
+      ),
+  );
+
+  effectIt.effect("searches the guest page and reports its match counts", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const findInPage = vi.fn();
+        const stopFindInPage = vi.fn();
+        Object.assign(preview.webContents, { findInPage, stopFindInPage });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_find");
+        yield* manager.registerWebview("tab_find", 42);
+        const reported = yield* Deferred.make<DesktopPreviewFindResultEvent>();
+        yield* manager.subscribeFindResults((event) => Deferred.succeed(reported, event));
+
+        yield* manager.findInPage("tab_find", "needle", { forward: true, newSession: true });
+        expect(findInPage).toHaveBeenCalledExactlyOnceWith("needle", {
+          forward: true,
+          findNext: true,
+        });
+
+        preview.listeners.get("found-in-page")!(
+          {} as never,
+          {
+            requestId: 1,
+            activeMatchOrdinal: 2,
+            matches: 5,
+            finalUpdate: true,
+          } as never,
+        );
+        expect(yield* Deferred.await(reported)).toEqual({
+          tabId: "tab_find",
+          activeMatchOrdinal: 2,
+          matches: 5,
+        });
+
+        yield* manager.stopFindInPage("tab_find");
+        expect(stopFindInPage).toHaveBeenCalledExactlyOnceWith("clearSelection");
+      }),
+    ),
+  );
+
   effectIt.effect("isolates failed state listeners and continues delivery", () => {
     const loggedErrors: Array<unknown> = [];
     const logger = Logger.make(({ message }) => {
@@ -820,6 +1050,53 @@ describe("PreviewManager", () => {
 
         expect(loadURL).toHaveBeenCalledOnce();
         expect(loadURL).toHaveBeenCalledWith("http://localhost:3200/");
+      }),
+    ),
+  );
+
+  effectIt.effect("treats a load superseded by a page redirect as a successful navigation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        // Same shape Electron's loadURL rejects with in lib/browser/api/web-contents.ts.
+        const loadError = (errno: number, code: string, url: string) =>
+          Object.assign(new Error(`${code} (${errno}) loading '${url}'`), { errno, code, url });
+        const preview = makeFaviconWebContents();
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_redirect");
+        yield* manager.registerWebview("tab_redirect", 42);
+
+        preview.loadURL.mockRejectedValueOnce(
+          loadError(-3, "ERR_ABORTED", "https://example.com/target"),
+        );
+        yield* manager.navigate("tab_redirect", "https://example.com/");
+
+        preview.loadURL.mockRejectedValueOnce(
+          loadError(-3, "ERR_ABORTED", "https://example.com/reload"),
+        );
+        yield* manager.navigate("tab_redirect", "https://example.com/reload");
+
+        preview.loadURL.mockImplementationOnce(async () => {
+          preview.listeners.get("will-prevent-unload")?.();
+          throw loadError(-3, "ERR_ABORTED", "https://example.com/blocked");
+        });
+        const blocked = yield* Effect.exit(
+          manager.navigate("tab_redirect", "https://example.com/blocked"),
+        );
+        expect(Exit.isFailure(blocked)).toBe(true);
+
+        preview.loadURL.mockRejectedValueOnce(
+          loadError(-105, "ERR_NAME_NOT_RESOLVED", "https://missing.invalid/"),
+        );
+        const failed = yield* Effect.exit(
+          manager.navigate("tab_redirect", "https://missing.invalid/"),
+        );
+        expect(Exit.isFailure(failed)).toBe(true);
+        if (Exit.isSuccess(failed)) return;
+        expect(Option.getOrThrow(Cause.findErrorOption(failed.cause))).toMatchObject({
+          _tag: "PreviewOperationError",
+          operation: "navigate.loadURL",
+          cause: { errno: -105 },
+        });
       }),
     ),
   );
@@ -2439,6 +2716,70 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
         expect(pick.pollUnsafe()).toBeDefined();
         expect(yield* Fiber.join(pick)).toBeNull();
+      }),
+    ),
+  );
+
+  effectIt.effect("delivers annotation voice state only to the pick session that owns it", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const firstReady = yield* Deferred.make<void>();
+        const secondReady = yield* Deferred.make<void>();
+        let registrations = 0;
+        const guest = {
+          ...makeTestPreviewWebContents(async () => ({
+            toPNG: () => Buffer.from("unused"),
+            toJPEG: () => Buffer.from("unused"),
+            getSize: () => ({ width: 1, height: 1 }),
+          })),
+          isFocused: () => true,
+          focus: vi.fn(),
+          send: (channel: string, ...args: unknown[]) => {
+            webviewSend(channel, ...args);
+            if (channel === "preview:start-pick")
+              Deferred.doneUnsafe(registrations++ === 0 ? firstReady : secondReady, Effect.void);
+          },
+          once: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
+        };
+        fromId.mockReturnValue(guest as never);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const first = yield* manager
+          .pickElement("tab_1", { sessionId: "first", shortcuts: [] })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(firstReady);
+        const state = {
+          tabId: "tab_1",
+          sessionId: "first",
+          available: true,
+          phase: "recording" as const,
+          status: "Recording",
+          errorAction: null,
+          preview: null,
+          freezesEditor: true,
+          blocksSubmission: true,
+          level: 0,
+          shortcutLabel: "Ctrl+D",
+          draft: { text: "Tighten spacing", cursor: 15 },
+        };
+        yield* manager.updateAnnotationVoice(state);
+        expect(webviewSend).toHaveBeenCalledWith("preview:annotation-voice-state", state);
+        const second = yield* manager
+          .pickElement("tab_1", { sessionId: "second", shortcuts: [] })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(secondReady);
+        expect(yield* Fiber.join(first)).toBeNull();
+        webviewSend.mockClear();
+        yield* manager.updateAnnotationVoice(state);
+        expect(webviewSend).not.toHaveBeenCalled();
+        yield* manager.updateAnnotationVoice({ ...state, sessionId: "second" });
+        expect(webviewSend).toHaveBeenCalledOnce();
+        yield* manager.cancelPickElement("tab_1");
+        expect(yield* Fiber.join(second)).toBeNull();
+        webviewSend.mockClear();
+        yield* manager.updateAnnotationVoice({ ...state, sessionId: "second" });
+        expect(webviewSend).not.toHaveBeenCalled();
       }),
     ),
   );
