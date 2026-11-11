@@ -889,14 +889,22 @@ it.layer(
   it.effect("still signals a stopping shell when the manager shuts down mid-lookup", () =>
     Effect.gen(function* () {
       const ptyAdapter = new FakePtyAdapter();
+      const lookupStarted = yield* Deferred.make<void>();
+      let stopping = false;
       yield* Effect.scoped(
         Effect.gen(function* () {
           const { manager } = yield* createManager(5, {
             ptyAdapter,
-            processTable: Effect.never,
+            processTable: Effect.suspend(() =>
+              stopping
+                ? Deferred.succeed(lookupStarted, undefined).pipe(Effect.andThen(Effect.never))
+                : Effect.succeed([]),
+            ),
           }).pipe(Effect.provide(layerWithHostPlatform("linux")));
           yield* manager.open(openInput());
+          stopping = true;
           yield* manager.close({ threadId: "thread-1" });
+          yield* Deferred.await(lookupStarted);
         }),
       );
 
