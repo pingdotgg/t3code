@@ -6667,7 +6667,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   // regression: #15892 non-execution metadata is carried through, not guessed from result text
-  it.effect.each(["cancelled", "denied", "permission_denied", undefined])(
+  it.effect.each(["cancelled", "interrupted", "denied", "permission_denied", undefined])(
     "preserves native tool non-execution metadata %s without inferring a denial from text",
     (kind) =>
       Effect.scoped(
@@ -6722,7 +6722,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               : [],
           );
           const failed = items.findLast((item) => item.nativeItemRef?.nativeId === "tool-error")!;
-          assert.equal(failed.status, kind === "cancelled" ? "cancelled" : "failed");
+          assert.equal(
+            failed.status,
+            kind === "cancelled" || kind === "interrupted" ? kind : "failed",
+          );
           assert.equal(failed.toolNonExecutionKind, kind);
           const ok = items.findLast((item) => item.nativeItemRef?.nativeId === "tool-ok")!;
           assert.equal(ok.status, "completed");
