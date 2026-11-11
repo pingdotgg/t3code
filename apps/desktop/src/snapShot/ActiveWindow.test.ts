@@ -212,3 +212,12 @@ it("keeps an untitled content window ahead of a much taller background window", 
   assert.strictEqual(window?.id, 1);
   assert.deepEqual(window?.bounds, bounds);
 });
+
+it("keeps a small window when the app has nothing larger", async () => {
+  const bounds = { x: 200, y: 200, width: 80, height: 60 };
+  stubMacLookup(macLookup([{ id: 7, title: "Timer", bounds }]));
+
+  const window = await activeWindow("darwin");
+
+  assert.strictEqual(window?.id, 7);
+});

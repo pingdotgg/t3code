@@ -115,14 +115,15 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   const output = (await runMacLookup()).trim();
   if (!output) return undefined;
   const lookup = decodeMacActiveWindowLookup(output);
-  const visible = lookup.windows.filter(
-    (window) =>
-      window.alpha > 0 &&
-      window.bounds.width > 0 &&
-      window.bounds.height > 0 &&
-      (window.bounds.width >= MAC_MIN_CONTENT_WINDOW_SIZE ||
-        window.bounds.height >= MAC_MIN_CONTENT_WINDOW_SIZE),
+  const shown = lookup.windows.filter(
+    (window) => window.alpha > 0 && window.bounds.width > 0 && window.bounds.height > 0,
   );
+  const contentSized = shown.filter(
+    (window) =>
+      window.bounds.width >= MAC_MIN_CONTENT_WINDOW_SIZE ||
+      window.bounds.height >= MAC_MIN_CONTENT_WINDOW_SIZE,
+  );
+  const visible = contentSized.length > 0 ? contentSized : shown;
   // Helpers belong to the content behind them, which may not be the app's largest window.
   const window = visible.find((candidate, index) => {
     if (candidate.title.trim() !== "") return true;
