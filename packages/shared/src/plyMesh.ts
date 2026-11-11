@@ -40,6 +40,8 @@ interface Property {
   readonly type: Scalar;
   /** For list properties, the type of the leading count. */
   readonly countType: Scalar | null;
+  /** Fewest binary bytes one value takes: the scalar, or a list's count. */
+  readonly bytes: number;
 }
 
 interface Element {
@@ -84,6 +86,7 @@ function parseHeader(bytes: Uint8Array): Header | null {
         name: words[list ? 4 : 2] ?? "",
         type: type.type,
         countType: countType?.type ?? null,
+        bytes: (countType ?? type).bytes,
       });
     }
   }
@@ -137,6 +140,18 @@ export async function parsePly(
   if (!header) return null;
   // Every item takes at least a byte, so a larger count means a damaged header.
   if (header.elements.some((element) => element.count > bytes.length)) return null;
+  // Every ASCII value takes a digit and a separator, so counts must fit the body before allocating.
+  const smallestBody = header.elements.reduce(
+    (sum, element) =>
+      sum +
+      element.count *
+        element.properties.reduce(
+          (size, property) => size + (header.format === "ascii" ? 2 : property.bytes),
+          0,
+        ),
+    header.format === "ascii" ? -1 : 0,
+  );
+  if (smallestBody > bytes.length - header.bodyOffset) return null;
   const faces = header.elements.find((element) => element.name === "face");
   if (!faces || faces.count === 0 || faces.count > limits.maxTriangles) return null;
   const readerFor = valueReaders(bytes, header);
