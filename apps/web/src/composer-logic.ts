@@ -28,15 +28,6 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-/** Fuzzy matches survive any prose, so a search continued past a space keeps literal matches only. */
-export function literalSpacedPathMatches<
-  T extends { readonly label: string; readonly path?: string },
->(items: T[], query: string): T[] {
-  const needle = query.toLowerCase();
-  if (!/\s/u.test(needle)) return items;
-  return items.filter((item) => (item.path ?? item.label).toLowerCase().includes(needle));
-}
-
 export function isPathSuggestionCurrent(
   searchTarget: ComposerPathSearchTarget,
   trigger: ComposerTrigger | null,

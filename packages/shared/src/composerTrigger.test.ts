@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   continueComposerPathTrigger,
   detectComposerTrigger,
+  hasSpacedPathSearchEnded,
+  literalSpacedPathMatches,
   parseSideChatCommand,
   serializeComposerFileLink,
 } from "./composerTrigger.ts";
@@ -98,6 +100,43 @@ describe("continueComposerPathTrigger", () => {
     ["text before the @ changes", "Inspekt @Release N then summarize", 18],
   ])("stops when %s", (_name, text, cursor) => {
     expect(continueComposerPathTrigger(text, cursor, open, before, queryEnd)).toBeNull();
+  });
+});
+
+describe("literalSpacedPathMatches", () => {
+  const items = [
+    { label: "Release Notes.md", path: "docs/Release Notes.md" },
+    { label: "AGENTS.md", path: "AGENTS.md" },
+    { label: "Fix login flow" },
+  ];
+
+  it.each([
+    ["AGENTS", ["Release Notes.md", "AGENTS.md", "Fix login flow"]],
+    ["release no", ["Release Notes.md"]],
+    ["login f", ["Fix login flow"]],
+    ["AGENTS.md ", []],
+    ["AGENTS.md before you push", []],
+  ])("keeps the literal matches for %j", (query, labels) => {
+    expect(literalSpacedPathMatches(items, query).map((item) => item.label)).toEqual(labels);
+  });
+});
+
+describe("hasSpacedPathSearchEnded", () => {
+  const spaced = detectComposerTrigger("@Release", 8)!;
+  const trigger = { ...spaced, query: "Release N", rangeEnd: 10 };
+  const settled = { trigger, itemCount: 0, isPending: false, threadMatchCount: 0 };
+
+  it("ends a spaced search once nothing matches and every search has settled", () => {
+    expect(hasSpacedPathSearchEnded(settled)).toBe(true);
+  });
+
+  it.each([
+    ["a search is pending", { isPending: true }],
+    ["a thread title matched before its row mounted", { threadMatchCount: 1 }],
+    ["items remain", { itemCount: 1 }],
+    ["the query has no space", { trigger: spaced }],
+  ])("keeps the search open while %s", (_name, override) => {
+    expect(hasSpacedPathSearchEnded({ ...settled, ...override })).toBe(false);
   });
 });
 

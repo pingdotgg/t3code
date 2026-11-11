@@ -6,9 +6,13 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
 vi.mock("../../state/queries", () => ({
-  useComposerPathSearch: () => ({ entries: [], isPending: false }),
+  // Like the server's fuzzy finder, path search answers any query.
+  useComposerPathSearch: () => ({
+    entries: [{ path: "docs/Release Notes.md", kind: "file" }],
+    isPending: false,
+  }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
-  useThreadSearch: () => undefined,
+  useThreadSearch: () => ({ matches: [], query: "", isPending: false }),
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
   getComposerDraftSnapshot: vi.fn(),
@@ -247,6 +251,13 @@ describe("mobile mention search", () => {
     // Moving the caret into existing prose after the query closes the search.
     await renderDraft(`Inspect @Release Notes.md${suffix}`);
     await caret(`Inspect @Release Notes.md${suffix}`.length);
+    expect(menu.trigger).toBeNull();
+    // Prose after a typed mention matches nothing literally, so the search ends there.
+    await renderDraft("@AGENTS.md");
+    await caret("@AGENTS.md".length);
+    await renderDraft("@AGENTS.md please review");
+    expect(menu.trigger).toBeNull();
+    await renderDraft("@AGENTS.md please review before you push");
     expect(menu.trigger).toBeNull();
   });
 });

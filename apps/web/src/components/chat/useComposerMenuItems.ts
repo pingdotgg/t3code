@@ -19,9 +19,13 @@ import {
   filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
+import {
+  hasSpacedPathSearchEnded,
+  literalSpacedPathMatches,
+} from "@t3tools/shared/composerTrigger";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
-import { literalSpacedPathMatches, type ComposerTrigger } from "../../composer-logic";
+import type { ComposerTrigger } from "../../composer-logic";
 import type { DraftId } from "../../composerDraftStore";
 import { basenameOfPath } from "../../pierre-icons";
 import {
@@ -120,7 +124,9 @@ export function useComposerMenuItems({
   const isPathTrigger = composerTriggerKind === "path";
   const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
+  const threadSearch = useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, {
+    titlesOnly: true,
+  });
   // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
@@ -418,5 +424,12 @@ export function useComposerMenuItems({
       : "No matching command.";
   })();
 
-  return { items, isLoading, emptyState };
+  const spacedPathSearchEnded = hasSpacedPathSearchEnded({
+    trigger: composerTrigger,
+    itemCount: items.length,
+    isPending: isLoading || threadSearch.isPending,
+    threadMatchCount: threadSearch.matches.length,
+  });
+
+  return { items, isLoading, emptyState, spacedPathSearchEnded };
 }

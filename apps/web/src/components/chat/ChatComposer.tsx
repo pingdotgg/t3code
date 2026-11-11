@@ -1096,6 +1096,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     items: composerMenuItems,
     isLoading: isComposerMenuLoading,
     emptyState: composerMenuEmptyState,
+    spacedPathSearchEnded,
   } = useComposerMenuItems({
     composerTrigger,
     environmentId,
@@ -1118,15 +1119,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelMentions: { instanceEntries: providerInstanceEntries, modelOptionsByInstance },
   });
 
-  // A search continued past a space ends once nothing matches it literally, so Enter sends the prose.
-  if (
-    composerTrigger?.kind === "path" &&
-    /\s/u.test(composerTrigger.query) &&
-    !isComposerMenuLoading &&
-    composerMenuItems.length === 0
-  ) {
-    clearComposerPathTrigger();
-  }
+  // Ending the search lets Enter send the prose instead of picking a fuzzy match.
+  if (spacedPathSearchEnded) clearComposerPathTrigger();
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
     ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`

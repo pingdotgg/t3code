@@ -32,6 +32,8 @@ import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
   continueComposerPathTrigger,
   detectComposerTrigger,
+  hasSpacedPathSearchEnded,
+  literalSpacedPathMatches,
   replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
@@ -345,7 +347,8 @@ export function useComposerCommandMenu({
     enabled,
     trigger: enabled ? detectComposerTrigger(draftMessage, selection.end) : null,
   }));
-  let trigger = previousSearch.trigger;
+  let search = previousSearch;
+  let trigger = search.trigger;
   const selectionMoved =
     previousSearch.selectionStart !== selection.start ||
     previousSearch.selectionEnd !== selection.end;
@@ -378,7 +381,7 @@ export function useComposerCommandMenu({
       trigger?.kind === "path" && trigger.rangeStart === continued?.trigger.rangeStart
         ? continued.queryEnd
         : (trigger?.rangeEnd ?? 0);
-    setPreviousSearch({
+    search = {
       ownerKey,
       draftMessage,
       selectionStart: selection.start,
@@ -387,7 +390,8 @@ export function useComposerCommandMenu({
       queryEnd,
       enabled,
       trigger,
-    });
+    };
+    setPreviousSearch(search);
   }
   const pathSearch = useComposerPathSearch({
     environmentId,
@@ -395,7 +399,7 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "path" ? trigger.query : null,
   });
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(
+  const threadSearch = useThreadSearch(
     trigger?.kind === "path" && environmentId ? [environmentId] : [],
     trigger?.kind === "path" ? trigger.query : "",
     { titlesOnly: true },
@@ -569,26 +573,41 @@ export function useComposerCommandMenu({
         modelOptions && modelProviders
           ? buildComposerModelItems(modelOptions, trigger.query, modelProviders)
           : [];
-      return [
-        ...threadItems,
-        ...environmentItems,
-        ...modelItems,
-        ...pathSearch.entries.map((entry) => {
-          const parts = entry.path.split("/");
-          return {
-            id: `path:${entry.path}`,
-            type: "path" as const,
-            path: entry.path,
-            kind: entry.kind,
-            label: parts[parts.length - 1] ?? entry.path,
-            description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
-          };
-        }),
-      ];
+      return literalSpacedPathMatches(
+        [
+          ...threadItems,
+          ...environmentItems,
+          ...modelItems,
+          ...pathSearch.entries.map((entry) => {
+            const parts = entry.path.split("/");
+            return {
+              id: `path:${entry.path}`,
+              type: "path" as const,
+              path: entry.path,
+              kind: entry.kind,
+              label: parts[parts.length - 1] ?? entry.path,
+              description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
+            };
+          }),
+        ],
+        trigger.query,
+      );
     }
 
     return [];
   })();
+
+  if (
+    hasSpacedPathSearchEnded({
+      trigger,
+      itemCount: items.length,
+      isPending: pathSearch.isPending || threadSearch.isPending,
+      threadMatchCount: threadSearch.matches.length,
+    })
+  ) {
+    trigger = null;
+    setPreviousSearch({ ...search, trigger: null, queryEnd: 0 });
+  }
 
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;

@@ -75,6 +75,34 @@ export function continueComposerPathTrigger(
   };
 }
 
+/** Fuzzy matches survive any prose, so a search continued past a space keeps literal matches only. */
+export function literalSpacedPathMatches<
+  T extends { readonly label: string; readonly path?: string },
+>(items: T[], query: string): T[] {
+  const needle = query.toLowerCase();
+  if (!/\s/u.test(needle)) return items;
+  return items.filter((item) => (item.path ?? item.label).toLowerCase().includes(needle));
+}
+
+/**
+ * A search continued past a space has run into prose once nothing matches it literally. Thread
+ * title matches mount their rows after the search settles, so they keep it open.
+ */
+export function hasSpacedPathSearchEnded(input: {
+  readonly trigger: ComposerTrigger | null;
+  readonly itemCount: number;
+  readonly isPending: boolean;
+  readonly threadMatchCount: number;
+}): boolean {
+  return (
+    input.trigger?.kind === "path" &&
+    /\s/u.test(input.trigger.query) &&
+    input.itemCount === 0 &&
+    !input.isPending &&
+    input.threadMatchCount === 0
+  );
+}
+
 /** A second slash makes the whole word a path, even when the caret precedes that slash. */
 export function isPathWord(
   text: string,
