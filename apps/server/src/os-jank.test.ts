@@ -170,6 +170,13 @@ effectIt.effect("refreshes PATH with directories the login shell gained after st
     shellEnvironment = {};
     assert.isFalse(yield* refresh);
     assert.equal(env.PATH, "/usr/bin:/home/me/.local/bin:/opt/kept/bin");
+
+    // A directory made fresh for each login (fnm) replaces the last one instead of piling up.
+    shellEnvironment = { PATH: "/tmp/fnm_multishells/1/bin:/usr/bin" };
+    assert.isTrue(yield* refresh);
+    shellEnvironment = { PATH: "/tmp/fnm_multishells/2/bin:/usr/bin" };
+    yield* refresh;
+    assert.equal(env.PATH, "/tmp/fnm_multishells/2/bin:/usr/bin:/opt/kept/bin");
   }),
 );
 

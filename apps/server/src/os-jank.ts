@@ -121,8 +121,15 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
   );
 });
 
+// Per environment: the PATH before the first refresh, and the shell PATH last read. Each refresh
+// rebuilds PATH from that baseline, so shells adding a fresh directory per login (fnm) cannot grow it.
+const refreshState = new WeakMap<
+  NodeJS.ProcessEnv,
+  { readonly baseline: string | undefined; shellPath: string | undefined }
+>();
+
 /**
- * Re-reads the login shell PATH after startup and reports whether PATH gained a directory.
+ * Re-reads the login shell PATH after startup and reports whether it gained a directory.
  * Runs even when the desktop app prepared the startup environment, which goes stale the same way.
  */
 export const refreshPath = Effect.fn("refreshPath")(function* () {
@@ -132,12 +139,21 @@ export const refreshPath = Effect.fn("refreshPath")(function* () {
 
   const env = yield* HostProcess.Environment;
   const readShellEnvironment = yield* LoginShellEnvironment;
-  const known = new Set(mergePathEntries(env.PATH, undefined, platform)?.split(":"));
+  let state = refreshState.get(env);
+  if (!state) {
+    state = { baseline: env.PATH, shellPath: undefined };
+    refreshState.set(env, state);
+  }
   for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
     const shellEnvironment = yield* readShellEnvironment(shell, LOGIN_SHELL_ENVIRONMENT_NAMES);
-    if (!shellEnvironment.PATH) continue;
+    const shellPath = shellEnvironment.PATH;
+    if (!shellPath) continue;
+    const known = new Set((state.shellPath ?? state.baseline ?? "").split(":"));
+    state.shellPath = shellPath;
+    if (state.baseline === undefined) delete env.PATH;
+    else env.PATH = state.baseline;
     applyLoginShellEnvironment(env, platform, shellEnvironment);
-    return (env.PATH ?? "").split(":").some((entry) => !known.has(entry));
+    return shellPath.split(":").some((entry) => entry !== "" && !known.has(entry));
   }
   return false;
 });

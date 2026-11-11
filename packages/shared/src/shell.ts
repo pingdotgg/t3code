@@ -332,6 +332,8 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
 };
 
 const LOGIN_SHELL_PROBE_TIMEOUT = Duration.seconds(5);
+// execFileSync's default maxBuffer, which bounds the startup read the same way.
+const LOGIN_SHELL_PROBE_MAX_OUTPUT = 1024 * 1024;
 
 const execLoginShellProbe = (shell: string, args: ReadonlyArray<string>) =>
   Effect.callback<Option.Option<string>>((resume) => {
@@ -349,6 +351,11 @@ const execLoginShellProbe = (shell: string, args: ReadonlyArray<string>) =>
     }
     child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
       output += chunk;
+      if (output.length > LOGIN_SHELL_PROBE_MAX_OUTPUT) {
+        child.kill("SIGKILL");
+        child.stdout?.destroy();
+        resume(Effect.succeedNone);
+      }
     });
     child.once("error", () => resume(Effect.succeedNone));
     child.once("close", (code) =>
