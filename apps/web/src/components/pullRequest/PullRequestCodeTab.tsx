@@ -140,8 +140,9 @@ import {
   getFileViewedRange,
   isFileDiffCollapsed,
   isLineInFileDiff,
-  toggleFileDiffFoldForViewed,
+  withFileDiffFold,
   type DiffFoldOverride,
+  type FileDiffFoldChoices,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
@@ -388,7 +389,7 @@ function PullRequestCodeTab({
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
   }));
-  const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
+  const [foldChoices, setFoldChoices] = useState<FileDiffFoldChoices>(() => new Map());
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
@@ -428,7 +429,7 @@ function PullRequestCodeTab({
     setStateScopeKey(scopeKey);
     setLastViewedFileKey(null);
     setDraft(null);
-    setToggledFiles(new Set());
+    setFoldChoices(new Map());
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
@@ -741,12 +742,21 @@ function PullRequestCodeTab({
       </div>
     );
 
-  const isCollapsed = (fileKey: string) =>
-    isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
-  const setCollapsed = (fileKey: string, collapsed: boolean) =>
-    setToggledFiles((current) =>
-      toggleFileDiffFoldForViewed(fileKey, collapsed, effectiveFoldOverride, current),
+  // A stale mark means the file changed since it was viewed; Fold all and Expand all outrank marks.
+  const foldsAsViewed = (path: string) =>
+    foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
+  const pathByFileKey = new Map(annotatedFiles.map((file) => [file.fileKey, file.path]));
+  const isCollapsed = (fileKey: string) => {
+    const path = pathByFileKey.get(fileKey);
+    return isFileDiffCollapsed(
+      fileKey,
+      effectiveFoldOverride,
+      foldChoices,
+      path !== undefined && foldsAsViewed(path),
     );
+  };
+  const setCollapsed = (fileKey: string, collapsed: boolean) =>
+    setFoldChoices((current) => withFileDiffFold(current, fileKey, collapsed));
   const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
     const range = getFileViewedRange(
       annotatedFiles,
@@ -755,12 +765,8 @@ function PullRequestCodeTab({
     );
     setLastViewedFileKey(fileKey);
     for (const file of range) setViewed(file.path, viewed);
-    setToggledFiles((current) =>
-      range.reduce(
-        (next, file) =>
-          toggleFileDiffFoldForViewed(file.fileKey, viewed, effectiveFoldOverride, next),
-        current,
-      ),
+    setFoldChoices((current) =>
+      range.reduce((next, file) => withFileDiffFold(next, file.fileKey, viewed), current),
     );
   };
   const viewerHandleRef = useRef<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(null);
@@ -854,7 +860,7 @@ function PullRequestCodeTab({
     if (file === undefined) return;
     if (range) diffReview.onSelectedLinesChange({ id: file.fileKey, range });
     else diffReview.selectFile(path);
-    // Unfold only: a second reveal before the unfold renders must not fold the file again.
+    // Record the unfold even when already open, so a Viewed mark that loads later cannot fold it.
     setCollapsed(file.fileKey, false);
     codeViewReveal.request(file.fileKey, range);
   };
@@ -862,7 +868,7 @@ function PullRequestCodeTab({
   const toggleAllFiles = () => {
     diffReview.showAllFiles();
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
-    setToggledFiles(new Set());
+    setFoldChoices(new Map());
   };
 
   const orderedCommits = // GitLab preserves UTC offsets, so compare instants.
@@ -1016,9 +1022,7 @@ function PullRequestCodeTab({
     onPostRender,
     // Find may repeat requests before render; only unfold, never toggle.
     onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
-      setToggledFiles((current) =>
-        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
-      ),
+      setFoldChoices((current) => withFileDiffFold(current, item.id, false)),
   };
 
   const runThreadCommand = async (
