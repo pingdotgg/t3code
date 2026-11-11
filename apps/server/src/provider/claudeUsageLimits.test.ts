@@ -133,6 +133,8 @@ describe("claudeUsageResponseToLimits", () => {
     kind: "monthly",
     label: "Monthly spend",
     usedPercent: expect.closeTo(9.262, 10),
+    resetsAt: "2026-08-01T00:00:00.000Z",
+    windowDurationMins: 31 * 24 * 60,
   };
 
   it("maps the captured Enterprise budget precisely, preferring spend beside rolling windows", () => {
@@ -142,6 +144,20 @@ describe("claudeUsageResponseToLimits", () => {
         windows: [monthlyWindow],
       },
     );
+    expect(
+      claudeUsageResponseToLimits({
+        checkedAt: "2027-12-31T23:59:00.000Z",
+        response: enterpriseResponse,
+      }).limits.windows,
+    ).toEqual([{ ...monthlyWindow, resetsAt: "2028-01-01T00:00:00.000Z" }]);
+    expect(
+      claudeUsageResponseToLimits({
+        checkedAt: "2028-02-10T08:00:00.000Z",
+        response: enterpriseResponse,
+      }).limits.windows,
+    ).toEqual([
+      { ...monthlyWindow, resetsAt: "2028-03-01T00:00:00.000Z", windowDurationMins: 29 * 24 * 60 },
+    ]);
     const response = {
       ...enterpriseResponse,
       rate_limits: {
