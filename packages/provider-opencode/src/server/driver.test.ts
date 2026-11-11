@@ -207,14 +207,18 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     "reports the installed CLI version independently of the loopback server (%s)",
     (installedVersion) =>
       Effect.gen(function* () {
+        const probeOffline: Array<string | undefined> = [];
         const runtime = {
           ...openCode2Runtime,
-          runOpenCodeCommand: () =>
-            Effect.succeed({
-              stdout:
-                installedVersion === null ? "unrecognized" : `opencode v${installedVersion}\n`,
-              stderr: "",
-              code: 0,
+          runOpenCodeCommand: (input) =>
+            Effect.sync(() => {
+              probeOffline.push(input.environment?.MISE_OFFLINE);
+              return {
+                stdout:
+                  installedVersion === null ? "unrecognized" : `opencode v${installedVersion}\n`,
+                stderr: "",
+                code: 0,
+              };
             }),
         } as OpenCodeRuntime.OpenCodeRuntime["Service"];
         const instance = yield* create(
@@ -225,6 +229,9 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         const snapshot = yield* instance.snapshot.refresh;
         assert.strictEqual(snapshot.version, "2.0.18");
         assert.strictEqual(snapshot.installedVersion, installedVersion);
+        yield* instance.snapshot.resolveMaintenance({ fresh: true });
+        assert.isNotEmpty(probeOffline);
+        assert.isTrue(probeOffline.every((offline) => offline === "1"));
       }).pipe(Effect.scoped),
   );
 

@@ -298,9 +298,10 @@ export const OpenCodeDriver: ProviderDriver<
     const cachedMaintenance = yield* makeCachedProviderMaintenanceResolution(
       maintenanceFor(
         isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
-          ? probeOpenCodeBinary(effectiveConfig.binaryPath, processEnv).pipe(
-              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
-            )
+          ? probeOpenCodeBinary(
+              effectiveConfig.binaryPath,
+              providerProbeEnvironment(processEnv),
+            ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime))
           : runtimeProbe.get,
       ),
     );
@@ -421,7 +422,10 @@ export const OpenCodeDriver: ProviderDriver<
         // while that independently managed server still runs the previous binary.
         installedVersion:
           effectiveConfig.enabled && isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
-            ? probeOpenCodeBinary(effectiveConfig.binaryPath, processEnv).pipe(
+            ? probeOpenCodeBinary(
+                effectiveConfig.binaryPath,
+                providerProbeEnvironment(processEnv),
+              ).pipe(
                 Effect.map((probed) => probed.version),
                 Effect.orElseSucceed(() => null),
               )
