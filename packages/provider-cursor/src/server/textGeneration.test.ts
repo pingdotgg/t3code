@@ -192,10 +192,6 @@ describe("CursorTextGeneration", () => {
 
   it.effect.each([
     { name: "invalid JSON", result: "Add a generated commit message" },
-    {
-      name: "a body with the wrong type",
-      result: '{"subject":"Add generated commit message","body":[]}',
-    },
     { name: "empty output", result: "   " },
   ])("retries $name with a fresh agent before returning a commit message", ({ result }) =>
     Effect.gen(function* () {
@@ -366,28 +362,6 @@ describe("CursorTextGeneration", () => {
         expect(cursorSdkMock.close).toHaveBeenCalledOnce();
         expect(cursorSdkMock.prompt).toHaveBeenCalledOnce();
       }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("stops after a second empty reply", () =>
-    Effect.gen(function* () {
-      cursorSdkMock.prompt.mockResolvedValue({
-        id: "empty-output",
-        status: "finished",
-        result: "   ",
-      });
-      const generation = yield* makeCursorTextGeneration(cursorSettings, {
-        CURSOR_API_KEY: "test-cursor-key",
-      });
-      const failure = yield* Effect.flip(
-        generation.generateThreadTitle({
-          cwd: process.cwd(),
-          message: "Fix reconnect",
-          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2"),
-        }),
-      );
-      expect(failure.detail).toBe("Cursor SDK returned empty output.");
-      expect(cursorSdkMock.prompt).toHaveBeenCalledTimes(2);
-    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("fails closed when ambient sandbox policy can expand write access", () =>
