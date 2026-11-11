@@ -774,7 +774,21 @@ describe("threadIdsLinkedToPullRequest", () => {
             environmentId,
             id: ThreadId.make("thread-d"),
             pullRequests: [],
-            branchPullRequest: { repository: "owner/repo", number: 7 },
+            branchPullRequest: {
+              repository: "owner/repo",
+              number: 7,
+              url: "https://github.com/owner/repo/pull/7",
+            },
+          },
+          {
+            environmentId,
+            id: ThreadId.make("thread-e"),
+            pullRequests: [],
+            branchPullRequest: {
+              repository: "owner/repo",
+              number: 7,
+              url: "https://gitlab.com/owner/repo/-/merge_requests/7",
+            },
           },
           {
             environmentId: EnvironmentId.make("other"),

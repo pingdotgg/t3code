@@ -20,6 +20,7 @@ import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runStreamGuarded, RpcPermissionGuard } from "../rpc/client.ts";
+import { legacyThreadPullRequestKey, threadPullRequestKeysEqual } from "../threadPullRequests.ts";
 import {
   createRuntimeCommand,
   runStreamInEnvironment,
@@ -281,7 +282,11 @@ export function threadIdsLinkedToPullRequest(
       readonly repository: string;
       readonly number: number;
     }>;
-    readonly branchPullRequest?: { readonly repository: string; readonly number: number } | null;
+    readonly branchPullRequest?: {
+      readonly repository: string;
+      readonly number: number;
+      readonly url: string;
+    } | null;
   }>,
   environmentId: EnvironmentIdType,
   reference: {
@@ -301,7 +306,12 @@ export function threadIdsLinkedToPullRequest(
     );
     const branchLinked =
       shell.branchPullRequest?.number === reference.number &&
-      shell.branchPullRequest.repository === reference.repository;
+      shell.branchPullRequest.repository === reference.repository &&
+      (reference.host === undefined ||
+        threadPullRequestKeysEqual(legacyThreadPullRequestKey(shell.branchPullRequest), {
+          ...reference,
+          host: reference.host,
+        }));
     if (linked || branchLinked) ids.push(shell.id);
   }
   return ids;
