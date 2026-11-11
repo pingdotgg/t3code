@@ -149,9 +149,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         if (!record || timestamp - record.lastAliveAt > livenessWindowMs) {
           return [undefined, { records }] as const;
         }
-        const next = new Map(records);
-        next.set(tokenHash, { ...record, lastAliveAt: timestamp });
-        return [record.scope, { records: next }] as const;
+        return [record.scope, { records }] as const;
       });
     },
   );
