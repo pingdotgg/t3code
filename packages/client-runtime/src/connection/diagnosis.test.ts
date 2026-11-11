@@ -146,9 +146,10 @@ describe("presentConnectionDiagnosis", () => {
         via: "relay",
         relayRegistration,
       });
-    expect(withRegistration("registered")?.headline).toBe(
-      "Mac mini is not linked to your T3 Connect account",
-    );
+    const listed = withRegistration("registered");
+    expect(listed?.headline).toBe("Mac mini is not linked to your T3 Connect account");
+    expect(listed?.steps[1]).toContain("turn T3 Connect on");
+    expect(listed?.steps[2]).toMatch(/^If T3 Code was reinstalled on Mac mini, remove this entry/);
     const diagnosis = withRegistration("unregistered");
     expect(diagnosis?.headline).toContain("no longer on your T3 Connect account");
     expect(diagnosis?.steps[0]).toContain("turn T3 Connect on");

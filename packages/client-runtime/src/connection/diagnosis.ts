@@ -185,6 +185,7 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
       return [
         "Check that this device is signed in to the same T3 Connect account as the host.",
         `On ${host}, open Settings > Sharing & access and turn T3 Connect on.`,
+        `If T3 Code was reinstalled on ${host}, remove this entry from this device and add ${host} again from the T3 Connect list.`,
       ];
     case "unregistered":
       return [
