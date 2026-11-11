@@ -117,7 +117,10 @@ jobs:
       - uses: ./.github/actions/setup-apt-mirrors
 
       - name: Install browser secret helper build libraries
-        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+        # Azure runner DNS stopped resolving *.ubuntu.com on 2026-11-11 (REL-68).
+        run: |
+          sudo resolvectl dns eth0 1.1.1.1 8.8.8.8
+          sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
 
       - name: Build JS bundle
         env:

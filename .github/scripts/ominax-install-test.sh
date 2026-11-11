@@ -66,6 +66,8 @@ wait_for_server() {
 }
 
 if [ "$os" = Linux ]; then
+  # Azure runner DNS stopped resolving *.ubuntu.com on 2026-11-11 (REL-68).
+  sudo resolvectl dns eth0 1.1.1.1 8.8.8.8
   sudo apt-get update -q >/dev/null
   sudo apt-get install -y -q xvfb imagemagick >/dev/null
   Xvfb :99 -screen 0 1440x900x24 >/dev/null 2>&1 &
