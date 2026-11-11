@@ -457,7 +457,13 @@ describe("ssh tunnel scripts", () => {
           ? Effect.gen(function* () {
               forwardListensAt = (yield* Clock.currentTimeMillis) + SSH_CONNECT_MS;
               yield* Deferred.succeed(tunnelSpawned, undefined);
-              return makeRunningProcess(() => undefined);
+              return {
+                ...makeRunningProcess(() => undefined),
+                // The remote session only starts once ssh has connected.
+                stdout: Stream.fromEffect(Effect.sleep(Duration.millis(SSH_CONNECT_MS))).pipe(
+                  Stream.map(() => new TextEncoder().encode("t3-ssh-tunnel-session-ready\n")),
+                ),
+              };
             })
           : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
       );

@@ -1427,7 +1427,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   );
   // Until the session script reports in, the managed server may still point at
   // an agent link from a previous connection.
-  const sessionReady = child.stdout.pipe(
+  const sessionLine = yield* child.stdout.pipe(
     Stream.decodeText(),
     Stream.splitLines,
     Stream.filter((line) => line.trim() === TUNNEL_SESSION_READY_LINE),
@@ -1438,6 +1438,10 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     ),
     // Output ending without the line means ssh is exiting, which exitFailure reports.
     Effect.flatMap(Option.match({ onNone: () => Effect.never, onSome: () => Effect.void })),
+    Effect.forkIn(scope),
+  );
+  // The session can only report in once ssh connects, so its deadline starts with the forward.
+  const sessionReady = Fiber.join(sessionLine).pipe(
     Effect.timeoutOrElse({
       duration: SSH_READY_TIMEOUT_MS,
       orElse: () =>
@@ -1447,19 +1451,19 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     }),
   );
   yield* Effect.raceFirst(
-    Effect.all(
-      [
-        waitForTunnelForward({ target: input.resolvedTarget, localPort: input.localPort }).pipe(
-          Effect.andThen(
+    waitForTunnelForward({ target: input.resolvedTarget, localPort: input.localPort }).pipe(
+      Effect.andThen(
+        Effect.all(
+          [
             waitForHttpReady({
               baseUrl: input.httpBaseUrl,
               timeoutMs: SSH_READY_TIMEOUT_MS,
             }),
-          ),
+            sessionReady,
+          ],
+          { concurrency: "unbounded", discard: true },
         ),
-        sessionReady,
-      ],
-      { concurrency: "unbounded", discard: true },
+      ),
     ),
     exitFailure,
   ).pipe(
