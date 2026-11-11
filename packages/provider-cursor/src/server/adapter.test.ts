@@ -2044,19 +2044,9 @@ describe("CursorAdapterV2", () => {
 const scopedProcessEnv = (values: Record<string, string>) =>
   Effect.acquireRelease(
     Effect.sync(() => {
-      const previous = Object.fromEntries(
-        Object.keys(values).map((key) => [key, process.env[key]] as const),
-      );
-      Object.assign(process.env, values);
-      return previous;
+      for (const [key, value] of Object.entries(values)) vi.stubEnv(key, value);
     }),
-    (previous) =>
-      Effect.sync(() => {
-        for (const [key, value] of Object.entries(previous)) {
-          if (value === undefined) delete process.env[key];
-          else process.env[key] = value;
-        }
-      }),
+    () => Effect.sync(() => vi.unstubAllEnvs()),
   );
 
 // Loopback stand-in for Cursor's backend: it asks the local SDK runtime for its request
