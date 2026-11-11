@@ -418,6 +418,7 @@ it.effect.each([false, true])("keeps a failed launcher close retryable (timeout:
       Layer.mergeAll(
         ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-close-retry-" }),
+        layerSecretResolver,
         NodeCrypto.layer,
         NetService.layer,
       ).pipe(Layer.provideMerge(NodeServices.layer)),
