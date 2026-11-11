@@ -143,8 +143,12 @@ it("reads GitLab merge request file and line anchors", () => {
     digest,
     range: null,
   });
-  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}_248_253`)).toMatchObject({
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}_248_253`)).toEqual({
     kind: "diff",
     digest,
+    range: { start: 253, side: "right", end: 253, endSide: "right" },
+  });
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}_12_0`)).toMatchObject({
+    range: { start: 12, side: "left" },
   });
 });
