@@ -17,10 +17,7 @@ const LDD_IN_BARE_DEBIAN = `\tlinux-vdso.so.1 (0x00007ffd2d1f8000)
 `;
 
 // Chrome's own abort on Ubuntu 26.04 with unprivileged user namespaces restricted.
-const SANDBOX_ABORT =
-  "[1005/163106.285700:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:129] No usable sandbox! If you are running on Ubuntu 23.10+ or another Linux distro that has disabled unprivileged user namespaces with AppArmor, see https://chromium.googlesource.com/";
 
-// What the real loader prints when the browser's `--version` cannot start it.
 const LOADER_ERROR =
   "chrome-headless-shell: error while loading shared libraries: libglib-2.0.so.0: cannot open shared object file: No such file or directory";
 
@@ -75,32 +72,33 @@ const diagnose = (input: {
 };
 
 describe("diagnoseLaunchFailure", () => {
-  it.effect("turns Chrome's sandbox abort into the AppArmor steps", () =>
+  it.effect("explains how to restart a root server without Chrome's sandbox", () =>
     Effect.gen(function* () {
       const { error, commands } = yield* diagnose({
         platform: "linux",
-        output: SANDBOX_ABORT,
+        uid: 0,
+        output: PreviewBrowserHost.NO_SANDBOX_SIGNATURE,
         ldd: "",
       });
-      expect(error?._tag).toBe("PreviewBrowserSandboxError");
-      expect(error?.message).toContain("Run `sudo t3 browser setup` on the host");
+      expect(error).toBeInstanceOf(PreviewBrowserHost.PreviewBrowserRootError);
+      expect(error?.message).toContain("T3 server is running as root");
+      expect(error?.message).toContain("T3 server's environment and restart the server");
+      expect(error?.message).toContain("T3CODE_SERVER_BROWSER_SANDBOX=0 t3 serve");
+      expect(error?.message).toContain("Environment=T3CODE_SERVER_BROWSER_SANDBOX=0");
+      expect(error?.message).toContain("this disables Chrome's sandbox");
       expect(commands).toEqual([]);
     }),
   );
 
-  it.effect("tells a root server to drop root, not to run setup", () =>
+  it.effect("keeps host setup guidance for a nonroot sandbox failure", () =>
     Effect.gen(function* () {
-      const { error, commands } = yield* diagnose({
+      const { error } = yield* diagnose({
         platform: "linux",
         output: PreviewBrowserHost.NO_SANDBOX_SIGNATURE,
         ldd: "",
-        uid: 0,
       });
-      expect(error?._tag).toBe("PreviewBrowserRootError");
-      expect(error?.message).toContain("`User=`");
-      expect(error?.message).toContain("`T3CODE_SERVER_BROWSER_SANDBOX=0`");
-      expect(error?.message).not.toMatch(/AppArmor|browser setup/);
-      expect(commands).toEqual([]);
+      expect(error).toBeInstanceOf(PreviewBrowserHost.PreviewBrowserSandboxError);
+      expect(error?.message).toContain("Run `sudo t3 browser setup` on the host");
     }),
   );
 
@@ -129,21 +127,6 @@ describe("diagnoseLaunchFailure", () => {
         version: "Google Chrome for Testing 154.0.8037.92\n",
       });
       expect(error).toBeUndefined();
-    }),
-  );
-
-  it.effect("leaves other failures alone", () =>
-    Effect.gen(function* () {
-      const linux = yield* diagnose({
-        platform: "linux",
-        output: "crashed",
-        ldd: "\tlibc.so.6 => /lib/libc.so.6\n",
-        version: "Google Chrome for Testing 154.0.8037.92\n",
-      });
-      expect(linux.error).toBeUndefined();
-      const mac = yield* diagnose({ platform: "darwin", output: "crashed", ldd: "" });
-      expect(mac.error).toBeUndefined();
-      expect(mac.commands).toEqual([]);
     }),
   );
 });

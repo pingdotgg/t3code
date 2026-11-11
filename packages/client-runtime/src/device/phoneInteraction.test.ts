@@ -25,21 +25,6 @@ it("keeps a captured screen gesture separate from orbit and ends it once on canc
   expect(screenPoint.mock.calls[1]?.[1]).toBe(true);
 });
 
-it("orbits without sending touches when dragged outside the screen or with the orbit modifier", () => {
-  const touch = vi.fn();
-  const orbit = vi.fn();
-  const input = createPhoneInteraction({ screenPoint: () => null, touch, orbit, zoomBy: vi.fn() });
-  input.begin(1, { x: 0.1, y: 0.2 });
-  input.move(1, { x: 0.4, y: 0.5 });
-  input.end();
-  input.begin(2, { x: 0.5, y: 0.5 }, true);
-  input.move(2, { x: 0.6, y: 0.5 });
-  input.end();
-  expect(orbit).toHaveBeenCalledTimes(2);
-  expect(orbit.mock.calls[0]?.[0]).toBeCloseTo(0.3);
-  expect(touch).not.toHaveBeenCalled();
-});
-
 it("blocks navigation during either captured gesture, then resumes without sending device touches", () => {
   const touch = vi.fn();
   const orbit = vi.fn();

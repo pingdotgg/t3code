@@ -9,7 +9,9 @@ export function stableStringify(value: unknown): string {
   if (isRecord(value)) {
     return `{${Object.entries(value)
       .filter(([, entryValue]) => entryValue !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
+      // Code-unit order, not localeCompare: signatures and RFC 7638 thumbprints
+      // must match across machines whatever their OS locale.
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`)
       .join(",")}}`;
   }

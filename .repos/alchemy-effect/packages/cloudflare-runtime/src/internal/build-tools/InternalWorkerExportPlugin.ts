@@ -37,10 +37,7 @@ export const InternalWorkerExportPlugin = (): rolldown.Plugin => {
   };
 
   const getRelativeModulePath = (importer: string, imported: string) => {
-    const relativePath = path.posix.relative(
-      path.posix.dirname(importer),
-      imported,
-    );
+    const relativePath = path.posix.relative(path.posix.dirname(importer), imported);
     return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
   };
 
@@ -59,22 +56,15 @@ export const InternalWorkerExportPlugin = (): rolldown.Plugin => {
           const moduleEntries: Array<string> = [];
           for (let index = 0; index < modules.length; index++) {
             const module = modules[index];
-            const relativePath = getRelativeModulePath(
-              chunk.fileName,
-              module.fileName,
-            );
+            const relativePath = getRelativeModulePath(chunk.fileName, module.fileName);
             if (module.isEntry) {
               imports.push(
                 `import { modules as worker${index}Modules } from ${JSON.stringify(relativePath)};`,
               );
               moduleEntries.push(`  ...worker${index}Modules,`);
             } else {
-              imports.push(
-                `import worker${index} from ${JSON.stringify(relativePath)};`,
-              );
-              moduleEntries.push(
-                `  ${JSON.stringify(module.fileName)}: worker${index},`,
-              );
+              imports.push(`import worker${index} from ${JSON.stringify(relativePath)};`);
+              moduleEntries.push(`  ${JSON.stringify(module.fileName)}: worker${index},`);
             }
           }
 
@@ -95,11 +85,7 @@ export const InternalWorkerExportPlugin = (): rolldown.Plugin => {
               .join("\n"),
           );
         } else {
-          magicString.update(
-            0,
-            code.length,
-            `export default ${JSON.stringify(code)};\n`,
-          );
+          magicString.update(0, code.length, `export default ${JSON.stringify(code)};\n`);
         }
 
         chunk.code = magicString.toString();
