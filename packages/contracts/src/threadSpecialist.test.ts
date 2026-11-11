@@ -8,6 +8,8 @@ import {
   specialistMcpServerEntries,
   ThreadSpecialist,
   ThreadSpecialistKey,
+  withoutSpecialistMcpServer,
+  withoutSpecialistSkill,
 } from "./threadSpecialist.ts";
 
 const decodeKey = Schema.decodeUnknownSync(ThreadSpecialistKey);
@@ -206,6 +208,52 @@ describe("specialistMcpServerEntries", () => {
         ["alpha", { type: "stdio", command: "alpha-mcp" }],
         ["zebra", { type: "http", url: "https://z.example/mcp" }],
       ],
+    );
+  });
+});
+
+describe("withoutSpecialistSkill", () => {
+  it("removes one skill and clears the field when empty", () => {
+    const specialist = decodeSpecialist({
+      key: "vault",
+      label: "Vault",
+      skills: ["vault-user", "debug"],
+    });
+    assert.deepEqual(withoutSpecialistSkill(specialist, "debug"), {
+      key: "vault",
+      label: "Vault",
+      skills: ["vault-user"],
+    });
+    assert.deepEqual(withoutSpecialistSkill(specialist, "vault-user").skills, ["debug"]);
+    assert.deepEqual(
+      withoutSpecialistSkill(withoutSpecialistSkill(specialist, "debug"), "vault-user"),
+      {
+        key: "vault",
+        label: "Vault",
+      },
+    );
+  });
+});
+
+describe("withoutSpecialistMcpServer", () => {
+  it("removes one server and clears the field when empty", () => {
+    const specialist = decodeSpecialist({
+      key: "vault",
+      label: "Vault",
+      mcpServers: {
+        vault: { type: "stdio", command: "vault-mcp" },
+        docs: { type: "http", url: "https://docs.example/mcp" },
+      },
+    });
+    assert.deepEqual(withoutSpecialistMcpServer(specialist, "docs").mcpServers, {
+      vault: { type: "stdio", command: "vault-mcp" },
+    });
+    assert.deepEqual(
+      withoutSpecialistMcpServer(withoutSpecialistMcpServer(specialist, "docs"), "vault"),
+      {
+        key: "vault",
+        label: "Vault",
+      },
     );
   });
 });

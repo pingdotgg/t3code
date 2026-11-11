@@ -192,3 +192,26 @@ export const specialistMcpServerEntries = (
   if (specialist?.mcpServers === undefined) return [];
   return Object.entries(specialist.mcpServers).sort(([left], [right]) => left.localeCompare(right));
 };
+
+/** Drop one skill from the role loadout; omits `skills` when none remain. */
+export const withoutSpecialistSkill = (
+  specialist: ThreadSpecialist,
+  skillName: string,
+): ThreadSpecialist => {
+  const skills = (specialist.skills ?? []).filter((name) => name !== skillName);
+  const { skills: _removed, ...rest } = specialist;
+  return skills.length === 0 ? rest : { ...rest, skills };
+};
+
+/** Drop one MCP server from the role loadout; omits `mcpServers` when none remain. */
+export const withoutSpecialistMcpServer = (
+  specialist: ThreadSpecialist,
+  serverName: string,
+): ThreadSpecialist => {
+  if (specialist.mcpServers === undefined || !(serverName in specialist.mcpServers)) {
+    return specialist;
+  }
+  const { [serverName]: _removed, ...remaining } = specialist.mcpServers;
+  const { mcpServers: _servers, ...rest } = specialist;
+  return Object.keys(remaining).length === 0 ? rest : { ...rest, mcpServers: remaining };
+};
