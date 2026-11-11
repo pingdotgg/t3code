@@ -9,6 +9,7 @@ import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
+import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
 
@@ -39,9 +40,26 @@ vi.mock(import("../state/server"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");
   const noConfig = Atom.make(null);
+  const modelsConfig = Atom.make({
+    environment: { platform: { os: "darwin" } },
+    availableEditors: [],
+    settings: { providerInstances: {} },
+    providers: [
+      {
+        instanceId: "codex",
+        driver: "codex",
+        displayName: "Codex",
+        models: [{ slug: "gpt-6.1", name: "GPT-6.1", isCustom: false, capabilities: {} }],
+      },
+    ],
+  });
   return {
     ...actual,
-    serverEnvironment: { ...actual.serverEnvironment, configValueAtom: (() => noConfig) as never },
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      configValueAtom: ((environmentId: string) =>
+        environmentId === "models" ? modelsConfig : noConfig) as never,
+    },
   };
 });
 vi.mock(import("../state/session"), async (original) => {
@@ -144,6 +162,38 @@ function buttonsLabelled(container: HTMLElement, label: string) {
     (button) => button.getAttribute("aria-label") === label,
   );
 }
+
+const SOURCE_NUMBER_PLUGINS = [remarkEnableOrderedListNumbers];
+
+it("keeps decimal markers in nested user lists while documents keep their counter styles", async () => {
+  setup();
+  const text = "1. Outer\n   1. Nested\n   7. Skipped\n      1. Deeper\n      4. Fourth";
+  await using screen = await render(
+    <div className="grid grid-cols-2 gap-8 p-8">
+      <section>
+        <h2>User message</h2>
+        <ChatMarkdown
+          cwd={undefined}
+          text={text}
+          className="user-message-markdown"
+          extraRemarkPlugins={SOURCE_NUMBER_PLUGINS}
+        />
+      </section>
+      <section>
+        <h2>Markdown preview</h2>
+        <ChatMarkdown cwd={undefined} text={text} />
+      </section>
+    </div>,
+  );
+  await expect.element(screen.getByText("User message", { exact: true })).toBeVisible();
+  const [message, preview] = screen.container.querySelectorAll(".chat-markdown");
+  expect(
+    [...message!.querySelectorAll("ol")].map((list) => getComputedStyle(list).listStyleType),
+  ).toEqual(["decimal", "decimal", "decimal"]);
+  expect(
+    [...preview!.querySelectorAll("ol")].map((list) => getComputedStyle(list).listStyleType),
+  ).toEqual(["decimal", "lower-alpha", "lower-roman"]);
+});
 
 it("shows unavailable audio when a workspace embed has no thread", async () => {
   setup();
@@ -324,6 +374,25 @@ describe("ChatMarkdown streaming", () => {
     expect(checkboxes()[1]).toBe(original);
     expect(checkboxes()[1]!.checked).toBe(false);
   });
+
+  it.each([
+    ["read-only", undefined],
+    ["editable", () => {}],
+  ])(
+    "unchecks the remaining %s task when the checked row above it is removed",
+    async (_, onTaskListChange) => {
+      setup();
+      const message = (text: string) => (
+        <ChatMarkdown cwd="/tmp/project" text={text} onTaskListChange={onTaskListChange} />
+      );
+      await using screen = await render(message("- [x] Completed item\n- [ ] Pending item"));
+      await screen.rerender(message("- [ ] Pending item"));
+      const checkboxes =
+        screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      expect(checkboxes).toHaveLength(1);
+      expect(checkboxes[0]!.checked).toBe(false);
+    },
+  );
 });
 
 describe("ChatMarkdown workspace file opens", () => {
@@ -396,6 +465,19 @@ describe("ChatMarkdown skill chips", () => {
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/skills/review/SKILL.md");
   });
+
+  it("names a mentioned model as its provider does, without a thread", async () => {
+    setup();
+    await using screen = await renderText("Ask (model:codex/gpt-6.1), not model:openai/gpt-4o.", {
+      environmentId: EnvironmentId.make("models"),
+    });
+
+    await expect
+      .element(screen.getByRole("button", { name: "Model GPT-6.1. Show details" }))
+      .toBeVisible();
+    expect(buttonsLabelled(screen.container, "Model gpt-4o. Show details")).toEqual([]);
+    expect(screen.container.textContent).toBe("Ask (GPT-6.1), not model:openai/gpt-4o.");
+  });
 });
 
 describe("ChatMarkdown headings", () => {
@@ -430,6 +512,51 @@ describe("ChatMarkdown inline code selection", () => {
     const fenced = screen.container.querySelector("pre code")!;
     await userEvent.dblClick(fenced, { position: { x: 4, y: 4 } });
     expect(window.getSelection()?.toString()).toBe("fenced");
+  });
+});
+
+describe("ChatMarkdown file chip tooltips", () => {
+  it("wraps a long path so its file name stays inside the tooltip", async () => {
+    setup();
+    const path =
+      "/tmp/project/packages/client-runtime/src/state/generated/environment-connection-handshake-retry-policy-fixtures.ts";
+    await using screen = await renderText(`See [the fixtures](${path}).`);
+
+    await userEvent.hover(screen.container.querySelector(".chat-markdown-file-link")!);
+    const tooltip = page.getByText(path);
+    await expect.element(tooltip).toBeVisible();
+
+    const popup = tooltip.element().closest("[data-side]")!;
+    const pathEnd = document.createRange();
+    pathEnd.selectNodeContents(tooltip.element());
+    expect(pathEnd.getBoundingClientRect().right).toBeLessThanOrEqual(
+      popup.getBoundingClientRect().right,
+    );
+  });
+});
+
+describe("ChatMarkdown editor deep links", () => {
+  const hrefs = (container: HTMLElement) =>
+    [...container.querySelectorAll("a")].map((link) => link.getAttribute("href"));
+
+  it("keeps local editor file links", async () => {
+    setup();
+    await using screen = await renderText(
+      "[file.md line 3](cursor://file/Users/me/repo/file.md:3) and [same](vscode://file/Users/me/repo/file.md:3:7)",
+    );
+    expect(hrefs(screen.container)).toEqual([
+      "cursor://file/Users/me/repo/file.md:3",
+      "vscode://file/Users/me/repo/file.md:3:7",
+    ]);
+  });
+
+  it("still drops other editor links and unknown schemes", async () => {
+    setup();
+    await using screen = await renderText(
+      "[prompt](cursor://anysphere.cursor-deeplink/prompt?text=hi) [user](cursor://me@file/Users/me/file.md) [unknown](foo://file/Users/me/file.md)",
+    );
+    expect(screen.container.innerHTML).not.toContain("://");
+    expect(hrefs(screen.container).filter(Boolean)).toEqual([]);
   });
 });
 
