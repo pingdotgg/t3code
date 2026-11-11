@@ -1,3 +1,4 @@
+import * as Railway from "@alchemy.run/railway";
 /**
  * Minimal Railway stack: a Project and an image Service.
  * The full graph (Postgres, Redis, Bucket, Volume, Variable,
@@ -5,7 +6,6 @@
  * `examples/railway-service`.
  */
 import * as Alchemy from "alchemy";
-import * as Railway from "alchemy/Railway";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(

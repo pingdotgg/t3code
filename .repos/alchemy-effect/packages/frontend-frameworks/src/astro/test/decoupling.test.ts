@@ -31,9 +31,7 @@ const collectSpecifiers = (source: string): Array<string> => {
 };
 
 /** Transitively walk relative imports starting from the given entry module. */
-const walkModuleGraph = async (
-  entry: string,
-): Promise<Map<string, Array<string>>> => {
+const walkModuleGraph = async (entry: string): Promise<Map<string, Array<string>>> => {
   const graph = new Map<string, Array<string>>();
   const queue = [entry];
   while (queue.length > 0) {
@@ -55,9 +53,7 @@ describe("framework-generic core is cloudflare-free", () => {
     const graph = await walkModuleGraph(NodePath.join(SRC, "index.ts"));
 
     // The walk must have actually covered the core modules.
-    const reached = [...graph.keys()].map((file) =>
-      NodePath.relative(SRC, file),
-    );
+    const reached = [...graph.keys()].map((file) => NodePath.relative(SRC, file));
     expect(reached).toContain("index.ts");
     expect(reached).toContain("Astro.ts");
     expect(reached).toContain("Target.ts");
@@ -67,10 +63,7 @@ describe("framework-generic core is cloudflare-free", () => {
       const relative = NodePath.relative(SRC, file);
 
       // The cloudflare halves must be unreachable from the core.
-      expect(
-        relative,
-        `core reaches cloudflare module ${relative}`,
-      ).not.toMatch(
+      expect(relative, `core reaches cloudflare module ${relative}`).not.toMatch(
         /^(cloudflare\.ts|integration\.ts|config-plugin\.ts|prerender-middleware\.ts|source\.ts|runtime[/\\])/,
       );
 
@@ -88,15 +81,9 @@ describe("framework-generic core is cloudflare-free", () => {
   it("the cloudflare target module is self-contained under the ./cloudflare subpath", async () => {
     // Sanity check the inverse direction: the target module exists and is the
     // only public seam re-exporting the integration fork.
-    const index = await NodeFsPromises.readFile(
-      NodePath.join(SRC, "index.ts"),
-      "utf8",
-    );
+    const index = await NodeFsPromises.readFile(NodePath.join(SRC, "index.ts"), "utf8");
     expect(index).not.toContain("./integration.ts");
-    const cloudflare = await NodeFsPromises.readFile(
-      NodePath.join(SRC, "cloudflare.ts"),
-      "utf8",
-    );
+    const cloudflare = await NodeFsPromises.readFile(NodePath.join(SRC, "cloudflare.ts"), "utf8");
     expect(cloudflare).toContain("./integration.ts");
   });
 });
