@@ -6,6 +6,7 @@ import {
   SecretProviderId,
   SecretProviderKind,
   type ServerSettings,
+  type ShellEnvironmentPatch,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
@@ -16,10 +17,12 @@ import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   DEV_REPLAY_INSTANCE_ID,
   deriveProviderInstanceConfigMap,
+  layerClaudeTokenWatcher,
   layerSettingsWatcher,
   seedDevReplayInstance,
 } from "./ProviderInstanceRegistryHydration.ts";
@@ -165,6 +168,7 @@ describe("layerSettingsWatcher", () => {
       const mutator = Layer.succeed(ProviderInstanceRegistryMutator, {
         reconcile: () => Queue.offer(reconciled, undefined),
         reloadSecrets: () => Effect.sync(() => void reloads++),
+        rebuildDriver: () => Effect.void,
       });
       yield* Layer.build(
         layerSettingsWatcher(Stream.fromQueue(changes), initial).pipe(Layer.provide(mutator)),
@@ -209,5 +213,61 @@ describe("layerSettingsWatcher", () => {
 
         expect(reloads()).toBe(1);
       }).pipe(Effect.scoped, Effect.provide(ServerSettingsService.layerTest())),
+  );
+});
+
+describe("layerClaudeTokenWatcher", () => {
+  effectIt.effect("rebuilds Claude only when the host's OAuth token changes", () =>
+    Effect.gen(function* () {
+      const patches = yield* Queue.unbounded<ShellEnvironmentPatch>();
+      const rebuilds = yield* Queue.unbounded<string | undefined>();
+      // Applied before Claude subscribed, so the first check must catch it.
+      const environment: NodeJS.ProcessEnv = { CLAUDE_CODE_OAUTH_TOKEN: "cached" };
+      // Like the receiver, each snapshot is applied to the host environment before it is published.
+      const snapshots = Stream.fromQueue(patches).pipe(
+        Stream.rechunk(1),
+        Stream.map((patch) => {
+          for (const [name, value] of Object.entries(patch)) {
+            if (value === null) delete environment[name];
+            else environment[name] = value;
+          }
+          return {
+            version: 1 as const,
+            type: "shellEnvironment" as const,
+            discovered: true,
+            platform: "darwin",
+            environment: patch,
+          };
+        }),
+      );
+      yield* Layer.build(
+        layerClaudeTokenWatcher(environment, undefined).pipe(
+          Layer.provide(
+            Layer.succeed(ProviderInstanceRegistryMutator, {
+              reconcile: () => Effect.void,
+              reloadSecrets: () => Effect.void,
+              rebuildDriver: (driver) => {
+                expect(driver).toBe("claudeAgent");
+                return Queue.offer(rebuilds, environment.CLAUDE_CODE_OAUTH_TOKEN);
+              },
+            }),
+          ),
+          Layer.provide(
+            DesktopTelemetryReceiver.layerTest({
+              subscribeShellEnvironment: Effect.succeed(snapshots),
+            }),
+          ),
+        ),
+      );
+
+      expect(yield* Queue.take(rebuilds)).toBe("cached");
+      yield* Queue.offerAll(patches, [
+        { PATH: "/usr/bin" },
+        { CLAUDE_CODE_OAUTH_TOKEN: "cached" },
+        { CLAUDE_CODE_OAUTH_TOKEN: "fresh" },
+        { CLAUDE_CODE_OAUTH_TOKEN: null },
+      ]);
+      expect(yield* Queue.takeN(rebuilds, 2)).toEqual(["fresh", undefined]);
+    }).pipe(Effect.scoped),
   );
 });

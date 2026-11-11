@@ -31,6 +31,7 @@ import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import type * as PortScanner from "../preview/PortScanner.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 
 type ProviderInstanceRegistryHydrationEnv =
   | Exclude<
@@ -47,7 +48,8 @@ type ProviderInstanceRegistryHydrationEnv =
   // Secret provider reads.
   | SecureRandom.SecureRandom
   // The Claude runner counts its CLIs as running agents for port discovery.
-  | PortScanner.PortDiscovery;
+  | PortScanner.PortDiscovery
+  | DesktopTelemetryReceiver.DesktopTelemetryReceiver;
 
 export const deriveProviderInstanceConfigMap = (
   settings: ServerSettings,
@@ -165,6 +167,31 @@ export const layerSettingsWatcher = (
     }),
   );
 
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
+
+// Claude copies the host environment when it is built, and the desktop can deliver the login
+// shell's `claude setup-token` credential after that, so a changed token rebuilds Claude.
+export const layerClaudeTokenWatcher = (
+  environment: NodeJS.ProcessEnv,
+  builtWithToken: string | undefined,
+) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
+      const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
+      // Subscribe before the first check so a snapshot applied in between is not missed.
+      const snapshots = yield* receiver.subscribeShellEnvironment;
+      let token = builtWithToken;
+      const sync = Effect.suspend(() => {
+        const next = environment.CLAUDE_CODE_OAUTH_TOKEN;
+        if (next === token) return Effect.void;
+        token = next;
+        return mutator.rebuildDriver(CLAUDE_DRIVER);
+      });
+      yield* sync.pipe(Effect.andThen(Stream.runForEach(snapshots, () => sync)), Effect.forkScoped);
+    }),
+  );
+
 export const layer: Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
@@ -186,10 +213,12 @@ export const layer: Layer.Layer<
         ? ({} as ProviderInstanceConfigMap)
         : deriveProviderInstanceConfigMap(initialSettings);
 
+    const liveEnvironment = yield* HostProcess.Environment;
+    const builtWithToken = liveEnvironment.CLAUDE_CODE_OAUTH_TOKEN;
     // Drivers launch from the host environment, minus launch overrides a policy ignores.
     const hostEnvironment = ManagedProviders.providerHostEnvironment(
       serverSettings.managedPolicy,
-      yield* HostProcess.Environment,
+      liveEnvironment,
     );
     // Instances of drivers the policy leaves out stay listed, as unavailable, so their threads
     // explain why instead of losing their provider.
@@ -206,9 +235,10 @@ export const layer: Layer.Layer<
       Layer.provide(SecretResolver.layer),
     );
 
-    return layerSettingsWatcher(settingsChanges, initialSettings).pipe(
-      Layer.provideMerge(layerMutable),
-    );
+    return Layer.merge(
+      layerSettingsWatcher(settingsChanges, initialSettings),
+      layerClaudeTokenWatcher(liveEnvironment, builtWithToken),
+    ).pipe(Layer.provideMerge(layerMutable));
   }),
 ) as Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry

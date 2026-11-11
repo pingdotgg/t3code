@@ -167,6 +167,12 @@ export class DesktopTelemetryReceiver extends Context.Service<
   {
     readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
     readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
+    /** Desktop shell snapshots, each after the receiver has applied it to the host environment. */
+    readonly subscribeShellEnvironment: Effect.Effect<
+      Stream.Stream<DesktopShellEnvironmentSnapshot>,
+      never,
+      Scope.Scope
+    >;
     readonly subscribe: Effect.Effect<
       {
         readonly latest: Option.Option<DesktopHostTelemetrySnapshot>;
@@ -418,6 +424,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   );
   const changes = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(8);
   const healthChanges = yield* PubSub.sliding<DesktopTelemetryReceiverHealth>(4);
+  const shellEnvironmentChanges = yield* PubSub.unbounded<DesktopShellEnvironmentSnapshot>();
   const latestUpdateReport = yield* Ref.make(Option.none<DesktopUpdateStatusReport>());
   const updateReportChanges = yield* PubSub.sliding<DesktopUpdateStatusReport>(16);
   const controlMutex = yield* Semaphore.make(1);
@@ -597,7 +604,10 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
         }
 
         if (message.type === "shellEnvironment") {
-          return recordContact.pipe(Effect.andThen(applyShellSnapshot(message)));
+          return recordContact.pipe(
+            Effect.andThen(applyShellSnapshot(message)),
+            Effect.andThen(PubSub.publish(shellEnvironmentChanges, message)),
+          );
         }
 
         if (message.type === "desktopUpdateStatus") {
@@ -704,6 +714,9 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   return DesktopTelemetryReceiver.of({
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
+    subscribeShellEnvironment: PubSub.subscribe(shellEnvironmentChanges).pipe(
+      Effect.map(Stream.fromSubscription),
+    ),
     subscribe: snapshotMutex.withPermits(1)(
       Effect.gen(function* () {
         const initial = yield* Ref.get(latest);
@@ -767,6 +780,8 @@ export const layerTest = (
     DesktopTelemetryReceiver.of({
       latest,
       changes,
+      subscribeShellEnvironment:
+        overrides.subscribeShellEnvironment ?? Effect.succeed(Stream.empty),
       subscribe:
         overrides.subscribe ??
         latest.pipe(

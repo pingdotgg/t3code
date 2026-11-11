@@ -59,6 +59,7 @@ import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCod
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHydration.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import {
@@ -2840,7 +2841,10 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(
-            ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+            ProviderInstanceRegistryHydration.layer.pipe(
+              Layer.provide(PortScanner.layerTest),
+              Layer.provide(DesktopTelemetryReceiver.layerTest()),
+            ),
           ),
           Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
           Layer.provideMerge(
@@ -2958,7 +2962,10 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(
-            ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+            ProviderInstanceRegistryHydration.layer.pipe(
+              Layer.provide(PortScanner.layerTest),
+              Layer.provide(DesktopTelemetryReceiver.layerTest()),
+            ),
           ),
           Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
           Layer.provideMerge(
@@ -3093,7 +3100,10 @@ it.layer(
       );
       readSeed = false;
       const services = yield* Layer.build(
-        ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+        ProviderInstanceRegistryHydration.layer.pipe(
+          Layer.provide(PortScanner.layerTest),
+          Layer.provide(DesktopTelemetryReceiver.layerTest()),
+        ),
       ).pipe(Effect.provide(dependencies));
       failCurrentRead = input.failCurrentRead ?? false;
       yield* PubSub.publish(changes, undefined);
