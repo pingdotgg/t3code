@@ -2,7 +2,7 @@ import { StackActions, useNavigation } from "@react-navigation/native";
 import { createContext, use } from "react";
 import { Platform } from "react-native";
 
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useWorkspacePaneState } from "../layout/AdaptiveWorkspaceLayout";
 
 export type ThreadInspectorMode = "route" | "git" | "files" | "preview";
 
@@ -19,7 +19,7 @@ export const ThreadInspectorNavigationContext = createContext<
 
 export function useOpenThreadInspector() {
   const navigation = useNavigation();
-  const { fileInspector } = useAdaptiveWorkspaceLayout();
+  const { fileInspector } = useWorkspacePaneState();
   const openInInspector = use(ThreadInspectorNavigationContext);
   return (
     source: { readonly environmentId: string; readonly threadId: string },

@@ -50,6 +50,32 @@ describe("descriptor helpers", () => {
     ).toEqual([{ id: "fastMode", value: true }]);
   });
 
+  it("dispatches an old Ultracode effort as Extra High with the Ultracode toggle", () => {
+    const legacy = [{ id: "effort", value: "ultracode" }];
+    const descriptors = getProviderOptionDescriptors({
+      caps: createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "high", label: "High", isDefault: true },
+              { id: "xhigh", label: "Extra High" },
+            ],
+          },
+          { id: "ultracode", label: "Ultracode", type: "boolean" },
+        ],
+      }),
+      selections: legacy,
+    });
+
+    expect(buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, legacy)).toEqual([
+      { id: "effort", value: "xhigh" },
+      { id: "ultracode", value: true },
+    ]);
+  });
+
   it("compares complete model selections independent of option ordering", () => {
     const left = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
       { id: "reasoningEffort", value: "high" },
