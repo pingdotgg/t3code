@@ -16,7 +16,7 @@ import { downloadAndShareAttachment } from "../lib/attachmentDownload";
 import { assetImageSource } from "../lib/assetImageSource";
 import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
 import { AppText as Text } from "./ui/AppText";
-import { FilePreviewModal } from "./FilePreviewModal";
+import { FilePreviewModal } from "./ui/FilePreviewModal";
 import { PresentationSource } from "./ui/NativePresentation";
 
 export function ComposerContextAttachment(props: {
