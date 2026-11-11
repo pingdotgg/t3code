@@ -2676,8 +2676,14 @@ it.live("reports why a page failed to load while the tab shows the error page", 
       page.emit("request", request);
       page.emit("requestfailed", request);
       page.url = () => "chrome-error://chromewebdata/";
-      expect((yield* status()).loadError).toEqual(certificateError);
-      expect((yield* snapshot()).loadError).toEqual(certificateError);
+      expect(yield* status()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
+      expect(yield* snapshot()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
 
       const subframeRequest = {
         ...request,
@@ -2686,7 +2692,10 @@ it.live("reports why a page failed to load while the tab shows the error page", 
       };
       page.emit("request", subframeRequest);
       page.emit("requestfailed", subframeRequest);
-      expect((yield* status()).loadError).toEqual(certificateError);
+      expect(yield* status()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
 
       // Clearing must happen before the next navigation replaces the error page.
       page.emit("request", { ...request, url: () => "https://device.local/login" });
@@ -2697,6 +2706,53 @@ it.live("reports why a page failed to load while the tab shows the error page", 
       page.emit("request", dataRequest);
       page.emit("requestfailed", dataRequest);
       expect((yield* status()).loadError?.url).toBe("data:text/html,…");
+      initialNavigation = async () => {
+        page.emit("request", request);
+        page.emit("requestfailed", request);
+      };
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "navigate",
+          input: { url: certificateError.url },
+        })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "PreviewAutomationExecutionError",
+        reason: `Navigation to ${certificateError.url} failed: ${certificateError.description}`,
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("preview_open rejects a desktop navigation that failed before automation attached", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const channel = yield* DesktopChannel.DesktopBrowserChannel;
+      desktopRendersNext = true;
+      desktopPageUrl = "chrome-error://chromewebdata/";
+      const failure = {
+        ...certificateError,
+        url: "https://user:secret@device.local/?token=private#fragment",
+      };
+      using _failure = vi.spyOn(channel, "loadFailure").mockReturnValue(failure);
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { url: failure.url, reuseExistingTab: false, open: false },
+        })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "PreviewAutomationExecutionError",
+        reason: `Navigation to ${certificateError.url} failed: ${certificateError.description}`,
+      });
+      expect(JSON.stringify(error)).not.toMatch(/secret|private|fragment/);
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.map((session) => session.tabId)).toEqual([tabId]);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -2728,8 +2784,14 @@ it.live("reports a desktop tab's load failure from before the server connected",
           input: {},
           tabId: PreviewTabId.make(opened.tabId),
         });
-      expect((yield* status()).loadError).toEqual(certificateError);
-      expect((yield* snapshot()).loadError).toEqual(certificateError);
+      expect(yield* status()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
+      expect(yield* snapshot()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
       desktopLoadFailures.set(opened.tabId, { ...certificateError, url: dataUrl });
       expect((yield* status()).loadError?.url).toBe("data:text/html,…");
       // A navigation the server sees supersedes it, even before the error page goes.
