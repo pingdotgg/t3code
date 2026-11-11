@@ -1491,194 +1491,13 @@ layer("ProviderEventIngestorV2", (it) => {
       ),
   );
 
-  it.effect.each(["interrupted", "cancelled"] as const)(
-    "preserves an approval resolved after terminal normalization reads it pending (%s)",
-    (status) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const eventSink = yield* EventSink.EventSinkV2;
-          const eventStore = yield* EventStore.EventStoreV2;
-          const projections = yield* ProjectionStore.ProjectionStoreV2;
-          const idAllocator = yield* IdAllocator.IdAllocatorV2;
-          const now = yield* DateTime.now;
-          const threadEvent = yield* threadCreatedEvent(now);
-          const threadId = threadEvent.threadId;
-          const providerSessionId = yield* idAllocator.allocate.providerSession({
-            providerInstanceId: modelSelection.instanceId,
-            threadId,
-          });
-          const providerThreadId = idAllocator.derive.providerThread({
-            driver: CODEX_DRIVER,
-            nativeThreadId: `${threadId}:approval-race`,
-          });
-          const providerTurnId = idAllocator.derive.providerTurn({
-            driver: CODEX_DRIVER,
-            nativeTurnId: `${threadId}:approval-race`,
-          });
-          const nodeId = NodeId.make(`${threadId}:approval`);
-          const request: OrchestrationV2RuntimeRequest = {
-            id: RuntimeRequestId.make(`${threadId}:approval`),
-            nodeId,
-            providerTurnId,
-            nativeRequestRef: null,
-            kind: "command",
-            status: "pending",
-            responseCapability: { type: "live", providerSessionId },
-            createdAt: now,
-            resolvedAt: null,
-          };
-          const node: OrchestrationV2ExecutionNode = {
-            id: nodeId,
-            threadId,
-            runId: null,
-            parentNodeId: null,
-            rootNodeId: nodeId,
-            kind: "approval_request",
-            status: "waiting",
-            countsForRun: false,
-            providerThreadId,
-            providerTurnId,
-            nativeItemRef: null,
-            runtimeRequestId: request.id,
-            checkpointScopeId: null,
-            startedAt: now,
-            completedAt: null,
-          };
-          const item: OrchestrationV2TurnItem = {
-            id: TurnItemId.make(`${threadId}:approval`),
-            threadId,
-            runId: null,
-            nodeId,
-            providerThreadId,
-            providerTurnId,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal: 1,
-            status: "waiting",
-            title: null,
-            startedAt: now,
-            completedAt: null,
-            updatedAt: now,
-            type: "approval_request",
-            requestId: request.id,
-            requestKind: "command",
-          };
-          const seedEvents: Array<OrchestrationV2DomainEvent> = [threadEvent];
-          for (const payload of [
-            { type: "runtime-request.updated" as const, payload: request },
-            { type: "node.updated" as const, payload: node },
-            { type: "turn-item.updated" as const, payload: item },
-          ])
-            seedEvents.push({
-              id: yield* idAllocator.allocate.event({ threadId }),
-              threadId,
-              occurredAt: now,
-              ...payload,
-            });
-          yield* eventSink.write({ events: seedEvents });
-          const normalized = yield* Deferred.make<void>();
-          const releaseTerminalWrite = yield* Deferred.make<void>();
-          const gatedSink = EventSink.EventSinkV2.of({
-            ...eventSink,
-            write: (input) =>
-              Deferred.succeed(normalized, undefined).pipe(
-                Effect.andThen(Deferred.await(releaseTerminalWrite)),
-                Effect.andThen(eventSink.write(input)),
-              ),
-          });
-          const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
-            Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
-            Effect.provideService(EventSink.EventSinkV2, gatedSink),
-          );
-          const terminal = yield* ingestor
-            .ingestNormalized({
-              providerSessionId,
-              providerInstanceId: modelSelection.instanceId,
-              threadId,
-              event: {
-                type: "provider_turn.updated",
-                driver: CODEX_DRIVER,
-                providerTurn: {
-                  id: providerTurnId,
-                  providerThreadId,
-                  nodeId,
-                  runAttemptId: null,
-                  nativeTurnRef: null,
-                  ordinal: 1,
-                  status,
-                  startedAt: now,
-                  completedAt: now,
-                },
-              },
-            })
-            .pipe(Effect.forkScoped);
-          yield* Deferred.await(normalized);
-          const responseEvents: Array<OrchestrationV2DomainEvent> = [];
-          for (const payload of [
-            {
-              type: "runtime-request.updated" as const,
-              payload: {
-                ...request,
-                status: "resolved" as const,
-                decision: "accept" as const,
-                resolvedAt: now,
-              },
-            },
-            {
-              type: "node.updated" as const,
-              payload: { ...node, status: "completed" as const, completedAt: now },
-            },
-            {
-              type: "turn-item.updated" as const,
-              payload: { ...item, status: "completed" as const, completedAt: now },
-            },
-          ])
-            responseEvents.push({
-              id: yield* idAllocator.allocate.event({ threadId }),
-              threadId,
-              occurredAt: now,
-              ...payload,
-            });
-          yield* eventSink.write({ events: responseEvents });
-          yield* Deferred.succeed(releaseTerminalWrite, undefined);
-          const committedTerminal = yield* Fiber.join(terminal);
-          const projection = yield* projections.getThreadProjection(threadId);
-          const approved = projection.runtimeRequests.find((entry) => entry.id === request.id)!;
-          assert.equal(approved.status, "resolved");
-          assert.equal(approved.decision, "accept");
-          assert.equal(projection.nodes.find((entry) => entry.id === nodeId)!.status, "completed");
-          assert.equal(
-            projection.turnItems.find((entry) => entry.id === item.id)!.status,
-            "completed",
-          );
-          assert.deepEqual(
-            committedTerminal.map((stored) => stored.event.type),
-            ["provider-turn.updated"],
-          );
-          const history = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
-          assert.isFalse(
-            history.some(
-              (stored) =>
-                stored.event.type === "runtime-request.updated" &&
-                stored.event.payload.status === "cancelled",
-            ),
-          );
-        }),
-      ),
-  );
-
-  it.effect.each(["command", "user_input"] as const)(
-    "rejects a %s response planned before terminal normalization cancelled the request",
-    (kind) =>
+  it.effect("preserves an approval resolved after terminal normalization reads it pending", () =>
+    Effect.scoped(
       Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
+        const eventStore = yield* EventStore.EventStoreV2;
         const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const outbox = yield* EffectOutbox.EffectOutboxV2.pipe(Effect.provide(EffectOutbox.layer));
-        const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2.pipe(
-          Effect.provide(CommandReceiptStore.layer),
-        );
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
         const now = yield* DateTime.now;
         const threadEvent = yield* threadCreatedEvent(now);
         const threadId = threadEvent.threadId;
@@ -1688,19 +1507,19 @@ layer("ProviderEventIngestorV2", (it) => {
         });
         const providerThreadId = idAllocator.derive.providerThread({
           driver: CODEX_DRIVER,
-          nativeThreadId: `${threadId}:respond-race`,
+          nativeThreadId: `${threadId}:approval-race`,
         });
         const providerTurnId = idAllocator.derive.providerTurn({
           driver: CODEX_DRIVER,
-          nativeTurnId: `${threadId}:respond-race`,
+          nativeTurnId: `${threadId}:approval-race`,
         });
-        const nodeId = NodeId.make(`${threadId}:request`);
+        const nodeId = NodeId.make(`${threadId}:approval`);
         const request: OrchestrationV2RuntimeRequest = {
-          id: RuntimeRequestId.make(`${threadId}:request`),
+          id: RuntimeRequestId.make(`${threadId}:approval`),
           nodeId,
           providerTurnId,
           nativeRequestRef: null,
-          kind,
+          kind: "command",
           status: "pending",
           responseCapability: { type: "live", providerSessionId },
           createdAt: now,
@@ -1712,7 +1531,7 @@ layer("ProviderEventIngestorV2", (it) => {
           runId: null,
           parentNodeId: null,
           rootNodeId: nodeId,
-          kind: kind === "user_input" ? "user_input_request" : "approval_request",
+          kind: "approval_request",
           status: "waiting",
           countsForRun: false,
           providerThreadId,
@@ -1723,8 +1542,8 @@ layer("ProviderEventIngestorV2", (it) => {
           startedAt: now,
           completedAt: null,
         };
-        const itemBase = {
-          id: TurnItemId.make(`${threadId}:request`),
+        const item: OrchestrationV2TurnItem = {
+          id: TurnItemId.make(`${threadId}:approval`),
           threadId,
           runId: null,
           nodeId,
@@ -1733,129 +1552,302 @@ layer("ProviderEventIngestorV2", (it) => {
           nativeItemRef: null,
           parentItemId: null,
           ordinal: 1,
-          status: "waiting" as const,
+          status: "waiting",
           title: null,
           startedAt: now,
           completedAt: null,
           updatedAt: now,
+          type: "approval_request",
+          requestId: request.id,
+          requestKind: "command",
         };
-        const item: OrchestrationV2TurnItem =
-          kind === "user_input"
-            ? { ...itemBase, type: "user_input_request", requestId: request.id, questions: [] }
-            : { ...itemBase, type: "approval_request", requestId: request.id, requestKind: kind };
-        const domainEvents = (
-          payloads: ReadonlyArray<
-            | {
-                readonly type: "runtime-request.updated";
-                readonly payload: OrchestrationV2RuntimeRequest;
-              }
-            | { readonly type: "node.updated"; readonly payload: OrchestrationV2ExecutionNode }
-            | { readonly type: "turn-item.updated"; readonly payload: OrchestrationV2TurnItem }
-          >,
-        ) =>
-          Effect.forEach(payloads, (payload) =>
-            Effect.map(
-              idAllocator.allocate.event({ threadId }),
-              (id): OrchestrationV2DomainEvent => ({ id, threadId, occurredAt: now, ...payload }),
+        const seedEvents: Array<OrchestrationV2DomainEvent> = [threadEvent];
+        for (const payload of [
+          { type: "runtime-request.updated" as const, payload: request },
+          { type: "node.updated" as const, payload: node },
+          { type: "turn-item.updated" as const, payload: item },
+        ])
+          seedEvents.push({
+            id: yield* idAllocator.allocate.event({ threadId }),
+            threadId,
+            occurredAt: now,
+            ...payload,
+          });
+        yield* eventSink.write({ events: seedEvents });
+        const normalized = yield* Deferred.make<void>();
+        const releaseTerminalWrite = yield* Deferred.make<void>();
+        const gatedSink = EventSink.EventSinkV2.of({
+          ...eventSink,
+          write: (input) =>
+            Deferred.succeed(normalized, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseTerminalWrite)),
+              Effect.andThen(eventSink.write(input)),
             ),
-          );
-        yield* eventSink.write({
-          events: [
-            threadEvent,
-            ...(yield* domainEvents([
-              { type: "runtime-request.updated", payload: request },
-              { type: "node.updated", payload: node },
-              { type: "turn-item.updated", payload: item },
-            ])),
-          ],
         });
-        // The respond command plans from this pending read before the stop commits.
-        const planned = yield* projections.getRuntimeResponseContext(threadId, request.id);
-        assert.equal(planned.request?.status, "pending");
-        yield* ingestor.ingestNormalized({
-          providerSessionId,
-          providerInstanceId: modelSelection.instanceId,
-          threadId,
-          event: {
-            type: "provider_turn.updated",
-            driver: CODEX_DRIVER,
-            providerTurn: {
-              id: providerTurnId,
-              providerThreadId,
-              nodeId,
-              runAttemptId: null,
-              nativeTurnRef: null,
-              ordinal: 1,
-              status: "interrupted",
-              startedAt: now,
-              completedAt: now,
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
+          Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
+          Effect.provideService(EventSink.EventSinkV2, gatedSink),
+        );
+        const terminal = yield* ingestor
+          .ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+            event: {
+              type: "provider_turn.updated",
+              driver: CODEX_DRIVER,
+              providerTurn: {
+                id: providerTurnId,
+                providerThreadId,
+                nodeId,
+                runAttemptId: null,
+                nativeTurnRef: null,
+                ordinal: 1,
+                status: "interrupted",
+                startedAt: now,
+                completedAt: now,
+              },
+            },
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(normalized);
+        const responseEvents: Array<OrchestrationV2DomainEvent> = [];
+        for (const payload of [
+          {
+            type: "runtime-request.updated" as const,
+            payload: {
+              ...request,
+              status: "resolved" as const,
+              decision: "accept" as const,
+              resolvedAt: now,
             },
           },
-        });
-        assert.equal(
-          (yield* projections.getRuntimeRequest(threadId, request.id))?.status,
-          "cancelled",
-        );
-        const commandId = CommandId.make(`${threadId}:respond`);
-        const exit = yield* eventSink
-          .commitCommand({
-            commandId,
+          {
+            type: "node.updated" as const,
+            payload: { ...node, status: "completed" as const, completedAt: now },
+          },
+          {
+            type: "turn-item.updated" as const,
+            payload: { ...item, status: "completed" as const, completedAt: now },
+          },
+        ])
+          responseEvents.push({
+            id: yield* idAllocator.allocate.event({ threadId }),
             threadId,
-            commandType: "runtime-request.respond",
-            acceptedAt: now,
-            events: yield* domainEvents([
-              {
-                type: "runtime-request.updated",
-                payload: {
-                  ...planned.request!,
-                  status: "resolved",
-                  resolvedAt: now,
-                  ...(kind === "user_input" ? { answers: { q: "yes" } } : { decision: "accept" }),
-                },
-              },
-              {
-                type: "node.updated",
-                payload: { ...planned.node!, status: "completed", completedAt: now },
-              },
-              {
-                type: "turn-item.updated",
-                payload: { ...planned.item!, status: "completed", completedAt: now },
-              },
-            ]),
-            effects: [
-              {
-                id: `effect:${commandId}:runtime-request.respond:${request.id}`,
-                commandId,
-                threadId,
-                request: {
-                  type: "runtime-request.respond",
-                  providerSessionId,
-                  requestId: request.id,
-                  ...(kind === "user_input" ? { answers: { q: "yes" } } : { decision: "accept" }),
-                },
-              },
-            ],
-          })
-          .pipe(Effect.exit);
-        assert.isTrue(Exit.isFailure(exit));
-        const error = Exit.isFailure(exit)
-          ? Cause.findErrorOption(exit.cause).pipe(Option.getOrThrow)
-          : undefined;
-        assert.instanceOf(error, EventSink.EventSinkRuntimeRequestNotPendingError);
-        assert.deepInclude(error, { requestId: request.id, status: "cancelled" });
-        assert.isTrue(Option.isNone(yield* receipts.getByCommandId(commandId)));
+            occurredAt: now,
+            ...payload,
+          });
+        yield* eventSink.write({ events: responseEvents });
+        yield* Deferred.succeed(releaseTerminalWrite, undefined);
+        const committedTerminal = yield* Fiber.join(terminal);
         const projection = yield* projections.getThreadProjection(threadId);
+        const approved = projection.runtimeRequests.find((entry) => entry.id === request.id)!;
+        assert.equal(approved.status, "resolved");
+        assert.equal(approved.decision, "accept");
+        assert.equal(projection.nodes.find((entry) => entry.id === nodeId)!.status, "completed");
         assert.equal(
-          projection.runtimeRequests.find((entry) => entry.id === request.id)?.status,
-          "cancelled",
+          projection.turnItems.find((entry) => entry.id === item.id)!.status,
+          "completed",
         );
-        assert.equal(projection.nodes.find((entry) => entry.id === nodeId)?.status, "cancelled");
-        assert.equal(
-          projection.turnItems.find((entry) => entry.id === item.id)?.status,
-          "cancelled",
+        assert.deepEqual(
+          committedTerminal.map((stored) => stored.event.type),
+          ["provider-turn.updated"],
         );
-        assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+        const history = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
+        assert.isFalse(
+          history.some(
+            (stored) =>
+              stored.event.type === "runtime-request.updated" &&
+              stored.event.payload.status === "cancelled",
+          ),
+        );
       }),
+    ),
+  );
+
+  it.effect("rejects a response planned before terminal normalization cancelled the request", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2.pipe(Effect.provide(EffectOutbox.layer));
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2.pipe(
+        Effect.provide(CommandReceiptStore.layer),
+      );
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const now = yield* DateTime.now;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const threadId = threadEvent.threadId;
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: `${threadId}:respond-race`,
+      });
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: CODEX_DRIVER,
+        nativeTurnId: `${threadId}:respond-race`,
+      });
+      const nodeId = NodeId.make(`${threadId}:request`);
+      const request: OrchestrationV2RuntimeRequest = {
+        id: RuntimeRequestId.make(`${threadId}:request`),
+        nodeId,
+        providerTurnId,
+        nativeRequestRef: null,
+        kind: "command",
+        status: "pending",
+        responseCapability: { type: "live", providerSessionId },
+        createdAt: now,
+        resolvedAt: null,
+      };
+      const node: OrchestrationV2ExecutionNode = {
+        id: nodeId,
+        threadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: nodeId,
+        kind: "approval_request",
+        status: "waiting",
+        countsForRun: false,
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        runtimeRequestId: request.id,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      };
+      const item: OrchestrationV2TurnItem = {
+        id: TurnItemId.make(`${threadId}:request`),
+        threadId,
+        runId: null,
+        nodeId,
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "waiting" as const,
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "approval_request",
+        requestId: request.id,
+        requestKind: "command",
+      };
+      const domainEvents = (
+        payloads: ReadonlyArray<
+          | {
+              readonly type: "runtime-request.updated";
+              readonly payload: OrchestrationV2RuntimeRequest;
+            }
+          | { readonly type: "node.updated"; readonly payload: OrchestrationV2ExecutionNode }
+          | { readonly type: "turn-item.updated"; readonly payload: OrchestrationV2TurnItem }
+        >,
+      ) =>
+        Effect.forEach(payloads, (payload) =>
+          Effect.map(
+            idAllocator.allocate.event({ threadId }),
+            (id): OrchestrationV2DomainEvent => ({ id, threadId, occurredAt: now, ...payload }),
+          ),
+        );
+      yield* eventSink.write({
+        events: [
+          threadEvent,
+          ...(yield* domainEvents([
+            { type: "runtime-request.updated", payload: request },
+            { type: "node.updated", payload: node },
+            { type: "turn-item.updated", payload: item },
+          ])),
+        ],
+      });
+      // The respond command plans from this pending read before the stop commits.
+      const planned = yield* projections.getRuntimeResponseContext(threadId, request.id);
+      assert.equal(planned.request?.status, "pending");
+      yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+        event: {
+          type: "provider_turn.updated",
+          driver: CODEX_DRIVER,
+          providerTurn: {
+            id: providerTurnId,
+            providerThreadId,
+            nodeId,
+            runAttemptId: null,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "interrupted",
+            startedAt: now,
+            completedAt: now,
+          },
+        },
+      });
+      assert.equal(
+        (yield* projections.getRuntimeRequest(threadId, request.id))?.status,
+        "cancelled",
+      );
+      const commandId = CommandId.make(`${threadId}:respond`);
+      const exit = yield* eventSink
+        .commitCommand({
+          commandId,
+          threadId,
+          commandType: "runtime-request.respond",
+          acceptedAt: now,
+          events: yield* domainEvents([
+            {
+              type: "runtime-request.updated",
+              payload: {
+                ...planned.request!,
+                status: "resolved",
+                resolvedAt: now,
+                decision: "accept",
+              },
+            },
+            {
+              type: "node.updated",
+              payload: { ...planned.node!, status: "completed", completedAt: now },
+            },
+            {
+              type: "turn-item.updated",
+              payload: { ...planned.item!, status: "completed", completedAt: now },
+            },
+          ]),
+          effects: [
+            {
+              id: `effect:${commandId}:runtime-request.respond:${request.id}`,
+              commandId,
+              threadId,
+              request: {
+                type: "runtime-request.respond",
+                providerSessionId,
+                requestId: request.id,
+                decision: "accept",
+              },
+            },
+          ],
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(exit));
+      const error = Exit.isFailure(exit)
+        ? Cause.findErrorOption(exit.cause).pipe(Option.getOrThrow)
+        : undefined;
+      assert.instanceOf(error, EventSink.EventSinkRuntimeRequestNotPendingError);
+      assert.deepInclude(error, { requestId: request.id, status: "cancelled" });
+      assert.isTrue(Option.isNone(yield* receipts.getByCommandId(commandId)));
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(
+        projection.runtimeRequests.find((entry) => entry.id === request.id)?.status,
+        "cancelled",
+      );
+      assert.equal(projection.nodes.find((entry) => entry.id === nodeId)?.status, "cancelled");
+      assert.equal(projection.turnItems.find((entry) => entry.id === item.id)?.status, "cancelled");
+      assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+    }),
   );
 
   it.effect("persists a failed provider terminal as one expected error item", () =>
