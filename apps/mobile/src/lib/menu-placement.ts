@@ -1,9 +1,6 @@
 import type { VerticalHinge } from "./layout";
 
-/**
- * Places a menu beside its anchor within the screen region that holds it. A creased hinge splits
- * the overlay into two regions, so a menu never straddles the fold.
- */
+/** Keep menus on their anchor's side of a creased hinge. */
 export function deriveMenuHorizontalPlacement(input: {
   readonly anchorX: number;
   readonly anchorWidth: number;

@@ -1,7 +1,4 @@
-/**
- * (A deny-all session is refused on the free tier: the spike's
- * `text_generation` recording.)
- */
+/** The free tier refuses deny-all sessions. */
 import type { ProviderReplayEntry } from "@t3tools/contracts";
 
 export const OPENCODE2_TITLE_GENERATION: ReadonlyArray<ProviderReplayEntry> = [

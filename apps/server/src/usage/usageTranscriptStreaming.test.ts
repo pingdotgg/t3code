@@ -108,6 +108,53 @@ async function scan(
 }
 
 describe("large usage records", () => {
+  it("streams Muse completion envelopes and resumes a partial appended event", async () => {
+    const entry = {
+      schema_version: 1,
+      record_type: "event",
+      payload_type: "runtime.session",
+      payload_schema_version: 3,
+      id: "envelope-1",
+      recorded_at: 1_785_578_400_123_456,
+      stream: { kind: "session", id: "parent" },
+      payload: {
+        source_run_record_id: "inference-1",
+        event: {
+          kind: "automated_review_completed",
+          model: { model_id: "review-model" },
+          usage: {
+            input_tokens: 100,
+            cached_input_tokens: 60,
+            output_tokens: 20,
+            reasoning_tokens: 8,
+          },
+        },
+      },
+    };
+    const small = await scan([entry], "muse", "small-muse");
+    expect(small.records[0]?.totals).toMatchObject({
+      uncachedInputTokens: 40,
+      cachedInputTokens: 60,
+    });
+    const path = NodePath.join(dir, "large-muse.jsonl");
+    await NodeFSP.writeFile(path, JSON.stringify({ ...entry, discarded: { content } }) + "\n");
+    const large = await readTranscriptRecords(path, "muse");
+    expect(large?.records).toEqual(small.records);
+    const appended = JSON.stringify({
+      ...entry,
+      id: "envelope-2",
+      payload: { ...entry.payload, source_run_record_id: "inference-2" },
+    });
+    await NodeFSP.appendFile(path, appended.slice(0, -7));
+    const partial = await readTranscriptRecords(path, "muse", large!.position);
+    expect(partial?.records).toEqual([]);
+    await NodeFSP.appendFile(path, appended.slice(-7) + "\n");
+    const completed = await readTranscriptRecords(path, "muse", partial!.position);
+    expect(completed?.records).toHaveLength(1);
+    expect(completed?.records[0]?.dedupeKey).not.toBe(large?.records[0]?.dedupeKey);
+    expect(completed?.records[0]?.totals).toEqual(small.records[0]?.totals);
+  });
+
   it("keeps Pi model, cost, and fork identity after large assistant content", async () => {
     const entry = {
       type: "message",
