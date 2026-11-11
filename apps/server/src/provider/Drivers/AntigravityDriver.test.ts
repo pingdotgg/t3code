@@ -426,7 +426,11 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             modelSelection,
             runtimePolicy: cliPolicy,
           });
-          expect(h.launches.at(-1)?.args).toEqual(["acp"]);
+          expect(h.launches.at(-1)?.args).toEqual([
+            "acp",
+            expect.stringMatching(/^--gemini-dir=/u),
+            "--app-data-dir=antigravity-acp",
+          ]);
           expect(
             (yield* h.readRequests)
               .slice(requestsBefore)

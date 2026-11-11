@@ -38,6 +38,7 @@ import {
   antigravityAuthLabel,
   antigravityAuthUsesBrowser,
   buildAntigravityAcpSpawnInput,
+  copyAntigravityCliConversation,
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
@@ -243,6 +244,19 @@ export const AntigravityDriver: ProviderDriver<
             : cause,
         ),
       );
+      if (executable.harnessPath === null && input.resumeSessionId !== undefined) {
+        yield* copyAntigravityCliConversation({
+          userHome,
+          acpDirectory: profile.acpDirectory,
+          sessionId: input.resumeSessionId,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.catch(() =>
+            Effect.logWarning("Could not copy an Antigravity CLI conversation into the profile."),
+          ),
+        );
+      }
       // Use one directory per process; shared cleanup could delete files another session still reads.
       // Remove after the child dies, best-effort on Windows where handles may outlive the kill;
       // the next driver start sweeps leftovers.
