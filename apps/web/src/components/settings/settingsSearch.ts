@@ -468,6 +468,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta folders project tree classic sidebar"],
   },
   {
+    id: "pinned-view",
+    title: "Pinned view",
+    to: "/settings/labs",
+    searchTerms: ["beta pins pinned threads separate own view inbox toggle"],
+  },
+  {
     id: "boring-sidebar-multiline",
     title: "Two-line folder rows",
     to: "/settings/labs",

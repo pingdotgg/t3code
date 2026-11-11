@@ -366,6 +366,8 @@ export function planSidebarThreadDrop(input: {
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeReorderableKeys?: ReadonlySet<string>;
   readonly activeTimeOrdered?: boolean;
+  // The section the pinned view hides: a drop into it changes lifecycle only, with no placement.
+  readonly offViewSection?: "pinned" | "active" | undefined;
 }): SidebarThreadDropPlan {
   const {
     activeKey,
@@ -421,7 +423,7 @@ export function planSidebarThreadDrop(input: {
   };
   switch (target.section) {
     case "active": {
-      if (input.activeTimeOrdered) {
+      if (input.activeTimeOrdered || input.offViewSection === "active") {
         return activeSection === "active"
           ? { kind: "none" }
           : {
@@ -455,6 +457,12 @@ export function planSidebarThreadDrop(input: {
     case "settled":
       return activeSection === "settled" ? { kind: "none" } : { kind: "settle" };
     case "pinned": {
+      // Like the pin action: the server puts a fresh pin at the top.
+      if (input.offViewSection === "pinned") {
+        return activeSection === "pinned"
+          ? { kind: "none" }
+          : { kind: "pin", order: [], orderKey: undefined, extraAssignments: [] };
+      }
       const order = target.pinnedOrder;
       if (
         activeSection === "pinned" &&
@@ -939,6 +947,23 @@ export function shouldRecedeSidebarThread(input: {
     return !input.isUnread && !input.isWoke;
   }
   return false;
+}
+
+/** Whether a row shows the Done pill: an unread completion with no other status or wake. */
+export function sidebarThreadShowsDone(
+  thread: ThreadStatusInput &
+    SidebarThreadStatusInput &
+    Pick<SidebarThreadSummary, "settledOverride">,
+  input: { readonly lastVisitedAt: string | undefined; readonly wokeAt: string | null },
+): boolean {
+  if (resolveSidebarThreadStatus(thread) !== "ready") return false;
+  if (!hasUnseenCompletion({ ...thread, lastVisitedAt: input.lastVisitedAt })) return false;
+  if (input.wokeAt === null || thread.settledOverride === "settled") return true;
+  const wokeAtMs = Date.parse(input.wokeAt);
+  if (Number.isNaN(wokeAtMs)) return true;
+  const lastVisitedAtMs =
+    input.lastVisitedAt === undefined ? Number.NaN : Date.parse(input.lastVisitedAt);
+  return lastVisitedAtMs >= wokeAtMs;
 }
 
 type SidebarThreadStatusInput = Pick<

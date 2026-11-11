@@ -61,13 +61,11 @@ and worktree while you stay in the new thread composer. This requires a Git proj
 
 Pin a thread from its menu to keep it above your active work.
 
-To give pinned threads their own view instead, turn on **Pinned view (beta)** in **Settings →
-General** on web and desktop, or **Pinned view** in **Settings → Thread behavior** on mobile. A
-pin button at the top of the thread list then switches between active threads and pinned threads,
-as does `mod+alt+p` on web and desktop or `Cmd+Option+P` on iPad with a hardware keyboard. Its
-badges count the threads in the other view and, in blue, how many of them finished since you last
-opened them. On iPhone and iPad the button has one badge: the finished count when there is one,
-otherwise the thread count. Change the web and desktop shortcut in **Settings → Keybindings**.
+On web and desktop, turn on **Settings → Labs → Pinned view** to give pinned threads their own
+view. A pin button at the top of the sidebar then switches between active threads and pinned
+threads, as does `mod+alt+p` (change it in **Settings → Keybindings**). Its badges count the threads
+in the other view and, in blue, how many of them finished since you last opened them. Snoozed and
+settled threads show in both views.
 
 On web and desktop, unpinning, settling, snoozing, and archiving a thread each show
 a notification with **Undo** for five seconds. Undo restores the thread's previous

@@ -101,7 +101,6 @@ import IconPencil from "@tabler/icons-react-native/IconPencil";
 import IconPlug from "@tabler/icons-react-native/IconPlug";
 import IconPhoto from "@tabler/icons-react-native/IconPhoto";
 import IconPin from "@tabler/icons-react-native/IconPin";
-import IconPinFilled from "@tabler/icons-react-native/IconPinFilled";
 import IconPinnedOff from "@tabler/icons-react-native/IconPinnedOff";
 import IconPlayerPause from "@tabler/icons-react-native/IconPlayerPause";
 import IconPlayerPlay from "@tabler/icons-react-native/IconPlayerPlay";
@@ -246,8 +245,6 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "person.badge.plus": IconUserPlus,
   photo: IconPhoto,
   pin: IconPin,
-  "pin.fill": IconPinFilled,
-  "pin.circle": IconPin,
   "pin.slash": IconPinnedOff,
   play: IconPlayerPlay,
   pause: IconPlayerPause,

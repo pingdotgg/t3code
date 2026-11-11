@@ -19,6 +19,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
+        <PinnedViewRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -51,6 +52,26 @@ function BoringSidebarRow() {
         </div>
       ) : null}
     </SettingsRow>
+  );
+}
+
+function PinnedViewRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("pinned-view")}
+      description="Give pinned threads their own view. A pin button at the top of the sidebar switches between active and pinned threads."
+      control={
+        <Switch
+          checked={settings.sidebarPinnedViewEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ sidebarPinnedViewEnabled: Boolean(checked) })
+          }
+          aria-label="Pinned view"
+        />
+      }
+    />
   );
 }
 

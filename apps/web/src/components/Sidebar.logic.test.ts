@@ -22,6 +22,7 @@ import {
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
+  sidebarThreadShowsDone,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
   sortScopedProjectsForSidebar,
@@ -976,6 +977,36 @@ describe("unseen completion with background work", () => {
   });
 });
 
+describe("sidebarThreadShowsDone", () => {
+  const thread = presentThreadShell(localEnvironmentId, {
+    ...makeThreadFixture().source,
+    latestRunId: RunId.make("run-done"),
+    status: "completed",
+    latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+  });
+  const beforeCompletion = "2026-06-20T00:59:00.000Z";
+
+  it("counts an unread completion until it is visited", () => {
+    expect(sidebarThreadShowsDone(thread, { lastVisitedAt: beforeCompletion, wokeAt: null })).toBe(
+      true,
+    );
+    expect(
+      sidebarThreadShowsDone(thread, { lastVisitedAt: "2026-06-20T01:01:00.000Z", wokeAt: null }),
+    ).toBe(false);
+  });
+
+  it("does not count a row that shows Woke or Approval instead", () => {
+    const wokeAt = "2026-06-20T02:00:00.000Z";
+    expect(sidebarThreadShowsDone(thread, { lastVisitedAt: beforeCompletion, wokeAt })).toBe(false);
+    expect(
+      sidebarThreadShowsDone(
+        { ...thread, hasPendingApprovals: true },
+        { lastVisitedAt: beforeCompletion, wokeAt: null },
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("Working shelf (beta)", () => {
   const runtime = {
     status: "running" as const,
@@ -1436,6 +1467,45 @@ describe("Working shelf (beta)", () => {
           activeKey: "p1",
           activeSection: "pinned",
           target: { section: "active", pinnedOrder: [], activeOrder: ["a1", "p1", "a2"] },
+        }),
+      ).toEqual({
+        kind: "move-active",
+        order: null,
+        assignments: [],
+        unpin: true,
+        unsettle: false,
+        unsnooze: false,
+      });
+    });
+
+    it("only changes lifecycle when dropping into the view the pinned view hides", () => {
+      const base = {
+        pinnedOrder: [],
+        pinnedKeysById: new Map([["p1", "m"]]),
+        activeOrder: ["a1", "a2"],
+        activeKeysById: new Map([
+          ["a1", "f"],
+          ["a2", "t"],
+        ]),
+      };
+      expect(
+        planSidebarThreadDrop({
+          ...base,
+          activeKey: "a1",
+          activeSection: "active",
+          target: { section: "pinned", pinnedOrder: ["a1"], activeOrder: ["a2"] },
+          offViewSection: "pinned",
+        }),
+      ).toEqual({ kind: "pin", order: [], orderKey: undefined, extraAssignments: [] });
+      expect(
+        planSidebarThreadDrop({
+          ...base,
+          pinnedOrder: ["p1"],
+          activeOrder: [],
+          activeKey: "p1",
+          activeSection: "pinned",
+          target: { section: "active", pinnedOrder: [], activeOrder: ["p1"] },
+          offViewSection: "active",
         }),
       ).toEqual({
         kind: "move-active",

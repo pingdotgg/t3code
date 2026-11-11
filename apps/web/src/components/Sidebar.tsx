@@ -208,6 +208,8 @@ import {
   type SidebarListItem,
   type SidebarSection,
   resolveSidebarRowThreadId,
+  resolveThreadLastVisitedAt,
+  sidebarThreadShowsDone,
 } from "./Sidebar.logic";
 import {
   createSidebarCollisionDetection,
@@ -424,6 +426,8 @@ function useSidebarThreads(input: {
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
   // Keeps folders with no active threads, so a project the user filtered to or pinned can start one.
   readonly keepEmptyFolders: (group: SidebarProjectSnapshot) => boolean;
+  // Null while the pinned view beta is off; otherwise the view showing, inbox or pins.
+  readonly threadView: "active" | "pinned" | null;
 }) {
   const {
     projectScopeKey,
@@ -436,6 +440,7 @@ function useSidebarThreads(input: {
     routeRowThreadKey,
     folderGroups,
     keepEmptyFolders: keepEmpty,
+    threadView,
   } = input;
   // Folders already separate the work, so boring mode has no Working shelf.
   const workingShelfEnabled =
@@ -487,8 +492,18 @@ function useSidebarThreads(input: {
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
-  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
-    partition;
+  // The pinned view shows the inbox or the pins, never both; snoozed and settled shelves show in
+  // both views, and search spans every thread.
+  const pinnedThreads = threadView === "active" ? EMPTY_THREADS : partition.pinnedThreads;
+  const activeThreads = threadView === "pinned" ? EMPTY_THREADS : partition.activeThreads;
+  const workingThreads = threadView === "pinned" ? EMPTY_THREADS : partition.workingThreads;
+  const { snoozedThreads, settledThreads } = partition;
+  const offViewThreads =
+    threadView === "active"
+      ? partition.pinnedThreads
+      : threadView === "pinned"
+        ? [...partition.activeThreads, ...partition.workingThreads]
+        : EMPTY_THREADS;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
@@ -524,7 +539,12 @@ function useSidebarThreads(input: {
   const projectFolders =
     folderGroups === null
       ? null
-      : groupSidebarThreadsByProject(folderGroups, activeThreads, keepEmpty).map((folder) => {
+      : groupSidebarThreadsByProject(
+          folderGroups,
+          activeThreads,
+          // The pinned view has no inbox, so it keeps no empty folders either.
+          threadView === "pinned" ? () => false : keepEmpty,
+        ).map((folder) => {
           const collapsed = !resolveProjectExpanded(
             projectExpandedById,
             sidebarFolderExpansionKeys(folder.group),
@@ -562,12 +582,16 @@ function useSidebarThreads(input: {
   }
   return {
     ...partition,
+    pinnedThreads,
+    activeThreads,
+    workingThreads,
+    offViewThreads,
     threads,
     workingShelfEnabled,
     searchableThreads: [
-      ...pinnedThreads,
-      ...activeThreads,
-      ...workingThreads,
+      ...partition.pinnedThreads,
+      ...partition.activeThreads,
+      ...partition.workingThreads,
       ...snoozedThreads,
       ...settledThreads,
     ],
@@ -991,6 +1015,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   });
   const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
+  const pinnedViewEnabled = useClientSettings((settings) => settings.sidebarPinnedViewEnabled);
+  const storedPinnedView = useUiStateStore((store) => store.sidebarPinnedView);
+  const threadView = !pinnedViewEnabled ? null : storedPinnedView ? "pinned" : "active";
+  const offViewSection =
+    threadView === null ? undefined : threadView === "active" ? "pinned" : "active";
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
@@ -1072,6 +1101,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const setProjectScopeKeys = (keys: readonly string[]) => {
     clearSelection();
     setPersistedProjectScopeKeys(keys);
+    scrollSidebarToTop(sidebarContentRef.current);
+  };
+  // A view flip hides rows the same way a scope change does.
+  const togglePinnedView = () => {
+    clearSelection();
+    useUiStateStore.getState().toggleSidebarPinnedView();
     scrollSidebarToTop(sidebarContentRef.current);
   };
   // A scope whose project is gone reads as all projects once every snapshot has
@@ -1335,7 +1370,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     activeKeys,
     pinnedKeysById,
     activeKeysById,
+    offViewThreads,
   } = useSidebarThreads({
+    threadView,
     projectScopeKey,
     scopedProjectKeys,
     serverConfigs,
@@ -1353,6 +1390,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
+
+  // Selecting the count re-renders only when it changes, not on every recorded visit.
+  const offViewDoneCount = useUiStateStore((store) =>
+    offViewThreads.reduce(
+      (count, thread) =>
+        sidebarThreadShowsDone(thread, {
+          lastVisitedAt: resolveThreadLastVisitedAt(
+            thread.lastVisitedAt,
+            store.threadLastVisitedAtById[threadShellKey(thread)],
+          ),
+          wokeAt: threadWokeAt(thread, { now: snoozeNow }),
+        })
+          ? count + 1
+          : count,
+      0,
+    ),
+  );
 
   // Ranked across environments as the palette ranks them, so one
   // environment's list does not sit above another's better matches; rows
@@ -2076,6 +2130,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             activeKeysById,
             activeReorderableKeys: activeReorderableThreadKeys,
             activeTimeOrdered: workingShelfEnabled,
+            offViewSection,
           }).kind !== "none"
         );
       },
@@ -2110,6 +2165,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       activeKeysById,
       activeReorderableKeys: activeReorderableThreadKeys,
       activeTimeOrdered: workingShelfEnabled,
+      offViewSection,
     });
     if (plan.kind === "none") return;
     if (plan.kind === "settle" && settlingThreadKeysRef.current.has(activeKey)) return;
@@ -2890,13 +2946,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation shortcuts using the current thread list
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
-        return;
-      }
+      if (event.defaultPrevented || event.repeat) return;
       const command = resolveShortcutCommand(event, keybindings, {
         platform: navigator.platform,
         context: threadShortcutContext(routeThreadRef),
       });
+      // The command palette lists the view toggle, so its shortcut works over the palette too.
+      if (command === "sidebar.togglePinnedView" && pinnedViewEnabled) {
+        event.preventDefault();
+        event.stopPropagation();
+        togglePinnedView();
+        return;
+      }
+      if (isCommandPaletteOpen() || isModelPickerOpen()) return;
       const navigateToThreadKey = (targetThreadKey: string | null) => {
         if (!targetThreadKey) return false;
         const targetThread = threadByKey.get(targetThreadKey);
@@ -2927,9 +2989,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keybindings,
     navigateToThread,
     orderedThreadKeys,
+    pinnedViewEnabled,
     routeRowThreadKey,
     routeThreadRef,
     threadByKey,
+    togglePinnedView,
   ]);
 
   const showJumpHints = useThreadJumpHintsVisible(keybindings, routeThreadRef);
@@ -2974,6 +3038,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
               hasProjects={projectGroups.length > 0}
+              pinnedViewToggle={
+                threadView === null
+                  ? null
+                  : {
+                      pinnedView: threadView === "pinned",
+                      onToggle: togglePinnedView,
+                      shortcutLabel: shortcutLabelForCommand(
+                        keybindings,
+                        "sidebar.togglePinnedView",
+                      ),
+                      otherViewThreadCount: offViewThreads.length,
+                      otherViewDoneCount: offViewDoneCount,
+                    }
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -3434,17 +3512,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         );
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
-                      const items: ReactNode[] = [
-                        <SidebarDraftBlock
-                          key="draft-sessions"
-                          projectByKey={projectByKey}
-                          projectDisplayNameByKey={projectDisplayNameByKey}
-                          scopedProjectKeys={scopedProjectKeys}
-                          routeDraftId={routeDraftIdForRows}
-                          onNavigateToDraft={navigateToDraft}
-                          onDraftContextMenu={handleDraftContextMenu}
-                        />,
-                      ];
+                      // Drafts are new inbox work, so the pinned view leaves them out.
+                      const items: ReactNode[] =
+                        threadView === "pinned"
+                          ? []
+                          : [
+                              <SidebarDraftBlock
+                                key="draft-sessions"
+                                projectByKey={projectByKey}
+                                projectDisplayNameByKey={projectDisplayNameByKey}
+                                scopedProjectKeys={scopedProjectKeys}
+                                routeDraftId={routeDraftIdForRows}
+                                onNavigateToDraft={navigateToDraft}
+                                onDraftContextMenu={handleDraftContextMenu}
+                              />,
+                            ];
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           // Folders draw active rows in their own place below.
@@ -3619,7 +3701,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ) : null}
           {!isSearchingThreads &&
           !hasProjectFolders &&
-          visibleDraftSessionCount === 0 &&
+          (threadView === "pinned" || visibleDraftSessionCount === 0) &&
           pinnedThreads.length +
             activeThreads.length +
             workingThreads.length +

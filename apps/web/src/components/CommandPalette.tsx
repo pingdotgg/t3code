@@ -111,6 +111,8 @@ import {
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
 import { useClientSettings } from "../hooks/useSettings";
+import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useUiStateStore } from "../uiStateStore";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -449,6 +451,8 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const pinnedViewEnabled = useClientSettings((settings) => settings.sidebarPinnedViewEnabled);
+  const sidebarPinnedView = useUiStateStore((store) => store.sidebarPinnedView);
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1687,6 +1691,22 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: direction === 1 ? "workspace.focusNext" : "workspace.focusPrevious",
       run: async () => {
         queueWorkspaceFocusFromPalette(direction);
+      },
+    });
+  }
+
+  if (pinnedViewEnabled) {
+    actionItems.push({
+      kind: "action",
+      value: "action:sidebar-pinned-view",
+      searchTerms: ["pinned", "pins", "pinned threads", "inbox", "sidebar view"],
+      title: sidebarPinnedView ? "Show active threads" : "Show pinned threads",
+      icon: <PinIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "sidebar.togglePinnedView",
+      run: async () => {
+        // Selected rows may be hidden by the new view, and bulk actions must not reach them.
+        useThreadSelectionStore.getState().clearSelection();
+        useUiStateStore.getState().toggleSidebarPinnedView();
       },
     });
   }
