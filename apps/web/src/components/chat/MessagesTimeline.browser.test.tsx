@@ -2,7 +2,7 @@ import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
-import { cdp, page } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -1816,4 +1816,43 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByRole("button", { name: "Open the current tab", exact: true }))
     .toBeVisible();
+});
+
+it("opens adjacent subagent previews without repeating the hover delay", async () => {
+  const entries = ["Review implementation", "Check edge cases"].map((title, index) => ({
+    kind: "event" as const,
+    id: `hover-agent-${index}`,
+    createdAt: CREATED_AT,
+    projectedItem: v2Item("subagent", {
+      id: `hover-item-${index}`,
+      subagentId: `hover-agent-${index}`,
+      title,
+      providerInstanceId: "codex",
+      driver: "codex",
+      origin: "app_owned",
+      childThreadId: `child-${index}`,
+      result: `Result for ${title}`,
+    }),
+  }));
+  await using screen = await renderTimeline(entries);
+  await screen.getByRole("button", { name: /Worked for/ }).click();
+  await screen.getByRole("button", { name: "2 subagents", exact: true }).click();
+  using _timers = fakeTimers();
+  const popup = () => document.querySelector('[data-slot="tooltip-popup"][data-open]');
+  await userEvent.hover(screen.getByRole("button", { name: "Open Review implementation" }));
+  await act(() => vi.advanceTimersByTime(199));
+  expect(popup()).toBeNull();
+  await act(() => vi.advanceTimersByTime(1));
+  expect(popup()?.textContent).toContain("Review implementation");
+  await userEvent.hover(screen.getByRole("button", { name: "Open Check edge cases" }));
+  await act(() => vi.advanceTimersByTime(1));
+  expect(popup()?.textContent).toContain("Check edge cases");
+  await userEvent.hover(screen.getByRole("button", { name: /Worked for/ }));
+  await act(() => vi.advanceTimersByTime(401));
+  expect(popup()).toBeNull();
+  await userEvent.hover(screen.getByRole("button", { name: "Open Review implementation" }));
+  await act(() => vi.advanceTimersByTime(199));
+  expect(popup()).toBeNull();
+  await act(() => vi.advanceTimersByTime(1));
+  expect(popup()?.textContent).toContain("Review implementation");
 });

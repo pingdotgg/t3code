@@ -56,7 +56,7 @@ vi.mock(import("../../state/use-atom-command"), () => ({
       : AsyncResult.failure(Cause.fail(new Error("Connection lost")))) as never,
 }));
 
-import { render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { ToastProvider } from "../ui/toast";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
@@ -405,4 +405,32 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
   await expect.element(screen.getByText("Unloaded fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Archived fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
+});
+
+it("shares the hover delay between adjacent lineage rows", async () => {
+  setup();
+  state.relatedShells = [
+    { id: "source", title: "First agent", lineage: { parentThreadId: null } },
+    {
+      id: "child",
+      title: "Second agent",
+      lineage: { parentThreadId: threadId, relationshipToParent: "fork", sideChat: false },
+    },
+  ];
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+  using _timers = fakeTimers();
+  const popup = () => document.querySelector('[data-slot="tooltip-popup"][data-open]');
+  await userEvent.hover(screen.getByText("First agent", { exact: true }));
+  await act(() => vi.advanceTimersByTime(200));
+  expect(popup()?.textContent).toContain("First agent");
+  await userEvent.hover(screen.getByText("Second agent", { exact: true }));
+  await act(() => vi.advanceTimersByTime(1));
+  expect(popup()?.textContent).toContain("Second agent");
 });
