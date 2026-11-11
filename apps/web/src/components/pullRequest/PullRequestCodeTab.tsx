@@ -740,9 +740,9 @@ function PullRequestCodeTab({
       </div>
     );
 
-  // A stale mark means the file changed since it was viewed, so it opens like any other file.
+  // A stale mark means the file changed since it was viewed; Fold all and Expand all outrank marks.
   const foldsAsViewed = (path: string) =>
-    filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
+    foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
       const collapsed = isFileDiffCollapsed(
@@ -810,7 +810,13 @@ function PullRequestCodeTab({
     setToggledFiles((current) =>
       range.reduce(
         (next, file) =>
-          toggleFileDiffFoldForViewed(file.fileKey, viewed, effectiveFoldOverride, next, viewed),
+          toggleFileDiffFoldForViewed(
+            file.fileKey,
+            viewed,
+            effectiveFoldOverride,
+            next,
+            viewed && foldOverride === null,
+          ),
         current,
       ),
     );
