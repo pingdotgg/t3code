@@ -13,6 +13,7 @@ import {
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
+  type PreviewAutomationLoadError,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -129,9 +130,13 @@ function makeSession(
         return { result: { value: [] } };
       }
       if (method === "Page.addScriptToEvaluateOnNewDocument") frame?.recording.resolve();
-      if (method === "Input.dispatchKeyEvent" && (input as { commands?: unknown }).commands) {
-        if (focusedFrame) focusedFrame.copy = keyCopy || focusedFrame.copy;
-        else pageCopy = keyCopy || pageCopy;
+      // The recorder drops its last copy on every copy or cut key it sees.
+      if (
+        method === "Input.dispatchKeyEvent" &&
+        ["copy", "cut"].includes((input as { commands?: Array<string> }).commands?.[0] ?? "")
+      ) {
+        if (focusedFrame) focusedFrame.copy = keyCopy;
+        else pageCopy = keyCopy;
       }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 7) {
         const value = frame ? frame.copy : pageCopy;
@@ -219,7 +224,7 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       interactiveElements: [],
     })),
     ariaSnapshot: vi.fn(async () => '- button "delete" [ref=e1]'),
-    locator: vi.fn(() => {
+    locator: vi.fn((): unknown => {
       throw new Error("Unexpected locator action");
     }),
     isClosed: () => closed,
@@ -326,6 +331,7 @@ let desktopAttachesLate = false;
 let desktopAttachWaiting = Promise.withResolvers<void>();
 const shownDesktopTabs = new Set<string>();
 const releasedDesktopTabs: Array<string> = [];
+const desktopLoadFailures = new Map<string, PreviewAutomationLoadError>();
 const desktopTurns = new NodeEvents.EventEmitter();
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
 const testThread = {
@@ -407,6 +413,7 @@ const dependencies = Layer.mergeAll(
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     isShown: (key) => shownDesktopTabs.has(key.tabId),
+    loadFailure: (key) => desktopLoadFailures.get(key.tabId),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
         Effect.sync(() => {
@@ -485,6 +492,7 @@ beforeEach(() => {
   focusedFrame = null;
   desktopTabs.clear();
   shownDesktopTabs.clear();
+  desktopLoadFailures.clear();
   desktopRendersNext = false;
   desktopAttachesLate = false;
   desktopAttachWaiting = Promise.withResolvers<void>();
@@ -994,6 +1002,40 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
+it.live(
+  "reports a valid CSS selector that matches several elements as ambiguous, not invalid",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const strict = new Error(
+          "locator.scrollIntoViewIfNeeded: Error: strict mode violation: locator('button[aria-label=\\'Permissions: Full access\\']') resolved to 2 elements:",
+        );
+        contexts[0]!.page.locator.mockImplementation(
+          () =>
+            new Proxy(
+              {},
+              {
+                get: () => async () => {
+                  throw strict;
+                },
+              },
+            ),
+        );
+        const failure = yield* broker
+          .invoke<void>({
+            scope,
+            tabId,
+            operation: "click",
+            input: { selector: "button[aria-label='Permissions: Full access']", timeoutMs: 1_000 },
+          })
+          .pipe(Effect.flip);
+        expect(failure.message).not.toMatch(/invalid selector/);
+        expect(failure.message).toMatch(/2 elements/);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
 it.live("reports a pending dialog without evaluating the page and resolves it explicitly", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1405,6 +1447,54 @@ it.live("only the controlling viewer's copy and cut keys reach its clipboard", (
       yield* viewer.input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 });
       expect(yield* clipboard(viewer.output)).toEqual([]);
       expect(yield* clipboard(watcher.output)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a busy embedded frame does not hold a copy key back from the page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const context = contexts[0]!;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const pageSession = context.sessions.at(-1)!;
+      const frame = makeFrame();
+      context.page.emit("framenavigated", frame);
+      yield* Effect.promise(() => frame.recording.promise);
+
+      // The frame answers its copy read only once the page has the key and the
+      // input after it, like a frame busy for longer than the user waits.
+      const keyReached = Promise.withResolvers<void>();
+      const pageSend = pageSession.send.getMockImplementation()!;
+      pageSession.send.mockImplementation(async (method, input) => {
+        if (method === "Input.dispatchKeyEvent" && (input as { type?: string }).type === "keyUp")
+          keyReached.resolve();
+        return pageSend(method, input);
+      });
+      const frameSession = context.sessions.at(-1)!;
+      const frameSend = frameSession.send.getMockImplementation()!;
+      frameSession.send.mockImplementation(async (method, input) => {
+        if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 7) {
+          await keyReached.promise;
+        }
+        return frameSend(method, input);
+      });
+
+      keyCopy = "copied";
+      const copying = yield* viewer
+        .input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* viewer.input({ type: "key", action: "up", key: "c", code: "KeyC", modifiers: 4 });
+      yield* Fiber.join(copying);
+      expect(pageSession.send).toHaveBeenCalledWith(
+        "Input.dispatchKeyEvent",
+        expect.objectContaining({ key: "c", commands: ["copy"] }),
+      );
+      const clipboard = yield* Queue.clear(viewer.output);
+      expect(clipboard.filter((item) => item._tag === "clipboard")).toEqual([
+        { _tag: "clipboard", text: "copied" },
+      ]);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -2522,6 +2612,107 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
         [...opened.filter((tabId) => tabId !== opened[2]), fresh.tabId!].toSorted(),
       );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+const certificateError = {
+  url: "https://device.local/",
+  code: -202,
+  description: "ERR_CERT_AUTHORITY_INVALID",
+};
+const dataUrl = `data:text/html,${"PAYLOAD".repeat(300)}`;
+
+it.live("reports why a page failed to load while the tab shows the error page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const request = {
+        url: () => certificateError.url,
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_CERT_AUTHORITY_INVALID" }),
+      };
+      const status = () =>
+        broker.invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} });
+      const snapshot = () =>
+        broker.invoke<PreviewAutomationSnapshot>({
+          scope,
+          tabId,
+          operation: "snapshot",
+          input: {},
+        });
+      expect(yield* status()).not.toHaveProperty("loadError");
+      expect(yield* snapshot()).not.toHaveProperty("loadError");
+      page.emit("request", request);
+      page.emit("requestfailed", request);
+      page.url = () => "chrome-error://chromewebdata/";
+      expect((yield* status()).loadError).toEqual(certificateError);
+      expect((yield* snapshot()).loadError).toEqual(certificateError);
+
+      const subframeRequest = {
+        ...request,
+        url: () => "https://frame.local/",
+        frame: () => ({}),
+      };
+      page.emit("request", subframeRequest);
+      page.emit("requestfailed", subframeRequest);
+      expect((yield* status()).loadError).toEqual(certificateError);
+
+      // Clearing must happen before the next navigation replaces the error page.
+      page.emit("request", { ...request, url: () => "https://device.local/login" });
+      expect(yield* status()).not.toHaveProperty("loadError");
+      expect(yield* snapshot()).not.toHaveProperty("loadError");
+
+      const dataRequest = { ...request, url: () => dataUrl };
+      page.emit("request", dataRequest);
+      page.emit("requestfailed", dataRequest);
+      expect((yield* status()).loadError?.url).toBe("data:text/html,…");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("reports a desktop tab's load failure from before the server connected", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      desktopLoadFailures.set(opened.tabId, certificateError);
+      yield* browser.attachViewer(viewerInput(opened.tabId, false));
+      const page = desktopConnections[0]!.context.page;
+      page.url = () => "chrome-error://chromewebdata/";
+      const status = () =>
+        broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "status",
+          input: {},
+          tabId: PreviewTabId.make(opened.tabId),
+        });
+      const snapshot = () =>
+        broker.invoke<PreviewAutomationSnapshot>({
+          scope,
+          operation: "snapshot",
+          input: {},
+          tabId: PreviewTabId.make(opened.tabId),
+        });
+      expect((yield* status()).loadError).toEqual(certificateError);
+      expect((yield* snapshot()).loadError).toEqual(certificateError);
+      desktopLoadFailures.set(opened.tabId, { ...certificateError, url: dataUrl });
+      expect((yield* status()).loadError?.url).toBe("data:text/html,…");
+      // A navigation the server sees supersedes it, even before the error page goes.
+      page.emit("request", {
+        url: () => "https://device.local/retry",
+        isNavigationRequest: () => true,
+        frame: () => page,
+      });
+      expect(yield* status()).not.toHaveProperty("loadError");
+      expect(yield* snapshot()).not.toHaveProperty("loadError");
     }),
   ).pipe(Effect.provide(layer)),
 );
