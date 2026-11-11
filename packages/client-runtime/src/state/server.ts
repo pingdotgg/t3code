@@ -43,10 +43,13 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import {
+  currentSession,
   isRpcClientError,
   request,
   requestGuarded,
+  requestInSession,
   runStream,
+  runStreamInSession,
   subscribe,
   subscribeDynamicWithSession,
   type EnvironmentRpcInput,
@@ -134,6 +137,8 @@ export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTe
 // Covers the service launcher's 30-minute trial deadline (PREPARED_TIMEOUT_MS)
 // and a final restart of the previous version when the trial rolls back.
 const SERVER_UPDATE_RESUME_TIMEOUT = Duration.minutes(32);
+// A live host replays its ready on subscribe within a round trip; past this, update without a baseline.
+const SERVER_UPDATE_ACCEPTING_READY_TIMEOUT = Duration.seconds(5);
 
 export function matchesServerUpdateReadyEvent(
   result: ServerSelfUpdateResult,
@@ -144,13 +149,20 @@ export function matchesServerUpdateReadyEvent(
     : event.payload.updateOutcome?.id === result.updateId;
 }
 
+/**
+ * `acceptedAt` is the `ready.at` of the process that accepted the update. A launcher host
+ * that comes back as any other process ends the wait, so validation can reject a missing
+ * or foreign outcome instead of timing out.
+ */
 export function matchesServerUpdateResumeEvent(
   result: ServerSelfUpdateResult,
   event: ServerLifecycleStreamReadyEvent,
+  acceptedAt?: string,
 ): boolean {
   return (
     (result.method === "desktop-app" && result.desktopUpdateToken !== undefined) ||
-    matchesServerUpdateReadyEvent(result, event)
+    matchesServerUpdateReadyEvent(result, event) ||
+    (result.updateId !== undefined && acceptedAt !== undefined && event.payload.at !== acceptedAt)
   );
 }
 
@@ -159,10 +171,10 @@ export function validateServerUpdateReadyEvent(
   event: ServerLifecycleStreamReadyEvent,
 ): Effect.Effect<void, ServerUpdateTerminalError> {
   if (result.updateId === undefined) return Effect.void;
-  const outcome = event.payload.updateOutcome;
+  const reported = event.payload.updateOutcome;
+  const outcome = reported?.id === result.updateId ? reported : undefined;
   if (
-    outcome?.id === result.updateId &&
-    outcome.status === "committed" &&
+    outcome?.status === "committed" &&
     outcome.targetVersion === result.targetVersion &&
     event.payload.environment.serverVersion === result.targetVersion
   ) {
@@ -365,6 +377,7 @@ export interface ServerConfigSubscriptionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
+  readonly providerCatalogsOnDemand?: boolean;
 }
 
 // Configs are JSON-shaped. Missing and undefined object fields persist identically.
@@ -486,6 +499,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
       ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
       ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+      ...(subscription.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
     }).pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
@@ -755,6 +769,7 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentThemes?: boolean;
     readonly usageLimitSources?: boolean;
     readonly usageLimitsCommand?: boolean;
+    readonly providerCatalogsOnDemand?: boolean;
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
@@ -770,6 +785,7 @@ export function createServerEnvironmentAtoms<R, E>(
           ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
           ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
           ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+          ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
         }),
       )
       .pipe(
@@ -855,6 +871,17 @@ export function createServerEnvironmentAtoms<R, E>(
         const desktopCommitStarting = yield* Deferred.make<void>();
         const desktopReconnectObserverArmed = yield* Deferred.make<void>();
         const desktopReconnected = yield* Deferred.make<void>();
+        let accepting: { readonly session: RpcSession; readonly at: string } | undefined;
+        let acceptedAt: string | undefined;
+        // The baseline only describes the accepting process if the request rides its session,
+        // so the session read here is the one the request is sent on.
+        const acceptingSession = currentSession().pipe(
+          Effect.tap((session) =>
+            Effect.sync(() => {
+              acceptedAt = accepting?.session === session ? accepting.at : undefined;
+            }),
+          ),
+        );
         yield* Deferred.await(desktopCommitStarting).pipe(
           Effect.andThen(
             environmentRegistry.stateChanges(target.environmentId).pipe(
@@ -881,6 +908,28 @@ export function createServerEnvironmentAtoms<R, E>(
               fromVersion,
               targetVersion,
             });
+            // Only launcher updates carry an updateId. Read before the request so a ready from
+            // after it can never pose as the accepting process.
+            if (currentConfig?.environment.capabilities.serverSelfUpdate === "boot-service") {
+              accepting = yield* environmentRegistry
+                .followStream(
+                  target.environmentId,
+                  subscribeDynamicWithSession(WS_METHODS.subscribeServerLifecycle, () =>
+                    Effect.succeed({}),
+                  ),
+                )
+                .pipe(
+                  Stream.filter(
+                    (entry): entry is readonly [RpcSession, ServerLifecycleStreamReadyEvent] =>
+                      entry[1].type === "ready",
+                  ),
+                  Stream.map(([session, ready]) => ({ session, at: ready.payload.at })),
+                  Stream.runHead,
+                  Effect.timeoutOption(SERVER_UPDATE_ACCEPTING_READY_TIMEOUT),
+                  Effect.map((head) => Option.getOrUndefined(Option.flatten(head))),
+                  Effect.orElseSucceed(() => undefined),
+                );
+            }
 
             const supportsProgress =
               currentConfig?.environment.capabilities.serverSelfUpdateProgress === true;
@@ -893,7 +942,17 @@ export function createServerEnvironmentAtoms<R, E>(
                   const streamExit = yield* environmentRegistry
                     .runStream(
                       target.environmentId,
-                      runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
+                      Stream.unwrap(
+                        acceptingSession.pipe(
+                          Effect.map((session) =>
+                            runStreamInSession(
+                              session,
+                              WS_METHODS.serverUpdateServerWithProgress,
+                              target.input,
+                            ),
+                          ),
+                        ),
+                      ),
                     )
                     .pipe(
                       Stream.runForEach((event) =>
@@ -933,7 +992,14 @@ export function createServerEnvironmentAtoms<R, E>(
               : yield* Effect.gen(function* () {
                   const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
                   const exit = yield* environmentRegistry
-                    .run(target.environmentId, request(WS_METHODS.serverUpdateServer, target.input))
+                    .run(
+                      target.environmentId,
+                      acceptingSession.pipe(
+                        Effect.flatMap((session) =>
+                          requestInSession(session, WS_METHODS.serverUpdateServer, target.input),
+                        ),
+                      ),
+                    )
                     .pipe(Effect.exit);
                   if (Exit.isSuccess(exit)) {
                     return exit.value;
@@ -1010,7 +1076,7 @@ export function createServerEnvironmentAtoms<R, E>(
           .pipe(
             Stream.filter(
               (event): event is ServerLifecycleStreamReadyEvent =>
-                event.type === "ready" && matchesServerUpdateResumeEvent(result, event),
+                event.type === "ready" && matchesServerUpdateResumeEvent(result, event, acceptedAt),
             ),
             Stream.runHead,
             Effect.timeoutOption(SERVER_UPDATE_RESUME_TIMEOUT),
@@ -1078,6 +1144,26 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
     ),
   );
+  const hiddenThreadTagsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const settings = get(settingsValueAtom(environmentId));
+      if (settings?.hideTaggedThreads !== true) return null;
+      // Tags are trimmed on write; trim hand-edited entries so " private" still matches.
+      const tags = settings.hiddenThreadTags.map((tag) => tag.trim()).filter((tag) => tag !== "");
+      return tags.length > 0 ? tags : null;
+    }).pipe(
+      // Trimming makes a new array on every settings push; keep equal lists stable.
+      Atom.withEquality(
+        (a: ReadonlyArray<string> | null, b: ReadonlyArray<string> | null) =>
+          a === b ||
+          (a !== null &&
+            b !== null &&
+            a.length === b.length &&
+            a.every((tag, index) => tag === b[index])),
+      ),
+      Atom.withLabel(`environment-data:server:hidden-thread-tags:${environmentId}`),
+    ),
+  );
   const usagePricesAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const overrides = get(settingsValueAtom(environmentId))?.usagePriceOverrides ?? {};
@@ -1108,9 +1194,15 @@ export function createServerEnvironmentAtoms<R, E>(
         Object.keys(aliases)
           .sort()
           .map((model) => [model, aliases[model]]),
-        settings?.cursorKeychainUsageEnabled ?? false,
       ]);
     }).pipe(Atom.withLabel(`environment-data:server:usage-scan-settings:${environmentId}`)),
+  );
+  // Settings snapshots rebuild the filter object; only a changed filter should touch the Usage tab.
+  const usageModelFilterAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(settingsValueAtom(environmentId))?.usageModelFilter).pipe(
+      Atom.withEquality((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+      Atom.withLabel(`environment-data:server:usage-model-filter:${environmentId}`),
+    ),
   );
   const providersValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.providers ?? null).pipe(
@@ -1187,6 +1279,11 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     databaseStorage,
     databaseCompactionRecommendations,
+    reclaimDatabaseSpace: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:reclaim-database-space",
+      tag: WS_METHODS.serverReclaimDatabaseSpace,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     storageCleanupReport: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:storage-cleanup-report",
       tag: WS_METHODS.serverGetStorageCleanupReport,
@@ -1194,6 +1291,8 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     updateStateAtom,
     settingsValueAtom,
+    hiddenThreadTagsAtom,
+    usageModelFilterAtom,
     providersValueAtom,
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:provider:auth-state",
@@ -1235,6 +1334,10 @@ export function createServerEnvironmentAtoms<R, E>(
     cancelProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-cancel",
       tag: WS_METHODS.providerAuthCancel,
+    }),
+    removeProviderAuthMethod: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:provider:auth-remove-method",
+      tag: WS_METHODS.providerAuthRemoveMethod,
     }),
     logoutProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-logout",
@@ -1333,6 +1436,8 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:resource-telemetry-history",
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
       staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
+      idleTtlMs: 0,
     }),
     searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:acp-registry:search",
@@ -1372,6 +1477,7 @@ export function createServerEnvironmentAtoms<R, E>(
           ...input,
           workspaceSnapshotsOnDemand: true,
           ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+          ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
         }),
       onSuccess: ({ environmentId, input }, registry, result) =>
         Effect.sync(() => {
@@ -1397,6 +1503,7 @@ export function createServerEnvironmentAtoms<R, E>(
             input.cwd ?? null,
             input.fresh ?? false,
             input.refreshModels ?? false,
+            input.modelCatalogOnly ?? false,
           ]),
       },
     }),
@@ -1569,6 +1676,10 @@ export function createServerEnvironmentAtoms<R, E>(
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
+    }),
+    listTextGeneratorModels: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:list-text-generator-models",
+      tag: WS_METHODS.serverListTextGeneratorModels,
     }),
     retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retry-resource-telemetry",
