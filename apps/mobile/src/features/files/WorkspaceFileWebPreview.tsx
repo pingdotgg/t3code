@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 import { WebView } from "react-native-webview";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -11,8 +11,8 @@ import { PdfPreview } from "../../components/PdfPreview";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { useHardwareBack } from "../../lib/backHandler";
 import { isPdfPreviewUri } from "../../lib/pdfPreview";
-import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 
 export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) {
   if (props.uri === null) {
@@ -22,10 +22,7 @@ export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) 
 }
 
 function DocumentWebPreview(props: { readonly uri: string }) {
-  const insets = useSafeAreaInsets();
-  const columnMetrics = useNativeColumnLayoutMetrics();
-  // iOS headers float over this column, so content starts below them.
-  const headerInset = Platform.OS === "ios" ? (columnMetrics?.safeArea.top ?? insets.top) : 0;
+  const headerInset = useContentTopInset();
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [linkedPdf, setLinkedPdf] = useState<string | null>(null);

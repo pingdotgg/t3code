@@ -1,49 +1,16 @@
-import { SheetCloseButton } from "../../../components/ui/SheetHeader";
+import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import { Linking, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
 
 import { Button } from "../../../components/ui/Button";
-import { IconButton } from "../../../components/ui/IconButton";
 import { AppActivityIndicator } from "../../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { LoadingStrip } from "../../../components/ui/LoadingStrip";
 import { SymbolView } from "../../../components/ui/AppSymbol";
-import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
 import { webViewDecelerationRate } from "../../../lib/webViewDecelerationRate";
-
-export function SettingsLegalDocumentCloseHeaderButton() {
-  const navigation = useNavigation();
-
-  return (
-    <SheetCloseButton
-      accessibilityLabel="Close legal document"
-      onClose={() => navigation.goBack()}
-    />
-  );
-}
-
-export function SettingsLegalDocumentExternalHeaderButton({
-  externalUrl = LEGAL_URL,
-}: {
-  readonly externalUrl?: string;
-}) {
-  const safeExternalUrl = isLegalDocumentUrl(externalUrl) ? externalUrl : LEGAL_URL;
-
-  return (
-    <IconButton
-      accessibilityLabel="Open legal documents in external browser"
-      icon="safari"
-      onPress={() => void Linking.openURL(safeExternalUrl).catch(() => undefined)}
-    />
-  );
-}
-
-function externalHeaderButton(externalUrl: string) {
-  return () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />;
-}
 
 interface SettingsLegalDocumentRouteScreenProps {
   readonly documentName: string;
@@ -58,12 +25,20 @@ export function SettingsLegalDocumentRouteScreen({
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [externalUrl, setExternalUrl] = useState(documentUrl);
+  const navigation = useNavigation();
+  const safeExternalUrl = isLegalDocumentUrl(externalUrl) ? externalUrl : LEGAL_URL;
   const headerOptions = (
-    <NativeStackScreenOptions
-      options={{
-        headerRight: externalHeaderButton(externalUrl),
-      }}
-      optionsVersion={externalUrl}
+    <SheetHeader
+      title={documentName}
+      accessibilityLabel="Close legal document"
+      onClose={() => navigation.goBack()}
+      actions={[
+        {
+          accessibilityLabel: "Open legal documents in external browser",
+          icon: "safari",
+          onPress: () => void Linking.openURL(safeExternalUrl).catch(() => undefined),
+        },
+      ]}
     />
   );
 
@@ -72,40 +47,44 @@ export function SettingsLegalDocumentRouteScreen({
   };
   if (loadError) {
     return (
-      <View className="flex-1 items-center justify-center gap-4 bg-sheet px-8">
+      <View className="flex-1 bg-sheet">
         {headerOptions}
-        <SymbolView
-          name="exclamationmark.triangle"
-          size={32}
-          tintColorClassName={"accent-icon"}
-          type="monochrome"
-          weight="regular"
-        />
-        <View className="items-center gap-2">
-          <Text className="text-center font-t3-bold text-lg text-foreground">
-            Couldn&apos;t load the {documentName.toLowerCase()}
-          </Text>
-          <Text selectable className="text-center text-sm leading-normal text-foreground-muted">
-            {loadError}
-          </Text>
-        </View>
-        <View className="w-full max-w-[320px] gap-2">
-          <Button
-            label="Try Again"
-            tone="contrast"
-            fullWidth
-            onPress={() => {
-              setLoadError(null);
-              setReloadKey((value) => value + 1);
-            }}
+        <View className="flex-1 items-center justify-center gap-4 px-8">
+          <SymbolView
+            name="exclamationmark.triangle"
+            size={32}
+            tintColorClassName={"accent-icon"}
+            type="monochrome"
+            weight="regular"
           />
-          <Pressable
-            accessibilityRole="link"
-            onPress={() => openExternalUrl(documentUrl)}
-            className="items-center rounded-xl px-4 py-3 active:bg-foreground/5"
-          >
-            <Text className="font-t3-medium text-base text-foreground-muted">Open in Browser</Text>
-          </Pressable>
+          <View className="items-center gap-2">
+            <Text className="text-center font-t3-bold text-lg text-foreground">
+              Couldn&apos;t load the {documentName.toLowerCase()}
+            </Text>
+            <Text selectable className="text-center text-sm leading-normal text-foreground-muted">
+              {loadError}
+            </Text>
+          </View>
+          <View className="w-full max-w-[320px] gap-2">
+            <Button
+              label="Try Again"
+              tone="contrast"
+              fullWidth
+              onPress={() => {
+                setLoadError(null);
+                setReloadKey((value) => value + 1);
+              }}
+            />
+            <Pressable
+              accessibilityRole="link"
+              onPress={() => openExternalUrl(documentUrl)}
+              className="items-center rounded-xl px-4 py-3 active:bg-foreground/5"
+            >
+              <Text className="font-t3-medium text-base text-foreground-muted">
+                Open in Browser
+              </Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     );
