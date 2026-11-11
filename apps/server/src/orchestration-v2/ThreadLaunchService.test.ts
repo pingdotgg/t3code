@@ -2455,6 +2455,35 @@ it.effect.each([
   }),
 );
 
+it.effect("refuses a new worktree in a project folder that is not a Git repository", () => {
+  const notARepository = (operation: string) => () =>
+    Effect.fail(
+      new GitCommandError({
+        operation,
+        command: "vcs-route",
+        cwd: project.workspaceRoot,
+        detail: "Failed to resolve the VCS driver for this Git command.",
+      }),
+    );
+  const harness = makeHarness({
+    hasCommit: notARepository("GitWorkflowService.hasCommit"),
+    git: {
+      resolveWorktreeBaseRemote: notARepository("GitWorkflowService.resolveWorktreeBaseRemote"),
+      hasRefNamed: notARepository("GitWorkflowService.hasRefNamed"),
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const checked = yield* Effect.exit(
+      launches.checkWorktreeBase({
+        projectId,
+        workspaceStrategy: { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
+      }),
+    );
+    assert.isTrue(Exit.isFailure(checked), "accepted a worktree launch outside a Git repository");
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("replays an accepted send after the project disables the instance", () => {
   const harness = makeHarness();
   const layerFiles = ServerConfig.layerTest(process.cwd(), { prefix: "t3-send-retry-" }).pipe(
