@@ -2141,6 +2141,18 @@ function isLessonStatusLine(text: string) {
   );
 }
 
+function stripLessonNarration(text: string): string | undefined {
+  const sentences = text
+    .trim()
+    .match(/[^.!?]+(?:[.!?](?=\s|$)|$)/gu)
+    ?.map((sentence) => sentence.trim());
+  if (sentences === undefined || sentences.length === 0) return undefined;
+  const narration =
+    /\b(?:I|I['’]m|I['’]ll|I['’]ve|I['’]d|let me|let['’]s|the (?:learner|user|student)|they (?:got|answered|picked|said|chose))\b/iu;
+  const teaching = sentences.filter((sentence) => !narration.test(sentence));
+  return teaching.length === sentences.length ? undefined : teaching.join(" ");
+}
+
 // In SDK mode, /goal appears only in transcripts: command output names it and Stop hooks report unmet checks.
 const CLAUDE_GOAL_SET_PREFIX = "Goal set: ";
 const CLAUDE_GOAL_ACTIVE = /^Goal active: ([\s\S]+?) \((?:not yet evaluated|(\d+) turns?)\)/u;
@@ -9301,6 +9313,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // The SDK snapshots each completed block; count thinking blocks separately to preserve streamed ids.
             for (const block of message.message.content) {
               if (block.type !== "thinking") {
+                const heldBefore =
+                  block.type === "tool_use" &&
+                  isLessonTurn(context.input) &&
+                  isLessonCardTool(block.name)
+                    ? context.assistant.heldText.map((item) => item.text).join("\n")
+                    : "";
                 if (block.type === "tool_use" && message.parent_tool_use_id === null) {
                   yield* flushHeldAssistantTextForTool(context, block);
                 }
@@ -9316,13 +9334,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   const lessonTurn = isLessonTurn(context.input);
                   const lessonCard = lessonTurn && isLessonCardTool(block.name);
                   if (lessonTurn && !lessonCard) continue;
-                  if (!lessonTurn && cardReplyRepeats(block, update.text)) continue;
+                  if (cardReplyRepeats(block, update.text)) continue;
+                  if (lessonCard && heldBefore && replyCoverage(update.text, heldBefore) >= 0.6)
+                    continue;
                   const text = lessonCard ? cardReplyCoversLead(block, update.text) : update.text;
                   if (text === "") continue;
+                  const promotedText = text ?? update.text;
+                  const shownText = lessonCard ? stripLessonNarration(promotedText) : undefined;
+                  if (shownText === "") continue;
                   yield* emitAssistantTextArtifacts({
                     context,
                     nativeItemId: update.itemId,
-                    text: text ?? update.text,
+                    text: shownText ?? promotedText,
                   });
                 }
                 continue;

@@ -2308,6 +2308,17 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         )
       );
     };
+    const stripLessonNarration = (value: string) => {
+      const sentences = value
+        .trim()
+        .match(/[^.!?]+(?:[.!?](?=\s|$)|$)/gu)
+        ?.map((sentence) => sentence.trim());
+      if (sentences === undefined || sentences.length === 0) return undefined;
+      const narration =
+        /\b(?:I|I['’]m|I['’]ll|I['’]ve|I['’]d|let me|let['’]s|the (?:learner|user|student)|they (?:got|answered|picked|said|chose))\b/iu;
+      const teaching = sentences.filter((sentence) => !narration.test(sentence));
+      return teaching.length === sentences.length ? undefined : teaching.join(" ");
+    };
     const leadRemainder = (use: typeof ToolUse.Type, text: string) => {
       const reply = isRecord(use.input) ? use.input.reply : undefined;
       if (typeof reply !== "string") return undefined;
@@ -2349,6 +2360,11 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       }
       if (isToolUse(block)) {
         const held = sample.heldLessonText.splice(0);
+        const heldBefore = held.join("\n");
+        if (lesson && normalizeToolName(block.name) === "ToolSearch") {
+          sample.heldLessonText.push(...held);
+          continue;
+        }
         const isCard =
           normalizeToolName(block.name) === "quiz_card" ||
           normalizeToolName(block.name) === "question_card";
@@ -2376,21 +2392,22 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
             isRecord(block.input) && typeof block.input.reply === "string" ? block.input.reply : "",
           );
         }
+        const thinking = response.content[index - 1];
+        if (isThinking(thinking) && isThinking(response.content[index - 2])) {
+          if (lesson) {
+            if (!isCard) continue;
+            if (heldBefore && replyCoverage(thinking.thinking, heldBefore) >= 0.6) continue;
+            const remainder = leadRemainder(block, thinking.thinking);
+            const promoted = remainder === undefined ? thinking.thinking : remainder;
+            if (promoted === "") continue;
+            const shown = stripLessonNarration(promoted);
+            if (shown !== "") texts.push(shown ?? promoted);
+          } else if (!repeats(block, thinking.thinking)) {
+            texts.push(thinking.thinking);
+          }
+        }
         continue;
       }
-      if (!isThinking(block) || !isThinking(response.content[index - 1])) continue;
-      const next = response.content[index + 1];
-      if (!isToolUse(next)) continue;
-      if (lesson) {
-        if (
-          normalizeToolName(next.name) !== "quiz_card" &&
-          normalizeToolName(next.name) !== "question_card"
-        )
-          continue;
-        const remainder = leadRemainder(next, block.thinking);
-        if (remainder === undefined) texts.push(block.thinking);
-        else if (remainder !== "") texts.push(remainder);
-      } else if (!repeats(next, block.thinking)) texts.push(block.thinking);
     }
     if (lesson && response.stop_reason !== "tool_use" && sample.heldLessonText.length > 0) {
       const joined = sample.heldLessonText.join("\n");

@@ -3615,6 +3615,36 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       expected: ["reasoning", "reasoning"],
     },
     {
+      tool: "mcp__t3-code__question_card",
+      reply: "Good. Yes, it is. Try it.",
+      lesson: true,
+      thinking: "Yes, it is.",
+      expected: ["reasoning", "reasoning"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Which temperature is fully liquid?",
+      lesson: true,
+      thinking:
+        "Melting begins at the solidus, but wetting needs the liquidus. I'm applying the same idea next.",
+      shownText: "Melting begins at the solidus, but wetting needs the liquidus.",
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Which pin do you heat first?",
+      lesson: true,
+      thinking: "They got it right. Let me give them a harder case.",
+      expected: ["reasoning", "reasoning"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Try it.",
+      lesson: true,
+      heldText: "The repo review found three task families.",
+      expected: ["reasoning", "reasoning", "assistant_message"],
+    },
+    {
       tool: "Bash",
       reply: undefined,
       lesson: true,
@@ -3637,7 +3667,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     },
   ] as const)(
     "shows a second thinking block before $tool (reply $reply) as $expected",
-    ({ tool, reply, expected, lesson }) =>
+    ({
+      tool,
+      reply,
+      expected,
+      lesson,
+      thinking = "The repo review found three task families.",
+      heldText,
+      shownText,
+    }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         yield* harness.runtime.startTurn(
@@ -3659,14 +3697,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             parent_tool_use_id: null,
             message: { id: "reply-message", model: "claude-sonnet-5-5", content },
           });
-        for (const frame of [
+        const frames = [
+          ...(heldText === undefined
+            ? []
+            : [
+                snapshot("held-root", [{ type: "text", text: heldText }]),
+                snapshot("held-tool-search", [
+                  { type: "tool_use", id: "tool-search", name: "ToolSearch", input: {} },
+                ]),
+              ]),
           snapshot("00000000-0000-4000-8000-000000000901", [
             { type: "thinking", thinking: "Planning the check", signature: "sig" },
           ]),
           snapshot("00000000-0000-4000-8000-000000000902", [
             {
               type: "thinking",
-              thinking: "The repo review found three task families.",
+              thinking,
               signature: "sig",
             },
           ]),
@@ -3679,7 +3725,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             },
           ]),
           makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000904", result: "" }),
-        ]) {
+        ];
+        for (const frame of frames) {
           yield* Queue.offer(harness.sdkMessages, frame);
         }
         yield* Queue.take(harness.terminalReceipts);
@@ -3692,6 +3739,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         );
         assert.deepEqual([...latest.values()], [...expected]);
+        if (shownText !== undefined) {
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+                ? [event.turnItem.text]
+                : [],
+            ),
+            [shownText],
+          );
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(
