@@ -967,8 +967,8 @@ function RenderedMarkdownSurface({
     if (!root || !viewport) return;
     const key = JSON.stringify([environmentId, cwd, relativePath]);
     const target = renderedMarkdownScrollTops.get(key) ?? 0;
-    // Images, math, and code blocks can settle after mount; keep reapplying the offset
-    // while content grows so a clamped early scrollTop does not overwrite the saved one.
+    // Images, math, and code blocks can settle after mount, and the viewport can resize;
+    // keep reapplying the offset so a clamped early scrollTop does not overwrite the saved one.
     let restoring = true;
     let unobserve = () => {};
     // Listen on the root so dragging the scrollbar, a sibling of the viewport, also
@@ -985,7 +985,7 @@ function RenderedMarkdownSurface({
     if (Math.abs(viewport.scrollTop - target) < 1) {
       stopRestoring();
     } else {
-      unobserve = observeResize(Array.from(viewport.children), () => {
+      unobserve = observeResize([viewport, ...viewport.children], () => {
         viewport.scrollTop = target;
         if (Math.abs(viewport.scrollTop - target) < 1) stopRestoring();
       });
