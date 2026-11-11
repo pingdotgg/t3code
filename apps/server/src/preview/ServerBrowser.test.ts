@@ -1425,12 +1425,13 @@ it.live("a busy embedded frame does not hold a copy key back from the page", () 
       context.page.emit("framenavigated", frame);
       yield* Effect.promise(() => frame.recording.promise);
 
-      // The frame answers its copy read only once the page has the key, like a
-      // frame busy for longer than the user waits.
+      // The frame answers its copy read only once the page has the key and the
+      // input after it, like a frame busy for longer than the user waits.
       const keyReached = Promise.withResolvers<void>();
       const pageSend = pageSession.send.getMockImplementation()!;
       pageSession.send.mockImplementation(async (method, input) => {
-        if (method === "Input.dispatchKeyEvent") keyReached.resolve();
+        if (method === "Input.dispatchKeyEvent" && (input as { type?: string }).type === "keyUp")
+          keyReached.resolve();
         return pageSend(method, input);
       });
       const frameSession = context.sessions.at(-1)!;
@@ -1443,11 +1444,19 @@ it.live("a busy embedded frame does not hold a copy key back from the page", () 
       });
 
       keyCopy = "copied";
-      yield* viewer.input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 });
+      const copying = yield* viewer
+        .input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* viewer.input({ type: "key", action: "up", key: "c", code: "KeyC", modifiers: 4 });
+      yield* Fiber.join(copying);
       expect(pageSession.send).toHaveBeenCalledWith(
         "Input.dispatchKeyEvent",
         expect.objectContaining({ key: "c", commands: ["copy"] }),
       );
+      const clipboard = yield* Queue.clear(viewer.output);
+      expect(clipboard.filter((item) => item._tag === "clipboard")).toEqual([
+        { _tag: "clipboard", text: "copied" },
+      ]);
     }),
   ).pipe(Effect.provide(layer)),
 );

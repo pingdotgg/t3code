@@ -295,6 +295,8 @@ interface ServerTab {
   readonly page: Page;
   readonly cdp: CDPSession;
   readonly frameSessions: Map<Frame, CDPSession>;
+  /** Copy reads run in key order, outside the input queue. */
+  copyReads: Promise<void>;
   readonly createdAt: number;
   usedAt: number;
   readonly viewers: Set<ViewerState>;
@@ -427,16 +429,15 @@ const CLIPBOARD_WORLD = "t3-preview-clipboard";
 // Chromium shares its clipboard across contexts; capture real copy/cut keys in a page-inaccessible world instead.
 const CLIPBOARD_SCRIPT = `(() => {
   let keying = false;
-  let keyedAt = 0;
-  let copied = "";
+  // One entry per copy or cut key, oldest first, so a later key cannot overwrite an unread copy.
+  const copies = [];
   // The same Ctrl or Cmd + C or X that editingCommand sends as copy or cut.
   addEventListener("keydown", (event) => {
     if (!event.isTrusted || event.altKey || event.ctrlKey === event.metaKey) return;
     const key = event.key.toLowerCase();
     if (key !== "c" && key !== "x") return;
     keying = true;
-    keyedAt = Date.now();
-    copied = "";
+    copies.push({ at: Date.now(), text: "" });
     setTimeout(() => { keying = false; });
   }, true);
   const selection = () => {
@@ -447,7 +448,8 @@ const CLIPBOARD_SCRIPT = `(() => {
     return String(document.getSelection() ?? "");
   };
   const record = (text) => {
-    copied = String(text ?? "").slice(0, ${CLIPBOARD_TEXT_LIMIT});
+    const copy = copies.at(-1);
+    if (copy) copy.text = String(text ?? "").slice(0, ${CLIPBOARD_TEXT_LIMIT});
   };
   // Capturing at window runs before page handlers can stop the event, and
   // before cut removes the selection.
@@ -462,11 +464,10 @@ const CLIPBOARD_SCRIPT = `(() => {
     addEventListener(type, snapshot, true);
     addEventListener(type, replace);
   }
-  // Only a key dispatched at or after since made this copy; older ones are stale.
+  // Copies from keys dispatched before since are stale.
   globalThis.takeCopy = (since) => {
-    const text = keyedAt >= since ? copied : "";
-    copied = "";
-    return text;
+    while (copies.length > 0 && copies[0].at < since) copies.shift();
+    return copies.shift()?.text ?? "";
   };
 })();`;
 
@@ -870,6 +871,7 @@ const make = Effect.gen(function* () {
       page,
       cdp,
       frameSessions: new Map(),
+      copyReads: Promise.resolve(),
       createdAt: Date.now(),
       usedAt: Date.now(),
       viewers: new Set(),
@@ -2464,11 +2466,14 @@ const make = Effect.gen(function* () {
           ),
         });
         viewer.pressedKeys.set(code || key, { key, code });
-        if (copying) {
+        if (!copying) return;
+        // A busy frame answers late; its read must not hold later input.
+        const read = tab.copyReads.then(async () => {
           const copied = await takeCopiedText(tab, since);
           if (copied) viewer.push({ _tag: "clipboard", text: copied });
-        }
-        return;
+        });
+        tab.copyReads = read;
+        return () => read;
       }
       case "text":
         if (typeof message.text === "string" && message.text.length > 0) {
@@ -2724,8 +2729,9 @@ const make = Effect.gen(function* () {
                   : {}),
               });
             } else {
-              const dispatch = (input: Record<string, unknown>) =>
-                dispatchViewerInput(tab, session, viewer, input);
+              const dispatch = async (input: Record<string, unknown>) => {
+                await dispatchViewerInput(tab, session, viewer, input);
+              };
               if (
                 message.type === "mouse" &&
                 message.action === "move" &&
@@ -2752,7 +2758,10 @@ const make = Effect.gen(function* () {
                   }),
                 );
               } else {
-                await tab.control.human(viewer.id, () => dispatch(message));
+                const copyRead = await tab.control.human(viewer.id, () =>
+                  dispatchViewerInput(tab, session, viewer, message),
+                );
+                await copyRead?.();
               }
             }
           } catch {
