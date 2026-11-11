@@ -161,7 +161,7 @@ describe("startup agent activity", () => {
     },
   );
 
-  it("publishes active work and older unsettled completions after startup", () => {
+  it("publishes active work and only unread results inside the retention window", () => {
     const startedAt = DateTime.toEpochMillis(DateTime.makeUnsafe(NOW));
     const oldCompleted = ThreadId.make("old-completed");
     const newCompleted = ThreadId.make("new-completed");
@@ -193,11 +193,28 @@ describe("startup agent activity", () => {
           status: "failed",
           latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
         }),
+        shell({
+          id: ThreadId.make("expired-failed"),
+          status: "failed",
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-03T11:59:00.000Z"),
+        }),
+        shell({
+          id: ThreadId.make("unread-completed"),
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T11:59:00.000Z"),
+          lastVisitedAt: DateTime.makeUnsafe("2026-09-04T11:00:00.000Z"),
+        }),
         shell({ id: ThreadId.make("idle"), status: "idle" }),
         shell({ id: ThreadId.make("missing-project"), projectId: ProjectId.make("missing") }),
       ],
     });
-    assert.deepStrictEqual(ids, [THREAD_ID, oldCompleted, newCompleted, oldFailed, newFailed]);
+    // Completions never visited count as read; failures stay unread until visited.
+    assert.deepStrictEqual(ids, [
+      THREAD_ID,
+      oldFailed,
+      newFailed,
+      ThreadId.make("unread-completed"),
+    ]);
   });
 });
 

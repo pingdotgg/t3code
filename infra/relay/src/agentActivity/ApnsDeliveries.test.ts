@@ -1134,9 +1134,14 @@ describe("fast completion delivery", () => {
     },
   );
 
-  it.effect.each([true, false])(
-    "preserves a freshly armed token only for a replayed read snapshot: replay=%s",
-    (replay) => {
+  it.effect.each([
+    { replay: true, replayThread: false, ends: false },
+    { replay: false, replayThread: false, ends: true },
+    // A thread replay is a real read of an already announced result.
+    { replay: true, replayThread: true, ends: true },
+  ])(
+    "preserves a freshly armed token only for a registration replay: %o",
+    ({ replay, replayThread, ends }) => {
       const queuedJobs: SignedApnsDeliveryJob[] = [];
       const read = {
         ...aggregate,
@@ -1147,8 +1152,18 @@ describe("fast completion delivery", () => {
       };
       return Effect.gen(function* () {
         const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-        yield* deliveries.sendForTarget({ target, aggregate: read, nowMs: 0, replay });
-        expect(queuedJobs).toHaveLength(replay ? 0 : 1);
+        yield* deliveries.sendForTarget({
+          target,
+          aggregate: read,
+          nowMs: 0,
+          replay,
+          ...(replayThread
+            ? { replayThread: { environmentId: state.environmentId, threadId: state.threadId } }
+            : {}),
+        });
+        expect(queuedJobs.map((job) => job.payload.kind)).toEqual(
+          ends ? ["live_activity_end"] : [],
+        );
       }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
     },
   );

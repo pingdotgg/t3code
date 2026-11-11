@@ -374,6 +374,9 @@ function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number)
   );
 }
 
+// Matches the relay's retention of unread results; older rows would be dropped on arrival.
+const RETAINED_RESULT_REPLAY_WINDOW_MS = 24 * 60 * 60 * 1_000;
+
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
   readonly now: number;
@@ -395,7 +398,15 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
         thread,
         now: input.now,
       });
-      return state !== null;
+      if (state === null) return false;
+      if (state.phase !== "completed" && state.phase !== "failed") return true;
+      // Catch-up runs on every restart and relink, so replay only results the phone still shows.
+      return (
+        state.unread === true &&
+        thread.latestRunCompletedAt != null &&
+        input.now - DateTime.toEpochMillis(thread.latestRunCompletedAt) <=
+          RETAINED_RESULT_REPLAY_WINDOW_MS
+      );
     })
     .map((thread) => thread.id);
 }
