@@ -290,6 +290,7 @@ public struct PullRequestsView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .disabled(model.isLoading)
+                .accessibilityLabel("Refresh pull requests")
             }
         }
         .t3NavigationChrome()
@@ -418,6 +419,8 @@ public struct PullRequestsView: View {
                 .font(.system(size: 18))
                 .foregroundStyle(hasExtraFilters ? T3Colors.accent : T3Colors.textSecondary)
         }
+        .accessibilityLabel("Filters")
+        .accessibilityValue(hasExtraFilters ? Text("Active") : Text("None"))
     }
 
     private func filterButton(
@@ -560,7 +563,7 @@ private struct PullRequestRowView: View {
 private final class PullRequestDetailModel {
     var detail: PullRequestDetail?
     var activity: PullRequestActivity?
-    var diffFiles: [PullRequestDiffFile] = []
+    var diff = PullRequestDiffDocument()
     var isDiffIncomplete = false
     var isLoading = true
     var isLoadingDiff = false
@@ -583,8 +586,14 @@ private final class PullRequestDetailModel {
         errorMessage = nil
         do {
             if invalidate { try await client.invalidatePullRequests(target) }
-            detail = try await client.pullRequestDetail(target)
+            let refreshedDetail = try await client.pullRequestDetail(target)
+            await Self.prepareMarkdown([refreshedDetail.body])
+            detail = refreshedDetail
             if let refreshedActivity = try? await client.pullRequestActivity(target) {
+                await Self.prepareMarkdown(
+                    refreshedActivity.comments.map(\.body)
+                        + refreshedActivity.reviewThreads.flatMap { $0.comments.map(\.body) }
+                )
                 activity = refreshedActivity
             }
         } catch {
@@ -593,10 +602,22 @@ private final class PullRequestDetailModel {
         isLoading = false
     }
 
+    /// `MarkdownMessageView` parses on the main thread when its document is not
+    /// cached. Parsing here first keeps that work out of scrolling.
+    private static func prepareMarkdown(_ sources: [String]) async {
+        await withTaskGroup(of: Void.self) { group in
+            for source in sources where !source.isEmpty {
+                group.addTask {
+                    _ = await MarkdownRenderCache.shared.document(for: MarkdownContentRevision(source))
+                }
+            }
+        }
+    }
+
     /// Runs under the Files tab's `.task(id:)`, so leaving the tab cancels it
     /// between pages. Parsing runs off the main actor.
     func loadDiff() async {
-        guard detail?.capabilities.diff == true, diffFiles.isEmpty, !isLoadingDiff else { return }
+        guard detail?.capabilities.diff == true, diff.files.isEmpty, !isLoadingDiff else { return }
         isLoadingDiff = true
         defer { isLoadingDiff = false }
         do {
@@ -609,11 +630,11 @@ private final class PullRequestDetailModel {
             } while cursor != nil
             try Task.checkCancellation()
             let patch = pagination.patch
-            let files = await Task.detached(priority: .userInitiated) {
-                PullRequestDiffParser.parse(patch)
+            let parsed = await Task.detached(priority: .userInitiated) {
+                PullRequestDiffDocument(files: PullRequestDiffParser.parse(patch))
             }.value
             try Task.checkCancellation()
-            diffFiles = files
+            diff = parsed
             isDiffIncomplete = pagination.isIncomplete
         } catch is CancellationError {
             return
@@ -933,7 +954,7 @@ struct PullRequestDetailView: View {
             PullRequestActivityView(activity: model.activity, model: model)
         case .files:
             PullRequestFilesView(
-                files: model.diffFiles,
+                diff: model.diff,
                 isLoading: model.isLoadingDiff,
                 isIncomplete: model.isDiffIncomplete,
                 drafts: $model.reviewDrafts,
@@ -1030,6 +1051,7 @@ struct PullRequestDetailView: View {
                 Image(systemName: "ellipsis.circle")
             }
             .disabled(model.isActing)
+            .accessibilityLabel("Pull request actions")
         }
     }
 
@@ -1079,9 +1101,11 @@ private struct PullRequestSummaryView: View {
     @Bindable var model: PullRequestDetailModel
     let onUpdateBranch: (PullRequestUpdateMethod) -> Void
 
+    // A plain stack: there are only a few sections, and a lazy stack would
+    // rebuild the description Markdown each time it scrolls back into view.
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 22) {
                 if detail.baseComparison == .behind,
                    detail.canPerform(.updateBranch) {
                     HStack {
@@ -1303,6 +1327,7 @@ private struct PullRequestReactionsView: View {
                     Image(systemName: "face.smiling")
                 }
                 .buttonStyle(.bordered)
+                .accessibilityLabel("Add reaction")
             }
         }
         .scrollIndicators(.hidden)
@@ -1310,7 +1335,7 @@ private struct PullRequestReactionsView: View {
 }
 
 private struct PullRequestFilesView: View {
-    let files: [PullRequestDiffFile]
+    let diff: PullRequestDiffDocument
     let isLoading: Bool
     let isIncomplete: Bool
     @Binding var drafts: [PullRequestReviewCommentDraft]
@@ -1319,78 +1344,31 @@ private struct PullRequestFilesView: View {
     var guideFocus: FeatureReviewGuideFileLocation? = nil
     @State private var commentingLine: PullRequestDiffSelection?
     @State private var selectedLine: PullRequestDiffSelection?
+    @State private var widestLineWidth: CGFloat?
+
+    private static let inset: CGFloat = 16
 
     var body: some View {
-        ScrollViewReader { proxy in
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                if isIncomplete {
-                    Label(
-                        "Some changes are missing from this diff.",
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .font(T3Typography.supportingStrong)
-                    .foregroundStyle(T3Colors.warning)
-                }
-                if isLoading {
-                    PullRequestLoadingText()
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 50)
-                } else if files.isEmpty {
-                    ContentUnavailableView("No diff available", systemImage: "doc.text.magnifyingglass")
-                } else {
-                    ForEach(files) { file in
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(file.path)
-                                .font(T3Typography.supportingStrong.monospaced())
-                                .foregroundStyle(T3Colors.textPrimary)
-                                .padding(.vertical, 10)
-                            Divider().overlay(T3Colors.separator)
-                            ScrollView(.horizontal) {
-                                LazyVStack(alignment: .leading, spacing: 0) {
-                                    ForEach(file.lines) { line in
-                                        HStack(spacing: 0) {
-                                            Text(line.oldLine.map(String.init) ?? "")
-                                                .frame(width: 42, alignment: .trailing)
-                                            Text(line.newLine.map(String.init) ?? "")
-                                                .frame(width: 42, alignment: .trailing)
-                                            Text(line.text)
-                                                .padding(.leading, 10)
-                                                .frame(minWidth: 500, alignment: .leading)
-                                        }
-                                        .font(T3Typography.code)
-                                        .t3CodeTextSize()
-                                        .foregroundStyle(line.foreground)
-                                        .padding(.vertical, 2)
-                                        .background(isGuideFocused(line, file: file) ? T3Colors.accent.opacity(0.12) : line.background)
-                                        .id("guide:\(file.path):\(line.id)")
-                                        .contentShape(Rectangle())
-                                        .onTapGesture {
-                                            guard line.kind != .header else { return }
-                                            selectedLine = PullRequestDiffSelection(file: file, line: line)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        .id("guide:file:\(file.path)")
-                        // One menu per file. A menu per line costs one interaction per row.
-                        .contextMenu {
-                            Button("Copy file path", systemImage: "doc.on.doc") {
-                                UIPasteboard.general.string = file.path
-                            }
-                            Button("Copy diff", systemImage: "doc.on.doc") {
-                                UIPasteboard.general.string = file.lines.map(\.text).joined(separator: "\n")
-                            }
-                        }
-                    }
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            if isIncomplete {
+                Label(
+                    "Some changes are missing from this diff.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(T3Typography.supportingStrong)
+                .foregroundStyle(T3Colors.warning)
+                .padding([.horizontal, .top], Self.inset)
             }
-            .padding(16)
-        }
-        .onAppear { scrollToGuideFocus(proxy) }
-        .onChange(of: files) { _, _ in scrollToGuideFocus(proxy) }
-        .onChange(of: guideFocus) { _, _ in scrollToGuideFocus(proxy) }
+            if isLoading {
+                PullRequestLoadingText()
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 50)
+                Spacer(minLength: 0)
+            } else if diff.files.isEmpty {
+                ContentUnavailableView("No diff available", systemImage: "doc.text.magnifyingglass")
+            } else {
+                lines
+            }
         }
         .confirmationDialog(
             selectedLine.map { "\($0.file.path):\($0.line.displayLineNumber)" } ?? "",
@@ -1422,22 +1400,149 @@ private struct PullRequestFilesView: View {
         }
     }
 
-    private func scrollToGuideFocus(_ proxy: ScrollViewProxy) {
-        guard let focus = guideFocus,
-              let file = files.first(where: { $0.path == focus.path || $0.oldPath == focus.path }) else { return }
-        if let start = focus.start, let side = focus.side,
-           let line = file.lines.first(where: { (side == .old ? $0.oldLine : $0.newLine) == start }) {
-            proxy.scrollTo("guide:\(file.path):\(line.id)", anchor: .top)
-        } else {
-            proxy.scrollTo("guide:file:\(file.path)", anchor: .top)
+    /// One scroll view for both axes over one flat lazy stack, so only the rows
+    /// on screen are built. A horizontal scroll view per file made SwiftUI build
+    /// every line of a file as soon as any part of it came into view.
+    private var lines: some View {
+        GeometryReader { proxy in
+            let contentWidth = max(widestLineWidth ?? 0, proxy.size.width - Self.inset * 2)
+            let focusedFile = guideFileIndex
+            ScrollViewReader { scroll in
+                ScrollView([.horizontal, .vertical]) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ScrollDirectionalLock().frame(width: 0, height: 0)
+                        // Lazy rows only measure what is on screen. Measuring the
+                        // widest line once keeps the content width stable while scrolling.
+                        if let widest = diff.widestLine {
+                            PullRequestDiffLineRow(line: widest, isFocused: false)
+                                .hidden()
+                                .frame(height: 0)
+                                .onGeometryChange(for: CGFloat.self, of: \.size.width) {
+                                    widestLineWidth = $0
+                                }
+                        }
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(diff.rows) { row in
+                                VStack(alignment: .leading, spacing: 0) {
+                                    if let line = row.line {
+                                        PullRequestDiffLineRow(
+                                            line: line,
+                                            isFocused: row.fileIndex == focusedFile && isGuideFocused(line)
+                                        )
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { select(line, fileIndex: row.fileIndex) }
+                                    } else {
+                                        fileHeader(
+                                            diff.files[row.fileIndex],
+                                            isFirst: row.fileIndex == 0,
+                                            width: proxy.size.width - Self.inset * 2
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        .frame(width: contentWidth, alignment: .leading)
+                    }
+                    .padding(Self.inset)
+                }
+                .onAppear { scrollToGuideFocus(scroll) }
+                .onChange(of: diff.rows) { _, _ in scrollToGuideFocus(scroll) }
+                .onChange(of: guideFocus) { _, _ in scrollToGuideFocus(scroll) }
+            }
         }
     }
 
-    private func isGuideFocused(_ line: PullRequestDiffLine, file: PullRequestDiffFile) -> Bool {
-        guard let focus = guideFocus, focus.path == file.path || focus.path == file.oldPath,
-              let start = focus.start, let end = focus.end, let side = focus.side,
+    private func fileHeader(_ file: PullRequestDiffFile, isFirst: Bool, width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(file.path)
+                .font(T3Typography.supportingStrong.monospaced())
+                .foregroundStyle(T3Colors.textPrimary)
+                .frame(width: width, alignment: .leading)
+                .padding(.vertical, 10)
+                // Keeps the path on screen while the lines scroll sideways.
+                .visualEffect { content, geometry in
+                    content.offset(x: max(0, Self.inset - geometry.frame(in: .scrollView).minX))
+                }
+            Divider().overlay(T3Colors.separator)
+        }
+        .padding(.top, isFirst ? 0 : 18)
+        // One menu per file. A menu per line costs one interaction per row.
+        .contextMenu {
+            Button("Copy file path", systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = file.path
+            }
+            Button("Copy diff", systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = file.lines.map(\.text).joined(separator: "\n")
+            }
+        }
+    }
+
+    private func select(_ line: PullRequestDiffLine, fileIndex: Int) {
+        guard line.kind != .header else { return }
+        selectedLine = PullRequestDiffSelection(file: diff.files[fileIndex], line: line)
+    }
+
+    private var guideFileIndex: Int? {
+        guard let focus = guideFocus else { return nil }
+        return diff.files.firstIndex { $0.path == focus.path || $0.oldPath == focus.path }
+    }
+
+    private func scrollToGuideFocus(_ proxy: ScrollViewProxy) {
+        guard let focus = guideFocus, let index = guideFileIndex else { return }
+        let file = diff.files[index]
+        if let start = focus.start, let side = focus.side,
+           let line = file.lines.first(where: { (side == .old ? $0.oldLine : $0.newLine) == start }) {
+            proxy.scrollTo(PullRequestDiffRow.ID.line(line.id), anchor: .topLeading)
+        } else {
+            proxy.scrollTo(PullRequestDiffRow.ID.file(file.id), anchor: .topLeading)
+        }
+    }
+
+    /// The caller checks that the line belongs to the focused file.
+    private func isGuideFocused(_ line: PullRequestDiffLine) -> Bool {
+        guard let focus = guideFocus, let start = focus.start, let end = focus.end, let side = focus.side,
               let number = side == .old ? line.oldLine : line.newLine else { return false }
         return number >= start && number <= end
+    }
+}
+
+/// SwiftUI has no directional lock for two-axis scroll views, so a slightly
+/// diagonal vertical swipe would also move the diff sideways.
+private struct ScrollDirectionalLock: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView { LockView() }
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    private final class LockView: UIView {
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            var view = superview
+            while let current = view, !(current is UIScrollView) { view = current.superview }
+            (view as? UIScrollView)?.isDirectionalLockEnabled = true
+        }
+    }
+}
+
+/// Inputs stay narrow so a tap or a guide focus change redraws only the rows it changes.
+private struct PullRequestDiffLineRow: View {
+    let line: PullRequestDiffLine
+    let isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(line.oldLine.map(String.init) ?? "")
+                .frame(width: 42, alignment: .trailing)
+            Text(line.newLine.map(String.init) ?? "")
+                .frame(width: 42, alignment: .trailing)
+            Text(line.text)
+                .padding(.leading, 10)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .font(T3Typography.code)
+        .t3CodeTextSize()
+        .foregroundStyle(line.foreground)
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isFocused ? T3Colors.accent.opacity(0.12) : line.background)
     }
 }
 
@@ -1587,15 +1692,15 @@ private struct PullRequestTextSheet: View {
     }
 }
 
-struct PullRequestDiffFile: Identifiable, Equatable {
+struct PullRequestDiffFile: Identifiable, Equatable, Sendable {
     let id: String
     let path: String
     let oldPath: String?
     let lines: [PullRequestDiffLine]
 }
 
-struct PullRequestDiffLine: Identifiable, Equatable {
-    enum Kind { case context, added, deleted, header }
+struct PullRequestDiffLine: Identifiable, Equatable, Sendable {
+    enum Kind: Sendable { case context, added, deleted, header }
     let id: Int
     let kind: Kind
     let text: String
@@ -1629,6 +1734,48 @@ struct PullRequestDiffLine: Identifiable, Equatable {
         default: .clear
         }
     }
+}
+
+/// The parsed diff plus the flat rows the Files tab renders. Built off the
+/// main actor once per load, so scrolling never derives rows.
+struct PullRequestDiffDocument: Sendable {
+    let files: [PullRequestDiffFile]
+    let rows: [PullRequestDiffRow]
+    /// The line with the most columns. Tabs count as four.
+    let widestLine: PullRequestDiffLine?
+
+    init(files: [PullRequestDiffFile] = []) {
+        var rows: [PullRequestDiffRow] = []
+        var widestLine: PullRequestDiffLine?
+        var widestColumns = -1
+        for (index, file) in files.enumerated() {
+            rows.append(PullRequestDiffRow(id: .file(file.id), fileIndex: index, line: nil))
+            for line in file.lines {
+                rows.append(PullRequestDiffRow(id: .line(line.id), fileIndex: index, line: line))
+                let columns = line.text.reduce(0) { $0 + ($1 == "\t" ? 4 : 1) }
+                if columns > widestColumns {
+                    widestColumns = columns
+                    widestLine = line
+                }
+            }
+        }
+        self.files = files
+        self.rows = rows
+        self.widestLine = widestLine
+    }
+}
+
+/// A file header when `line` is nil, otherwise one diff line.
+struct PullRequestDiffRow: Identifiable, Equatable, Sendable {
+    enum ID: Hashable, Sendable {
+        case file(String)
+        /// Parser line ids are unique across the whole patch.
+        case line(Int)
+    }
+
+    let id: ID
+    let fileIndex: Int
+    let line: PullRequestDiffLine?
 }
 
 private struct PullRequestDiffSelection: Identifiable {

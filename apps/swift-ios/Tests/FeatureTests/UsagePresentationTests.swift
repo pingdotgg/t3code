@@ -21,13 +21,13 @@ struct UsagePresentationTests {
         let presentation = state.presentation
         let day = "2026-08-09"
         let daySegments = presentation.costSegments.filter { $0.period == day }
-        #expect(presentation.costSegments.count == 7 * UsageProviderKind.allCases.count)
-        #expect(daySegments.map(\.provider) == UsageProviderKind.allCases)
-        let trailingProviderCount = UsageProviderKind.allCases.count - 2
-        #expect(daySegments.map { ($0.start, $0.end) }.map { [$0.0, $0.1] }
-            == [[0, 2], [2, 5]] + Array(repeating: [5, 5], count: trailingProviderCount))
-        #expect(presentation.tokenSegments.filter { $0.period == day }.map(\.end)
-            == [300, 400] + Array(repeating: 400, count: trailingProviderCount))
+        // Empty providers and days get no marks; the x domain keeps every day.
+        #expect(presentation.chartPeriods.count == 7)
+        #expect(presentation.chartPeriods.last == day)
+        #expect(presentation.costSegments.count == 2)
+        #expect(daySegments.map(\.provider) == [.codex, .claude])
+        #expect(daySegments.map { ($0.start, $0.end) }.map { [$0.0, $0.1] } == [[0, 2], [2, 5]])
+        #expect(presentation.tokenSegments.filter { $0.period == day }.map(\.end) == [300, 400])
         #expect(presentation.providersByCost.map(\.provider) == [.claude, .codex])
         #expect(presentation.providersByTokens.map(\.provider) == [.codex, .claude])
         #expect(presentation.periods.map(\.id) == [day])

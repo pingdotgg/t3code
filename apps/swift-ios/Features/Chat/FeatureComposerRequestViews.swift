@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct FeatureComposerApprovalPanel: View {
+    @SwiftUI.Environment(\.featureThreadViewportHeight) private var viewportHeight
     let approval: FeatureApproval
     let position: Int
     let total: Int
@@ -55,7 +56,7 @@ struct FeatureComposerApprovalPanel: View {
                             .t3CodeTextSize(approval.kind == .command)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxHeight: 220)
+                    .frame(maxHeight: FeatureThreadViewport.panelHeight(220, in: viewportHeight))
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -179,6 +180,7 @@ struct FeatureComposerApprovalPanel: View {
 }
 
 struct FeatureComposerUserInputPanel: View {
+    @SwiftUI.Environment(\.featureThreadViewportHeight) private var viewportHeight
     let input: FeatureUserInput
     let isResponding: Bool
     let onSubmit: ([String: FeatureInputAnswer], [String: [FeatureUploadAttachment]]) async -> Void
@@ -261,7 +263,7 @@ struct FeatureComposerUserInputPanel: View {
                             .padding(.horizontal, 10)
                             .padding(.top, 10)
                         }
-                        .frame(maxHeight: 320)
+                        .frame(maxHeight: FeatureThreadViewport.panelHeight(320, in: viewportHeight))
                         .scrollIndicators(.hidden)
                     }
 

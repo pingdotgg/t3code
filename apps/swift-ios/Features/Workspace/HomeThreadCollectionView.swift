@@ -39,6 +39,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UICollectionView {
+        context.coordinator.openURL = context.environment.openURL
         var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
         configuration.backgroundColor = T3Colors.uiBackground
         configuration.showsSeparators = false
@@ -48,10 +49,14 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             coordinator?.trailingSwipeActions(at: indexPath)
         }
 
-        let collectionView = UICollectionView(
+        let collectionView = HomeThreadListView(
             frame: .zero,
             collectionViewLayout: UICollectionViewCompositionalLayout.list(using: configuration)
         )
+        collectionView.onReturnToWindow = { [weak coordinator = context.coordinator, weak collectionView] in
+            guard let collectionView else { return }
+            coordinator?.applyQueuedUpdate(in: collectionView)
+        }
         collectionView.backgroundColor = T3Colors.uiBackground
         collectionView.alwaysBounceVertical = true
         collectionView.keyboardDismissMode = .interactive
@@ -63,6 +68,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     }
 
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
+        context.coordinator.openURL = context.environment.openURL
         context.coordinator.update(parent: self, collectionView: collectionView)
     }
 
@@ -85,6 +91,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         }
 
         private var parent: HomeThreadCollectionView
+        var openURL = OpenURLAction { _ in .systemAction }
         private var dataSource: UICollectionViewDiffableDataSource<Section, HomeCollectionItem.ID>?
         private var registration: UICollectionView.CellRegistration<HomeCollectionCell, HomeCollectionItem.ID>?
         private var itemsByID: [HomeCollectionItem.ID: HomeCollectionItem] = [:]
@@ -102,6 +109,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         init(parent: HomeThreadCollectionView) {
             self.parent = parent
             selectedThreadID = parent.selectedThreadID
+        }
+
+        private func openPullRequest(_ thread: FeatureThread, _ presentation: HomeThreadPullRequestPresentation) {
+            if case let .open(url) = presentation.action { openURL(url) }
+            else { parent.onOpenPullRequest(thread, presentation) }
         }
 
         func configure(_ collectionView: UICollectionView) {
@@ -133,10 +145,17 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             applyLatestSnapshot(in: collectionView)
         }
 
+        func applyQueuedUpdate(in collectionView: UICollectionView) {
+            applyLatestSnapshot(in: collectionView)
+        }
+
         /// Keep a row's content and size fixed during its removal. Stream updates
         /// that arrive mid-animation are applied together after that animation.
         private func applyLatestSnapshot(in collectionView: UICollectionView) {
             guard !isApplyingSnapshot, hasQueuedUpdate, let dataSource else { return }
+            // A pushed thread covers Home on iPhone, and its rows still change
+            // every second while a reply streams. Apply once Home is back.
+            guard (collectionView as? HomeThreadListView)?.isCovered != true else { return }
             hasQueuedUpdate = false
             let previousItems = itemsByID
             let previousThreadItemIDs = threadItemIDs
@@ -399,7 +418,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     isSelected: identifier.threadID == selectedThreadID,
                     now: now,
                     onOpenPullRequest: { [weak self] thread, presentation in
-                        self?.parent.onOpenPullRequest(thread, presentation)
+                        self?.openPullRequest(thread, presentation)
                     },
                     onPullRequestChange: { [weak self, weak cell] pullRequest in
                         guard let self,
@@ -557,7 +576,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             if let pullRequest = pullRequestsByThreadID[thread.id] {
                 let title = if case .open = pullRequest.action { "Open pull request" } else { "Show linked pull requests" }
                 actions.append(accessibilityAction(title, systemImage: "arrow.triangle.pull") { coordinator in
-                    coordinator.parent.onOpenPullRequest(thread, pullRequest)
+                    coordinator.openPullRequest(thread, pullRequest)
                 })
             }
             if let title = Self.newTaskOnBranchTitle(thread) {
@@ -1242,4 +1261,21 @@ private struct HomeCollectionCellContent: View {
 
 private extension Optional where Wrapped == [IndexPath] {
     var orEmpty: [IndexPath] { self ?? [] }
+}
+
+/// Tracks when Home leaves the window after being shown (a pushed thread
+/// covers it) and reports its return, so updates queued meanwhile land first.
+private final class HomeThreadListView: UICollectionView {
+    var onReturnToWindow: (() -> Void)?
+    private(set) var isCovered = false
+    private var hasBeenShown = false
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        isCovered = window == nil && hasBeenShown
+        if window != nil {
+            hasBeenShown = true
+            onReturnToWindow?()
+        }
+    }
 }

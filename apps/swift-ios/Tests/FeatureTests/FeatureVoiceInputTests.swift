@@ -179,6 +179,29 @@ struct FeatureVoiceInputTests {
     }
 
     @Test
+    func failedRecordingStartShowsAnErrorAndAllowsRetry() async {
+        let adapter = TestVoiceInputAdapter()
+        let controller = controller(adapter: adapter)
+        adapter.startError = URLError(.cannotOpenFile)
+
+        controller.start()
+        await controller.waitForCurrentOperation()
+
+        #expect(controller.phase == .error)
+        #expect(controller.errorAction == .retry)
+        #expect(adapter.cleanupCount == 1)
+
+        adapter.startError = nil
+        controller.start()
+        await controller.waitForCurrentOperation()
+
+        #expect(controller.phase == .recording)
+        #expect(adapter.startRecordingCount == 2)
+        controller.cancel()
+        await controller.waitForCurrentOperation()
+    }
+
+    @Test
     func cancellationDuringTranscriptionDiscardsLateResultsAndOwnedAudio() async {
         let adapter = TestVoiceInputAdapter()
         let controller = controller(adapter: adapter)
@@ -259,6 +282,7 @@ private final class TestVoiceInputAdapter: FeatureVoiceInputAdapter {
     var onPermissionRequest: (() -> Void)?
     var onStartRecording: (() -> Void)?
     var onTranscribe: (() -> Void)?
+    var startError: (any Error)?
     private(set) var startRecordingCount = 0
     private(set) var cleanupCount = 0
     private(set) var ownedRecordingWasRemoved = false
@@ -270,10 +294,11 @@ private final class TestVoiceInputAdapter: FeatureVoiceInputAdapter {
         return .granted
     }
 
-    func startRecording(maximumDuration: TimeInterval) throws {
+    func startRecording(maximumDuration: TimeInterval) async throws {
         startRecordingCount += 1
         #expect(maximumDuration == 5 * 60)
         onStartRecording?()
+        if let startError { throw startError }
     }
 
     func stopRecording() async throws -> URL {

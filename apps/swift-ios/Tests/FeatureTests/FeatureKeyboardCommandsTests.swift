@@ -238,7 +238,7 @@ struct FeatureKeyboardCommandsTests {
             enabledCommands: Set(FeatureKeyboardCommand.paletteActions + [.commandPalette, .threadJump(1)]),
             isTerminalActive: true
         )
-        let shortcuts = FeatureKeyboardShortcut.available(in: context, isPad: true)
+        let shortcuts = FeatureKeyboardShortcut.available(in: context)
         #expect(!shortcuts.contains { $0.command == .copyThreadReference })
         #expect(shortcuts.contains { $0.command == .terminal })
         #expect(shortcuts.contains { $0.command == .commandPalette })
@@ -249,14 +249,12 @@ struct FeatureKeyboardCommandsTests {
     }
 
     @Test
-    func phoneAndPadKeepRNCommandKMappings() {
+    func externalKeyboardsHaveThePaletteAndThreadJumpsOnEveryDevice() {
         let context = FeatureKeyboardContext(enabledCommands: [.focusSearch, .commandPalette, .threadJump(1)])
-        let phone = FeatureKeyboardShortcut.available(in: context, isPad: false)
-        let pad = FeatureKeyboardShortcut.available(in: context, isPad: true)
-        #expect(phone.first { $0.input == "k" }?.command == .focusSearch)
-        #expect(pad.first { $0.input == "k" }?.command == .commandPalette)
-        #expect(!phone.contains { $0.command == .threadJump(1) })
-        #expect(pad.contains { $0.input == "1" && $0.command == .threadJump(1) })
+        let shortcuts = FeatureKeyboardShortcut.available(in: context)
+        #expect(shortcuts.first { $0.input == "k" }?.command == .commandPalette)
+        #expect(shortcuts.first { $0.input == "f" }?.command == .focusSearch)
+        #expect(shortcuts.contains { $0.input == "1" && $0.command == .threadJump(1) })
     }
 
     @Test
@@ -308,7 +306,7 @@ struct FeatureKeyboardCommandsTests {
         #expect(!context.allows(.threadJump(0)))
         #expect(!context.allows(.threadJump(10)))
         #expect(!context.allows(.threadJump(1)))
-        #expect(FeatureKeyboardShortcut.available(in: context, isPad: true).map(\.command) == [.threadJump(3)])
+        #expect(FeatureKeyboardShortcut.available(in: context).map(\.command) == [.threadJump(3)])
     }
 
     @Test

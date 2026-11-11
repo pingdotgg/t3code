@@ -22,6 +22,9 @@ extension View {
             onPaletteQueryChange: onPaletteQueryChange,
             onCommand: onCommand
         )
+        // The hosted navigation containers must reach the display edge so
+        // their bars can join the scene's vertical toolbar on iPhone Duo.
+        .ignoresSafeArea(.container)
     }
 }
 
@@ -35,9 +38,7 @@ private struct FeatureKeyboardHost<Content: View>: UIViewControllerRepresentable
 
     func makeUIViewController(context: Context) -> FeatureKeyboardHostingController {
         let controller = FeatureKeyboardHostingController(
-            rootView: AnyView(content
-                .environment(\.featureKeyboardDispatcher, dispatcher)
-                .environment(\.self, context.environment)),
+            rootView: AnyView(hostedContent(environment: context.environment)),
             dispatcher: dispatcher
         )
         updateDispatcher()
@@ -46,10 +47,22 @@ private struct FeatureKeyboardHost<Content: View>: UIViewControllerRepresentable
 
     func updateUIViewController(_ controller: FeatureKeyboardHostingController, context: Context) {
         updateDispatcher()
-        controller.rootView = AnyView(content
-            .environment(\.featureKeyboardDispatcher, dispatcher)
-            .environment(\.self, context.environment))
+        controller.rootView = AnyView(hostedContent(environment: context.environment))
         controller.refreshPalette()
+    }
+
+    private func hostedContent(environment: EnvironmentValues) -> some View {
+        // Forward app state, but let this host derive its own container state.
+        // Copying the full environment leaves space for a closed Duo inspector.
+        content
+            .environment(\.featureKeyboardDispatcher, dispatcher)
+            .environment(environment[FeatureWorkspaceActivity.self])
+            .environment(\.featureWorkspaceFoldSidebarWidth, environment.featureWorkspaceFoldSidebarWidth)
+            .environment(\.t3CodeSizeSteps, environment.t3CodeSizeSteps)
+            .environment(\.scenePhase, environment.scenePhase)
+            .environment(\.openURL, environment.openURL)
+            .dynamicTypeSize(environment.dynamicTypeSize)
+            .tint(T3Colors.accent)
     }
 
     static func dismantleUIViewController(_ controller: FeatureKeyboardHostingController, coordinator: ()) {
@@ -126,8 +139,7 @@ final class FeatureKeyboardHostingController: UIHostingController<AnyView> {
     override var keyCommands: [UIKeyCommand]? {
         guard canHandleCommands else { return super.keyCommands }
         return (super.keyCommands ?? []) + FeatureKeyboardShortcut.available(
-            in: dispatcher.context,
-            isPad: traitCollection.userInterfaceIdiom == .pad
+            in: dispatcher.context
         ).map { shortcut in
             let command = UIKeyCommand(
                 input: shortcut.input,
@@ -155,8 +167,7 @@ final class FeatureKeyboardHostingController: UIHostingController<AnyView> {
     private func resolve(_ sender: UIKeyCommand?) -> FeatureKeyboardCommand? {
         guard let sender else { return nil }
         return FeatureKeyboardShortcut.available(
-            in: dispatcher.context,
-            isPad: traitCollection.userInterfaceIdiom == .pad
+            in: dispatcher.context
         ).first { $0.input == sender.input && $0.modifiers == sender.modifierFlags }?.command
     }
 

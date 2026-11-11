@@ -369,9 +369,11 @@ struct FeatureComposerView: View {
                     voiceInputController.appMovedToBackground()
                 }
             }
+            // AVAudioSession does not promise which thread posts this, and the
+            // handler changes main-actor voice state.
             .onReceive(NotificationCenter.default.publisher(
                 for: AVAudioSession.interruptionNotification
-            )) { notification in
+            ).receive(on: DispatchQueue.main)) { notification in
                 guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey]
                         as? UInt,
                       AVAudioSession.InterruptionType(rawValue: rawType) == .began else { return }

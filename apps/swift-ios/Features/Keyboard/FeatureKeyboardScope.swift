@@ -186,7 +186,7 @@ private final class FeatureKeyboardScopeView: UIView {
         installedContext = dispatcher.context
         FeatureKeyboardScopeRelay.registrations.setObject(self, forKey: registrationID.uuidString as NSString)
         installedCommands = FeatureKeyboardShortcut.available(
-            in: dispatcher.context, isPad: traitCollection.userInterfaceIdiom == .pad
+            in: dispatcher.context
         ).map { shortcut in
             let command = UIKeyCommand(
                 title: shortcut.command.title,
@@ -220,7 +220,7 @@ private final class FeatureKeyboardScopeView: UIView {
               let commandController, FeatureKeyboardPresentation.isTop(commandController),
               (window.featureKeyboardFirstResponder as? any UITextInput)?.markedTextRange == nil,
               let command = FeatureKeyboardShortcut.available(
-                in: dispatcher.context, isPad: traitCollection.userInterfaceIdiom == .pad
+                in: dispatcher.context
               ).first(where: { $0.input == sender.input && $0.modifiers == sender.modifierFlags }) else { return }
         dispatcher.perform(command.command)
     }

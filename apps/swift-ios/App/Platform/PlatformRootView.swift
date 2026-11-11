@@ -47,6 +47,16 @@ struct PlatformRootView: View {
         .onOpenURL { url in
             handle(url: url, letOnboardingConfirmConnection: true)
         }
+        #if DEBUG
+        // Benchmarks open a thread without UI automation, which would keep
+        // the accessibility tree busy and skew the timing.
+        .task {
+            guard let link = ProcessInfo.processInfo.environment["T3_DEBUG_OPEN_URL"],
+                  let url = URL(string: link) else { return }
+            try? await Task.sleep(for: .seconds(4))
+            handle(url: url, letOnboardingConfirmConnection: false)
+        }
+        #endif
         .task(id: subscriptionUsageKey) {
             guard subscriptionUsageKey.isActive else { return }
             await subscriptionUsage.observe(
@@ -200,8 +210,9 @@ struct PlatformRootView: View {
     private var presentedIncomingShare: Binding<T3IncomingShareEnvelope?> {
         Binding(
             get: {
-                guard !incomingShareProjects.isEmpty else { return nil }
-                return incomingShareCoordinator.pendingEnvelope
+                guard let envelope = incomingShareCoordinator.pendingEnvelope,
+                      !DailyUXCreationContext.projects(in: model.snapshot).isEmpty else { return nil }
+                return envelope
             },
             set: { value in
                 guard value == nil, importedShareProjectID == nil else { return }
@@ -292,7 +303,7 @@ struct PlatformRootView: View {
 
     private func refreshIncomingShares() {
         guard !model.isLoading else { return }
-        let hasProjects = !incomingShareProjects.isEmpty
+        let hasProjects = !DailyUXCreationContext.projects(in: model.snapshot).isEmpty
         Task { @MainActor in
             if await incomingShareCoordinator.refresh(hasProjects: hasProjects) {
                 incomingShareNeedsProject = true

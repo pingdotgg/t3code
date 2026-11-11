@@ -76,7 +76,7 @@ public struct FeatureGitBranchesView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
                                         Text(branch.name)
-                                        if branch.isCurrent { Image(systemName: "checkmark") }
+                                        if branch.isCurrent { Image(systemName: "checkmark").accessibilityHidden(true) }
                                     }
                                     if !snapshot.isAvailable(branch) {
                                         Text("Checked out in another worktree")
@@ -88,6 +88,7 @@ public struct FeatureGitBranchesView: View {
                                 }
                             }
                             .disabled(branch.isCurrent || !snapshot.isAvailable(branch))
+                            .accessibilityAddTraits(branch.isCurrent ? .isSelected : [])
                         }
                     }
                 }

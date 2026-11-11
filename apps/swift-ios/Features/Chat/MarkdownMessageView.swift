@@ -39,8 +39,9 @@ struct MarkdownMessageView: View {
     private let clipboardSource: ComposerContextClipboardFragment.Source?
     private let messageContext: OrchestrationMessageContext?
     private let copyText: String?
-    @State private var copyError: String?
-    @State private var selectionSource: MarkdownSelectionSource
+    /// Private, so the @State macro creates this once per view identity rather
+    /// than on every parent update; `selectionContext` refreshes its fields.
+    @State private var selectionSource = MarkdownSelectionSource("")
     @State private var renderedDocument: MarkdownRenderedDocument?
     @State private var streamingRenderer = StreamingMarkdownRenderer()
 
@@ -62,7 +63,6 @@ struct MarkdownMessageView: View {
         self.clipboardSource = clipboardSource
         self.messageContext = messageContext
         self.copyText = copyText
-        _selectionSource = State(initialValue: MarkdownSelectionSource(source))
         let revision = MarkdownContentRevision(source)
         self.revision = revision
         let initialDocument = if isStreaming {
@@ -96,11 +96,6 @@ struct MarkdownMessageView: View {
         .accessibilityAction(named: copyActionTitle) {
             selectionSource.copyMessage()
         }
-        .alert("Could not copy context", isPresented: Binding(
-            get: { copyError != nil }, set: { if !$0 { copyError = nil } }
-        )) {
-            Button("OK") { copyError = nil }
-        } message: { Text(copyError ?? "") }
         .task(id: RenderRequest(revision: revision, isStreaming: isStreaming)) {
             if !isStreaming {
                 streamingRenderer.cancel()
@@ -108,6 +103,15 @@ struct MarkdownMessageView: View {
                 // the last streamed render instead of reparsing synchronously.
                 if let renderedDocument, renderedDocument.revision == revision {
                     MarkdownRenderCache.shared.promote(renderedDocument)
+                    return
+                }
+                // The last streamed render is usually a little behind the final
+                // text. Keep it on screen and finish off the main thread; a
+                // synchronous parse of a long reply here stalls ~100 ms.
+                if isEarlierRender(renderedDocument) {
+                    if let document = await MarkdownRenderCache.shared.document(for: revision) {
+                        renderedDocument = document
+                    }
                     return
                 }
                 renderedDocument = MarkdownRenderCache.shared.documentImmediately(for: revision)
@@ -135,20 +139,27 @@ struct MarkdownMessageView: View {
         if let renderedDocument, renderedDocument.revision == revision {
             return renderedDocument
         }
-        // While streaming, a slightly stale document is better than flashing
-        // back to plain text between renders. Streamed content only appends,
-        // so require the stale document to be a prefix of the current source:
+        // While streaming, and while the final parse finishes, a slightly stale
+        // document is better than flashing back to plain text. Streamed content
+        // only appends, so require the stale document to be a prefix of the current source:
         // that accepts earlier snapshots of this message and rejects leftovers
         // from a recycled cell showing a different message.
+        if isEarlierRender(renderedDocument) { return renderedDocument }
         if isStreaming {
-            if let renderedDocument,
-               renderedDocument.revision.utf8Count <= revision.utf8Count,
-               source.utf8.starts(with: renderedDocument.revision.source.utf8) {
-                return renderedDocument
-            }
-            return nil
+            // A new streamed message starts small. Parsing it inline until the
+            // first async render lands keeps plain text from swapping to
+            // Markdown geometry, which shifts every row below it.
+            return revision.utf8Count <= 2_048
+                ? MarkdownRenderCache.shared.documentImmediately(for: revision)
+                : nil
         }
         return MarkdownRenderCache.shared.documentImmediately(for: revision)
+    }
+
+    private func isEarlierRender(_ document: MarkdownRenderedDocument?) -> Bool {
+        guard let document else { return false }
+        return document.revision.utf8Count <= revision.utf8Count
+            && source.utf8.starts(with: document.revision.source.utf8)
     }
 
     private var selectionContext: MarkdownSelectionContext {
@@ -156,7 +167,7 @@ struct MarkdownMessageView: View {
         selectionSource.originalText = copyText ?? source
         selectionSource.clipboardSource = clipboardSource
         selectionSource.messageContext = messageContext
-        selectionSource.onCopyError = { copyError = $0 }
+        selectionSource.onCopyError = { MarkdownCopyErrorAlert.show($0) }
         return MarkdownSelectionContext(
             source: selectionSource,
             copyActionTitle: copyActionTitle,
@@ -282,21 +293,48 @@ private struct MarkdownBlocksView: View {
     var spacing: CGFloat = 12
     var textColor: MarkdownTextColor = .primary
 
+    @SwiftUI.Environment(\.markdownTextSelectable) private var isSelectable
+
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
-            ForEach(blocks.indices, id: \.self) { index in
-                // Unchanged blocks share inline runs by reference across
-                // streaming revisions, so equatable comparison skips their
-                // body and layout entirely; only the changed tail re-renders.
-                MarkdownBlockView(
-                    block: blocks[index],
-                    selectionContext: selectionContext,
-                    imageContext: imageContext,
-                    textColor: textColor
-                )
-                    .equatable()
+            if isSelectable {
+                ForEach(blocks.indices, id: \.self) { index in
+                    blockView(blocks[index])
+                }
+            } else {
+                // Runs of text draw as one canvas (`MarkdownTextRun`); other
+                // blocks keep their own views.
+                let segments = MarkdownTextRun.segments(blocks, spacing: spacing)
+                ForEach(segments.indices, id: \.self) { index in
+                    switch segments[index] {
+                    case let .text(run):
+                        MarkdownTextRunView(
+                            run: run,
+                            textColor: textColor.uiColor,
+                            skills: selectionContext.skills,
+                            copyActionTitle: selectionContext.copyActionTitle,
+                            copyMessage: { [source = selectionContext.source] in source.copyMessage() }
+                        )
+                            .equatable()
+                    case let .block(block):
+                        blockView(block)
+                    }
+                }
             }
         }
+    }
+
+    /// Unchanged blocks share inline runs by reference across streaming
+    /// revisions, so equatable comparison skips their body and layout entirely;
+    /// only the changed tail re-renders.
+    private func blockView(_ block: MarkdownRenderedBlock) -> some View {
+        MarkdownBlockView(
+            block: block,
+            selectionContext: selectionContext,
+            imageContext: imageContext,
+            textColor: textColor
+        )
+            .equatable()
     }
 }
 
@@ -864,7 +902,93 @@ enum MarkdownCodeBlockWrapping {
     }
 }
 
-private struct MarkdownInlineText: UIViewRepresentable {
+/// One block of Markdown text. Drawn by `MarkdownTextCanvas` while
+/// scrolling; the message the reader is selecting in uses a text view.
+private struct MarkdownInlineText: View {
+    @SwiftUI.Environment(\.markdownTextSelectable) private var isSelectable
+
+    let rendered: MarkdownRenderedInline
+    let selectionContext: MarkdownSelectionContext
+    let lineSpacing: CGFloat
+    let textColor: MarkdownTextColor
+    let wrapsLines: Bool
+
+    init(
+        _ rendered: MarkdownRenderedInline,
+        selectionContext: MarkdownSelectionContext,
+        lineSpacing: CGFloat = 0,
+        textColor: MarkdownTextColor = .primary,
+        wrapsLines: Bool = true
+    ) {
+        self.rendered = rendered
+        self.selectionContext = selectionContext
+        self.lineSpacing = lineSpacing
+        self.textColor = textColor
+        self.wrapsLines = wrapsLines
+    }
+
+    var body: some View {
+        if isSelectable {
+            MarkdownSelectableText(
+                rendered, selectionContext: selectionContext,
+                lineSpacing: lineSpacing, textColor: textColor, wrapsLines: wrapsLines
+            )
+        } else {
+            MarkdownCanvasText(
+                rendered: rendered, selectionContext: selectionContext,
+                lineSpacing: lineSpacing, textColor: textColor, wrapsLines: wrapsLines
+            )
+        }
+    }
+}
+
+private struct MarkdownCanvasText: UIViewRepresentable {
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.openURL) private var openURL
+
+    let rendered: MarkdownRenderedInline
+    let selectionContext: MarkdownSelectionContext
+    let lineSpacing: CGFloat
+    let textColor: MarkdownTextColor
+    let wrapsLines: Bool
+
+    func makeCoordinator() -> MarkdownSelectableText.Coordinator {
+        MarkdownSelectableText.Coordinator()
+    }
+
+    func makeUIView(context: Context) -> MarkdownTextCanvas {
+        let canvas = MarkdownTextCanvas()
+        canvas.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        canvas.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        return canvas
+    }
+
+    func updateUIView(_ canvas: MarkdownTextCanvas, context: Context) {
+        context.coordinator.selectionContext = selectionContext
+        canvas.attributedText = context.coordinator.attributedText(
+            from: rendered,
+            lineSpacing: lineSpacing,
+            textColor: textColor,
+            dynamicTypeSize: dynamicTypeSize,
+            wrapsLines: wrapsLines,
+            skills: selectionContext.skills,
+            traits: canvas.traitCollection
+        )
+        canvas.onOpenURL = { openURL($0) }
+        canvas.accessibilityCustomActions = context.coordinator.accessibilityActions(
+            title: selectionContext.copyActionTitle
+        )
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownTextCanvas, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0 else {
+            return wrapsLines ? nil : uiView.size(fitting: nil)
+        }
+        return uiView.size(fitting: wrapsLines ? width : nil)
+    }
+}
+
+private struct MarkdownSelectableText: UIViewRepresentable {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @SwiftUI.Environment(\.openURL) private var openURL
 
@@ -1287,5 +1411,22 @@ enum MarkdownInlineFormatter {
                 )
             )
         ) ?? AttributedString(source)
+    }
+}
+
+/// A failed context copy is rare, so it is shown through UIKit instead of an
+/// `.alert` on every message, which would be graph work on each cell
+/// configuration while scrolling.
+@MainActor
+private enum MarkdownCopyErrorAlert {
+    static func show(_ message: String) {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+        guard var top = scene?.keyWindow?.rootViewController else { return }
+        while let presented = top.presentedViewController { top = presented }
+        let alert = UIAlertController(title: "Could not copy context", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        top.present(alert, animated: true)
     }
 }
