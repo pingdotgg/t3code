@@ -1988,7 +1988,7 @@ const assertReadsThroughMessageOrdinalIndex = Effect.fn("assertReadsThroughMessa
 );
 
 // Each message's first item orders it, not the stored message order (the assistant reply is stored
-// first); the message-ordinal statement reads those ordinals through migration 81's index.
+// first); the message-ordinal statement reads those ordinals through migration 82's index.
 const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const sql = yield* SqlClient.SqlClient;
@@ -4871,7 +4871,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
       const settledPayload = (settledAt: string | null, archivedAt: string | null) => sql`
         UPDATE orchestration_v2_projection_threads
-        SET payload_json = json_set(payload_json, '$.settledAt', ${settledAt}, '$.archivedAt', ${archivedAt})
+        SET payload_json = json_set(payload_json, '$.settledAt', ${settledAt}, '$.archivedAt', ${archivedAt}),
+          archived_at = ${archivedAt}
         WHERE thread_id = ${readThreadId}
       `;
       yield* settledPayload(DateTime.formatIso(now), null);
