@@ -241,7 +241,7 @@ function RetentionControl({
           <InputGroupInput
             ref={input}
             autoFocus
-            size="sm"
+            size="settings"
             type="number"
             min={minimum}
             max={MAX_RETENTION_DAYS}
