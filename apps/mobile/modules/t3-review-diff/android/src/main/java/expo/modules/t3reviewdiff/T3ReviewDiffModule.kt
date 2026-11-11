@@ -69,7 +69,8 @@ class T3ReviewDiffModule : Module() {
       AsyncFunction("scrollToTop") { view: T3ReviewDiffView, animated: Boolean ->
         view.scrollToTop(animated)
       }
-      AsyncFunction("setRowsJson") { view: T3ReviewDiffView, rowsJson: String ->
+      AsyncFunction("setRowsJson") { view: T3ReviewDiffView, rowsJson: String, resetKey: String ->
+        view.setContentResetKey(resetKey)
         view.setRowsJson(rowsJson)
       }
       AsyncFunction("setTokensJson") { view: T3ReviewDiffView, tokensJson: String ->

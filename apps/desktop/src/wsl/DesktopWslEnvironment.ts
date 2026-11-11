@@ -9,10 +9,12 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { buildRemoteNodeEnvScript } from "@t3tools/ssh/tunnel";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
 
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
@@ -437,10 +439,8 @@ cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // it accurately instead of letting the server crash on ERR_MODULE_NOT_FOUND at
 // launch (which, in wsl-only mode, would just fail to launch with no fallback).
 //
-// The sentinel must be a package the CLI bundle leaves external. It used to be
-// "effect", back when the bundle externalized its runtime deps and the whole
-// node_modules tree was unpacked. The bundle now inlines its JS dependencies,
-// so "effect" no longer exists on disk and only the native packages do.
+// The sentinel must be a package the CLI bundle leaves external. The bundle
+// inlines its JS dependencies, so only the native packages exist on disk.
 // Resolving node-pty is what actually validates the unpacked tree.
 try { require.resolve("node-pty/package.json"); } catch (_e) { process.exit(3); }
 const fs = require("node:fs");
@@ -1029,15 +1029,26 @@ const getUserHomeImpl = (
     Effect.orElseSucceed(() => Option.none<string>()),
   );
 
-const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable")(function* (
+export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable")(function* (
   platform: NodeJS.Platform,
   windir: string,
-): Effect.fn.Return<boolean, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<
+  boolean,
+  never,
+  FileSystem.FileSystem | Path.Path | DesktopManagedPolicy.DesktopManagedPolicy
+> {
   if (platform !== "win32") return false;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   const wslExePath = path.join(windir, "System32", "wsl.exe");
-  return yield* fileSystem.exists(wslExePath).pipe(Effect.orElseSucceed(() => false));
+  if (!(yield* fileSystem.exists(wslExePath).pipe(Effect.orElseSucceed(() => false)))) {
+    return false;
+  }
+  // A server in WSL reads Linux's policy, never this machine's, so a managed machine runs none.
+  return yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
+    Effect.map((found) => found === undefined),
+    Effect.orElseSucceed(() => false),
+  );
 });
 
 export interface DesktopWslEnvironmentTestStub {
@@ -1131,7 +1142,8 @@ export const layer = Layer.effect(
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
-    const windir = process.env.WINDIR ?? "C:\\Windows";
+    // Not Config: Windows variable names are case-insensitive only on the live process.env.
+    const windir = (yield* HostProcess.Environment).WINDIR ?? "C:\\Windows";
 
     const provideSpawner = <A, E>(
       effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner>,
@@ -1142,6 +1154,10 @@ export const layer = Layer.effect(
     const wslAvailable = yield* makeIsAvailable(environment.platform, windir).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, environment.path),
+      Effect.provideService(
+        DesktopManagedPolicy.DesktopManagedPolicy,
+        yield* DesktopManagedPolicy.DesktopManagedPolicy,
+      ),
       Effect.withSpan("desktop.wsl.isAvailable"),
     );
     const isAvailable = Effect.succeed(wslAvailable);
