@@ -2,11 +2,21 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeURL from "node:url";
 import type { SnapShotKeyChord } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { nativeImage } from "electron";
 
 // Keep dbus-next out of desktop detection and PNG reads in the main process.
 
 export const HYPRLAND_CAPTURE_ACTION = "capture-window";
+
+export class CaptureSetupRequiredError extends Schema.TaggedError<CaptureSetupRequiredError>()(
+  "CaptureSetupRequiredError",
+  { state: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return `${this.state} Open Settings → SnapShots to continue setup.`;
+  }
+}
 export const NIRI_CAPTURE_PATH = "/com/t3tools/SnapShot";
 export const NIRI_CAPTURE_INTERFACE = "com.t3tools.SnapShot";
 

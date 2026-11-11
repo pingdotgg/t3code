@@ -39,7 +39,7 @@ export function useDeviceControls(options: {
 
   const available = detail !== null && visible;
   const act = async (body: ActionBody) => {
-    if (busy.current || !available) return;
+    if (busy.current || !available) return false;
     busy.current = true;
     setPending(true);
     setView((current) => ({ ...current, error: null }));
@@ -47,13 +47,14 @@ export function useDeviceControls(options: {
       environmentId,
       input: { hostId, deviceId, ...body } as DeviceActionInput,
     })
-      .then((result) =>
+      .then((result) => {
         setView((current) =>
           result._tag === "Success"
             ? { detail: result.value, error: null }
             : { ...current, error: formatEnvironmentQueryError(result.cause) },
-        ),
-      )
+        );
+        return result._tag === "Success";
+      })
       .finally(() => {
         busy.current = false;
         setPending(false);
