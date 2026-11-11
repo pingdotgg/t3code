@@ -598,7 +598,7 @@ type SidebarThreadRowProps = {
 };
 
 // Mounted only while renaming, so each rename starts uncommitted.
-function ThreadRenameInput(props: {
+export function ThreadRenameInput(props: {
   title: string;
   onTitleChange: (title: string) => void;
   onCommit: () => void;

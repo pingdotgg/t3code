@@ -1,34 +1,143 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useDraggable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { memo, useState } from "react";
+import * as Schema from "effect/Schema";
+import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
+import {
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 import { isElectron } from "../../env";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { cn } from "../../lib/utils";
 import { useProjects, useVisibleThreadShells } from "../../state/entities";
+import { readEnvironmentScope } from "../../state/session";
+import { threadEnvironment } from "../../state/threads";
+import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import type { SidebarThreadSummary } from "../../types";
 import { resolveThreadStatusPill } from "../Sidebar.logic";
+import { ThreadRenameInput } from "../sidebar/SidebarThreadRow";
+import { showThreadContextMenu } from "../sidebar/threadContextMenu";
+import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
-import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
-import { BOARD_COLUMNS, groupThreadsByColumn } from "./taskBoard.logic";
+import {
+  BOARD_PANELS,
+  BoardLayoutSchema,
+  groupThreadsByPanel,
+  moveBoardPanel,
+  resolveBoardDropEdge,
+  resolveBoardLayout,
+  toggleBoardPanelCollapsed,
+  type BoardDropEdge,
+  type BoardLayout,
+  type BoardPanelId,
+} from "./taskBoard.logic";
 
 const PAGE_SIZE = 50;
+const LAYOUT_STORAGE_KEY = "t3code:task-board:layout";
+const SavedLayoutSchema = Schema.NullOr(BoardLayoutSchema);
+const PANEL_LABELS = new Map(BOARD_PANELS.map((panel) => [panel.id, panel.label]));
 
-const BoardCard = memo(function BoardCard(props: {
-  thread: SidebarThreadSummary;
-  projectTitle: string | null;
-  nowMs: number;
+type DropTarget = { readonly panelId: BoardPanelId; readonly edge: BoardDropEdge };
+type PanelMode = "expanded" | "header" | "rail";
+
+const DROP_EDGE_CLASS: Record<BoardDropEdge, string> = {
+  left: "inset-y-0 -left-2 w-1",
+  right: "inset-y-0 -right-2 w-1",
+  top: "inset-x-0 -top-2 h-1",
+  bottom: "inset-x-0 -bottom-2 h-1",
+};
+
+const cardKey = (thread: SidebarThreadSummary) => `${thread.environmentId}:${thread.id}`;
+
+interface BoardCardHandlers {
   onOpen: (thread: SidebarThreadSummary) => void;
+  onStartRename: (key: string) => void;
+  onCommitRename: (thread: SidebarThreadSummary, title: string) => void;
+  onCancelRename: () => void;
+}
+
+// Mounted only while renaming, so the draft starts from the current title.
+function BoardCardRename(props: {
+  thread: SidebarThreadSummary;
+  onCommit: (thread: SidebarThreadSummary, title: string) => void;
+  onCancel: () => void;
 }) {
-  const { thread } = props;
+  const [title, setTitle] = useState(props.thread.title);
+  return (
+    <div className="flex w-full rounded-lg border border-border bg-card px-3 py-2">
+      <ThreadRenameInput
+        title={title}
+        onTitleChange={setTitle}
+        onCommit={() => props.onCommit(props.thread, title)}
+        onCancel={props.onCancel}
+      />
+    </div>
+  );
+}
+
+const BoardCard = memo(function BoardCard(
+  props: BoardCardHandlers & {
+    thread: SidebarThreadSummary;
+    projectTitle: string | null;
+    nowMs: number;
+    renaming: boolean;
+  },
+) {
+  const { thread, onStartRename } = props;
   const pill = resolveThreadStatusPill({ thread });
+  const openMenu = (position: { x: number; y: number }) =>
+    showThreadContextMenu(scopeThreadRef(thread.environmentId, thread.id), position, {
+      onStartRename: () => onStartRename(cardKey(thread)),
+    });
+  const handleContextMenu = (event: ReactMouseEvent) => {
+    if (openMenu({ x: event.clientX, y: event.clientY })) event.preventDefault();
+  };
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (openMenu({ x: rect.left, y: rect.bottom })) event.preventDefault();
+  };
+  if (props.renaming) {
+    return (
+      <BoardCardRename
+        thread={thread}
+        onCommit={props.onCommitRename}
+        onCancel={props.onCancelRename}
+      />
+    );
+  }
   return (
     <button
       type="button"
       onClick={() => props.onOpen(thread)}
+      onContextMenu={handleContextMenu}
+      onKeyDown={handleKeyDown}
       className="flex w-full flex-col gap-1 rounded-lg border border-border bg-card px-3 py-2 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
       <span className="line-clamp-2 text-sm font-medium text-foreground">{thread.title}</span>
@@ -46,6 +155,201 @@ const BoardCard = memo(function BoardCard(props: {
   );
 });
 
+// Kept apart from the panel shell so drag feedback never re-renders the cards.
+const BoardPanelCards = memo(function BoardPanelCards(
+  props: BoardCardHandlers & {
+    panelId: BoardPanelId;
+    items: SidebarThreadSummary[];
+    limit: number;
+    renamingKey: string | null;
+    projectTitles: ReadonlyMap<string, string>;
+    nowMs: number;
+    onShowMore: (panelId: BoardPanelId) => void;
+  },
+) {
+  const { items, limit } = props;
+  return (
+    // Horizontal wheel movement must chain to the board, so only the y axis is contained.
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+      <div className="flex flex-col gap-2 px-2 pb-2">
+        {items.slice(0, limit).map((thread) => (
+          <BoardCard
+            key={cardKey(thread)}
+            thread={thread}
+            projectTitle={
+              props.projectTitles.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+            }
+            nowMs={props.nowMs}
+            renaming={props.renamingKey === cardKey(thread)}
+            onOpen={props.onOpen}
+            onStartRename={props.onStartRename}
+            onCommitRename={props.onCommitRename}
+            onCancelRename={props.onCancelRename}
+          />
+        ))}
+        {items.length > limit ? (
+          <button
+            type="button"
+            onClick={() => props.onShowMore(props.panelId)}
+            className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            Show {Math.min(PAGE_SIZE, items.length - limit)} more
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+});
+
+function BoardPanelHeader(props: {
+  panelId: BoardPanelId;
+  label: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: (panelId: BoardPanelId) => void;
+}) {
+  const { listeners, setNodeRef } = useDraggable({ id: props.panelId });
+  const ToggleIcon = props.collapsed ? PanelLeftOpenIcon : PanelLeftCloseIcon;
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      className="flex shrink-0 cursor-grab touch-none items-center gap-2 py-1.5 pr-1.5 pl-3 active:cursor-grabbing"
+    >
+      <h2 className="min-w-0 flex-1 truncate text-xs font-semibold text-muted-foreground uppercase">
+        {props.label}
+      </h2>
+      <span className="text-xs text-muted-foreground">{props.count}</span>
+      <Button
+        variant="ghost-muted"
+        size="icon-micro"
+        aria-label={props.collapsed ? `Expand ${props.label}` : `Collapse ${props.label}`}
+        aria-expanded={!props.collapsed}
+        onClick={() => props.onToggle(props.panelId)}
+      >
+        <ToggleIcon />
+      </Button>
+    </div>
+  );
+}
+
+function BoardPanelRail(props: {
+  panelId: BoardPanelId;
+  label: string;
+  count: number;
+  onToggle: (panelId: BoardPanelId) => void;
+}) {
+  const { listeners, setNodeRef } = useDraggable({ id: props.panelId });
+  return (
+    <button
+      ref={setNodeRef}
+      {...listeners}
+      type="button"
+      aria-label={`Expand ${props.label}`}
+      aria-expanded={false}
+      onClick={() => props.onToggle(props.panelId)}
+      className="flex min-h-0 flex-1 touch-none flex-col items-center gap-2 rounded-xl py-2 text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+    >
+      <PanelLeftOpenIcon className="size-3.5 shrink-0" />
+      <span className="min-h-0 truncate text-xs font-semibold uppercase [writing-mode:vertical-rl]">
+        {props.label} · {props.count}
+      </span>
+    </button>
+  );
+}
+
+const BoardPanel = memo(function BoardPanel(
+  props: BoardCardHandlers & {
+    panelId: BoardPanelId;
+    label: string;
+    mode: PanelMode;
+    items: SidebarThreadSummary[];
+    limit: number;
+    renamingKey: string | null;
+    dragging: boolean;
+    dropEdge: BoardDropEdge | null;
+    projectTitles: ReadonlyMap<string, string>;
+    nowMs: number;
+    onShowMore: (panelId: BoardPanelId) => void;
+    onToggle: (panelId: BoardPanelId) => void;
+  },
+) {
+  const { panelId, label, mode, items } = props;
+  return (
+    <section
+      aria-label={label}
+      data-board-panel={panelId}
+      className={cn(
+        "relative flex min-h-0 flex-col rounded-xl bg-muted/40",
+        mode === "header" ? "shrink-0" : "flex-1",
+        props.dragging && "opacity-50",
+      )}
+    >
+      {mode === "rail" ? (
+        <BoardPanelRail
+          panelId={panelId}
+          label={label}
+          count={items.length}
+          onToggle={props.onToggle}
+        />
+      ) : (
+        <BoardPanelHeader
+          panelId={panelId}
+          label={label}
+          count={items.length}
+          collapsed={mode === "header"}
+          onToggle={props.onToggle}
+        />
+      )}
+      {mode === "expanded" ? (
+        <BoardPanelCards
+          panelId={panelId}
+          items={items}
+          limit={props.limit}
+          renamingKey={props.renamingKey}
+          projectTitles={props.projectTitles}
+          nowMs={props.nowMs}
+          onOpen={props.onOpen}
+          onStartRename={props.onStartRename}
+          onCommitRename={props.onCommitRename}
+          onCancelRename={props.onCancelRename}
+          onShowMore={props.onShowMore}
+        />
+      ) : null}
+      {props.dropEdge ? (
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute rounded-full bg-primary",
+            DROP_EDGE_CLASS[props.dropEdge],
+          )}
+        />
+      ) : null}
+    </section>
+  );
+});
+
+function findDropTarget(
+  board: HTMLElement,
+  activeId: BoardPanelId,
+  point: { x: number; y: number },
+): DropTarget | null {
+  for (const element of board.querySelectorAll<HTMLElement>("[data-board-panel]")) {
+    const rect = element.getBoundingClientRect();
+    if (
+      point.x < rect.left ||
+      point.x > rect.right ||
+      point.y < rect.top ||
+      point.y > rect.bottom
+    ) {
+      continue;
+    }
+    const panelId = element.dataset.boardPanel as BoardPanelId;
+    return panelId === activeId ? null : { panelId, edge: resolveBoardDropEdge(rect, point) };
+  }
+  return null;
+}
+
 export function TaskBoardPage() {
   const navigate = useNavigate();
   const threads = useVisibleThreadShells();
@@ -53,18 +357,95 @@ export function TaskBoardPage() {
   const nowMinute = useNowMinute();
   const now = `${nowMinute}:00.000Z`;
   const [shown, setShown] = useState<Record<string, number>>({});
+  const [savedLayout, setSavedLayout] = useLocalStorage(
+    LAYOUT_STORAGE_KEY,
+    null,
+    SavedLayoutSchema,
+  );
+  const [renamingKey, setRenamingKey] = useState<string | null>(null);
+  const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const [activeId, setActiveId] = useState<BoardPanelId | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  const dropTargetRef = useRef<DropTarget | null>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const projectTitles = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
   );
-  const groups = groupThreadsByColumn(threads, now);
+  const groups = groupThreadsByPanel(threads, now);
+  const layout = resolveBoardLayout(savedLayout);
   const nowMs = Date.parse(now);
+
+  const updateLayout = (update: (layout: BoardLayout) => BoardLayout) =>
+    setSavedLayout((saved) => update(resolveBoardLayout(saved)));
   const openThread = (thread: SidebarThreadSummary) => {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
     });
   };
+  const showMore = (panelId: BoardPanelId) =>
+    setShown((previous) => ({
+      ...previous,
+      [panelId]: (previous[panelId] ?? PAGE_SIZE) + PAGE_SIZE,
+    }));
+  const cancelRename = () => setRenamingKey(null);
+  const commitRename = (thread: SidebarThreadSummary, title: string) => {
+    setRenamingKey(null);
+    const trimmed = title.trim();
+    if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) return;
+    if (trimmed.length === 0) {
+      toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
+      return;
+    }
+    if (trimmed === thread.title) return;
+    void updateThreadMetadata({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id, title: trimmed },
+    }).then((result) => {
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to rename thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    });
+  };
+  const togglePanel = (panelId: BoardPanelId) =>
+    updateLayout((current) => toggleBoardPanelCollapsed(current, panelId));
+  const endDrag = () => {
+    setActiveId(null);
+    setDropTarget(null);
+    dropTargetRef.current = null;
+  };
+  const handleDragEnd = (event: DragEndEvent) => {
+    const target = dropTargetRef.current;
+    const moved = event.active.id as BoardPanelId;
+    if (target !== null) updateLayout((current) => moveBoardPanel(current, moved, target));
+    endDrag();
+  };
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the pointer against panel rects while a panel drag is active
+  useEffect(() => {
+    const board = boardRef.current;
+    if (activeId === null || board === null) return;
+    const onPointerMove = (event: PointerEvent) => {
+      const next = findDropTarget(board, activeId, { x: event.clientX, y: event.clientY });
+      const current = dropTargetRef.current;
+      if (current?.panelId === next?.panelId && current?.edge === next?.edge) return;
+      dropTargetRef.current = next;
+      setDropTarget(next);
+    };
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onPointerMove);
+  }, [activeId]);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
@@ -82,53 +463,67 @@ export function TaskBoardPage() {
             </EmptyHeader>
           </Empty>
         ) : (
-          <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
-            {BOARD_COLUMNS.map((column) => {
-              const items = groups[column.id];
-              const limit = shown[column.id] ?? PAGE_SIZE;
-              return (
-                <section
-                  key={column.id}
-                  aria-label={column.label}
-                  className="flex min-h-0 w-72 shrink-0 flex-col rounded-xl bg-muted/40"
-                >
-                  <h2 className="flex items-center justify-between px-3 py-2 text-xs font-semibold text-muted-foreground uppercase">
-                    {column.label}
-                    <span className="font-normal">{items.length}</span>
-                  </h2>
-                  <ScrollArea className="min-h-0 flex-1">
-                    <div className="flex flex-col gap-2 px-2 pb-2">
-                      {items.slice(0, limit).map((thread) => (
-                        <BoardCard
-                          key={`${thread.environmentId}:${thread.id}`}
-                          thread={thread}
-                          projectTitle={
-                            projectTitles.get(`${thread.environmentId}:${thread.projectId}`) ?? null
-                          }
-                          nowMs={nowMs}
-                          onOpen={openThread}
-                        />
-                      ))}
-                      {items.length > limit ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setShown((previous) => ({
-                              ...previous,
-                              [column.id]: limit + PAGE_SIZE,
-                            }))
-                          }
-                          className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-                        >
-                          Show {Math.min(PAGE_SIZE, items.length - limit)} more
-                        </button>
-                      ) : null}
-                    </div>
-                  </ScrollArea>
-                </section>
-              );
-            })}
-          </div>
+          <DndContext
+            sensors={sensors}
+            onDragStart={(event: DragStartEvent) => setActiveId(event.active.id as BoardPanelId)}
+            onDragEnd={handleDragEnd}
+            onDragCancel={endDrag}
+          >
+            {/* Swipes past either edge scroll nothing instead of navigating history. */}
+            <div
+              ref={boardRef}
+              data-history-swipe="off"
+              className="flex min-h-0 flex-1 gap-3 overflow-x-auto overscroll-x-contain p-3"
+            >
+              {layout.columns.map((column) => {
+                const allCollapsed = column.every((id) => layout.collapsed.includes(id));
+                return (
+                  <div
+                    key={column.join(":")}
+                    className={cn(
+                      "flex min-h-0 shrink-0 flex-col gap-3",
+                      allCollapsed ? "w-11" : "w-72",
+                    )}
+                  >
+                    {column.map((panelId) => (
+                      <BoardPanel
+                        key={panelId}
+                        panelId={panelId}
+                        label={PANEL_LABELS.get(panelId) ?? panelId}
+                        mode={
+                          !layout.collapsed.includes(panelId)
+                            ? "expanded"
+                            : allCollapsed
+                              ? "rail"
+                              : "header"
+                        }
+                        items={groups[panelId]}
+                        limit={shown[panelId] ?? PAGE_SIZE}
+                        dragging={activeId === panelId}
+                        dropEdge={dropTarget?.panelId === panelId ? dropTarget.edge : null}
+                        projectTitles={projectTitles}
+                        nowMs={nowMs}
+                        renamingKey={renamingKey}
+                        onOpen={openThread}
+                        onStartRename={setRenamingKey}
+                        onCommitRename={commitRename}
+                        onCancelRename={cancelRename}
+                        onShowMore={showMore}
+                        onToggle={togglePanel}
+                      />
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+            <DragOverlay dropAnimation={null}>
+              {activeId === null ? null : (
+                <div className="w-48 cursor-grabbing rounded-lg border border-border bg-popover px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase shadow-lg">
+                  {PANEL_LABELS.get(activeId)} · {groups[activeId].length}
+                </div>
+              )}
+            </DragOverlay>
+          </DndContext>
         )}
       </div>
     </SidebarInset>

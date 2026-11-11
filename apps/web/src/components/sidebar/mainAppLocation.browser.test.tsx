@@ -68,10 +68,12 @@ describe("main app return location", () => {
 
     const closingUsage = await returnLocation("/usage", "Close modal");
     const sidebarBack = await returnLocation("/pull-requests", "Back to app");
+    const leavingBoard = await returnLocation("/board", "Back to app");
 
-    expect({ closingUsage, sidebarBack }).toEqual({
+    expect({ closingUsage, sidebarBack, leavingBoard }).toEqual({
       closingUsage: THREAD_PATH,
       sidebarBack: THREAD_PATH,
+      leavingBoard: THREAD_PATH,
     });
   });
 });

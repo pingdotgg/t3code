@@ -57,7 +57,9 @@ function lockSwipeAxis(
 ): Exclude<SwipeGesture, { kind: "pending" }> {
   const { path, sumX, sumY } = pending;
   if (Math.abs(sumX) <= Math.abs(sumY)) return { kind: "ignored" };
-  if (path.some((node) => node instanceof Element && node.matches('[role="dialog"]'))) {
+  // `data-history-swipe="off"` marks a horizontal scroller whose edges must not navigate.
+  const blocksSwipe = '[role="dialog"], [data-history-swipe="off"]';
+  if (path.some((node) => node instanceof Element && node.matches(blocksSwipe))) {
     return { kind: "ignored" };
   }
   if (canScrollHorizontally(path, sumX)) return { kind: "ignored" };

@@ -264,6 +264,10 @@ import {
 } from "./sidebar/SidebarThreadRow";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
 import {
+  type ThreadContextMenuOptions,
+  useProvideThreadContextMenu,
+} from "./sidebar/threadContextMenu";
+import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
 } from "./sidebar/SidebarProjectFolderHeader";
@@ -2590,7 +2594,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const handleThreadContextMenu = useStableCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    (
+      threadRef: ScopedThreadRef,
+      position: { x: number; y: number },
+      options?: ThreadContextMenuOptions,
+    ) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
@@ -2600,7 +2608,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           await handleMultiSelectContextMenu(position);
           return;
         }
-        const thread = threadByKeyRef.current.get(threadKey);
+        // The task board also opens this menu for threads the list is not showing.
+        const thread =
+          threadByKeyRef.current.get(threadKey) ??
+          threads.find((candidate) => threadShellKey(candidate) === threadKey);
         if (!thread) return;
         const threadWorkspacePath =
           thread.worktreePath ??
@@ -2611,8 +2622,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadAutoSettleOptOut === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
-        const isSettled = settledThreadKeysRef.current.has(threadKey);
-        const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
+        const isSettled =
+          settledThreadKeysRef.current.has(threadKey) ||
+          (configLoaded && thread.settledOverride === "settled");
+        const isSnoozed =
+          snoozedThreadKeysRef.current.has(threadKey) ||
+          (configLoaded && effectiveSnoozed(thread, { now: new Date().toISOString() }));
         const isPinned = thread.pinnedAt != null;
         const snoozePresets = resolveSnoozePresets(
           new Date(),
@@ -2773,7 +2788,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           }
           case "rename":
-            startThreadRename(threadRef, thread.title);
+            (options?.onStartRename ?? startThreadRename)(threadRef, thread.title);
             return;
           case "share-guest":
             openGuestShareDialog(threadRef);
@@ -2886,6 +2901,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       })();
     },
   );
+  useProvideThreadContextMenu(handleThreadContextMenu);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation shortcuts using the current thread list
   useEffect(() => {

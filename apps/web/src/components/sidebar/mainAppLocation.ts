@@ -27,7 +27,8 @@ export function startMainAppLocationTracking(router: AnyRouter): () => void {
     if (isAppModalPage(pathname) || SHELL_LESS_PATHS.has(pathname)) return;
     const href = withoutAssistantCitationHash(router.state.location.href);
     appModalReturnHref = href;
-    if (!isSidebarUtilityPage(pathname)) mainAppHref = href;
+    // The task board toggles back to the page that opened it.
+    if (!isSidebarUtilityPage(pathname) && pathname !== "/board") mainAppHref = href;
   };
   record();
   return router.subscribe("onResolved", record);
