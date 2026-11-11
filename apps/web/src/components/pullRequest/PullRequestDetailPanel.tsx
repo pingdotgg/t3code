@@ -27,7 +27,6 @@ import {
   type PullRequestSummary,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
-  pullRequestConversationThreads,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -1144,7 +1143,7 @@ export function PullRequestDetailPanel({
     if (!detail || attachTarget === null) return;
     const thread =
       subject.kind === "comment"
-        ? pullRequestConversationThreads(detail).find((candidate) =>
+        ? detail.reviewThreads.find((candidate) =>
             candidate.comments.some((comment) => comment.id === subject.comment.id),
           )
         : undefined;
@@ -1206,7 +1205,7 @@ export function PullRequestDetailPanel({
         baseBranch: detail.baseBranch,
         state: detail.state,
         isDraft: detail.isDraft,
-        reviewThreads: pullRequestConversationThreads(detail),
+        reviewThreads: detail.reviewThreads,
         comments: detail.comments,
         checks: checksStale ? [] : detail.checks,
         commentsTruncated: detail.commentsTruncated,
