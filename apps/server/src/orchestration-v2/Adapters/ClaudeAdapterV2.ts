@@ -9378,9 +9378,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (message.subtype === "model_refusal_fallback" && message.scope !== "local") {
               const modelSelection = {
                 ...context.input.modelSelection,
-                model: resolveClaudeModelSlug(subagentModelCatalog, message.fallback_model),
+                model: resolveClaudeModelSlug(modelCatalog, message.fallback_model),
               };
-              liveQuery.selection = compileClaudeModelSelection(modelSelection);
+              liveQuery.selection = compileClaudeModelSelection(modelSelection, modelCatalog);
               yield* emitProviderEvent({
                 type: "app_thread.model_selection.updated",
                 driver: CLAUDE_PROVIDER,
