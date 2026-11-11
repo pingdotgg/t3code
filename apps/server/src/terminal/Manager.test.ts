@@ -1876,7 +1876,7 @@ it.layer(
         );
 
         yield* manager.open(openInput());
-        yield* manager.restart(restartInput({ env: runtimeEnv }));
+        yield* manager.open(openInput({ terminalId: "override", env: runtimeEnv }));
 
         expect(ptyAdapter.spawnInputs).toHaveLength(2);
         for (const [index, expected] of [
@@ -1890,7 +1890,7 @@ it.layer(
                 Object.entries(spawnEnv)
                   .filter(([candidate]) => candidate.toUpperCase() === key)
                   .map(([, entryValue]) => entryValue),
-                `${index === 0 ? "open" : "restart"} ${key}`,
+                `${index === 0 ? "default" : "override"} ${key}`,
               )
               .toEqual([value]);
           }
