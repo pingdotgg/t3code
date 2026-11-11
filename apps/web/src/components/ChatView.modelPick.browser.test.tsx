@@ -1,4 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -36,7 +37,12 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 
 // Its own file: the app's shell subscription outlives a test, and it must list this thread.
 it("a model picked for an existing thread reaches the server before any message is sent", async () => {
-  const thread = threadWithHistory("thread-model-pick", 1);
+  const stored = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5.4",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  };
+  const thread = { ...threadWithHistory("thread-model-pick", 1), modelSelection: stored };
   using _environment = installFakeEnvironment([thread], { acceptCommands: true });
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -52,16 +58,26 @@ it("a model picked for an existing thread reaches the server before any message 
   });
   await expect.element(page.getByText("Answer 0 for thread-model-pick.")).toBeVisible();
 
+  const modelSets = () =>
+    dispatchedCommands().filter((command) => command.type === "thread.model-selection.set");
+
+  // With no options remembered in this browser, the thread's own model keeps its stored ones.
   await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+  await page.getByRole("option", { name: /GPT-5\.4/ }).click();
+  await vi.waitFor(() =>
+    expect(modelSets()).toEqual([
+      expect.objectContaining({ threadId: thread.id, modelSelection: stored }),
+    ]),
+  );
+
+  // The picker stays open beside its effort column.
   await page.getByRole("option", { name: /GPT-5\.5/ }).click();
   await vi.waitFor(() =>
-    expect(
-      dispatchedCommands().filter((command) => command.type === "thread.model-selection.set"),
-    ).toEqual([
+    expect(modelSets().at(-1)).toEqual(
       expect.objectContaining({
         threadId: thread.id,
-        modelSelection: expect.objectContaining({ instanceId: "codex", model: "gpt-5.5" }),
+        modelSelection: { instanceId: "codex", model: "gpt-5.5" },
       }),
-    ]),
+    ),
   );
 });

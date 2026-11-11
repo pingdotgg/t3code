@@ -17,6 +17,7 @@ import {
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
+  type ModelSelection,
   type VcsStatusStreamEvent,
   type OrchestrationProjectShell,
   type OrchestrationV2Command,
@@ -196,6 +197,7 @@ export interface FakeThread {
   readonly sideChatOf?: ThreadId;
   /** Makes this an older settled thread the shell leaves out; only its family read returns it. */
   readonly olderSettled?: true;
+  readonly modelSelection?: ModelSelection;
   readonly id: ThreadId;
   readonly title: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
@@ -232,7 +234,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     projectId: PROJECT_ID,
     title: thread.title,
     providerInstanceId: CODEX,
-    modelSelection: MODEL,
+    modelSelection: thread.modelSelection ?? MODEL,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: "main",

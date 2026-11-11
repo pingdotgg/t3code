@@ -164,9 +164,17 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     }
     const rememberedOptions =
       useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[resolvedModel];
-    const nextModelSelection: ModelSelection =
+    const threadSelection = activeThread.modelSelection;
+    // This pick replaces the stored options, so the thread's own model carries them over.
+    const pickOptions =
       rememberedOptions !== undefined && rememberedOptions.length > 0
-        ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
+        ? rememberedOptions
+        : threadSelection.instanceId === instanceId && threadSelection.model === resolvedModel
+          ? threadSelection.options
+          : undefined;
+    const nextModelSelection: ModelSelection =
+      pickOptions !== undefined && pickOptions.length > 0
+        ? { instanceId, model: resolvedModel, options: [...pickOptions] }
         : { instanceId, model: resolvedModel };
     const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
       hasStartedSession: activeRuntime !== null,
