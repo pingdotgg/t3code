@@ -992,6 +992,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
+  const wokeIndicator = useClientSettings((settings) => settings.sidebarWokeIndicator);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
@@ -3381,7 +3382,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   })
                                 : null
                             }
-                            wokeAt={threadWokeAt(thread, { now: snoozeNow })}
+                            wokeAt={
+                              wokeIndicator === "off"
+                                ? null
+                                : threadWokeAt(thread, { now: snoozeNow })
+                            }
+                            wokeLabelHidden={wokeIndicator === "icon"}
                             isActive={routeRowThreadKey === threadKey}
                             revealRef={
                               routeRowThreadKey === threadKey ? revealActiveRow : undefined
