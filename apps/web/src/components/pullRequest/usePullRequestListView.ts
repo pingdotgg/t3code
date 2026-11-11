@@ -121,14 +121,19 @@ export function usePullRequestScope(
     scopedProjectId,
     projectsKnown,
   );
-  const environmentQueries = ((): ReadonlyArray<{
+  const queriesFor = (
+    availability?: PullRequestHostAvailability,
+  ): ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly projectIds?: ReadonlyArray<ProjectId>;
   }> => {
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
     if (!projectsKnown || scopedProjectId !== undefined) return plain;
-    return pullRequestProjectQueries(projects, queryEnvironmentIds, hostAvailability);
-  })();
+    return pullRequestProjectQueries(projects, queryEnvironmentIds, availability);
+  };
+  const environmentQueries = queriesFor(hostAvailability);
+  // What the page reads once a refresh forgets host reads; refresh must refetch these too.
+  const preferredEnvironmentQueries = queriesFor();
   const assignmentKey = environmentQueries
     .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)
     .join("|");
@@ -178,6 +183,7 @@ export function usePullRequestScope(
     selectedProject,
     queryEnvironmentIds,
     environmentQueries,
+    preferredEnvironmentQueries,
     assignmentKey,
     linkedSelection,
     expectedHosts,
