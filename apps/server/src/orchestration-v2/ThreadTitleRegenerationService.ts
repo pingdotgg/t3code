@@ -170,11 +170,13 @@ const make = Effect.gen(function* () {
       const result = yield* textGeneration.generateThreadTitle({
         cwd: worktreeExists ? worktreePath : project.value.workspaceRoot,
         message: context.message,
+        projectTitle: project.value.title,
         attachments: context.attachments,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
         ...(inherited === undefined ? {} : { forkSource: inherited }),
         instructions: settings.threadTitleInstructions,
         modelSelection: settings.textGenerationModelSelection,
+        projectId: projection.thread.projectId,
       });
       const generatedTitle = result.title.trim();
       return generatedTitle === "New thread" ||

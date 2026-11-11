@@ -21,6 +21,7 @@ import {
   Plugin,
   PluginKey,
   TextSelection,
+  type Transaction,
 } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import type { NodeType, ResolvedPos } from "@tiptap/pm/model";
@@ -91,6 +92,7 @@ import {
   serializeSelection,
   skillChipReplacements,
   splitOrLiftListItem,
+  surroundSelectionWithMark,
   stepCaretAcrossStyledEdge,
   type IsKnownModel,
   type SkillMeta,
@@ -186,7 +188,7 @@ export interface ComposerPromptEditorProps {
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
-  onCitationSubmitAndSend?: () => void;
+  onCitationSubmitAndSend?: () => boolean;
   /** Saves unsaved citation text into replacedValue when a controlled rewrite replaces the document. */
   onCitationDraftSave?: (replacedValue: string, savedValue: string) => void;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
@@ -213,12 +215,12 @@ const ComposerCitationCommentContext = createContext<{
   openComment: OpenCitationComment | null;
   onOpenChange: (citeKey: string, open: boolean) => void;
   onDraftChange: (citeKey: string, comment: string) => void;
-  onSubmitAndSend: () => void;
+  onSubmitAndSend: () => boolean;
 }>({
   openComment: null,
   onOpenChange: () => {},
   onDraftChange: () => {},
-  onSubmitAndSend: () => {},
+  onSubmitAndSend: () => false,
 });
 
 const RichComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
@@ -477,13 +479,23 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     editor.chain().focus().deleteRange({ from, to }).run();
   };
 
+  const sentRef = useRef(false);
   const onRestoreFocus = () => {
+    const sent = sentRef.current;
+    sentRef.current = false;
     if (!editor.isEditable) return;
     const pos = nodePos();
-    if (pos === null) return;
-    const current = editor.state.doc.nodeAt(pos);
-    if (!current || current.type.name !== "composer-citation") return;
-    editor.commands.focus(pos + current.nodeSize);
+    const current = pos === null ? null : editor.state.doc.nodeAt(pos);
+    if (pos === null || current?.type.name !== "composer-citation") {
+      if (sent) editor.view.focus();
+      return;
+    }
+    // The send's controlled rewrite may still be pending; emitting this caret move would restore the old prompt.
+    editor
+      .chain()
+      .setMeta(SILENT_SELECTION_META, sent)
+      .focus(pos + current.nodeSize)
+      .run();
   };
 
   return (
@@ -512,7 +524,6 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     >
       <AssistantCitationChip
         citation={citation}
-        composer
         commentEditor={{
           open: commentTarget !== null,
           sourceAnchor: commentTarget?.sourceAnchor,
@@ -525,7 +536,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;
-            commentContext.onSubmitAndSend();
+            sentRef.current = commentContext.onSubmitAndSend();
             return true;
           },
           onRestoreFocus,
@@ -728,6 +739,8 @@ function chipSelectionDecorations({ doc, selection }: EditorState): DecorationSe
 }
 
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
+
+const SILENT_SELECTION_META = "composerSilentSelection";
 
 function replaceSkillChips(
   editor: TiptapEditor,
@@ -995,10 +1008,10 @@ function ComposerPromptEditorTiptapInner(
     onDraftChange: (nodeKey: string, comment: string) => {
       citationDraftRef.current = { key: nodeKey, comment };
     },
-    onSubmitAndSend: onCitationSubmitAndSend ?? (() => {}),
+    onSubmitAndSend: onCitationSubmitAndSend ?? (() => false),
   };
 
-  const handleEditorChange = (updated: TiptapEditor) => {
+  const handleEditorChange = (updated: TiptapEditor, transaction: Transaction) => {
     const map = serializeEditorDoc(updated.state.doc);
     const contextIds = literalText ? [] : [...map.contextIds];
     const { from, to } = updated.state.selection;
@@ -1025,7 +1038,7 @@ function ComposerPromptEditorTiptapInner(
       previousSnapshot.contextIds.length === contextIds.length &&
       previousSnapshot.contextIds.every((id, index) => id === contextIds[index])
     );
-    if (isApplyingControlledUpdateRef.current) return;
+    if (isApplyingControlledUpdateRef.current || transaction.getMeta(SILENT_SELECTION_META)) return;
     if (!snapshotChanged) {
       if (didComposerSelectionChangeVisibly(previousSelectionRange, nextSelectionRange)) {
         readCallbacks().onVisibleSelectionChange?.();
@@ -1343,6 +1356,11 @@ function ComposerPromptEditorTiptapInner(
           const startMd = flatToMarkdown(map, pmToFlat(map, from));
           const endMd = flatToMarkdown(map, pmToFlat(map, to));
           if (selectionTouchesMentionBoundary(map.value, startMd, endMd)) return false;
+          const markTr = surroundSelectionWithMark(view.state, from, to, text);
+          if (markTr) {
+            view.dispatch(markTr);
+            return true;
+          }
           const tr = view.state.tr.insertText(closer, to).insertText(text, from);
           tr.setSelection(TextSelection.create(tr.doc, from + text.length, to + text.length));
           view.dispatch(tr);
@@ -1459,10 +1477,10 @@ function ComposerPromptEditorTiptapInner(
             return;
           }
         }
-        handleEditorChange(updated);
+        handleEditorChange(updated, transaction);
       },
-      onSelectionUpdate: ({ editor: updated }) => {
-        handleEditorChange(updated);
+      onSelectionUpdate: ({ editor: updated, transaction }) => {
+        handleEditorChange(updated, transaction);
       },
     },
     [],

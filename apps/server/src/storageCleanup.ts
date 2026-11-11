@@ -47,6 +47,7 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -618,7 +619,7 @@ const make = Effect.gen(function* () {
         );
       if (result === null) return null;
       if (result.exitCode === 0 || result.exitCode === allowedExitCode) return result;
-      if (result.stderr.toLowerCase().includes("not a git repository")) return null;
+      if (isNonRepositoryGitStderr(result.stderr)) return null;
       return yield* failure(
         result.stderr.trim().split(/\r?\n/)[0]?.slice(0, 1000) || "command failed",
       );
@@ -654,6 +655,7 @@ const make = Effect.gen(function* () {
           : "--untracked-files=all",
       ],
       maxOutputBytes: 64 * 1024,
+      appendTruncationMarker: true,
     });
     if (status.stdoutTruncated) return "local changes exceed the inspection limit";
     const records = status.stdout.split("\0").filter(Boolean);
@@ -669,6 +671,7 @@ const make = Effect.gen(function* () {
       cwd,
       args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
       maxOutputBytes: 64 * 1024,
+      appendTruncationMarker: true,
     });
     if (ignored.stdoutTruncated) return "ignored files exceed the inspection limit";
     const file = ignored.stdout
@@ -925,7 +928,17 @@ const make = Effect.gen(function* () {
         return reason;
       };
       yield* Effect.gen(function* () {
-        if (!(yield* fs.exists(worktreePath))) return;
+        const exists = yield* fs.exists(worktreePath).pipe(
+          // A stored path under a regular file cannot exist, but access() fails with ENOTDIR.
+          Effect.catchIf(
+            (error) =>
+              error.cause instanceof Error &&
+              "code" in error.cause &&
+              error.cause.code === "ENOTDIR",
+            () => Effect.succeed(false),
+          ),
+        );
+        if (!exists) return;
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
           return keep(`shared by ${members.length} threads`);
