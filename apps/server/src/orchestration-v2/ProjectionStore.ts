@@ -86,6 +86,7 @@ import {
   backgroundWorkHoldsCompletion,
   deriveBlockedOnThreadWait,
   derivePendingBackgroundWork,
+  isPullRequestWatchTask,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -529,7 +530,7 @@ export interface ProjectionStoreV2Shape {
   >;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
-  /** An active run, or a background roster that holds its thread's completion, on any thread. */
+  /** An active run, or pending background work that holds its thread's completion, on any thread. */
   readonly hasLiveAgentWork: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   /** Every active thread, in shell order. */
   readonly listActiveShellIndex: () => Effect.Effect<
@@ -7636,17 +7637,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         LIMIT 1
       `;
       if (activeRuns.length > 0) return true;
-      const rosters = yield* sql<PayloadRow>`
-        SELECT payload_json FROM orchestration_v2_projection_provider_threads
-        WHERE CASE WHEN json_valid(payload_json)
-          THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
-          ELSE 0 END
+      // Starts from the pending-item partial index, so its predicate matches the shell's read.
+      const candidates = yield* sql<{ readonly thread_id: string }>`
+        SELECT t.thread_id FROM orchestration_v2_projection_threads t
+        WHERE t.deleted_at IS NULL
+          AND t.thread_id IN (
+            SELECT item.thread_id FROM orchestration_v2_projection_turn_items item
+            WHERE item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+              AND item.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
+            UNION
+            SELECT provider_thread.thread_id
+            FROM orchestration_v2_projection_provider_threads provider_thread
+            WHERE json_array_length(provider_thread.payload_json, '$.pendingBackgroundTasks') > 0
+          )
       `;
-      for (const row of rosters) {
-        const providerThread = yield* decodeProviderThreadPayload(row.payload_json);
-        if (backgroundWorkHoldsCompletion(providerThread.pendingBackgroundTasks ?? [])) return true;
-      }
-      return false;
+      if (candidates.length === 0) return false;
+      // The shell decides what is pending, so a hold always has a thread that shows it.
+      const { threads } = yield* decodeShellSnapshot(
+        yield* readShellSnapshotRows({
+          threadIds: candidates.map((row) => ThreadId.make(row.thread_id)),
+        }),
+      );
+      return threads.some((shell) =>
+        backgroundWorkHoldsCompletion(
+          (shell.pendingBackgroundTasks ?? []).filter((task) => !isPullRequestWatchTask(task)),
+        ),
+      );
     }, Effect.mapError(shellSnapshotReadError));
 
     const listActiveShellIndex = Effect.fn("ProjectionStore.listActiveShellIndex")(function* () {

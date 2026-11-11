@@ -129,15 +129,16 @@ const makeHarness = Effect.fn("makeKeepAwakeHarness")(function* (options: {
       Effect.flatMap((next) => PubSub.publish(settingsChanges, next)),
     );
   const work = (
-    type: "run.created" | "run.updated" | "provider-thread.updated",
+    type: "run.created" | "run.updated" | "provider-thread.updated" | "turn-item.updated",
     live: boolean | "unreadable",
+    payload?: { readonly type: "subagent"; readonly status: "running" | "completed" },
   ) =>
     Ref.set(working, live).pipe(
       Effect.andThen(
         Effect.suspend(() => {
           const stored = {
             sequence: committed.length + 1,
-            event: { type },
+            event: { type, payload },
           } as OrchestrationV2StoredEvent;
           committed.push(stored);
           return PubSub.publish(events, stored);
@@ -177,8 +178,11 @@ it.effect("whileWorking holds from the first live work to the last", () =>
     yield* harness.work("run.updated", true);
     assert.equal(yield* harness.next, "query");
 
-    yield* harness.work("provider-thread.updated", false);
+    // Only an item that ended can have changed the answer, so progress asks nothing.
+    yield* harness.work("turn-item.updated", true, { type: "subagent", status: "running" });
+    yield* harness.work("turn-item.updated", false, { type: "subagent", status: "completed" });
     assert.deepEqual([yield* harness.next, yield* harness.next], ["query", "kill"]);
+    assert.isTrue(yield* harness.idle);
     assert.lengthOf(harness.commands, 1);
   }),
 );

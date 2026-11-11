@@ -3,8 +3,9 @@
  *
  * @module KeepAwake
  */
-import type { KeepAwakeMode } from "@t3tools/contracts";
+import type { KeepAwakeMode, OrchestrationV2StoredEvent } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -40,7 +41,17 @@ const inhibitor = ChildProcess.make("/usr/bin/caffeinate", ["-i", "-w", String(p
   forceKillAfter: Duration.seconds(2),
 });
 
-const WORK_EVENT_TYPES = ["run.created", "run.updated", "provider-thread.updated"] as const;
+const WORK_EVENT_TYPES = [
+  "run.created",
+  "run.updated",
+  "provider-thread.updated",
+  "turn-item.updated",
+  "thread.deleted",
+] as const;
+
+// Item updates stream with every tool call; only an ending background item can release the hold.
+const canChangeLiveWork = ({ event }: OrchestrationV2StoredEvent) =>
+  event.type !== "turn-item.updated" || turnItemUpdateCanEndBackgroundWork(event.payload);
 
 const restartSchedule = Schedule.exponential("1 second").pipe(
   Schedule.modifyDelay(({ duration }) =>
@@ -71,7 +82,10 @@ const make = Effect.gen(function* () {
         WORK_EVENT_TYPES.map((eventType) => eventSink.stream({ afterSequence, eventType })),
         { concurrency: "unbounded" },
       );
-      return Stream.concat(Stream.succeed(undefined), workEvents).pipe(
+      return Stream.concat(
+        Stream.succeed(undefined),
+        Stream.filter(workEvents, canChangeLiveWork),
+      ).pipe(
         Stream.buffer({ capacity: 1, strategy: "sliding" }),
         Stream.mapEffect(() => projections.hasLiveAgentWork()),
       );

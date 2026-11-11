@@ -9483,18 +9483,20 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   );
 });
 
-it.effect("reports live agent work for active runs and holding background rosters only", () =>
+it.effect("reports live agent work for active runs and holding background work only", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
-    const now = yield* DateTime.now;
-    const threadId = ThreadId.make("thread:live-work");
+    const threadId = yield* addRolledBackRecoveryCandidate("live-work");
+    const initial = yield* store.getThreadProjection(threadId);
+    const now = initial.updatedAt;
     const runId = RunId.make("run:live-work");
+    // The fixture's command is still running, but its run was rolled back.
     assert.isFalse(yield* store.hasLiveAgentWork());
 
     const run = {
       id: runId,
       threadId,
-      ordinal: 1,
+      ordinal: 2,
       providerInstanceId,
       modelSelection,
       providerThreadId: null,
@@ -9579,5 +9581,66 @@ it.effect("reports live agent work for active runs and holding background roster
       });
       assert.equal(yield* store.hasLiveAgentWork(), expected, name);
     }
+
+    // Work the provider reports only as a turn item, with the run over and the roster empty.
+    const command = {
+      id: TurnItemId.make("item:live-work:command"),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 2,
+      status: "running" as const,
+      title: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "command_execution" as const,
+      input: "sleep 60",
+    };
+    const subagent = {
+      ...command,
+      id: TurnItemId.make("item:live-work:subagent"),
+      type: "subagent" as const,
+      subagentId: NodeId.make("node:live-work:subagent"),
+      origin: "provider_native" as const,
+      driver,
+      providerInstanceId,
+      childThreadId: null,
+      prompt: "Review",
+      result: null,
+    };
+    const items = [
+      ["bare command item", command, false],
+      ["subagent item", subagent, true],
+      [
+        "ended subagent item",
+        { ...subagent, status: "completed" as const, completedAt: now },
+        false,
+      ],
+      ["second subagent item", { ...subagent, id: TurnItemId.make("item:live-work:two") }, true],
+    ] as const;
+    for (const [name, payload, expected] of items) {
+      yield* store.apply({
+        id: EventId.make(`event:live-work:item:${name}`),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload,
+      });
+      assert.equal(yield* store.hasLiveAgentWork(), expected, name);
+    }
+
+    yield* store.apply({
+      id: EventId.make("event:live-work:deleted"),
+      type: "thread.deleted",
+      threadId,
+      occurredAt: now,
+      payload: { ...initial.thread, deletedAt: now },
+    });
+    assert.isFalse(yield* store.hasLiveAgentWork(), "deleted thread");
   }).pipe(Effect.provide(layerTest)),
 );
