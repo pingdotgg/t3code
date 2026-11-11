@@ -74,7 +74,7 @@ import {
   useQuietThreadProjection,
 } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
-import { primaryServerAvailableEditorsAtom, primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import {
   readEnvironmentScope,
   useEnvironmentScope,
@@ -660,7 +660,9 @@ function ThreadSurfaceContent({
   const bridge = useThreadChatBridge(threadRef);
   const { paneId } = useLayoutPane();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
+  const availableEditors =
+    useAtomValue(serverEnvironment.configValueAtom(threadRef.environmentId))?.availableEditors ??
+    [];
   const workspaceMutationId = bridge?.workspaceMutationId ?? null;
   const [pendingFiles, setPendingFiles] = useState<ReadonlySet<string>>(EMPTY_PENDING);
   const onPendingChange = (relativePath: string, pending: boolean) => {
@@ -760,6 +762,12 @@ function ThreadSurfaceContent({
           <PullRequestDetailPanel
             key={`${surface.host ?? ""}:${surface.repository}#${surface.number}`}
             initialTab={surface.detailTab ?? "summary"}
+            revealUrl={surface.revealUrl}
+            onRevealSettled={(revealUrl) => {
+              useRightPanelStore
+                .getState()
+                .settlePullRequestReveal(threadRef, surface.id, revealUrl);
+            }}
             onTabChange={(tab) =>
               useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab)
             }

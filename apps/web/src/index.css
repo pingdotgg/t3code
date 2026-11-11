@@ -610,6 +610,26 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@utility pane-mobile-chrome {
+  @media (width < 48rem) {
+    background-color: var(--app-chrome-background);
+
+    & > [data-pane-header] {
+      background-color: var(--app-chrome-background);
+    }
+
+    & > [data-pane-header] + * {
+      border-start-start-radius: var(--radius-pane);
+      border-start-end-radius: var(--radius-pane);
+      background-color: var(--background);
+    }
+
+    & > [data-chat-header] + * {
+      overflow: hidden;
+    }
+  }
+}
+
 /* The font tokens are declared outside the inline theme so utilities reference
    the variables and Settings -> Appearance can override them at runtime. The
    default stacks are mirrored in `appearanceFonts.ts`. */
@@ -1033,6 +1053,24 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--surface-fill) border-box;
   box-shadow: var(--surface-shadow);
 }
+
+:root:is(:not([data-surface-style]), [data-surface-style="gradient-rim"])
+  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well:not(
+    [data-surface-preview] *
+  ),
+[data-surface-preview="gradient-rim"]
+  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well {
+  --well-fill: var(--raised-fill);
+  --well-rim: var(--raised-rim);
+  --well-shadow: var(--raised-shadow);
+
+  &:is(:hover, [data-pressed]):not([data-popup-open]) {
+    --well-fill: var(--raised-hover-fill);
+    --well-rim: var(--raised-hover-rim);
+    --well-shadow: var(--raised-hover-shadow);
+  }
+}
+
 :where([data-slot="checkbox"], [data-slot="radio"])[data-unchecked]:not([aria-invalid="true"]) {
   --surface-rim: linear-gradient(var(--muted-foreground), var(--muted-foreground));
 }
@@ -1529,8 +1567,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --chrome-art-image: url("./assets/chrome/art-nightly-sunrise-light.jpg") center / cover no-repeat;
 }
 
+/* Dark chrome paints the Orbital Sunrise vector itself, in its colors. The chrome's own
+   color lies over it, strongest where the tabs and thread list sit and thinning toward the
+   window's foot, so the sky reads as the app's chrome and the horizon rises under the UI.
+   Sized past cover and set 8vh low so the horizon clears the list. */
 :root:is(.dark, .black-chrome) [data-chrome-art="nightly"] {
-  --chrome-art-image: url("./assets/chrome/art-nightly-sunrise.jpg") center / cover no-repeat;
+  --chrome-art-image:
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--app-chrome-background) 82%, transparent) 0%,
+      color-mix(in srgb, var(--app-chrome-background) 76%, transparent) 50%,
+      color-mix(in srgb, var(--app-chrome-background) 48%, transparent) 80%,
+      color-mix(in srgb, var(--app-chrome-background) 14%, transparent) 100%
+    ),
+    url("./assets/chrome/art-nightly-sunrise-color.svg") center calc(100% + 8vh) / max(100vw, 192vh)
+      auto no-repeat;
 }
 
 [data-chrome-art="nightly"] {
@@ -3300,6 +3351,10 @@ html[data-theme-id] [data-app-sidebar] {
   }
 }
 
+html[data-theme-id] [data-mobile="true"] [data-app-sidebar] {
+  --dim-foreground: var(--sidebar-muted-foreground);
+}
+
 /* T3 Chat's panel divider is deliberately pink, and its resize affordance
    keeps that color while hovered. Do not neutralize this branded edge. */
 html[data-theme-id="t3-chat"] [data-app-sidebar] {
@@ -3382,8 +3437,10 @@ html:root[data-theme-id="t3-code-classic"] > body {
 
 /* Main's toolbar is its page color. The lifted pane takes its header with it, or the strip
    between the tab notches reads as a black bar. */
-html:root[data-theme-id="t3-code-classic"] [data-chat-header] {
-  background-color: var(--background);
+@media (width >= 48rem) {
+  html:root[data-theme-id="t3-code-classic"] [data-chat-header] {
+    background-color: var(--background);
+  }
 }
 
 html:root[data-theme-id="t3-code-classic"] [data-app-modal] {
@@ -3500,6 +3557,13 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --ss-none: linear-gradient(transparent, transparent);
   --ss-hover: color-mix(in srgb, var(--appearance-contrast-target) 6%, transparent);
   --ss-hover-layer: linear-gradient(var(--ss-hover), var(--ss-hover)) padding-box;
+  --ss-aqua-hue: 0;
+}
+
+/* The jelly stops lean about 16 degrees blue-ward so the default ring lands on the pen's blue.
+   A theme's own accent is turned back by that much, so the jelly keeps the accent's hue. */
+:root[data-theme-id]:not([data-theme-id=""]) {
+  --ss-aqua-hue: 16;
 }
 
 /* Style previews (Settings > Appearance > Style) paint one style inside
@@ -3724,6 +3788,12 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --pill-icon: #525252;
   --pill-rim: var(--composer-pill-rim, linear-gradient(180deg, #00000022, #00000003));
   --pill-shadow: var(--composer-pill-shadow, 0 1px 3px #00000011);
+}
+
+:root[data-surface-style="flat"] [data-chat-composer-compact-send] [data-variant="pill"] {
+  --button-pill-fill: var(--composer-pill-fill);
+  --button-pill-rim: var(--composer-pill-rim);
+  --button-pill-shadow: var(--composer-pill-shadow);
 }
 
 /* Flat sliders use solid tracks and thumbs; only keyboard focus adds a ring. */
@@ -4018,7 +4088,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root[data-surface-style="aqua-blue"] > body,
 [data-surface-preview="aqua-blue"] {
   --ss-background: var(--background);
-  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.55) c h) !important;
+  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.55) c calc(h + var(--ss-aqua-hue))) !important;
   --lit-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--ss-aqua-ring) calc(l + 0.01) calc(c * 0.562) calc(h - 20.792)) 0%,
@@ -4082,7 +4152,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root.dark [data-surface-preview="aqua-blue"],
 :root.black-chrome[data-surface-style="aqua-blue"] [data-chrome-scope] {
   --ss-background: oklch(from var(--background) max(l, 0.195734) c h);
-  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.55) c h) !important;
+  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.55) c calc(h + var(--ss-aqua-hue))) !important;
   --lit-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--ss-aqua-ring) calc(l + 0.01) calc(c * 0.562) calc(h - 20.792)) 0%,
@@ -5420,6 +5490,10 @@ body {
   list-style-type: lower-roman;
 }
 
+.chat-markdown.user-message-markdown ol {
+  list-style-type: decimal;
+}
+
 .chat-markdown li + li {
   margin-top: 0.25rem;
 }
@@ -5759,21 +5833,15 @@ body {
   color: var(--code-foreground);
 }
 
-/* Pierre's find panel and match highlights read these. */
-.diff-render-surface {
+/* Pierre's find panel is a sibling of the diff containers, so it misses their theme tokens.
+   The top inset clears the 32px sticky file header and its line counts. */
+.diff-render-surface > [data-search-panel] {
   --diffs-search-panel-bg: var(--popover);
   --diffs-search-panel-fg: var(--popover-foreground);
-  --diffs-search-panel-accent: var(--primary);
-  --diffs-search-panel-font: var(--font-sans);
-  /* Under a pane header the viewer scrolls under (--surface-top-inset), its
-     scroll targets land at the header's foot (StyledDiffCodeView). */
+  --diffs-search-panel-modified: var(--primary);
+  --diffs-header-font-fallback: var(--font-sans);
+  --diffs-search-panel-inset-top: calc(40px + var(--surface-top-inset, 0px));
   scroll-padding-top: var(--surface-top-inset, 0px);
-}
-
-/* Pierre sticks its find panel below the sticky file header; the header sits
-   at the pane header's foot. */
-.diff-render-surface > [data-diffs-search] {
-  translate: 0 var(--surface-top-inset, 0px);
 }
 
 /* Pierre's file renderer owns its own surface tokens. Keep the root of a file
@@ -5928,6 +5996,17 @@ body {
   margin-top: var(--composer-corner-h);
 }
 
+@media (width < 40rem) {
+  .composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"] {
+    padding-inline-end: var(--composer-corner-w);
+    mask-image: none;
+  }
+
+  .composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"]::before {
+    display: none;
+  }
+}
+
 .composer-prompt-body [data-composer-placeholder] {
   padding-inline-end: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
 }
@@ -6076,8 +6155,12 @@ body {
   }
 }
 
-/* A workspace area with no control of its own takes F6 focus itself; keep that visible. */
+/* A workspace area with no control of its own takes F6 focus itself; keep that visible.
+   workspaceFocus.ts marks those, since :focus-visible also matches a clicked area after a key press. */
 [data-workspace-area]:focus-visible {
+  outline: none;
+}
+[data-workspace-keyboard-focus]:focus {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }

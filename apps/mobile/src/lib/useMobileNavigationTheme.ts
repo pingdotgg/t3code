@@ -15,7 +15,7 @@ export function useMobileNavigationTheme(surface: "screen" | "sidebar" = "screen
         ...base.colors,
         primary: variables["--color-primary-text"],
         background: variables[surface === "sidebar" ? "--color-drawer" : "--color-screen"],
-        card: variables[surface === "sidebar" ? "--color-drawer" : "--color-sheet-solid"],
+        card: variables[surface === "sidebar" ? "--color-drawer" : "--color-header"],
         text: variables[
           surface === "sidebar" ? "--color-drawer-foreground" : "--color-header-foreground"
         ],

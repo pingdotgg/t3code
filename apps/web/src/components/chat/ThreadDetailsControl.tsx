@@ -53,7 +53,7 @@ export function ThreadDetailsControl({
         ...({ "data-part": part } as Record<string, string>),
         className: cn(
           parts[part],
-          multiline && "h-auto min-h-9 py-0 disabled:opacity-100 sm:h-auto sm:min-h-9",
+          multiline && "h-auto min-h-9 py-1.5 disabled:opacity-100 sm:h-auto sm:min-h-9",
           tone === "muted" && "text-muted-foreground hover:text-foreground",
           tone === "primary" && "text-primary hover:text-primary",
           tone === "destructive" &&

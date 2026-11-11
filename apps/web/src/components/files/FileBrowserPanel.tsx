@@ -11,13 +11,12 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { FolderOpen, SearchIcon } from "lucide-react";
-import { ChevronsDownUp, ChevronsUpDown } from "lucide";
+import { FolderOpen, SearchIcon, ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
+
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
-import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -630,10 +629,11 @@ export default function FileBrowserPanel({
                   />
                 }
               >
-                <MorphIcon
-                  className="size-3.5"
-                  icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
-                />
+                {allDirectoriesExpanded ? (
+                  <ChevronsDownUpIcon className="size-3.5" />
+                ) : (
+                  <ChevronsUpDownIcon className="size-3.5" />
+                )}
               </TooltipTrigger>
               <TooltipPopup>
                 {expandAll || allDirectoriesExpanded

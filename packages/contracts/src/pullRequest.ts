@@ -89,6 +89,7 @@ export type PullRequestActor = typeof PullRequestActor.Type;
 export const PullRequestLabel = Schema.Struct({
   name: TrimmedNonEmptyString,
   color: Schema.NullOr(Schema.String),
+  description: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type PullRequestLabel = typeof PullRequestLabel.Type;
 
@@ -115,6 +116,11 @@ export const PullRequestCheck = Schema.Struct({
   startedAt: Schema.optional(IsoDateTime),
   completedAt: Schema.optional(IsoDateTime),
   required: Schema.optional(Schema.Boolean),
+  /**
+   * Not a check: it stands for ones the host could not list, such as workflow runs awaiting
+   * approval when that read fails, so nothing waits on it or counts it as passing.
+   */
+  placeholder: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCheck = typeof PullRequestCheck.Type;
 
@@ -174,6 +180,8 @@ export const PullRequestThreadComment = Schema.Struct({
   createdAt: IsoDateTime,
   editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   url: Schema.NullOr(Schema.String),
+  /** The review that posted the comment, so a link to a review with no text finds its comments. */
+  reviewUrl: Schema.optional(Schema.NullOr(Schema.String)),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
   canEdit: Schema.optional(Schema.Boolean),
 });
@@ -204,6 +212,16 @@ export const PullRequestReviewThread = Schema.Struct({
   canResolve: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReviewThread = typeof PullRequestReviewThread.Type;
+
+/** A thread on the change request as a whole, such as a GitLab overview thread. */
+export const PullRequestOverviewThread = Schema.Struct({
+  ...PullRequestReviewThread.fields,
+  path: Schema.Null,
+  line: Schema.Null,
+});
+export type PullRequestOverviewThread = typeof PullRequestOverviewThread.Type;
+
+export type PullRequestConversationThread = PullRequestReviewThread | PullRequestOverviewThread;
 
 export const PullRequestReviewerKind = Schema.Literals(["user", "team"]);
 export type PullRequestReviewerKind = typeof PullRequestReviewerKind.Type;
@@ -395,12 +413,16 @@ export const PullRequestListCursors = Schema.Record(
 );
 export type PullRequestListCursors = typeof PullRequestListCursors.Type;
 
+export const PULL_REQUEST_LIST_PROJECT_LIMIT = 100;
+
 export const PullRequestListInput = Schema.Struct({
   state: PullRequestListState,
   involvement: Schema.optional(PullRequestInvolvement),
   filters: Schema.optional(PullRequestListFilters),
   projectId: Schema.optional(ProjectId),
-  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  projectIds: Schema.optional(
+    Schema.Array(ProjectId).check(Schema.isMaxLength(PULL_REQUEST_LIST_PROJECT_LIMIT)),
+  ),
   host: Schema.optional(TrimmedNonEmptyString),
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 }))),
   cursors: Schema.optional(PullRequestListCursors),
@@ -414,6 +436,8 @@ export const PullRequestProviderSummary = Schema.Struct({
   searchesOnHost: Schema.Boolean,
   actions: Schema.optional(ForwardCompatibleArray(PullRequestAction)),
   projectCount: PositiveInt,
+  /** SSH checkouts can resolve to an HTTP authority different from their stored identity. */
+  projectIds: Schema.optional(Schema.Array(ProjectId)),
   configured: Schema.Boolean,
   detail: Schema.NullOr(TrimmedNonEmptyString),
 });
@@ -694,6 +718,8 @@ export const PullRequestActivity = Schema.Struct({
   commentsTruncated: Schema.Boolean,
   reviewThreadsTruncated: Schema.optional(Schema.Boolean),
   reviewThreads: Schema.Array(PullRequestReviewThread),
+  // Apart from reviewThreads so clients that require a thread path still decode the activity.
+  overviewThreads: Schema.optional(Schema.Array(PullRequestOverviewThread)),
   commits: Schema.Array(PullRequestCommit),
   /**
    * Each time somebody was asked for a review, oldest first, where the host keeps those events.
@@ -703,6 +729,13 @@ export const PullRequestActivity = Schema.Struct({
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 });
 export type PullRequestActivity = typeof PullRequestActivity.Type;
+
+export const pullRequestConversationThreads = (
+  activity: Pick<PullRequestActivity, "reviewThreads" | "overviewThreads">,
+): ReadonlyArray<PullRequestConversationThread> =>
+  activity.overviewThreads === undefined || activity.overviewThreads.length === 0
+    ? activity.reviewThreads
+    : [...activity.reviewThreads, ...activity.overviewThreads];
 
 export const PullRequestDetailView = Schema.Struct({
   ...PullRequestDetail.fields,
@@ -977,6 +1010,7 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
   {
     reason: PullRequestUnavailableReason,
     provider: Schema.optional(SourceControlProviderKind),
+    listResult: Schema.optional(PullRequestListResult),
     /**
      * What the host needs on the server, in its own words. Absent from older servers, which
      * shipped no such field, and for a host that names nothing.
@@ -1008,6 +1042,7 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
     operation: Schema.String,
     detail: TrimmedNonEmptyString,
     reason: Schema.optional(Schema.Literal("not-found")),
+    listResult: Schema.optional(PullRequestListResult),
     cause: Schema.optional(Schema.Defect()),
   },
   { httpApiStatus: 502 },

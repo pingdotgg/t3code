@@ -5,6 +5,8 @@ import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
+
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   commandSucceeds: false,
@@ -123,6 +125,8 @@ it.each([
   ["disconnect", "Could not disconnect agent session"],
 ])("clears the previous %s error after a successful retry", async (action, title) => {
   setup();
+  const container = document.createElement("div");
+  container.style.paddingTop = "240px";
   await using screen = await render(
     <ToastProvider timeout={0}>
       <ThreadRelationshipsPanel
@@ -132,7 +136,7 @@ it.each([
         showSideChats
       />
     </ToastProvider>,
-    { router: "/environment/fork" },
+    { router: "/environment/fork", container },
   );
 
   const runAction = async () => {
@@ -201,8 +205,12 @@ it("opens an idle child from Lineage when its shell has not been loaded", async 
       showSideChats
     />,
   );
-  await screen.getByRole("button", { name: /Previous agents/ }).click();
-  const child = page.getByRole("menuitem", { name: /Idle child/ });
+  const previousAgents = screen.getByRole("button", { name: "Previous agents" });
+  await expect.element(previousAgents).toHaveAttribute("aria-expanded", "false");
+  await expect.element(screen.getByRole("button", { name: /Idle child/ })).not.toBeInTheDocument();
+  await previousAgents.click();
+  await expect.element(previousAgents).toHaveAttribute("aria-expanded", "true");
+  const child = screen.getByRole("button", { name: /Idle child/ });
   await expect.element(child).toBeEnabled();
   await child.click();
   await vi.waitFor(() =>
@@ -298,18 +306,20 @@ it("folds a finished remote subagent into previous agents with its full title in
         remoteChild: {
           environmentId: remoteEnvId,
           threadId: remoteThreadId,
-          label: "Remote VM",
+          label: "Remote VM with a long machine name in the office",
         },
       },
     ],
   };
   await using screen = await render(
-    <ThreadRelationshipsPanel
-      environmentId={environmentId}
-      threadId={threadId}
-      showLineage
-      showSideChats={false}
-    />,
+    <div style={{ width: 320 }}>
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={threadId}
+        showLineage
+        showSideChats={false}
+      />
+    </div>,
     { router: "/environment/fork" },
   );
 
@@ -317,13 +327,17 @@ it("folds a finished remote subagent into previous agents with its full title in
     .element(page.getByRole("button", { name: new RegExp(longTitle) }))
     .not.toBeInTheDocument();
   await screen.getByRole("button", { name: "Previous agents" }).click();
-  const row = page.getByRole("menuitem", { name: new RegExp(longTitle) });
+  const row = screen.getByRole("button", { name: new RegExp(longTitle) });
+  // A long environment label must not squeeze the title out of the row.
+  expect(
+    page.getByText(longTitle, { exact: true }).element().getBoundingClientRect().width,
+  ).toBeGreaterThan(0);
   await userEvent.hover(row);
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
   );
   expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
-    "Runs on Remote VM. Connect to it to open the thread there.",
+    "Runs on Remote VM with a long machine name in the office. Connect to it to open the thread there.",
   );
 
   await row.click({ force: true });

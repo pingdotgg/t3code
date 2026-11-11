@@ -1,3 +1,4 @@
+import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 /**
  * The top of the Summary tab: whether this pull request can merge, one expandable row per thing
  * that decides it (checks, reviews, conflicts), and the merge itself under them. The merge control
@@ -73,15 +74,27 @@ function ReadinessRow({
   label,
   meta,
   children,
+  revealUrl,
 }: {
+  revealUrl?: string | undefined;
   icon: ReactNode;
   label: ReactNode;
   meta?: ReactNode;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(revealUrl !== undefined);
+  const [seenRevealUrl, setSeenRevealUrl] = useState(revealUrl);
+  if (revealUrl !== seenRevealUrl) {
+    setSeenRevealUrl(revealUrl);
+    if (revealUrl !== undefined) setOpen(true);
+  }
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      data-pull-request-summary-section
+      aria-label={revealUrl !== undefined ? "Checks" : undefined}
+    >
       <CollapsibleTrigger render={<ContentButton variant="panel-row" />}>
         <span className="flex min-w-0 flex-1 items-center gap-2 text-meta">
           {icon}
@@ -96,7 +109,7 @@ function ReadinessRow({
           />
         </span>
       </CollapsibleTrigger>
-      <CollapsiblePanel>
+      <CollapsiblePanel animate={revealUrl === undefined}>
         <div className="px-2 pb-2 pl-7">{children}</div>
       </CollapsiblePanel>
     </Collapsible>
@@ -104,6 +117,7 @@ function ReadinessRow({
 }
 
 export function PullRequestReadinessCard({
+  revealUrl,
   environmentId,
   threadRef,
   reference,
@@ -133,6 +147,7 @@ export function PullRequestReadinessCard({
   primaryMenuVariant = "default",
   note,
 }: {
+  revealUrl?: string | undefined;
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
   reference: PullRequestRef;
@@ -278,6 +293,7 @@ export function PullRequestReadinessCard({
     <div className="surface-panel min-w-0 overflow-hidden rounded-xl">
       <div>
         <ReadinessRow
+          revealUrl={parsePullRequestAnchor(revealUrl)?.kind === "checks" ? revealUrl : undefined}
           icon={checksIcon}
           label={
             checksStale && checksPresentation

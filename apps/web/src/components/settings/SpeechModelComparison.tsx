@@ -1,4 +1,4 @@
-import type { EnvironmentSpeechModel } from "@t3tools/contracts";
+import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -74,14 +74,17 @@ export function LanguageRow({
 export function ModelBenchmarks({
   model,
   languages,
+  tier,
   facts,
 }: {
   model: EnvironmentSpeechModel;
   languages: readonly string[];
+  tier: SpeechBenchmarkTier;
   /** Plain facts, such as language count and size, shown after the scores. */
   facts: readonly string[];
 }) {
   const data = model.benchmark;
+  const seconds = data?.secondsPer30s[tier];
   const visible = !data
     ? []
     : languages.length
@@ -109,21 +112,21 @@ export function ModelBenchmarks({
           </span>
         );
       })}
-      {data ? (
-        <span>
-          Speed:{" "}
-          {data.secondsPer30s === null ? (
-            "not benchmarked"
-          ) : (
-            <>
-              <Text variant="meta" tone="strong" emphasis>
-                {data.secondsPer30s} s
-              </Text>{" "}
-              / 30 s
-            </>
-          )}
-        </span>
-      ) : null}
+      <span>
+        Speed:{" "}
+        {tier === "cpu" && data && data.secondsPer30s.cpu === undefined ? (
+          "update server"
+        ) : seconds == null ? (
+          "not benchmarked"
+        ) : (
+          <>
+            <Text variant="meta" tone="strong" emphasis>
+              {seconds} s
+            </Text>{" "}
+            / 30 s
+          </>
+        )}
+      </span>
       {facts.map((fact) => (
         <span key={fact}>{fact}</span>
       ))}

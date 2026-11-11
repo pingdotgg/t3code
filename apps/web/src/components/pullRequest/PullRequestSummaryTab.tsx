@@ -1,17 +1,25 @@
+import {
+  parsePullRequestAnchor,
+  pullRequestAnchorMatchesUrl,
+  resolvePullRequestReviewAnchor,
+} from "@t3tools/shared/pullRequestAnchor";
+import { holdLinkedNodeInView } from "./holdLinkedNodeInView";
 import { useAtomValue } from "@effect/atom-react";
 import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
-import type {
-  EnvironmentId,
-  PullRequestComment,
-  PullRequestDetailView,
-  PullRequestRef,
-  PullRequestReviewThread,
-  PullRequestThreadCommentsResult,
-  ScopedThreadRef,
+import {
+  type EnvironmentId,
+  type PullRequestComment,
+  type PullRequestDetailView,
+  type PullRequestRef,
+  type PullRequestConversationThread,
+  type PullRequestReviewThread,
+  type ScopedThreadRef,
+  pullRequestConversationThreads,
+  type PullRequestThreadCommentsResult,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -24,7 +32,7 @@ import {
   TagIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -95,6 +103,7 @@ import {
   pullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 import { PullRequestReactionBar } from "./PullRequestReactions";
+import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 
@@ -122,7 +131,7 @@ function CommentLocation({
   thread,
 }: {
   comment: PullRequestComment;
-  thread: PullRequestReviewThread | undefined;
+  thread: PullRequestConversationThread | undefined;
 }) {
   const path = thread?.path ?? comment.path;
   if (!path) return null;
@@ -159,7 +168,9 @@ function CommentBody({
   comment,
   editing,
   className,
+  revealCount = 0,
 }: {
+  revealCount?: number;
   comment: PullRequestComment;
   editing: CommentEditing;
   className?: string | undefined;
@@ -184,6 +195,7 @@ function CommentBody({
     <div className={cn("flex items-start gap-1", className)}>
       <PullRequestCommentBody
         key={comment.id}
+        revealCount={revealCount}
         className="min-w-0 flex-1"
         text={comment.body}
         cwd={editing.cwd}
@@ -203,9 +215,10 @@ function CommentBody({
  */
 function chatSubject(
   comment: PullRequestComment,
-  thread: PullRequestReviewThread | undefined,
+  thread: PullRequestConversationThread | undefined,
 ): PullRequestChatSubject | null {
-  if (thread !== undefined) {
+  // An overview thread has no line to attach, so it goes as its opening remark, as fixing it does.
+  if (thread !== undefined && thread.path !== null) {
     return thread.comments.some((entry) => visibleBody(entry.body) !== null)
       ? { kind: "thread", thread }
       : null;
@@ -231,6 +244,7 @@ function Section({
   meta,
   defaultOpen = true,
   keepMounted = false,
+  revealCount = 0,
   actions,
   children,
 }: {
@@ -241,10 +255,20 @@ function Section({
   meta?: ReactNode;
   defaultOpen?: boolean;
   keepMounted?: boolean;
+  /** Reopens the section each time a link reveals it. */
+  revealCount?: number;
   actions?: ReactNode;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  // A reveal opens at once: the opening animation would move what was just scrolled to.
+  const [open, setOpen] = useState<boolean | "revealed">(
+    revealCount > 0 ? "revealed" : defaultOpen,
+  );
+  const [seenRevealCount, setSeenRevealCount] = useState(revealCount);
+  if (revealCount !== seenRevealCount) {
+    setSeenRevealCount(revealCount);
+    setOpen("revealed");
+  }
   const headingRef = useRef<HTMLDivElement>(null);
   const setOpenWithScrollAnchor = (nextOpen: boolean) => {
     if (!nextOpen) {
@@ -266,16 +290,16 @@ function Section({
   };
   return (
     <Collapsible
-      open={open}
+      open={open !== false}
       onOpenChange={setOpenWithScrollAnchor}
       render={<section aria-label={title} />}
       data-pull-request-summary-section
     >
       <div
         ref={headingRef}
-        className="sticky top-0 z-10 flex w-full items-center bg-(--code-surface) pr-4"
+        className="sticky top-0 z-10 flex w-full flex-wrap items-center gap-x-2 bg-(--code-surface) pr-4"
       >
-        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-label text-foreground">
+        <CollapsibleTrigger className="flex min-w-fit flex-1 items-center gap-1.5 px-4 py-3 text-left text-label text-foreground">
           <span>{title}</span>
           {count !== undefined ? (
             <span className="font-normal tabular-nums text-muted-foreground">
@@ -295,7 +319,7 @@ function Section({
         ) : null}
         {actions}
       </div>
-      <CollapsiblePanel keepMounted={keepMounted}>
+      <CollapsiblePanel keepMounted={keepMounted} animate={open !== "revealed"}>
         <div className="px-4 pb-4">{children}</div>
       </CollapsiblePanel>
     </Collapsible>
@@ -309,6 +333,8 @@ const CommentFilterSchema = Schema.Struct({ bots: Schema.Boolean, resolved: Sche
 const DEFAULT_COMMENT_FILTER: typeof CommentFilterSchema.Type = { bots: false, resolved: false };
 
 export function PullRequestSummaryTab({
+  revealUrl,
+  onRevealSettled,
   scrollerRef,
   readiness,
   environmentId,
@@ -323,6 +349,9 @@ export function PullRequestSummaryTab({
   onAddToChat,
   onRefresh,
 }: {
+  /** A clicked link to scroll to, until onRevealSettled reports it shown. */
+  revealUrl?: string | undefined;
+  onRevealSettled?: ((revealUrl: string) => void) | undefined;
   scrollerRef?: (node: HTMLDivElement | null) => void;
   /** The readiness card: checks, reviews and conflicts over the merge. Built by the panel. */
   readiness?: ReactNode;
@@ -347,13 +376,38 @@ export function PullRequestSummaryTab({
     DEFAULT_COMMENT_FILTER,
     CommentFilterSchema,
   );
-  const items = pullRequestConversationItems(detail.comments, detail.reviewThreads);
+  const location = parsePullRequestAnchor(revealUrl);
+  const [linked, setLinked] = useState<{ url: string; anchor: string; count: number } | null>(null);
+  const [seenRevealUrl, setSeenRevealUrl] = useState<string | undefined>(undefined);
+  if (revealUrl !== seenRevealUrl) {
+    setSeenRevealUrl(revealUrl);
+    if (location?.kind === "timeline") {
+      setLinked({ url: detail.url, anchor: location.anchor, count: (linked?.count ?? 0) + 1 });
+    }
+  }
+  const linkedAnchor =
+    linked?.url === detail.url
+      ? resolvePullRequestReviewAnchor(
+          linked.anchor,
+          detail.comments,
+          pullRequestConversationThreads(detail),
+        )
+      : null;
+  const matchesLink = (url: string | null) =>
+    linkedAnchor !== null && pullRequestAnchorMatchesUrl(linkedAnchor, url);
+  const itemMatchesLink = (item: PullRequestConversationItem) =>
+    pullRequestConversationItemComments(item).some((comment) => matchesLink(comment.url));
+  const items = pullRequestConversationItems(
+    detail.comments,
+    pullRequestConversationThreads(detail),
+  );
   const commentCount = items.reduce(
     (count, item) => count + pullRequestConversationItemComments(item).length,
     0,
   );
   // Filter whole conversations before promoting open threads, keeping human replies to bots.
-  const filteredItems = filterPullRequestConversationItems(items, commentFilter);
+  const filtered = new Set(filterPullRequestConversationItems(items, commentFilter));
+  const filteredItems = items.filter((item) => filtered.has(item) || itemMatchesLink(item));
   const filteredOutCount =
     commentCount -
     filteredItems.reduce(
@@ -376,11 +430,23 @@ export function PullRequestSummaryTab({
     item.kind === "thread" ? !promotedIds.has(item.id) : !pinnedIds.has(item.id),
   );
   // Open threads lead, but share the same mounting budget as the remaining conversation.
-  const visibleOpenThreads = openThreads.slice(0, shownConversations);
-  const { shown: recentItems, hidden: hiddenTalkCount } = pagePullRequestConversationItems(
-    talkItems,
-    Math.max(0, shownConversations - visibleOpenThreads.length),
+  const pagedOpenThreads = openThreads.slice(0, shownConversations);
+  const linkedOpenThread = openThreads.find((thread) =>
+    thread.comments.some((comment) => matchesLink(comment.url)),
   );
+  const visibleOpenThreads =
+    linkedOpenThread && !pagedOpenThreads.includes(linkedOpenThread)
+      ? [...pagedOpenThreads, linkedOpenThread]
+      : pagedOpenThreads;
+  const page = pagePullRequestConversationItems(
+    talkItems,
+    Math.max(0, shownConversations - pagedOpenThreads.length),
+  );
+  const linkedTalkItem = talkItems.find(itemMatchesLink);
+  const extraLinkedItem =
+    linkedTalkItem && !page.shown.includes(linkedTalkItem) ? linkedTalkItem : null;
+  const recentItems = extraLinkedItem ? [...page.shown, extraLinkedItem] : page.shown;
+  const hiddenTalkCount = page.hidden - (extraLinkedItem ? 1 : 0);
   const hiddenConversationCount = openThreads.length - visibleOpenThreads.length + hiddenTalkCount;
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
   const visibleItems = orderPullRequestComments(recentItems, commentOrder);
@@ -453,6 +519,72 @@ export function PullRequestSummaryTab({
   const [commentSaving, setCommentSaving] = useState(false);
   const editingCommentId = commentScope?.pullRequest === detail.url ? commentScope.commentId : null;
 
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [checksReveals, setChecksReveals] = useState(0);
+  const [descriptionReveals, setDescriptionReveals] = useState(0);
+  const [seenSectionUrl, setSeenSectionUrl] = useState<string | undefined>(undefined);
+  if (revealUrl !== seenSectionUrl) {
+    setSeenSectionUrl(revealUrl);
+    if (location?.kind === "checks") setChecksReveals((count) => count + 1);
+    if (location?.kind === "summary" && location.anchor !== "top") {
+      setDescriptionReveals((count) => count + 1);
+    }
+  }
+  const stopHolding = useRef<(() => void) | null>(null);
+  const revealSummary = useEffectEvent(() => {
+    const root = scrollRef.current;
+    if (revealUrl === undefined || !root) return;
+    let target: HTMLElement | null | undefined;
+    if (location?.kind === "checks") {
+      target = root.querySelector<HTMLElement>(
+        '[data-pull-request-summary-section][aria-label="Checks"]',
+      );
+    } else if (location?.kind === "timeline") {
+      target = root.querySelector<HTMLElement>("[data-pr-link-target=true]");
+    } else if (location?.kind === "summary") {
+      if (location.anchor === "top") {
+        stopHolding.current?.();
+        root.scrollTop = 0;
+        return onRevealSettled?.(revealUrl);
+      }
+      target = /^issue-\d+$/.test(location.anchor)
+        ? root.querySelector<HTMLElement>("[data-pr-description]")
+        : [...root.querySelectorAll<HTMLElement>("[id]")].find(
+            (node) => node.id === location.anchor || node.id === `user-content-${location.anchor}`,
+          );
+    }
+    // A heading may still be rendering; the link stays pending until it appears.
+    if (!target) return;
+    stopHolding.current?.();
+    const heading = target.hasAttribute("data-pull-request-summary-section")
+      ? null
+      : target.closest("[data-pull-request-summary-section]")?.firstElementChild;
+    stopHolding.current = holdLinkedNodeInView(
+      target,
+      root,
+      () => (heading?.getBoundingClientRect().height ?? 0) + (heading ? 8 : 0),
+    );
+    onRevealSettled?.(revealUrl);
+  });
+  const editingDescription = bodyScope?.url === detail.url;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls to a linked section, description or heading once it renders
+  useEffect(() => {
+    revealSummary();
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- retries once the description markdown renders, including after its editor closes
+    revealUrl,
+    description,
+    checksReveals,
+    descriptionReveals,
+    editingDescription,
+    linked,
+    detail.comments,
+    detail.reviewThreads,
+    detail.overviewThreads,
+    activityPending,
+  ]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the hold observes DOM outside React and must end with the tab
+  useEffect(() => () => stopHolding.current?.(), []);
   // Checkbox ticks and the editor share one draft, so each starts from the other's latest body.
   const saveDescription = async (body: string) => {
     const key = detail.url;
@@ -515,9 +647,20 @@ export function PullRequestSummaryTab({
     />
   );
 
+  const resolveButtonFor = (thread: PullRequestConversationThread | undefined) =>
+    thread === undefined ? null : (
+      <PullRequestResolveThreadButton
+        environmentId={environmentId}
+        reference={reference}
+        detail={detail}
+        thread={thread}
+        onRefresh={onRefresh}
+      />
+    );
+
   const renderCommentCard = (
     comment: PullRequestComment,
-    thread: PullRequestReviewThread | undefined,
+    thread: PullRequestConversationThread | undefined,
     { reply = false, footer }: { reply?: boolean; footer?: ReactNode } = {},
   ) => {
     const body = visibleBody(comment.body);
@@ -527,7 +670,7 @@ export function PullRequestSummaryTab({
       (comment.kind !== "review" && comment.kind !== "review-comment") ||
       outcome === "approved"
         ? null
-        : thread === undefined
+        : thread === undefined || thread.path === null
           ? body === null
             ? null
             : { kind: "comment", comment }
@@ -537,7 +680,9 @@ export function PullRequestSummaryTab({
     return (
       <article
         key={`${detail.url}:${comment.id}`}
-        className="group rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
+        data-pr-link-target={matchesLink(comment.url) || undefined}
+        tabIndex={matchesLink(comment.url) ? -1 : undefined}
+        className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-primary/40 rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
       >
         <div className="flex flex-wrap items-center gap-1.5 px-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
@@ -566,6 +711,7 @@ export function PullRequestSummaryTab({
               </span>
             </Button>
           ) : null}
+          {resolveButtonFor(thread)}
           {onAddToChat && chat !== null ? (
             <AddToChatButton onClick={() => onAddToChat(chat)} />
           ) : null}
@@ -576,7 +722,12 @@ export function PullRequestSummaryTab({
           </div>
         )}
         {body === null && !commentEditing.canEdit(comment) ? null : (
-          <CommentBody className="mt-2 px-3" comment={comment} editing={commentEditing} />
+          <CommentBody
+            revealCount={matchesLink(comment.url) ? (linked?.count ?? 0) : 0}
+            className="mt-2 px-3"
+            comment={comment}
+            editing={commentEditing}
+          />
         )}
         <div className="mt-2 flex px-3">{reactionBarFor(comment)}</div>
         {footer}
@@ -594,8 +745,14 @@ export function PullRequestSummaryTab({
     const hasDetail = body !== null || commentEditing.canEdit(comment) || reactions.length > 0;
     const actor = comment.author;
     return (
-      <div key={`${detail.url}:${comment.id}`}>
+      <div
+        key={`${detail.url}:${comment.id}:${matchesLink(comment.url) ? linked?.count : 0}`}
+        data-pr-link-target={matchesLink(comment.url) || undefined}
+        tabIndex={matchesLink(comment.url) ? -1 : undefined}
+        className="data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-primary/40"
+      >
         <PullRequestReviewEntry
+          defaultOpen={matchesLink(comment.url)}
           actor={actor}
           profileUrl={
             actor
@@ -642,7 +799,11 @@ export function PullRequestSummaryTab({
           {hasDetail ? (
             <>
               {body === null && !commentEditing.canEdit(comment) ? null : (
-                <CommentBody comment={comment} editing={commentEditing} />
+                <CommentBody
+                  revealCount={matchesLink(comment.url) ? (linked?.count ?? 0) : 0}
+                  comment={comment}
+                  editing={commentEditing}
+                />
               )}
               <div className="mt-2 flex">{reactionBarFor(comment)}</div>
             </>
@@ -656,8 +817,9 @@ export function PullRequestSummaryTab({
   const renderThreadCard = (thread: PullRequestReviewThread) => (
     <ReviewThreadCard
       // Named with the pull request too: a thread id is the host's own.
-      key={`${detail.url}:${thread.id}`}
+      key={`${detail.url}:${thread.id}:${thread.comments.some((comment) => matchesLink(comment.url)) ? linked?.count : 0}`}
       standalone
+      revealAnchor={linkedAnchor}
       thread={thread}
       workspaceRoot={detail.workspaceRoot}
       completionScope={completionScope}
@@ -747,7 +909,8 @@ export function PullRequestSummaryTab({
       const chat = chatSubject(comment, item.thread);
       return (
         <PullRequestResolvedThreadRow
-          key={`${detail.url}:thread:${item.id}`}
+          key={`${detail.url}:thread:${item.id}:${itemMatchesLink(item) ? linked?.count : 0}`}
+          defaultOpen={itemMatchesLink(item)}
           path={item.thread.path}
           line={item.thread.line}
           outdated={item.thread.isOutdated}
@@ -759,7 +922,15 @@ export function PullRequestSummaryTab({
             ) : null
           }
         >
-          {renderThreadCard(item.thread)}
+          {item.thread.path === null ? (
+            <div className="space-y-2">
+              {renderCommentCard(comment, item.thread)}
+              {replies}
+              {moreReplies}
+            </div>
+          ) : (
+            renderThreadCard(item.thread)
+          )}
         </PullRequestResolvedThreadRow>
       );
     }
@@ -780,12 +951,24 @@ export function PullRequestSummaryTab({
   const attachments = pullRequestAttachments(detail.body);
 
   return (
-    <div ref={scrollerRef} className="h-full overflow-y-auto" data-pull-request-summary-scroll>
+    <div
+      ref={(node) => {
+        scrollRef.current = node;
+        scrollerRef?.(node);
+      }}
+      className="h-full overflow-y-auto"
+      data-pull-request-summary-scroll
+    >
       {readiness ? <section className="px-4 pt-3.5 pb-1.5">{readiness}</section> : null}
 
-      <Section key={`description:${detail.url}`} title="Description" keepMounted>
+      <Section
+        key={`description:${detail.url}`}
+        title="Description"
+        keepMounted
+        revealCount={descriptionReveals}
+      >
         <div className="group">
-          {bodyScope?.url === detail.url ? (
+          {editingDescription ? (
             <PullRequestMarkdownEditor
               allowEmpty
               value={bodyScope.body}
@@ -800,10 +983,11 @@ export function PullRequestSummaryTab({
               onCancel={() => setBodyScope(null)}
             />
           ) : (
-            <div className="flex items-start gap-1">
+            <div className="flex items-start gap-1" data-pr-description>
               <PullRequestCommentBody
                 key={detail.url}
                 variant="description"
+                revealCount={descriptionReveals}
                 className="min-w-0 flex-1"
                 text={description.trim().length > 0 ? description : "_No description provided._"}
                 cwd={detail.workspaceRoot}
@@ -831,6 +1015,7 @@ export function PullRequestSummaryTab({
                 label={label}
                 size="default"
                 className="max-w-48"
+                focusable
               />
             ))}
             {detail.capabilities.labels === true ? (
@@ -879,12 +1064,13 @@ export function PullRequestSummaryTab({
       <Section
         key={`conversation:${detail.url}`}
         title="Conversation"
+        revealCount={linked?.url === detail.url ? linked.count : 0}
         count={
           activityPending || activityError ? undefined : Math.max(detail.commentCount, commentCount)
         }
         meta={conversationMeta}
         actions={
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <Menu>
               <MenuTrigger
                 render={<Button size="xs" variant="ghost-muted" />}
@@ -931,6 +1117,11 @@ export function PullRequestSummaryTab({
           </div>
         }
       >
+        {linkedAnchor !== null && revealUrl === undefined && !items.some(itemMatchesLink) ? (
+          <p role="status" className="py-4 text-meta text-muted-foreground">
+            The linked item is not in the loaded activity.
+          </p>
+        ) : null}
         {activityPending ? (
           <PullRequestConversationGhost terminology={terminology} />
         ) : activityError ? (

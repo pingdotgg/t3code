@@ -497,7 +497,7 @@ function QuestionOptionRow({
         <span
           aria-hidden
           className={cn(
-            "flex size-4 shrink-0 items-center justify-center rounded-kbd",
+            "flex size-4 shrink-0 items-center justify-center rounded-kbd border border-foreground/55",
             selected ? "surface-gloss-on text-primary-foreground" : "surface-well",
           )}
         >

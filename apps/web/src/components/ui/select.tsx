@@ -174,7 +174,7 @@ function SelectPopup({
         sideOffset={sideOffset}
       >
         <SelectPrimitive.Popup
-          className="origin-(--transform-origin) rounded-card text-foreground outline-none"
+          className="origin-(--transform-origin) rounded-card text-foreground outline-none [-webkit-app-region:no-drag]"
           data-slot="select-popup"
           {...props}
         >

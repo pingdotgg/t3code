@@ -138,7 +138,7 @@ export function NoProjectsComposer({
           environmentId={environmentId}
           canOperateThread={canOperateThread}
           // A first thread has no history to compact.
-          isCompacting={false}
+          canSteer={true}
           resumeCompactionTokens={null}
           keepFullHistory={false}
           onToggleKeepFullHistory={() => {}}
@@ -157,6 +157,7 @@ export function NoProjectsComposer({
           activeThreadId={null}
           activeProjectId={null}
           activeThread={undefined}
+          activeThreadRuns={EMPTY_ENTRIES}
           promptHistoryEntries={EMPTY_ENTRIES}
           forceExpandedOnMobile={false}
           projectSelectionRequired={false}

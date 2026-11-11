@@ -89,6 +89,13 @@ export const Actor = Schema.Struct({
 })
 export interface Actor extends Schema.Struct.Type<typeof Actor.fields> {}
 
+/** A review object for a given pull request. */
+export const PullRequestReviewPullRequestReview = Schema.Struct({
+  /** The HTTP URL permalink for this PullRequestReview. */
+  url: Shared.URI
+})
+export interface PullRequestReviewPullRequestReview extends Schema.Struct.Type<typeof PullRequestReviewPullRequestReview.fields> {}
+
 /**
  * `fragment ThreadComment on PullRequestReviewComment`
  *
@@ -109,6 +116,8 @@ export const ThreadComment = Schema.Struct({
   url: Shared.URI,
   /** Returns whether or not a comment has been minimized. */
   isMinimized: Schema.Boolean,
+  /** The pull request review associated with this review comment. */
+  pullRequestReview: Schema.NullOr(PullRequestReviewPullRequestReview),
   /** A list of reactions grouped by content left on the subject. */
   reactionGroups: Schema.NullOr(Schema.Array(ReactionGroup))
 })
@@ -517,7 +526,7 @@ export const ReviewThreads = GraphQL.query("ReviewThreads", {
     fragments: [
       { name: "ReviewThreadPage", body: ["on PullRequestReviewThreadConnection{totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated path line diffSide comments(first:10){totalCount pageInfo{hasNextPage endCursor}nodes{...ThreadComment}}firstComment:comments(first:1){nodes{diffHunk}}}}"] },
       { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Organization{login}...on Mannequin{login}}}}}"] },
-      { name: "ThreadComment", body: ["on PullRequestReviewComment{id author{__typename login avatarUrl}body createdAt lastEditedAt url isMinimized...Reactions}"] }
+      { name: "ThreadComment", body: ["on PullRequestReviewComment{id author{__typename login avatarUrl}body createdAt lastEditedAt url isMinimized pullRequestReview{url}...Reactions}"] }
     ]
   },
   variables: {
@@ -568,7 +577,7 @@ export const ReviewThreadPages = GraphQL.query("ReviewThreadPages", {
     ],
     fragments: [
       { name: "ReviewThreadPage", body: ["on PullRequestReviewThreadConnection{totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated path line diffSide comments(first:10){totalCount pageInfo{hasNextPage endCursor}nodes{...ThreadComment}}firstComment:comments(first:1){nodes{diffHunk}}}}"] },
-      { name: "ThreadComment", body: ["on PullRequestReviewComment{id author{__typename login avatarUrl}body createdAt lastEditedAt url isMinimized...Reactions}"] },
+      { name: "ThreadComment", body: ["on PullRequestReviewComment{id author{__typename login avatarUrl}body createdAt lastEditedAt url isMinimized pullRequestReview{url}...Reactions}"] },
       { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Organization{login}...on Mannequin{login}}}}}"] }
     ]
   },
@@ -645,7 +654,7 @@ export const ReviewThreadComments = GraphQL.query("ReviewThreadComments", {
       { name: "node", body: ["(id:$", "threadId", "){__typename...on PullRequestReviewThread{pullRequest{id}comments(first:100 after:$", "after", "){pageInfo{hasNextPage endCursor}nodes{...ThreadComment}}}}"] }
     ],
     fragments: [
-      { name: "ThreadComment", body: ["on PullRequestReviewComment{id author{__typename login avatarUrl}body createdAt lastEditedAt url isMinimized...Reactions}"] },
+      { name: "ThreadComment", body: ["on PullRequestReviewComment{id author{__typename login avatarUrl}body createdAt lastEditedAt url isMinimized pullRequestReview{url}...Reactions}"] },
       { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Organization{login}...on Mannequin{login}}}}}"] }
     ]
   },

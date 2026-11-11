@@ -8,7 +8,11 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { dispatchPreviewAction, type PreviewAction } from "../components/preview/previewActionBus";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { shouldCreateNewThreadInCurrentProject } from "../components/Sidebar.logic";
-import { createNewThreadHandler, resolveDefaultProjectRef } from "../hooks/useHandleNewThread";
+import {
+  createNewThreadHandler,
+  readLastUsedProjectKey,
+  resolveDefaultProjectRef,
+} from "../hooks/useHandleNewThread";
 import { createScratchProjectActions } from "../hooks/useScratchProject";
 import { getClientSettings } from "../hooks/useSettings";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -17,13 +21,13 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { readProjects, readThreadShell } from "../state/entities";
+import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { environmentPresentations } from "../state/presentation";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { readEnvironmentScope } from "../state/session";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
-import { threadlessSurfacesProjectRef } from "../threadlessSurfaces";
 import { useUiStateStore } from "../uiStateStore";
 import { type CommandHandler, registerCommands } from "./dispatcher";
 
@@ -70,6 +74,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       : false;
   };
   const readThreadContext = () => {
+    const lastUsedProjectKey = readLastUsedProjectKey();
     const focused = selectFocusedTab(useLayoutStore.getState().layout)?.content;
     const target =
       focused?.kind === "chat"
@@ -93,9 +98,12 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         target?.kind === "server"
           ? target.threadRef.environmentId
           : (activeDraftThread?.environmentId ?? null),
-      defaultProjectRef:
-        threadlessSurfacesProjectRef(target?.kind === "server" ? target.threadRef : null) ??
-        resolveDefaultProjectRef(readProjects(), useUiStateStore.getState().projectOrder),
+      defaultProjectRef: resolveDefaultProjectRef(
+        readProjects(),
+        useUiStateStore.getState().projectOrder,
+        lastUsedProjectKey,
+        appAtomRegistry.get(defaultProjectFallbackReadyAtom(lastUsedProjectKey)),
+      ),
       handleNewThread,
     };
   };
@@ -220,6 +228,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "preview.zoomIn": previewCommand("zoom-in"),
       "preview.zoomOut": previewCommand("zoom-out"),
       "preview.resetZoom": previewCommand("reset-zoom"),
+      "preview.find": previewCommand("find"),
     },
     {
       when: () =>

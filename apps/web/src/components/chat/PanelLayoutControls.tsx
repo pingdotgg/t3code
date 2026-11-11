@@ -1,11 +1,11 @@
-import { ListFilterIcon } from "lucide-react";
-import { Maximize2, Minimize2 } from "lucide";
-import { MorphIcon } from "~/components/MorphIcon";
+import { ListFilterIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
+
 import { memo } from "react";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { Button } from "../ui/button";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
+import { useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -29,6 +29,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleThreadPanel,
   disabledReason = null,
 }: PanelLayoutControlsProps) {
+  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
+  if (mobileSidebarSheetMounted) return null;
   const threadPanelToggle = (
     <Button
       className="relative shrink-0 [-webkit-app-region:no-drag]"
@@ -80,6 +82,8 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   maximized: boolean;
   onToggle: () => void;
 }) {
+  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
+  if (mobileSidebarSheetMounted) return null;
   const label = maximized ? "Restore panel size" : "Maximize panel";
   return (
     <Tooltip>
@@ -93,7 +97,11 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
             variant="ghost"
             size="sm"
           >
-            <MorphIcon className="size-3.5" icon={maximized ? Minimize2 : Maximize2} />
+            {maximized ? (
+              <Minimize2Icon className="size-3.5" />
+            ) : (
+              <Maximize2Icon className="size-3.5" />
+            )}
           </Toggle>
         }
       />

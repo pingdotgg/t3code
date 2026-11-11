@@ -15,14 +15,16 @@ import type * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { page } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
@@ -51,7 +53,7 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 }));
 
 it("imports Pi conversations through the environment RPC and can retry a changed project", async () => {
-  using _environment = installFakeEnvironment([]);
+  using _environment = installFakeEnvironment([], { acceptCommands: true });
   const scan = vi.fn(() =>
     Effect.succeed({
       candidates: [
@@ -85,6 +87,15 @@ it("imports Pi conversations through the environment RPC and can retry a changed
             get(target, method, receiver) {
               if (method === WS_METHODS.agentSessionsScan) return scan;
               if (method === WS_METHODS.agentSessionsImport) return importSessions;
+              if (method === WS_METHODS.projectsReadFile)
+                return ({ relativePath }: { relativePath: string }) =>
+                  Effect.succeed({
+                    relativePath,
+                    contents: "",
+                    byteLength: 0,
+                    truncated: false,
+                    exists: false,
+                  });
               return Reflect.get(target, method, receiver);
             },
           }),
@@ -96,31 +107,46 @@ it("imports Pi conversations through the environment RPC and can retry a changed
   const router = getRouter(createMemoryHistory({ initialEntries: ["/welcome"] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, { router: false });
+  await page.getByRole("button", { name: "Review all 1", exact: true }).click();
   await expect.element(page.getByRole("img", { name: "Pi", exact: true })).toBeVisible();
   await expect.element(page.getByRole("img", { name: "Claude Code", exact: true })).toBeVisible();
   await expect.element(page.getByRole("img", { name: "Codex", exact: true })).toBeVisible();
-  const importButton = page.getByRole("button", { name: "Import Terminal sessions", exact: true });
-  await userEvent.click(importButton);
-  await expect.element(page.getByText(/changed directories/)).toBeVisible();
+  await page.getByText("Import projects and their threads", { exact: true }).click();
+  await page.getByRole("button", { name: "Import threads and start", exact: true }).click();
+  await expect
+    .element(page.getByText("Could not import thread history.", { exact: true }))
+    .toBeVisible();
+  await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
+
+  expect(importSessions).toHaveBeenCalledTimes(1);
+  await expect
+    .element(page.getByRole("heading", { name: "Welcome to T3 Code" }))
+    .not.toBeInTheDocument();
   changed = false;
-  await userEvent.click(importButton);
-  await expect.element(page.getByText("Terminal sessions: 2 imported, 1 skipped.")).toBeVisible();
+  await router.navigate({ to: "/welcome" });
+  await expect.element(page.getByRole("heading", { name: "Welcome to T3 Code" })).toBeVisible();
+  await page.getByText("Import projects and their threads", { exact: true }).click();
+  await page.getByRole("button", { name: "Import threads and start", exact: true }).click();
+  await expect
+    .element(page.getByText("Imported 2 threads. 1 thread could not be imported.", { exact: true }))
+    .toBeVisible();
+  expect(importSessions).toHaveBeenCalledTimes(2);
   expect(importSessions).toHaveBeenLastCalledWith({
     projectId: PROJECT_ID,
     expectedWorkspaceRoot: "/workspace/render",
   });
-  await userEvent.click(page.getByRole("button", { name: "Refresh", exact: true }));
-  await expect.poll(() => scan.mock.calls.length).toBe(2);
-  await userEvent.click(page.getByRole("link", { name: "Back to app" }));
   await expect
-    .element(page.getByRole("heading", { name: "Import conversations" }))
+    .element(page.getByRole("heading", { name: "Welcome to T3 Code" }))
     .not.toBeInTheDocument();
 });
 
 it("a new draft does not load its reserved thread before the server lists it", async () => {
   using _environment = installFakeEnvironment([]);
   using fetchSpy = vi.spyOn(globalThis, "fetch");
-  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
   const draftId = DraftId.make("draft-27443");
   const threadId = ThreadId.make("thread-27443");
   useComposerDraftStore
@@ -147,7 +173,10 @@ it("a new draft does not load its reserved thread before the server lists it", a
 it("answers a pending question while an oversized message draft is set aside", async () => {
   const thread = threadWithHistory("oversized-question-draft", 0);
   using _environment = installFakeEnvironment([thread]);
-  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
   const target = scopeThreadRef(ENVIRONMENT_ID, thread.id);
   const oversizedDraft = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS + 1);
   const router = getRouter(
@@ -215,4 +244,93 @@ it("answers a pending question while an oversized message draft is set aside", a
   await page.getByRole("button", { name: "Answer", exact: true }).click();
   await expect.element(page.getByRole("button", { name: /Submitting/ }).first()).toBeVisible();
   expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe(oversizedDraft);
+});
+
+it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
+  const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("older-settled: question 0")).toBeVisible();
+
+  await page.getByRole("button", { name: `Thread actions for ${thread.title}` }).click();
+  // Without a bound the poll runs to the test deadline and reports a bare timeout.
+  await expect
+    .element(page.getByRole("menuitem", { name: "Rename thread" }), { timeout: 5_000 })
+    .toBeVisible();
+});
+
+it("retains each thread's diff selection when returning from another thread or Settings", async () => {
+  const a = threadWithHistory("diff-selection-a", 1);
+  const b = threadWithHistory("diff-selection-b", 1);
+  using _environment = installFakeEnvironment([a, b]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const aRef = scopeThreadRef(ENVIRONMENT_ID, a.id);
+  const bRef = scopeThreadRef(ENVIRONMENT_ID, b.id);
+  useRightPanelStore.getState().open(aRef, "diff");
+  useRightPanelStore.getState().open(bRef, "diff");
+  useDiffPanelStore.getState().selectBranchBaseRef(bRef, "origin/release");
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${a.id}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
+  await act(() => useDiffPanelStore.getState().selectGitScope(aRef, "unstaged"));
+
+  await act(() =>
+    router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENVIRONMENT_ID, threadId: b.id },
+    }),
+  );
+  await expect.element(page.getByText(`Answer 0 for ${b.id}.`)).toBeVisible();
+  expect(selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, bRef)).toEqual({
+    kind: "branch",
+    baseRef: "origin/release",
+  });
+  await act(() =>
+    router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENVIRONMENT_ID, threadId: a.id },
+    }),
+  );
+  await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
+  expect(selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, aRef)).toEqual({
+    kind: "unstaged",
+  });
+
+  await act(() => useDiffPanelStore.getState().selectTurn(aRef, a.runs[0]!.id));
+  await act(() => router.navigate({ to: "/settings/general" }));
+  await expect
+    .element(page.getByRole("heading", { name: "Time format", exact: true }))
+    .toBeVisible();
+  await act(() =>
+    router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENVIRONMENT_ID, threadId: a.id },
+    }),
+  );
+  await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
+  expect(
+    selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, aRef),
+  ).toMatchObject({
+    kind: "turn",
+    turnId: a.runs[0]!.id,
+  });
 });

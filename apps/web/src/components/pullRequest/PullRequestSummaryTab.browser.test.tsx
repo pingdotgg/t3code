@@ -215,6 +215,52 @@ it("leaves description checkboxes read-only without the right to edit it", async
   );
 });
 
+it("fixes an overview thread as its opening remark, since it has no line to attach", async () => {
+  setup();
+  const author = { login: "reviewer", name: null, avatarUrl: null };
+  const note = { author, createdAt: "2026-09-01T00:00:00Z", url: null };
+  const remark = {
+    ...note,
+    id: "10",
+    kind: "review-comment" as const,
+    body: "Mention the flag in the README",
+    path: null,
+    reviewState: null,
+  };
+  const onFixFinding = vi.fn();
+  const value: PullRequestDetailView = {
+    ...detail,
+    comments: [remark],
+    overviewThreads: [
+      {
+        id: "overview",
+        path: null,
+        line: null,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [{ ...note, id: "10", body: remark.body }],
+      },
+    ],
+  };
+  await using screen = await renderUi(
+    <PullRequestSummaryTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      threadRef={null}
+      reference={value}
+      detail={value}
+      activityPending={false}
+      activityError={null}
+      onRefresh={() => {}}
+      onFixFinding={onFixFinding}
+    />,
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Fix in a thread" }));
+  expect(onFixFinding).toHaveBeenCalledWith({ kind: "comment", comment: remark });
+});
+
 function openThread(id: string, bot = false): PullRequestReviewThread {
   return {
     id,
@@ -292,6 +338,96 @@ it("pages promoted open threads together with the remaining conversations", asyn
     .element(screen.getByText("Finding thread-10", { exact: true }))
     .not.toBeInTheDocument();
 });
+
+it.each(["review", "issue-comment", "resolved-reply"] as const)(
+  "reveals a linked %s in the summary conversation",
+  async (kind) => {
+    setup();
+    const url = `${detail.url}#${kind === "review" ? "pullrequestreview-123" : kind === "issue-comment" ? "issuecomment-123" : "discussion_r123"}`;
+    const linkedDetail: PullRequestDetailView = {
+      ...detail,
+      comments:
+        kind === "resolved-reply"
+          ? []
+          : [
+              {
+                id: "linked",
+                kind,
+                author: detail.author,
+                body: "Linked reply",
+                createdAt: "2026-10-01T00:00:00Z",
+                url,
+                path: null,
+                reviewState: kind === "review" ? "CHANGES_REQUESTED" : null,
+              },
+            ],
+      reviewThreads:
+        kind !== "resolved-reply"
+          ? []
+          : [
+              {
+                id: "thread",
+                path: "src/test.ts",
+                line: 5,
+                side: "right",
+                isResolved: true,
+                isOutdated: false,
+                comments: [
+                  {
+                    id: "root",
+                    author: detail.author,
+                    body: "Root comment",
+                    createdAt: "2026-10-01T00:00:00Z",
+                    url: `${detail.url}#discussion_r122`,
+                  },
+                  {
+                    id: "reply",
+                    author: detail.author,
+                    body: "Linked reply",
+                    createdAt: "2026-10-01T00:01:00Z",
+                    url,
+                  },
+                ],
+              },
+            ],
+    };
+    const settled = vi.fn();
+    await using screen = await renderUi(
+      <div style={{ height: 600 }}>
+        <PullRequestSummaryTab
+          scrollerRef={() => {}}
+          detail={linkedDetail}
+          environmentId={EnvironmentId.make("environment")}
+          reference={detail}
+          threadRef={null}
+          activityPending={false}
+          activityError={null}
+          onRefresh={() => {}}
+          revealUrl={url}
+          onRevealSettled={settled}
+        />
+      </div>,
+    );
+    await expect.element(screen.getByText("Linked reply", { exact: true })).toBeVisible();
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+    await screen.rerender(
+      <div style={{ height: 600 }}>
+        <PullRequestSummaryTab
+          scrollerRef={() => {}}
+          detail={linkedDetail}
+          environmentId={EnvironmentId.make("environment")}
+          reference={detail}
+          threadRef={null}
+          activityPending={false}
+          activityError={null}
+          onRefresh={() => {}}
+          onRevealSettled={settled}
+        />
+      </div>,
+    );
+    await expect.element(screen.getByText("Linked reply", { exact: true })).toBeVisible();
+  },
+);
 
 it("adds promoted review conversations to chat without requiring review permissions", async () => {
   setup();

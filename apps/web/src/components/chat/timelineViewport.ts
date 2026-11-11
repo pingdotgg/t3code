@@ -1,3 +1,5 @@
+import { readHtmlRenderContentHeight } from "@t3tools/shared/htmlRender";
+
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { openLayerMatches } from "../../lib/openLayers";
 import { registerCommands } from "../../shortcuts/dispatcher";
@@ -70,6 +72,7 @@ const DOWN_KEYS = new Set(["PageDown", "End", "ArrowDown", " "]);
  */
 export function attachTimelineViewport(
   scrollNode: HTMLElement,
+  onFrameResize?: (frame: HTMLIFrameElement) => void,
   ownsDocumentKeys?: () => boolean,
 ): TimelineViewport & {
   readonly dispose: () => void;
@@ -146,6 +149,23 @@ export function attachTimelineViewport(
       emit({ source: "scroll" });
     }
   };
+  const frameHeights = new WeakMap<HTMLIFrameElement, number>();
+  const handleFrameResize = (event: MessageEvent) => {
+    const height = readHtmlRenderContentHeight(event.data);
+    if (height === undefined) return;
+    const frame = [...scrollNode.querySelectorAll("iframe")].find(
+      (frame) => frame.contentWindow === event.source,
+    );
+    if (!frame) return;
+    const previous = frameHeights.get(frame);
+    frameHeights.set(frame, height);
+    if (previous !== undefined && previous !== height && document.activeElement === frame) {
+      emit({ source: "command", releasesFollow: true });
+      onFrameResize?.(frame);
+    }
+  };
+  // Run before frame listeners resize rows, so an accordion cannot drag the reader to the end.
+  window.addEventListener("message", handleFrameResize, true);
   scrollNode.addEventListener("scroll", handleScroll, { passive: true });
   scrollNode.addEventListener("wheel", handleWheel, { passive: true });
   scrollNode.addEventListener("touchmove", handleTouchMove, { passive: true });
@@ -175,6 +195,7 @@ export function attachTimelineViewport(
       return () => followReleasedListeners.delete(listener);
     },
     dispose: () => {
+      window.removeEventListener("message", handleFrameResize, true);
       listeners.clear();
       followReleasedListeners.clear();
       scrollNode.removeEventListener("scroll", handleScroll);

@@ -11,8 +11,10 @@ import {
   CopyIcon,
   FolderOpenIcon,
   InfoIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
 } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
+
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -35,7 +37,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -324,7 +325,11 @@ function ProcessNameCell({
           aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
           onClick={() => onToggle(process.pid)}
         >
-          <MorphIcon className="size-3.5" icon={isExpanded ? ChevronDown : ChevronRight} />
+          {isExpanded ? (
+            <ChevronDownIcon className="size-3.5" />
+          ) : (
+            <ChevronRightIcon className="size-3.5" />
+          )}
         </Button>
       ) : (
         <span className="size-5 shrink-0" aria-hidden="true" />
@@ -1022,9 +1027,12 @@ function DiagnosticsSettingsBody() {
 
       <SettingsSection
         title="Trace diagnostics"
+        className="max-sm:[&>[data-settings-scroll-target]]:flex-wrap max-sm:[&>[data-settings-scroll-target]]:gap-2"
         headerAction={
-          <div className="flex items-center gap-1.5">
-            <DiagnosticsLastChecked checkedAt={data?.readAt ?? null} />
+          <div className="flex flex-wrap items-center gap-1.5 sm:flex-nowrap">
+            <span className="max-sm:basis-full sm:contents">
+              <DiagnosticsLastChecked checkedAt={data?.readAt ?? null} />
+            </span>
             <Button
               size="xs"
               variant="secondary"

@@ -24,10 +24,19 @@ function scrollCommentIntoView(element: HTMLElement) {
 export function PullRequestCommentBody({
   className,
   variant = "comment",
+  revealCount = 0,
   ...props
-}: ComponentProps<typeof PullRequestMarkdown> & { variant?: "comment" | "description" }) {
+}: ComponentProps<typeof PullRequestMarkdown> & {
+  variant?: "comment" | "description";
+  revealCount?: number;
+}) {
   const maxHeight = variant === "description" ? 64 : 240;
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(revealCount > 0);
+  const [seenRevealCount, setSeenRevealCount] = useState(revealCount);
+  if (revealCount !== seenRevealCount) {
+    setSeenRevealCount(revealCount);
+    if (revealCount > 0) setExpanded(true);
+  }
   const [overflowing, setOverflowing] = useState(false);
   const clip = useRef<HTMLDivElement>(null);
   const id = useId();

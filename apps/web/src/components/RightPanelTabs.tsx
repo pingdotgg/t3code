@@ -31,8 +31,16 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronLeft, ChevronRight, Files, Plus } from "lucide-react";
-import { Volume2, VolumeOff } from "lucide";
+import {
+  ChevronLeft,
+  ChevronRight,
+  EllipsisIcon,
+  Files,
+  Plus,
+  Volume2Icon,
+  VolumeOffIcon,
+} from "lucide-react";
+
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -49,13 +57,14 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { useTheme } from "~/hooks/useTheme";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { useDeviceState } from "~/state/device";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
 import { useRevealActiveTab } from "~/hooks/useRevealActiveTab";
@@ -213,7 +222,11 @@ function PanelTabStrip({
 }) {
   if (notched) {
     return (
-      <div ref={ref} className="flex shrink-0 items-center gap-1" data-right-panel-tab-list>
+      <div
+        ref={ref}
+        className="flex shrink-0 items-center gap-1 max-md:min-w-0 max-md:shrink"
+        data-right-panel-tab-list
+      >
         {children}
       </div>
     );
@@ -232,10 +245,16 @@ function PanelTabStrip({
   );
 }
 
-function PanelTabsNotch(props: { notched: boolean; addButton: ReactNode; children: ReactNode }) {
+function PanelTabsNotch(props: {
+  notched: boolean;
+  addButton: ReactNode;
+  pinnedTab: ReactNode;
+  children: ReactNode;
+}) {
   if (!props.notched) return props.children;
   return (
     <PaneNotch>
+      {props.pinnedTab}
       <LayoutPaneTabStrip>{props.children}</LayoutPaneTabStrip>
       {props.addButton ? (
         <span data-pane-notch-add="" className="flex shrink-0">
@@ -247,8 +266,25 @@ function PanelTabsNotch(props: { notched: boolean; addButton: ReactNode; childre
 }
 
 function PanelActionsNotch(props: { notched: boolean; hasActions: boolean; children: ReactNode }) {
+  const isMobile = useMediaQuery("max-md");
   if (!props.notched) return props.children;
   if (!props.hasActions) return null;
+  if (isMobile) {
+    return (
+      <Popover>
+        <PopoverTrigger
+          render={<Button size="icon-sm" variant="ghost" aria-label="Surface controls" />}
+        >
+          <EllipsisIcon />
+        </PopoverTrigger>
+        <PopoverPopup align="end" padding="compact">
+          <div className="flex max-w-[calc(100vw-2rem)] flex-wrap items-center gap-2">
+            {props.children}
+          </div>
+        </PopoverPopup>
+      </Popover>
+    );
+  }
   return (
     <PaneNotch side="right" className="ms-auto shrink-0">
       {props.children}
@@ -501,6 +537,7 @@ function RightPanelTab(
       {...listeners}
       className={cn(
         "cursor-pointer group/tab flex shrink-0 items-center",
+        notched && "max-md:min-w-0 max-md:shrink",
         isDragging && "relative z-10",
         // In the notch a tab is the chat's 28px notch tab (pen JiaZk).
         notched
@@ -515,7 +552,11 @@ function RightPanelTab(
       )}
     >
       <>
-        <PanelTabCloseButton label={`Close ${title}`} onClick={() => onClose(surface)}>
+        <PanelTabCloseButton
+          label={`Close ${title}`}
+          onClick={() => onClose(surface)}
+          showOnPhone={notched}
+        >
           {filesCrumb ? (
             <Files className="size-3.5 shrink-0 text-foreground" />
           ) : surface.kind === "terminal" && layoutTab ? (
@@ -552,7 +593,11 @@ function RightPanelTab(
                       .catch(() => undefined);
                   }}
                 >
-                  <MorphIcon className="size-3" icon={audio === "muted" ? VolumeOff : Volume2} />
+                  {audio === "muted" ? (
+                    <VolumeOffIcon className="size-3" />
+                  ) : (
+                    <Volume2Icon className="size-3" />
+                  )}
                 </button>
               }
             />
@@ -589,6 +634,7 @@ function RightPanelTab(
                   }}
                   className={cn(
                     "cursor-pointer flex min-w-0 items-center",
+                    filesCrumb && notched && "max-md:hidden",
                     active && surface.kind === "diff" && "shrink-0",
                   )}
                   aria-label={
@@ -634,7 +680,8 @@ function RightPanelTab(
             ref={onBreadcrumbSlotChange}
             className={cn(
               "flex min-w-0 items-center empty:hidden",
-              filesCrumb && "min-w-[8ch]",
+              filesCrumb && "min-w-[8ch] max-md:min-w-0",
+              filesCrumb && notched && "max-md:[&>svg:first-child]:hidden",
               notched ? "gap-1" : "gap-0.5",
             )}
           />
@@ -662,15 +709,26 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const { tabId: layoutPaneTabId, leadingEdge } = useLayoutPane();
   const layoutTabId = props.mode === "embedded" ? layoutPaneTabId : null;
   const siblingTabs = useLayoutPaneSiblingTabs();
+  const isMobile = useMediaQuery("max-md");
+  const pinnedChatTab =
+    isMobile && layoutTabId !== null
+      ? [...siblingTabs.before, ...siblingTabs.after].find((tab) => tab.content.kind === "chat")
+      : undefined;
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const renameRequested = useLayoutTabRenameRequested(layoutTabId);
   const renamingDeviceId = renamingDevice ?? (renameRequested ? props.activeSurfaceId : null);
   // The active tab's breadcrumb and the row's actions slot; its surface
   // portals its header into them (PanelTabBreadcrumb, PanelTabActions).
   const [breadcrumbSlot, setBreadcrumbSlot] = useState<HTMLSpanElement | null>(null);
+  const [mobileBreadcrumbSlot, setMobileBreadcrumbSlot] = useState<HTMLSpanElement | null>(null);
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const { hasActions, registerActions } = usePanelTabActionsHost();
-  const tabSlots = { breadcrumb: breadcrumbSlot, actions: actionsSlot, registerActions };
+  const mobileDiff = isMobile && props.mode === "embedded" && focusedSurface?.kind === "diff";
+  const tabSlots = {
+    breadcrumb: mobileDiff ? mobileBreadcrumbSlot : breadcrumbSlot,
+    actions: actionsSlot,
+    registerActions,
+  };
   // A layout pane's tabs sit in its notch (pen JiaZk), like a chat's.
   const notched = props.mode === "embedded" || props.pane === true;
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
@@ -891,12 +949,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (!viewport) return;
 
     const update = () => updateTabScrollState(viewport);
+    // Only a vertical mouse wheel is translated. Horizontal input scrolls natively, since
+    // consuming it keeps Chromium from starting the gesture scroll that swipe navigation tracks.
     const handleWheel = (event: WheelEvent) => {
-      if (event.ctrlKey) return;
-      let delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      let delta = event.deltaY;
       if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
       if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= viewport.clientWidth;
-      if (delta === 0) return;
 
       const previousScrollLeft = viewport.scrollLeft;
       viewport.scrollLeft += delta;
@@ -991,9 +1050,21 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         data-right-panel-tabbar
         data-pane-header={notched ? "" : undefined}
       >
-        <PanelTabsNotch notched={notched} addButton={addSurfaceMenu}>
+        <PanelTabsNotch
+          notched={notched}
+          addButton={addSurfaceMenu}
+          pinnedTab={
+            pinnedChatTab ? (
+              <span className="flex max-w-24 min-w-0 shrink-0">
+                <LayoutPaneTab tab={pinnedChatTab} />
+              </span>
+            ) : null
+          }
+        >
           {layoutTabId !== null
-            ? siblingTabs.before.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
+            ? siblingTabs.before
+                .filter((tab) => tab.id !== pinnedChatTab?.id)
+                .map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
             : null}
           <PanelTabStrip notched={notched} ref={attachTabList}>
             <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
@@ -1048,7 +1119,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {notched ? null : addSurfaceMenu}
           </PanelTabStrip>
           {layoutTabId !== null
-            ? siblingTabs.after.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
+            ? siblingTabs.after
+                .filter((tab) => tab.id !== pinnedChatTab?.id)
+                .map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
             : null}
         </PanelTabsNotch>
         {/* In the notch the tabs scroll by wheel and ctrl+Tab; the actions need the room. */}
@@ -1100,6 +1173,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           notched={notched && props.activeSurfaceId !== null}
           hasActions={hasActions || props.layoutControls !== undefined}
         >
+          {mobileDiff ? (
+            <span ref={setMobileBreadcrumbSlot} className="flex min-w-0 items-center gap-1" />
+          ) : null}
           <div
             ref={setActionsSlot}
             className="ms-auto flex shrink-0 items-center gap-0.5 empty:hidden [-webkit-app-region:no-drag]"

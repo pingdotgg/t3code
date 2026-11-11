@@ -16,7 +16,8 @@ import {
 
 import { Switch } from "../ui/switch";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { ScheduledRelativeLabel, scheduleLabel } from "../settings/ScheduledTasksSettings";
+import { ScheduledRelativeLabel } from "../settings/ScheduledTasksSettings";
+import { scheduleLabel } from "../settings/scheduledTasksSettings.logic";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -145,11 +146,11 @@ export function ThreadAutomationsPanel(props: {
       }
       data-thread-automations-panel
     >
-      <div className="max-h-[13.5rem] overflow-y-auto">
+      <div className="max-h-[13.5rem] overflow-x-hidden overflow-y-auto">
         {boundTasks.map((task) => (
           <Menu key={task.id}>
-            <div className="flex min-h-9 items-center pe-1">
-              <MenuTrigger render={<ThreadDetailsControl multiline />}>
+            <div className="flex min-h-9 min-w-0 items-center pe-1">
+              <MenuTrigger render={<ThreadDetailsControl className="min-w-0 flex-1" multiline />}>
                 <span className="relative shrink-0">
                   <CalendarClockIcon className="size-4 text-muted-foreground" />
                   {task.enabled ? (
@@ -166,7 +167,11 @@ export function ThreadAutomationsPanel(props: {
                         ? "Paused"
                         : task.lastRunStatus === "running"
                           ? "Running"
-                          : scheduleLabel(task.schedule))}
+                          : scheduleLabel(
+                              task.schedule,
+                              tasksQuery.data?.timeZone,
+                              task.nextRunAt,
+                            ))}
                   </span>
                 </span>
               </MenuTrigger>
@@ -188,7 +193,11 @@ export function ThreadAutomationsPanel(props: {
                 onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
               />
             </div>
-            <MenuPopup side="right" align="start">
+            <MenuPopup
+              side="right"
+              align="start"
+              collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "end" }}
+            >
               <MenuItem
                 onClick={() =>
                   void navigate({

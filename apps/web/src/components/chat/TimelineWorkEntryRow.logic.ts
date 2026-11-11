@@ -94,7 +94,6 @@ export function buildToolCallExpandedBody(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
   visibleLabel: string,
-  viewedImagePath: string | null,
 ): string | null {
   const blocks: string[] = [];
   const seen = new Set<string>([visibleLabel.trim()]);
@@ -123,22 +122,10 @@ export function buildToolCallExpandedBody(
     addBlock(raw ?? command);
   }
   const detail = workEntry.detail?.trim();
-  if (detail !== viewedImagePath?.trim()) {
-    addBlock(detail);
-  }
-  const viewedImagePaths = new Set(
-    viewedImagePath
-      ? [viewedImagePath.trim(), formatWorkspaceRelativePath(viewedImagePath, workspaceRoot)]
-      : [],
-  );
+  addBlock(detail);
   const changedFiles = (workEntry.changedFiles ?? []).flatMap((filePath) => {
     const formattedPath = formatWorkspaceRelativePath(filePath, workspaceRoot);
-    return viewedImagePaths.has(filePath) ||
-      viewedImagePaths.has(formattedPath) ||
-      filePath.trim() === detail ||
-      formattedPath === detail
-      ? []
-      : [formattedPath];
+    return filePath.trim() === detail || formattedPath === detail ? [] : [formattedPath];
   });
   if (changedFiles.length > 0) {
     addBlock([...new Set(changedFiles)].join("\n"));
@@ -192,43 +179,60 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
   return workToneIcon(workEntry.tone).iconName;
 }
 
+// Look past the visible label so long destinations and inline delimiters can close.
+// This is bounded lookahead, not document-wide Markdown parity: a closing delimiter
+// or reference definition beyond this prefix remains unresolved by the parser.
+export const THOUGHT_PREVIEW_SOURCE_MAX_LENGTH = 8_192;
+export const THOUGHT_PREVIEW_MAX_LENGTH = 2_048;
+
 /** Compact reasoning keeps formulas while flattening other Markdown into label text. */
 export function remarkThoughtPreview(fallback: string) {
   return (tree: Root) => {
     const children: RootContent[] = [];
+    let remaining = THOUGHT_PREVIEW_MAX_LENGTH;
+    let fragments: string[] = [];
+    const flush = () => {
+      if (fragments.length === 0) return;
+      children.push({ type: "text", value: fragments.join("").replace(/\s+/g, " ") });
+      fragments = [];
+    };
     const append = (value: string) => {
-      const last = children.at(-1);
-      const text = value.replace(/\s+/g, " ");
-      if (last?.type === "text") last.value = (last.value + text).replace(/\s+/g, " ");
-      else children.push({ type: "text", value: text });
+      const text = value.slice(0, remaining);
+      remaining -= text.length;
+      fragments.push(text);
     };
     const visit = (node: Root | RootContent) => {
-      if (node.type === "html" || node.type === "definition") return;
+      if (remaining === 0 || node.type === "html" || node.type === "definition") return;
       if (node.type === "math" || node.type === "inlineMath") {
+        flush();
+        const value = node.value.slice(0, remaining);
+        remaining -= value.length;
         children.push({
           type: "inlineMath",
-          value: node.value,
+          value,
           position: node.position,
           data: {
             hName: "code",
             hProperties: { className: ["language-math", "math-inline"] },
-            hChildren: [{ type: "text", value: node.value }],
+            hChildren: [{ type: "text", value }],
           },
         });
       } else if ("alt" in node) append(node.alt ?? "");
       else if ("value" in node) append(node.value);
       else if ("children" in node) {
-        node.children.forEach((child, index) => {
+        for (const [index, child] of node.children.entries()) {
+          if (remaining === 0) break;
           if (
             index &&
             ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(node.type)
           )
             append(" ");
           visit(child);
-        });
+        }
       } else if (node.type === "break") append(" ");
     };
     visit(tree);
+    flush();
     const first = children[0];
     const last = children.at(-1);
     if (first?.type === "text") first.value = first.value.trimStart();
