@@ -29,7 +29,8 @@ All subcommands share these options:
 
 | Option              | Description                                                                                                                                    |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--backend <configured\|local>` | `configured` uses the stack's state layer; `local` reads `.alchemy/state`, including orphaned state after a failed bootstrap |
+| `--backend <name>`  | `configured` (default) uses the stack's state layer; `local` reads `.alchemy/state`, including orphaned state after a failed bootstrap; a provider's store (`aws`, `cloudflare`) is reached from the profile alone, without a stack file |
+| `--name <name>`     | With a provider store, address one other than the account's default, by logical name (1-20 lowercase letters, digits and hyphens) |
 | `--profile <name>`  | Auth profile to use (defaults to `$ALCHEMY_PROFILE` or `default`)                                                                        |
 | `--env-file <path>` | Load environment variables from a file                                                                                                         |
 | `--config, -c <file>` | Stack entrypoint to resolve the state layer from (defaults to `alchemy.run.ts`)                                                              |
@@ -99,6 +100,83 @@ re-imports owned resources automatically; see
 and [Adopting Resources](/cli/adopting-resources) for when `--adopt`
 is needed.
 :::
+
+## `state bootstrap`
+
+```sh
+alchemy state bootstrap [--backend <name>] [options]
+```
+
+Provision a state store, or adopt it when it already exists.
+Idempotent. You normally don't need it: the first deploy that uses the
+store provisions it. Run it to provision ahead of time (for example
+before CI uses the store), or to repair an interrupted bootstrap.
+
+Without `--backend` it provisions the store your entrypoint
+(`alchemy.run.ts`, or `--config`) configures, with every option it sets,
+such as a custom Worker or bucket name, a pinned account or a domain.
+With `--backend` it provisions a provider's default store, or the one
+`--name` names.
+
+- `cloudflare`: deploys the state-store Worker and creates its auth
+  token and encryption key in the account's Secrets Store when they are
+  missing. Existing secrets are never changed. An existing Worker is
+  adopted and its credentials
+  (`~/.alchemy/profiles/<profile>/state-stores/cloudflare.json`) are
+  refreshed.
+- `aws`: creates the state bucket with versioning, encryption, a public
+  access block and owner-enforced ownership, or converges an existing one
+  to those settings.
+
+| Option    | Description                                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------------------------- |
+| `--force` | `cloudflare`: redeploy the Worker even when it exists, keeping its secrets (with `--backend`)                  |
+
+```sh
+alchemy state bootstrap
+alchemy state bootstrap --backend cloudflare
+alchemy state bootstrap --backend cloudflare --profile staging --force
+alchemy state bootstrap --backend aws --name team-a
+alchemy state bootstrap --backend cloudflare --name team-a
+```
+
+## `state teardown`
+
+```sh
+alchemy state teardown --backend <name> [options]
+```
+
+Delete a provider's state store and its backing resources: the
+Cloudflare Worker, its secrets and cached credentials; or the S3 bucket
+with every object version. Asks for confirmation unless `--yes`.
+
+:::danger
+This deletes the state itself. Stacks whose state lived in the store
+lose their record of what they deployed; the cloud resources remain.
+:::
+
+## `state logs`
+
+```sh
+alchemy state logs --backend <name> [options]
+```
+
+Fetch or stream the state store's own logs, to debug the store itself.
+Only `cloudflare` keeps logs (from the state-store Worker, through the
+Workers Observability API), which needs the `workers_observability:read`
+and `workers_observability_telemetry:write` OAuth scopes (re-run
+`alchemy profile edit --reconfigure Cloudflare` on older profiles).
+
+| Option           | Description                                                              |
+| ---------------- | ------------------------------------------------------------------------ |
+| `--tail`, `-t`   | Stream logs as they happen instead of fetching past entries              |
+| `--limit <n>`    | Number of entries to fetch (default: 100). Ignored with `--tail`         |
+| `--since <time>` | Fetch logs since a duration (`1h`, `30m`, `2d`) or ISO date              |
+
+```sh
+alchemy state logs --backend cloudflare --since 30m --limit 200
+alchemy state logs --backend cloudflare --tail
+```
 
 ## Where next
 
