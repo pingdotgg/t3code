@@ -35,6 +35,7 @@ export const makeWriteSideChatText = Effect.gen(function* () {
       kind: input.kind,
       prompt: input.prompt,
       modelSelection,
+      projectId: input.thread.projectId,
     }).pipe(
       Effect.provideService(TextGeneration.TextGeneration, textGeneration),
       Effect.provideService(FileSystem.FileSystem, fileSystem),

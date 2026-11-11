@@ -50,6 +50,7 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
   "preview.focusUrl",
+  "preview.find",
 ] as const;
 
 /** A closed view saved before version 3 may hold an official build's side chat as T3 Learn's. */
