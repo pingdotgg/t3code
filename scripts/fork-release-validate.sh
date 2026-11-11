@@ -7,6 +7,7 @@ set -euo pipefail
 node scripts/check-patch-pins.ts
 node scripts/check-upstream-migrations.ts
 node scripts/check-fork-guards.ts
+node scripts/check-removed-connect.ts
 # shellcheck disable=SC2046 # one test file per word
 NODE_ENV=test vp test run $(node -p "[...new Set(require('./scripts/fork-guards.json').map((g) => g.test))].join(' ')")
 
@@ -22,7 +23,8 @@ NODE_ENV=test vp test run \
   apps/server/src/threadTask \
   apps/server/src/scheduledTasks \
   apps/server/src/clients \
-  scripts/build-desktop-artifact.test.ts
+  scripts/build-desktop-artifact.test.ts \
+  scripts/check-removed-connect.test.ts
 NODE_ENV=test vp test run \
   apps/server/src/persistence/ForkMigrations.test.ts \
   apps/server/src/persistence/Migrations.test.ts \

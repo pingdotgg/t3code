@@ -126,6 +126,10 @@ jobs:
       - name: Check fork guard tests are intact
         run: node scripts/check-fork-guards.ts
 
+      # T3 Connect was removed; an upstream sync must not bring its files or Clerk back.
+      - name: Check removed T3 Connect stays removed
+        run: node scripts/check-removed-connect.ts
+
       # Files/dependencies are repo-wide; export checks cover clean workspaces only.
       - name: Check unused code
         run: vp run knip:check
