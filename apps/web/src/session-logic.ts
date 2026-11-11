@@ -500,16 +500,23 @@ export interface TimelineEntriesProjection {
   readonly entries: TimelineEntry[];
 }
 
-/** Grok's `todo_write` tool repeats the plan event, and merge args omit step text. */
+function runKey(row: OrchestrationV2ProjectedTurnItem): string | null {
+  return row.item.runId === null ? null : `${row.sourceThreadId}:${row.item.runId}`;
+}
+
 function omitSupersededGrokTodoTools(
   entries: TimelineEntry[],
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
 ): TimelineEntry[] {
-  if (!visibleTurnItems.some((row) => row.item.type === "todo_list")) return entries;
+  const runsWithTodoList = new Set(
+    visibleTurnItems.flatMap((row) => (row.item.type === "todo_list" ? [runKey(row)] : [])),
+  );
+  runsWithTodoList.delete(null);
+  if (runsWithTodoList.size === 0) return entries;
   return entries.filter((entry) => {
-    if (entry.kind !== "work") return true;
-    const item = entry.entry.projectedItem?.item;
-    return !(item?.type === "dynamic_tool" && isGrokTodoWriteTool(item));
+    const row = entry.kind === "work" ? entry.entry.projectedItem : undefined;
+    if (row?.item.type !== "dynamic_tool" || !isGrokTodoWriteTool(row.item)) return true;
+    return !runsWithTodoList.has(runKey(row));
   });
 }
 
@@ -696,12 +703,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     });
   }
 
-  const withoutSupersededTodoTools = omitSupersededGrokTodoTools(entries, input.visibleTurnItems);
-  if (withoutSupersededTodoTools !== entries) {
-    entries.length = 0;
-    entries.push(...withoutSupersededTodoTools);
-  }
-
   const retainedMessageIds = new Set([...committedMessageIds, ...foldedAnswerMessageIds]);
   for (const message of input.anchoredMessages ?? []) {
     if (retainedMessageIds.has(message.id)) continue;
@@ -734,7 +735,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     }
   }
 
-  return entries;
+  return omitSupersededGrokTodoTools(entries, input.visibleTurnItems);
 }
 
 type AttachmentResource = Extract<AssetResource, { readonly _tag: "attachment" }>;

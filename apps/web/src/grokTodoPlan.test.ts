@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { grokTodoStepsFromTool, isGrokTodoWriteTool } from "./grokTodoPlan";
 
 describe("Grok todo_write", () => {
-  it("recognizes the Updating plan tool by title and by the TodoWrite variant", () => {
+  it("recognizes the Updating plan tool but not Claude's TodoWrite", () => {
     expect(
       isGrokTodoWriteTool({
         title: "Updating plan",
@@ -16,6 +16,13 @@ describe("Grok todo_write", () => {
         title: "Read file",
         toolName: "read_file",
         input: { variant: "ReadFile", path: "package.json" },
+      }),
+    ).toBe(false);
+    expect(
+      isGrokTodoWriteTool({
+        title: "TodoWrite",
+        toolName: "TodoWrite",
+        input: { todos: [{ content: "Claude task", status: "pending", activeForm: "Doing" }] },
       }),
     ).toBe(false);
   });

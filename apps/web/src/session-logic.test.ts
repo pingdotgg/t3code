@@ -710,6 +710,33 @@ describe("V2 session presentation", () => {
         toolOnly,
       ).entries.map((entry) => entry.id),
     ).toEqual([todo.id]);
+
+    const laterTool = {
+      ...tool,
+      id: TurnItemId.make("item-updating-plan-later"),
+      runId: RunId.make("run-grok-todo-later"),
+      ordinal: 2,
+    };
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [visible(todo, 0), visible(laterTool, 1)],
+        optimisticMessages: [],
+      }).map((entry) => entry.id),
+    ).toEqual([todo.id, laterTool.id]);
+
+    const todoOnly = deriveTimelineEntriesFromVisibleTurnItemsWithState({
+      visibleTurnItems: [visible(todo, 0)],
+      optimisticMessages: [],
+    });
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItemsWithState(
+        {
+          visibleTurnItems: [visible(todo, 0), visible(laterTool, 1)],
+          optimisticMessages: [],
+        },
+        todoOnly,
+      ).entries.map((entry) => entry.id),
+    ).toEqual([todo.id, laterTool.id]);
   });
 
   it("waits for a dispatched turn item before adding queued input to the timeline", () => {

@@ -1,24 +1,14 @@
 import type { GrokTodoStep } from "../../grokTodoPlan";
 
-function mark(status: GrokTodoStep["status"]): string {
-  switch (status) {
-    case "completed":
-      return "✓";
-    case "running":
-      return "◉";
-    case "cancelled":
-      return "–";
-    default:
-      return "○";
-  }
-}
+const STATUS: Record<GrokTodoStep["status"], { readonly mark: string; readonly label: string }> = {
+  pending: { mark: "○", label: "Pending" },
+  running: { mark: "◉", label: "In progress" },
+  completed: { mark: "✓", label: "Completed" },
+  cancelled: { mark: "–", label: "Cancelled" },
+};
 
 export function TodoChecklist(props: {
-  readonly steps: ReadonlyArray<{
-    readonly id: string;
-    readonly text: string;
-    readonly status: "pending" | "running" | "completed" | "cancelled";
-  }>;
+  readonly steps: ReadonlyArray<GrokTodoStep>;
   readonly className?: string;
 }) {
   return (
@@ -29,7 +19,7 @@ export function TodoChecklist(props: {
       {props.steps.map((step) => (
         <li key={step.id} className="flex min-w-0 gap-2">
           <span className="w-3 shrink-0 text-muted-foreground" aria-hidden>
-            {mark(step.status)}
+            {STATUS[step.status].mark}
           </span>
           <span
             className={
@@ -38,6 +28,7 @@ export function TodoChecklist(props: {
                 : "min-w-0 text-foreground"
             }
           >
+            <span className="sr-only">{`${STATUS[step.status].label}: `}</span>
             {step.text}
           </span>
         </li>
