@@ -538,6 +538,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
       ? ["Follow-up behavior"]
       : []),
+    ...(settings.composerTypingGuardEnabled !== DEFAULT_UNIFIED_SETTINGS.composerTypingGuardEnabled
+      ? ["Hold requests while typing"]
+      : []),
     ...(settings.toolCallVisibility !== DEFAULT_UNIFIED_SETTINGS.toolCallVisibility
       ? ["Tool calls in chat"]
       : []),
@@ -656,6 +659,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      composerTypingGuardEnabled: DEFAULT_UNIFIED_SETTINGS.composerTypingGuardEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility,
@@ -1208,6 +1212,32 @@ export function ChatSettingsPanel() {
                 <SelectItem value="steer">Steer</SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("composer-typing-guard")}
+          description="While you type in the composer, hold new approvals and agent questions until you pause, blur, send, or choose Show now. Turn off to let them take over immediately."
+          resetAction={
+            settings.composerTypingGuardEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.composerTypingGuardEnabled ? (
+              <SettingResetButton
+                label="hold requests while typing"
+                onClick={() =>
+                  updateSettings({
+                    composerTypingGuardEnabled: DEFAULT_UNIFIED_SETTINGS.composerTypingGuardEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.composerTypingGuardEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ composerTypingGuardEnabled: Boolean(checked) })
+              }
+              aria-label="Hold requests while typing"
+            />
           }
         />
       </SettingsSection>

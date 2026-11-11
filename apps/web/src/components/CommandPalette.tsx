@@ -76,10 +76,15 @@ import {
   PinIcon,
   PinOffIcon,
   PlugIcon,
+  ShieldIcon,
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
+import {
+  flushComposerTypingGuardHeldRequests,
+  useComposerTypingGuardActions,
+} from "./chat/composerTypingGuardActions";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
@@ -449,6 +454,7 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const heldTypingGuardCount = useComposerTypingGuardActions((state) => state.heldCount);
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1476,6 +1482,29 @@ function OpenCommandPaletteDialog(props: {
       icon: <UserPlusIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openGuestShareDialog(threadRef);
+      },
+    });
+  }
+
+  if (activeThread !== null && heldTypingGuardCount > 0) {
+    actionItems.push({
+      kind: "action",
+      value: "action:flush-composer-typing-guard",
+      searchTerms: [
+        "show held",
+        "flush",
+        "typing guard",
+        "held approval",
+        "held question",
+        "show now",
+      ],
+      title:
+        heldTypingGuardCount === 1
+          ? "Show held request now"
+          : `Show ${heldTypingGuardCount} held requests now`,
+      icon: <ShieldIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        flushComposerTypingGuardHeldRequests();
       },
     });
   }
