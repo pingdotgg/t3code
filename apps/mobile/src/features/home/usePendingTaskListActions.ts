@@ -1,5 +1,4 @@
 import * as Dialog from "../../components/ui/Dialog";
-import { useHomeThreadRouteSelection } from "./home-thread-navigation";
 import { useCallback } from "react";
 
 import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
@@ -14,14 +13,11 @@ import {
 import { withThreadDismissal } from "./thread-dismissal";
 
 export function usePendingTaskListActions(
-  selectRoute?: (params: ReactNavigation.RootParamList["Thread"]) => void,
+  selectThreadRoute: (params: ReactNavigation.RootParamList["Thread"]) => void,
 ): {
   readonly openPendingTask: (pendingTask: PendingNewTask) => void;
   readonly confirmDeletePendingTask: (pendingTask: PendingNewTask) => void;
 } {
-  const selectHomeRoute = useHomeThreadRouteSelection();
-  const selectThreadRoute = selectRoute ?? selectHomeRoute;
-
   const openPendingTask = useCallback(
     (pendingTask: PendingNewTask) => {
       selectThreadRoute(

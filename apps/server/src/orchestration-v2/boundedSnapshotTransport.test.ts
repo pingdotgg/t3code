@@ -15,6 +15,7 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION,
   OrchestrationV2ThreadBoundedSnapshot,
+  OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadStreamItem,
   ProjectId,
   ProviderDriverKind,
@@ -53,6 +54,9 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 const decodeBounded = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
 );
+const decodeHistoryPage = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage)),
+);
 const decodeStreamItem = Schema.decodeUnknownSync(
   Schema.toCodecJson(OrchestrationV2ThreadStreamItem),
 );
@@ -81,6 +85,10 @@ const management = Layer.unwrap(
       getThreadSnapshot: (id) => projections.getThreadSnapshot(id).pipe(Effect.orDie),
       getThreadSnapshotWindow: (id, options) =>
         projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),
+      getThreadHistoryPage: (id, cursor, throughEntryId, conversationOnly) =>
+        projections
+          .getThreadHistoryPage(id, cursor, throughEntryId, conversationOnly)
+          .pipe(Effect.orDie),
       streamStoredEventsFrom: (input) =>
         input?.threadId === BODIES ? Stream.fromIterable(bodiesLiveTail()) : Stream.empty,
     });
@@ -492,6 +500,46 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
       ),
     );
 
+    it.effect("HTTP: the ID table is opt-in and decodes to the same snapshot", () =>
+      withHttp(async (get) => {
+        const base = `/api/orchestration/threads/${encodeURIComponent(threadId)}/bounded?compactTurnItems=1`;
+        const plainBody = await (await get(base)).text();
+        const tableBody = await (await get(`${base}&compactIds=1`)).text();
+        const wire = JSON.parse(tableBody);
+
+        assert.notProperty(JSON.parse(plainBody), "ids");
+        assert.isArray(wire.ids);
+        assert.isNumber(wire.projection.visibleTurnItems[0].item.id);
+        assert.isNumber(wire.projection.thread.id);
+        assert.isBelow(tableBody.length, plainBody.length);
+        const decoded = decodeBounded(tableBody);
+        assert.deepStrictEqual(decoded, decodeBounded(plainBody));
+
+        // Only the long thread has older history to page.
+        if (threadId !== LONG) return;
+        assert.isNotNull(decoded.historyCursor);
+        const history = `/api/orchestration/threads/${encodeURIComponent(threadId)}/history?cursor=${encodeURIComponent(decoded.historyCursor ?? "")}`;
+        const plainPage = await (await get(history)).text();
+        const tablePage = await (await get(`${history}&compactIds=1`)).text();
+        assert.isArray(JSON.parse(tablePage).ids);
+        const page = decodeHistoryPage(tablePage);
+        assert.isAbove(page.items.length, 0);
+        assert.deepStrictEqual(page, decodeHistoryPage(plainPage));
+      }),
+    );
+
+    it.effect("WS: the ID table is opt-in and decodes to the same snapshot", () =>
+      Effect.gen(function* () {
+        const input = { threadId, acceptBoundedSnapshot: true, acceptCompactTurnItems: true };
+        const plain = yield* firstSnapshot(input);
+        const table = yield* firstSnapshot({ ...input, acceptCompactIds: true });
+
+        assert.notProperty(encodeStreamItem(plain.raw), "ids");
+        assert.property(encodeStreamItem(table.raw), "ids");
+        assert.deepStrictEqual(table.decoded, plain.decoded);
+      }),
+    );
+
     it.effect("WS: bounded snapshots stay unchanged unless the client opts in", () =>
       Effect.gen(function* () {
         const legacy = yield* firstSnapshot({ threadId, acceptBoundedSnapshot: true });
@@ -544,6 +592,15 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
           assert.isBelow(dedupedBody.length, compactBody.length);
           assert.deepStrictEqual(
             boundedSnapshotProjection(decodeBounded(dedupedBody)),
+            boundedSnapshotProjection(decodeBounded(compactBody)),
+          );
+          // The client sends both opt-ins: bodies restore after the ID table resolves.
+          const tabledBody = await (
+            await get(`${base}?compactTurnItems=1&dedupeBodies=1&compactIds=1`)
+          ).text();
+          assert.property(JSON.parse(tabledBody), "ids");
+          assert.deepStrictEqual(
+            boundedSnapshotProjection(decodeBounded(tabledBody)),
             boundedSnapshotProjection(decodeBounded(compactBody)),
           );
         }),
