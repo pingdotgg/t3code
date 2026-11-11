@@ -776,8 +776,9 @@ describe("MessagesTimeline messages", () => {
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
   });
 
-  const revealModes = ["inline", "delayed", "grouped-delayed", "grouped-end"];
+  const revealModes = ["inline", "at-end", "delayed", "grouped-delayed", "grouped-end"];
   it.each(revealModes)("reveals %s output", async (mode) => {
+    const inline = mode === "inline" || mode === "at-end";
     setup();
     environmentQuery.data =
       mode === "grouped-end"
@@ -808,7 +809,7 @@ describe("MessagesTimeline messages", () => {
         {...props}
         routeThreadKey={routeThreadKey}
         liveFollowEnabled={false}
-        {...(mode === "inline"
+        {...(inline
           ? {}
           : {
               turnItemSource: {
@@ -832,7 +833,7 @@ describe("MessagesTimeline messages", () => {
               itemType: "dynamic_tool",
               toolLifecycleStatus: "completed",
               toolData: { input: { query: `${"x".repeat(1200)} TOOL_INPUT_END` } },
-              ...(mode === "inline"
+              ...(inline
                 ? {}
                 : {
                     itemType: "command_execution",
@@ -861,7 +862,9 @@ describe("MessagesTimeline messages", () => {
             : []),
           ...(mode === "grouped-end"
             ? [message("Completed.", { role: "assistant" }, "final-message")]
-            : tallEntries.slice(6)),
+            : mode === "at-end"
+              ? [message("Done.", { role: "assistant" }, "final-message")]
+              : tallEntries.slice(6)),
           ...(outerGrowth
             ? [message("Later output\n\n".repeat(20), { role: "assistant" }, "outer-growth")]
             : []),
@@ -930,17 +933,26 @@ describe("MessagesTimeline messages", () => {
     await act(() => {
       void props.listRef.current!.scrollToIndex({ index: 6, animated: false });
     });
-    await vi.waitFor(async () => {
+    if (mode === "at-end") {
       await act(() => {
-        viewport.scrollTop += header().getBoundingClientRect().bottom - (visibleBottom() - 8);
-        viewport.dispatchEvent(new Event("scroll"));
+        void props.listRef.current!.scrollToEnd({ animated: false });
       });
-      expect(resolveTimelineIsAtEnd(props.listRef.current!.getState())).toBe(false);
-      expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom());
-      expect(header().getBoundingClientRect().top).toBeGreaterThan(
-        viewport.getBoundingClientRect().top,
+      await vi.waitFor(() =>
+        expect(resolveTimelineIsAtEnd(props.listRef.current!.getState())).toBe(true),
       );
-    });
+    } else {
+      await vi.waitFor(async () => {
+        await act(() => {
+          viewport.scrollTop += header().getBoundingClientRect().bottom - (visibleBottom() - 8);
+          viewport.dispatchEvent(new Event("scroll"));
+        });
+        expect(resolveTimelineIsAtEnd(props.listRef.current!.getState())).toBe(false);
+        expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom());
+        expect(header().getBoundingClientRect().top).toBeGreaterThan(
+          viewport.getBoundingClientRect().top,
+        );
+      });
+    }
 
     const collapsedScrollTop = viewport.scrollTop;
     using scrollBy = vi.spyOn(viewport, "scrollBy");
@@ -953,7 +965,7 @@ describe("MessagesTimeline messages", () => {
       await screen.rerender(timeline());
       await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(collapsedScrollTop));
     }
-    if (mode !== "inline" && mode !== "grouped-end") {
+    if (!inline && mode !== "grouped-end") {
       await vi.waitFor(() =>
         expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom() + 1),
       );

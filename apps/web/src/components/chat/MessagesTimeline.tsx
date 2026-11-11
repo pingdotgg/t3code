@@ -527,18 +527,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
     reveal?: { readonly entryId?: string | undefined; readonly contentKey?: string | undefined },
   ) => {
     const list = listRef.current;
-    disclosureRevealRef.current =
-      reveal && list && resolveTimelineIsAtEnd(list.getState()) !== true
-        ? {
-            key: anchorKey,
-            identity: listIdentityKey,
-            entryId: reveal.entryId,
-            contentKey: reveal.contentKey,
-            ready: false,
-          }
-        : null;
+    disclosureRevealRef.current = null;
     // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
     if (!list || (isWorking && list.getState().isFollowingEnd)) return;
+    if (reveal) {
+      disclosureRevealRef.current = {
+        key: anchorKey,
+        identity: listIdentityKey,
+        entryId: reveal.entryId,
+        contentKey: reveal.contentKey,
+        ready: false,
+      };
+    }
     list.cancelScroll();
     list.anchorVisibleContent({ key: anchorKey });
   };
