@@ -571,9 +571,10 @@ layer("ProviderEventIngestorV2", (it) => {
 
   // regression: #24690 an answer commits before its outbox delivery reaches the provider
   it.effect.each([
-    { decision: "decline", feedback: "Use a safer command." },
-    { decision: "accept" },
-  ] as const)("keeps a committed $decision when the provider withdraws the approval", (answer) =>
+    { name: "keeps a committed decline", answer: { decision: "decline", feedback: "No." } },
+    { name: "keeps a committed accept", answer: { decision: "accept" } },
+    { name: "cancels an approval withdrawn before it was projected", answer: null },
+  ] as const)("$name when the provider withdraws the approval", ({ answer }) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -664,47 +665,44 @@ layer("ProviderEventIngestorV2", (it) => {
             }),
           { concurrency: 1 },
         );
-      yield* ingest("waiting");
-
-      // The orchestrator's response transaction; its outbox delivery never runs here.
-      const outcome = answer.decision === "accept" ? "completed" : "cancelled";
-      const resolved = { ...request, status: "resolved" as const, resolvedAt: now, ...answer };
-      const answeredNode: OrchestrationV2ExecutionNode = {
-        ...node,
-        status: outcome,
-        completedAt: now,
-      };
-      const answeredItem: OrchestrationV2TurnItem = { ...item, status: outcome, completedAt: now };
-      const base = { threadId, nodeId, occurredAt: now };
-      yield* eventSink.write({
-        events: [
-          {
-            ...base,
-            id: yield* idAllocator.allocate.event({ threadId }),
-            type: "runtime-request.updated",
-            payload: resolved,
-          },
-          {
-            ...base,
-            id: yield* idAllocator.allocate.event({ threadId }),
-            type: "node.updated",
-            payload: answeredNode,
-          },
-          {
-            ...base,
-            id: yield* idAllocator.allocate.event({ threadId }),
-            type: "turn-item.updated",
-            payload: answeredItem,
-          },
-        ],
-      });
+      const outcome = answer?.decision === "accept" ? "completed" : "cancelled";
+      if (answer !== null) {
+        yield* ingest("waiting");
+        // The orchestrator's response transaction; its outbox delivery never runs here.
+        const base = { threadId, nodeId, occurredAt: now };
+        yield* eventSink.write({
+          events: [
+            {
+              ...base,
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "runtime-request.updated",
+              payload: { ...request, status: "resolved", resolvedAt: now, ...answer },
+            },
+            {
+              ...base,
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "node.updated",
+              payload: { ...node, status: outcome, completedAt: now },
+            },
+            {
+              ...base,
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "turn-item.updated",
+              payload: { ...item, status: outcome, completedAt: now },
+            },
+          ],
+        });
+      }
 
       yield* ingest("cancelled");
       const projection = yield* projectionStore.getThreadProjection(threadId);
       const stored = projection.runtimeRequests.find((entry) => entry.id === request.id);
-      assert.equal(stored?.status, "resolved");
-      assert.equal(stored?.decision, answer.decision);
-      assert.equal(stored?.feedback, "feedback" in answer ? answer.feedback : undefined);
+      assert.equal(stored?.status, answer === null ? "cancelled" : "resolved");
+      assert.equal(stored?.decision, answer?.decision);
+      assert.equal(
+        stored?.feedback,
+        answer !== null && "feedback" in answer ? answer.feedback : undefined,
+      );
       assert.equal(projection.nodes.find((entry) => entry.id === nodeId)?.status, outcome);
       assert.equal(projection.turnItems.find((entry) => entry.id === item.id)?.status, outcome);
     }),
