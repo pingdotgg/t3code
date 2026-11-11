@@ -310,6 +310,9 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
           });
       }
     },
-    catch: (cause) => new CourseReferenceFetchError({ message: String(cause) }),
+    catch: (cause) =>
+      new CourseReferenceFetchError({
+        message: isReferenceBlockedError(cause) ? cause.reason : String(cause),
+      }),
   });
 });
