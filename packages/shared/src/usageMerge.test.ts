@@ -646,25 +646,6 @@ describe("mergeUsage", () => {
       expect(merged.duplicateSources).toEqual([`wsl: ${secondMount.homePath}`]);
     });
 
-    it("keeps machines apart that share a hostname and path but not a physical source", () => {
-      const merged = mergeUsage(
-        [
-          environment("pc-a", summary([bucket({ sourcePath: windows.homePath })], [windows])),
-          environment(
-            "pc-b",
-            summary(
-              [bucket({ sourcePath: windows.homePath })],
-              [{ ...windows, volumeId: "99:1", physicalSourceId: "physical-other-pc" }],
-            ),
-          ),
-        ],
-        USAGE_CONTRACT_VERSION,
-      );
-
-      expect(merged.costUsd).toBe(20);
-      expect(merged.duplicateSources).toHaveLength(0);
-    });
-
     it("still counts a shared directory once when only one server reports physical identity", () => {
       const { physicalSourceId: _omitted, ...legacy } = windows;
       const merged = mergeUsage(

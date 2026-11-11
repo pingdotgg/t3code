@@ -42,8 +42,8 @@ import type {
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
-  listTranscriptFiles,
   DESKTOP_HOST_SCOPE_ENV,
+  listTranscriptFiles,
   readDirectoryVolumeId,
   readPhysicalSourceId,
   readTranscriptRecords,
