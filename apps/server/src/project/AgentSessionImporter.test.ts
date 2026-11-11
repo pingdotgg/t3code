@@ -268,6 +268,8 @@ const makeImporter = Effect.fn(function* (
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
   return {
     run: importer.importRecentAgentThreads({ projectId }),
+    listSessions: importer.listSessions,
+    adoptSession: importer.adoptSession,
     importNativeHistory: importer.importNativeHistory,
     published,
   };
@@ -786,5 +788,111 @@ it.effect("imports under a policy ceiling in the project's default, kept under t
     expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId })).runtimeMode).toBe(
       "auto-accept-edits",
     );
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("lists Claude sessions for a project and marks already adopted ones", () =>
+  Effect.gen(function* () {
+    const claude = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "020e7f00-dce6-406b-8ec6-ed90498945d6",
+      "claudeAgent",
+    );
+    const codex = candidate(CODEX_MODEL_SELECTION, "codex-listed");
+    const importer = yield* makeImporter([claude, codex]);
+    expect(yield* importer.listSessions({ projectId, provider: "claudeAgent" })).toEqual({
+      sessions: [
+        {
+          provider: "claudeAgent",
+          providerInstanceId: claude.source.providerInstanceId,
+          providerSessionId: claude.source.providerSessionId,
+          title: "Imported thread",
+          model: CLAUDE_MODEL_SELECTION.model,
+          updatedAt: timestamp,
+          filePath: claude.source.filePath,
+          importedThreadId: null,
+        },
+      ],
+    });
+    expect(
+      yield* importer.adoptSession({
+        projectId,
+        provider: "claudeAgent",
+        providerInstanceId: claude.source.providerInstanceId,
+        providerSessionId: claude.source.providerSessionId,
+      }),
+    ).toEqual({ threadId: importId(claude), adopted: true });
+    expect(yield* importer.listSessions({ projectId, provider: "claudeAgent" })).toEqual({
+      sessions: [
+        {
+          provider: "claudeAgent",
+          providerInstanceId: claude.source.providerInstanceId,
+          providerSessionId: claude.source.providerSessionId,
+          title: "Imported thread",
+          model: CLAUDE_MODEL_SELECTION.model,
+          updatedAt: timestamp,
+          filePath: claude.source.filePath,
+          importedThreadId: importId(claude),
+        },
+      ],
+    });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("adopts a Claude session into a resumable T3 thread without recreating it", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const claude = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "120e7f00-dce6-406b-8ec6-ed90498945d6",
+      "claudeAgent",
+    );
+    const importer = yield* makeImporter([claude]);
+    const threadId = importId(claude);
+
+    expect(
+      yield* importer.adoptSession({
+        projectId,
+        provider: "claudeAgent",
+        providerInstanceId: claude.source.providerInstanceId,
+        providerSessionId: claude.source.providerSessionId,
+        title: "Adopted Claude session",
+      }),
+    ).toEqual({ threadId, adopted: true });
+
+    const records = yield* projections.getThreadRecords(threadId, ["messages", "providerThreads"]);
+    expect(records.thread.title).toBe("Adopted Claude session");
+    expect(records.thread.historyOrigin).toBe("v1_import");
+    expect(records.messages.map((message) => message.text)).toEqual(["Fix it", "Fixed"]);
+    expect(records.providerThreads[0]?.nativeThreadRef).toEqual({
+      driver: "claudeAgent",
+      nativeId: claude.source.providerSessionId,
+      strength: "strong",
+    });
+    expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId })).resumeCursor).toEqual({
+      threadId,
+      resume: claude.source.providerSessionId,
+    });
+
+    expect(
+      yield* importer.adoptSession({
+        projectId,
+        provider: "claudeAgent",
+        providerInstanceId: claude.source.providerInstanceId,
+        providerSessionId: claude.source.providerSessionId,
+      }),
+    ).toEqual({ threadId, adopted: false });
+
+    expect(
+      yield* Effect.flip(
+        importer.adoptSession({
+          projectId,
+          provider: "claudeAgent",
+          providerInstanceId: claude.source.providerInstanceId,
+          providerSessionId: "220e7f00-dce6-406b-8ec6-ed90498945d6",
+        }),
+      ),
+    ).toMatchObject({ _tag: "AgentSessionAdoptNotFoundError" });
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );

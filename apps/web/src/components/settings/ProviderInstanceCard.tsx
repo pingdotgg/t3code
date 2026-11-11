@@ -68,6 +68,7 @@ import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
+import { ClaudeSessionAdoptSection } from "./ClaudeSessionAdoptSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
@@ -1389,6 +1390,13 @@ export function ProviderInstanceCard({
           environmentId={environmentId}
           instanceId={instanceId}
           provider={liveProvider}
+          projects={acpProjects}
+          readOnly={readOnly}
+        />
+      ) : null}
+      {environmentId !== undefined && driverKind === "claudeAgent" ? (
+        <ClaudeSessionAdoptSection
+          environmentId={environmentId}
           projects={acpProjects}
           readOnly={readOnly}
         />

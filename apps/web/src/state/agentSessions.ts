@@ -17,3 +17,23 @@ export const agentSessionImport = createEnvironmentRpcCommand(connectionAtomRunt
   label: "environment-data:agent-sessions:import",
   tag: WS_METHODS.agentSessionsImport,
 });
+
+export const agentSessionList = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:list",
+  tag: WS_METHODS.agentSessionsList,
+  concurrency: {
+    mode: "singleFlight",
+    key: ({ environmentId, input }) =>
+      `${environmentId}:${input.projectId}:${input.provider ?? "claudeAgent"}`,
+  },
+});
+
+export const agentSessionAdopt = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:adopt",
+  tag: WS_METHODS.agentSessionsAdopt,
+  concurrency: {
+    mode: "singleFlight",
+    key: ({ environmentId, input }) =>
+      `${environmentId}:${input.projectId}:${input.providerInstanceId}:${input.providerSessionId}`,
+  },
+});
