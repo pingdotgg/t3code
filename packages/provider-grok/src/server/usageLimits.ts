@@ -24,7 +24,8 @@ const GrokCredentials = Schema.Record(
   }),
 );
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(GrokCredentials));
-const GrokUsageResponse = Schema.Struct({
+export const GROK_USAGE_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+export const GrokUsageResponse = Schema.Struct({
   config: Schema.optional(
     Schema.Struct({
       creditUsagePercent: Schema.optional(Schema.Number),
@@ -38,6 +39,7 @@ const GrokUsageResponse = Schema.Struct({
     }),
   ),
 });
+const GrokErrorResponse = Schema.Struct({ error: Schema.String });
 
 function parsePeriodBoundary(value: string | undefined) {
   if (
@@ -178,10 +180,19 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   const usageLimits = yield* Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
-      HttpClientRequest.get("https://cli-chat-proxy.grok.com/v1/billing?format=credits").pipe(
-        HttpClientRequest.bearerToken(token),
-      ),
+      HttpClientRequest.get(GROK_USAGE_URL).pipe(HttpClientRequest.bearerToken(token)),
     );
+    if (response.status === 403) {
+      const { error } = yield* HttpClientResponse.schemaBodyJson(GrokErrorResponse)(response);
+      // xAI refuses Grok Build while the account's privacy setting is a legacy mode.
+      if (error.includes("WKE=privacy-mode:")) {
+        return makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "Switch your xAI account to Privacy Mode to show Grok usage limits.",
+        });
+      }
+    }
     const body = yield* HttpClientResponse.schemaBodyJson(GrokUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );

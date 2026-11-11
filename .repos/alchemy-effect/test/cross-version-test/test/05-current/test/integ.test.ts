@@ -1,6 +1,6 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";
 
@@ -44,9 +44,7 @@ test(
     const res = yield* getOk(url);
     expect(res.status).toBe(200);
 
-    const body = yield* Effect.tryPromise(
-      () => res.json() as Promise<{ marker: string }>,
-    );
+    const body = yield* Effect.tryPromise(() => res.json() as Promise<{ marker: string }>);
     expect(body.marker).toBe(MARKER);
   }),
   { timeout: 120_000 },

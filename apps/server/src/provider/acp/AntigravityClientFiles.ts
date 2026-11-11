@@ -78,13 +78,25 @@ export const readAntigravityClientTextFile = Effect.fn("AntigravityClientFiles.r
         `File '${input.request.path}' is not a readable text file under ${CLIENT_FILE_MAX_BYTES} bytes.`,
       );
     }
-    const text = yield* input.fileSystem
-      .readFileString(filePath)
+    const bytes = yield* input.fileSystem
+      .readFile(filePath)
       .pipe(
         Effect.mapError(() =>
           EffectAcpErrors.AcpRequestError.internalError(`Could not read '${input.request.path}'.`),
         ),
       );
+    const text = yield* Effect.try({
+      try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+      catch: () =>
+        EffectAcpErrors.AcpRequestError.invalidParams(
+          `File '${input.request.path}' is not a UTF-8 text file.`,
+        ),
+    });
+    if (text.includes("\0")) {
+      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+        `File '${input.request.path}' contains binary data.`,
+      );
+    }
     const line = input.request.line ?? undefined;
     const limit = input.request.limit ?? undefined;
     if (line === undefined && limit === undefined) {
