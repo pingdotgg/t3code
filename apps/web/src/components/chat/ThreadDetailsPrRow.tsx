@@ -444,7 +444,7 @@ export function ThreadDetailsPrRow({
             type="button"
             variant="ghost"
             size="sm"
-            part={wrap ? "title" : part}
+            className={grow ? "flex-1" : undefined}
             aria-label={openAriaLabel}
             onClick={onOpen}
             onAuxClick={onOpen}

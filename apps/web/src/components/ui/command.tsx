@@ -30,7 +30,11 @@ function CommandDialogTrigger(props: CommandDialogPrimitive.Trigger.Props) {
 function CommandDialogBackdrop({ className, ...props }: CommandDialogPrimitive.Backdrop.Props) {
   return (
     <CommandDialogPrimitive.Backdrop
-      className={cn(DIALOG_BACKDROP_CLASS, "z-[80] data-ending-style:pointer-events-none", className)}
+      className={cn(
+        DIALOG_BACKDROP_CLASS,
+        "z-[80] data-ending-style:pointer-events-none",
+        className,
+      )}
       data-slot="command-dialog-backdrop"
       {...props}
     />
