@@ -19,10 +19,10 @@ import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import * as ProcessRunner from "../processRunner.ts";
 import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
 import {
-  requestServiceLauncherStop,
-  serviceControlPipePath,
   serviceLauncherIsRunning,
+  serviceLauncherLockPath,
   serviceTaskName,
+  waitForServiceLauncherExit,
 } from "../serviceLauncher.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -38,6 +38,7 @@ import {
   SERVICE_STATE_FILE,
   SERVICE_UNIT_ENV,
   compareExactServiceVersions,
+  serviceTaskIsDisabled,
   serviceUnitBaseDirOf as bootServiceBaseDirOf,
   parseServiceState,
   serviceStateActiveVersion,
@@ -196,7 +197,7 @@ export function renderBootServiceTask(
     "--log-file",
     plan.logPath,
     "--service-unit",
-    BOOT_SERVICE_UNIT_FILE,
+    BOOT_SERVICE_TASK_FILE,
   ]
     .map(quoteWindowsArgument)
     .join(" ");
@@ -252,7 +253,7 @@ export type BootServiceStep = {
   readonly timeout?: Duration.Input;
 } & (
   | { readonly command: string; readonly args: ReadonlyArray<string> }
-  /** A step no command can do, such as waiting on the Windows launcher's control pipe. */
+  /** A step no command can do, such as waiting for the Windows launcher to exit. */
   | { readonly run: Effect.Effect<void, BootServiceCommandError> }
 );
 
@@ -278,6 +279,9 @@ const defaultSystemdUnitDir = (path: Path.Path, homeDir: string, xdgConfigHome: 
     "systemd",
     "user",
   );
+
+const scheduledTaskPath = (path: Path.Path, localAppData: string) =>
+  path.join(localAppData, "t3code", BOOT_SERVICE_TASK_FILE);
 
 const launchdPlistPath = (path: Path.Path, homeDir: string) =>
   path.join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE);
@@ -427,10 +431,10 @@ function schtasksManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
   readonly session: WindowsSession;
-  /** Asks the installed launcher to stop and waits for it; Task Scheduler cannot. */
+  /** Ends the task and waits for its launcher to exit; Task Scheduler does not wait. */
   readonly stopLauncher: Effect.Effect<void, BootServiceCommandError>;
 }): BootServiceManager {
-  const unitPath = input.path.join(input.session.localAppData, "t3code", BOOT_SERVICE_TASK_FILE);
+  const unitPath = scheduledTaskPath(input.path, input.session.localAppData);
   const task = ["/TN", input.session.taskName];
   const register = {
     step: "registering the scheduled task",
@@ -469,7 +473,7 @@ function schtasksManager(input: {
       { ...run, step: "restarting the service after a failed update" },
     ],
     // Ending the task kills only its console host; the launcher sees the console close and
-    // stops gracefully while the replacement waits for its control pipe.
+    // stops gracefully while the replacement waits for its lock.
     handoff: [
       register,
       {
@@ -572,6 +576,10 @@ export const bootServiceUnitPath = Effect.fn("cloud.boot_service.unit_path")(fun
   const homeDir = yield* HostProcess.HomeDirectory;
   if (homeDir === "") return undefined;
   if (platform === "darwin") return launchdPlistPath(path, homeDir);
+  if (platform === "win32") {
+    const localAppData = (yield* HostProcess.Environment).LOCALAPPDATA ?? "";
+    return localAppData === "" ? undefined : scheduledTaskPath(path, localAppData);
+  }
   if (platform !== "linux") return undefined;
   const unitDir =
     (yield* readSystemdUnitDirectory(yield* ProcessRunner.ProcessRunner, path)) ??
@@ -770,9 +778,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   // Root under sudo must not reach or start a separate root service.
   const rootUnderSudo =
     uid === 0 && (yield* Config.String("SUDO_USER").pipe(Config.withDefault(""))) !== "";
-  const runningInsideService =
-    (yield* Config.String(SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
-    BOOT_SERVICE_UNIT_FILE;
+  const runningInsideService = [BOOT_SERVICE_UNIT_FILE, BOOT_SERVICE_TASK_FILE].includes(
+    yield* Config.String(SERVICE_UNIT_ENV).pipe(Config.withDefault("")),
+  );
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -831,21 +839,22 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     systemRoot: (yield* windowsVariable("SystemRoot")) || "C:\\Windows",
   };
   // The unit is per user, so the launcher to stop is the one serving the installed unit's home.
-  const launcherControlPath = (unit: Option.Option<string>) =>
-    serviceControlPipePath(
+  const launcherLockPath = (unit: Option.Option<string>) =>
+    serviceLauncherLockPath(
       Option.getOrUndefined(Option.flatMapNullishOr(unit, bootServiceBaseDirOf)) ?? input.baseDir,
     );
+  // Ending the task closes the launcher's console, which the launcher takes as its SIGTERM.
+  // Task Scheduler then reports the task stopped at once, so the lock says when it really is.
   const stopWindowsLauncher = Effect.gen(function* () {
     const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
-    yield* Effect.tryPromise({
-      try: () => requestServiceLauncherStop(launcherControlPath(unit)),
-      catch: (cause) =>
-        new BootServiceCommandError({ step: "stopping the installed service", cause }),
-    });
-    // Agents the server left behind keep its console host, and so the task, running.
     yield* runner
       .run({ command: "schtasks", args: ["/End", "/TN", windowsSession.taskName] })
       .pipe(Effect.ignore);
+    yield* Effect.tryPromise({
+      try: (signal) => waitForServiceLauncherExit(launcherLockPath(unit), signal),
+      catch: (cause) =>
+        new BootServiceCommandError({ step: "stopping the installed service", cause }),
+    });
   });
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
   const resolveTarget = (systemdUnitDir: string | undefined) => {
@@ -1049,7 +1058,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       (release) => Effect.sync(release),
     );
 
-  // Running means the launcher answers its control pipe: a task can stay running after the
+  // Running means the launcher holds its lock: a task can stay running after the
   // launcher exits, while agents it left behind hold the console host open.
   const readSchtasksProblems = Effect.fn("cloud.boot_service.read_schtasks_problems")(function* (
     unit: Option.Option<string>,
@@ -1057,15 +1066,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const [task, running] = yield* Effect.all(
       [
         probe("schtasks", ["/Query", "/TN", windowsSession.taskName, "/XML"]),
-        Effect.promise(() => serviceLauncherIsRunning(launcherControlPath(unit))),
+        Effect.promise(() => serviceLauncherIsRunning(launcherLockPath(unit))),
       ],
       { concurrency: "unbounded" },
     );
-    const settings = Option.isSome(task)
-      ? (/<Settings>[\s\S]*?<\/Settings>/.exec(task.value.stdout)?.[0] ?? "")
-      : "";
     const problems: BootServiceProblem[] = [];
-    if (!succeeded(task) || settings.includes("<Enabled>false</Enabled>")) {
+    if (Option.isNone(task) || task.value.code !== 0 || serviceTaskIsDisabled(task.value.stdout)) {
       problems.push("service-disabled");
     }
     if (!running) problems.push("service-stopped");
@@ -1206,11 +1212,17 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           if (Option.isSome(previousStateText)) {
             const installedVersion = serviceStateActiveVersion(previousStateText.value);
             if (serviceStateHasPendingUpdate(previousStateText.value)) {
-              const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
+              const windows = platform === "win32";
+              const quote = (word: string) => `'${word.replaceAll("'", windows ? "''" : "'\\''")}'`;
+              const launcher = (version: string) =>
+                quote(pinnedRuntimePaths(path, input.baseDir, version, platform).entryPath);
               return yield* new BootServiceUpdatePendingError(
                 !currentlyInstalled && installedVersion !== undefined
                   ? {
-                      recoveryCommand: `T3CODE_HOME=${quote(input.baseDir)} ${quote(pinnedRuntimePaths(path, input.baseDir, installedVersion, platform).entryPath)} __service-launcher`,
+                      // PowerShell has no inline variable assignment; the launcher takes a flag.
+                      recoveryCommand: windows
+                        ? `& ${launcher(installedVersion)} __service-launcher --base-dir ${quote(input.baseDir)}`
+                        : `T3CODE_HOME=${quote(input.baseDir)} ${launcher(installedVersion)} __service-launcher`,
                     }
                   : {},
               );
@@ -1345,7 +1357,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
             ([enabled, active]) => succeeded(active) || succeeded(enabled),
           )
         : manager.kind === "schtasks"
-          ? !(yield* readSchtasksProblems(unit)).includes("service-disabled")
+          ? // A task disabled while its launcher runs was left that way by an interrupted stop.
+            yield* Effect.map(
+              readSchtasksProblems(unit),
+              (problems) =>
+                !problems.includes("service-disabled") || !problems.includes("service-stopped"),
+            )
           : succeeded(
               yield* probe("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`]),
             );

@@ -15,15 +15,19 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
-import { renderBootServicePlist, renderBootServiceUnit } from "./cloud/bootService.ts";
+import {
+  renderBootServicePlist,
+  renderBootServiceTask,
+  renderBootServiceUnit,
+} from "./cloud/bootService.ts";
 import {
   databaseBackupBlocker,
   Launcher,
   readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
-  requestServiceLauncherStop,
-  serviceControlPipePath,
+  serviceLauncherIsRunning,
+  serviceLauncherLockPath,
   writeServiceState,
 } from "./serviceLauncher.ts";
 import {
@@ -507,6 +511,15 @@ if (context.update?.status === "pending") {
           environmentPath: "/usr/bin:/custom/runtime/versions/1.0.0",
         }),
     },
+    {
+      name: "Task Scheduler",
+      legacyInstall: false,
+      render: (plan: Parameters<typeof renderBootServiceTask>[0]) =>
+        renderBootServiceTask(
+          { ...plan, program: [`${plan.program[0]}.exe`, "__service-launcher"] },
+          { userId: "PC\\theo", homeDir: "C:\\Users\\theo", conhostPath: "conhost.exe" },
+        ),
+    },
   ])(
     "commits and repoints $name only after the trial reports prepared",
     ({ render, legacyInstall }) =>
@@ -928,7 +941,7 @@ if (context.update?.status === "pending") {
     }),
   );
 
-  it.effect("stops the server over IPC when asked on the control socket, with the marker set", () =>
+  it.effect("holds its lock while it serves and stops the server over IPC, marker set", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -967,16 +980,13 @@ process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.dat
           activeVersion: "1.0.0",
         }),
       );
-      const controlPath =
-        (yield* HostProcess.Platform) === "win32"
-          ? serviceControlPipePath(root)
-          : path.join(root, "control.sock");
+      const lockPath = serviceLauncherLockPath(root);
       const serving = Promise.withResolvers<void>();
       const launcher = new Launcher(
         root,
         yield* Effect.promise(() => readServiceState(statePath)),
         {
-          controlPath,
+          lockPath,
           stopChildOverIpc: true,
           // The update request proves the child is up; refusing it leaves the server running.
           backupSpaceProbe: {
@@ -991,10 +1001,12 @@ process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.dat
       const running = launcher.run();
       yield* Effect.promise(() => Promise.race([serving.promise, running]));
 
-      assert.isTrue(yield* Effect.promise(() => requestServiceLauncherStop(controlPath)));
+      assert.isTrue(yield* Effect.promise(() => serviceLauncherIsRunning(lockPath)));
+      // What losing the task's console does.
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
       yield* Effect.promise(() => running);
       assert.equal(yield* fs.readFileString(reportPath), "true");
-      assert.isFalse(yield* Effect.promise(() => requestServiceLauncherStop(controlPath)));
+      assert.isFalse(yield* Effect.promise(() => serviceLauncherIsRunning(lockPath)));
     }),
   );
 

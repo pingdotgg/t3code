@@ -1,5 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Cross-process launcher contention uses real filesystem leases and IPC barriers.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -17,6 +18,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { serviceLauncherLockPath } from "../serviceLauncher.ts";
 import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
@@ -165,6 +167,8 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     lingerStartsManager: boolean;
     enabled: boolean;
     active: boolean;
+    /** A Windows launcher: it holds its lock until its task ends. */
+    launcher?: { readonly close: () => void };
   } = {
     failCommand: undefined,
     linger: "yes",
@@ -188,6 +192,11 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         control.managerReachable ||= control.lingerStartsManager;
       }
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
+      if (input.command === "schtasks") {
+        if (input.args[0] === "/Create" || input.args.includes("/ENABLE")) control.enabled = true;
+        if (input.args.includes("/DISABLE")) control.enabled = false;
+        if (input.args[0] === "/End") control.launcher?.close();
+      }
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
       // The manager loads units only from its own unit directory.
       const unitOutsideManager =
@@ -217,13 +226,15 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
               })
             : input.args[0] === "--version"
               ? `t3 v${/versions[\\/]([^\\/]+)[\\/]/.exec(input.command)?.[1] ?? "1.2.3"}\n`
-              : input.command === "loginctl" && input.args[0] === "show-user"
-                ? `${control.linger ?? ""}\n`
-                : input.args[1] === "is-enabled"
-                  ? control.enabled
-                    ? "enabled\n"
-                    : "disabled\n"
-                  : "",
+              : input.command === "schtasks" && input.args[0] === "/Query"
+                ? `<Task><Settings><Enabled>${control.enabled}</Enabled></Settings></Task>`
+                : input.command === "loginctl" && input.args[0] === "show-user"
+                  ? `${control.linger ?? ""}\n`
+                  : input.args[1] === "is-enabled"
+                    ? control.enabled
+                      ? "enabled\n"
+                      : "disabled\n"
+                    : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed ||
@@ -289,7 +300,12 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
-                ...(insideService ? { T3_BOOT_SERVICE_UNIT: "t3code.service" } : {}),
+                ...(insideService
+                  ? {
+                      T3_BOOT_SERVICE_UNIT:
+                        platform === "win32" ? "t3code-task.xml" : "t3code.service",
+                    }
+                  : {}),
                 ...(underSudo ? { SUDO_USER: "julius" } : {}),
               },
             }),
@@ -1267,7 +1283,7 @@ process.disconnect();
         `schtasks /Create /XML ${plan.unitPath} /TN t3code-PC-theo /F`,
         "schtasks /Run /TN t3code-PC-theo",
       ]);
-      // No launcher answers the control pipe here.
+      // No launcher holds the lock here.
       expect(yield* service.status).toMatchObject({
         installed: true,
         current: false,
@@ -1282,6 +1298,29 @@ process.disconnect();
         "schtasks /Delete /TN t3code-PC-theo /F",
       ]);
       expect((yield* service.status).installed).toBe(false);
+    }),
+  );
+
+  it.effect("stops a Windows launcher by ending its task, and restarts one left disabled", () =>
+    Effect.gen(function* () {
+      const { service, commands, control } = yield* makeHarness("win32");
+      const plan = yield* service.install();
+      const launcher = new NodeSqlite.DatabaseSync(serviceLauncherLockPath(plan.baseDir));
+      launcher.exec("BEGIN EXCLUSIVE");
+      control.launcher = launcher;
+      // An interrupted stop disables the task and leaves its launcher running.
+      control.enabled = false;
+      expect((yield* service.status).problems).toEqual(["service-disabled"]);
+
+      commands.length = 0;
+      yield* service.withStopped(Effect.sync(() => commands.push("repair")));
+      expect(commands.filter((command) => !command.includes("/Query"))).toEqual([
+        "schtasks /Change /TN t3code-PC-theo /DISABLE",
+        "schtasks /End /TN t3code-PC-theo",
+        "repair",
+        "schtasks /Change /TN t3code-PC-theo /ENABLE",
+        "schtasks /Run /TN t3code-PC-theo",
+      ]);
     }),
   );
 

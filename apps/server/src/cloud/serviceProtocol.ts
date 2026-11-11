@@ -14,6 +14,8 @@ export const SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
 /** Marks a repointed unit whose service still runs the old version; launcher startup clears it. */
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
+/** Held by a Windows launcher while it runs: Task Scheduler tracks only the task's console host. */
+export const SERVICE_LAUNCHER_LOCK_FILE = "service-launcher.lock";
 
 const unquoteSystemdValue = (raw: string) =>
   (raw.startsWith('"') && raw.endsWith('"')
@@ -26,6 +28,10 @@ const unescapeXmlText = (value: string) =>
 
 const unquoteWindowsArgument = (raw: string) =>
   unescapeXmlText(raw).replace(/(\\+)$/, (slashes) => slashes.slice(slashes.length / 2));
+
+/** Whether Task Scheduler's copy of a task is disabled as a whole, not one of its triggers. */
+export const serviceTaskIsDisabled = (taskXml: string): boolean =>
+  /<Settings>[\s\S]*?<\/Settings>/.exec(taskXml)?.[0].includes("<Enabled>false</Enabled>") === true;
 
 export function serviceUnitBaseDirOf(contents: string): string | undefined {
   const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];

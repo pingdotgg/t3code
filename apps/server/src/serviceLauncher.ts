@@ -5,7 +5,6 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
@@ -23,8 +22,10 @@ import {
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
   parseServiceState,
+  serviceTaskIsDisabled,
   serviceUnitBaseDirOf,
   SERVICE_ENV_FILE,
+  SERVICE_LAUNCHER_LOCK_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -41,8 +42,8 @@ const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
 // A replacement started by a handoff waits up to two minutes for the stopping launcher.
-const CONTROL_LISTEN_RETRY_MS = 500;
-const CONTROL_LISTEN_ATTEMPTS = 240;
+const LOCK_RETRY_MS = 500;
+const LOCK_ATTEMPTS = 240;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
 
@@ -79,14 +80,36 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
  */
 export interface ServiceUnit {
   readonly path: string;
-  /** systemd keeps a loaded copy of the unit; launchd re-reads the plist at bootstrap. */
+  /** systemd and Task Scheduler keep a loaded copy; launchd re-reads the plist at bootstrap. */
   readonly reload: () => Promise<void>;
+}
+
+// Registering replaces the task, so one the CLI disabled to keep the service stopped stays disabled.
+async function registerServiceTask(unitPath: string, taskName: string): Promise<void> {
+  const schtasks = (...args: ReadonlyArray<string>) =>
+    NodeUtil.promisify(NodeChildProcess.execFile)("schtasks", args, {
+      windowsHide: true,
+      timeout: 30_000,
+    });
+  const registered = await schtasks("/Query", "/TN", taskName, "/XML");
+  await schtasks("/Create", "/XML", unitPath, "/TN", taskName, "/F");
+  if (serviceTaskIsDisabled(registered.stdout)) {
+    await schtasks("/Change", "/TN", taskName, "/DISABLE");
+  }
 }
 
 function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): ServiceUnit | undefined {
   const unitName = env[SERVICE_UNIT_ENV]?.trim();
+  if (!unitName) return undefined;
+  if (unitName.endsWith(".xml")) {
+    const localAppData = env.LOCALAPPDATA?.trim();
+    if (!localAppData) return undefined;
+    const path = NodePath.win32.join(localAppData, "t3code", unitName);
+    const taskName = serviceTaskName(env.USERDOMAIN ?? "", env.USERNAME ?? "");
+    return { path, reload: () => registerServiceTask(path, taskName) };
+  }
   const home = env.HOME?.trim();
-  if (!unitName || !home) return undefined;
+  if (!home) return undefined;
   if (unitName.endsWith(".plist")) {
     return {
       path: NodePath.join(home, "Library", "LaunchAgents", unitName),
@@ -117,12 +140,13 @@ function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): Servi
   };
 }
 
-// systemd's ExecStart value, or the plist string before the __service-launcher argument.
+// systemd's ExecStart value, or the plist string or task argument before __service-launcher.
 // Only the version segment changes, so quoted or escaped paths stay as rendered.
 // The launch agent's PATH names a versions directory without the executable; leave it.
 const SERVICE_UNIT_PROGRAMS = [
   /^(ExecStart=.*?[\\/]runtime[\\/]versions[\\/])([^\\/\s"]+)([\\/]t3)(?=["\s])/m,
   /(<string>[^<]*?[\\/]runtime[\\/]versions[\\/])([^\\/<]+)([\\/]t3<\/string>\s*<string>__service-launcher<\/string>)/,
+  /(<Arguments>--headless "[^"<]*?[\\/]runtime[\\/]versions[\\/])([^\\/"<]+)([\\/]t3\.exe" "__service-launcher")/,
 ] as const;
 
 /**
@@ -616,46 +640,41 @@ async function terminateChild(
 /** Task Scheduler names are machine-wide, so each Windows account runs its own task. */
 export const serviceTaskName = (domain: string, userName: string) => `t3code-${domain}-${userName}`;
 
-/** Keyed by T3 home, so only the launcher serving that home can answer. */
-export const serviceControlPipePath = (baseDir: string) =>
-  `\\\\.\\pipe\\t3code-service-${NodeCrypto.createHash("sha256")
-    .update(NodePath.resolve(baseDir).toLowerCase())
-    .digest("hex")
-    .slice(0, 16)}`;
+export const serviceLauncherLockPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_LAUNCHER_LOCK_FILE);
 
-const isMissingControl = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
-
-/** Asks the launcher to stop and resolves once it has exited; false when none was running. */
-export function requestServiceLauncherStop(controlPath: string): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    let connected = false;
-    const socket = NodeNet.connect(controlPath, () => {
-      connected = true;
-      // Not end(): a half-close makes the launcher close the socket before it has stopped.
-      socket.write("stop\n");
-    });
-    socket.on("data", () => undefined);
-    socket.on("error", (error) => {
-      if (!connected) {
-        if (isMissingControl(error)) resolve(false);
-        else reject(error);
-      }
-    });
-    socket.once("close", () => {
-      if (connected) resolve(true);
-    });
-  });
+// An exclusive SQLite transaction, like the server's owner lock: the OS drops it when the holder dies.
+async function tryAcquireLauncherLock(
+  lockPath: string,
+): Promise<{ readonly close: () => void } | undefined> {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(lockPath);
+  try {
+    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+    return db;
+  } catch (cause) {
+    db.close();
+    if (cause instanceof Error && "errcode" in cause && cause.errcode === 5) return undefined;
+    throw cause;
+  }
 }
 
-export function serviceLauncherIsRunning(controlPath: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = NodeNet.connect(controlPath, () => {
-      socket.destroy();
-      resolve(true);
-    });
-    // Any error but a missing pipe, such as a busy one, means a launcher holds it.
-    socket.once("error", (error) => resolve(!isMissingControl(error)));
-  });
+export async function serviceLauncherIsRunning(lockPath: string): Promise<boolean> {
+  if (!NodeFS.existsSync(lockPath)) return false;
+  const lock = await tryAcquireLauncherLock(lockPath);
+  lock?.close();
+  return lock === undefined;
+}
+
+/** Resolves once no launcher holds the lock; the caller bounds the wait through `signal`. */
+export async function waitForServiceLauncherExit(
+  lockPath: string,
+  signal: AbortSignal,
+): Promise<void> {
+  while (await serviceLauncherIsRunning(lockPath)) {
+    signal.throwIfAborted();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 const stopMarkerPath = (baseDir: string) =>
@@ -678,7 +697,7 @@ export class Launcher {
   readonly #serviceUnit: ServiceUnit | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   readonly #output: number | undefined;
-  readonly #controlPath: string | undefined;
+  readonly #lockPath: string | undefined;
   readonly #stopChildOverIpc: boolean;
 
   constructor(
@@ -690,8 +709,8 @@ export class Launcher {
       readonly environment?: Readonly<NodeJS.ProcessEnv>;
       /** Launcher and server output, for managers that cannot redirect it. */
       readonly output?: number;
-      /** Where `requestServiceLauncherStop` reaches this launcher. */
-      readonly controlPath?: string;
+      /** Makes this the only launcher for its home; a replacement waits for the one stopping. */
+      readonly lockPath?: string;
       /** Windows `kill()` is TerminateProcess, which skips the server's shutdown finalizers. */
       readonly stopChildOverIpc?: boolean;
     } = {},
@@ -701,7 +720,7 @@ export class Launcher {
     this.#serviceUnit = options.serviceUnit;
     this.#environment = { ...(options.environment ?? process.env) };
     this.#output = options.output;
-    this.#controlPath = options.controlPath;
+    this.#lockPath = options.lockPath;
     // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
     this.#stopChildOverIpc = options.stopChildOverIpc ?? process.platform === "win32";
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
@@ -714,17 +733,17 @@ export class Launcher {
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
     try {
-      const control =
-        this.#controlPath === undefined
-          ? undefined
-          : await this.#listenForControl(this.#controlPath);
+      const lock =
+        this.#lockPath === undefined ? undefined : await this.#acquireLock(this.#lockPath);
       try {
         // The launcher that held the lock may have moved the state since main read it.
-        if (control !== undefined) this.#state = await readServiceState(this.#statePath);
-        this.#enqueue(() => this.#recover());
+        if (lock !== undefined) this.#state = await readServiceState(this.#statePath);
+        // A stop that arrived while waiting for the lock leaves nothing to start.
+        if (lock !== undefined || this.#lockPath === undefined)
+          this.#enqueue(() => this.#recover());
         await this.#completion.promise;
       } finally {
-        control?.close();
+        lock?.close();
       }
     } finally {
       process.off("SIGTERM", onSigterm);
@@ -732,35 +751,16 @@ export class Launcher {
     }
   }
 
-  /** Also the single-instance lock: a replacement waits until the stopping launcher releases it. */
-  async #listenForControl(controlPath: string): Promise<{ readonly close: () => void }> {
-    const sockets = new Set<NodeNet.Socket>();
-    const server = NodeNet.createServer((socket) => {
-      sockets.add(socket);
-      socket.once("close", () => sockets.delete(socket));
-      socket.on("error", () => undefined);
-      socket.on("data", (data) => {
-        if (String(data).includes("stop")) void this.stop("SIGTERM");
-      });
-    });
-    for (let attempt = 1; ; attempt++) {
-      const error = await new Promise<NodeJS.ErrnoException | undefined>((resolve) => {
-        server.once("error", resolve);
-        server.listen(controlPath, () => {
-          server.off("error", resolve);
-          resolve(undefined);
-        });
-      });
-      if (error === undefined) break;
-      if (error.code !== "EADDRINUSE" || attempt >= CONTROL_LISTEN_ATTEMPTS) throw error;
-      await new Promise((resolve) => setTimeout(resolve, CONTROL_LISTEN_RETRY_MS));
+  async #acquireLock(lockPath: string): Promise<{ readonly close: () => void } | undefined> {
+    for (let attempt = 1; !this.#stopRequested; attempt++) {
+      const lock = await tryAcquireLauncherLock(lockPath);
+      if (lock !== undefined) return lock;
+      if (attempt >= LOCK_ATTEMPTS) {
+        throw new Error("Another T3 Code service launcher still runs for this T3 home.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
     }
-    return {
-      close: () => {
-        server.close();
-        for (const socket of sockets) socket.destroy();
-      },
-    };
+    return undefined;
   }
 
   #terminate(child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals = "SIGTERM") {
@@ -1248,7 +1248,7 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
       environment,
       ...(serviceUnit === undefined ? {} : { serviceUnit }),
       ...(output === undefined ? {} : { output }),
-      ...(windows ? { controlPath: serviceControlPipePath(baseDir) } : {}),
+      ...(windows ? { lockPath: serviceLauncherLockPath(baseDir) } : {}),
     });
     // Ending a scheduled task kills its console host without a signal; the console read fails instead.
     const watchConsole = windows && process.stdin.isTTY === true;
