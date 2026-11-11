@@ -26,10 +26,24 @@ function parseCpuList(list: string): ReadonlySet<number> | null {
   return cpus;
 }
 
-function readCpu(allowed: ReadonlySet<number> | null) {
-  const all = NodeOS.cpus();
-  const pinned = allowed ? all.filter((_, index) => allowed.has(index)) : all;
-  const cpus = pinned.length > 0 ? pinned : all;
+// os.cpus() compacts online CPUs, so its indices are not CPU ids; /proc/stat lines are keyed.
+function pinnedCpu(stat: string, allowed: ReadonlySet<number>) {
+  const cpu = { idle: 0, total: 0, count: 0 };
+  for (const [, id, fields] of stat.matchAll(/^cpu(\d+) (.+)$/gm)) {
+    if (!allowed.has(Number(id))) continue;
+    const counters = (fields ?? "").trim().split(/\s+/).map(Number);
+    const at = (index: number) => counters[index] ?? 0;
+    // user nice system idle iowait irq softirq steal
+    const idle = at(3) + at(4);
+    cpu.idle += idle;
+    cpu.total += idle + at(0) + at(1) + at(2) + at(5) + at(6) + at(7);
+    cpu.count++;
+  }
+  return cpu.count > 0 ? cpu : null;
+}
+
+function readCpu() {
+  const cpus = NodeOS.cpus();
   const cpu = cpus.reduce(
     (sum, { times }) => ({
       idle: sum.idle + times.idle,
@@ -88,11 +102,16 @@ const make = Effect.fn("makeHostResources")(function* () {
           )
         : null;
 
-    const previousCpu = readCpu(allowedCpus);
+    const sampleCpu = () =>
+      allowedCpus
+        ? Effect.map(readFile("/proc/stat"), (stat) => pinnedCpu(stat, allowedCpus) ?? readCpu())
+        : Effect.sync(readCpu);
+
+    const previousCpu = yield* sampleCpu();
     const previousUsage = yield* readCpuUsage();
     const startedAt = yield* Clock.currentTimeMillis;
     yield* Effect.sleep("200 millis");
-    const cpu = readCpu(allowedCpus);
+    const cpu = yield* sampleCpu();
     const usage = yield* readCpuUsage();
     const elapsedMicros = ((yield* Clock.currentTimeMillis) - startedAt) * 1000;
     const totalDelta = cpu.total - previousCpu.total;

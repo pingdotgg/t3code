@@ -12,8 +12,8 @@ import { vi } from "vite-plus/test";
 
 import * as HostResources from "./HostResources.ts";
 
-// An 8-CPU host; every cpus() call advances each CPU by 100 ms at its `host.busy` utilization.
-const host = vi.hoisted(() => ({ busy: [] as ReadonlyArray<number>, reads: 0 }));
+// An 8-CPU host; every cpus() call advances each CPU by 100 ms at `host.busy` utilization.
+const host = vi.hoisted(() => ({ busy: 0, reads: 0 }));
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeOS>();
   return {
@@ -21,16 +21,19 @@ vi.mock("node:os", async (importOriginal) => {
     totalmem: () => 4 * 1024 ** 3,
     cpus: () => {
       const elapsed = 100 * host.reads++;
-      return host.busy.map((busy) => ({
-        model: "test",
-        speed: 1,
-        times: { user: elapsed * busy, nice: 0, sys: 0, idle: elapsed * (1 - busy), irq: 0 },
-      }));
+      const times = {
+        user: elapsed * host.busy,
+        nice: 0,
+        sys: 0,
+        idle: elapsed * (1 - host.busy),
+        irq: 0,
+      };
+      return Array.from({ length: 8 }, () => ({ model: "test", speed: 1, times }));
     },
   };
 });
-const setup = (busy: number | ReadonlyArray<number> = 0) => {
-  host.busy = typeof busy === "number" ? Array.from({ length: 8 }, () => busy) : busy;
+const setup = (busy = 0) => {
+  host.busy = busy;
   host.reads = 0;
 };
 
@@ -148,20 +151,28 @@ describe("HostResources.layer", () => {
     ),
   );
 
-  it.effect("counts only the CPUs the server is pinned to as host idle", () =>
+  it.effect("samples the CPUs the server is pinned to by id, not by os.cpus() index", () =>
     Effect.gen(function* () {
-      // A neighbour saturates CPUs 0-1, the server's whole cpuset; CPUs 2-7 sit idle.
-      setup([1, 1, 0, 0, 0, 0, 0, 0]);
+      setup();
       const snapshot = yield* read;
 
-      assert.strictEqual(snapshot.cpuCount, 2);
+      assert.strictEqual(snapshot.cpuCount, 1);
       assert.strictEqual(snapshot.cpuUtilization, 1);
     }).pipe(
       Effect.provide(
         linuxHost({
           ...unlimitedCgroup,
-          "/proc/self/status": ["Name:\tnode\nCpus_allowed_list:\t0-1\n"],
-          [`${cgroup}/cpu.max`]: ["400000 100000\n"],
+          "/proc/self/status": ["Name:\tnode\nCpus_allowed_list:\t4\n"],
+          // CPU 1 is offline; the server's CPU 4 is saturated, everything else is idle.
+          "/proc/stat": [0, 100].map((elapsed) =>
+            [0, 2, 3, 4, 5, 6, 7]
+              .map((id) =>
+                id === 4
+                  ? `cpu${id} ${elapsed} 0 0 0 0 0 0 0`
+                  : `cpu${id} 0 0 0 ${elapsed} 0 0 0 0`,
+              )
+              .join("\n"),
+          ),
         }),
       ),
     ),
