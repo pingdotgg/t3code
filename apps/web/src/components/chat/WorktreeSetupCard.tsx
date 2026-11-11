@@ -20,8 +20,6 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
   XIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
