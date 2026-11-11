@@ -3,7 +3,11 @@ import * as Effect from "effect/Effect";
 import type { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
 
 /** Your tailnet devices as one environment sees them, and the changes it can make. */
 export function createTailnetDeviceAtoms<R, E>(
@@ -16,6 +20,11 @@ export function createTailnetDeviceAtoms<R, E>(
   });
   return {
     list,
+    /** The snapshot now and after every change, pushed by the environment. */
+    snapshot: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:tailnet-devices:snapshot",
+      tag: WS_METHODS.subscribeTailnetDevices,
+    }),
     setAccess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:tailnet-devices:set-access",
       tag: WS_METHODS.tailnetDevicesSetAccess,

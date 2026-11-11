@@ -170,11 +170,12 @@ const registerPairingConnection = Effect.fn(
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const knownAddressOnly = input.expectedEnvironmentId === undefined;
-  if (!(yield* registry.register(registration, { knownAddressOnly }))) {
-    return registration.target.environmentId;
-  }
+  const register = registry.register(registration, { knownAddressOnly });
   // Paired by the user with a code, so the network no longer owns it.
-  if (knownAddressOnly) yield* releaseNetworkMember(registration.target.environmentId);
+  const registered = knownAddressOnly
+    ? yield* releaseNetworkMember(registration.target.environmentId, register)
+    : yield* register;
+  if (!registered) return registration.target.environmentId;
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry
     .setEnabled(registration.target.environmentId, true)
@@ -324,8 +325,10 @@ const registerSshConnection = Effect.fn(
     return yield* differentMachineError(registration.target.label);
   }
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  yield* registry.register(registration);
-  yield* releaseNetworkMember(registration.target.environmentId);
+  yield* releaseNetworkMember(
+    registration.target.environmentId,
+    registry.register(registration).pipe(Effect.as(true)),
+  );
   return registration.target.environmentId;
 });
 
