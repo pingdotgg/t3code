@@ -563,16 +563,24 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    yield* Effect.tryPromise({
+    const written = yield* Effect.tryPromise({
       // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
-      try: () =>
-        NodeFSP.writeFile(realTargetPath, input.contents, {
-          flag:
-            NodeFS.constants.O_WRONLY |
-            NodeFS.constants.O_CREAT |
-            NodeFS.constants.O_TRUNC |
-            (NodeFS.constants.O_NOFOLLOW ?? 0),
-        }),
+      try: async () => {
+        try {
+          await NodeFSP.writeFile(realTargetPath, input.contents, {
+            flag:
+              NodeFS.constants.O_WRONLY |
+              NodeFS.constants.O_CREAT |
+              (input.overwrite === false ? NodeFS.constants.O_EXCL : NodeFS.constants.O_TRUNC) |
+              (NodeFS.constants.O_NOFOLLOW ?? 0),
+          });
+          return true;
+        } catch (cause) {
+          if (input.overwrite === false && (cause as NodeJS.ErrnoException).code === "EEXIST")
+            return false;
+          throw cause;
+        }
+      },
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
@@ -583,6 +591,7 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
+    if (!written) return { relativePath: target.relativePath };
     // Editor autosave overwrites existing files, which leaves the indexed paths unchanged, and
     // fff's watcher applies the new contents on its own. A forced rescan re-walks the whole
     // workspace, and the save would wait for it.

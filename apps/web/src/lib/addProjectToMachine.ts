@@ -7,6 +7,7 @@ import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
   ProjectCloneSnapshot,
+  ProjectCloneExistingDestination,
   ProjectId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
@@ -38,6 +39,7 @@ export interface AddProjectToMachineInput {
   readonly title: string;
   readonly remoteUrl: string;
   readonly destinationPath: string;
+  readonly existingDestination?: ProjectCloneExistingDestination | undefined;
   readonly files: ReadonlyArray<string>;
 }
 
@@ -136,13 +138,14 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         createdAt: new Date().toISOString(),
         remoteUrl: input.remoteUrl,
         destinationPath: input.destinationPath,
+        existingDestination: input.existingDestination,
       },
     },
     { label: "Add project to machine", reportFailure: false },
   );
   if (started._tag === "Failure") {
     setFileCopy(copyKey, null);
-    throw new Error(failureMessage(started));
+    throw squashAtomCommandFailure(started);
   }
   void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
   if (reads.length === 0) return;
@@ -170,6 +173,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
               ? `${input.subdirectory}/${read.relativePath}`
               : read.relativePath,
             contents: read.contents,
+            overwrite: input.existingDestination !== "combine",
           },
         },
         { label: "Copy file to machine", reportFailure: false },

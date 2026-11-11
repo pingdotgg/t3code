@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
@@ -196,6 +197,31 @@ describe("ProjectCloneTracker", () => {
       expect(yield* tracker.retry(projectId)).toBe(true);
     }).pipe(Effect.provide(harness.layer));
   });
+
+  it.effect.each(["replace", "combine"] as const)(
+    "%s preserves the destination across cancel, retry and discard",
+    (existingDestination) =>
+      Effect.gen(function* () {
+        const started = yield* Queue.unbounded<void>();
+        const harness = makeHarness({
+          clone: (_input, options) => {
+            expect(options?.existingDestination).toBe(existingDestination);
+            return Queue.offer(started, undefined).pipe(Effect.andThen(Effect.never));
+          },
+        });
+        yield* Effect.gen(function* () {
+          const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+          yield* tracker.start({ ...startInput, existingDestination }, harness.hooks);
+          yield* Queue.take(started);
+          expect(yield* tracker.cancel(projectId)).toBe(true);
+          expect(yield* tracker.retry(projectId)).toBe(true);
+          yield* Queue.take(started);
+          yield* tracker.discard(projectId);
+          expect(harness.discarded).toEqual([]);
+          expect(yield* tracker.get(projectId)).toBeNull();
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
 
   it.effect("a cancel that lands after git finished keeps the checkout", () => {
     const gate = Deferred.makeUnsafe<void>();

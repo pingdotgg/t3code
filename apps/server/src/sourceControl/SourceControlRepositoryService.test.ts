@@ -17,6 +17,8 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -64,6 +66,8 @@ function layer(input: {
   readonly provider?: SourceControlProvider.SourceControlProvider["Service"];
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly fileSystem?: FileSystem.FileSystem;
+  readonly cwd?: string;
+  readonly baseDir?: string;
 }) {
   const layerService = SourceControlRepositoryService.layer.pipe(
     Layer.provide(
@@ -88,8 +92,11 @@ function layer(input: {
     ),
     Layer.provide(
       ServerConfig.layerTest(
-        process.cwd(),
-        input.fileSystem ? "/tmp/t3-source-control-repos" : { prefix: "t3-source-control-repos-" },
+        input.cwd ?? process.cwd(),
+        input.baseDir ??
+          (input.fileSystem
+            ? "/tmp/t3-source-control-repos"
+            : { prefix: "t3-source-control-repos-" }),
       ),
     ),
   );
@@ -217,6 +224,15 @@ it.effect.each(["--bare", "source.git"])(
         });
         assert.strictEqual(result.cwd, destinationPath);
         assert.isTrue(yield* fs.exists(path.join(destinationPath, ".git")));
+        yield* service.cloneRepository(
+          { remoteUrl: repositoryName, destinationPath },
+          { existingDestination: "replace" },
+        );
+        yield* service.cloneRepository(
+          { remoteUrl: repositoryName, destinationPath },
+          { existingDestination: "combine" },
+        );
+        assert.isTrue(yield* fs.exists(path.join(destinationPath, ".git")));
       }).pipe(Effect.provide(layer({ git: { execute: git.execute } })));
     }).pipe(
       Effect.provide(
@@ -230,6 +246,268 @@ it.effect.each(["--bare", "source.git"])(
         ),
       ),
     ),
+);
+
+it.effect.each(["replace", "combine"] as const)(
+  "%s protects server data through canonical and symlinked configuration paths",
+  (existingDestination) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-protected-" });
+      const home = path.join(parent, "home");
+      const server = path.join(home, "server");
+      const data = path.join(home, "t3-data");
+      const userdata = path.join(data, "userdata");
+      const allowed = path.join(home, "projects", "existing");
+      for (const directory of [server, userdata, allowed]) {
+        yield* fs.makeDirectory(directory, { recursive: true });
+        yield* fs.writeFileString(path.join(directory, "keep.txt"), "original");
+      }
+      const alias = path.join(parent, "home-alias");
+      if (symlinksSupported) {
+        yield* fs.symlink(home, alias);
+        yield* fs.symlink(server, path.join(allowed, "work-link"));
+      }
+      for (const configuredHome of symlinksSupported ? [home, alias] : [home]) {
+        yield* Effect.gen(function* () {
+          const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+          for (const destinationPath of [home, server, data, userdata, parent]) {
+            const error = yield* service
+              .prepareClone({ remoteUrl: CLONE_URLS.url, destinationPath }, { existingDestination })
+              .pipe(Effect.flip);
+            assert.include(error.detail, "Choose a project folder");
+          }
+          assert.strictEqual(
+            (yield* service.prepareClone(
+              { remoteUrl: CLONE_URLS.url, destinationPath: allowed },
+              { existingDestination },
+            )).destinationPath,
+            allowed,
+          );
+        }).pipe(
+          Effect.provide(
+            layer({
+              cwd: path.join(configuredHome, "server"),
+              baseDir: path.join(configuredHome, "t3-data"),
+            }),
+          ),
+          Effect.provideService(HostProcess.HomeDirectory, configuredHome),
+        );
+        if (symlinksSupported) {
+          const error = yield* Effect.gen(function* () {
+            const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+            return yield* service
+              .prepareClone(
+                { remoteUrl: CLONE_URLS.url, destinationPath: allowed },
+                { existingDestination },
+              )
+              .pipe(Effect.flip);
+          }).pipe(
+            Effect.provide(
+              layer({
+                cwd: path.join(configuredHome, "projects", "existing", "work-link"),
+                baseDir: data,
+              }),
+            ),
+            Effect.provideService(HostProcess.HomeDirectory, configuredHome),
+          );
+          assert.include(error.detail, "Choose a project folder");
+        }
+      }
+      assert.strictEqual(yield* fs.readFileString(path.join(userdata, "keep.txt")), "original");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect.each(["replace", "combine"] as const)(
+  "%s resolves a non-empty clone destination only after cloning succeeds",
+  (existingDestination) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-conflict-" });
+      const destinationPath = path.join(parent, "checkout");
+      yield* fs.makeDirectory(path.join(destinationPath, "nested"), { recursive: true });
+      yield* fs.writeFileString(path.join(destinationPath, "README.md"), "destination edits");
+      yield* fs.writeFileString(path.join(destinationPath, "nested", "local.txt"), "local");
+      yield* Effect.gen(function* () {
+        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+        yield* service.cloneRepository(
+          { remoteUrl: CLONE_URLS.url, destinationPath },
+          { existingDestination },
+        );
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(destinationPath, "README.md")),
+          existingDestination === "combine" ? "destination edits" : "remote",
+        );
+        assert.strictEqual(
+          yield* fs.exists(path.join(destinationPath, "nested", "local.txt")),
+          existingDestination === "combine",
+        );
+        assert.strictEqual(yield* fs.readFileString(path.join(destinationPath, "new.txt")), "new");
+        assert.deepStrictEqual(yield* fs.readDirectory(parent), ["checkout"]);
+      }).pipe(
+        Effect.provide(
+          layer({
+            git: {
+              execute: (input) =>
+                Effect.gen(function* () {
+                  assert.strictEqual(
+                    yield* fs.readFileString(path.join(destinationPath, "README.md")),
+                    "destination edits",
+                  );
+                  const staging = path.join(input.cwd, input.args.at(-1)!);
+                  assert.notStrictEqual(staging, destinationPath);
+                  yield* fs.makeDirectory(path.join(staging, ".git"), { recursive: true });
+                  yield* fs.writeFileString(path.join(staging, "README.md"), "remote");
+                  yield* fs.writeFileString(path.join(staging, "new.txt"), "new");
+                  return processOutput();
+                }).pipe(Effect.orDie),
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect.each(["replace", "combine"] as const)(
+  "%s preserves the destination when the clone fails",
+  (existingDestination) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-failure-" });
+      const destinationPath = path.join(parent, "checkout");
+      yield* fs.makeDirectory(destinationPath);
+      yield* fs.writeFileString(path.join(destinationPath, "local.txt"), "keep me");
+      yield* Effect.gen(function* () {
+        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+        const error = yield* Effect.flip(
+          service.cloneRepository(
+            { remoteUrl: CLONE_URLS.url, destinationPath },
+            { existingDestination },
+          ),
+        );
+        assert.include(error.detail, "could not be cloned");
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(destinationPath, "local.txt")),
+          "keep me",
+        );
+        assert.deepStrictEqual(yield* fs.readDirectory(parent), ["checkout"]);
+      }).pipe(
+        Effect.provide(
+          layer({
+            git: {
+              execute: (input) =>
+                Effect.fail(
+                  new GitCommandError({
+                    operation: input.operation,
+                    command: "git",
+                    cwd: input.cwd,
+                    detail: "failed",
+                    exitCode: 128,
+                  }),
+                ),
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("restores the original folder if installing the completed clone fails", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-rollback-" });
+    const destinationPath = path.join(parent, "checkout");
+    yield* fs.makeDirectory(destinationPath);
+    yield* fs.writeFileString(path.join(destinationPath, "local.txt"), "original");
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service
+        .cloneRepository(
+          { remoteUrl: CLONE_URLS.url, destinationPath },
+          { existingDestination: "replace" },
+        )
+        .pipe(Effect.flip);
+      assert.strictEqual(
+        yield* fs.readFileString(path.join(destinationPath, "local.txt")),
+        "original",
+      );
+      assert.deepStrictEqual(yield* fs.readDirectory(parent), ["checkout"]);
+    }).pipe(
+      Effect.provide(
+        layer({
+          fileSystem: FileSystem.FileSystem.of({
+            ...fs,
+            rename: (source, target) =>
+              source.endsWith(`${path.sep}checkout`) && target === destinationPath
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      module: "FileSystem",
+                      method: "rename",
+                      _tag: "PermissionDenied",
+                      pathOrDescriptor: target,
+                    }),
+                  )
+                : fs.rename(source, target),
+          }),
+          git: {
+            execute: (input) =>
+              fs
+                .makeDirectory(path.join(input.cwd, input.args.at(-1)!), { recursive: true })
+                .pipe(Effect.as(processOutput()), Effect.orDie),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect.each([CLONE_URLS.sshUrl, "https://github.com/other/repository.git"])(
+  "combines a checkout only when its origin matches (%s)",
+  (origin) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-checkout-" });
+      const destinationPath = path.join(parent, "checkout");
+      yield* fs.makeDirectory(path.join(destinationPath, ".git"), { recursive: true });
+      yield* fs.writeFileString(path.join(destinationPath, ".git", "HEAD"), "local branch");
+      yield* fs.writeFileString(path.join(destinationPath, "local.txt"), "local changes");
+      yield* Effect.gen(function* () {
+        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+        const clone = service.cloneRepository(
+          { remoteUrl: CLONE_URLS.url, destinationPath },
+          { existingDestination: "combine" },
+        );
+        if (origin === CLONE_URLS.sshUrl) {
+          assert.strictEqual((yield* clone).cwd, destinationPath);
+        } else {
+          assert.include((yield* Effect.flip(clone)).detail, "different repository");
+        }
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(destinationPath, ".git", "HEAD")),
+          "local branch",
+        );
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(destinationPath, "local.txt")),
+          "local changes",
+        );
+      }).pipe(
+        Effect.provide(
+          layer({
+            git: {
+              execute: (input) => {
+                assert.deepStrictEqual(input.args, ["remote", "get-url", "origin"]);
+                return Effect.succeed({ ...processOutput(), stdout: origin });
+              },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("reports clone progress from git's stderr and keeps its error text on failure", () =>
