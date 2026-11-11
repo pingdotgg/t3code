@@ -1,4 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
+import { useMatches } from "@tanstack/react-router";
 import { markdownProseDirection, textDirection } from "~/textDirection";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -11,8 +12,12 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { Kbd } from "../ui/kbd";
 import { cn } from "~/lib/utils";
 import { isInSideChatPane } from "~/lib/sideChatPane";
+import { isAppModalPage } from "../sidebar/mainAppLocation";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
+
+// A pointer resting where options appear would otherwise answer a question nobody has read.
+const QUESTION_READ_DELAY_MS = 500;
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -87,6 +92,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
   const autoAdvanceTimerRef = useRef<number | null>(null);
+  const questionShownRef = useRef<{ questionId: string; at: number } | null>(null);
   const advance = useStableCallback(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
     questionId: string;
@@ -114,6 +120,20 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   ) {
     setOptimisticSingleSelect(null);
   }
+
+  // Matches, not location, so this flips with the modal _chat.tsx renders over the chat.
+  const coveredByAppModal = useMatches({
+    select: (matches) => matches.some((match) => isAppModalPage(match.pathname)),
+  });
+  const visibleQuestionId = isCollapsed || coveredByAppModal ? undefined : activeQuestion?.id;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records when a question's options are shown: on mount, question change, expand, or closing Settings/Usage over the still-mounted chat
+  useEffect(() => {
+    questionShownRef.current =
+      visibleQuestionId === undefined
+        ? null
+        : { questionId: visibleQuestionId, at: performance.now() };
+  }, [visibleQuestionId]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the auto-advance timer when the question changes, input is disabled, or the panel unmounts
   useEffect(() => {
@@ -316,7 +336,16 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     type="button"
                     aria-pressed={isSelected}
                     disabled={disabled || isResponding}
-                    onClick={() => {
+                    onClick={(event) => {
+                      const shown = questionShownRef.current;
+                      // detail is 0 for Enter/Space, which only reach a deliberately focused option.
+                      if (
+                        event.detail > 0 &&
+                        (shown?.questionId !== activeQuestion.id ||
+                          performance.now() - shown.at < QUESTION_READ_DELAY_MS)
+                      ) {
+                        return;
+                      }
                       handleOptionSelection(activeQuestion.id, optionValue);
                     }}
                     className={className}
