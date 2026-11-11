@@ -33,6 +33,10 @@ function Probe({ wantedPaths }: { wantedPaths: string[] }) {
   );
 }
 
+function setup() {
+  state.pages.clear();
+}
+
 function page(path: string, value: string, nextCursor: string | null): PullRequestDiffResult {
   return {
     patch: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+${value}\n`,
@@ -46,7 +50,7 @@ it.each([
   { name: "ends before a newly added file", path: "other.ts", cursor: null },
   { name: "has an obsolete next cursor", path: "other.ts", cursor: "old-next" },
 ])("waits for a cached page that $name to settle", async ({ path, cursor }) => {
-  state.pages.clear();
+  setup();
   await using stack = new AsyncDisposableStack();
   const registry = stack.adopt(AtomRegistry.make(), (value) => value.dispose());
   const first = Atom.make<AsyncResult.AsyncResult<PullRequestDiffResult>>(
@@ -70,7 +74,7 @@ it.each([
 });
 
 it("walks more cached pages than React's re-render limit to reach the requested file", async () => {
-  state.pages.clear();
+  setup();
   await using stack = new AsyncDisposableStack();
   const registry = stack.adopt(AtomRegistry.make(), (value) => value.dispose());
   const pageCount = 30;
@@ -96,11 +100,11 @@ it("walks more cached pages than React's re-render limit to reach the requested 
   );
   const result = JSON.parse(screen.container.querySelector("output")!.textContent!);
   expect(result.loading).toBe(false);
-  expect(result.files).toContainEqual(["wanted.ts", "FOUND"]);
+  expect(result.files).toContainEqual(["wanted.ts", "FOUND\n"]);
 });
 
 it("does not request the next page once the requested file is loaded", async () => {
-  state.pages.clear();
+  setup();
   await using stack = new AsyncDisposableStack();
   const registry = stack.adopt(AtomRegistry.make(), (value) => value.dispose());
   let nextPageReads = 0;
@@ -124,13 +128,13 @@ it("does not request the next page once the requested file is loaded", async () 
   );
   expect(JSON.parse(screen.container.querySelector("output")!.textContent!)).toEqual({
     loading: false,
-    files: [["wanted.ts", "FOUND"]],
+    files: [["wanted.ts", "FOUND\n"]],
   });
   expect(nextPageReads).toBe(0);
 });
 
 it("waits for a later cached page that is still refreshing", async () => {
-  state.pages.clear();
+  setup();
   await using stack = new AsyncDisposableStack();
   const registry = stack.adopt(AtomRegistry.make(), (value) => value.dispose());
   state.pages.set(
@@ -153,14 +157,14 @@ it("waits for a later cached page that is still refreshing", async () => {
     </RegistryContext.Provider>,
   );
   const result = () => JSON.parse(screen.container.querySelector("output")!.textContent!);
-  expect(result()).toEqual({ loading: true, files: [["first.ts", "FIRST"]] });
+  expect(result()).toEqual({ loading: true, files: [["first.ts", "FIRST\n"]] });
 
   await act(() => registry.set(second, AsyncResult.success(page("wanted.ts", "FRESH", null))));
   expect(result()).toEqual({
     loading: false,
     files: [
-      ["first.ts", "FIRST"],
-      ["wanted.ts", "FRESH"],
+      ["first.ts", "FIRST\n"],
+      ["wanted.ts", "FRESH\n"],
     ],
   });
 });
