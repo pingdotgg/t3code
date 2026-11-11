@@ -90,7 +90,7 @@ function SubagentAvatar(props: {
           showBadge
         />
       ) : driver === undefined ? (
-        <SymbolView name="sparkles" size={13} tintColorClassName="accent-icon-muted" />
+        <SymbolView name="robot" size={13} tintColorClassName="accent-icon-muted" />
       ) : (
         <ProviderIcon provider={driver} iconUrl={provider?.iconUrl} size={15} />
       )}
@@ -128,6 +128,7 @@ export function ThreadSubagentGroup(props: {
       result: live?.result ?? item.result,
       progress: live?.progress ?? item.progress,
       model: live?.model ?? null,
+      modelSelection: live?.modelSelection,
     };
   });
   const grouped = agents.length > 1;
