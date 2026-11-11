@@ -21,6 +21,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
@@ -148,6 +149,8 @@ it.effect.each([
       const layerOrchestration = Layer.merge(
         layerOrchestrator,
         ThreadManagementService.layer.pipe(
+          Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
+          Layer.provide(SqlitePersistence.layerMemory),
           Layer.provide(layerOrchestrator),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(

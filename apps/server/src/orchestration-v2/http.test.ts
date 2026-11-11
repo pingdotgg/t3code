@@ -134,6 +134,7 @@ const serveOrchestrationHttp = (
       Layer.mergeAll(
         runtime,
         ThreadManagementService.layer.pipe(
+          Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
           Layer.provide(
             Layer.mergeAll(runtime, CommandReceiptStore.layer, ServerSettings.layerTest({})),
           ),

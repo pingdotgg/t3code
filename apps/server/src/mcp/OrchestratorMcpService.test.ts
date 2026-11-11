@@ -46,6 +46,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
@@ -3333,6 +3334,8 @@ describe("OrchestratorMcpService provider resolution", () => {
           },
         });
         const layerThreads = ThreadManagementService.layer.pipe(
+          Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
+          Layer.provide(layerDatabase),
           Layer.provideMerge(layerOrchestrator),
           Layer.provide(
             LegacyV1ThreadImporter.layer.pipe(
@@ -3516,6 +3519,8 @@ describe("OrchestratorMcpService provider resolution", () => {
           providerInstances: { [codexInstanceId]: { driver: "codex", enabled: true } },
         });
         const layerThreads = ThreadManagementService.layer.pipe(
+          Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
+          Layer.provide(layerDatabase),
           Layer.provideMerge(layerOrchestrator),
           Layer.provide(
             LegacyV1ThreadImporter.layer.pipe(
@@ -5606,6 +5611,8 @@ describe("OrchestratorMcpService thread stop", () => {
         { databaseLayer: layerDatabase, runEffectWorker: false },
       );
       const layerThreads = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
+        Layer.provide(layerDatabase),
         Layer.provideMerge(layerOrchestrator),
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),

@@ -259,7 +259,7 @@ it.effect("re-indexes a context changed mid-stream when the message finishes", (
   }).pipe(freshDatabase),
 );
 
-it.effect("drops rolled-back, deleted and project-deleted sources", () =>
+it.effect("drops rolled-back, deleted, side-chat and project-deleted threads", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* backfillFixture;
@@ -271,6 +271,24 @@ it.effect("drops rolled-back, deleted and project-deleted sources", () =>
     yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${NOW} WHERE thread_id = 'a'`;
     assert.deepStrictEqual(yield* links("b"), []);
     yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = 'a'`;
+
+    const onlyArch = [{ threadId: ThreadId.make("arch"), direction: "mentions" as const }];
+    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${NOW} WHERE thread_id = 'b'`;
+    assert.deepStrictEqual(yield* links("a"), onlyArch);
+    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = 'b'`;
+
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.lineage', json('{"sideChat":true}'))
+      WHERE thread_id = 'b'
+    `;
+    assert.deepStrictEqual(yield* links("a"), onlyArch);
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_remove(payload_json, '$.lineage')
+      WHERE thread_id = 'b'
+    `;
+    assert.strictEqual((yield* links("a")).length, 2);
 
     yield* sql`UPDATE projection_projects SET deleted_at = ${NOW} WHERE project_id = 'p1'`;
     assert.deepStrictEqual(yield* links("b"), []);

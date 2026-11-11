@@ -130,7 +130,6 @@ import * as McpSignIn from "./mcpApps/McpSignIn.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
-import { listThreadMentionLinks } from "./orchestration-v2/threadMentionLinks.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as Workflows from "./workflows/Workflows.ts";
@@ -2156,11 +2155,7 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadMentionLinks]: (input) =>
-          serverEnvironment.getEnvironmentId.pipe(
-            Effect.flatMap((environmentId) =>
-              listThreadMentionLinks({ threadId: input.threadId, environmentId }),
-            ),
-            Effect.provideService(SqlClient.SqlClient, sql),
+          threadManagement.getThreadMentionLinks(input.threadId).pipe(
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({

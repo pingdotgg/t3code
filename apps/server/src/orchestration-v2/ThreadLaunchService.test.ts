@@ -1,3 +1,4 @@
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
@@ -171,6 +172,8 @@ function makeHarness(options: HarnessOptions = {}) {
   const layerServerSettings = ServerSettings.layerTest(options.serverSettings);
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
   const layerThreadManagement = ThreadManagement.layer.pipe(
+    Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
+    Layer.provide(layerDatabase),
     Layer.provide(layerOrchestrator),
     Layer.provide(layerServerSettings),
     Layer.provide(layerReceipts),

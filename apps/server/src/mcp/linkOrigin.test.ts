@@ -1,3 +1,4 @@
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -73,6 +74,7 @@ const layerOrchestrator = Layer.mergeAll(
   ),
 );
 const layerOrchestration = ThreadManagement.layer.pipe(
+  Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
   Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
   Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
 );

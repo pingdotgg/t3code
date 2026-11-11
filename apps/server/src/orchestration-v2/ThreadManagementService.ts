@@ -30,6 +30,7 @@ import {
   type OrchestrationV2LinkedSender,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShellSnapshot,
+  type OrchestrationV2ThreadMentionLinks,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadTranscript,
   type OrchestrationV2TurnItem,
@@ -59,12 +60,14 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
+import { listThreadMentionLinks } from "./threadMentionLinks.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
@@ -481,6 +484,9 @@ export interface ThreadManagementServiceShape {
   readonly listAppOwnedChildThreadIds: Orchestrator.OrchestratorV2["Service"]["listAppOwnedChildThreadIds"];
   readonly getThreadLinkMetadata: Orchestrator.OrchestratorV2["Service"]["getThreadLinkMetadata"];
   readonly getThreadTitles: Orchestrator.OrchestratorV2["Service"]["getThreadTitles"];
+  readonly getThreadMentionLinks: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2ThreadMentionLinks, Orchestrator.OrchestratorProjectionError>;
   /** Omit `projectId` to list every project's threads. Side chats are never listed. */
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
@@ -648,6 +654,8 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const worktreeRestore = yield* ThreadWorktreeRestore;
+  const sql = yield* SqlClient.SqlClient;
+  const environmentIdentity = yield* ServerEnvironment.ServerEnvironmentIdentity;
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
@@ -1900,6 +1908,17 @@ const make = Effect.gen(function* () {
     ),
     getThreadTitles: orchestrator.getThreadTitles,
     getThreadLinkMetadata: orchestrator.getThreadLinkMetadata,
+    getThreadMentionLinks: Effect.fn("ThreadManagementService.getThreadMentionLinks")(
+      function* (threadId) {
+        const environmentId = yield* environmentIdentity.getEnvironmentId;
+        return yield* listThreadMentionLinks({ threadId, environmentId }).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.mapError(
+            (cause) => new Orchestrator.OrchestratorProjectionError({ threadId, cause }),
+          ),
+        );
+      },
+    ),
     listProjectThreads,
     sendToThread,
     submitRunOutput,
@@ -1949,6 +1968,8 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
+  | SqlClient.SqlClient
+  | ServerEnvironment.ServerEnvironmentIdentity
 > = Layer.effect(ThreadManagementService, make).pipe(
   Layer.provide(layerLegacyV1ThreadImporterNoop),
   Layer.provide(layerThreadWorktreeRestoreNoop),
@@ -1964,4 +1985,6 @@ export const layerWithLegacyImporter: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
+  | SqlClient.SqlClient
+  | ServerEnvironment.ServerEnvironmentIdentity
 > = Layer.effect(ThreadManagementService, make).pipe(Layer.provide(ThreadCommandExecutor.layer));

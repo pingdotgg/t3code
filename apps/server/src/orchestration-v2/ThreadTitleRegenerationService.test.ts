@@ -22,6 +22,7 @@ import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -65,6 +66,8 @@ function makeHarness(
   );
   const layerServerSettings = ServerSettings.layerTest({});
   const layerThreadManagement = ThreadManagement.layer.pipe(
+    Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
+    Layer.provide(layerDatabase),
     Layer.provide(layerOrchestrator),
     Layer.provide(layerServerSettings),
     Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),

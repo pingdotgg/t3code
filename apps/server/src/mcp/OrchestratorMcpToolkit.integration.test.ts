@@ -28,6 +28,7 @@ import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer } from "effect/ai";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -248,6 +249,8 @@ describe("orchestrator MCP toolkit", () => {
         ).pipe(
           Layer.provide(
             ThreadManagementService.layer.pipe(
+              Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
+              Layer.provide(SqlitePersistence.layerMemory),
               Layer.provide(layerOrchestrator),
               Layer.provide(ServerSettings.layerTest()),
               Layer.provide(

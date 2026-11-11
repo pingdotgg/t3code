@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -140,6 +141,7 @@ const layerRuntime = (dbPath: string) => {
     RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
     RuntimeLayer.layerProjectService,
   ).pipe(
+    Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
     Layer.provide(
       Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
         peek: () => Effect.succeed(unusedEnrichment),

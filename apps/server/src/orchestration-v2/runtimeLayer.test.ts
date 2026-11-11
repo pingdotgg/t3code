@@ -3,6 +3,7 @@ import { PullRequestUnavailableError, SourceControlProviderKind } from "@t3tools
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -338,6 +339,10 @@ const moveProject = (projectId: ProjectId, workspaceRoot: string, updatedAt: str
     }),
   );
 
+const layerRuntimeTest = RuntimeLayer.layer.pipe(
+  Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
+);
+
 // Read-only oracle: projections still equal a replay of these unpruned test logs.
 const layerProjectionReplayTest = ProjectionReplay.layer.pipe(
   Layer.provide(
@@ -351,7 +356,7 @@ const layerProjectionReplayTest = ProjectionReplay.layer.pipe(
 );
 
 const layerTest = Layer.mergeAll(
-  RuntimeLayer.layer,
+  layerRuntimeTest,
   layerProjectionReplayTest,
   RuntimeLayer.layerEventSink,
   ProjectStore.layer,
@@ -371,7 +376,7 @@ const layerTest = Layer.mergeAll(
   Layer.provide(layerPlatformTest),
 );
 
-const layerLegacyImportTest = Layer.merge(RuntimeLayer.layer, layerProjectionReplayTest).pipe(
+const layerLegacyImportTest = Layer.merge(layerRuntimeTest, layerProjectionReplayTest).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
   Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -470,7 +475,7 @@ const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
 );
 
 const layerProjectDeletionTest = Layer.mergeAll(
-  RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
+  layerRuntimeTest.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
   RuntimeLayer.layerProjectService,
   RuntimeLayer.layerEventSink,
   ProjectionStore.layer,
@@ -1349,7 +1354,7 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
 
 const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
   layerProjectionReplayTest,
-  RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
+  layerRuntimeTest.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
   RuntimeLayer.layerProjectService,
   RuntimeLayer.layerEventSink,
   RuntimeLayer.layerEventInfrastructure,
@@ -14430,7 +14435,7 @@ const queueResumeDisabledInstanceProjectId = ProjectId.make(
 );
 
 const layerQueueResumeDisabledInstanceTest = Layer.mergeAll(
-  RuntimeLayer.layer,
+  layerRuntimeTest,
   RuntimeLayer.layerEventSink,
   ProjectStore.layer,
   ProjectionStore.layer,

@@ -133,42 +133,36 @@ describe("thread relationships", () => {
     expect(threadRelationshipRowStatus(graph, cRow)).toBe("idle");
   });
 
-  it("keeps the lineage edge when a mentioned thread is also a fork", () => {
+  it.each([
+    {
+      name: "keeps the lineage edge when a mentioned thread is also a fork",
+      bLineage: { parentThreadId: ThreadId.make("a"), relationshipToParent: "fork" },
+      directions: ["mentions"],
+      edge: { kind: "fork" },
+    },
+    {
+      name: "shows one outgoing row when two threads mention each other",
+      bLineage: { parentThreadId: null },
+      directions: ["mentionedBy", "mentions"],
+      edge: { sourceThreadId: ThreadId.make("a") },
+    },
+  ] as const)("$name", ({ bLineage, directions, edge }) => {
     const a = ThreadId.make("a");
     const b = ThreadId.make("b");
     const graph = deriveThreadRelationshipGraph({
       threads: [
         { id: a, lineage: { parentThreadId: null } },
-        { id: b, lineage: { parentThreadId: a, relationshipToParent: "fork" } },
-      ] as never,
-      projection: null,
-      mentions: { threadId: a, links: [{ threadId: b, direction: "mentions" }] },
-    });
-    const rows = immediateThreadRelationships(graph, a).filter((row) => row.threadId === b);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.edge.kind).toBe("fork");
-  });
-
-  it("shows one outgoing row when two threads mention each other", () => {
-    const a = ThreadId.make("a");
-    const b = ThreadId.make("b");
-    const graph = deriveThreadRelationshipGraph({
-      threads: [
-        { id: a, lineage: { parentThreadId: null } },
-        { id: b, lineage: { parentThreadId: null } },
+        { id: b, lineage: bLineage },
       ] as never,
       projection: null,
       mentions: {
         threadId: a,
-        links: [
-          { threadId: b, direction: "mentionedBy" },
-          { threadId: b, direction: "mentions" },
-        ],
+        links: directions.map((direction) => ({ threadId: b, direction })),
       },
     });
     const rows = immediateThreadRelationships(graph, a).filter((row) => row.threadId === b);
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.edge.sourceThreadId).toBe(a);
+    expect(rows[0]!.edge).toMatchObject(edge);
   });
 
   it("keeps an older activity run visible over a newer cancelled run", () => {

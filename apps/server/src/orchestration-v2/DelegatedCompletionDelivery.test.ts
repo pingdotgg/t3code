@@ -1,6 +1,7 @@
 import * as Exit from "effect/Exit";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -129,6 +130,7 @@ const layerTest = Layer.mergeAll(
   EffectOutbox.layer,
 ).pipe(
   Layer.provideMerge(RuntimeLayer.layerProjectService),
+  Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
       normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),

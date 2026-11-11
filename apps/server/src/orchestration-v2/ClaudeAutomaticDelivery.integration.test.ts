@@ -28,6 +28,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -338,6 +339,7 @@ it.effect.each(deliveries)(
             Effect.provide(
               ScheduledTaskService.layer.pipe(
                 Layer.provide(ThreadManagementService.layer),
+                Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
                 Layer.provide(ServerSettings.layerTest()),
                 Layer.provide(
                   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
