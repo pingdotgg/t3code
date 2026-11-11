@@ -1,8 +1,4 @@
-import {
-  DurableObject,
-  WorkerEntrypoint,
-  WorkflowEntrypoint,
-} from "cloudflare:workers";
+import { DurableObject, WorkerEntrypoint, WorkflowEntrypoint } from "cloudflare:workers";
 
 export default {
   fetch: () => new Response("default"),

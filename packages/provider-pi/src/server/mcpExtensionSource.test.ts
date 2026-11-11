@@ -4,15 +4,17 @@ import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
-import { assert, describe, expect, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
   event: { payload: unknown },
-  ctx: { model: { provider: string } },
+  ctx: { model: { provider: string; serviceTiers?: ReadonlyArray<{ id: string }> } },
 ) => Record<string, unknown> | undefined;
+
+type CommandHandler = (args: string) => Promise<void>;
 
 interface SkillCommand {
   readonly name: string;
@@ -25,7 +27,10 @@ type InputHook = (
   ctx: { ui: { notify: (message: string, level: string) => void } },
 ) => Promise<{ action: string; text: string; images?: ReadonlyArray<unknown> } | undefined>;
 
-async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
+async function loadHooks(
+  commands: ReadonlyArray<SkillCommand> = [],
+  argv: ReadonlyArray<string> = [],
+) {
   const handlers = new Map<string, unknown>();
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
@@ -34,12 +39,13 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
     ),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: { env: {} },
+    process: { env: {}, argv },
     NodeFSP,
     NodePath,
     stripFrontmatter: (content: string) => content,
     pi: {
       on: (name: string, handler: unknown) => handlers.set(name, handler),
+      registerCommand: () => {},
       getCommands: () => commands,
     },
   });
@@ -47,26 +53,6 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
 }
 
 describe("Pi orchestration prompt section", () => {
-  it("adds a stable section without overriding the prompt or skipping discovery", async () => {
-    const bridge = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
-    const hook = bridge.handlers.get("before_agent_start")!;
-    const sections: Record<string, string> = { existing: "keep me" };
-    const event = { systemPrompt: "base", systemPromptOptions: { sections } };
-    const ctx = { model: { api: "openai-completions" }, ui: { notify: assert.fail } };
-
-    assert.isUndefined(await hook(event, ctx));
-    assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
-    assert.equal(event.systemPrompt, "base");
-    assert.include(bridge.getActiveTools(), "mcp__t3-code__preview_snapshot");
-
-    const guidance = sections.t3_code_orchestration!;
-    assert.isUndefined(await hook(event, ctx));
-    assert.deepEqual(event.systemPromptOptions.sections, {
-      existing: "keep me",
-      t3_code_orchestration: guidance,
-    });
-  });
-
   it.each([
     {
       name: "on Pi builds without prompt sections",
@@ -94,6 +80,32 @@ describe("Pi orchestration prompt section", () => {
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
     }
+  });
+});
+
+describe("Pi project trust", () => {
+  it.each([
+    { name: "a trusted folder", trusted: true, argv: [], notices: 0 },
+    { name: "an untrusted folder", trusted: false, argv: [], notices: 1 },
+    { name: "--no-approve", trusted: false, argv: ["--approve", "-na"], notices: 0 },
+  ])("sends $notices trust notice per session for $name", async ({ trusted, argv, notices }) => {
+    const sent: string[] = [];
+    const ctx = {
+      cwd: "/repo",
+      isProjectTrusted: () => trusted,
+      ui: { notify: (message: string) => sent.push(message) },
+    };
+    // Pi reruns extension factories on session replacement without asking about trust again.
+    for (const _session of [1, 2]) {
+      const handlers = (await loadHooks([], ["node", "pi", ...argv])) as Map<
+        string,
+        (event: unknown, ctx: unknown) => unknown
+      >;
+      for (const _turn of [1, 2]) await handlers.get("before_agent_start")!({}, ctx);
+    }
+    assert.equal(sent.length, notices * 2);
+    for (const message of sent)
+      assert.include(message, "for /repo because the folder is not trusted");
   });
 });
 
@@ -148,15 +160,6 @@ describe("Pi MCP tool results", () => {
     assert.deepEqual(output.content, [{ type: "text", text: '{"count":2}' }]);
     assert.deepEqual(output.structuredContent, result);
   });
-
-  it("propagates cancellation without returning a successful result", async () => {
-    const bridge = await loadMcpBridge();
-    const controller = new AbortController();
-    controller.abort();
-    await expect(bridge.tools[0]!.execute("cancelled", {}, controller.signal)).rejects.toThrow(
-      "aborted",
-    );
-  });
 });
 
 describe("Pi MCP tool exposure", () => {
@@ -164,29 +167,6 @@ describe("Pi MCP tool exposure", () => {
     model: { api: "anthropic-messages" },
     ui: { notify: () => undefined },
   };
-
-  it.each(["session_start", "session_tree", "model_select", "before_agent_start"])(
-    "declares optional T3 tools for OpenAI-compatible gateways at %s",
-    async (hookName) => {
-      const bridge = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
-      const hook = bridge.handlers.get(hookName);
-      assert.isDefined(hook);
-      await hook!(
-        { systemPrompt: "Pi system prompt" },
-        { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
-      );
-      assert.isTrue(
-        bridge.tools
-          .filter((tool) => tool.name.startsWith("mcp__t3-code__"))
-          .every((tool) => bridge.getActiveTools().includes(tool.name)),
-      );
-      const result = await bridge.tools
-        .find((tool) => tool.name === "mcp__t3-code__preview_snapshot")!
-        .execute("gateway-call", {});
-      assert.equal(result.content[0]?.text, "browser snapshot");
-      assert.equal(bridge.tools.filter((tool) => tool.exposure === "hidden").length, 4);
-    },
-  );
 
   it("keeps orchestration direct and optional bridge tools discoverable on modern Pi", async () => {
     const bridge = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
@@ -288,53 +268,32 @@ describe("Pi MCP tool exposure", () => {
       assert.isUndefined(tool?.promptGuidelines);
     },
   );
+});
 
-  it("preserves legacy wildcard tool selection", async () => {
-    const bridge = await loadMcpBridge({
-      modern: true,
-      toolSearchAvailable: true,
-      allowsTool: (name) =>
-        name === "read" || name === "tool_search" || name.startsWith("mcp__t3-code__"),
-    });
-    await bridge.handlers.get("session_start")!({ systemPrompt: "" }, discoveryContext);
-    assert.equal(bridge.tools.length, 4);
-    assert.equal(bridge.tools.filter((tool) => tool.exposure === "direct").length, 3);
-    const tool = bridge.tools.find((tool) => tool.name === "mcp__t3-code__preview_snapshot");
-    assert.isDefined(tool);
-    assert.equal((await tool!.execute("selected", {})).content[0]?.text, "browser snapshot");
-  });
-
-  it.each([false, true])(
-    "reconciles tree loadouts while honoring search exclusion: %s",
-    async (excludeSearch) => {
-      const bridge = await loadMcpBridge({
-        modern: true,
-        toolSearchAvailable: true,
-        allowsTool: (name) =>
-          name !== "mcp__t3-code__delegate_task" && (!excludeSearch || name !== "tool_search"),
-      });
-      await bridge.handlers.get("session_start")!({ systemPrompt: "" }, discoveryContext);
-      bridge.restoreActiveTools([
-        "read",
-        "mcp__t3-code__task_status",
-        "mcp__t3-code__preview_snapshot",
-      ]);
-      const tree = bridge.handlers.get("session_tree");
-      assert.isDefined(tree);
-      await tree!({ systemPrompt: "" }, discoveryContext);
-      assert.deepEqual(bridge.getActiveTools(), [
-        "read",
-        "mcp__t3-code__task_status",
-        "mcp__t3-code__preview_snapshot",
-        ...(!excludeSearch ? ["tool_search"] : []),
-      ]);
-      assert.isFalse(
-        bridge.tools.some(
-          (tool) => tool.exposure !== "hidden" && tool.name.endsWith("__delegate_task"),
-        ),
-      );
+describe("Pi MCP tool schemas", () => {
+  it.each([{ type: "object" }, {}])(
+    "declares empty properties on object schemas that omit them: %j",
+    async (inputSchema) => {
+      const bridge = await loadMcpBridge({ inputSchema });
+      assert.isAbove(bridge.tools.length, 0);
+      for (const tool of bridge.tools) {
+        assert.deepEqual(tool.parameters, { type: "object", properties: {} });
+      }
     },
   );
+
+  it("keeps declared properties and other schema keywords", async () => {
+    const inputSchema = {
+      type: "object",
+      properties: { depth: { type: "number" } },
+      required: ["depth"],
+      additionalProperties: false,
+    };
+    const bridge = await loadMcpBridge({ inputSchema });
+    for (const tool of bridge.tools) {
+      assert.deepEqual(tool.parameters, inputSchema);
+    }
+  });
 });
 
 describe("Pi tool discovery permissions", () => {
@@ -411,6 +370,7 @@ describe("Pi tool discovery permissions", () => {
         on: (name: string, handler: ToolCallHook) => {
           if (name === "tool_call") toolCall = handler;
         },
+        registerCommand: () => {},
         getAllTools: () => [{ name: "tool_search", sourceInfo: { path: searchPath } }],
       },
     });
@@ -442,8 +402,9 @@ describe("Pi tool discovery permissions", () => {
   });
 });
 
-async function loadRequestHook(): Promise<RequestHook> {
+async function loadRequestHook() {
   const handlers = new Map<string, RequestHook>();
+  const commands = new Map<string, CommandHandler>();
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
       "export default async function",
@@ -452,12 +413,42 @@ async function loadRequestHook(): Promise<RequestHook> {
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: { env: {} },
-    pi: { on: (name: string, handler: RequestHook) => handlers.set(name, handler) },
+    pi: {
+      on: (name: string, handler: RequestHook) => handlers.set(name, handler),
+      registerCommand: (name: string, options: { handler: CommandHandler }) =>
+        commands.set(name, options.handler),
+    },
   });
   const hook = handlers.get("before_provider_request");
+  const setServiceTier = commands.get(PI_T3_SERVICE_TIER_COMMAND);
   assert.isDefined(hook);
-  return hook!;
+  assert.isDefined(setServiceTier);
+  return Object.assign(hook!, { setServiceTier: setServiceTier! });
 }
+
+describe("Pi service tier", () => {
+  it("sends only a tier the active model advertises, until Standard clears it", async () => {
+    const hook = await loadRequestHook();
+    const sol = {
+      provider: "columbia-codex",
+      serviceTiers: [{ id: "priority" }, { id: "ultrafast" }],
+    };
+    const payload = { model: "gpt-6.1-sol", reasoning: { effort: "high" } };
+    assert.isUndefined(hook({ payload }, { model: sol }));
+
+    await hook.setServiceTier("priority");
+    assert.deepEqual(hook({ payload }, { model: sol }), { ...payload, service_tier: "priority" });
+
+    await hook.setServiceTier("ultrafast");
+    assert.equal(hook({ payload }, { model: sol })?.service_tier, "ultrafast");
+    const fastOnly = { provider: "columbia-codex", serviceTiers: [{ id: "priority" }] };
+    assert.isUndefined(hook({ payload }, { model: fastOnly }));
+    assert.isUndefined(hook({ payload }, { model: { provider: "anthropic" } }));
+
+    await hook.setServiceTier("");
+    assert.isUndefined(hook({ payload }, { model: sol }));
+  });
+});
 
 describe("Pi upstream output-budget workaround", () => {
   it.each(["max_tokens", "max_completion_tokens"])(

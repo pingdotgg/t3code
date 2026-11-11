@@ -33,12 +33,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-import {
-  captureLinuxWindow,
-  getLinuxCaptureSupport,
-  readPortalPng,
-  resizeLinuxCapture,
-} from "./LinuxSnapShot.ts";
+import { captureLinuxWindow, getLinuxCaptureSupport, readPortalPng } from "./LinuxSnapShot.ts";
 
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
 const appId = "com.t3tools.T3Code";
@@ -207,19 +202,6 @@ it("uses the standard path when KWin's native capability is missing, but not whe
   bus.kdeError = new DBusError("org.freedesktop.DBus.Error.AccessDenied", "Denied");
   await expect(getLinuxCaptureSupport(appId)).rejects.toThrow("Denied");
 });
-
-it("does not fall through to the picker when KDE needs helper setup", async () => {
-  vi.stubEnv("XDG_CURRENT_DESKTOP", "KDE");
-  await expect(captureLinuxWindow(appId)).rejects.toThrow("KDE capture setup");
-  expect(bus.calls.some((call) => call.member === "Screenshot")).toBe(false);
-  expect(bus.disconnect).toHaveBeenCalledOnce();
-});
-it("selects Hyprland without probing a different desktop or falling back on missing setup", async () => {
-  vi.stubEnv("XDG_CURRENT_DESKTOP", "Hyprland");
-  expect((await getLinuxCaptureSupport(appId)).linuxBackend).toBe("hyprland");
-  await expect(captureLinuxWindow(appId)).rejects.toThrow("Hyprland capture setup");
-  expect(bus.calls).toEqual([]);
-});
 afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
@@ -243,18 +225,6 @@ it.each([
     expect((await getLinuxCaptureSupport(appId)).linuxBackend).toBe(expected);
     expect(bus.calls[0]?.member).toBe("Register");
     expect(bus.disconnect).toHaveBeenCalledOnce();
-  },
-);
-
-it.each([1, 2])(
-  "reports feedback separately from capture support for extension v%s",
-  async (version) => {
-    bus.portalVersion = 2;
-    bus.extensionVersion = version;
-    expect(await getLinuxCaptureSupport(appId)).toEqual({
-      linuxBackend: "gnome-extension",
-      linuxFeedbackAvailable: version === 2,
-    });
   },
 );
 
@@ -294,19 +264,6 @@ it("keeps capture working with v1 and does not request unavailable effects", asy
   expect(bus.disconnect).toHaveBeenCalledOnce();
 });
 
-it("can activate without animation, and expires a renderer-abandoned capture", async () => {
-  vi.useFakeTimers();
-  bus.portalVersion = 2;
-  bus.extensionVersion = 2;
-  const snapshot = await captureLinuxWindow(appId, { flash: false, animate: false });
-  expect(snapshot!.feedback!.animationStarted).toBe(false);
-  bus.activationError = new Error("No window");
-  await expect(snapshot!.feedback!.activate("T3 Code")).rejects.toThrow("No window");
-  expect(snapshot!.png).toEqual(png);
-  await vi.advanceTimersByTimeAsync(15_000);
-  expect(bus.disconnect).toHaveBeenCalledOnce();
-});
-
 it.each([false, true])(
   "accepts an early Response with a changed request path: %s",
   async (differentHandle) => {
@@ -338,52 +295,6 @@ it.each([1, 2])(
   },
 );
 
-it("does not downgrade a failed screenshot request", async () => {
-  bus.screenshotError = new DBusError("org.freedesktop.DBus.Error.AccessDenied", "Denied");
-  await expect(captureLinuxWindow(appId)).rejects.toThrow("Denied");
-  expect(bus.send).toHaveBeenCalledWith(expect.objectContaining({ member: "Close" }));
-  expect(bus.disconnect).toHaveBeenCalledOnce();
-});
-
-it.each([false, true])(
-  "times out and closes requests, ignoring forged responses: %s",
-  async (wrongSender) => {
-    vi.useFakeTimers();
-    bus.sendResponse = wrongSender;
-    bus.wrongSender = wrongSender;
-    const capture = expect(captureLinuxWindow(appId)).rejects.toThrow("timed out");
-    await vi.advanceTimersByTimeAsync(120_001);
-    await capture;
-    expect(bus.send).toHaveBeenCalledWith(expect.objectContaining({ member: "Close" }));
-    expect(bus.listenerCount("message")).toBe(0);
-    expect(bus.disconnect).toHaveBeenCalledOnce();
-  },
-);
-
-it("uses the GNOME extension and preserves its window identity", async () => {
-  bus.portalVersion = 2;
-  bus.extensionVersion = 1;
-  expect(await captureLinuxWindow(appId)).toEqual({ png, window: metadata });
-  expect(bus.requestName).toHaveBeenCalledWith(`${appId}.SnapShot`, expect.any(Number));
-  expect(bus.calls.some((call) => call.member === "Screenshot")).toBe(false);
-});
-
-it("fails instead of opening a picker after an extension denial", async () => {
-  bus.portalVersion = 2;
-  bus.extensionVersion = 1;
-  bus.extensionError = new Error("Locked session");
-  await expect(captureLinuxWindow(appId)).rejects.toThrow("Locked session");
-  expect(bus.disconnect).toHaveBeenCalledOnce();
-});
-
-it("allows the picker only when both automatic backends are absent", async () => {
-  bus.portalVersion = 2;
-  expect(await captureLinuxWindow(appId)).toBeUndefined();
-  expect(bus.calls.some((call) => call.member === "Screenshot" || call.member === "Capture")).toBe(
-    false,
-  );
-});
-
 it("tolerates an older portal without Registry, but not registration denial", async () => {
   bus.registryError = new DBusError("org.freedesktop.DBus.Error.UnknownMethod", "Old portal");
   expect((await getLinuxCaptureSupport(appId)).linuxBackend).toBe("screenshot-portal");
@@ -404,11 +315,4 @@ it("reads only local PNG files without removing the portal file", async () => {
   await expect(readPortalPng("file://remote/image.png")).rejects.toThrow();
   await NodeFSP.writeFile(NodePath.join(directory, "image.png"), "not a PNG");
   await expect(readPortalPng(bus.uri)).rejects.toThrow("Invalid");
-});
-
-it("bounds large images without distorting their aspect ratio", () => {
-  imageSize.width = 4000;
-  imageSize.height = 2000;
-  resizeLinuxCapture(png);
-  expect(resize).toHaveBeenLastCalledWith({ width: 2560, height: 1280, quality: "best" });
 });

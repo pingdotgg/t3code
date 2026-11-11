@@ -7,28 +7,21 @@ import * as Result from "effect/Result";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 
-/**
- * Windows refuses to rename over or away from a file another process holds open
- * without delete sharing, such as a virus scanner or the search indexer. The same
- * codes also mean a denial that never clears, so retries need a bound.
- */
+/** Windows open-file locks block renames; the same codes can mean permanent denial, so bound retries. */
 export const isWindowsRenameLock = (error: PlatformError.PlatformError) => {
   const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
   return code === "EBUSY" || code === "EPERM" || code === "EACCES";
 };
 
-// About 2 seconds in total. Settings and keybinding saves wait on this while holding
-// their write lock, so a denial that is not a brief scan has to surface quickly.
+// Bound denial delays to about two seconds because settings saves hold their write lock.
 const LOCKED_RENAME_RETRIES = 20;
 const LOCKED_RENAME_RETRY_DELAY = "100 millis";
+const CHUNK_WRITE_LENGTH = 1 << 20;
 
-/**
- * A symlinked target is resolved first so the link survives and its destination is
- * rewritten, since renaming over the link itself would swap it for a regular file.
- */
+/** Resolves symlink targets before renaming so writes preserve the link. Iterable contents stream in bounded batches. */
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
-  readonly contents: string;
+  readonly contents: string | Iterable<string>;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -39,9 +32,7 @@ export const writeFileStringAtomically = (input: {
       const targetDirectory = path.dirname(targetPath);
 
       yield* fs.makeDirectory(targetDirectory, { recursive: true });
-      // The temp directory is cleanup, not part of the write: failing to remove
-      // it (a virus scanner holding it on Windows) must not fail a write that
-      // already landed.
+      // Cleanup failure must not fail a write that already landed.
       const tempDirectory = yield* Effect.acquireRelease(
         fs.makeTempDirectory({
           directory: targetDirectory,
@@ -51,12 +42,32 @@ export const writeFileStringAtomically = (input: {
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      yield* fs.writeFileString(tempPath, input.contents);
+      const contents = input.contents;
+      if (typeof contents === "string") {
+        yield* fs.writeFileString(tempPath, contents);
+      } else {
+        // Closed before the rename, which Windows refuses for open files.
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const file = yield* fs.open(tempPath, { flag: "w" });
+            const encoder = new TextEncoder();
+            let batch: string[] = [];
+            let batchLength = 0;
+            for (const chunk of contents) {
+              batch.push(chunk);
+              batchLength += chunk.length;
+              if (batchLength < CHUNK_WRITE_LENGTH) continue;
+              yield* file.writeAll(encoder.encode(batch.join("")));
+              batch = [];
+              batchLength = 0;
+            }
+            if (batchLength > 0) yield* file.writeAll(encoder.encode(batch.join("")));
+          }),
+        );
+      }
       if (platform !== "win32") return yield* fs.rename(tempPath, targetPath);
 
-      // A retry must not replace a save another process landed while this one
-      // waited, so it gives up once the target is no longer the file seen here.
-      // A read-only target fails with the same EPERM as a held one but never clears.
+      // Stop retrying if another save changes the target; read-only targets also return permanent EPERM.
       const targetVersion = fs.stat(targetPath).pipe(
         Effect.map((info) => ({
           id: `${Option.getOrUndefined(info.ino)}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}`,

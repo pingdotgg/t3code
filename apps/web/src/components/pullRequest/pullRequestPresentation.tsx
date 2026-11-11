@@ -115,7 +115,7 @@ export interface PullRequestConflictPresentation {
   readonly Icon: PullRequestGlyphIcon;
 }
 
-export function resolvePullRequestConflict(input: {
+function resolvePullRequestConflict(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   readonly mergeability?: PullRequestMergeability;
@@ -143,8 +143,6 @@ export function PullRequestStateGlyph({
   const presentation = resolvePullRequestState({ state, isDraft });
   return (
     <Tooltip>
-      {/* The list row is itself a button, so the trigger stays a span: an interactive one would
-          nest a control inside that button and steal the row's click target. */}
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon
           role="img"
@@ -281,6 +279,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
     staleRingClassName:
       "ring-2 ring-[color-mix(in_srgb,var(--color-emerald-500)_35%,var(--background))] dark:ring-[color-mix(in_srgb,var(--color-emerald-400)_35%,var(--background))]",
+    fillClassName: "fill-emerald-500 dark:fill-emerald-400",
     badgeVariant: "success",
   },
   "changes-requested": {
@@ -289,6 +288,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     toneClassName: "text-destructive",
     ringClassName: "ring-2 ring-destructive",
     staleRingClassName: "ring-2 ring-[color-mix(in_srgb,var(--destructive)_35%,var(--background))]",
+    fillClassName: "fill-destructive",
     badgeVariant: "error",
   },
   dismissed: {
@@ -298,6 +298,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     ringClassName: "ring-2 ring-muted-foreground/60",
     staleRingClassName:
       "ring-2 ring-[color-mix(in_srgb,var(--contrast-muted-foreground)_30%,var(--background))]",
+    fillClassName: "fill-muted-foreground",
     badgeVariant: "outline",
   },
 } as const satisfies Record<
@@ -308,6 +309,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     toneClassName: string;
     ringClassName: string;
     staleRingClassName: string;
+    fillClassName: string;
     badgeVariant: "success" | "error" | "outline";
   }
 >;
@@ -316,12 +318,7 @@ export function pullRequestReviewOutcomeToneClassName(outcome: PullRequestReview
   return REVIEW_OUTCOME_PRESENTATION[outcome].toneClassName;
 }
 
-/**
- * A faded verdict is mixed into the background rather than made translucent. The ring is the only
- * separator an avatar carrying one has — the summary drops the opaque `ring-background` where a
- * verdict is drawn — and the stack overlaps by 4px, so an alpha ring would let the neighbour show
- * straight through it and the two faces would merge.
- */
+// Mix rings with the background to prevent avatars showing through their overlap.
 export function pullRequestReviewOutcomeRingClassName(
   outcome: PullRequestReviewOutcome,
   stale = false,
@@ -350,6 +347,28 @@ export function PullRequestReviewOutcomeIcon({
   );
 }
 
+// Ring color alone blends into colorful bot avatars; the glyph gives each verdict a shape.
+export function PullRequestReviewOutcomeAvatarBadge({
+  outcome,
+  stale = false,
+}: {
+  outcome: PullRequestReviewOutcome;
+  stale?: boolean;
+}) {
+  const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
+  return (
+    <presentation.Icon
+      aria-hidden
+      strokeWidth={3}
+      className={cn(
+        "absolute -right-1 -bottom-1 size-3 text-background",
+        presentation.fillClassName,
+        stale && "opacity-50",
+      )}
+    />
+  );
+}
+
 export function pullRequestReviewOutcomeLabel(outcome: PullRequestReviewOutcome): string {
   return REVIEW_OUTCOME_PRESENTATION[outcome].label;
 }
@@ -364,7 +383,6 @@ export function PullRequestReviewOutcomeBadge({
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
     <Badge size="sm" variant={presentation.badgeVariant} className={className}>
-      {/* Align with surrounding text using the label, rather than the icon's bottom edge. */}
       <span className="inline-flex items-baseline gap-1">
         <presentation.Icon aria-hidden className="size-3 self-center" />
         <span>{presentation.label}</span>
@@ -419,7 +437,6 @@ export function PullRequestActorLabel({
   profileUrl?: string | null;
 }) {
   const login = actor?.login ?? "ghost";
-  // Let the name supply the group's baseline while the avatar stays vertically centered.
   const label = (
     <span className={cn("flex min-w-0 items-baseline", variant === "label" && "gap-1.5")}>
       <PullRequestActorAvatar actor={actor} className="self-center" />
