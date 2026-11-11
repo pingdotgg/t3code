@@ -102,7 +102,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     catch: (cause) => new BootstrapFdStatError({ fd, cause }),
   });
 
-  const stream = yield* makeBootstrapInputStream(fd, stat.isSocket() || stat.isFIFO());
+  const stream = yield* makeBootstrapInputStream(fd, isPipeStat(stat));
 
   // Covers slow cold starts while staying well under the desktop readiness timeout.
   const timeoutMs = options?.timeoutMs ?? 30_000;
@@ -172,6 +172,10 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     }),
   );
 });
+
+// Node's Stats.isFIFO() is hardwired to false on Windows, where libuv reports pipes as S_IFIFO.
+const isPipeStat = (stat: NodeFS.Stats): boolean =>
+  stat.isSocket() || (stat.mode & NodeFS.constants.S_IFMT) === NodeFS.constants.S_IFIFO;
 
 const makeBootstrapInputStream = Effect.fn("bootstrap.makeBootstrapInputStream")(function* (
   fd: number,
