@@ -1,5 +1,6 @@
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
+import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { type TimelineRow, TimelineRowActivityCtx, TimelineRowCtx } from "./timelineRowContext";
@@ -343,7 +344,11 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         ) : null}
       </div>
       {userMessageMeta ? (
-        <UserMessageMeta intent={userMessageMeta.intent} label={userMessageMeta.label} />
+        <UserMessageMeta
+          unread={row.projectedItem?.item.status === "pending"}
+          intent={userMessageMeta.intent}
+          label={userMessageMeta.label}
+        />
       ) : null}
       <UserMessageProjectedStatus row={row} />
       {expanded ? (
@@ -874,7 +879,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       ) : null}
       {userMessageMeta && steerLabelAbove ? (
-        <UserMessageMeta intent={userMessageMeta.intent} label={userMessageMeta.label} />
+        <UserMessageMeta
+          unread={row.projectedItem?.item.status === "pending"}
+          intent={userMessageMeta.intent}
+          label={userMessageMeta.label}
+        />
       ) : null}
       {mediaAboveText ? (
         <div className="flex max-w-[80%] justify-end">
@@ -1184,6 +1193,8 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   );
 });
 
+const USER_MESSAGE_REMARK_PLUGINS = [remarkEnableOrderedListNumbers];
+
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
@@ -1221,9 +1232,10 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
-      className="text-foreground"
+      className="text-foreground user-message-markdown"
       lineBreaks
       parseRawHtml={false}
+      extraRemarkPlugins={USER_MESSAGE_REMARK_PLUGINS}
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
     />
@@ -1233,7 +1245,9 @@ const UserMessageBody = memo(function UserMessageBody(props: {
 function UserMessageMeta({
   intent,
   label,
+  unread,
 }: {
+  readonly unread: boolean;
   readonly intent: "steer" | "promoted_queued_to_steer";
   readonly label: string;
 }) {
@@ -1249,8 +1263,13 @@ function UserMessageMeta({
       >
         <Redo2Icon aria-hidden className="size-3" />
         {label}
+        {unread ? <span className="ms-1">waiting to be read</span> : null}
       </TooltipTrigger>
-      <TooltipPopup side="top">{userMessageIntentDescription(intent)}</TooltipPopup>
+      <TooltipPopup side="top">
+        {unread
+          ? "Waiting for the agent to read this. It reads steers between steps, after a running command finishes."
+          : userMessageIntentDescription(intent)}
+      </TooltipPopup>
     </Tooltip>
   );
 }
