@@ -75,9 +75,10 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeOS from "node:os";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
-import { shellStdoutFile } from "@t3tools/shared/shellStdoutFile";
+import { shellStdoutFile, type ShellStdoutFile } from "@t3tools/shared/shellStdoutFile";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   claudeMcpToolName,
@@ -3244,6 +3245,8 @@ function claudePendingBackgroundTask(input: {
 }): OrchestrationV2PendingBackgroundTask {
   return {
     taskId: input.taskId,
+    // Every roster task is a local_bash task, which stop_task ends and which writes an output file.
+    individualControl: true,
     kind: input.startedByMonitor
       ? "monitor"
       : ((input.taskType === null
@@ -5211,12 +5214,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           | { readonly kind: "redirect"; readonly filePath: string }
           | { readonly kind: "claude"; readonly root: string; readonly sessionId: string }
         >();
-        // Git Bash on Windows spells C:\ as /c/.
-        const resolveRedirectTarget = (target: string, cwd: string | undefined) =>
-          path.resolve(
-            cwd ?? ".",
-            hostPlatform === "win32" ? target.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:") : target,
-          );
+        // Git Bash on Windows spells C:\ as /c/ and mounts /tmp at the Windows temp dir. Its other
+        // POSIX roots live inside its install, so those paths stay unresolved.
+        const windowsPath = (target: string) => {
+          if (hostPlatform !== "win32" || !target.startsWith("/")) return target;
+          const drive = /^\/([a-zA-Z])(\/.*)?$/.exec(target);
+          if (drive) return `${drive[1]}:${drive[2] ?? "/"}`;
+          const temp = /^\/tmp(\/.*)?$/.exec(target);
+          if (!temp) return undefined;
+          const tempDir =
+            adapterOptions.environment.TEMP || adapterOptions.environment.TMP || NodeOS.tmpdir();
+          return path.join(tempDir, temp[1] ?? "");
+        };
+        const resolveStdoutFile = (stdout: ShellStdoutFile, cwd: string | undefined) => {
+          let directory = cwd ?? ".";
+          for (const change of stdout.cwdChanges) {
+            const next = windowsPath(change);
+            if (next === undefined) return undefined;
+            directory = path.resolve(directory, next);
+          }
+          const file = windowsPath(stdout.path);
+          return file === undefined ? undefined : path.resolve(directory, file);
+        };
         // Waits for the tail's last read so its output lands before the call settles.
         const stopTaskOutputTail = (toolUseId: string) =>
           Effect.suspend(() => {
@@ -8947,7 +8966,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               launch?.classification.itemType === "command_execution"
                 ? firstStringInputField(launch.input, ["command"])
                 : undefined;
+            const output = taskOutputFiles.get(message.task_id);
             yield* upsertPendingBackgroundTask(input.nativeThreadId, {
+              ...(output?.kind === "redirect" ? { outputFile: output.filePath } : {}),
               ...(launch === undefined || command === undefined
                 ? {}
                 : {
@@ -9745,13 +9766,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   launch?.classification.itemType === "command_execution"
                     ? firstStringInputField(launch.input, ["command"])
                     : undefined;
-                const redirect = command === undefined ? undefined : shellStdoutFile(command);
+                const stdout = command === undefined ? undefined : shellStdoutFile(command);
+                // A file it cannot place falls back to Claude's capture rather than a guessed path.
+                const redirect =
+                  stdout === undefined ? undefined : resolveStdoutFile(stdout, liveQuery.bashCwd);
                 const output =
                   redirect !== undefined
-                    ? {
-                        kind: "redirect" as const,
-                        filePath: resolveRedirectTarget(redirect, liveQuery.bashCwd),
-                      }
+                    ? { kind: "redirect" as const, filePath: redirect }
                     : liveQuery.taskOutputRoot !== undefined
                       ? {
                           kind: "claude" as const,
@@ -12444,42 +12465,45 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
           }),
           backgroundTaskOutput: ({ providerThread, taskId }) =>
-            Stream.callback<string, ProviderAdapter.ProviderAdapterV2Error>((queue) =>
-              Effect.gen(function* () {
-                const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
-                const file = taskOutputFiles.get(taskId);
-                if (
-                  nativeThreadId == null ||
-                  file === undefined ||
-                  !(yield* hasPendingBackgroundTaskOnNativeThread(nativeThreadId, taskId))
-                ) {
-                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver: CLAUDE_PROVIDER,
-                    detail: "No readable background task output belongs to this provider thread",
-                  });
-                }
-                const stop = yield* Deferred.make<void>();
-                yield* Effect.addFinalizer(() => Deferred.succeed(stop, undefined));
-                const onChunk = (chunk: string) => Queue.offer(queue, chunk).pipe(Effect.asVoid);
-                // Only a path from a command this thread's agent ran is ever read here.
-                // Claude's capture ends the stream when Claude never writes it.
-                yield* (
-                  file.kind === "redirect"
-                    ? tailOutputFile({ filePath: file.filePath, stop, onChunk })
-                    : tailClaudeTaskOutput({
-                        root: file.root,
-                        sessionId: file.sessionId,
-                        taskId,
-                        stop,
-                        onChunk,
-                      })
-                ).pipe(
-                  Effect.andThen(Queue.end(queue)),
-                  Effect.provideService(FileSystem.FileSystem, fileSystem),
-                  Effect.provideService(Path.Path, path),
-                  Effect.forkScoped,
-                );
-              }),
+            Stream.callback<string, ProviderAdapter.ProviderAdapterV2Error>(
+              (queue) =>
+                Effect.gen(function* () {
+                  const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+                  const file = taskOutputFiles.get(taskId);
+                  if (
+                    nativeThreadId == null ||
+                    file === undefined ||
+                    !(yield* hasPendingBackgroundTaskOnNativeThread(nativeThreadId, taskId))
+                  ) {
+                    return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CLAUDE_PROVIDER,
+                      detail: "No readable background task output belongs to this provider thread",
+                    });
+                  }
+                  const stop = yield* Deferred.make<void>();
+                  yield* Effect.addFinalizer(() => Deferred.succeed(stop, undefined));
+                  const onChunk = (chunk: string) => Queue.offer(queue, chunk).pipe(Effect.asVoid);
+                  // Only a path from a command this thread's agent ran is ever read here.
+                  // Claude's capture ends the stream when Claude never writes it.
+                  yield* (
+                    file.kind === "redirect"
+                      ? tailOutputFile({ filePath: file.filePath, stop, onChunk })
+                      : tailClaudeTaskOutput({
+                          root: file.root,
+                          sessionId: file.sessionId,
+                          taskId,
+                          stop,
+                          onChunk,
+                        })
+                  ).pipe(
+                    Effect.andThen(Queue.end(queue)),
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                    Effect.forkScoped,
+                  );
+                }),
+              // A slow viewer pauses the tail instead of queueing reads without bound.
+              { bufferSize: 16, strategy: "suspend" },
             ),
           awaitBackgroundTasks: Effect.fn("ClaudeAdapterV2.awaitBackgroundTasks")(
             function* ({ providerThread, taskIds, awaited }) {

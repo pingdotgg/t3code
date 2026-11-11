@@ -10826,7 +10826,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
           .pendingBackgroundTasks;
         assert.deepEqual(roster, [
-          { taskId: longRunning.taskId, kind: "monitor", description: "Monitor 0" },
+          {
+            taskId: longRunning.taskId,
+            kind: "monitor",
+            description: "Monitor 0",
+            individualControl: true,
+          },
         ]);
       }).pipe(
         Effect.provide(
@@ -11533,13 +11538,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ]) {
           yield* Queue.offer(harness.sdkMessages, frame);
         }
-        while (
-          !(yield* Queue.take(
+        let listed: OrchestrationV2PendingBackgroundTask | undefined;
+        while (listed === undefined) {
+          listed = (yield* Queue.take(
             harness.providerThreadReceipts,
-          )).providerThread.pendingBackgroundTasks?.some(
+          )).providerThread.pendingBackgroundTasks?.find(
             (task) => task.taskId === "redirected-task",
-          )
-        );
+          );
+        }
+        // Clients label the output with the file the server follows.
+        assert.equal(listed.outputFile, logFile);
         const redirected = { ...target, taskId: "redirected-task" };
         assert.deepEqual(
           Array.from(yield* Stream.runCollect(output(redirected).pipe(Stream.take(1)))),
@@ -12245,7 +12253,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.providerThread.id === providerThreadA.id,
           )?.providerThread.pendingBackgroundTasks;
           assert.deepEqual(rosterAAfterSettle ?? [], [
-            { taskId: taskA, description: "work on A", kind: "command" },
+            { taskId: taskA, description: "work on A", kind: "command", individualControl: true },
           ]);
           assert.isTrue(yield* hasPendingBackgroundWork);
           assert.isTrue(yield* hasPendingBackgroundWorkForThread(providerThreadA));

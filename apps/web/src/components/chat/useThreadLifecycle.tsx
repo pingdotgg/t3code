@@ -106,6 +106,7 @@ interface ThreadLifecycleInput {
   readonly runtimeMode: RuntimeMode;
   readonly isWorking: boolean;
   readonly pendingBackgroundTasks: Parameters<typeof backgroundWorkNowItem>[0]["tasks"];
+  readonly runningBackgroundTasks: Parameters<typeof backgroundWorkNowItem>[0]["tasks"];
   readonly turnItems: Parameters<typeof backgroundWorkNowItem>[0]["turnItems"];
   readonly activePendingApproval: PendingThreadRequests["activePendingApproval"];
   readonly activePendingUserInput: PendingThreadRequests["activePendingUserInput"];
@@ -158,6 +159,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     runtimeMode,
     isWorking,
     pendingBackgroundTasks,
+    runningBackgroundTasks,
     turnItems,
     activePendingApproval,
     activePendingUserInput,
@@ -608,7 +610,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     : null;
   const backgroundWork = activeThread
     ? {
-        tasks: pendingBackgroundTasks,
+        tasks: runningBackgroundTasks,
         turnItems,
         // While a turn runs, the composer's Stop owns the interrupt.
         stopDisabled: isWorking || !canOperateThread || isStoppingBackgroundWork,

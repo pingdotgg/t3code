@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 const CLAUDE_TASK_OUTPUT_POLL_MS = 250;
 /** Bound discovery when Claude never writes the file. */
 const MAX_LOCATE_ATTEMPTS = 40;
+const CLAUDE_TASK_PATH_ID = /^[\w-]+$/;
 /** Skip ahead of fast writers; only the tail is displayed. */
 const MAX_READ_BYTES = 256 * 1024;
 
@@ -50,6 +51,10 @@ const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
   readonly sessionId: string;
   readonly taskId: string;
 }) {
+  // Both ids come from the provider stream; anything but a plain id could leave the root.
+  if (!CLAUDE_TASK_PATH_ID.test(input.sessionId) || !CLAUDE_TASK_PATH_ID.test(input.taskId)) {
+    return Option.none<string>();
+  }
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projects = yield* fileSystem.readDirectory(input.root).pipe(Effect.orElseSucceed(() => []));

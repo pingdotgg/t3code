@@ -1040,6 +1040,10 @@ const PendingBackgroundTaskFields = {
    * subagent. Only the agent knows whether a command is a wait or a dev server it left running.
    */
   awaited: Schema.optional(Schema.Literal(true)),
+  /** The provider can stop this task alone and stream its output. */
+  individualControl: Schema.optional(Schema.Literal(true)),
+  /** The file the task's command sends its output to, which its output stream follows. */
+  outputFile: Schema.optional(TrimmedNonEmptyString),
 };
 
 export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(

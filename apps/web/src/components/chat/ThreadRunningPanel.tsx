@@ -8,7 +8,6 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { ChevronRightIcon, LoaderCircleIcon, SquareIcon, TerminalIcon } from "lucide-react";
-import { shellStdoutFile } from "@t3tools/shared/shellStdoutFile";
 import { useState, type ReactNode } from "react";
 
 import { revealThreadTerminal } from "../../lib/revealThreadTerminal";
@@ -65,18 +64,21 @@ export function ThreadRunningPanel(props: {
       ? []
       : tasks.map((task) => {
           const name = labels.get(task.taskId) ?? task.kind;
-          const expanded = followsTasks && expandedTaskId === task.taskId;
+          // Only tasks the provider marks can be stopped alone or followed; others open the dialog.
+          const controlled = followsTasks && task.individualControl === true;
+          const stoppable = taskStop.available && task.individualControl === true;
+          const expanded = controlled && expandedTaskId === task.taskId;
           const { command } = backgroundTaskLaunch(task, work.turnItems);
-          const followedFile = command === undefined ? undefined : shellStdoutFile(command);
+          const followedFile = task.outputFile;
           const label = (
             <>
               <TerminalIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
               <RowText
                 title={name}
                 detail={`Agent · ${task.awaited ? "Waiting" : "Running"}`}
-                padEnd={taskStop.available}
+                padEnd={stoppable}
               />
-              {followsTasks ? (
+              {controlled ? (
                 <ChevronRightIcon
                   aria-hidden
                   className={cn(
@@ -91,9 +93,9 @@ export function ThreadRunningPanel(props: {
             key: `agent:${task.taskId}`,
             node: (
               <RunningRow
-                stopBesideChevron={followsTasks}
+                stopBesideChevron={controlled}
                 stop={
-                  taskStop.available ? (
+                  stoppable ? (
                     <StopButton
                       label={`Stop ${name}`}
                       tooltip="Stop this background task"
@@ -103,7 +105,7 @@ export function ThreadRunningPanel(props: {
                   ) : null
                 }
               >
-                {followsTasks ? (
+                {controlled ? (
                   <ThreadDetailsControl
                     size="sm"
                     variant="ghost"
@@ -138,7 +140,7 @@ export function ThreadRunningPanel(props: {
                   </div>
                 ) : null}
                 {followedFile ? (
-                  <div className="truncate font-sans text-muted-foreground">
+                  <div className="font-sans break-all text-muted-foreground">
                     Following {followedFile}
                   </div>
                 ) : null}
@@ -198,7 +200,7 @@ export function ThreadRunningPanel(props: {
       title="Running"
       actions={
         // Servers that cannot stop one task still let the user end all of them.
-        work && tasks.length > 0 && !taskStop.available ? (
+        work && tasks.some((task) => !(taskStop.available && task.individualControl)) ? (
           <Tooltip>
             <TooltipTrigger
               render={

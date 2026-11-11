@@ -1500,23 +1500,22 @@ const make = Effect.gen(function* () {
   });
 
   // The provider thread whose roster lists the task, with its live runtime if any.
-  const findBackgroundTask = Effect.fnUntraced(function* (input: {
-    readonly threadId: ThreadId;
-    readonly taskId: string;
-  }) {
-    const records = yield* orchestrator.getThreadRecords(input.threadId, ["providerThreads"]);
-    const providerThread = records.providerThreads.find(
-      (candidate) =>
-        candidate.appThreadId === input.threadId &&
-        candidate.pendingBackgroundTasks?.some((task) => task.taskId === input.taskId),
-    );
-    if (records.thread.deletedAt !== null || providerThread === undefined) return null;
-    const runtime =
-      providerThread.providerSessionId == null
-        ? Option.none()
-        : yield* sessions.get(providerThread.providerSessionId);
-    return { providerThread, runtime };
-  });
+  const findBackgroundTask = Effect.fn("ThreadManagementService.findBackgroundTask")(
+    function* (input: { readonly threadId: ThreadId; readonly taskId: string }) {
+      const records = yield* orchestrator.getThreadRecords(input.threadId, ["providerThreads"]);
+      const providerThread = records.providerThreads.find(
+        (candidate) =>
+          candidate.appThreadId === input.threadId &&
+          candidate.pendingBackgroundTasks?.some((task) => task.taskId === input.taskId),
+      );
+      if (records.thread.deletedAt !== null || providerThread === undefined) return null;
+      const runtime =
+        providerThread.providerSessionId == null
+          ? Option.none()
+          : yield* sessions.get(providerThread.providerSessionId);
+      return { providerThread, runtime };
+    },
+  );
 
   const stopBackgroundTask: ThreadManagementServiceShape["stopBackgroundTask"] = Effect.fn(
     "ThreadManagementService.stopBackgroundTask",
@@ -1587,7 +1586,16 @@ const make = Effect.gen(function* () {
             truncated: false,
             running: true,
           };
-          return Stream.concat(Stream.succeed(opening), frames);
+          // A stream that ends (the provider never wrote output) says so instead of looking live.
+          const closing = Stream.suspend(() =>
+            Stream.succeed<OrchestrationV2CommandOutputFrame>({
+              kind: "append",
+              text: "",
+              truncated: tail.truncated,
+              running: false,
+            }),
+          );
+          return Stream.succeed(opening).pipe(Stream.concat(frames), Stream.concat(closing));
         }),
       );
 

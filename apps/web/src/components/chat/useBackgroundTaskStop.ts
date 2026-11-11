@@ -11,6 +11,8 @@ import { orchestrationEnvironment } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
+const STOP_RETRY_AFTER_MS = 10_000;
+
 /** Older servers answer neither per-task stop nor task output, so both stay hidden there. */
 export function useBackgroundTaskControl(environmentId: EnvironmentId): boolean {
   return (
@@ -33,12 +35,18 @@ export function useBackgroundTaskStop(environmentId: EnvironmentId, threadId: Th
     if (stopping.has(taskId)) return;
     setStopping((current) => new Set(current).add(taskId));
     const result = await stopTask({ environmentId, input: { threadId, taskId } });
-    if (result._tag === "Success") return;
-    setStopping((current) => {
-      const next = new Set(current);
-      next.delete(taskId);
-      return next;
-    });
+    const release = () =>
+      setStopping((current) => {
+        const next = new Set(current);
+        next.delete(taskId);
+        return next;
+      });
+    if (result._tag === "Success") {
+      // The row normally leaves first; if the provider never reports the stop, allow a retry.
+      window.setTimeout(release, STOP_RETRY_AFTER_MS);
+      return;
+    }
+    release();
     if (isAtomCommandInterrupted(result)) return;
     const error = squashAtomCommandFailure(result);
     toastManager.add(

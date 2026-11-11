@@ -4,7 +4,6 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
-import { shellStdoutFile } from "@t3tools/shared/shellStdoutFile";
 import { useState, type ReactElement, type ReactNode } from "react";
 
 import { InlineButton } from "../ui/button";
@@ -75,7 +74,8 @@ export function BackgroundWorkDetails(props: {
                 task.itemId ?? (item?.type === "command_execution" ? item.id : undefined);
               const childThreadId = task.kind === "subagent" ? task.childThreadId : undefined;
               const isCommand = task.kind !== "subagent";
-              const followedFile = command === undefined ? undefined : shellStdoutFile(command);
+              const controlled = isCommand && task.individualControl === true;
+              const followedFile = task.outputFile;
               const stopping = taskStop.stopping.has(task.taskId);
               return (
                 <section key={task.taskId} className="space-y-2 text-sm">
@@ -83,7 +83,7 @@ export function BackgroundWorkDetails(props: {
                     <h3 className="font-medium">{title}</h3>
                     <span className="flex shrink-0 items-baseline gap-3 text-xs text-muted-foreground">
                       {task.awaited ? "Waiting" : "Running"}
-                      {isCommand && taskStop.available ? (
+                      {controlled && taskStop.available ? (
                         <InlineButton
                           disabled={stopping}
                           onClick={() => void taskStop.stop(task.taskId)}
@@ -98,7 +98,7 @@ export function BackgroundWorkDetails(props: {
                       <ShellCommandBlock command={command} />
                     </div>
                   ) : null}
-                  {isCommand && followsTasks ? (
+                  {controlled && followsTasks ? (
                     <div className="space-y-1 font-mono text-xs whitespace-pre-wrap break-words">
                       {followedFile ? (
                         <div className="font-sans text-muted-foreground">

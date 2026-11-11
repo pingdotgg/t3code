@@ -7,6 +7,7 @@ import {
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
+  deriveThreadRunningBackgroundTasks,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
@@ -1237,5 +1238,31 @@ describe("Open in for the host environment", () => {
         }),
       ).toBe(visible);
     }
+  });
+});
+
+describe("deriveThreadRunningBackgroundTasks", () => {
+  it("lists the active provider thread's commands while a turn runs, without subagents", () => {
+    const devServer = {
+      taskId: "dev-server",
+      kind: "command" as const,
+      individualControl: true as const,
+    };
+    const projection = {
+      thread: { activeProviderThreadId: "provider-thread:active" },
+      runs: [{ id: "run:2", status: "running" }],
+      providerThreads: [
+        {
+          id: "provider-thread:active",
+          pendingBackgroundTasks: [devServer, { taskId: "explorer", kind: "subagent" }],
+        },
+        {
+          id: "provider-thread:earlier",
+          pendingBackgroundTasks: [{ taskId: "old-watcher", kind: "monitor" }],
+        },
+      ],
+    } as unknown as Parameters<typeof deriveThreadRunningBackgroundTasks>[0];
+
+    expect(deriveThreadRunningBackgroundTasks(projection)).toEqual([devServer]);
   });
 });
