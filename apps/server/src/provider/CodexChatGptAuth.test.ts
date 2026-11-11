@@ -1,6 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - Local mock OAuth server validates the browser callback boundary.
+import * as NodeNet from "node:net";
+import * as Context from "effect/Context";
+import * as Scope from "effect/Scope";
+import * as ServerConfig from "../config.ts";
+import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as NodeHttp from "node:http";
 import * as NodeCrypto from "node:crypto";
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
@@ -8,11 +14,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import { subscribeChatGptHandoff } from "./CodexChatGptHandoff.ts";
-import { FetchHttpClient } from "effect/http";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
@@ -38,9 +44,23 @@ const makeHarnessFor = Effect.fnUntraced(function* (
   const environment = ServerEnvironment.ServerEnvironmentIdentity.of({
     getEnvironmentId: Effect.succeed(environmentId),
   });
-  const keys = yield* Effect.promise(() => generateKeyPair("RS256"));
-  const jwk = yield* Effect.promise(() => exportJWK(keys.publicKey));
-  const untrustedKeys = yield* Effect.promise(() => generateKeyPair("RS256"));
+  const signingKeyFor = (kid: string) => {
+    const pair = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    return {
+      kid,
+      privateKey: pair.privateKey,
+      publicJwk: { ...pair.publicKey.export({ format: "jwk" }), kid, alg: "RS256", use: "sig" },
+    };
+  };
+  let signingKey = signingKeyFor("test");
+  let jwksRequests = 0;
+  const untrustedKeys = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const signIdToken = (claims: Record<string, unknown>, privateKey: NodeCrypto.KeyObject) => {
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const signingInput = `${encode({ alg: "RS256", kid: signingKey.kid })}.${encode(claims)}`;
+    const signature = NodeCrypto.sign("sha256", Buffer.from(signingInput), privateKey);
+    return `${signingInput}.${signature.toString("base64url")}`;
+  };
   const secrets = ServerSecretStore.ServerSecretStore.of({
     get: (name) => Effect.sync(() => Option.fromUndefinedOr(bytes.get(name))),
     set: (name, value) =>
@@ -93,9 +113,8 @@ const makeHarnessFor = Effect.fnUntraced(function* (
               return;
             }
             if (request.url === "/jwks") {
-              response.end(
-                JSON.stringify({ keys: [{ ...jwk, kid: "test", alg: "RS256", use: "sig" }] }),
-              );
+              jwksRequests += 1;
+              response.end(JSON.stringify({ keys: [signingKey.publicJwk] }));
               return;
             }
             if (request.url === "/revoke") {
@@ -161,21 +180,20 @@ const makeHarnessFor = Effect.fnUntraced(function* (
                   .digest("base64url"),
                 authorize.searchParams.get("code_challenge"),
               );
-              const token = await new SignJWT({
-                nonce: invalidNonce ? "incorrect" : authorize.searchParams.get("nonce"),
-                email,
-              })
-                .setProtectedHeader({ alg: "RS256", kid: "test" })
-                .setIssuer(identityFailure === "issuer" ? "https://untrusted-issuer.test" : origin)
-                .setAudience(
-                  identityFailure === "audience"
-                    ? "oaiapp_untrusted_audience"
-                    : body.get("client_id")!,
-                )
-                .setSubject(subject)
-                .setIssuedAt()
-                .setExpirationTime("1h")
-                .sign(identityFailure === "signature" ? untrustedKeys.privateKey : keys.privateKey);
+              const token = signIdToken(
+                {
+                  nonce: invalidNonce ? "incorrect" : authorize.searchParams.get("nonce"),
+                  email,
+                  iss: identityFailure === "issuer" ? "https://untrusted-issuer.test" : origin,
+                  aud:
+                    identityFailure === "audience"
+                      ? "oaiapp_untrusted_audience"
+                      : body.get("client_id")!,
+                  sub: subject,
+                  exp: 4_102_444_800,
+                },
+                identityFailure === "signature" ? untrustedKeys.privateKey : signingKey.privateKey,
+              );
               response.end(
                 JSON.stringify({
                   access_token: "initial-access",
@@ -277,6 +295,10 @@ const makeHarnessFor = Effect.fnUntraced(function* (
   });
   return {
     auth,
+    jwksRequests: () => jwksRequests,
+    rotateSigningKey: () => {
+      signingKey = signingKeyFor("rotated");
+    },
     analyticsEvents,
     secrets,
     environmentId,
@@ -320,6 +342,16 @@ const makeHarnessFor = Effect.fnUntraced(function* (
       );
       return { auth: destination, bytes: destinationBytes };
     }),
+    bindProfile: (expectedProfileKey: string) =>
+      makeCodexChatGptAuth({
+        instanceId,
+        expectedProfileKey,
+        discoveryUrl: `${origin}/discovery`,
+        resource: `${origin}/v1`,
+      }).pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+        Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
+      ),
     recreateAuth: makeCodexChatGptAuth({
       instanceId,
       discoveryUrl: `${origin}/discovery`,
@@ -388,7 +420,9 @@ const makeHarness = makeHarnessFor(instanceId);
 const provision = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.scoped,
-    Effect.provide(Layer.mergeAll(FetchHttpClient.layer, NodeServices.layer)),
+    Effect.provide(
+      Layer.mergeAll(FetchHttpClient.layer, NodeServices.layer, NodePlatformCrypto.layer),
+    ),
   );
 it.effect(
   "changing account registers a new user-owned client and then reuses that registration",
@@ -631,6 +665,17 @@ it.effect(
           h.exchanges[2]!.get("redirect_uri"),
           reconnect.searchParams.get("redirect_uri"),
         );
+        assert.strictEqual(h.jwksRequests(), 1);
+        h.rotateSigningKey();
+        yield* h.auth.controller.logout(Effect.void);
+        yield* h.signIn;
+        yield* h.phase("succeeded");
+        assert.strictEqual(h.jwksRequests(), 2);
+        yield* TestClock.adjust("10 minutes");
+        yield* h.auth.controller.logout(Effect.void);
+        yield* h.signIn;
+        yield* h.phase("succeeded");
+        assert.strictEqual(h.jwksRequests(), 3);
       }),
     ),
 );
@@ -905,7 +950,9 @@ it.effect(
       assert.strictEqual(harness.exchanges.length, 2);
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, FetchHttpClient.layer),
+      ),
     ),
 );
 
@@ -942,7 +989,9 @@ it.effect(
       yield* harness.phase("succeeded");
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, FetchHttpClient.layer),
+      ),
     ),
 );
 
@@ -976,7 +1025,12 @@ it.effect("keeps simultaneous remote accounts and environments independent", () 
     yield* second.phase("succeeded");
     assert.strictEqual(Option.getOrThrow(yield* first.auth.read).subject, "user-test");
     assert.strictEqual(Option.getOrThrow(yield* second.auth.read).subject, "other-user");
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer, FetchHttpClient.layer),
+    ),
+  ),
 );
 
 it.effect(
@@ -1325,6 +1379,70 @@ it.effect("an expired initial code retains the issued ID for a fresh authorizati
   ),
 );
 
+it.effect.each([false, true])(
+  "removes only the selected incomplete connection across restart (authenticated: %s)",
+  (authenticated) =>
+    provision(
+      Effect.gen(function* () {
+        const h = yield* makeHarness;
+        if (authenticated) {
+          yield* h.signIn;
+          yield* h.phase("succeeded");
+        }
+        const credentials = yield* h.auth.read;
+        h.setCallbackClientId("oaiapp_failed");
+        h.setCodeError("invalid_grant");
+        yield* h.changeAccount;
+        const failed = yield* h.phase("failed");
+        const methodId = "chatgpt-profile:oaiapp_failed";
+        assert.isTrue(failed.methods!.find((method) => method.id === methodId)?.canRemove);
+        h.setCallbackClientId("oaiapp_other_failed");
+        yield* h.changeAccount;
+        yield* h.phase("failed");
+        const { waiting } = yield* h.startRemote(methodId);
+        const busy = yield* Effect.flip(h.auth.controller.removeMethod!(methodId));
+        assert.include(busy.detail, "Finish or cancel");
+        yield* h.auth.controller.cancel("owner", waiting.flowId!);
+        const removed = yield* h.auth.controller.removeMethod!(methodId);
+        assert.isFalse(removed.methods!.some((method) => method.id === methodId));
+        assert.isTrue(
+          removed.methods!.some((method) => method.id === "chatgpt-profile:oaiapp_other_failed"),
+        );
+        assert.deepEqual(yield* h.auth.read, credentials);
+        h.setCallbackClientId("oaiapp_new_failed");
+        yield* h.changeAccount;
+        const next = yield* h.phase("failed");
+        const profiles = next.methods!.filter((method) => method.id.startsWith("chatgpt-profile:"));
+        assert.strictEqual(new Set(profiles.map((method) => method.name)).size, profiles.length);
+        yield* h.auth.controller.removeMethod!("chatgpt-profile:oaiapp_new_failed");
+        const last = yield* h.auth.controller.removeMethod!("chatgpt-profile:oaiapp_other_failed");
+        assert.strictEqual(
+          last.methods!.filter((method) => method.id.startsWith("chatgpt-profile:")).length,
+          authenticated ? 1 : 0,
+        );
+        const restarted = yield* h.recreateAuth;
+        yield* restarted.controller.refreshMethods!;
+        const state = yield* restarted.controller.subscribe("owner").pipe(Stream.runHead);
+        assert.deepEqual(Option.getOrThrow(state).methods, last.methods);
+        if (authenticated) {
+          assert.isFalse(
+            last.methods!.find((method) => method.id === "chatgpt-profile:oaiapp_test")?.canRemove,
+          );
+          yield* Effect.flip(h.auth.controller.removeMethod!("chatgpt-profile:oaiapp_test"));
+          yield* h.auth.controller.logout(Effect.void);
+        }
+        h.setCodeError(undefined);
+        h.setCallbackClientId("oaiapp_test");
+        yield* h.signIn;
+        yield* h.phase("succeeded");
+        assert.strictEqual(
+          h.authorizationRequests.at(-1)!.searchParams.get("client_id"),
+          authenticated ? "oaiapp_test" : "dynamic_agent_client",
+        );
+      }),
+    ),
+);
+
 it.effect("identity-only sign-in requests consent on an explicit retry, then rechecks scopes", () =>
   provision(
     Effect.gen(function* () {
@@ -1586,8 +1704,13 @@ it.effect(
         const callback = new URL(
           new URL(state.authorizationUrl!).searchParams.get("redirect_uri")!,
         );
-        const request = yield* Effect.tryPromise(() => fetch(callback)).pipe(Effect.result);
-        assert.strictEqual(request._tag, "Failure");
+        const rejected = yield* Effect.promise(() =>
+          fetch(callback).then(
+            () => false,
+            () => true,
+          ),
+        );
+        assert.isTrue(rejected);
         assert.isTrue(Option.isNone(yield* h.auth.read));
       }),
     ),
@@ -1601,6 +1724,208 @@ it.effect("telemetry failures do not fail a verified ChatGPT sign-in", () =>
       const state = yield* h.phase("succeeded");
       assert.strictEqual(state.phase, "succeeded");
       assert.isTrue(Option.isSome(yield* h.auth.read));
+    }),
+  ),
+);
+it.effect("a running session renews its bound profile but refuses a replacement sign-in", () =>
+  provision(
+    Effect.gen(function* () {
+      const h = yield* makeHarness;
+      yield* h.signIn;
+      yield* h.phase("succeeded");
+      const profileKey = yield* h.auth.profileKey(Option.getOrThrow(yield* h.auth.read));
+      const first = yield* h.bindProfile(profileKey);
+      const second = yield* h.bindProfile(profileKey);
+      yield* h.seedExpired;
+      const renewed = yield* Effect.all([first.access, second.access], {
+        concurrency: "unbounded",
+      });
+      assert.equal(h.refreshes(), 1);
+      assert.equal(renewed[0].accessToken, "access-1");
+      assert.deepEqual(renewed[0], renewed[1]);
+      assert.equal(yield* h.auth.profileKey(renewed[0]), profileKey);
+
+      // Reconnecting the same account replaces its sign-in identity, too.
+      yield* h.reconnectProfile("oaiapp_test");
+      yield* h.phase("succeeded");
+      const replacement = Option.getOrThrow(yield* h.auth.read);
+      assert.equal(replacement.clientId, renewed[0].clientId);
+      assert.equal(replacement.subject, renewed[0].subject);
+      yield* h.seedExpired;
+      assert.equal((yield* first.access.pipe(Effect.flip)).operation, "access");
+      assert.equal(h.refreshes(), 1);
+      yield* h.auth.revoke;
+      assert.equal((yield* second.access.pipe(Effect.flip)).operation, "access");
+      assert.isTrue(Option.isNone(yield* h.auth.read));
+    }),
+  ),
+);
+
+const makeRenewalBroker = Effect.gen(function* () {
+  const oauthEntered = yield* Deferred.make<void>();
+  const oauthRelease = yield* Deferred.make<void>();
+  let pauseOAuth = false;
+  const refreshTokens: string[] = [];
+  const credentials = {
+    clientId: "oaiapp_broker",
+    subject: "broker-user",
+    idToken: "broker-sign-in",
+    email: null,
+    accessToken: "expired-access",
+    refreshToken: "single-use-refresh",
+    expiresAt: 0,
+    earliestRefreshAt: null,
+    scopes: ["chatgpt.tokens.use.direct"],
+  };
+  const environmentId = EnvironmentId.make("00000000-0000-4000-8000-000000000001");
+  const http = HttpClient.make((request) =>
+    Effect.gen(function* () {
+      if (request.url.endsWith("openid-configuration")) {
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            issuer: "https://auth.openai.com",
+            authorization_endpoint: "https://auth.openai.com/authorize",
+            token_endpoint: "https://auth.openai.com/token",
+            jwks_uri: "https://auth.openai.com/jwks",
+          }),
+        );
+      }
+      assert.equal(request.url, "https://auth.openai.com/token");
+      assert.equal(request.body._tag, "Uint8Array");
+      if (request.body._tag !== "Uint8Array") return yield* Effect.die("Missing refresh body");
+      const body = new URLSearchParams(new TextDecoder().decode(request.body.body));
+      refreshTokens.push(body.get("refresh_token")!);
+      yield* Deferred.succeed(oauthEntered, undefined);
+      if (pauseOAuth) yield* Deferred.await(oauthRelease);
+      return HttpClientResponse.fromWeb(
+        request,
+        Response.json({
+          access_token: "renewed-access",
+          refresh_token: "rotated-refresh",
+          expires_in: 3600,
+          token_type: "Bearer",
+          scope: "chatgpt.tokens.use.direct",
+        }),
+      );
+    }),
+  );
+  return yield* Effect.gen(function* () {
+    const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
+    yield* store.set(new TextEncoder().encode(JSON.stringify(credentials)));
+    const auth = yield* makeCodexChatGptAuth({ instanceId });
+    const profileKey = yield* auth.profileKey(credentials);
+    const scope = yield* Scope.make();
+    yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
+    const context = yield* Layer.buildWithScope(CodexManagedTokenBroker.layer, scope);
+    const broker = Context.get(context, CodexManagedTokenBroker.CodexManagedTokenBroker);
+    const endpoint = yield* broker.endpoint;
+    yield* Effect.addFinalizer(() => Deferred.succeed(oauthRelease, undefined));
+    return {
+      auth,
+      store,
+      broker,
+      endpoint,
+      refreshTokens,
+      request: { version: 1, instanceId, environmentId, profileKey },
+      oauthEntered,
+      oauthRelease,
+      pause: () => {
+        pauseOAuth = true;
+      },
+    };
+  }).pipe(
+    Effect.provide(ServerSecretStore.layer),
+    Effect.provideService(HttpClient.HttpClient, http),
+    Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+      getEnvironmentId: Effect.succeed(environmentId),
+    }),
+  );
+});
+
+const brokerClient = (endpoint: string, request: unknown) =>
+  Effect.acquireRelease(
+    Effect.callback<{ socket: NodeNet.Socket; response: Promise<string> }, Error>((resume) => {
+      const socket = NodeNet.createConnection(endpoint);
+      let text = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => {
+        text += chunk;
+      });
+      const response = new Promise<string>((resolve) => socket.once("close", () => resolve(text)));
+      socket.on("error", () => {});
+      socket.once("error", (error) => resume(Effect.fail(error)));
+      socket.once("connect", () => {
+        socket.write(JSON.stringify(request) + "\n");
+        resume(Effect.succeed({ socket, response }));
+      });
+      return Effect.sync(() => {
+        if (socket.connecting) socket.destroy();
+      });
+    }),
+    ({ socket }) => Effect.sync(() => socket.destroy()),
+  );
+const provideBroker = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.scoped,
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-renewal-test-" }).pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)),
+      ),
+    ),
+  );
+
+// regression: #16132 a renewal must outlive the Codex helper that asked for it, because the
+// refresh token it spends is single-use.
+it.effect("server-owned renewal persists rotated credentials after the helper disconnects", () =>
+  provideBroker(
+    Effect.gen(function* () {
+      const h = yield* makeRenewalBroker;
+      h.pause();
+      const client = yield* brokerClient(h.endpoint, h.request);
+      yield* Deferred.await(h.oauthEntered);
+      client.socket.destroy();
+      yield* Effect.promise(() => client.response);
+      assert.equal(Option.getOrThrow(yield* h.auth.read).refreshToken, "single-use-refresh");
+      yield* Deferred.succeed(h.oauthRelease, undefined);
+      yield* h.broker.awaitIdle;
+      const persisted = Option.getOrThrow(yield* h.auth.read);
+      assert.equal(persisted.refreshToken, "rotated-refresh");
+      assert.equal((yield* h.auth.access).accessToken, "renewed-access");
+      assert.deepEqual(h.refreshTokens, ["single-use-refresh"]);
+    }),
+  ),
+);
+
+it.live("the private broker refuses another environment, instance, or sign-in profile", () =>
+  provideBroker(
+    Effect.gen(function* () {
+      const h = yield* makeRenewalBroker;
+      yield* Effect.forEach(
+        [
+          {
+            ...h.request,
+            environmentId: EnvironmentId.make("00000000-0000-4000-8000-000000000002"),
+          },
+          { ...h.request, instanceId: ProviderInstanceId.make("another-instance") },
+          { ...h.request, profileKey: "0".repeat(64) },
+        ],
+        (request) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const client = yield* brokerClient(h.endpoint, request);
+              assert.equal(yield* Effect.promise(() => client.response), "");
+            }),
+          ),
+      );
+      yield* h.broker.awaitIdle;
+      assert.deepEqual(h.refreshTokens, []);
+      const client = yield* brokerClient(h.endpoint, h.request);
+      assert.deepEqual(JSON.parse(yield* Effect.promise(() => client.response)), {
+        token: "renewed-access",
+      });
+      yield* h.broker.awaitIdle;
+      assert.deepEqual(h.refreshTokens, ["single-use-refresh"]);
     }),
   ),
 );
