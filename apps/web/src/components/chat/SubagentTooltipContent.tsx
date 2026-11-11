@@ -11,8 +11,8 @@ import {
   resolveSubagentMetadata,
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
-import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/client-runtime/state/thread-execution";
-import { getModelSelectionStringOptionValue, resolveSelectableModel } from "@t3tools/shared/model";
+import { formatSubagentEffort } from "@t3tools/client-runtime/state/thread-execution";
+import { resolveSelectableModel } from "@t3tools/shared/model";
 import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
 import type { ReactNode } from "react";
 import {
@@ -72,9 +72,11 @@ export function SubagentTooltipContent(props: {
     childModel === modelSlug && childSelection?.instanceId === props.providerInstanceId
       ? childSelection
       : undefined;
-  const effort = REASONING_EFFORT_OPTION_IDS.map((id) =>
-    getModelSelectionStringOptionValue(matchingSelection, id),
-  ).find(Boolean);
+  const effort = formatSubagentEffort({
+    modelSlug,
+    modelSelection: childSelection,
+    provider: props.provider,
+  });
   const speed = provider
     ? providerModel?.capabilities?.optionDescriptors
         ?.map((descriptor) => {
@@ -134,11 +136,9 @@ export function SubagentTooltipContent(props: {
         ) : (
           <BotIcon className="size-3 shrink-0" />
         )}
-        <span className="inline-flex min-w-0 flex-col items-start gap-1 text-muted-foreground">
-          <span className="min-w-0 truncate">
-            <span>{modelLabel}</span>
-            {showInstanceBadge ? <span className="block">{entry.displayName}</span> : null}
-          </span>
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
+          <span className="min-w-0 truncate">{modelLabel}</span>
+          {showInstanceBadge ? <span className="shrink-0">{entry.displayName}</span> : null}
           {effort || speed?.speedIcon ? (
             <span className="inline-flex shrink-0 items-center gap-1">
               {speed?.speedIcon && provider ? (
