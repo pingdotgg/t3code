@@ -3730,6 +3730,12 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --pill-shadow: var(--composer-pill-shadow, 0 1px 3px #00000011);
 }
 
+:root[data-surface-style="flat"] [data-chat-composer-compact-send] [data-variant="pill"] {
+  --button-pill-fill: var(--composer-pill-fill);
+  --button-pill-rim: var(--composer-pill-rim);
+  --button-pill-shadow: var(--composer-pill-shadow);
+}
+
 /* Flat sliders use solid tracks and thumbs; only keyboard focus adds a ring. */
 @media not (forced-colors: active) {
   :root[data-surface-style="flat"] .settings-slider {
