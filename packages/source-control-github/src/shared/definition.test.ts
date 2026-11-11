@@ -105,6 +105,14 @@ describe("GitHub CLI commands", () => {
   });
 });
 
+describe("GitHub repository pages", () => {
+  it("leaves the tree route on other hosts to them", () => {
+    expect(
+      definition.repositoryUrlFromPage?.(new URL("https://scm.example.test/o/r/tree/main")),
+    ).toBeNull();
+  });
+});
+
 describe("GitHub remotes", () => {
   const recognize = (url: string) => recognizeRemoteWith(definition, url);
 
