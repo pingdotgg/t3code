@@ -668,7 +668,14 @@
         white-space: nowrap;
       }
     </style>
-    <title>T3 Code (Beta)</title>
+    <script>
+      // Desktop's preload injects branding before page scripts. Titling before the <title> below
+      // parses keeps Electron from reporting the web build's channel to the window first.
+      const desktopDisplayName = window.desktopBridge?.getAppBranding?.()?.displayName;
+      if (desktopDisplayName) document.title = desktopDisplayName;
+    </script>
+    <!-- vite.config.ts stamps the web build's channel into this title. -->
+    <title>T3 Code</title>
   </head>
   <body>
     <div id="root">
