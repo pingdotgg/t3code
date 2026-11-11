@@ -1879,6 +1879,16 @@ describe("reset credits per window", () => {
         "seven_day_fable",
       ),
     ).toEqual({ count: 1, scope: "Fable" });
+    const mixed = {
+      ...credits,
+      options: [
+        option("full", 1, ["seven_day", "seven_day_fable"]),
+        option("fable", 2, ["seven_day_fable"]),
+      ],
+    };
+    expect(resetCreditsForWindow(mixed, windows, "seven_day").count).toBe(1);
+    expect(resetCreditsForWindow(mixed, windows, "seven_day_fable").count).toBe(3);
+    expect(resetCreditsForWindow(mixed, windows, "five_hour").count).toBe(0);
   });
 
   it("counts resets without clears details against every window", () => {
