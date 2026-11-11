@@ -6,7 +6,11 @@ import {
   VcsProcessSpawnError,
 } from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
-import { T3_LEARN_HOME_ENV, T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
+import {
+  T3_LEARN_COMMAND,
+  T3_LEARN_HOME_ENV,
+  T3_LEARN_PRODUCT_NAME,
+} from "@t3tools/shared/t3LearnIdentity";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -38,7 +42,7 @@ export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailab
     if (this.repositoryRoot === undefined) {
       return "Threads without a project are not available on this environment.";
     }
-    return `Threads without a project are off because the ${T3_LEARN_PRODUCT_NAME} home ${this.baseDir} is inside the Git repository ${this.repositoryRoot}. If that repository was created by mistake, move ${this.repositoryRoot}/.git out of the way; otherwise point ${T3_LEARN_HOME_ENV} (desktop app) or T3CODE_HOME (or --base-dir, server) at a folder outside it. Then restart ${T3_LEARN_PRODUCT_NAME}.`;
+    return `Threads without a project are off because the ${T3_LEARN_PRODUCT_NAME} home ${this.baseDir} is inside the Git repository ${this.repositoryRoot}. If that repository was created by mistake, move ${this.repositoryRoot}/.git out of the way; otherwise point --base-dir or ${T3_LEARN_HOME_ENV} at a folder outside it (the desktop app and the ${T3_LEARN_COMMAND} command read ${T3_LEARN_HOME_ENV}; other servers read T3CODE_HOME). Then restart ${T3_LEARN_PRODUCT_NAME}.`;
   }
 }
 
