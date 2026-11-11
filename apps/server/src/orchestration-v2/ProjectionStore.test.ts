@@ -4676,7 +4676,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
       const settledPayload = (settledAt: string | null, archivedAt: string | null) => sql`
         UPDATE orchestration_v2_projection_threads
-        SET payload_json = json_set(payload_json, '$.settledAt', ${settledAt}, '$.archivedAt', ${archivedAt})
+        SET payload_json = json_set(payload_json, '$.settledAt', ${settledAt}, '$.archivedAt', ${archivedAt}),
+          archived_at = ${archivedAt}
         WHERE thread_id = ${readThreadId}
       `;
       yield* settledPayload(DateTime.formatIso(now), null);
