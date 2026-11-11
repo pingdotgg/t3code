@@ -536,6 +536,11 @@ describe("ssh tunnel scripts", () => {
       expectedPromptAttempts: [1],
     },
     {
+      name: "does not ask for a password when the host key cannot be verified",
+      stderr: "Host key verification failed.\r\n",
+      expectedPromptAttempts: [],
+    },
+    {
       name: "asks for a password when the server rejects every key",
       stderr: "julius@devbox: Permission denied (publickey,password).\r\n",
       expectedPromptAttempts: [1],
