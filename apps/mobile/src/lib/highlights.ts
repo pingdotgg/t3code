@@ -1,3 +1,8 @@
+import {
+  embeddedScripts,
+  withEmbeddedScripts,
+  type SyntaxToken,
+} from "@t3tools/client-runtime/work-log/embedded-scripts";
 import type { T3Highlights } from "@t3tools/mobile-highlights-native";
 import { NitroModules } from "react-native-nitro-modules";
 
@@ -80,6 +85,46 @@ export function tokenizeCode(code: string, language: string): TokenizedCode {
       return line;
     },
   };
+}
+
+/** Shell commands also color the scripts they embed, such as heredocs and `python -c`. */
+export function highlightCommand(
+  code: string,
+  language: "shellscript" | "powershell",
+  scheme: HighlightScheme,
+): HighlightedLines {
+  const tokenize = (text: string, lang: string) => {
+    // A missing grammar keeps the shell colors, as on web.
+    if (highlightLanguageId(lang) === 0) throw new Error(`No grammar for ${lang}`);
+    return withOffsets(text, highlightCode(text, lang, scheme));
+  };
+  const embedded = language === "shellscript" ? embeddedScripts(code) : [];
+  return withEmbeddedScripts(code, tokenize(code, language), embedded, tokenize).map((line) =>
+    line.map((token) => ({
+      content: token.content,
+      color: token.color ?? null,
+      fontStyle: token.fontStyle ?? null,
+    })),
+  );
+}
+
+function withOffsets(code: string, lines: HighlightedLines): SyntaxToken[][] {
+  const endings = code.match(/\r?\n/gu) ?? [];
+  let offset = 0;
+  return lines.map((line, index) => {
+    const tokens = line.map((token) => {
+      const start = offset;
+      offset += token.content.length;
+      return {
+        content: token.content,
+        offset: start,
+        ...(token.color ? { color: token.color } : {}),
+        ...(token.fontStyle ? { fontStyle: token.fontStyle } : {}),
+      };
+    });
+    offset += endings[index]?.length ?? 0;
+    return tokens;
+  });
 }
 
 /** LF and CRLF split lines; a trailing line break yields a final empty line. */
