@@ -821,6 +821,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       accentColor,
       enabled,
       auth,
+      // A live session's model list outranks a fresh probe, so a refresh must drop both.
+      invalidateCaches: liveSnapshotSemaphore.withPermit(
+        invalidateEnrichmentCache.pipe(
+          Effect.andThen(
+            Option.isSome(runtimeCoordinator)
+              ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
+              : Effect.void,
+          ),
+        ),
+      ),
       snapshot: {
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
