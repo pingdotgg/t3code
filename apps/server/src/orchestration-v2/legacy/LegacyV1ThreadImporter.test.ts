@@ -223,11 +223,13 @@ it.effect("propagates interruption from transcript reads and retry-marker writes
   }).pipe(Effect.provide(layerTest)),
 );
 
-const malformedLegacyTimestamp = "2026-07-13T14:13:00.3NZ";
-
-const seedLegacyThread = (threadId: ThreadId) =>
+// regression: #30813 a malformed V1 timestamp stopped the server from starting
+it.effect("imports legacy rows with malformed timestamps and keeps the archive marker", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const malformed = "2026-07-13T14:13:00.3NZ";
     yield* sql`
       INSERT INTO projection_projects (
         project_id, title, workspace_root, scripts_json, created_at, updated_at
@@ -239,56 +241,28 @@ const seedLegacyThread = (threadId: ThreadId) =>
     yield* sql`
       INSERT INTO projection_threads (
         thread_id, project_id, title, model_selection_json, runtime_mode,
-        interaction_mode, created_at, updated_at
+        interaction_mode, created_at, updated_at, archived_at
       ) VALUES (
-        ${threadId}, 'project:malformed', 'Legacy thread',
+        'thread:malformed', 'project:malformed', 'Legacy thread',
         '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
-        '2026-07-13T14:00:00.000Z', '2026-07-13T14:00:00.000Z'
+        '2026-07-13T14:00:00.000Z', ${malformed}, ${malformed}
       )
     `;
-  });
-
-it.effect("imports a legacy thread whose updated_at and archived_at are malformed", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = ThreadId.make("thread:malformed-archived");
-    yield* seedLegacyThread(threadId);
-    yield* sql`
-      UPDATE projection_threads
-      SET updated_at = ${malformedLegacyTimestamp}, archived_at = ${malformedLegacyTimestamp}
-      WHERE thread_id = ${threadId}
-    `;
-
-    const exit = yield* Effect.exit(importer.reconcileShells);
-
-    assert.deepStrictEqual(exit, Exit.succeed({ importedThreadCount: 1, importedMessageCount: 0 }));
-    const projection = yield* projections.getThreadProjection(threadId);
-    assert.isNotNull(projection.thread.archivedAt, "malformed archived_at resurrected the thread");
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("imports a legacy message whose created_at is malformed", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = ThreadId.make("thread:malformed-message");
-    yield* seedLegacyThread(threadId);
     yield* sql`
       INSERT INTO projection_thread_messages (
         message_id, thread_id, role, text, is_streaming, created_at, updated_at
       ) VALUES (
-        'message:malformed', ${threadId}, 'user', 'Question', 0,
-        ${malformedLegacyTimestamp}, '2026-07-13T14:13:00.000Z'
+        'message:malformed', 'thread:malformed', 'user', 'Question', 0,
+        ${malformed}, '2026-07-13T14:13:00.000Z'
       )
     `;
 
-    const exit = yield* Effect.exit(importer.reconcileShells);
-
-    assert.deepStrictEqual(exit, Exit.succeed({ importedThreadCount: 1, importedMessageCount: 1 }));
-    const projection = yield* projections.getThreadProjection(threadId);
+    assert.deepStrictEqual(yield* importer.reconcileShells, {
+      importedThreadCount: 1,
+      importedMessageCount: 1,
+    });
+    const projection = yield* projections.getThreadProjection(ThreadId.make("thread:malformed"));
+    assert.isNotNull(projection.thread.archivedAt);
     assert.deepStrictEqual(
       projection.messages.map((message) => message.text),
       ["Question"],
