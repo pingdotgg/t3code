@@ -57,7 +57,7 @@ export default function NotebookPreview(props: {
       (count, cell) => count + cell.outputs.filter((output) => output.kind === "html").length,
       0,
     );
-  // oxlint-disable-next-line t3code/react-effect-budget -- Observe output visibility and measure departing outputs to bound iframe lifetimes while preserving scroll height.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe output visibility and measure departing outputs to bound iframe lifetimes while preserving scroll height.
   useEffect(() => {
     const root = scroll.current;
     if (!root || !outputCount) return;
