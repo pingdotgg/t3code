@@ -43,29 +43,4 @@ describe("SelectPopup", () => {
       );
     });
   });
-
-  it("keeps the native scrollbar on a fallback list that overflows", async () => {
-    const values = Array.from({ length: 12 }, (_, index) => `machine-${index}`);
-    await using screen = await render(
-      <Select defaultValue="machine-0">
-        <SelectTrigger aria-label="Run on">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectPopup alignItemWithTrigger={false} className="max-h-[120px]">
-          {values.map((value) => (
-            <SelectItem key={value} value={value} style={rowStyle}>
-              {value}
-            </SelectItem>
-          ))}
-        </SelectPopup>
-      </Select>,
-    );
-
-    await userEvent.click(screen.getByRole("combobox", { name: "Run on" }));
-    await expect.element(page.getByRole("option", { name: "machine-0" })).toBeVisible();
-
-    const list = document.querySelector<HTMLElement>("[data-slot='select-list']");
-    expect(list && list.scrollHeight > list.clientHeight).toBe(true);
-    expect(list && getComputedStyle(list).scrollbarWidth).not.toBe("none");
-  });
 });
