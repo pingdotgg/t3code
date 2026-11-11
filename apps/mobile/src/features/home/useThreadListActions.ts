@@ -5,7 +5,7 @@ import { showThreadUndoNotice } from "./thread-undo-notice";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { useRef } from "react";
 
 import { withThreadDismissal } from "./thread-dismissal";

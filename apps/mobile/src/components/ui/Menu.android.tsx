@@ -1,4 +1,4 @@
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { cloneElement, isValidElement, type ReactElement } from "react";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
 import type { MenuProps } from "./Menu.types";

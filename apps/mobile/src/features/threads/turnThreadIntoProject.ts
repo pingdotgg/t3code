@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { appAtomRegistry } from "../../state/atom-registry";
