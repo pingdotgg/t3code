@@ -712,6 +712,21 @@ layer("GitLabPullRequestCli.layer", (it) => {
       });
       const merge = mockedExecute.mock.calls.at(-1)?.[0].args ?? [];
       expect(merge[merge.indexOf("--sha") + 1]).toBe("reviewed-head");
+
+      // A rebase cannot be pinned, so a head that moved refuses it before rebasing.
+      mockedExecute.mockClear();
+      const refused = yield* Effect.flip(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "merge",
+          mergeMethod: "rebase",
+          expectedHeadSha: "reviewed-head",
+        }),
+      );
+      expect(refused._tag).toBe("GitLabMutationRefusedError");
+      expect(mockedExecute.mock.calls.map(([call]) => call.args[1])).not.toContain("rebase");
     }),
   );
 

@@ -2697,11 +2697,23 @@ export const make = Effect.gen(function* () {
         const [subcommand, ...flags] = actionArgs(input.action, input.mergeMethod);
         if (input.action === "merge" || input.action === "enable-auto-merge") {
           if (input.mergeMethod === "rebase") {
+            // GitLab's rebase takes no SHA, so the reviewed head is checked just before it.
+            if (input.expectedHeadSha !== undefined) {
+              const current = yield* getDiffRefs(input);
+              if (current.headSha !== input.expectedHeadSha) {
+                return yield* new GitLabMutationRefusedError({
+                  command: "glab",
+                  cwd: input.cwd,
+                  operation: "runMergeRequestAction",
+                  reasons: [`the head is now ${current.headSha}, not ${input.expectedHeadSha}`],
+                });
+              }
+            }
             // A rebase changes the source SHA, so wait for it before reading the merge guard.
             yield* executeMr("rebase");
           }
           const refs = yield* getDiffRefs(input);
-          // A rebase replaces the reviewed head, which the caller checked before asking for it.
+          // After a rebase, the head checked above is replaced by its rebased commits.
           flags.push(
             "--sha",
             input.mergeMethod === "rebase" ? refs.headSha : (input.expectedHeadSha ?? refs.headSha),
