@@ -29,6 +29,7 @@ const sentThreadOpens = new Map<string, number>();
 // When this client last opened each thread, sent or not, so recent threads
 // follow quick switches the server merges.
 const localThreadOpens = new Map<string, number>();
+let localThreadOpensVersion = 0;
 /**
  * Records that this client opened a thread, and says whether to send the open
  * to the server now.
@@ -36,6 +37,7 @@ const localThreadOpens = new Map<string, number>();
 export function claimThreadOpen(environmentId: EnvironmentId, threadId: string, now: number) {
   const key = `${environmentId}:${threadId}`;
   localThreadOpens.set(key, now);
+  localThreadOpensVersion += 1;
   if (now - (sentThreadOpens.get(key) ?? Number.NEGATIVE_INFINITY) < THREAD_OPEN_DEDUPE_MS) {
     return false;
   }
@@ -208,6 +210,41 @@ export function threadSearchSubject(
   thread: ThreadSearchShell,
   projectTitle: string | null | undefined,
   environmentLabel?: string | null,
+): ThreadSearchSubject {
+  // A keystroke ranks the same shells again, so a subject is built once per shell.
+  const cached = subjectCache.get(thread);
+  if (
+    cached !== undefined &&
+    cached.projectTitle === projectTitle &&
+    cached.environmentLabel === environmentLabel &&
+    cached.opensVersion === localThreadOpensVersion
+  ) {
+    return cached.subject;
+  }
+  const subject = buildThreadSearchSubject(thread, projectTitle, environmentLabel);
+  subjectCache.set(thread, {
+    projectTitle,
+    environmentLabel,
+    opensVersion: localThreadOpensVersion,
+    subject,
+  });
+  return subject;
+}
+
+const subjectCache = new WeakMap<
+  ThreadSearchShell,
+  {
+    readonly projectTitle: string | null | undefined;
+    readonly environmentLabel: string | null | undefined;
+    readonly opensVersion: number;
+    readonly subject: ThreadSearchSubject;
+  }
+>();
+
+function buildThreadSearchSubject(
+  thread: ThreadSearchShell,
+  projectTitle: string | null | undefined,
+  environmentLabel: string | null | undefined,
 ): ThreadSearchSubject {
   // What the user wrote, not agent wakes or task notices in the user role. A
   // thread the user never wrote in counts from its creation; an older server

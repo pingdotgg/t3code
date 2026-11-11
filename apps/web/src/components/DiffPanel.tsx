@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
+import type { ReviewBranchCommitsResult, ScopedThreadRef, RunId } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
 import * as Schema from "effect/Schema";
-import { useEffect, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
@@ -33,6 +33,7 @@ import { revisionedQuery } from "~/state/revisionedQuery";
 import { cn } from "~/lib/utils";
 import {
   resolveToolCallDiffTarget,
+  selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
   useDiffPanelSessionStore,
   useDiffPanelStore,
@@ -60,12 +61,13 @@ import {
   useQuietThreadVisibleTurnItems,
 } from "../state/entities";
 import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
-import { formatShortTimestamp } from "../timestampFormat";
+import { formatRelativeTimeLabel, formatShortTimestamp } from "../timestampFormat";
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView } from "./diffs/AnnotatableCodeView";
 import { DiffFileTree } from "./diffs/DiffFileTree";
+import { FileExplorerPane } from "./files/FileExplorerPane";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { Button } from "./ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -83,6 +85,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSub,
@@ -99,10 +102,13 @@ import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 
+import { observeIntersection } from "~/lib/observeIntersection";
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
 import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
+import { projectCommitUrl } from "@t3tools/client-runtime/change-request-links";
+import { useOpenLink } from "../browser/useOpenLink";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
@@ -130,13 +136,13 @@ function DiffFileCollapseToggle({
   filePath,
   fileKey,
   collapsed,
-  unavailable,
   onToggle,
+  load,
 }: {
   filePath: string;
   fileKey: string;
   collapsed: boolean;
-  unavailable: boolean;
+  load?: () => void;
   onToggle: (fileKey: string) => void;
 }) {
   return (
@@ -149,7 +155,16 @@ function DiffFileCollapseToggle({
             className="-ms-0.5"
             aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
             aria-expanded={!collapsed}
-            disabled={unavailable}
+            ref={(node) => {
+              if (!node || !load) return;
+              return observeIntersection(
+                node,
+                (entry) => {
+                  if (entry.isIntersecting) load();
+                },
+                { rootMargin: "600px" },
+              );
+            }}
             onClick={(event) => {
               event.stopPropagation();
               onToggle(fileKey);
@@ -223,6 +238,8 @@ export default function DiffPanel({
   );
   const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
   const [baseRefQuery, setBaseRefQuery] = useState("");
+  // The open commit menu keeps the list it opened with, so rows do not move under the pointer.
+  const [openCommitMenu, setOpenCommitMenu] = useState<ReviewBranchCommitsResult | null>(null);
   const [codeViewRevision, setCodeViewRevision] = useState(0);
 
   const routeThreadRef = useThreadRouteRef();
@@ -263,8 +280,14 @@ export default function DiffPanel({
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
+  const rememberedBaseRef = useDiffPanelStore((state) =>
+    selectThreadBranchBaseRef(state, routeThreadRef),
+  );
   const toolCallSelection = diffSelection.kind === "tool-call" ? diffSelection : null;
-  const isGitSelection = diffSelection.kind === "branch" || diffSelection.kind === "unstaged";
+  const isGitSelection =
+    diffSelection.kind === "branch" ||
+    diffSelection.kind === "unstaged" ||
+    diffSelection.kind === "commit";
   const toolCallItems = useQuietThreadVisibleTurnItems(toolCallSelection ? routeThreadRef : null);
   const toolCallDetail = useTurnItemDetail(
     toolCallSelection && routeThreadRef
@@ -294,8 +317,15 @@ export default function DiffPanel({
   }, [diffSelection, orderedTurnDiffSummaries, routeThreadRef]);
 
   const selectedRunId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
-  const selectedGitScope = diffSelection.kind === "unstaged" ? "unstaged" : "branch";
-  const selectedBaseRef = diffSelection.kind === "branch" ? diffSelection.baseRef : null;
+  const selectedGitScope =
+    diffSelection.kind === "unstaged" || diffSelection.kind === "commit"
+      ? diffSelection.kind
+      : "branch";
+  const selectedCommitSha = diffSelection.kind === "commit" ? diffSelection.sha : null;
+  const selectedBaseRef =
+    diffSelection.kind === "branch" || diffSelection.kind === "commit"
+      ? diffSelection.baseRef
+      : null;
   const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
@@ -306,31 +336,17 @@ export default function DiffPanel({
         orderedTurnDiffSummaries[0]);
   const selectedCheckpointTurnCount = selectedTurn?.checkpointTurnCount;
   const latestTurn = orderedTurnDiffSummaries[0];
-  const selectedScopeLabel = toolCallSelection
-    ? "Tool call"
-    : selectedRunId === null
-      ? selectedGitScope === "unstaged"
-        ? "Uncommitted"
-        : "Changes"
-      : selectedTurn?.runId === latestTurn?.runId
-        ? "Latest turn"
-        : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
   const reviewSectionId = toolCallSelection
     ? `tool-call:${toolCallSelection.threadId}:${toolCallSelection.itemId}`
     : selectedTurn
       ? `turn:${selectedTurn.runId}`
-      : selectedGitScope;
+      : selectedCommitSha !== null
+        ? `commit:${selectedCommitSha}`
+        : selectedGitScope;
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
     : null;
   const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
-  const reviewSectionTitle = toolCallSelection
-    ? "Tool call"
-    : selectedTurn
-      ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
-      : selectedGitScope === "unstaged"
-        ? "Uncommitted"
-        : "Changes";
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
       ? {
@@ -354,7 +370,17 @@ export default function DiffPanel({
       ? {
           cwd: activeCwd,
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
+          ...(selectedCommitSha !== null ? { commitSha: selectedCommitSha } : {}),
           ignoreWhitespace: diffIgnoreWhitespace,
+          metadataOnly: true,
+          ...(selectedCommitSha === null
+            ? {
+                sourceKind:
+                  selectedGitScope === "unstaged"
+                    ? ("working-tree" as const)
+                    : ("branch-range" as const),
+              }
+            : {}),
         }
       : undefined;
   const canRefreshGitDiff =
@@ -372,13 +398,71 @@ export default function DiffPanel({
         )
       : null,
   );
+  const branchCommitsQuery = useEnvironmentQuery(
+    visible && isGitRepo && canReadFiles && activeThread && activeCwd
+      ? reviewEnvironment.branchCommits({
+          environmentId: activeThread.environmentId,
+          input: {
+            cwd: activeCwd,
+            ...(rememberedBaseRef ? { baseRef: rememberedBaseRef } : {}),
+          },
+        })
+      : null,
+  );
+  const branchCommits = openCommitMenu ?? branchCommitsQuery.data;
   const activeThreadRefreshKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
-    (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
+    (source) =>
+      source.kind ===
+      (selectedGitScope === "unstaged"
+        ? "working-tree"
+        : selectedGitScope === "commit"
+          ? "commit"
+          : "branch-range"),
   );
+  const comparisonHeadRef = selectedGitSource?.headRef ?? gitStatusQuery.data?.refName ?? "HEAD";
+  const comparisonBaseRef = selectedGitSource?.baseRef ?? selectedBaseRef ?? "Automatic";
+  const selectedCommitSubject =
+    selectedCommitSha !== null && selectedGitSource?.headRef === selectedCommitSha
+      ? selectedGitSource.commitSubject
+      : undefined;
+  const selectedGitScopeLabel =
+    selectedCommitSha !== null
+      ? (selectedCommitSubject ?? `Commit ${selectedCommitSha.slice(0, 7)}`)
+      : selectedGitScope === "unstaged"
+        ? "Uncommitted"
+        : "Changes";
+  const selectedScopeLabel = toolCallSelection
+    ? "Tool call"
+    : selectedRunId === null
+      ? selectedCommitSha !== null
+        ? (selectedCommitSubject ?? "Commit")
+        : selectedGitScopeLabel
+      : selectedTurn?.runId === latestTurn?.runId
+        ? "Latest turn"
+        : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
+  const reviewSectionTitle = toolCallSelection
+    ? "Tool call"
+    : selectedTurn
+      ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
+      : selectedGitScopeLabel;
+  const headerCommitSha = selectedRunId === null ? selectedCommitSha : null;
+  const selectedCommitUrl =
+    headerCommitSha !== null
+      ? projectCommitUrl(activeProject?.repositoryIdentity, headerCommitSha)
+      : null;
+  const openLink = useOpenLink(routeThreadRef);
+  // A SHA link goes to the code host; it must not route back into this pane's commit selection.
+  const openCommitUrl = (event: MouseEvent<HTMLElement>, url: string) => {
+    event.stopPropagation();
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button === 1)
+      return;
+    event.preventDefault();
+    void openLink(url, { event });
+  };
   const refreshPreviewQuery = branchDiffPreview.refresh;
   const refreshDiffFromUserAction = refreshPreviewQuery;
 
@@ -400,16 +484,25 @@ export default function DiffPanel({
     : selectedTurn
       ? activeCheckpointDiff
       : branchDiffPreview;
-  const isLoadingSelectedPatch = selectedPatchQuery.isPending && selectedPatchQuery.data === null;
+  const isLoadingSelectedPatch =
+    selectedPatchQuery.isPending &&
+    (selectedPatchQuery.data === null ||
+      (isGitSelection && preview?.incomplete === true && selectedGitSource?.files?.length === 0));
   const selectedPatchError = toolCallSelection
     ? toolCallDetail.error
     : selectedTurn
       ? activeCheckpointDiff.error
       : branchDiffPreview.error;
   const hasResolvedPatch = typeof selectedPatch === "string";
-  const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
+  const hasNoNetChanges =
+    hasResolvedPatch &&
+    selectedPatch.trim().length === 0 &&
+    !preview?.incomplete &&
+    (!selectedGitSource?.patchesDeferred || selectedGitSource.files?.length === 0);
   const lazySource =
-    isGitSelection && selectedGitSource?.truncated && selectedGitSource.files
+    isGitSelection &&
+    (selectedGitSource?.truncated || selectedGitSource?.patchesDeferred) &&
+    selectedGitSource.files?.length
       ? selectedGitSource
       : null;
   const renderablePatch = getRenderablePatch(
@@ -456,12 +549,14 @@ export default function DiffPanel({
     }
     return currentLoadDiffFiles(fileDiff);
   });
+  const canSelectBranchBase = canReadFiles && canRefreshGitDiff && selectedGitScope === "branch";
+  const branchRefsCwd = branchDiffPreview.data?.cwd ?? activeCwd;
   const localBranchRefs = useEnvironmentQuery(
-    isGitSelection && selectedGitScope === "branch" && activeThread && branchDiffPreview.data?.cwd
+    canSelectBranchBase && activeThread && branchRefsCwd
       ? vcsEnvironment.listRefs({
           environmentId: activeThread.environmentId,
           input: {
-            cwd: branchDiffPreview.data.cwd,
+            cwd: branchRefsCwd,
             includeMatchingRemoteRefs: true,
             refKind: "local",
             ...(baseRefQuery.trim().length > 0 ? { query: baseRefQuery.trim() } : {}),
@@ -471,11 +566,11 @@ export default function DiffPanel({
       : null,
   );
   const remoteBranchRefs = useEnvironmentQuery(
-    isGitSelection && selectedGitScope === "branch" && activeThread && branchDiffPreview.data?.cwd
+    canSelectBranchBase && activeThread && branchRefsCwd
       ? vcsEnvironment.listRefs({
           environmentId: activeThread.environmentId,
           input: {
-            cwd: branchDiffPreview.data.cwd,
+            cwd: branchRefsCwd,
             includeMatchingRemoteRefs: true,
             refKind: "remote",
             ...(baseRefQuery.trim().length > 0 ? { query: baseRefQuery.trim() } : {}),
@@ -485,7 +580,7 @@ export default function DiffPanel({
       : null,
   );
   const baseRefChoices = buildBaseRefChoices(
-    localBranchRefs.data?.refs.filter((ref) => ref.name !== selectedGitSource?.headRef) ?? [],
+    localBranchRefs.data?.refs.filter((ref) => ref.name !== comparisonHeadRef) ?? [],
     remoteBranchRefs.data?.refs ?? [],
   );
   const matchingBaseRefChoices = filterBaseRefChoices(baseRefChoices, baseRefQuery);
@@ -499,20 +594,19 @@ export default function DiffPanel({
     ...matchingBaseRefChoices.map(valueForBaseRefChoice),
   ];
   const {
-    scope: filePatchScope,
     isPending: areFilePatchesPending,
     fileStates,
     retry,
     requestFile,
-    readyFilePaths,
     renderableFiles,
-    settledFileCount,
+    remainingFileCount,
     loadNextFiles,
   } = useReviewFilePatches({
     environmentId: activeThread?.environmentId,
     cwd: branchDiffPreview.data?.cwd,
     source: lazySource,
-    baseRef: lazySource?.baseRef ?? selectedBaseRef,
+    baseRef:
+      selectedCommitSha !== null ? selectedBaseRef : (lazySource?.baseRef ?? selectedBaseRef),
     ignoreWhitespace: diffIgnoreWhitespace,
     theme: resolvedTheme,
     previewInput: branchDiffPreviewInput,
@@ -541,7 +635,16 @@ export default function DiffPanel({
   );
 
   const isRefreshingDiff = branchDiffPreview.isPending || areFilePatchesPending;
-  const renderableFileEntries = renderableFiles.map(getCachedFileEntry);
+  const pathOccurrences = new Map<string, number>();
+  const renderableFileEntries = renderableFiles.map((fileDiff) => {
+    const entry = getCachedFileEntry(fileDiff);
+    if (!isGitSelection) return entry;
+    // Metadata has no change type; keep each path's identity when its patch arrives.
+    const pathKey = JSON.stringify([fileDiff.prevName ?? fileDiff.name, fileDiff.name]);
+    const occurrence = pathOccurrences.get(pathKey) ?? 0;
+    pathOccurrences.set(pathKey, occurrence + 1);
+    return { ...entry, fileKey: `${pathKey}:${occurrence}` };
+  });
   const diffFileKeys = renderableFileEntries.map((file) => file.fileKey);
   const testFileCount = renderableFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
@@ -569,25 +672,17 @@ export default function DiffPanel({
       .updateCollapsedFileKeys(collapseScopeKey, defaultCollapsedDiffFileKeys, update);
   };
   const renderLoadingBoundary = () =>
-    settledFileCount < renderableFiles.length ? (
-      <DiffFileLoadingBoundary
-        load={loadNextFiles}
-        count={renderableFiles.length - settledFileCount}
-      />
+    remainingFileCount > 0 ? (
+      <DiffFileLoadingBoundary load={loadNextFiles} count={remainingFileCount} />
     ) : null;
-  const codeViewFiles = shownFileEntries
-    .filter(
-      ({ fileDiff }) =>
-        !lazySource || !readyFilePaths || readyFilePaths.has(resolveFileDiffPath(fileDiff)),
-    )
-    .map(({ fileDiff, fileKey, fileVersion }) => ({
-      fileDiff,
-      filePath: resolveFileDiffPath(fileDiff),
-      fileKey,
-      fileVersion,
-      collapsed:
-        collapsedDiffFileKeys.has(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
-    }));
+  const codeViewFiles = shownFileEntries.map(({ fileDiff, fileKey, fileVersion }) => ({
+    fileDiff,
+    filePath: resolveFileDiffPath(fileDiff),
+    fileKey,
+    fileVersion,
+    collapsed:
+      collapsedDiffFileKeys.has(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
+  }));
   const pendingFiles = renderableFiles.filter(
     (file) => file.cacheKey?.endsWith(":pending") && isFileShown(file),
   );
@@ -606,9 +701,7 @@ export default function DiffPanel({
       next.delete(file.fileKey);
       return next;
     });
-    if (lazySource && index >= settledFileCount) {
-      requestFile(index);
-    }
+    if (lazySource) requestFile(filePath);
     codeViewReveal.request(file.fileKey);
     return true;
   };
@@ -655,9 +748,12 @@ export default function DiffPanel({
     });
   };
   const toggleDiffFileCollapsed = useStableCallback((fileKey: string) => {
+    const file = renderableFileEntries.find((file) => file.fileKey === fileKey);
+    if (lazySource && file) requestFile(resolveFileDiffPath(file.fileDiff));
+    const pending = file?.fileDiff.cacheKey?.endsWith(":pending") === true;
     updateCollapsedDiffFiles((current) => {
       const next = new Set(current);
-      if (next.has(fileKey)) {
+      if (pending || next.has(fileKey)) {
         next.delete(fileKey);
       } else {
         next.add(fileKey);
@@ -693,16 +789,23 @@ export default function DiffPanel({
     useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
+  const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
   const selectedScopeValue = toolCallSelection
     ? ""
     : selectedRunId === null
-      ? selectedGitScope
+      ? selectedCommitValue || selectedGitScope
       : selectedTurn?.runId === latestTurn?.runId
         ? "latest"
         : selectedTurnValue;
   const selectScopeValue = (value: string) => {
     if (value === "unstaged" || value === "branch") {
       selectGitScope(value);
+    } else if (value === selectedCommitValue) {
+      selectGitScope("branch");
+    } else if (value.startsWith("commit:")) {
+      if (routeThreadRef) {
+        useDiffPanelStore.getState().selectCommit(routeThreadRef, value.slice("commit:".length));
+      }
     } else if (value === "latest") {
       if (latestTurn) selectTurn(latestTurn.runId);
     } else {
@@ -717,13 +820,37 @@ export default function DiffPanel({
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button size="xs" variant="secondary" />}
-            className="max-w-full"
+            className={cn("max-w-full", headerCommitSha !== null && "min-w-0 shrink")}
             aria-label={`Diff scope: ${selectedScopeLabel}`}
             data-workspace-focus-default
           >
             <span className="truncate">{selectedScopeLabel}</span>
             <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
           </DropdownMenuTrigger>
+          {headerCommitSha !== null ? (
+            selectedCommitUrl ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <a
+                      href={selectedCommitUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 font-mono text-xs text-muted-foreground underline underline-offset-4"
+                      onClick={(event) => openCommitUrl(event, selectedCommitUrl)}
+                    />
+                  }
+                >
+                  {headerCommitSha.slice(0, 7)}
+                </TooltipTrigger>
+                <TooltipPopup side="top">{selectedCommitUrl}</TooltipPopup>
+              </Tooltip>
+            ) : (
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                {headerCommitSha.slice(0, 7)}
+              </span>
+            )
+          ) : null}
           <DropdownMenuContent align="start">
             <DropdownMenuRadioGroup value={selectedScopeValue} onValueChange={selectScopeValue}>
               <DropdownMenuRadioItem value="branch" closeOnClick>
@@ -760,12 +887,105 @@ export default function DiffPanel({
                 </DropdownMenuRadioGroup>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
+            <DropdownMenuSub
+              onOpenChange={(open) => {
+                setOpenCommitMenu(open ? (branchCommitsQuery.data ?? null) : null);
+                if (!open) return;
+                // The menu keeps the list it opened with; the refreshed one shows next time.
+                branchCommitsQuery.refresh();
+              }}
+            >
+              <DropdownMenuSubTrigger>Commits</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-80 max-w-96">
+                <DropdownMenuRadioGroup
+                  value={selectedCommitValue}
+                  onValueChange={selectScopeValue}
+                >
+                  {branchCommits?.commits.map((commit) => {
+                    const commitUrl = projectCommitUrl(
+                      activeProject?.repositoryIdentity,
+                      commit.sha,
+                    );
+                    return (
+                      <div
+                        key={commit.sha}
+                        className={cn(
+                          "flex items-center rounded-sm hover:bg-accent has-data-highlighted:bg-accent has-focus-visible:bg-accent [&_[data-checked]]:bg-transparent [&_[data-highlighted]]:bg-transparent",
+                          selectedCommitSha === commit.sha && "bg-foreground/[0.08]",
+                        )}
+                      >
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <DropdownMenuRadioItem
+                                className="min-w-0 flex-1"
+                                value={`commit:${commit.sha}`}
+                                closeOnClick
+                              />
+                            }
+                          >
+                            <span className="flex items-center gap-3">
+                              <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
+                              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                                {formatRelativeTimeLabel(commit.committedAt)}
+                              </span>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipPopup side="right" className="max-w-80">
+                            {commit.subject}
+                          </TooltipPopup>
+                        </Tooltip>
+                        {commitUrl ? (
+                          <DropdownMenuItem
+                            className="shrink-0"
+                            render={
+                              <a
+                                href={commitUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={`Open commit ${commit.sha.slice(0, 7)}`}
+                              />
+                            }
+                            onClick={(event) => openCommitUrl(event, commitUrl)}
+                          >
+                            <span className="font-mono text-xs text-muted-foreground underline underline-offset-4">
+                              {commit.sha.slice(0, 7)}
+                            </span>
+                          </DropdownMenuItem>
+                        ) : (
+                          <span className="shrink-0 px-2 font-mono text-xs text-muted-foreground">
+                            {commit.sha.slice(0, 7)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </DropdownMenuRadioGroup>
+                {branchCommitsQuery.error ? (
+                  <DropdownMenuItem disabled>{branchCommitsQuery.error}</DropdownMenuItem>
+                ) : !canReadFiles ? (
+                  <DropdownMenuItem disabled>
+                    {fileAccess.isPending
+                      ? "Checking file access..."
+                      : (fileAccess.error ?? "This connection cannot read local diffs.")}
+                  </DropdownMenuItem>
+                ) : branchCommits === null ? (
+                  <DropdownMenuItem disabled>Loading commits...</DropdownMenuItem>
+                ) : branchCommits.commits.length === 0 ? (
+                  <DropdownMenuItem disabled>No commits on this branch.</DropdownMenuItem>
+                ) : branchCommits.truncated ? (
+                  <DropdownMenuItem disabled>
+                    {`Showing latest ${branchCommits.commits.length} commits`}
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
           </DropdownMenuContent>
         </DropdownMenu>
-        {isGitSelection && selectedGitScope === "branch" && selectedGitSource?.baseRef && (
+        {canSelectBranchBase && (
           <div
             className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
-            aria-label={`Comparing ${selectedGitSource.headRef ?? "HEAD"} against ${selectedGitSource.baseRef}`}
+            aria-label={`Comparing ${comparisonHeadRef} against ${comparisonBaseRef}`}
           >
             <Tooltip>
               <TooltipTrigger
@@ -775,13 +995,11 @@ export default function DiffPanel({
                   <span className="flex min-w-[min(3rem,calc(100%-2.75rem))] items-center gap-2 overflow-hidden @max-[20rem]/diff-refs:hidden" />
                 }
               >
-                <span className="min-w-0 max-w-48 truncate">
-                  {selectedGitSource.headRef ?? "HEAD"}
-                </span>
+                <span className="min-w-0 max-w-48 truncate">{comparisonHeadRef}</span>
                 <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
               </TooltipTrigger>
               <TooltipPopup side="top">
-                {`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
+                {`${comparisonHeadRef} → ${comparisonBaseRef}`}
               </TooltipPopup>
             </Tooltip>
             <Tooltip>
@@ -791,7 +1009,7 @@ export default function DiffPanel({
                 vs
               </TooltipTrigger>
               <TooltipPopup side="top">
-                {`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
+                {`${comparisonHeadRef} → ${comparisonBaseRef}`}
               </TooltipPopup>
             </Tooltip>
             <Combobox
@@ -809,9 +1027,9 @@ export default function DiffPanel({
               <ComboboxTrigger
                 render={<Button variant="ghost-muted" size="xs" />}
                 className="min-w-9 max-w-48 shrink-0"
-                aria-label={`Change comparison target. Currently ${selectedGitSource.baseRef}`}
+                aria-label={`Change comparison target. Currently ${comparisonBaseRef}`}
               >
-                <span className="min-w-0 truncate">{selectedGitSource.baseRef}</span>
+                <span className="min-w-0 truncate">{comparisonBaseRef}</span>
                 <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
               </ComboboxTrigger>
               <ComboboxPopup
@@ -894,7 +1112,12 @@ export default function DiffPanel({
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+      <div
+        className={cn(
+          "flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]",
+          headerCommitSha !== null && "gap-0",
+        )}
+      >
         {codeViewFiles.length > 0 || (isGitSelection && selectedGitSource?.files?.length) ? (
           <DiffStatLabel
             additions={diffLineStat.additions}
@@ -1078,10 +1301,19 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+            {preview?.incomplete && (
+              <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
+                {selectedPatchError
+                  ? "Showing tracked changes. Untracked changes could not be loaded. Refresh to retry."
+                  : "Showing tracked changes. Checking untracked files..."}
+              </p>
+            )}
             {isSelectedPatchTruncated && !lazySource && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
                 This preview exceeds the size limit. Changes shown are incomplete.
-                {isGitSelection && selectedGitSource?.files ? " Totals include all changes." : ""}
+                {isGitSelection && selectedGitSource?.files && !preview?.incomplete
+                  ? " Totals include all changes."
+                  : ""}
               </p>
             )}
             {omittedToolCallFiles > 0 && (
@@ -1124,7 +1356,9 @@ export default function DiffPanel({
                         ? "Loading checkpoint diff..."
                         : selectedGitScope === "unstaged"
                           ? "Loading uncommitted changes..."
-                          : "Loading changes..."
+                          : selectedGitScope === "commit"
+                            ? "Loading commit..."
+                            : "Loading changes..."
                   }
                 />
               ) : (
@@ -1191,8 +1425,10 @@ export default function DiffPanel({
                 >
                   <AnnotatableCodeView
                     key={collapseScopeKey ?? reviewSectionId}
+                    environmentId={activeThread?.environmentId}
+                    projectId={activeThread?.projectId}
                     viewerRef={codeViewReveal.attach}
-                    codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}
+                    codeViewKey={codeViewMountKey}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
                     pendingFiles={pendingFiles}
@@ -1229,15 +1465,19 @@ export default function DiffPanel({
                         }
                       : {})}
                     onRevealSearchMatch={unfoldDiffFile}
-                    renderHeaderPrefix={(fileDiff, fileKey) => {
-                      const unavailable = fileDiff.cacheKey?.endsWith(":pending") === true;
+                    renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
                       return (
                         <DiffFileCollapseToggle
                           filePath={resolveFileDiffPath(fileDiff)}
                           fileKey={fileKey}
-                          collapsed={unavailable || collapsedDiffFileKeys.has(fileKey)}
-                          unavailable={unavailable}
+                          collapsed={collapsed}
                           onToggle={toggleDiffFileCollapsed}
+                          {...(fileDiff.cacheKey?.endsWith(":pending") &&
+                          !collapsedDiffFileKeys.has(fileKey)
+                            ? {
+                                load: () => requestFile(resolveFileDiffPath(fileDiff)),
+                              }
+                            : {})}
                         />
                       );
                     }}
@@ -1255,7 +1495,12 @@ export default function DiffPanel({
                   />
                 </div>
                 {fileTreeOpen ? (
-                  <aside className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60">
+                  <FileExplorerPane
+                    resizable
+                    storageKey="t3code:diff-file-tree-width"
+                    defaultWidthFraction={0.4}
+                    resizeLabel="Resize Changes files"
+                  >
                     <DiffFileTree
                       ariaLabel={`${reviewSectionTitle} files`}
                       entries={fileTreeEntries}
@@ -1263,7 +1508,7 @@ export default function DiffPanel({
                       revealRequestId={selectedFileRevealRequestId}
                       onSelectFile={revealDiffFile}
                     />
-                  </aside>
+                  </FileExplorerPane>
                 ) : null}
               </div>
             ) : (
