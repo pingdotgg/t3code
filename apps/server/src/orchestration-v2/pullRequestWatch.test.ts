@@ -592,8 +592,10 @@ describe("evaluatePullRequestWatch", () => {
     assert.isFalse(pending([ci, check("CodeRabbit", "success")]));
     assert.isFalse(pending([ci, check("CodeRabbit", "failure")]));
     assert.isFalse(pending([ci, check("deploy", "action-required")]));
-    // A failed read keeps the last answer.
+    // A failed read keeps the last answer, as does one with only an unreadable approval check.
     assert.isFalse(pending([], watch({ headSha: "aaaaaaaaaa", checksPending: false })));
+    const unreadable = { ...check("approvals", "action-required"), placeholder: true };
+    assert.isTrue(pending([unreadable], watch({ headSha: "aaaaaaaaaa", checksPending: true })));
   });
 
   it("waits for a new head's checks only where the host always reports some", () => {
