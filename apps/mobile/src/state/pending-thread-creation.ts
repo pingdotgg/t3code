@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/state/shell";
 import type { LocalThreadMessage } from "../lib/threadActivity";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { Atom } from "effect/reactivity";
 import * as DateTime from "effect/DateTime";
 
@@ -130,6 +131,49 @@ export function pendingThreadCreationMessage(message: QueuedThreadMessage): Loca
     streaming: false,
     createdAt: message.createdAt,
     updatedAt: message.createdAt,
+  };
+}
+
+/**
+ * Threads this client is launching read as preparing from Send until their first run lands.
+ * The server commits the thread before its run, so the list would otherwise place it twice.
+ */
+export function withLaunchingThreads(input: {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly launches: ReadonlyArray<QueuedThreadMessage>;
+  readonly hiddenThreadKeys: ReadonlySet<string>;
+}): ReadonlyArray<EnvironmentThreadShell> {
+  if (input.launches.length === 0) return input.threads;
+  const launchByKey = new Map<string, QueuedThreadMessage>();
+  for (const message of input.launches) {
+    if (!message.creation || input.hiddenThreadKeys.has(threadKey(message))) continue;
+    launchByKey.set(scopedThreadKey(message.environmentId, message.threadId), message);
+  }
+  if (launchByKey.size === 0) return input.threads;
+  const threads = input.threads.map((thread) => {
+    const key = scopedThreadKey(thread.environmentId, thread.id);
+    const launch = launchByKey.get(key);
+    if (!launch) return thread;
+    launchByKey.delete(key);
+    return thread.latestRun === null && thread.runtime === null
+      ? { ...thread, runtime: launchingRuntime(thread) }
+      : thread;
+  });
+  for (const launch of launchByKey.values()) {
+    const shell = pendingThreadCreationShell(launch);
+    if (shell) threads.push({ ...shell, runtime: launchingRuntime(shell) });
+  }
+  return threads;
+}
+
+function launchingRuntime(thread: EnvironmentThreadShell): EnvironmentThreadShell["runtime"] {
+  return {
+    status: "preparing",
+    activeRunId: null,
+    providerInstanceId: thread.providerInstanceId,
+    providerName: null,
+    lastError: null,
+    updatedAt: thread.updatedAt,
   };
 }
 
