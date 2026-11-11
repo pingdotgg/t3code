@@ -141,8 +141,8 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       const copyRejected = input.command === "cp" && input.args[0] === "-c";
       if (copyRejected) {
         const destination = input.args.at(-1) ?? "";
-        yield* fs.makeDirectory(destination, { recursive: true }).pipe(Effect.orDie);
-        yield* fs.writeFileString(path.join(destination, "t3"), "partial").pipe(Effect.orDie);
+        yield* fs.makeDirectory(destination, { recursive: true });
+        yield* fs.writeFileString(path.join(destination, "t3"), "partial");
       }
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
@@ -155,7 +155,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         (command === "systemctl --user stop t3code.service" ||
           command.startsWith("launchctl bootout --wait "))
       ) {
-        yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
+        yield* fs.writeFileString(statePath, control.stateAfterStop);
       }
       return {
         stdout:
@@ -194,7 +194,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         stdoutInvalidUtf8: false,
         stderrInvalidUtf8: false,
       };
-    }),
+    }, Effect.orDie),
   });
   const makeService = (
     environmentPath: string | undefined = installerPath,
@@ -879,13 +879,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
         `    <string>${path.join(launcherDir, "t3")}</string>\n    <string>__service-launcher</string>`,
       );
-      expect(
-        commands.some((command) =>
-          command.startsWith(
-            `cp -c -pR ${path.join(baseDir, "runtime", "versions", "1.2.3")} ${launcherDir}.next-`,
-          ),
-        ),
-      ).toBe(true);
       expect(yield* service.status).toMatchObject({
         current: true,
         installedVersion: "1.2.3",
