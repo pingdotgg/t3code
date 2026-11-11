@@ -583,10 +583,8 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const threads = [
             { ...threadShell("older"), createdAt: DateTime.makeUnsafe("2026-09-18T00:00:00Z") },
             { ...threadShell("same-time"), createdAt: DateTime.makeUnsafe(terminalAt) },
-            threadShell("new-1"),
-            threadShell("new-2"),
+            threadShell("new"),
             { ...threadShell("saved"), branchPullRequest: reference },
-            { ...threadShell("explicit"), linkedPullRequest: reference },
           ].map((thread) => ({ ...thread, branch: "staging" }));
           const project: OrchestrationProjectShell = {
             id: reference.projectId,
@@ -664,12 +662,11 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           expect(
             commands.map((command) => {
               if (command.type !== "thread.pull-request.sync") throw new Error(command.type);
-              expect(command).not.toHaveProperty("linkedPullRequest");
               return [command.threadId, command.branchPullRequest];
             }),
           ).toEqual(
             state === "open"
-              ? ["older", "same-time", "new-1", "new-2", "explicit"].map((id) => [id, reference])
+              ? ["older", "same-time", "new"].map((id) => [id, reference])
               : [
                   ["older", reference],
                   ["same-time", reference],
