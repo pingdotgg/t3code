@@ -21,9 +21,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as Docker from "../../Docker.ts";
 import * as Globals from "../../globals/Globals.ts";
 import * as Internet from "../../globals/Internet.ts";
@@ -32,11 +32,7 @@ import * as Paths from "../../internal/Paths.ts";
 import * as Runtime from "../../Runtime.ts";
 import * as RuntimeServices from "../../RuntimeServices.ts";
 import * as Workerd from "../../workerd/Workerd.ts";
-import {
-  localRuntimeLayer,
-  makeTempDirectory,
-  startTestWorker,
-} from "../helpers/runtime.ts";
+import { localRuntimeLayer, makeTempDirectory, startTestWorker } from "../helpers/runtime.ts";
 
 // -----------------------------------------------------------------------------
 // Test workers
@@ -125,13 +121,9 @@ const VALID_EMAIL = emailFixture([
 
 // >= 100 `@` occurrences in References (upstream counts them instead of
 // parsing the header).
-const MANY_REFERENCES = Array.from(
-  { length: 120 },
-  (_, i) => `<ref-${i}@example.net>`,
-).join(" ");
+const MANY_REFERENCES = Array.from({ length: 120 }, (_, i) => `<ref-${i}@example.net>`).join(" ");
 
-const emailParams = (from: string, to: string) =>
-  new URLSearchParams({ from, to }).toString();
+const emailParams = (from: string, to: string) => new URLSearchParams({ from, to }).toString();
 const EMAIL_PATH = `/cdn-cgi/handler/email?${emailParams(
   "someone@example.com",
   "someone-else@example.com",
@@ -170,12 +162,9 @@ layer(localRuntimeLayer)("inbound email trigger route", (it) => {
         body: VALID_EMAIL,
       });
       expect(res.status).toBe(200);
-      expect(yield* Effect.promise(() => res.text())).toBe(
-        "Worker successfully processed email",
-      );
+      expect(yield* Effect.promise(() => res.text())).toBe("Worker successfully processed email");
 
-      const received =
-        yield* worker.fetchJson<Array<ReceivedEmail>>("/received");
+      const received = yield* worker.fetchJson<Array<ReceivedEmail>>("/received");
       expect(received).toHaveLength(1);
       const message = received[0];
       // Envelope addresses come from the URL parameters, the raw MIME body
@@ -183,12 +172,26 @@ layer(localRuntimeLayer)("inbound email trigger route", (it) => {
       expect(message.from).toBe("someone@example.com");
       expect(message.to).toBe("someone-else@example.com");
       expect(message.raw).toBe(VALID_EMAIL);
-      expect(message.rawSize).toBe(
-        new TextEncoder().encode(VALID_EMAIL).byteLength,
+      expect(message.rawSize).toBe(new TextEncoder().encode(VALID_EMAIL).byteLength);
+      expect(message.messageIdHeader).toBe("<im-a-random-message-id@example.com>");
+    }),
+  );
+
+  // Miniflare's current path (`CorePaths.EMAIL`).
+  it.effect("dispatches an email sent to Miniflare's /cdn-cgi/local/email path", () =>
+    Effect.gen(function* () {
+      const worker = yield* startTestWorker({
+        name: "email-dispatch-local-path",
+        compatibilityDate,
+        compatibilityFlags: [],
+        bindings: [],
+        modules: [...workerModules(RECORDING_EMAIL_WORKER)],
+      });
+      const res = yield* worker.fetch(
+        `/cdn-cgi/local/email?${emailParams("someone@example.com", "someone-else@example.com")}`,
+        { method: "POST", body: VALID_EMAIL },
       );
-      expect(message.messageIdHeader).toBe(
-        "<im-a-random-message-id@example.com>",
-      );
+      expect(yield* Effect.promise(() => res.text())).toBe("Worker successfully processed email");
     }),
   );
 
@@ -221,13 +224,10 @@ layer(localRuntimeLayer)("inbound email trigger route", (it) => {
       );
       // No `from`
       yield* expectInvalid(
-        yield* worker.fetch(
-          "/cdn-cgi/handler/email?to=someone-else@example.com",
-          {
-            method: "POST",
-            body: VALID_EMAIL,
-          },
-        ),
+        yield* worker.fetch("/cdn-cgi/handler/email?to=someone-else@example.com", {
+          method: "POST",
+          body: VALID_EMAIL,
+        }),
       );
     }),
   );
@@ -344,14 +344,11 @@ layer(localRuntimeLayer)("inbound email trigger route", (it) => {
         body: email,
       });
       expect(res.status).toBe(200);
-      const received =
-        yield* worker.fetchJson<Array<ReceivedEmail>>("/received");
+      const received = yield* worker.fetchJson<Array<ReceivedEmail>>("/received");
       expect(received).toHaveLength(1);
       // Locally the id is a dashless UUID at a dummy domain (matching
       // Miniflare — production uses a random id at the sender domain).
-      expect(received[0].forwardResult?.messageId).toMatch(
-        /^[0-9a-f]{32}@example\.com$/,
-      );
+      expect(received[0].forwardResult?.messageId).toMatch(/^[0-9a-f]{32}@example\.com$/);
     }),
   );
 
@@ -375,9 +372,7 @@ layer(localRuntimeLayer)("inbound email trigger route", (it) => {
         body: email,
       });
       expect(res.status).toBe(500);
-      expect(yield* Effect.promise(() => res.text())).toContain(
-        "email handler boom",
-      );
+      expect(yield* Effect.promise(() => res.text())).toContain("email handler boom");
     }),
   );
 
@@ -395,7 +390,7 @@ layer(localRuntimeLayer)("inbound email trigger route", (it) => {
       });
       expect(res.status).toBe(404);
       expect(yield* Effect.promise(() => res.text())).toBe(
-        '"/cdn-cgi/handler/bogus" is not a valid handler. Did you mean to use "/cdn-cgi/handler/scheduled" or "/cdn-cgi/handler/email"?',
+        '"/cdn-cgi/handler/bogus" is not a valid handler. Did you mean to use "/cdn-cgi/local/scheduled" or "/cdn-cgi/local/email"?',
       );
     }),
   );
@@ -434,9 +429,7 @@ layer(localRuntimeLayer)("inbound email reply validation", (it) => {
       }),
     );
 
-  expectNotReplyable("x-auto-response-suppress blocks replies", [
-    "X-Auto-Response-Suppress: OOF",
-  ]);
+  expectNotReplyable("x-auto-response-suppress blocks replies", ["X-Auto-Response-Suppress: OOF"]);
   expectNotReplyable("Auto-Submitted blocks replies", ["Auto-Submitted: true"]);
   expectNotReplyable("only In-Reply-To blocks replies", [
     "In-Reply-To: <im-a-random-parent-message-id@example.com>",
@@ -456,14 +449,9 @@ layer(localRuntimeLayer)("inbound email reply validation", (it) => {
 // -----------------------------------------------------------------------------
 
 layer(localRuntimeLayer)("inbound email reply message validation", (it) => {
-  const replyFixture = (headers: Array<string>) =>
-    JSON.stringify(emailFixture(headers));
+  const replyFixture = (headers: Array<string>) => JSON.stringify(emailFixture(headers));
 
-  const expectReplyError = (
-    name: string,
-    replyEmail: string,
-    expectedError: string,
-  ) =>
+  const expectReplyError = (name: string, replyEmail: string, expectedError: string) =>
     it.effect(name, () =>
       Effect.gen(function* () {
         const worker = yield* startTestWorker({
@@ -478,9 +466,7 @@ layer(localRuntimeLayer)("inbound email reply message validation", (it) => {
           body: VALID_EMAIL,
         });
         expect(res.status).toBe(500);
-        expect(yield* Effect.promise(() => res.text())).toContain(
-          expectedError,
-        );
+        expect(yield* Effect.promise(() => res.text())).toContain(expectedError);
       }),
     );
 
@@ -497,11 +483,7 @@ layer(localRuntimeLayer)("inbound email reply message validation", (it) => {
   // email", but its `.includes()` assertion is a no-op: postal-mime parses
   // an empty message successfully, so the actual first failure — there as
   // here — is the From-header mismatch.
-  expectReplyError(
-    "empty reply",
-    '""',
-    "From: header does not match mail from",
-  );
+  expectReplyError("empty reply", '""', "From: header does not match mail from");
 
   expectReplyError(
     "reply without a message id",
@@ -577,9 +559,7 @@ describe("inbound email reply persistence", () => {
       Layer.provide(Paths.PathsLive),
       Layer.provide(Docker.DockerLive),
       Layer.provide(Workerd.WorkerdLive),
-      Layer.provideMerge(
-        Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer),
-      ),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
     );
 
   it.effect(
@@ -608,9 +588,7 @@ describe("inbound email reply persistence", () => {
             compatibilityDate,
             compatibilityFlags: [],
             bindings: [],
-            modules: [
-              ...workerModules(replyEmailWorker(JSON.stringify(replyEmail))),
-            ],
+            modules: [...workerModules(replyEmailWorker(JSON.stringify(replyEmail)))],
           });
           const res = yield* worker.fetch(EMAIL_PATH, {
             method: "POST",
@@ -626,14 +604,10 @@ describe("inbound email reply persistence", () => {
         const names = yield* fs.readDirectory(emailDir);
         const emlFiles = names.filter((name) => name.endsWith(".eml"));
         expect(emlFiles).toHaveLength(1);
-        const content = yield* fs.readFileString(
-          path.join(emailDir, emlFiles[0]),
-        );
+        const content = yield* fs.readFileString(path.join(emailDir, emlFiles[0]));
         // The reply had no References header, so one referencing the incoming
         // message is prepended.
-        expect(content).toContain(
-          "References: <im-a-random-parent-message-id@example.com>",
-        );
+        expect(content).toContain("References: <im-a-random-parent-message-id@example.com>");
         expect(content.endsWith(replyEmail)).toBe(true);
       }).pipe(Effect.provide(NodeServices.layer)),
     { timeout: 30_000 },

@@ -227,12 +227,7 @@ export const DeviceIcon = ({ className }: { className?: string }) => (
 /** Cycles light → dark → system. Icon shows the current preference. */
 export const ThemeToggle = () => {
   const { preference, setPreference } = useTheme();
-  const next =
-    preference === "light"
-      ? "dark"
-      : preference === "dark"
-        ? "system"
-        : "light";
+  const next = preference === "light" ? "dark" : preference === "dark" ? "system" : "light";
   return (
     <button
       type="button"
@@ -241,13 +236,7 @@ export const ThemeToggle = () => {
       aria-label={`Theme: ${preference}. Switch to ${next}.`}
       className="cursor-pointer rounded-md border border-border-muted p-1.5 text-fg-muted hover:text-fg-default"
     >
-      {preference === "light" ? (
-        <SunIcon />
-      ) : preference === "dark" ? (
-        <MoonIcon />
-      ) : (
-        <DeviceIcon />
-      )}
+      {preference === "light" ? <SunIcon /> : preference === "dark" ? <MoonIcon /> : <DeviceIcon />}
     </button>
   );
 };
@@ -399,13 +388,7 @@ export const Markdown = ({
               ) {
                 token.text = token.text.replace(
                   /(<img\b[^>]*?\bsrc=)("([^"]*)"|'([^']*)')/gi,
-                  (
-                    _match,
-                    prefix: string,
-                    _quoted,
-                    doubleQuoted,
-                    singleQuoted,
-                  ) => {
+                  (_match, prefix: string, _quoted, doubleQuoted, singleQuoted) => {
                     const href = (doubleQuoted ?? singleQuoted) as string;
                     return `${prefix}"${resolveAsset(href)}"`;
                   },

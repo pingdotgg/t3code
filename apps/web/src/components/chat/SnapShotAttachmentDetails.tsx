@@ -1,75 +1,21 @@
 import type { SnapShotSource } from "@t3tools/contracts";
 import { ImageIcon, TextIcon } from "lucide-react";
-import { Suspense, use, useMemo, type CSSProperties } from "react";
+import { Suspense } from "react";
 
-import { useTheme } from "../../hooks/useTheme";
-import { resolveDiffThemeName } from "../../lib/diffRendering";
-import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
+import { useRenderedAppearance } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { HighlightedTokens } from "./HighlightedTokens";
 
 export const SNAP_SHOT_ATTACHMENT_FRAME_CLASS =
   "relative h-28 w-52 max-w-full overflow-hidden rounded-lg border border-border/80";
 
-export interface SnapShotAccessibilityDetails {
+interface SnapShotAccessibilityDetails {
   content: string;
   format: "json" | "text";
-}
-
-interface SyntaxToken {
-  readonly content: string;
-  readonly offset: number;
-  readonly color?: string;
-  readonly fontStyle?: number;
-}
-
-function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
-  const fontStyle = token.fontStyle ?? 0;
-  return {
-    ...(token.color ? { color: token.color } : {}),
-    ...(fontStyle & 1 ? { fontStyle: "italic" } : {}),
-    ...(fontStyle & 2 ? { fontWeight: 700 } : {}),
-    ...(fontStyle & 4 ? { textDecoration: "underline" } : {}),
-  };
-}
-
-function HighlightedAccessibilityJson({
-  content,
-  theme,
-}: {
-  content: string;
-  theme: "light" | "dark";
-}) {
-  const highlighter = use(getSyntaxHighlighterPromise("json"));
-  const lines = useMemo(
-    () =>
-      highlighter.codeToTokens(content, {
-        lang: "json",
-        theme: resolveDiffThemeName(theme),
-      }).tokens,
-    [content, highlighter, theme],
-  );
-
-  let lineOffset = 0;
-  return lines.map((line) => {
-    const lineContent = line.map((token) => token.content).join("");
-    const lineKey = `${lineOffset}:${lineContent}`;
-    const hasNextLine = lineOffset + lineContent.length < content.length;
-    lineOffset += lineContent.length + 1;
-    return (
-      <span key={lineKey}>
-        {line.map((token) => (
-          <span key={`${token.offset}:${token.content}`} style={syntaxTokenStyle(token)}>
-            {token.content}
-          </span>
-        ))}
-        {hasNextLine ? "\n" : null}
-      </span>
-    );
-  });
 }
 
 export function SnapShotAccessibilityData({
@@ -79,12 +25,12 @@ export function SnapShotAccessibilityData({
   details: SnapShotAccessibilityDetails;
   className?: string;
 }) {
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   const content =
     details.format === "json" ? (
       <RenderErrorBoundary fallback={details.content}>
         <Suspense fallback={details.content}>
-          <HighlightedAccessibilityJson content={details.content} theme={resolvedTheme} />
+          <HighlightedTokens code={details.content} language="json" theme={resolvedTheme} />
         </Suspense>
       </RenderErrorBoundary>
     ) : (
@@ -121,7 +67,7 @@ export function snapShotAccessibilityDetails(
   return text ? { content: text, format: "text" } : undefined;
 }
 
-export function snapShotIncludesAccessibility(source: SnapShotSource): boolean {
+function snapShotIncludesAccessibility(source: SnapShotSource): boolean {
   return Boolean(source.accessibility || source.accessibleText?.trim());
 }
 

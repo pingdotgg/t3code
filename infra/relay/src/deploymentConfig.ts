@@ -52,10 +52,7 @@ function appendDnsSafeSuffix(prefix: string, suffix: string): string {
   return `${truncatedPrefix}-${suffix}`;
 }
 
-/**
- * Alchemy's physical-name helper sanitizes resource names after adding the
- * stage. Keep custom domains and runtime-created resources aligned with it.
- */
+// Match Alchemy's post-stage name sanitization for domains and runtime-created resources.
 function relayStageSlug(stage: string): string {
   return stage
     .toLowerCase()
@@ -123,4 +120,13 @@ export function managedEndpointTunnelNamePrefix(stage: string): string {
 
 export function managedEndpointTunnelName(stage: string, hash: string): string {
   return `${managedEndpointTunnelNamePrefix(stage)}${stableSuffix(hash)}`;
+}
+
+/** Tunnel-name hash covers user and environment; public environment ids alone do not identify an authorized link. */
+export const MANAGED_ENDPOINT_KEY_PATTERN = new RegExp(
+  `^[0-9a-f]{${MANAGED_ENDPOINT_HASH_LENGTH}}$`,
+);
+
+export function managedEndpointTunnelNameForKey(stage: string, endpointKey: string): string {
+  return `${managedEndpointTunnelNamePrefix(stage)}${endpointKey}`;
 }

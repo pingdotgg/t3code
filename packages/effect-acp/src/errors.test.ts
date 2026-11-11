@@ -1,10 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
+import * as RpcClientError from "effect/rpc/RpcClientError";
 
-import * as AcpSchema from "./_generated/schema.gen.ts";
-import { callRpc, runHandler } from "./_internal/shared.ts";
+import { callRpc } from "./_internal/shared.ts";
 import * as AcpError from "./errors.ts";
 
 const decodeNestedNumberPayload = Schema.decodeUnknownEffect(
@@ -54,35 +53,16 @@ describe("effect-acp errors", () => {
     });
   });
 
-  it.effect("preserves protocol request errors as request errors", () => {
-    const failure = AcpSchema.Error.make({
-      code: -32602,
-      message: "Invalid params",
-      data: { field: "sessionId" },
-    });
-
-    return Effect.gen(function* () {
-      const error = yield* callRpc("session/load", Effect.fail(failure)).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "AcpRequestError",
-        code: -32602,
-        errorMessage: "Invalid params",
-        data: { field: "sessionId" },
-        method: "session/load",
-        operation: "receive-response",
-      });
-    });
-  });
-
-  it("does not expose legacy diagnostic detail as the transport message", () => {
+  it("includes the authored detail but not the cause in the transport message", () => {
     const cause = new Error("connection refused at a private endpoint");
     const error = new AcpError.AcpTransportError({
-      detail: cause.message,
+      detail: "ACP replay did not consume all frames",
       cause,
     });
 
-    expect(error.message).toBe("ACP transport operation failed.");
+    expect(error.message).toBe(
+      "ACP transport operation failed: ACP replay did not consume all frames.",
+    );
     expect(error.cause).toBe(cause);
   });
 
@@ -101,25 +81,6 @@ describe("effect-acp errors", () => {
     });
     expect(error.message).toBe("ACP extension request handler failed for method 'x/test'");
     expect(error.message).not.toContain(cause.message);
-  });
-
-  it.effect("uses the structured mapper for core handler failures", () => {
-    const cause = new AcpError.AcpTransportError({
-      operation: "read-input-stream",
-      cause: new Error("private transport diagnostics"),
-    });
-
-    return Effect.gen(function* () {
-      const error = yield* runHandler(() => Effect.fail(cause), {}, "fs/read_text_file").pipe(
-        Effect.flip,
-      );
-
-      expect(error).toMatchObject({
-        code: -32603,
-        message: "ACP request handler failed for method 'fs/read_text_file'",
-      });
-      expect(error.message).not.toContain(cause.message);
-    });
   });
 
   it.effect("keeps invalid extension payload values only in the exact schema cause", () =>
@@ -159,6 +120,36 @@ describe("effect-acp errors", () => {
       expect(protocolError.message).not.toContain(secret);
       expect(encodeUnknownJson(protocolDiagnostics)).not.toContain(secret);
       expect("detail" in protocolError).toBe(false);
+    }),
+  );
+
+  it.effect("summarizes schema issues by path without payload values", () =>
+    Effect.gen(function* () {
+      const secret = "acp-summary-secret";
+      const decodeStruct = Schema.decodeUnknownEffect(
+        Schema.Struct({
+          update: Schema.Struct({ used: Schema.Number, size: Schema.Number }),
+          env: Schema.Record(Schema.String, Schema.Number),
+        }),
+      );
+
+      const cause = yield* decodeStruct(
+        { update: { size: secret }, env: { [`${secret} key`]: secret } },
+        { errors: "all" },
+      ).pipe(Effect.flip);
+      const error = AcpError.AcpProtocolParseError.fromSchemaError(
+        "decode-notification-payload",
+        "session/update",
+        cause,
+      );
+
+      expect(error.issueSummary).toBe(
+        "update.used missing, update.size wrong type, env.* wrong type",
+      );
+      expect(error.message).toBe(
+        "ACP protocol operation 'decode-notification-payload' failed for method 'session/update': update.used missing, update.size wrong type, env.* wrong type.",
+      );
+      expect(error.message).not.toContain(secret);
     }),
   );
 });

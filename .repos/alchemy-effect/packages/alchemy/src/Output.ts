@@ -7,7 +7,7 @@ import { SingleShotGen } from "effect/Utils";
 import { getRefMetadata, isRef, type Ref } from "./Ref.ts";
 import { isResource, type Resource, type ResourceLike } from "./Resource.ts";
 import { RuntimeContext, sanitizeKey } from "./RuntimeContext.ts";
-import { Stack } from "./Stack.ts";
+import { StackContext } from "./StackContext.ts";
 import { Stage } from "./Stage.ts";
 import * as State from "./State/State.ts";
 import { isPlainData, isPrimitive, type Primitive } from "./Util/data.ts";
@@ -16,9 +16,7 @@ const inspect = Symbol.for("nodejs.util.inspect.custom");
 
 export const of = <R extends ResourceLike>(
   resource: Ref<R> | R,
-): R extends ResourceLike
-  ? ResourceExpr<R["Attributes"]>
-  : RefExpr<R["Attributes"]> => {
+): R extends ResourceLike ? ResourceExpr<R["Attributes"]> : RefExpr<R["Attributes"]> => {
   if (isRef(resource)) {
     const metadata = getRefMetadata(resource);
     return new RefExpr(
@@ -40,11 +38,7 @@ export const of = <R extends ResourceLike>(
 };
 
 export const asOutput = <T>(t: T | Output<T> | Effect.Effect<T>): Output<T> =>
-  isOutput(t)
-    ? t
-    : Effect.isEffect(t)
-      ? new EffectExpr(VoidExpr, () => t)
-      : new LiteralExpr(t);
+  isOutput(t) ? t : Effect.isEffect(t) ? new EffectExpr(VoidExpr, () => t) : new LiteralExpr(t);
 
 /**
  * Lift a plan-time Effect into an {@link Output}.
@@ -64,9 +58,7 @@ export const fromEffect = <A, Req = never>(
 ): ToOutput<A, Req> => new EffectExpr(VoidExpr, () => effect) as any;
 
 export const isOutput = (value: any): value is Output<any> =>
-  value &&
-  (typeof value === "object" || typeof value === "function") &&
-  ExprSymbol in value;
+  value && (typeof value === "object" || typeof value === "function") && ExprSymbol in value;
 
 export interface Output<A = any, Req = any> extends Pipeable {
   /** @internal phantom */
@@ -76,11 +68,7 @@ export interface Output<A = any, Req = any> extends Pipeable {
   /** @internal phantom */
   readonly req: Req;
   /** @internal phantom */
-  [Symbol.iterator](): Iterator<
-    Effect.Effect<void, never, Req>,
-    Accessor<A>,
-    void
-  >;
+  [Symbol.iterator](): Iterator<Effect.Effect<void, never, Req>, Accessor<A>, void>;
   bind(id: string): Effect.Effect<Effect.Effect<A>, never, RuntimeContext>;
   asEffect(): Effect.Effect<Accessor<A>, never, Req>;
   as<T>(): Output<T, Req>;
@@ -112,9 +100,7 @@ export const ExprSymbol = Symbol.for("alchemy/Expr");
 const exprKind = (node: any): unknown => node?.[ExprSymbol]?.kind ?? node?.kind;
 
 export const isExpr = (value: any): value is Expr<any> =>
-  value &&
-  (typeof value === "object" || typeof value === "function") &&
-  ExprSymbol in value;
+  value && (typeof value === "object" || typeof value === "function") && ExprSymbol in value;
 
 export type Expr<A = any, Req = any> =
   | AllExpr<Expr<A, Req>[]>
@@ -139,11 +125,7 @@ export abstract class BaseExpr<A = any, Req = any> implements Output<A, Req> {
     return this as any;
   }
 
-  [Symbol.iterator](): Iterator<
-    Effect.Effect<void, never, Req>,
-    Accessor<A>,
-    void
-  > {
+  [Symbol.iterator](): Iterator<Effect.Effect<void, never, Req>, Accessor<A>, void> {
     // @ts-expect-error - TODO(sam): fix this (works at runtime, but maybe indicates a bad assumption)
     return new SingleShotGen(this.asEffect());
   }
@@ -156,9 +138,7 @@ export abstract class BaseExpr<A = any, Req = any> implements Output<A, Req> {
     // `set`/`get` store keys verbatim, so canonicalize here (the caller's job).
     const key = sanitizeKey(id);
     return RuntimeContext.pipe(
-      Effect.flatMap((ctx) =>
-        Effect.map(ctx.set(key, this), (k) => ctx.get<A>(k)),
-      ),
+      Effect.flatMap((ctx) => Effect.map(ctx.set(key, this), (k) => ctx.get<A>(k))),
     );
   }
 
@@ -183,16 +163,17 @@ export type ArrayExpr<A extends any[], Req = any> = Output<A, Req> & {
 };
 
 export const isResourceExpr = <Value = any, Req = any>(
-  node: Expr<Value, Req> | any,
+  node: any,
 ): node is ResourceExpr<Value, Req> => exprKind(node) === "ResourceExpr";
 
 export class ResourceExpr<Value, Req = never> extends BaseExpr<Value, Req> {
   readonly kind = "ResourceExpr";
-  constructor(
-    readonly src: ResourceLike,
-    readonly stables?: Record<string, any>,
-  ) {
+  readonly src: ResourceLike;
+  readonly stables?: Record<string, any>;
+  constructor(src: ResourceLike, stables?: Record<string, any>) {
     super();
+    this.src = src;
+    this.stables = stables;
     return proxy(this);
   }
   [inspect](): string {
@@ -204,17 +185,17 @@ export const isPropExpr = <A = any, Prop extends keyof A = keyof A, Req = any>(
   node: any,
 ): node is PropExpr<A, Prop, Req> => exprKind(node) === "PropExpr";
 
-export class PropExpr<
-  A = any,
-  Id extends keyof A = keyof A,
-  Req = any,
-> extends BaseExpr<A[Id], Req> {
+export class PropExpr<A = any, Id extends keyof A = keyof A, Req = any> extends BaseExpr<
+  A[Id],
+  Req
+> {
   readonly kind = "PropExpr";
-  constructor(
-    public readonly expr: Expr<A, Req>,
-    public readonly identifier: Id,
-  ) {
+  readonly expr: Expr<A, Req>;
+  readonly identifier: Id;
+  constructor(expr: Expr<A, Req>, identifier: Id) {
     super();
+    this.expr = expr;
+    this.identifier = identifier;
     return proxy(this);
   }
   [inspect](): string {
@@ -229,8 +210,10 @@ export const isLiteralExpr = <A = any>(node: any): node is LiteralExpr<A> =>
 
 export class LiteralExpr<A> extends BaseExpr<A, never> {
   readonly kind = "LiteralExpr";
-  constructor(public readonly value: A) {
+  readonly value: A;
+  constructor(value: A) {
     super();
+    this.value = value;
     return proxy(this);
   }
   [inspect](): string {
@@ -241,13 +224,9 @@ export class LiteralExpr<A> extends BaseExpr<A, never> {
 export const VoidExpr = new LiteralExpr(void 0);
 
 export const map: {
-  <A, B>(
-    fn: (value: A) => B,
-  ): <Req>(output: Output<A, Req>) => ToOutput<B, Req>;
+  <A, B>(fn: (value: A) => B): <Req>(output: Output<A, Req>) => ToOutput<B, Req>;
   <A, B, Req>(output: Output<A, Req>, fn: (value: A) => B): ToOutput<B, Req>;
-} = (<A, B, Req>(
-  ...args: [fn: (value: A) => B] | [output: Output<A, Req>, fn: (value: A) => B]
-) =>
+} = (<A, B, Req>(...args: [fn: (value: A) => B] | [output: Output<A, Req>, fn: (value: A) => B]) =>
   args.length === 1
     ? <Req>(output: Output<A, Req>): ToOutput<B, Req> =>
         new ApplyExpr(output as Expr<A, Req>, args[0]) as any
@@ -260,16 +239,26 @@ export const isApplyExpr = <In = any, Out = any, Req = any>(
 
 export class ApplyExpr<A, B, Req = never> extends BaseExpr<B, Req> {
   readonly kind = "ApplyExpr";
-  constructor(
-    public readonly expr: Expr<A, Req>,
-    public readonly f: (value: A) => B,
-  ) {
+  readonly expr: Expr<A, Req>;
+  readonly f: (value: A) => B;
+  constructor(expr: Expr<A, Req>, f: (value: A) => B) {
     super();
+    this.expr = expr;
+    this.f = f;
     return proxy(this);
   }
 
   [inspect](): string {
     return `${this.expr[inspect]()}.map(${this.f.toString()})`;
+  }
+
+  // Bind the upstream and apply `f` where it is read. A binding keyed by this
+  // expression would embed `f.toString()`, which differs between the deploy
+  // and a minified runtime bundle, so the runtime would find nothing.
+  override asEffect(): any {
+    return Effect.map(this.expr.asEffect() as Effect.Effect<Accessor<A>>, (accessor) =>
+      Effect.map(accessor, this.f),
+    );
   }
 }
 
@@ -300,16 +289,14 @@ export const isFlatMapExpr = <In = any, Out = any, Req = any, Req2 = any>(
   node: any,
 ): node is FlatMapExpr<In, Out, Req, Req2> => exprKind(node) === "FlatMapExpr";
 
-export class FlatMapExpr<A, B, Req = never, Req2 = never> extends BaseExpr<
-  B,
-  Req | Req2
-> {
+export class FlatMapExpr<A, B, Req = never, Req2 = never> extends BaseExpr<B, Req | Req2> {
   readonly kind = "FlatMapExpr";
-  constructor(
-    public readonly expr: Expr<A, Req>,
-    public readonly f: (value: A) => Output<B, Req2>,
-  ) {
+  readonly expr: Expr<A, Req>;
+  readonly f: (value: A) => Output<B, Req2>;
+  constructor(expr: Expr<A, Req>, f: (value: A) => Output<B, Req2>) {
     super();
+    this.expr = expr;
+    this.f = f;
     return proxy(this);
   }
   [inspect](): string {
@@ -321,16 +308,14 @@ export const isEffectExpr = <In = any, Out = any, Req = any, Req2 = any>(
   node: any,
 ): node is EffectExpr<In, Out, Req, Req2> => exprKind(node) === "EffectExpr";
 
-export class EffectExpr<A, B, Req = never, Req2 = never> extends BaseExpr<
-  B,
-  Req
-> {
+export class EffectExpr<A, B, Req = never, Req2 = never> extends BaseExpr<B, Req> {
   readonly kind = "EffectExpr";
-  constructor(
-    public readonly expr: Expr<A, Req>,
-    public readonly f: (value: A) => Effect.Effect<B, never, Req2>,
-  ) {
+  readonly expr: Expr<A, Req>;
+  readonly f: (value: A) => Effect.Effect<B, never, Req2>;
+  constructor(expr: Expr<A, Req>, f: (value: A) => Effect.Effect<B, never, Req2>) {
     super();
+    this.expr = expr;
+    this.f = f;
     return proxy(this);
   }
   [inspect](): string {
@@ -338,9 +323,8 @@ export class EffectExpr<A, B, Req = never, Req2 = never> extends BaseExpr<
   }
 }
 
-export const isNamedExpr = <A = any, Req = any>(
-  node: any,
-): node is NamedExpr<A, Req> => exprKind(node) === "NamedExpr";
+export const isNamedExpr = <A = any, Req = any>(node: any): node is NamedExpr<A, Req> =>
+  exprKind(node) === "NamedExpr";
 
 /**
  * Wraps another `Expr` and overrides its `toString()` / inspect output.
@@ -351,11 +335,12 @@ export const isNamedExpr = <A = any, Req = any>(
  */
 export class NamedExpr<A, Req = never> extends BaseExpr<A, Req> {
   readonly kind = "NamedExpr";
-  constructor(
-    public readonly expr: Expr<A, Req>,
-    public readonly bindingName: string,
-  ) {
+  readonly expr: Expr<A, Req>;
+  readonly bindingName: string;
+  constructor(expr: Expr<A, Req>, bindingName: string) {
     super();
+    this.expr = expr;
+    this.bindingName = bindingName;
     return proxy(this);
   }
   [inspect](): string {
@@ -363,70 +348,129 @@ export class NamedExpr<A, Req = never> extends BaseExpr<A, Req> {
   }
 }
 
-export const named = <A, Req>(
-  expr: Output<A, Req>,
-  name: string,
-): Output<A, Req> => new NamedExpr(expr as Expr<A, Req>, name) as any;
+export const named = <A, Req>(expr: Output<A, Req>, name: string): Output<A, Req> =>
+  new NamedExpr(expr as Expr<A, Req>, name) as any;
 
 export const all = <Outs extends (Output | Expr)[]>(...outs: Outs) =>
   new AllExpr(outs as any) as unknown as All<Outs>;
 
 export type All<Outs extends (Output | Expr)[]> = number extends Outs["length"]
-  ? [Outs[number]] extends [
-      Output<infer V, infer Req> | Expr<infer V, infer Req>,
-    ]
+  ? [Outs[number]] extends [Output<infer V, infer Req> | Expr<infer V, infer Req>]
     ? Output<V, Req>
     : never
   : Tuple<Outs>;
 
-type Tuple<
-  Outs extends (Output | Expr)[],
-  Values extends any[] = [],
-  Req = never,
-> = Outs extends [infer H, ...infer Tail extends (Output | Expr)[]]
+type Tuple<Outs extends (Output | Expr)[], Values extends any[] = [], Req = never> = Outs extends [
+  infer H,
+  ...infer Tail extends (Output | Expr)[],
+]
   ? H extends Output<infer V, infer Req2>
     ? Tuple<Tail, [...Values, V], Req | Req2>
     : never
   : Output<Values, Req>;
 
-export const isAllExpr = <Outs extends Expr[] = Expr[]>(
-  node: any,
-): node is AllExpr<Outs> => exprKind(node) === "AllExpr";
+export const isAllExpr = <Outs extends Expr[] = Expr[]>(node: any): node is AllExpr<Outs> =>
+  exprKind(node) === "AllExpr";
 
 export class AllExpr<Outs extends Expr[]> extends BaseExpr<Outs> {
   readonly kind = "AllExpr";
-  constructor(public readonly outs: Outs) {
+  readonly outs: Outs;
+  constructor(outs: Outs) {
     super();
+    this.outs = outs;
     return proxy(this);
   }
   [inspect](): string {
     return `all(${this.outs.map((out) => out[inspect]()).join(", ")})`;
   }
+
+  // Bind each member on its own (see `ApplyExpr.asEffect`).
+  override asEffect(): any {
+    return Effect.map(
+      Effect.all(this.outs.map((out) => out.asEffect() as Effect.Effect<Accessor<unknown>>)),
+      (accessors) => Effect.all(accessors),
+    );
+  }
 }
 
-export const isRefExpr = <A = any>(node: any): node is RefExpr<A> =>
-  exprKind(node) === "RefExpr";
+export const isRefExpr = <A = any>(node: any): node is RefExpr<A> => exprKind(node) === "RefExpr";
 
 export class RefExpr<A> extends BaseExpr<A, never> {
   readonly kind = "RefExpr";
+  readonly stack: string | undefined;
+  readonly stage: string | undefined;
+  readonly resourceId: string;
+  /**
+   * Statically-known properties of the ref's target (currently its
+   * resource `Type`), served as literals by the proxy instead of
+   * `PropExpr`s — mirrors {@link ResourceExpr}'s `stables`.
+   */
+  readonly stables?: Record<string, any>;
   constructor(
-    public readonly stack: string | undefined,
-    public readonly stage: string | undefined,
-    public readonly resourceId: string,
-    /**
-     * Statically-known properties of the ref's target (currently its
-     * resource `Type`), served as literals by the proxy instead of
-     * `PropExpr`s — mirrors {@link ResourceExpr}'s `stables`.
-     */
-    readonly stables?: Record<string, any>,
+    stack: string | undefined,
+    stage: string | undefined,
+    resourceId: string,
+    stables?: Record<string, any>,
   ) {
     super();
+    this.stack = stack;
+    this.stage = stage;
+    this.resourceId = resourceId;
+    this.stables = stables;
     return proxy(this);
   }
   [inspect](): string {
     return `ref(${this.resourceId}, { stack: ${this.stack}, stage: ${this.stage} })`;
   }
 }
+
+/**
+ * Refs the plan bound to a resource declared in the same program. A ref names
+ * a resource by stack, stage and id; when those are the current stack and
+ * stage and the program also declares that resource, the ref is a dependency
+ * on it, exactly like a direct reference: {@link upstream} reports the edge
+ * (create waits for the target, delete runs the dependent first) and
+ * {@link evaluate} reads the target's fresh attributes from the apply-time
+ * outputs. Unbound refs (other stacks or stages, or resources only in state)
+ * keep reading persisted state and carry no edge.
+ */
+const boundRefs = new WeakMap<object, ResourceLike>();
+
+// Keyed by the raw expression, so a ref reached through its proxy or
+// unwrapped through `ExprSymbol` finds the same binding.
+const rawExpr = (ref: object): object => (ref as any)[ExprSymbol] ?? ref;
+
+/** Bind `ref` to the declared resource it names (see {@link boundRefs}). */
+export const bindRef = (ref: RefExpr<any>, target: ResourceLike): void => {
+  boundRefs.set(rawExpr(ref), target);
+};
+
+/** The declared resource a ref was bound to, if any. */
+export const refTarget = (ref: RefExpr<any>): ResourceLike | undefined =>
+  boundRefs.get(rawExpr(ref));
+
+/**
+ * Every {@link RefExpr} reachable from `value` through the same expression and
+ * plain-data structure {@link upstream} walks. Refs a `flatMap` produces at
+ * evaluation time are not reachable, as for any upstream.
+ */
+export const collectRefs = (value: any, seen: WeakSet<object> = new WeakSet()): RefExpr<any>[] => {
+  if (isPrimitive(value) || isResource(value)) {
+    return [];
+  } else if (isExpr(value)) {
+    if (isRefExpr(value)) return [value];
+    if (isPropExpr(value)) return collectRefs(value.expr, seen);
+    if (isAllExpr(value)) return value.outs.flatMap((out: any) => collectRefs(out, seen));
+    if (isEffectExpr(value) || isApplyExpr(value) || isFlatMapExpr(value) || isNamedExpr(value)) {
+      return collectRefs(value.expr, seen);
+    }
+    return [];
+  } else if (isPlainData(value)) {
+    if (alreadySeen(value, seen)) return [];
+    return Object.values(value).flatMap((child) => collectRefs(child, seen));
+  }
+  return [];
+};
 
 export const isStackRefExpr = <A = any>(node: any): node is StackRefExpr<A> =>
   exprKind(node) === "StackRefExpr";
@@ -441,17 +485,16 @@ export const isStackRefExpr = <A = any>(node: any): node is StackRefExpr<A> =>
  */
 export class StackRefExpr<A> extends BaseExpr<A, never> {
   readonly kind = "StackRefExpr";
-  constructor(
-    public readonly stack: string,
-    public readonly stage: string | undefined,
-  ) {
+  readonly stack: string;
+  readonly stage: string | undefined;
+  constructor(stack: string, stage: string | undefined) {
     super();
+    this.stack = stack;
+    this.stage = stage;
     return proxy(this);
   }
   [inspect](): string {
-    return `stackRef(${this.stack}${
-      this.stage ? `, { stage: ${this.stage} }` : ""
-    })`;
+    return `stackRef(${this.stack}${this.stage ? `, { stage: ${this.stage} }` : ""})`;
   }
 }
 
@@ -474,16 +517,13 @@ export const filter = <Outs extends any[]>(...outs: Outs) =>
   outs.filter(isOutput) as unknown as Filter<Outs>;
 
 export type Filter<Outs extends any[]> = number extends Outs["length"]
-  ? Output<
-      Extract<Outs[number], Output>["value"],
-      Extract<Outs[number], Output>["req"]
-    >
+  ? Output<Extract<Outs[number], Output>["value"], Extract<Outs[number], Output>["req"]>
   : FilterTuple<Outs>;
 
-export type FilterTuple<
-  Outs extends (Output | Expr)[],
-  Values extends any[] = [],
-> = Outs extends [infer H, ...infer Tail extends (Output | Expr)[]]
+export type FilterTuple<Outs extends (Output | Expr)[], Values extends any[] = []> = Outs extends [
+  infer H,
+  ...infer Tail extends (Output | Expr)[],
+]
   ? H extends Output<infer V>
     ? FilterTuple<Tail, [...Values, V]>
     : FilterTuple<Tail, Values>
@@ -492,14 +532,22 @@ export type FilterTuple<
 export const interpolate = <Args extends any[]>(
   template: TemplateStringsArray,
   ...args: Args
-): All<Args> extends Output<any, infer Req> ? Output<string, Req> : never =>
-  all(...args.map((arg) => (isOutput(arg) ? arg : literal(arg)))).pipe(
+): All<Args> extends Output<any, infer Req> ? Output<string, Req> : never => {
+  const outs = args.map((arg) => (isOutput(arg) ? arg : literal(arg)));
+  const expr = all(...outs).pipe(
     map((args) =>
-      template
-        .map((str, i) => str + (args[i] == null ? "" : String(args[i])))
-        .join(""),
+      template.map((str, i) => str + (args[i] == null ? "" : String(args[i]))).join(""),
     ),
-  ) as any;
+  );
+  // The binding id of a mapped Output embeds the mapper's source, which the
+  // runtime bundler reprints differently from the deploying process, so the
+  // two sides would derive different keys. Name it from the template and its
+  // arguments instead, which are identical on both sides.
+  const name = template
+    .map((str, i) => (i < outs.length ? `${str}\${${(outs[i] as any)[inspect]()}}` : str))
+    .join("");
+  return named(expr as Output<string, any>, `interpolate(${name})`) as any;
+};
 
 function proxy(self: any): any {
   const target = Object.assign(() => {}, self);
@@ -553,13 +601,10 @@ function proxy(self: any): any {
           ? self
           : prop === inspect
             ? target[inspect]
-            : (isResourceExpr(self) || isRefExpr(self)) &&
-                self.stables &&
-                prop in self.stables
+            : (isResourceExpr(self) || isRefExpr(self)) && self.stables && prop in self.stables
               ? self.stables[prop as keyof typeof self.stables]
               : prop in self
-                ? typeof self[prop as keyof typeof self] === "function" &&
-                  !("kind" in self)
+                ? typeof self[prop as keyof typeof self] === "function" && !("kind" in self)
                   ? new PropExpr(proxy, prop as never)
                   : self[prop as keyof typeof self]
                 : new PropExpr(proxy, prop as never),
@@ -570,10 +615,7 @@ function proxy(self: any): any {
         // `Output.map` / `Output.mapEffect` / `Output.flatMap` functions.
         if (self.identifier === "map" || self.identifier === "apply") {
           return new ApplyExpr(self.expr, args[0]);
-        } else if (
-          self.identifier === "mapEffect" ||
-          self.identifier === "effect"
-        ) {
+        } else if (self.identifier === "mapEffect" || self.identifier === "effect") {
           return new EffectExpr(self.expr, args[0]);
         } else if (self.identifier === "flatMap") {
           return new FlatMapExpr(self.expr, args[0]);
@@ -592,9 +634,7 @@ export class MissingSourceError extends Data.TaggedError("MissingSourceError")<{
   srcId: string;
 }> {}
 
-export class InvalidReferenceError extends Data.TaggedError(
-  "InvalidReferenceError",
-)<{
+export class InvalidReferenceError extends Data.TaggedError("InvalidReferenceError")<{
   message: string;
   stack: string;
   stage: string;
@@ -616,11 +656,12 @@ export const evaluate: <A, Req = never>(
   InvalidReferenceError | MissingSourceError | Config.ConfigError,
   State.State | Req
 > = (expr, upstream, ancestors = new Set()) =>
+  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- the declared signature above carries the real error/requirement types
   Effect.gen(function* () {
     if (isResource(expr)) {
       const srcId = expr.FQN;
       const src = upstream[srcId as keyof typeof upstream];
-      if (!src) {
+      if (!Object.hasOwn(upstream, srcId)) {
         // type-safety should prevent this but let the caller decide how to handle it
         return yield* new MissingSourceError({
           message: `Source ${srcId} not found`,
@@ -632,7 +673,7 @@ export const evaluate: <A, Req = never>(
       if (isResourceExpr(expr)) {
         const srcId = expr.src.FQN;
         const src = upstream[srcId as keyof typeof upstream];
-        if (!src) {
+        if (!Object.hasOwn(upstream, srcId)) {
           // type-safety should prevent this but let the caller decide how to handle it
           return yield* new MissingSourceError({
             message: `Source ${srcId} not found`,
@@ -653,16 +694,18 @@ export const evaluate: <A, Req = never>(
         const value = yield* evaluate(expr.expr, upstream);
         return yield* evaluate(expr.f(value), upstream);
       } else if (isAllExpr(expr)) {
-        return yield* Effect.all(
-          expr.outs.map((out) => evaluate(out, upstream)),
-        );
+        return yield* Effect.forEach(expr.outs, (out) => evaluate(out, upstream));
       } else if (isPropExpr(expr)) {
         return (yield* evaluate(expr.expr, upstream))?.[expr.identifier];
       } else if (isNamedExpr(expr)) {
         return yield* evaluate(expr.expr, upstream);
       } else if (isRefExpr(expr)) {
+        const target = refTarget(expr);
+        if (target !== undefined && Object.hasOwn(upstream, target.FQN)) {
+          return upstream[target.FQN as keyof typeof upstream];
+        }
         const state = yield* yield* State.State;
-        const stack = expr.stack ?? (yield* Stack).name;
+        const stack = expr.stack ?? (yield* StackContext).name;
         const stage = expr.stage ?? (yield* Stage);
         const resource = yield* state.get({
           stack,
@@ -670,14 +713,12 @@ export const evaluate: <A, Req = never>(
           fqn: expr.resourceId,
         });
         if (!resource) {
-          return yield* Effect.fail(
-            new InvalidReferenceError({
-              message: `Reference to '${expr.resourceId}' in stack '${stack}' and stage '${stage}' not found. Have you deployed '${stage}' or '${stack}'?`,
-              stack,
-              stage,
-              resourceId: expr.resourceId,
-            }),
-          );
+          return yield* new InvalidReferenceError({
+            message: `Reference to '${expr.resourceId}' in stack '${stack}' and stage '${stage}' not found. Have you deployed '${stage}' or '${stack}'?`,
+            stack,
+            stage,
+            resourceId: expr.resourceId,
+          });
         }
         // RefExpr targets persisted resources; tasks aren't cross-stack
         // referenceable. Return the resource's output attrs, otherwise the
@@ -689,14 +730,12 @@ export const evaluate: <A, Req = never>(
         const stage = expr.stage ?? (yield* Stage);
         const output = yield* state.getOutput({ stack, stage });
         if (output == null) {
-          return yield* Effect.fail(
-            new InvalidReferenceError({
-              message: `Reference to stack '${stack}' at stage '${stage}' not found. Have you deployed stage '${stage}' of '${stack}'?`,
-              stack,
-              stage,
-              resourceId: stack,
-            }),
-          );
+          return yield* new InvalidReferenceError({
+            message: `Reference to stack '${stack}' at stage '${stage}' not found. Have you deployed stage '${stage}' of '${stack}'?`,
+            stack,
+            stage,
+            resourceId: stack,
+          });
         }
         return output;
       }
@@ -712,17 +751,11 @@ export const evaluate: <A, Req = never>(
       }
       const nested = new Set(ancestors).add(expr);
       if (Array.isArray(expr)) {
-        return yield* Effect.all(
-          expr.map((item) => evaluate(item, upstream, nested)),
-        );
+        return yield* Effect.forEach(expr, (item) => evaluate(item, upstream, nested));
       }
       return Object.fromEntries(
-        yield* Effect.all(
-          Object.entries(expr).map(([key, value]) =>
-            evaluate(value, upstream, nested).pipe(
-              Effect.map((value) => [key, value]),
-            ),
-          ),
+        yield* Effect.forEach(Object.entries(expr), ([key, value]) =>
+          evaluate(value, upstream, nested).pipe(Effect.map((value) => [key, value])),
         ),
       );
     }
@@ -734,6 +767,49 @@ export const evaluate: <A, Req = never>(
     // `Config.isConfig` on purpose — Configs are Effects but must resolve.
     return expr;
   }) as Effect.Effect<any>;
+
+/**
+ * Evaluate the parts of `expr` that `upstream` can resolve. An Output whose
+ * sources are all in `upstream` is evaluated, plain data is walked, and an
+ * Output with any other source is returned unevaluated.
+ */
+export const evaluateAvailable = (
+  expr: any,
+  upstream: {
+    [Id in string]: any;
+  },
+  ancestors: ReadonlySet<object> = new Set(),
+): Effect.Effect<
+  any,
+  InvalidReferenceError | MissingSourceError | Config.ConfigError,
+  State.State
+> =>
+  Effect.gen(function* () {
+    if (isResource(expr) || isOutput(expr)) {
+      const sources = Object.keys(upstreamAny(expr));
+      return sources.every((fqn) => Object.hasOwn(upstream, fqn))
+        ? yield* evaluate(expr, upstream)
+        : expr;
+    }
+    if (Config.isConfig(expr)) {
+      return yield* evaluate(expr, upstream);
+    }
+    if (isPlainData(expr)) {
+      if (ancestors.has(expr)) {
+        return undefined;
+      }
+      const nested = new Set(ancestors).add(expr);
+      if (Array.isArray(expr)) {
+        return yield* Effect.forEach(expr, (item) => evaluateAvailable(item, upstream, nested));
+      }
+      return Object.fromEntries(
+        yield* Effect.forEach(Object.entries(expr), ([key, value]) =>
+          evaluateAvailable(value, upstream, nested).pipe(Effect.map((value) => [key, value])),
+        ),
+      );
+    }
+    return expr;
+  });
 
 export const hasOutputs = (value: any): value is Output<any, any> =>
   Object.keys(upstreamAny(value)).length > 0;
@@ -772,10 +848,7 @@ export const upstreamAny = (
     if (alreadySeen(value, seen)) {
       return {};
     }
-    return Object.assign(
-      {},
-      ...Object.values(value).map((value) => resolveUpstream(value, seen)),
-    );
+    return Object.assign({}, ...Object.values(value).map((value) => resolveUpstream(value, seen)));
   }
   return {};
 };
@@ -793,16 +866,14 @@ export const upstream = <E extends Output<any, any>>(
     return {
       [expr.src.FQN]: expr.src,
     };
+  } else if (isRefExpr(expr)) {
+    const target = refTarget(expr);
+    return target === undefined ? {} : { [target.FQN]: target };
   } else if (isPropExpr(expr)) {
     return upstream(expr.expr, seen);
   } else if (isAllExpr(expr)) {
     return Object.assign({}, ...expr.outs.map((out) => upstream(out, seen)));
-  } else if (
-    isEffectExpr(expr) ||
-    isApplyExpr(expr) ||
-    isFlatMapExpr(expr) ||
-    isNamedExpr(expr)
-  ) {
+  } else if (isEffectExpr(expr) || isApplyExpr(expr) || isFlatMapExpr(expr) || isNamedExpr(expr)) {
     return upstream(expr.expr, seen);
   } else if (isPlainData(expr)) {
     if (alreadySeen(expr, seen)) {
@@ -816,10 +887,7 @@ export const upstream = <E extends Output<any, any>>(
 };
 
 // TODO(sam): add a type
-export const resolveUpstream = <const A>(
-  value: A,
-  seen: WeakSet<object> = new WeakSet(),
-): any => {
+export const resolveUpstream = <const A>(value: A, seen: WeakSet<object> = new WeakSet()): any => {
   if (isPrimitive(value)) {
     return {} as any;
   } else if (isResource(value)) {
@@ -857,8 +925,7 @@ export const toEnvKey = <const ID extends string, const Suffix extends string>(
 export const toUpper = <const S extends string>(str: S) =>
   str.toUpperCase() as string extends S ? S : Uppercase<S>;
 
-const replace = <const S extends string>(str: S) =>
-  str.replace(/-/g, "_") as Replace<S>;
+const replace = <const S extends string>(str: S) => str.replace(/-/g, "_") as Replace<S>;
 
 type Replace<S extends string, Accum extends string = ""> = string extends S
   ? S

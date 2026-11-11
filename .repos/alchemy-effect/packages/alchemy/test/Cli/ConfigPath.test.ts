@@ -1,10 +1,14 @@
-import { UserInputError } from "@/Cli/commands/errors.ts";
-import { resolveConfig } from "@/Cli/commands/flags.ts";
+import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { describe, expect, it } from "alchemy-test";
+import * as Schema from "effect/Schema";
+import { UserInputError } from "@/Cli/commands/errors.ts";
+import { resolveConfig, include, exclude, validateSelectionOptions } from "@/Cli/commands/flags.ts";
+import { DevOptions } from "@/Cli/DevOptions.ts";
+import { PlatformServices } from "@/Util/PlatformServices.ts";
 
-describe("stack command config paths", () => {
+describe("stack command config paths", { tags: ["unit", "local"] }, () => {
   it.effect("uses the positional config path", () =>
     Effect.gen(function* () {
       const args = yield* resolveConfig({
@@ -49,4 +53,78 @@ describe("stack command config paths", () => {
       }
     }),
   );
+});
+
+describe("stack selection options", { tags: ["unit", "local"] }, () => {
+  for (const [name, flag] of [
+    ["include", include],
+    ["exclude", exclude],
+  ] as const) {
+    for (const [values, expected] of [
+      [[], undefined],
+      [
+        ["Branch,Password", "Namespace/**"],
+        ["Branch,Password", "Namespace/**"],
+      ],
+      [[""], [""]],
+      [["Branch,"], ["Branch,"]],
+      [
+        [" App/* ", "App/*", "App/*"],
+        [" App/* ", "App/*", "App/*"],
+      ],
+    ] as const) {
+      it.effect(`parses repeated --${name} patterns ${JSON.stringify(values)}`, () =>
+        Effect.gen(function* () {
+          const [, parsed] = yield* flag.parse({
+            arguments: [],
+            flags: values.length ? { [name]: [...values] } : {},
+          });
+          expect(parsed).toEqual(expected);
+        }).pipe(Effect.provide(PlatformServices)),
+      );
+    }
+  }
+
+  it.effect("retains include and exclude through dev reload JSON roundtrips", () =>
+    Effect.gen(function* () {
+      for (const include of [undefined, [], ["Branch,Password", "Namespace/**"]]) {
+        for (const exclude of [undefined, [], ["Namespace/Legacy", "**/.Private"]]) {
+          const options = {
+            main: "alchemy.run.ts",
+            stage: "test",
+            envFile: Option.none(),
+            force: false,
+            include,
+            exclude,
+          };
+          const wire = yield* Schema.encodeEffect(DevOptions)(options);
+          const decoded = yield* Schema.decodeUnknownEffect(DevOptions)(
+            JSON.parse(JSON.stringify(wire)),
+          );
+          expect(decoded.include).toEqual(include);
+          expect(decoded.exclude).toEqual(exclude);
+        }
+      }
+    }),
+  );
+
+  for (const selection of [
+    { include: ["Branch"] },
+    { exclude: ["Branch"] },
+    { include: [] },
+    { exclude: [] },
+  ]) {
+    for (const combination of [{ destroy: true }, { detectDrift: true }]) {
+      it.effect(`rejects ${JSON.stringify(selection)} with ${JSON.stringify(combination)}`, () =>
+        Effect.gen(function* () {
+          const result = yield* validateSelectionOptions({
+            ...selection,
+            ...combination,
+          }).pipe(Effect.result);
+          expect(Result.isFailure(result)).toBe(true);
+          yield* validateSelectionOptions(combination);
+        }),
+      );
+    }
+  }
 });

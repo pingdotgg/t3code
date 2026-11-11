@@ -1,6 +1,6 @@
 import * as AcpCompat from "./compat.ts";
-import * as Rpc from "effect/unstable/rpc/Rpc";
-import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import * as Rpc from "effect/rpc/Rpc";
+import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as Schema from "effect/Schema";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
@@ -141,9 +141,6 @@ export const AgentRpcs = RpcGroup.make(
   SetSessionConfigOptionRpc,
 );
 
-// Registry agents transition independently. The compatibility groups accept
-// both protocol generations on the wire while the public client normalizes
-// them into one provider-neutral surface after initialize negotiates v1 or v2.
 const CompatInitializeRpc = Rpc.make(AGENT_METHODS.initialize, {
   // The negotiation request intentionally carries both v1 and v2 capability
   // field names. A union encoder would select one branch and discard the
@@ -308,7 +305,6 @@ const CompatRequestPermissionRpc = Rpc.make(CLIENT_METHODS.session_request_permi
 });
 
 const CompatElicitationRpc = Rpc.make(CLIENT_METHODS.elicitation_create, {
-  // Decode in the handler so malformed requests receive ACP's invalid-params error.
   payload: Schema.Unknown,
   success: Schema.Union([
     AcpSchema.CreateElicitationResponse,

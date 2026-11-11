@@ -1,0 +1,124 @@
+---
+import { WALL_COLUMNS } from "../../data/sentiment";
+import Card from "./SentimentCard.astro";
+
+/** What people say about Alchemy: three hand-ordered columns of post cards. */
+---
+
+<div class="snt-cols">
+  {
+    WALL_COLUMNS.map((col) => (
+      <ul class="snt-col" role="list">
+        {col.map((p) => (
+          <li>
+            <Card post={p} />
+          </li>
+        ))}
+      </ul>
+    ))
+  }
+</div>
+
+<style>
+  /* ---------- card ---------- */
+  :global(.snt-card) {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    height: 100%;
+    padding: 18px 20px;
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--alc-bg-elev-1) 75%, transparent);
+    color: inherit;
+    text-decoration: none;
+    transition:
+      border-color 160ms ease,
+      transform 160ms ease;
+  }
+  :global(a.snt-card:hover) {
+    border-color: color-mix(in srgb, var(--alc-accent) 55%, transparent);
+    transform: translateY(-2px);
+  }
+  :global(a.snt-card:focus-visible) {
+    outline: 2px solid var(--alc-accent);
+    outline-offset: 2px;
+  }
+  :global(.snt-card__head) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  :global(.snt-avatar) {
+    flex: none;
+    display: block;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid var(--alc-hairline-2);
+  }
+  :global(.snt-card__who) {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.25;
+  }
+  :global(.snt-card__name) {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--alc-fg-1);
+  }
+  :global(.snt-handle) {
+    font-size: 12.5px;
+    color: var(--alc-fg-3);
+  }
+  :global(.snt-card__x) {
+    margin-left: auto;
+    flex: none;
+    color: var(--alc-fg-3);
+  }
+  :global(.snt-card__text) {
+    margin: 0;
+    font-size: 14.5px;
+    line-height: 1.6;
+    color: var(--alc-fg-2);
+    white-space: pre-line;
+  }
+
+  /* ---------- wall: fixed columns so the order is exactly as curated ---------- */
+  .snt-cols {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    align-items: start;
+  }
+  .snt-col {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 16px;
+  }
+  @media (max-width: 900px) {
+    .snt-cols {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .snt-col:last-child {
+      grid-column: 1 / -1;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 640px) {
+    .snt-cols,
+    .snt-col:last-child {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    /* Phones: a short sample instead of a very long single column. */
+    .snt-col:nth-child(2) > li:nth-child(n + 3),
+    .snt-col:nth-child(3) {
+      display: none;
+    }
+  }
+</style>

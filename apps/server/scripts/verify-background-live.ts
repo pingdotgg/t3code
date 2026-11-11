@@ -1,10 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalFetch:off globalConsole:off preferSchemaOverJson:off - Host-side process verifier retains raw wire evidence and owns deadline timers.
-/**
- * Real server/provider conformance check. Run from the repository root:
- * node apps/server/scripts/verify-background-live.ts --model claude-sonnet-4-6
- * Uses existing provider CLI authentication, a fresh T3 home and a disposable Git
- * project. Evidence is retained in the printed directory, including on failure.
- */
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalFetch:off globalConsole:off globalJsonInEffect:off - Host-side process verifier retains raw wire evidence and owns deadline timers.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -18,8 +12,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Socket } from "effect/unstable/socket";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import { Socket } from "effect/socket";
+import { RpcClient, RpcSerialization } from "effect/rpc";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_HEADER,
@@ -159,7 +153,6 @@ NodeFS.writeFileSync(
   ),
 );
 
-// This is a real external dependency of the child command, not a provider stub.
 const secret = `RESULT_${NodeCrypto.randomUUID()}`;
 const gatePath = `/${NodeCrypto.randomUUID()}`;
 let response: NodeHttp.ServerResponse | undefined;
@@ -196,8 +189,6 @@ await new Promise<void>((done) => gate.once("listening", done));
 const gateAddress = gate.address();
 NodeAssert.ok(gateAddress && typeof gateAddress !== "string");
 
-// Reserve an ephemeral port, then give it to the real server. A bind race fails
-// the check; it never falls back to an existing environment.
 const reservation = NodeHttp.createServer();
 reservation.listen(0, "127.0.0.1");
 await new Promise<void>((done) => reservation.once("listening", done));
@@ -295,11 +286,11 @@ try {
   const ticket = Schema.decodeUnknownSync(Schema.Struct({ ticket: Schema.String }))(
     await ticketResponse.json(),
   );
-  const socket = Socket.layerWebSocket(
+  const layerSocket = Socket.layerWebSocket(
     `${origin.replace("http:", "ws:")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket.ticket)}`,
   ).pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal));
-  const protocol = RpcClient.layerProtocolSocket().pipe(
-    Layer.provide(socket),
+  const layerProtocol = RpcClient.layerProtocolSocket().pipe(
+    Layer.provide(layerSocket),
     Layer.provide(RpcSerialization.layerJson),
   );
   const threadId = ThreadId.make(NodeCrypto.randomUUID());
@@ -483,10 +474,9 @@ try {
         .filter((message) => message.role === "assistant" && message.text.includes(secret))
         .map((message) => message.id),
     };
-  }).pipe(Effect.scoped, Effect.provide(protocol), Effect.timeout(timeoutMs));
+  }).pipe(Effect.scoped, Effect.provide(layerProtocol), Effect.timeout(timeoutMs));
   const finished = await Effect.runPromise(program, { signal: abort.signal });
   verdict = finished;
-  // Check persistence through an actual clean server restart on the same SQLite DB.
   await stopServer(server);
   ({ server, ready } = startServer());
   await ready;
@@ -559,7 +549,6 @@ async function stopServer(server: ReturnType<typeof NodeChildProcess.spawn>) {
     await stopped;
     clearTimeout(deadline);
   }
-  // Kill only the process group created above, including lingering provider pipes.
   if (server.pid) {
     try {
       process.kill(-server.pid, "SIGKILL");

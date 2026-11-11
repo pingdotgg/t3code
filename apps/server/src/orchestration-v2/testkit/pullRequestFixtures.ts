@@ -9,7 +9,6 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-/** The thread fields pull request tests set; timestamps are ISO strings. */
 export interface PullRequestTestThread {
   readonly id: ThreadId;
   readonly projectId: ProjectId;
@@ -23,6 +22,7 @@ export interface PullRequestTestThread {
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
   readonly latestUserMessageAt: string | null;
+  readonly lineage?: OrchestrationV2ThreadShell["lineage"];
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly archivedAt: string | null;
@@ -47,7 +47,11 @@ export function v2PullRequestThread(thread: PullRequestTestThread): Orchestratio
     createdBy: "user",
     creationSource: "web",
     activeProviderThreadId: null,
-    lineage: { rootThreadId: thread.id, parentThreadId: null, relationshipToParent: null },
+    lineage: thread.lineage ?? {
+      rootThreadId: thread.id,
+      parentThreadId: null,
+      relationshipToParent: null,
+    },
     forkedFrom: null,
     latestRunId: null,
     activeRunId: null,

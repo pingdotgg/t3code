@@ -1,0 +1,158 @@
+[
+  {
+    "id": "schema.public",
+    "label": "Create schema \"public\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres"
+    },
+    "precheck": [],
+    "execute": [
+      {
+        "description": "Create schema \"public\"",
+        "sql": "CREATE SCHEMA IF NOT EXISTS \"public\"",
+        "params": []
+      }
+    ],
+    "postcheck": []
+  },
+  {
+    "id": "table.assignee",
+    "label": "Create table \"assignee\"",
+    "summary": "Creates table \"assignee\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "assignee"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"assignee\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"assignee\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "create table \"assignee\"",
+        "sql": "CREATE TABLE \"public\".\"assignee\" (\n  \"id\" SERIAL NOT NULL,\n  \"name\" text NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"assignee\" exists",
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": ["\"public\".\"assignee\""]
+      }
+    ]
+  },
+  {
+    "id": "table.features",
+    "label": "Create table \"features\"",
+    "summary": "Creates table \"features\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "features"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"features\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"features\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "create table \"features\"",
+        "sql": "CREATE TABLE \"public\".\"features\" (\n  \"id\" int4 NOT NULL,\n  \"priority\" int4 NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"features\" exists",
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": ["\"public\".\"features\""]
+      }
+    ]
+  },
+  {
+    "id": "table.tasks",
+    "label": "Create table \"tasks\"",
+    "summary": "Creates table \"tasks\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "tasks"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"tasks\" does not exist",
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": ["\"public\".\"tasks\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "create table \"tasks\"",
+        "sql": "CREATE TABLE \"public\".\"tasks\" (\n  \"assigneeId\" int4,\n  \"id\" SERIAL NOT NULL,\n  \"severity\" text,\n  \"title\" text NOT NULL,\n  \"type\" text NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
+        "params": []
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"tasks\" exists",
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": ["\"public\".\"tasks\""]
+      }
+    ]
+  },
+  {
+    "id": "foreignKey.features.features_id_fkey",
+    "label": "Add foreign key \"features_id_fkey\" on \"features\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "foreignKey",
+        "name": "features_id_fkey",
+        "table": "features"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure FK \"features_id_fkey\" does not exist",
+        "sql": "SELECT NOT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
+        "params": ["features_id_fkey", "public", "\"public\".\"features\""]
+      }
+    ],
+    "execute": [
+      {
+        "description": "add FK \"features_id_fkey\"",
+        "sql": "ALTER TABLE \"public\".\"features\"\nADD CONSTRAINT \"features_id_fkey\"\nFOREIGN KEY (\"id\")\nREFERENCES \"public\".\"tasks\" (\"id\")\nON DELETE CASCADE"
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify FK \"features_id_fkey\" exists",
+        "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
+        "params": ["features_id_fkey", "public", "\"public\".\"features\""]
+      }
+    ]
+  }
+]

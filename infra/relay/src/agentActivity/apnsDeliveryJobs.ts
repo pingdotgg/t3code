@@ -1,34 +1,27 @@
-import * as NodeCrypto from "node:crypto";
-
 import {
   RelayAgentActivityAggregateState,
   RelayAgentAwarenessPhase,
-  type RelayDeliveryKind,
 } from "@t3tools/contracts/relay";
 import { stableStringify } from "@t3tools/shared/relaySigning";
+import * as Mac from "effect/crypto/Mac";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 const MAX_JOB_AGE_MS = 10 * 60 * 1_000;
-export const APNS_DELIVERY_JOB_SIGNING_ALGORITHM = "hmac-sha256";
+const APNS_DELIVERY_JOB_SIGNING_ALGORITHM = "hmac-sha256";
 
 const ApnsDeliveryKindSchema = Schema.Literals([
-  "live_activity_start",
   "live_activity_update",
   "live_activity_end",
   "push_notification",
 ]);
-const LiveActivityStartOrUpdateKindSchema = Schema.Literals([
-  "live_activity_start",
-  "live_activity_update",
-]);
-const LiveActivityKindSchema = Schema.Literals([
-  "live_activity_start",
-  "live_activity_update",
-  "live_activity_end",
-]);
+const LiveActivityStartOrUpdateKindSchema = Schema.Literals(["live_activity_update"]);
+const LiveActivityKindSchema = Schema.Literals(["live_activity_update", "live_activity_end"]);
 
 const ApnsDeliveryJobContext = {
   jobId: Schema.String,
@@ -42,17 +35,11 @@ export const ApnsNotificationPayload = Schema.Struct({
   environmentId: Schema.String,
   threadId: Schema.String,
   deepLink: Schema.String,
-  // Optional so delivery jobs queued by older relay builds still decode.
-  // New jobs use these fields to avoid delivering a stale Done/attention
-  // notification after the thread has moved to another phase.
   phase: Schema.optional(RelayAgentAwarenessPhase),
   updatedAt: Schema.optional(Schema.String),
 });
 export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
 
-// Alert copy attached to a Live Activity update/end push. Its presence makes
-// the update "alerting": iOS wakes the screen, plays the haptic, and briefly
-// expands the Dynamic Island instead of silently redrawing.
 export const ApnsLiveActivityAlert = Schema.Struct({
   title: Schema.String,
   body: Schema.String,
@@ -67,14 +54,11 @@ export const ApnsDeliveryJobPayload = Schema.Struct({
     userId: Schema.String,
     deviceId: Schema.String,
     token: Schema.String,
-    // Per-device APNs routing; absent on jobs queued by older relay builds,
-    // which fall back to the configured defaults.
     bundleId: Schema.optional(Schema.NullOr(Schema.String)),
     apsEnvironment: Schema.optional(Schema.NullOr(Schema.Literals(["sandbox", "production"]))),
   }),
   aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
   notification: Schema.NullOr(ApnsNotificationPayload),
-  // Optional so jobs queued by older relay builds still decode.
   alert: Schema.optional(Schema.NullOr(ApnsLiveActivityAlert)),
   createdAt: Schema.String,
   expiresAt: Schema.String,
@@ -241,10 +225,8 @@ export const ApnsDeliveryJobVerificationError = Schema.Union([
 ]);
 export type ApnsDeliveryJobVerificationError = typeof ApnsDeliveryJobVerificationError.Type;
 
-export const isApnsDeliveryJobVerificationError = Schema.is(ApnsDeliveryJobVerificationError);
-
 export function makeApnsDeliveryJobPayload(input: {
-  readonly kind: RelayDeliveryKind;
+  readonly kind: ApnsDeliveryJobPayload["kind"];
   readonly userId: string;
   readonly deviceId: string;
   readonly token: string;
@@ -270,8 +252,7 @@ export function makeApnsDeliveryJobPayload(input: {
     },
     aggregate: input.aggregate,
     notification: input.notification ?? null,
-    // Omitted (not null) when absent so signatures stay identical to jobs from
-    // relay builds that predate the field.
+    // Omit absent fields to preserve signatures from older relay builds.
     ...(input.alert ? { alert: input.alert } : {}),
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,
@@ -284,7 +265,6 @@ export function expiresAtForJob(createdAtMs: number): string {
 
 function validatePayloadShape(payload: ApnsDeliveryJobPayload): ApnsDeliveryJobInvalid | null {
   switch (payload.kind) {
-    case "live_activity_start":
     case "live_activity_update":
       if (payload.aggregate === null) {
         return new ApnsDeliveryJobLiveActivityAggregateMissing({
@@ -332,41 +312,63 @@ function validatePayloadShape(payload: ApnsDeliveryJobPayload): ApnsDeliveryJobI
   }
 }
 
-function signatureForPayload(input: {
+const signingKey = (secret: Redacted.Redacted<string>) =>
+  Mac.key(Mac.hmacSha256, new TextEncoder().encode(Redacted.value(secret)));
+
+const payloadBytes = (payload: ApnsDeliveryJobPayload) =>
+  new TextEncoder().encode(stableStringify(payload));
+
+export const signApnsDeliveryJob = Effect.fn("relay.apns_delivery_jobs.sign")(function* (input: {
   readonly secret: Redacted.Redacted<string>;
   readonly payload: ApnsDeliveryJobPayload;
-}): string {
-  return NodeCrypto.createHmac("sha256", Redacted.value(input.secret))
-    .update(stableStringify(input.payload))
-    .digest("base64url");
-}
-
-function timingSafeEqualBase64Url(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left, "base64url");
-  const rightBuffer = Buffer.from(right, "base64url");
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-  return NodeCrypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-export function signApnsDeliveryJob(input: {
-  readonly secret: Redacted.Redacted<string>;
-  readonly payload: ApnsDeliveryJobPayload;
-}): SignedApnsDeliveryJob {
+}) {
+  const mac = yield* Mac.Mac;
+  const signature = yield* signingKey(input.secret).pipe(
+    Effect.flatMap((key) => mac.sign(key, payloadBytes(input.payload))),
+    Effect.orDie,
+  );
   return {
     algorithm: APNS_DELIVERY_JOB_SIGNING_ALGORITHM,
     payload: input.payload,
-    signature: signatureForPayload(input),
-  };
-}
+    signature: Base64Url.encode(signature),
+  } satisfies SignedApnsDeliveryJob;
+});
 
-export function verifySignedApnsDeliveryJob(input: {
-  readonly secret: Redacted.Redacted<string>;
-  readonly job: SignedApnsDeliveryJob;
-  readonly nowMs: number;
-}): ApnsDeliveryJobPayload | ApnsDeliveryJobVerificationError {
-  const payload = input.job.payload;
+export const verifySignedApnsDeliveryJob = Effect.fn("relay.apns_delivery_jobs.verify")(
+  function* (input: {
+    readonly secret: Redacted.Redacted<string>;
+    readonly job: SignedApnsDeliveryJob;
+    readonly nowMs: number;
+  }) {
+    const payload = input.job.payload;
+    const invalid = validateSignedJobWindow(payload, input.nowMs);
+    if (invalid !== null) {
+      return yield* invalid;
+    }
+    const tag = Base64Url.decode(input.job.signature);
+    const mac = yield* Mac.Mac;
+    const verified =
+      Result.isSuccess(tag) &&
+      (yield* signingKey(input.secret).pipe(
+        Effect.flatMap((key) => mac.verify(key, tag.success, payloadBytes(payload))),
+        Effect.orDie,
+      ));
+    if (!verified) {
+      return yield* new ApnsDeliveryJobSignatureInvalid({
+        jobId: payload.jobId,
+        kind: payload.kind,
+        userId: payload.target.userId,
+        deviceId: payload.target.deviceId,
+      });
+    }
+    return payload;
+  },
+);
+
+function validateSignedJobWindow(
+  payload: ApnsDeliveryJobPayload,
+  nowMs: number,
+): ApnsDeliveryJobVerificationError | null {
   const invalidPayload = validatePayloadShape(payload);
   if (invalidPayload !== null) {
     return invalidPayload;
@@ -413,7 +415,7 @@ export function verifySignedApnsDeliveryJob(input: {
       expiresAt: payload.expiresAt,
     });
   }
-  if (expiresAtMs <= input.nowMs) {
+  if (expiresAtMs <= nowMs) {
     return new ApnsDeliveryJobExpired({
       jobId: payload.jobId,
       kind: payload.kind,
@@ -422,17 +424,5 @@ export function verifySignedApnsDeliveryJob(input: {
       expiresAt: payload.expiresAt,
     });
   }
-  const expected = signatureForPayload({
-    secret: input.secret,
-    payload,
-  });
-  if (!timingSafeEqualBase64Url(input.job.signature, expected)) {
-    return new ApnsDeliveryJobSignatureInvalid({
-      jobId: payload.jobId,
-      kind: payload.kind,
-      userId: payload.target.userId,
-      deviceId: payload.target.deviceId,
-    });
-  }
-  return payload;
+  return null;
 }

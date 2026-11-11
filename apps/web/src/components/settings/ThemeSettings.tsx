@@ -9,7 +9,7 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -83,8 +83,7 @@ function downloadThemeFile(filename: string, contents: string): void {
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  // Revoking synchronously can abort the download in some browsers; give the
-  // browser time to open the stream first.
+  // Delay revocation so browsers can open the download stream.
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
@@ -129,8 +128,6 @@ function ThemeLibraryCard({
     onSelectAndUse: (themeIndex: number, mode: ThemeAppearance) => void;
   };
 }) {
-  // A one-appearance theme can only take its own side of the mix, so the card
-  // tooltip promises exactly what clicking it does.
   const cardModes = theme.previews.map((preview) => preview.mode);
   const [radialModeOpen, setRadialModeOpen] = useState<ThemeAppearance | null>(null);
   const radialModeGroups = (["light", "dark"] as const).map((mode) => {
@@ -146,9 +143,6 @@ function ThemeLibraryCard({
     };
   });
   return (
-    // The card surface stays a plain div (buttons cannot nest inside a button
-    // role); the title button and mode circles carry the accessible actions,
-    // while the card click is a pointer-only convenience.
     <Tooltip>
       <TooltipTrigger
         render={
@@ -197,7 +191,7 @@ function ThemeLibraryCard({
                                 : `Use ${mode} variant, currently ${selected.option.label}`
                             }
                             aria-pressed={isActive}
-                            className="absolute left-1/2 top-2 z-20 flex size-14 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            className="absolute left-1/2 top-2 z-20 flex size-14 items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60"
                             style={{
                               transform: `translateX(calc(-50% + ${rootOffsetX}px))`,
                             }}
@@ -216,7 +210,7 @@ function ThemeLibraryCard({
                             {isActive ? (
                               <span
                                 aria-hidden
-                                className="pointer-events-none absolute inset-0 rounded-full ring-2 ring-ring"
+                                className="pointer-events-none absolute inset-0 rounded-full ring-2 ring-inset ring-ring"
                               />
                             ) : null}
                             {isActive ? (
@@ -256,8 +250,10 @@ function ThemeLibraryCard({
                                     aria-label={`Use ${option.label} for ${mode} mode${optionIsActive ? ", currently active" : ""}`}
                                     aria-pressed={optionIsActive}
                                     className={cn(
-                                      "absolute left-1/2 top-1 z-30 flex size-7 items-center justify-center rounded-full bg-background shadow-sm outline-none transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-ring",
-                                      optionIsActive ? "ring-2 ring-ring" : "ring-1 ring-border/70",
+                                      "absolute left-1/2 top-1 z-30 flex size-7 items-center justify-center rounded-full bg-background shadow-sm outline-none transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                                      optionIsActive
+                                        ? "ring-2 ring-inset ring-ring"
+                                        : "ring-1 ring-border/70",
                                     )}
                                     style={{
                                       opacity: isOpen ? 1 : 0,
@@ -303,7 +299,7 @@ function ThemeLibraryCard({
                   <button
                     aria-label={`Use ${variantNavigation ? `${variantNavigation.collectionLabel}, ${theme.label} variant` : `${theme.label} theme`}${isActive ? ", currently active" : ""}`}
                     aria-pressed={isActive}
-                    className="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+                    className="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -445,9 +441,7 @@ function CustomThemeCollectionCard({
   const safeIndex = Math.min(variantIndex, themes.length - 1);
   const theme = themes[safeIndex];
 
-  useEffect(() => {
-    if (variantIndex !== safeIndex) setVariantIndex(safeIndex);
-  }, [safeIndex, variantIndex]);
+  if (variantIndex !== safeIndex) setVariantIndex(safeIndex);
 
   if (!theme) return null;
   const collectionLabel = theme.collection?.label ?? theme.label;
@@ -531,8 +525,6 @@ export function ThemeLibrary({
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
   } | null>(null);
-  // Keep the target after closing so the dialog text remains populated during
-  // its exit animation. The next trash action replaces it before reopening.
   const [isThemeRemovalOpen, setIsThemeRemovalOpen] = useState(false);
   const [themeIdsToRemove, setThemeIdsToRemove] = useState<ReadonlyArray<string>>([]);
   const themeIdsToRemoveSet = new Set(themeIdsToRemove);
@@ -542,7 +534,7 @@ export function ThemeLibrary({
   const removeDialogCollectionLabel =
     removeDialogTheme?.collection?.label ?? removeDialogTheme?.label;
 
-  const notifyThemeSaveFailure = useCallback(() => {
+  const notifyThemeSaveFailure = () => {
     toastManager.add(
       stackedThreadToast({
         type: "error",
@@ -550,9 +542,9 @@ export function ThemeLibrary({
         description: "Try again.",
       }),
     );
-  }, []);
+  };
 
-  const notifyThemeRemovalFailure = useCallback(() => {
+  const notifyThemeRemovalFailure = () => {
     toastManager.add(
       stackedThreadToast({
         type: "error",
@@ -560,45 +552,37 @@ export function ThemeLibrary({
         description: "Try again.",
       }),
     );
-  }, []);
+  };
 
-  const persistTheme = useCallback(
-    (nextTheme: string) => {
-      const didSave = setTheme(nextTheme);
-      if (!didSave) notifyThemeSaveFailure();
-      return didSave;
-    },
-    [notifyThemeSaveFailure, setTheme],
-  );
+  const persistTheme = (nextTheme: string) => {
+    const didSave = setTheme(nextTheme);
+    if (!didSave) notifyThemeSaveFailure();
+    return didSave;
+  };
 
-  const handleRemoveTheme = useCallback(
-    (customTheme: ThemeDefinition, collectionThemes: ReadonlyArray<ThemeDefinition>) => {
-      setThemeRemovalTarget({ theme: customTheme, collectionThemes });
-      setThemeIdsToRemove(collectionThemes.length > 1 ? [] : [customTheme.id]);
-      setIsThemeRemovalOpen(true);
-    },
-    [],
-  );
+  const handleRemoveTheme = (
+    customTheme: ThemeDefinition,
+    collectionThemes: ReadonlyArray<ThemeDefinition>,
+  ) => {
+    setThemeRemovalTarget({ theme: customTheme, collectionThemes });
+    setThemeIdsToRemove(collectionThemes.length > 1 ? [] : [customTheme.id]);
+    setIsThemeRemovalOpen(true);
+  };
 
-  const handleConfirmRemoveTheme = useCallback(() => {
+  const handleConfirmRemoveTheme = () => {
     if (!themeRemovalTarget) return;
     const removedIds = new Set(themeIdsToRemove);
     if (removedIds.size === 0) return;
     const removesBase = removedIds.has(getThemeDefinition(theme)?.id ?? "");
-    // Captured raw before persistTheme clears the mix: a half naming a
-    // published theme whose set has not streamed in yet is pruned from the
-    // `themeHalves` prop, and rebuilding from that would drop it.
+    // Read raw halves before persistTheme clears them; themeHalves omits published themes not yet streamed
+    // in.
     const storedHalves = readThemeHalvesRaw();
-    // Keep the themes installed if we cannot move the selection off one of
-    // them; the dialog stays open so the user can retry or cancel.
     if (removesBase && !persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) {
       return;
     }
     for (const appearance of ["light", "dark"] as const) {
       const half = storedHalves[appearance];
       if (half === undefined) continue;
-      // Writing a base preference clears the whole mix, so halves that name
-      // a surviving theme are written back; removed halves fall back to base.
       const next = half && removedIds.has(half) ? null : removesBase ? half : undefined;
       if (next !== undefined && !setThemeHalf(appearance, next)) {
         notifyThemeRemovalFailure();
@@ -612,60 +596,31 @@ export function ThemeLibrary({
       return;
     }
     setIsThemeRemovalOpen(false);
-  }, [
-    appearanceMode,
-    notifyThemeRemovalFailure,
-    persistTheme,
-    setThemeHalf,
-    theme,
-    themeIdsToRemove,
-    themeRemovalTarget,
-  ]);
+  };
 
-  // ----- Automatic-mode mixing -------------------------------------------
-  // The pair model: one theme owns light, one owns dark, and the global
-  // appearance mode (light / dark / auto) decides which is showing.
   const baseCardId = getThemeDefinition(theme)?.id ?? null;
   const lightOwner = themeHalves?.light ?? baseCardId;
   const darkOwner = themeHalves?.dark ?? baseCardId;
 
-  const assignHalf = useCallback(
-    (appearance: ThemeAppearance, cardId: string | null) => {
-      const otherAppearance = appearance === "light" ? "dark" : "light";
-      // Picking the default over a themed base cannot be stored as a half:
-      // the base would still own that appearance. Convert the base into an
-      // explicit half on the other side so this side falls back to default.
-      if (cardId === null && baseCardId !== null) {
-        // Read raw, before persistTheme clears the mix: the other half may
-        // name a published theme that has not streamed in yet, and falling
-        // back to the base would silently rewrite it.
-        const otherOwner = readThemeHalvesRaw()[otherAppearance] ?? baseCardId;
-        if (!persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) return;
-        if (!setThemeHalf(otherAppearance, otherOwner)) {
-          // Best-effort rollback: restore the whole-theme selection rather
-          // than leaving the user with no theme at all.
-          setTheme(theme);
-          notifyThemeSaveFailure();
-        }
-        return;
-      }
-      if (!setThemeHalf(appearance, cardId)) {
+  const assignHalf = (appearance: ThemeAppearance, cardId: string | null) => {
+    const otherAppearance = appearance === "light" ? "dark" : "light";
+    // To restore one default appearance, move the themed base to the opposite explicit half.
+    if (cardId === null && baseCardId !== null) {
+      // Read raw before persistTheme clears the mix; unstreamed published halves must not fall back to the
+      // base.
+      const otherOwner = readThemeHalvesRaw()[otherAppearance] ?? baseCardId;
+      if (!persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) return;
+      if (!setThemeHalf(otherAppearance, otherOwner)) {
+        setTheme(theme);
         notifyThemeSaveFailure();
       }
-    },
-    [
-      appearanceMode,
-      baseCardId,
-      notifyThemeSaveFailure,
-      persistTheme,
-      setTheme,
-      setThemeHalf,
-      theme,
-    ],
-  );
+      return;
+    }
+    if (!setThemeHalf(appearance, cardId)) {
+      notifyThemeSaveFailure();
+    }
+  };
 
-  // "Create theme" starts from whatever is on screen for the appearance being
-  // edited, so tuning the theme you already use never means rebuilding it.
   const activeThemeForAppearance =
     getThemeDefinition((initialAppearance === "light" ? lightOwner : darkOwner) ?? "") ?? null;
 
@@ -684,15 +639,11 @@ export function ThemeLibrary({
     if (!setAppearanceMode(mode)) notifyThemeSaveFailure();
   };
 
-  // ----- Wireframe tiles on top, two-ball cards below --------------------
   const handlePairPick = (cardId: string | null) => (mode: ThemeMode) => {
     if (mode === "system") return;
     assignHalf(mode, cardId);
   };
 
-  // Rings always show the effective owner of each appearance: an unpicked
-  // half belongs to the default card (a null owner), so a fresh install
-  // shows T3 Code selected instead of nothing.
   const pickedModesFor = (cardId: string | null): ThemeMode[] => {
     const rings: ThemeMode[] = [];
     if (lightOwner === cardId) rings.push("light");
@@ -726,13 +677,13 @@ export function ThemeLibrary({
             aria-label={mode === "system" ? "Follow the system appearance" : `Use ${mode} mode`}
             aria-pressed={isActive}
             className={cn(
-              "flex cursor-pointer flex-col items-stretch gap-1.5 rounded-xl border p-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+              // The accent ring marks the picked tile; focus is a neutral ring set inside it with a gap.
+              "flex cursor-pointer flex-col items-stretch gap-1.5 rounded-xl border p-2 outline-none transition-colors focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-7 focus-visible:outline-foreground/60",
               isActive
-                ? "border-transparent bg-accent/30"
+                ? "border-transparent bg-accent/30 ring-2 ring-inset ring-ring"
                 : "border-border/70 bg-card/60 hover:bg-accent/10",
             )}
             key={mode}
-            style={isActive ? { boxShadow: "inset 0 0 0 1px var(--ring)" } : undefined}
             onClick={() => setMode(mode)}
             type="button"
           >
@@ -766,10 +717,6 @@ export function ThemeLibrary({
   ];
 
   const renderPairGrid = () => (
-    // One shared provider so every tooltip in the grid hands off instantly to
-    // the next hovered trigger instead of stacking on top of it. The card
-    // tooltip briefly showing while crossing between a card's two circles is
-    // accepted — scoping the group tighter makes the handoffs feel sluggish.
     <TooltipProvider>
       <div
         className="grid w-full gap-2"
@@ -816,14 +763,10 @@ export function ThemeLibrary({
         })}
         {environmentThemes
           .filter(
-            // A saved theme with the same id wins resolution, so its card is
-            // the one that must show; rendering both would also collide keys.
+            // Saved themes win id resolution; show only their card to avoid duplicate keys.
             (environmentTheme) => !customThemes.some((theme) => theme.id === environmentTheme.id),
           )
           .map((environmentTheme) => (
-            // No edit or remove: the environment republishes these palettes on
-            // every change, so anything saved here would be overwritten.
-            // Duplicating is the way to keep a copy.
             <ThemeLibraryCard
               activeModes={pickedModesFor(environmentTheme.id)}
               isActive={false}
@@ -884,12 +827,12 @@ export function ThemeLibrary({
 
   return (
     <div className="space-y-3">
-      <h3 className="px-3 text-sm font-normal text-foreground/70 sm:px-4">
+      <h3 className="flex min-h-7 items-center px-3 text-base font-semibold text-foreground sm:px-4">
         {searchableSetting("color-scheme").title}
       </h3>
       {renderModeTiles()}
-      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-2 sm:px-4">
-        <h3 className="text-sm font-normal text-foreground/70">
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-5 sm:px-4">
+        <h3 className="text-base font-semibold text-foreground">
           {searchableSetting("theme").title}
         </h3>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -917,8 +860,6 @@ export function ThemeLibrary({
       {renderPairGrid()}
       <ThemeImportDialog
         onImportedMany={(importedThemes, { updated }) => {
-          // Re-apply after collection updates. The update may remove the
-          // selected variant, in which case the theme hook falls back safely.
           if (updated) refreshTheme();
           const verb = updated ? "updated" : "added";
           toastManager.add(
@@ -933,8 +874,6 @@ export function ThemeLibrary({
           );
         }}
         onImported={(importedTheme) => {
-          // Same rule as clicking the card: a one-appearance theme takes its
-          // side of the mix instead of becoming the base for both.
           const modes = getThemeModes(importedTheme);
           if (modes.length === 1) {
             assignHalf(modes[0]!, importedTheme.id);
@@ -989,7 +928,7 @@ export function ThemeLibrary({
                     <span className="absolute right-2 top-2 inline-grid size-5 grid-cols-1 sm:size-4">
                       <input
                         checked={checked}
-                        className="col-start-1 row-start-1 size-full appearance-none rounded-sm border border-input bg-background outline-none checked:border-primary checked:bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring dark:not-checked:bg-input/32 forced-colors:appearance-auto"
+                        className="col-start-1 row-start-1 size-full appearance-none rounded-sm border border-input bg-background outline-none checked:border-primary checked:bg-primary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring checked:focus-visible:inset-ring-3 checked:focus-visible:inset-ring-background dark:not-checked:bg-input/32 forced-colors:appearance-auto"
                         id={checkboxId}
                         name="themes-to-remove"
                         type="checkbox"

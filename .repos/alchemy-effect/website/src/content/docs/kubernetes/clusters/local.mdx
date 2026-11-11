@@ -1,0 +1,238 @@
+---
+title: Local clusters
+description: Run a Kubernetes cluster on your machine with Kubernetes.LocalCluster. It is a kind cluster in Docker with an image registry wired into its nodes, so Effect programs and Dockerfiles deploy the same way they do on a hosted cluster.
+---
+
+[`Kubernetes.LocalCluster`](/providers/kubernetes/localcluster) runs
+a Kubernetes cluster on your machine. Use it to try Alchemy's
+Kubernetes resources, develop against a real cluster without paying
+for one, or run tests.
+
+```typescript
+const cluster = yield* Kubernetes.LocalCluster("Cluster", {
+  name: "alchemy",
+});
+
+const web = yield* Kubernetes.Deployment("Web", {
+  cluster,
+  image: "ghcr.io/stefanprodan/podinfo:6.15.0",
+  port: 9898,
+  serviceType: "ClusterIP",
+});
+```
+
+Unlike [`Kubernetes.KubeConfig`](/kubernetes/clusters/connecting),
+which describes a cluster that already exists, `LocalCluster` is a
+resource. Deploying creates the cluster, and destroying deletes it.
+
+## What it creates
+
+A `LocalCluster` is two Docker containers:
+
+- a single-node [kind](https://kind.sigs.k8s.io) cluster named
+  `name`, and
+- a `registry:3` image registry named `<name>-registry`,
+  published on `localhost:<registryPort>`.
+
+Alchemy connects the registry to the cluster's Docker network and
+configures the node to pull `localhost:<registryPort>/…` images from
+it, following kind's
+[local registry](https://kind.sigs.k8s.io/docs/user/local-registry/)
+setup. Creating the cluster takes about 30 seconds.
+
+## Requirements
+
+- [Docker](https://docs.docker.com/get-started/get-docker/) must be
+  running.
+- [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
+  must be installed. On macOS, run `brew install kind`. Set `KIND_BIN`
+  to use a binary that isn't on `PATH`.
+
+## Pass it as the cluster
+
+The resource's `connection` attribute carries everything a workload
+needs, so pass the whole resource as `cluster`:
+
+- **Authentication.** It uses the kubeconfig context `kind-<name>`.
+- **Registry.** It points at `localhost:<registryPort>`, so `main`
+  programs and `context` Dockerfiles are built and pushed there.
+- **Architecture.** It matches your Docker host's CPU architecture,
+  so images are built for the node without setting `architecture`.
+
+Effect programs therefore run without extra setup:
+
+```typescript
+const hello = yield* Kubernetes.Job(
+  "Hello",
+  { cluster, main: import.meta.url },
+  Effect.gen(function* () {
+    return {
+      run: Effect.log("hello from a Job"),
+    };
+  }),
+);
+```
+
+## Use kubectl
+
+kind adds the context `kind-<name>` to your kubeconfig, so `kubectl`
+works against the cluster directly:
+
+```sh
+kubectl --context kind-alchemy get pods --all-namespaces
+```
+
+Set `kubeconfig` to write the context to a different file instead
+of `$KUBECONFIG` or `~/.kube/config`:
+
+```typescript
+const cluster = yield* Kubernetes.LocalCluster("Cluster", {
+  name: "alchemy",
+  kubeconfig: "./.alchemy/kubeconfig",
+});
+```
+
+## Reach services
+
+A kind cluster has no cloud load balancer. Use
+`serviceType: "ClusterIP"` or `"NodePort"` for Deployments, and
+reach them with `kubectl port-forward`:
+
+```sh
+kubectl --context kind-alchemy port-forward service/web 9898:9898
+```
+
+A `LoadBalancer` Service would wait about three minutes for an
+address that never arrives.
+
+## Expose services on localhost
+
+To reach a service without `port-forward`, forward a host port to the
+node. This maps `localhost:8080` to port 30080 on the node:
+
+```typescript
+const cluster = yield* Kubernetes.LocalCluster("Cluster", {
+  name: "alchemy",
+  nodes: [
+    {
+      role: "control-plane",
+      extraPortMappings: [{ containerPort: 30080, hostPort: 8080 }],
+    },
+  ],
+});
+```
+
+Then give the service a `NodePort` Service on that port. A Deployment
+labels its pods `app.kubernetes.io/name: <name>`, so a
+[Manifest](/kubernetes/objects/manifests) can select them:
+
+```typescript
+const web = yield* Kubernetes.Deployment("Web", {
+  cluster,
+  name: "web",
+  image: "ghcr.io/stefanprodan/podinfo:6.15.0",
+  port: 9898,
+  serviceType: "ClusterIP",
+});
+
+yield* Kubernetes.Manifest("WebNodePort", {
+  cluster,
+  manifest: {
+    apiVersion: "v1",
+    kind: "Service",
+    metadata: { name: "web-nodeport", namespace: web.namespace },
+    spec: {
+      type: "NodePort",
+      selector: { "app.kubernetes.io/name": web.deploymentName },
+      ports: [{ port: 9898, targetPort: 9898, nodePort: 30080 }],
+    },
+  },
+});
+```
+
+`curl localhost:8080` now reaches podinfo. The same approach puts an
+ingress controller or Gateway implementation on ports 80 and 443:
+map those ports on the node, then install the controller with a
+[Helm chart](/kubernetes/objects/helm-charts), configured for kind.
+
+## Configure the cluster
+
+`LocalCluster` accepts the fields of a
+[kind cluster configuration](https://kind.sigs.k8s.io/docs/user/configuration/)
+as props: `nodes` with their `extraPortMappings`, `extraMounts`, and
+labels, `networking`, `featureGates`, `runtimeConfig`, and the kubeadm
+and containerd patches. Alchemy adds the containerd setting its
+registry needs.
+
+Worker nodes pull from the registry too:
+
+```typescript
+const cluster = yield* Kubernetes.LocalCluster("Cluster", {
+  name: "alchemy",
+  nodes: [{ role: "control-plane" }, { role: "worker" }, { role: "worker" }],
+});
+```
+
+kind can't change a running cluster, so changing any of these fields
+replaces the cluster.
+
+## Choose a Kubernetes version
+
+`nodeImage` selects the kind node image, and with it the Kubernetes
+version:
+
+```typescript
+const cluster = yield* Kubernetes.LocalCluster("Cluster", {
+  name: "alchemy",
+  nodeImage: "kindest/node:v1.33.1",
+});
+```
+
+Without it, kind uses its default node image. Changing `nodeImage`
+replaces the cluster.
+
+## Run several clusters
+
+Each cluster needs its own registry port:
+
+```typescript
+const blue = yield* Kubernetes.LocalCluster("Blue", { name: "blue" });
+const green = yield* Kubernetes.LocalCluster("Green", {
+  name: "green",
+  registryPort: 5002,
+});
+```
+
+`registryPort` defaults to `5001`. Changing it recreates the registry
+container on the new port, which drops the images pushed to it.
+Workloads on the cluster are updated in the same deploy and push
+their images to the new port.
+
+## Updates and replacement
+
+- Changing `name`, `nodeImage`, `kubeconfig`, or any kind field
+  (`nodes`, `networking`, and so on) replaces the cluster.
+  Alchemy deletes the cluster and creates a new one. Everything
+  deployed to it is recreated on the new cluster.
+- Changing `registryPort` moves the registry to the new port.
+
+If you delete the cluster outside Alchemy, for example with
+`kind delete cluster`, [`alchemy drift`](/cli/drift) reports it as
+missing. Run
+`alchemy deploy --force` to recreate it and apply everything on it
+again.
+
+## Take it to a real cluster
+
+`LocalCluster` is for local work. The same workloads run on a hosted
+cluster by changing what `cluster` points at. See
+[Deploy to your own cluster](/kubernetes/tutorial/part-5).
+
+## Where next
+
+- **[Tutorial](/kubernetes/tutorial/part-1).** Build up a stack on a
+  local cluster step by step.
+- **[Container registries](/kubernetes/clusters/registries).** Learn
+  about the `registry` setting `LocalCluster` fills in for you.
+- **[`LocalCluster` reference](/providers/kubernetes/localcluster).**
+  Look up every prop and attribute.

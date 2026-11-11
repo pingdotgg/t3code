@@ -22,7 +22,7 @@ Create `src/Docs.ts` with a bucket definition.
 
 ```typescript
 // src/Docs.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Docs = Cloudflare.R2.Bucket("Docs", {});
 ```
@@ -37,7 +37,7 @@ field selects R2 as the data source.
 
 ```typescript
 // src/Search.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { Docs } from "./Docs.ts";
 
 export const Search = Cloudflare.AI.Search("Search", {
@@ -194,7 +194,7 @@ Call it during the Worker's Construction phase.
 
 ```diff lang="typescript"
 // src/Api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 +import { Search } from "./Search.ts";
 
@@ -226,8 +226,8 @@ retrieve the relevant chunks, then answer with the configured generation
 model. It returns an Effect, so call it like any other.
 
 ```diff lang="typescript"
-+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
++import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
    return {
      fetch: Effect.gen(function* () {

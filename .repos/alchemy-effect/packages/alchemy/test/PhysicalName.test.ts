@@ -1,10 +1,11 @@
-import { InstanceId } from "@/InstanceId.ts";
-import { createPhysicalName } from "@/PhysicalName.ts";
-import { Stack, type StackSpec } from "@/Stack.ts";
-import { Stage } from "@/Stage.ts";
-import { describe, expect, it } from "alchemy-test";
+import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { createPhysicalName } from "@/PhysicalName.ts";
+import { ResourceContext } from "@/ResourceContext.ts";
+import { Stack, type StackSpec } from "@/Stack.ts";
+import { Stage } from "@/Stage.ts";
+import { resourceContext } from "./Util/ResourceContext.ts";
 
 type StackShape = Omit<StackSpec, "output">;
 
@@ -16,22 +17,19 @@ const stack: StackShape = {
   actions: {},
 };
 
-const environment = (
-  spec: StackShape = stack,
-  instanceId = "0123456789abcdef0123456789abcdef",
-) =>
+const environment = (spec: StackShape = stack, instanceId = "0123456789abcdef0123456789abcdef") =>
   Layer.mergeAll(
     Layer.succeed(Stack, spec),
     Layer.succeed(Stage, spec.stage),
-    Layer.succeed(InstanceId, instanceId),
+    Layer.succeed(ResourceContext, resourceContext(instanceId)),
   );
 
 const provide = <A, E>(
-  effect: Effect.Effect<A, E, Stack | Stage | InstanceId>,
+  effect: Effect.Effect<A, E, Stack | Stage | ResourceContext>,
   instanceId?: string,
 ) => effect.pipe(Effect.provide(environment(stack, instanceId)));
 
-describe("createPhysicalName", () => {
+describe("createPhysicalName", { tags: ["unit", "local"] }, () => {
   it.effect("keeps short names untruncated", () =>
     provide(
       Effect.gen(function* () {
@@ -62,7 +60,7 @@ describe("createPhysicalName", () => {
           // Pathological logical id: long enough that `${stack}-${id}-…` alone
           // exceeds IAM's 64-char role-name limit, so the distinguishing
           // `-task-role` / `-execution-role` tail falls entirely inside the
-          // truncated region. Both names share the same InstanceId (same
+          // truncated region. Both names share the same instance ID (same
           // resource), which is exactly the collision scenario.
           const longId = "my-very-long-container-platform-service-logical-id";
           const taskRole = yield* createPhysicalName({
@@ -80,28 +78,26 @@ describe("createPhysicalName", () => {
       ),
   );
 
-  it.effect(
-    "distinguishes every colliding suffix pair used by role helpers",
-    () =>
-      provide(
-        Effect.gen(function* () {
-          const longId = "z".repeat(100);
-          const suffixes = [
-            "task-role",
-            "execution-role",
-            "job-role",
-            "instance-role",
-            "access-role",
-          ];
-          const names = yield* Effect.forEach(suffixes, (suffix) =>
-            createPhysicalName({ id: `${longId}-${suffix}`, maxLength: 64 }),
-          );
-          expect(new Set(names).size).toBe(suffixes.length);
-          for (const name of names) {
-            expect(name.length).toBe(64);
-          }
-        }),
-      ),
+  it.effect("distinguishes every colliding suffix pair used by role helpers", () =>
+    provide(
+      Effect.gen(function* () {
+        const longId = "z".repeat(100);
+        const suffixes = [
+          "task-role",
+          "execution-role",
+          "job-role",
+          "instance-role",
+          "access-role",
+        ];
+        const names = yield* Effect.forEach(suffixes, (suffix) =>
+          createPhysicalName({ id: `${longId}-${suffix}`, maxLength: 64 }),
+        );
+        expect(new Set(names).size).toBe(suffixes.length);
+        for (const name of names) {
+          expect(name.length).toBe(64);
+        }
+      }),
+    ),
   );
 
   it.effect("different instance ids still produce different names", () =>
@@ -119,65 +115,59 @@ describe("createPhysicalName", () => {
     }),
   );
 
-  it.effect(
-    "keeps the full hash under tight limits (DAX-style maxLength 20)",
-    () =>
-      provide(
-        Effect.gen(function* () {
-          // maxLength 20 with the default 16-char instance suffix leaves no
-          // room for prefix + hash + suffix; the hash must survive in full
-          // (the suffix shrinks) or same-resource names collide again.
-          const longId = "c".repeat(60);
-          const names = yield* Effect.forEach(["alpha", "beta"], (suffix) =>
-            createPhysicalName({
-              id: `${longId}-${suffix}`,
-              maxLength: 20,
-              lowercase: true,
-            }),
-          );
-          expect(names[0]!.length).toBe(20);
-          expect(names[1]!.length).toBe(20);
-          expect(names[0]).not.toBe(names[1]);
-        }),
-      ),
-  );
-
-  it.effect(
-    "keeps uniqueness with a shortened suffixLength (Canary-style 21/8)",
-    () =>
-      provide(
-        Effect.gen(function* () {
-          const longId = "d".repeat(60);
-          const names = yield* Effect.forEach(["alpha", "beta"], (suffix) =>
-            createPhysicalName({
-              id: `${longId}-${suffix}`,
-              maxLength: 21,
-              suffixLength: 8,
-              lowercase: true,
-            }),
-          );
-          expect(names[0]!.length).toBe(21);
-          expect(names[0]).not.toBe(names[1]);
-        }),
-      ),
-  );
-
-  it.effect(
-    "prepends a safe prefix when the name collides with a forbidden prefix",
-    () =>
+  it.effect("keeps the full hash under tight limits (DAX-style maxLength 20)", () =>
+    provide(
       Effect.gen(function* () {
-        // A stack named `AWS-…` (e.g. file-namespaced test stacks) collides
-        // with service-reserved prefixes like S3 Tables' / ResourceGroups' `aws`.
-        const awsStack: StackShape = { ...stack, name: "AWS-S3Tables-Test" };
-        const name = yield* createPhysicalName({
-          id: "bucket",
-          maxLength: 63,
-          lowercase: true,
-          forbiddenPrefixes: ["xn--", "sthree-", "amzn-s3-demo-", "aws"],
-        }).pipe(Effect.provide(environment(awsStack)));
-        expect(name.startsWith("x-aws-s3tables-test-")).toBe(true);
-        expect(name.length).toBeLessThanOrEqual(63);
+        // maxLength 20 with the default 16-char instance suffix leaves no
+        // room for prefix + hash + suffix; the hash must survive in full
+        // (the suffix shrinks) or same-resource names collide again.
+        const longId = "c".repeat(60);
+        const names = yield* Effect.forEach(["alpha", "beta"], (suffix) =>
+          createPhysicalName({
+            id: `${longId}-${suffix}`,
+            maxLength: 20,
+            lowercase: true,
+          }),
+        );
+        expect(names[0]!.length).toBe(20);
+        expect(names[1]!.length).toBe(20);
+        expect(names[0]).not.toBe(names[1]);
       }),
+    ),
+  );
+
+  it.effect("keeps uniqueness with a shortened suffixLength (Canary-style 21/8)", () =>
+    provide(
+      Effect.gen(function* () {
+        const longId = "d".repeat(60);
+        const names = yield* Effect.forEach(["alpha", "beta"], (suffix) =>
+          createPhysicalName({
+            id: `${longId}-${suffix}`,
+            maxLength: 21,
+            suffixLength: 8,
+            lowercase: true,
+          }),
+        );
+        expect(names[0]!.length).toBe(21);
+        expect(names[0]).not.toBe(names[1]);
+      }),
+    ),
+  );
+
+  it.effect("prepends a safe prefix when the name collides with a forbidden prefix", () =>
+    Effect.gen(function* () {
+      // A stack named `AWS-…` (e.g. file-namespaced test stacks) collides
+      // with service-reserved prefixes like S3 Tables' / ResourceGroups' `aws`.
+      const awsStack: StackShape = { ...stack, name: "AWS-S3Tables-Test" };
+      const name = yield* createPhysicalName({
+        id: "bucket",
+        maxLength: 63,
+        lowercase: true,
+        forbiddenPrefixes: ["xn--", "sthree-", "amzn-s3-demo-", "aws"],
+      }).pipe(Effect.provide(environment(awsStack)));
+      expect(name.startsWith("x-aws-s3tables-test-")).toBe(true);
+      expect(name.length).toBeLessThanOrEqual(63);
+    }),
   );
 
   it.effect("non-colliding names are unaffected by forbiddenPrefixes", () =>

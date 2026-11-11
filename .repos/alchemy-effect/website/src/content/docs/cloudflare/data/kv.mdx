@@ -18,7 +18,7 @@ strongly-consistent state coordinated per object, use
 
 ```typescript
 // src/cache.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Cache = Cloudflare.KV.Namespace("Cache");
 ```
@@ -28,7 +28,7 @@ Yield it inside your Stack:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { Cache } from "./src/cache.ts";
 
@@ -63,10 +63,10 @@ client in the runtime handlers. This Worker stores a value on
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Cache } from "./cache.ts";
 
 export default Cloudflare.Worker(

@@ -2,7 +2,15 @@
   "name": "fly-website-sveltekit",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/fly-website-sveltekit"
+  },
   "type": "module",
+  "imports": {
+    "#lib/*": "./src/lib/*"
+  },
   "scripts": {
     "dev": "alchemy dev",
     "deploy": "alchemy deploy",
@@ -10,11 +18,13 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/fly": "workspace:*",
     "alchemy": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/fly-io": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@sveltejs/kit": "catalog:",
@@ -23,12 +33,7 @@
     "@types/node": "catalog:node24",
     "svelte": "catalog:",
     "tailwindcss": "catalog:",
-    "typescript": "catalog:",
+    "typescript": "catalog:typescript-classic",
     "vite": "catalog:"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/fly-website-sveltekit"
   }
 }

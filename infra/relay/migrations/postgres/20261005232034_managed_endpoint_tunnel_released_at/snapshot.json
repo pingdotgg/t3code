@@ -1,0 +1,42 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "7b10c420-1566-4dfc-8e9c-c73efa561d3b",
+  "prevIds": ["13972659-45db-4ce9-9818-523b450bceca"],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "relay_managed_endpoint_allocations",
+        "tunnel_released_at"
+      ],
+      "writes": [
+        "s|col|public.relay_managed_endpoint_allocations.tunnel_released_at",
+        "n|col|public.relay_managed_endpoint_allocations.tunnel_released_at",
+        "e|col|public.relay_managed_endpoint_allocations.tunnel_released_at"
+      ],
+      "reads": ["n|tbl|public.relay_managed_endpoint_allocations", "n|sch|public"]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_managed_endpoint_allocations",
+        "name": "tunnel_released_at",
+        "type": "varchar(64)",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

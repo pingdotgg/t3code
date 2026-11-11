@@ -1,30 +1,50 @@
 import { Effect } from "effect";
 import { Server } from "foldkit/experimental";
+import { readCountCookie } from "./cookie";
+import { Flags, init, view } from "./main";
 
-import { Flags, init, view } from "./main.ts";
+export const renderDocument = Server.renderDocument;
 
-// THE SERVER ENTRY — one Web Request in, one delivery result out. The Worker
-// places the result into the HTML shell; nothing here knows who called it.
-// The same entry is what a build-time prerender would call.
+const flagsForRequest = (cookieHeader: string): Flags => ({
+  initialCount: readCountCookie(cookieHeader),
+  renderedAt: new Date().toISOString(),
+  renderedOn: "Server",
+});
 
-// The count comes off the query string purely so the render has something
-// request-shaped to do: `/?count=7` serves a 7 before any JavaScript runs.
-const flagsForRequest = (request: Request): Flags => {
-  const raw = new URL(request.url).searchParams.get("count");
-  const parsed = raw === null ? Number.NaN : Number(raw);
-  return { initialCount: Number.isFinite(parsed) ? parsed : 0 };
-};
+// NOTE: the Flags built from this request are serialized into the rendered
+// HTML and travel to the browser with it. The hydrating client reads them
+// back and calls init with the exact values this render used; the client
+// computes no Flags of its own.
+// NOTE: a preflight reaches this entry in development and in production alike,
+// so an application's CORS policy goes here rather than in the host: it can
+// allow one origin for one route and refuse it for another. This answer allows
+// nothing and only reports which methods the host forwards.
+const preflightResponse = (): Response =>
+  new Response(null, {
+    status: 204,
+    headers: { allow: Server.HOST_METHOD_ANSWERS.allow },
+  });
 
 export const renderPage = (request: Request): Promise<Server.EntryResult> =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const application = yield* Server.renderToString(
+      if (request.method === "OPTIONS") {
+        return Server.Responded(preflightResponse());
+      }
+
+      const renderedApplication = yield* Server.renderToString(
         { Flags, init, view },
         {
-          flags: flagsForRequest(request),
-          buildId: import.meta.env.FOLDKIT_BUILD_ID,
+          flags: flagsForRequest(request.headers.get("cookie") ?? ""),
         },
       );
-      return Server.Rendered(application);
+
+      return Server.Rendered(renderedApplication, {
+        headers: {
+          "cache-control": "private, no-store",
+          vary: "cookie",
+          "x-content-type-options": "nosniff",
+        },
+      });
     }),
   );

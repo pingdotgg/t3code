@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+import { createRequire } from "node:module";
 import type {
   BindingHook,
   BindingServices,
@@ -6,8 +8,8 @@ import type {
   DurableObjectNamespace as RuntimeDurableObject,
   QueueConsumer as RuntimeQueueConsumer,
   RuntimeServices,
+  RuntimeWorker,
 } from "@alchemy.run/cloudflare-runtime/core";
-import * as FrameworkCore from "../core/index.ts";
 import type * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -17,9 +19,8 @@ import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import * as NodeCrypto from "node:crypto";
-import { createRequire } from "node:module";
-import { runBuildChild } from "../core/BuildChild.ts";
+import { resolveBuildEnv, runBuildChild } from "../core/BuildChild.ts";
+import * as FrameworkCore from "../core/index.ts";
 import { makeWakuCloudflareTarget } from "./cloudflare.ts";
 import { layer as wakuFrameworkLayer } from "./Waku.ts";
 
@@ -27,7 +28,7 @@ import { layer as wakuFrameworkLayer } from "./Waku.ts";
 // Structural mirror of alchemy's Worker source-provider contract.
 //
 // This module is loaded dynamically by alchemy's `loadSource` (see
-// `packages/alchemy/src/Cloudflare/Workers/Source.ts` — `WorkerSourceModule`,
+// `packages/cloudflare/src/Workers/Source.ts` — `WorkerSourceModule`,
 // `SourceProvider`, `SourceContext`, `DevContext`, `SourceBuildOutput`). The
 // contract is deliberately implemented STRUCTURALLY — no alchemy import — so
 // version skew degrades to a load-time `SourceProviderError` instead of a
@@ -93,14 +94,20 @@ export interface SourceContext {
 /** Mirror of alchemy `Cloudflare/Workers/Source.DevContext`. */
 export interface DevContext extends SourceContext {
   readonly worker: {
-    readonly name: string;
     readonly bindings: Array<BindingHook<BindingServices>>;
-    readonly durableObjectNamespaces: Array<
-      RuntimeDurableObject & { uniqueKey: string }
-    >;
+    readonly durableObjectNamespaces: Array<RuntimeDurableObject & { uniqueKey: string }>;
     readonly hyperdrives: Record<string, Required<HyperdriveOrigin>>;
     readonly queueConsumers: Effect.Effect<Array<RuntimeQueueConsumer>>;
     readonly assets: RuntimeAssets | undefined;
+    /**
+     * The Worker's other runtime settings (crons, Workflows, tail consumers,
+     * Cache API, `request.cf`, zone, Access), spread whole into the runtime
+     * Worker.
+     */
+    readonly options: Pick<
+      RuntimeWorker,
+      "workflows" | "crons" | "tails" | "streamingTails" | "cache" | "cf" | "zone" | "access"
+    >;
   };
   readonly runtimeContext: Context.Context<RuntimeServices>;
 }
@@ -131,6 +138,7 @@ export type SourceRequirements = FileSystem.FileSystem | Path.Path;
 /** Mirror of alchemy `Cloudflare/Workers/Source.SourceProvider` (narrowed E/R). */
 export interface SourceProvider {
   readonly ownsAssets: boolean;
+  readonly devAssetsBinding?: boolean;
   readonly build: (
     ctx: SourceContext,
   ) => Effect.Effect<SourceBuildOutput, WakuSourceError, SourceRequirements>;
@@ -140,11 +148,7 @@ export interface SourceProvider {
   ) => Effect.Effect<Partial<SourceHash>, WakuSourceError, SourceRequirements>;
   readonly dev: (
     ctx: DevContext,
-  ) => Effect.Effect<
-    ServerDevHandle,
-    WakuSourceError,
-    SourceRequirements | Scope.Scope
-  >;
+  ) => Effect.Effect<ServerDevHandle, WakuSourceError, SourceRequirements | Scope.Scope>;
 }
 
 /**
@@ -182,9 +186,7 @@ export interface WakuSourceOptions {
 const wakuConfigFor = (options: WakuSourceOptions) => ({
   ...(options.srcDir !== undefined ? { srcDir: options.srcDir } : undefined),
   ...(options.distDir !== undefined ? { distDir: options.distDir } : undefined),
-  ...(options.basePath !== undefined
-    ? { basePath: options.basePath }
-    : undefined),
+  ...(options.basePath !== undefined ? { basePath: options.basePath } : undefined),
 });
 
 /**
@@ -220,11 +222,7 @@ const stableValue = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return value.map(stableValue);
   }
-  if (
-    value !== null &&
-    typeof value === "object" &&
-    value.constructor === Object
-  ) {
+  if (value !== null && typeof value === "object" && value.constructor === Object) {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
         .sort(([a], [b]) => a.localeCompare(b))
@@ -234,8 +232,7 @@ const stableValue = (value: unknown): unknown => {
   return value;
 };
 
-const sha256Object = (value: unknown): string =>
-  sha256(JSON.stringify(stableValue(value)));
+const sha256Object = (value: unknown): string => sha256(JSON.stringify(stableValue(value)));
 
 /** The integration's own version — included in the input hash so upgrading the
  * adapter busts the build memo even when project sources are unchanged. */
@@ -308,9 +305,7 @@ const compileIgnoreRule = (raw: string): RegExp | undefined => {
 };
 
 const compileIgnoreRules = (rules: ReadonlyArray<string>): Array<RegExp> =>
-  rules
-    .map(compileIgnoreRule)
-    .filter((regex): regex is RegExp => regex !== undefined);
+  rules.map(compileIgnoreRule).filter((regex): regex is RegExp => regex !== undefined);
 
 const compileIncludeGlobs = (globs: ReadonlyArray<string>): Array<RegExp> =>
   globs.map((glob) => new RegExp(`^${globBodyToRegExpSource(glob)}$`));
@@ -331,10 +326,7 @@ const LOCKFILE_NAMES = [
   "yarn.lock",
 ];
 
-const findUp = Effect.fn(function* (
-  startDir: string,
-  filenames: ReadonlyArray<string>,
-) {
+const findUp = Effect.fn(function* (startDir: string, filenames: ReadonlyArray<string>) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   let dir = startDir;
@@ -395,10 +387,7 @@ const resolveMemo = Effect.fn(function* (
       ? compileIgnoreRules(memo.exclude)
       : compileIgnoreRules(yield* readGitIgnoreRules(rootDir));
   return {
-    include:
-      memo?.include !== undefined
-        ? compileIncludeGlobs(memo.include)
-        : undefined,
+    include: memo?.include !== undefined ? compileIncludeGlobs(memo.include) : undefined,
     exclude: [
       // Always excluded regardless of gitignore: dependency trees, VCS
       // metadata, and the build output waku itself writes (hashing `distDir`
@@ -412,16 +401,13 @@ const resolveMemo = Effect.fn(function* (
 
 /** Deterministic, machine-independent content hash of one directory tree:
  * sorted `[relativePosixPath, sha256(content)]` pairs (never absolute paths). */
-const hashDirectory = Effect.fn(function* (
-  rootDir: string,
-  memo: ResolvedMemo,
-) {
+const hashDirectory = Effect.fn(function* (rootDir: string, memo: ResolvedMemo) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
   const files: Array<string> = [];
-  const walk: (dir: string, rel: string) => Effect.Effect<void, PlatformError> =
-    Effect.fn(function* (dir: string, rel: string) {
+  const walk: (dir: string, rel: string) => Effect.Effect<void, PlatformError> = Effect.fn(
+    function* (dir: string, rel: string) {
       const entries = (yield* fs.readDirectory(dir)).sort();
       for (const entry of entries) {
         const relPath = rel === "" ? entry : `${rel}/${entry}`;
@@ -433,16 +419,14 @@ const hashDirectory = Effect.fn(function* (
         if (stat.type === "Directory") {
           yield* walk(absPath, relPath);
         } else if (stat.type === "File") {
-          if (
-            memo.include !== undefined &&
-            !matchesAny(memo.include, relPath)
-          ) {
+          if (memo.include !== undefined && !matchesAny(memo.include, relPath)) {
             continue;
           }
           files.push(relPath);
         }
       }
-    });
+    },
+  );
   yield* walk(rootDir, "");
 
   if (memo.lockfile) {
@@ -481,11 +465,7 @@ const hashWakuInput = Effect.fn(function* (params: {
 }) {
   const path = yield* Path.Path;
   const memo = yield* resolveMemo(params.rootDir, params.distDir, params.memo);
-  const workspaceMemo = yield* resolveMemo(
-    params.rootDir,
-    params.distDir,
-    undefined,
-  );
+  const workspaceMemo = yield* resolveMemo(params.rootDir, params.distDir, undefined);
   const [root, ...workspaceHashes] = yield* Effect.all(
     [
       hashDirectory(params.rootDir, memo),
@@ -516,9 +496,7 @@ const hashWakuInput = Effect.fn(function* (params: {
     },
   });
   const workspaces = Array.from(params.workspaces).map((workspace) =>
-    path
-      .relative(params.rootDir, path.resolve(params.rootDir, workspace))
-      .replaceAll("\\", "/"),
+    path.relative(params.rootDir, path.resolve(params.rootDir, workspace)).replaceAll("\\", "/"),
   );
   return { hash, workspaces };
 });
@@ -533,9 +511,8 @@ const maybeReadString = Effect.fn(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
   return yield* fs.readFileString(file).pipe(
     Effect.catchIf(
-      (error) =>
-        error._tag === "PlatformError" && error.reason._tag === "NotFound",
-      () => Effect.succeed(undefined),
+      (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
+      () => Effect.undefined,
     ),
   );
 });
@@ -559,10 +536,7 @@ const readClientAssets = Effect.fn(function* (
     maybeReadString(path.join(directory, "_headers")),
     maybeReadString(path.join(directory, "_redirects")),
   ]);
-  const ignores = compileIgnoreRules([
-    ...SPECIAL_ASSET_FILES,
-    ...(ignoreFile?.split("\n") ?? []),
-  ]);
+  const ignores = compileIgnoreRules([...SPECIAL_ASSET_FILES, ...(ignoreFile?.split("\n") ?? [])]);
   const manifest = new Map<string, { hash: string; size: number }>();
   yield* Effect.forEach(
     entries,
@@ -690,17 +664,11 @@ export const buildInChild = (config: WakuBuildChildConfig) =>
 
 /** Routing config from the raw `props.assets` (directory/hash keys are
  * path-level concerns owned by alchemy; only the routing config passes through). */
-const assetsConfigOf = (
-  assets: unknown,
-): Record<string, unknown> | undefined => {
+const assetsConfigOf = (assets: unknown): Record<string, unknown> | undefined => {
   if (assets === undefined || assets === null || typeof assets !== "object") {
     return undefined;
   }
-  const {
-    directory: _directory,
-    hash: _hash,
-    ...config
-  } = assets as Record<string, unknown>;
+  const { directory: _directory, hash: _hash, ...config } = assets as Record<string, unknown>;
   return Object.keys(config).length > 0 ? config : undefined;
 };
 
@@ -711,14 +679,11 @@ export const makeWakuSourceProvider = (
     framework: "waku",
     displayName: "Waku",
     buildModule: import.meta.url,
-    layer: ({ root, target }) =>
-      wakuFrameworkLayer({ root, waku: wakuConfigFor(options), target }),
+    layer: ({ root, target }) => wakuFrameworkLayer({ root, waku: wakuConfigFor(options), target }),
   },
 ): SourceProvider => {
   const rootDirOf = (path: Path.Path): string =>
-    options.rootDir !== undefined
-      ? path.resolve(options.rootDir)
-      : process.cwd();
+    options.rootDir !== undefined ? path.resolve(options.rootDir) : process.cwd();
   const distDir = options.distDir ?? "dist";
   const wakuConfig = wakuConfigFor(options);
 
@@ -726,6 +691,8 @@ export const makeWakuSourceProvider = (
     // Waku's assets are a build product (`dist/public`), not a props-level
     // directory — the provider reads and diffs them itself.
     ownsAssets: true,
+    // Dev runs the Worker in workerd with the Vite plugin's assets service.
+    devAssetsBinding: true,
 
     build: Effect.fn(function* (ctx) {
       const path = yield* Path.Path;
@@ -737,6 +704,7 @@ export const makeWakuSourceProvider = (
         module: integration.buildModule,
         rootDir,
         framework: integration.framework,
+        env: resolveBuildEnv(ctx.env),
         config: {
           rootDir,
           compatibilityDate: ctx.compatibility.date,
@@ -758,25 +726,18 @@ export const makeWakuSourceProvider = (
         ),
       );
 
-      if (
-        output.serverModules === undefined ||
-        output.serverModules.length === 0
-      ) {
-        return yield* Effect.fail(
-          new SourceProviderError({
-            provider: integration.provider,
-            message: `${integration.displayName} build produced no server modules`,
-          }),
-        );
+      if (output.serverModules === undefined || output.serverModules.length === 0) {
+        return yield* new SourceProviderError({
+          provider: integration.provider,
+          message: `${integration.displayName} build produced no server modules`,
+        });
       }
       const [entry, ...rest] = output.serverModules;
-      const files: [BundleFile, ...Array<BundleFile>] = [
-        ...[entry!, ...rest].map((file) => ({
-          path: file.name.replaceAll("\\", "/"),
-          content: file.content,
-          hash: file.hash,
-        })),
-      ] as [BundleFile, ...Array<BundleFile>];
+      const files: [BundleFile, ...Array<BundleFile>] = [entry!, ...rest].map((file) => ({
+        path: file.name.replaceAll("\\", "/"),
+        content: file.content,
+        hash: file.hash,
+      })) as [BundleFile, ...Array<BundleFile>];
       const bundle: BundleOutput = {
         files,
         hash: sha256Object(files.map((file) => [file.path, file.hash])),
@@ -785,11 +746,8 @@ export const makeWakuSourceProvider = (
       const [assets, input] = yield* Effect.all(
         [
           output.clientDirectory !== undefined
-            ? readClientAssets(
-                output.clientDirectory,
-                assetsConfigOf(ctx.assets),
-              )
-            : Effect.succeed(undefined),
+            ? readClientAssets(output.clientDirectory, assetsConfigOf(ctx.assets))
+            : Effect.undefined,
           hashWakuInput({
             rootDir,
             distDir,
@@ -847,7 +805,8 @@ export const makeWakuSourceProvider = (
           // from it exist in dev.
           ...(options.main !== undefined ? { main: options.main } : undefined),
           worker: {
-            name: ctx.worker.name,
+            ...ctx.worker.options,
+            name: ctx.workerName,
             bindings: ctx.worker.bindings,
             durableObjectNamespaces: ctx.worker.durableObjectNamespaces,
             hyperdrives: ctx.worker.hyperdrives,
@@ -891,13 +850,8 @@ export const makeWakuSourceProvider = (
  * JSON-serializable options.
  */
 const sourceModule = {
-  make: (
-    options: unknown,
-  ): Effect.Effect<SourceProvider, SourceProviderError> => {
-    if (
-      options !== undefined &&
-      (typeof options !== "object" || options === null)
-    ) {
+  make: (options: unknown): Effect.Effect<SourceProvider, SourceProviderError> => {
+    if (options !== undefined && (typeof options !== "object" || options === null)) {
       return Effect.fail(
         new SourceProviderError({
           provider: PROVIDER,
@@ -905,9 +859,7 @@ const sourceModule = {
         }),
       );
     }
-    return Effect.succeed(
-      makeWakuSourceProvider((options ?? {}) as WakuSourceOptions),
-    );
+    return Effect.succeed(makeWakuSourceProvider((options ?? {}) as WakuSourceOptions));
   },
 };
 

@@ -22,10 +22,10 @@ delivery:
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as GitHub from "alchemy/GitHub";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as GitHub from "@alchemy.run/github";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default Cloudflare.Worker(
   "Worker",
@@ -67,11 +67,11 @@ the Worker:
    Effect.gen(function* () {
      // ...
 -  }),
-+  }).pipe(Effect.provide(Cloudflare.Workers.GitHubRepositoryEventSourceLive)),
++  }).pipe(Effect.provide(GitHub.RepositoryEventSourceLive)),
  );
 ```
 
-`GitHubRepositoryEventSourceLive` does both halves: at deploy time it
+`GitHub.RepositoryEventSourceLive` does both halves: at deploy time it
 provisions the repository webhook pointing at this Worker, and at
 runtime it registers a `fetch` listener that claims the webhook's
 delivery path and forwards each verified delivery to your handler.
@@ -85,8 +85,8 @@ alongside Cloudflare's:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as GitHub from "alchemy/GitHub";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as GitHub from "@alchemy.run/github";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import Worker from "./src/worker.ts";
@@ -171,7 +171,7 @@ plumbing:
 
 ## Typed payloads
 
-`event` is Octokit's `EmitterWebhookEvent` — a discriminated union of
+`event` is a discriminated union of
 `{ id, name, payload }` keyed on `name`, narrowed to the events you
 selected. A `switch` on `event.name` narrows `payload` exhaustively:
 
@@ -196,55 +196,10 @@ yield* GitHub.consumeRepositoryEvents(
 Selecting `["*"]` (or omitting `events`) widens the union back to
 every GitHub event name.
 
-## Case study: a release-blogging agent
-
-The [`cloudflare-agent` example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-agent)
-uses this event source as the front door of an autonomous pipeline:
-a Worker consumes push events on the alchemy repo, filters for
-release commits on `main`, and hands each one to a Durable Object
-that drives an AI agent to write the release blog post.
-
-The filter is ordinary handler code over the typed `push` payload:
-
-```typescript
-// src/ReleaseService.ts
-yield* GitHub.consumeRepositoryEvents(
-  {
-    owner: "alchemy-run",
-    repository: "alchemy",
-    events: ["push"],
-  },
-  (event) => {
-    const title = event.payload.head_commit?.message.split("\n")[0] ?? "";
-    const isRelease =
-      event.payload.ref === "refs/heads/main" &&
-      title.startsWith("chore(release):");
-
-    return isRelease
-      ? versions.getByName(event.payload.head_commit!.id).generateBlog({
-          input: event.payload,
-        })
-      : Effect.log(`skipping ${event.payload.head_commit?.id}`);
-  },
-);
-```
-
-Worth reading in the example:
-
-- `src/ReleaseService.ts` — the Worker above; each release commit is
-  routed to a Durable Object keyed by commit hash.
-- `src/ReleaseVersion.ts` — the per-release Durable Object that
-  forwards the payload to the agent.
-- `src/ReleaseBlogger.ts` — an `Alchemy.Agent` whose prompt
-  references its tools directly.
-- `src/DevBox.ts` — a Cloudflare Container the agent's file and shell
-  tools execute in.
-
 ## Cloudflare-only today
 
-`Cloudflare.Workers.GitHubRepositoryEventSourceLive` is currently the
-only implementation of the `RepositoryEventSource` contract — there
-is no AWS Lambda event source yet. On other hosts you can still
+`GitHub.RepositoryEventSourceLive` runs on any host that is a
+`WebhookHost`, and today only Cloudflare Workers are. On other hosts you can still
 provision a [`GitHub.Webhook`](/providers/github/webhook) directly
 with any delivery URL, but signature verification and routing are
 yours to implement.

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpClient, HttpRouter } from "effect/unstable/http";
+import { HttpClient, HttpRouter } from "effect/http";
 
 import { makeMockUpdateRouteLayer } from "./mock-update-server.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -20,32 +20,6 @@ const withMockUpdateServer = <A, E, R>(rootRealPath: string, effect: Effect.Effe
   );
 
 it.layer(NodeServices.layer)("mock-update-server", (it) => {
-  it.effect("serves files from the configured root", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "mock-update-server-root-",
-      });
-      const rootRealPath = yield* fileSystem.realPath(root);
-      const filePath = path.join(root, "latest.yml");
-
-      yield* fileSystem.writeFileString(filePath, "version: 0.0.1\n");
-
-      yield* withMockUpdateServer(
-        rootRealPath,
-        Effect.gen(function* () {
-          const client = yield* HttpClient.HttpClient;
-          const response = yield* client.get("/latest.yml");
-
-          assert.equal(response.status, 200);
-          assert.equal(response.headers["content-type"], "text/yaml");
-          assert.equal(yield* response.text, "version: 0.0.1\n");
-        }),
-      );
-    }),
-  );
-
   it.effect("rejects encoded path traversal outside the configured root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

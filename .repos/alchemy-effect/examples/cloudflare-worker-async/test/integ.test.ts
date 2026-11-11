@@ -1,10 +1,10 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 
 // A fresh workers.dev URL transiently 404s/5xxs while the edge converges.
@@ -63,9 +63,7 @@ test(
 
     const send = Effect.gen(function* () {
       const sendResponse = yield* executeWhenReady(
-        HttpClientRequest.post(
-          `${url}/queue/send?text=${encodeURIComponent(text)}`,
-        ),
+        HttpClientRequest.post(`${url}/queue/send?text=${encodeURIComponent(text)}`),
       );
       expect(sendResponse.status).toBe(202);
       const { sent } = (yield* sendResponse.json) as { sent: Message };
@@ -88,9 +86,7 @@ test(
         sent.push(yield* send);
       }
       for (const message of sent) {
-        const resultResponse = yield* HttpClient.get(
-          `${url}/queue/${message.id}`,
-        );
+        const resultResponse = yield* HttpClient.get(`${url}/queue/${message.id}`);
         if (resultResponse.status === 200) {
           const body = yield* resultResponse.text;
           if (body) return JSON.parse(body) as Message;

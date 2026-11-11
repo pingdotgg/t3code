@@ -1,24 +1,20 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
-import * as Neon from "alchemy/Neon";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Drizzle from "@alchemy.run/drizzle";
+import * as Neon from "@alchemy.run/neon";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 import type { Post, User } from "../src/schema.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
-  providers: Layer.mergeAll(
-    Cloudflare.providers(),
-    Drizzle.providers(),
-    Neon.providers(),
-  ),
+  providers: Layer.mergeAll(Cloudflare.providers(), Drizzle.providers(), Neon.providers()),
   state: Alchemy.localState(),
 });
 
@@ -65,9 +61,7 @@ test(
     };
     expect(Array.isArray(initialBody.users)).toBe(true);
 
-    const createResponse = yield* HttpClient.execute(
-      HttpClientRequest.post(baseUrl),
-    );
+    const createResponse = yield* HttpClient.execute(HttpClientRequest.post(baseUrl));
     expect(createResponse.status).toBe(200);
 
     const createBody = (yield* createResponse.json) as unknown as {
@@ -100,9 +94,7 @@ test(
       error: "Invalid user ID",
     });
 
-    const methodResponse = yield* HttpClient.execute(
-      HttpClientRequest.patch(baseUrl),
-    );
+    const methodResponse = yield* HttpClient.execute(HttpClientRequest.patch(baseUrl));
     expect(methodResponse.status).toBe(405);
     expect(yield* methodResponse.json).toEqual({
       error: "Method not allowed",
@@ -127,9 +119,7 @@ test(
     const finalBody = (yield* finalResponse.json) as unknown as {
       users: User[];
     };
-    expect(finalBody.users.some((user) => user.id === createdUser.id)).toBe(
-      false,
-    );
+    expect(finalBody.users.some((user) => user.id === createdUser.id)).toBe(false);
   }).pipe(Effect.provide(jsonClient)),
   // The cold-start `getWhenReady` window plus a full CRUD round-trip against a
   // freshly-warmed Neon/Hyperdrive connection routinely exceeds 20s. Match the
@@ -152,14 +142,11 @@ test(
       expect(Array.isArray(body.users)).toBe(true);
     });
 
-    const jitter = Effect.sync(
-      () => Math.floor(Math.random() * 401) + 100,
-    ).pipe(Effect.flatMap((ms) => Effect.sleep(Duration.millis(ms))));
-
-    yield* queryOnce.pipe(
-      Effect.zip(jitter),
-      Effect.repeat(Schedule.recurs(99)),
+    const jitter = Effect.sync(() => Math.floor(Math.random() * 401) + 100).pipe(
+      Effect.flatMap((ms) => Effect.sleep(Duration.millis(ms))),
     );
+
+    yield* queryOnce.pipe(Effect.zip(jitter), Effect.repeat(Schedule.recurs(99)));
   }).pipe(Effect.provide(jsonClient)),
   { timeout: 120_000 },
 );

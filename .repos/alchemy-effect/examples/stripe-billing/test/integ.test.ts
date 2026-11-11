@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Stripe from "alchemy/Stripe";
-import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Stripe from "@alchemy.run/stripe";
+import * as Test from "@alchemy.run/test/Bun";
 import {
   CreatePaymentMethod,
   CreatePaymentMethodAttach,
@@ -11,13 +11,13 @@ import {
   GetCheckoutSession,
   GetWebhookEndpoints,
 } from "@distilled.cloud/stripe/stripe";
-import { expect } from "bun:test";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -59,11 +59,7 @@ const readEntitlement = (baseUrl: string, customerId: string) =>
 
 // Webhook delivery is asynchronous; poll until the entitlement reaches the
 // expected status.
-const waitForStatus = (
-  baseUrl: string,
-  customerId: string,
-  status: Entitlement["status"],
-) =>
+const waitForStatus = (baseUrl: string, customerId: string, status: Entitlement["status"]) =>
   readEntitlement(baseUrl, customerId).pipe(
     Effect.repeat({
       schedule: Schedule.spaced("5 seconds"),
@@ -78,12 +74,8 @@ test(
     const { url } = yield* stack;
     expect(url).toBeString();
     const delivery = `${url.replace(/\/+$/, "")}/webhooks/stripe`;
-    const endpoints = yield* GetWebhookEndpoints({ limit: 100 }).pipe(
-      Effect.provide(StripeHttp),
-    );
-    const endpoint = endpoints.data.find(
-      (e) => e.url.replace(/\/+$/, "") === delivery,
-    );
+    const endpoints = yield* GetWebhookEndpoints({ limit: 100 }).pipe(Effect.provide(StripeHttp));
+    const endpoint = endpoints.data.find((e) => e.url.replace(/\/+$/, "") === delivery);
     expect(endpoint).toBeDefined();
     expect(endpoint?.enabled_events).toEqual(
       expect.arrayContaining([
@@ -121,10 +113,7 @@ test(
 
     // The session is a real subscription-mode Checkout for the deployed
     // Price, bound to the customer the Worker just created.
-    const sessionId = new URL(body.checkoutUrl).pathname
-      .split("/")
-      .filter(Boolean)
-      .at(-1)!;
+    const sessionId = new URL(body.checkoutUrl).pathname.split("/").filter(Boolean).at(-1)!;
     const session = yield* GetCheckoutSession({ session: sessionId }).pipe(
       Effect.provide(StripeHttp),
     );
@@ -168,10 +157,7 @@ test(
     // Stripe's `tok_visa` test card and creating the same subscription
     // directly — this fires the real `customer.subscription.*` webhooks the
     // Worker consumes.
-    const sessionId = new URL(checkoutUrl).pathname
-      .split("/")
-      .filter(Boolean)
-      .at(-1)!;
+    const sessionId = new URL(checkoutUrl).pathname.split("/").filter(Boolean).at(-1)!;
     const session = yield* GetCheckoutSession({
       session: sessionId,
       expand: ["line_items"],

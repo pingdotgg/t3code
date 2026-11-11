@@ -1,11 +1,11 @@
 import * as Effect from "effect/Effect";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import { Job, JobId } from "./Job.ts";
 import { JobNotifications, NotifyJobError } from "./JobNotifications.ts";
 import { GetJobError, JobStorage, PutJobError } from "./JobStorage.ts";
@@ -24,9 +24,7 @@ export const createJob = HttpApiEndpoint.post("createJob", "/", {
   }),
 });
 
-export const JobApi = HttpApi.make("JobApi").add(
-  HttpApiGroup.make("Jobs").add(getJob, createJob),
-);
+export const JobApi = HttpApi.make("JobApi").add(HttpApiGroup.make("Jobs").add(getJob, createJob));
 
 export const JobApiLive = HttpApiBuilder.layer(JobApi).pipe(
   Layer.provide(
@@ -75,11 +73,7 @@ export const JobApiLive = HttpApiBuilder.layer(JobApi).pipe(
                   id: jobId,
                   content: req.payload.content,
                 })
-                .pipe(
-                  Effect.catchTag("PutJobError", (error) =>
-                    Effect.succeed(error),
-                  ),
-                );
+                .pipe(Effect.catchTag("PutJobError", (error) => Effect.succeed(error)));
               if (job instanceof PutJobError) {
                 return HttpServerResponse.text(job.message, {
                   status: 500,
@@ -87,11 +81,7 @@ export const JobApiLive = HttpApiBuilder.layer(JobApi).pipe(
               }
               const notificationResult = yield* notifications
                 .notifyJobCreated(job)
-                .pipe(
-                  Effect.catchTag("NotifyJobError", (error) =>
-                    Effect.succeed(error),
-                  ),
-                );
+                .pipe(Effect.catchTag("NotifyJobError", (error) => Effect.succeed(error)));
               if (notificationResult instanceof NotifyJobError) {
                 return HttpServerResponse.text(notificationResult.message, {
                   status: 500,

@@ -2,7 +2,6 @@ const REPLAY_WORKSPACE_PLACEHOLDER = "<workspace>";
 const REPLAY_HOME = "/home/replay-user";
 const REPLAY_CHECKOUT = "/home/replay-user/t3code";
 const REPLAY_HOSTNAME = "replay-host";
-/** Account- and install-scoped values Codex reports; the adapter reads none of them. */
 const REPLAY_VALUES_BY_KEY: Readonly<Record<string, string>> = {
   installationId: "00000000-0000-4000-8000-000000000000",
   planType: "unknown",
@@ -11,7 +10,6 @@ const REPLAY_VALUES_BY_KEY: Readonly<Record<string, string>> = {
 interface CodexReplayRecordingMachine {
   readonly home: string;
   readonly hostname: string;
-  /** Root of the checkout the recorder runs from; it names the local worktree layout. */
   readonly checkout: string;
 }
 
@@ -56,14 +54,6 @@ function withoutMachineIdentity(
   );
 }
 
-/**
- * Codex supports multiple provider threads in one app-server session, so native
- * fork recording keeps the request ids emitted by that single client. Outbound
- * frames name the recording cwd `<workspace>`, which replay swaps for its own
- * checkpoint workspace. With `machine`, every frame also swaps the checkout
- * path, home directory, hostname, installation id and plan type for neutral
- * values so fixtures carry no local identity; the adapter reads none of them.
- */
 export function codexReplayRecordingOutputRecords(
   records: ReadonlyArray<Record<string, unknown>>,
   options: {

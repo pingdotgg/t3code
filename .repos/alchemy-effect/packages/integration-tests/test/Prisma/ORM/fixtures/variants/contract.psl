@@ -1,0 +1,29 @@
+model Task {
+  id Int @id @default(autoincrement())
+  title String
+  type String
+
+  @@discriminator(type)
+  @@map("tasks")
+}
+
+model Bug {
+  severity String
+  assigneeId Int?
+  assignee Assignee? @relation(fields: [assigneeId], references: [id])
+
+  @@base(Task, "bug")
+}
+
+model Feature {
+  priority Int
+
+  @@base(Task, "feature")
+  @@map("features")
+}
+
+model Assignee {
+  id Int @id @default(autoincrement())
+  name String
+  bugs Bug[]
+}

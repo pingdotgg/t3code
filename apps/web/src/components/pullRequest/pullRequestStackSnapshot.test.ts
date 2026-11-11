@@ -88,6 +88,10 @@ describe("saved stack navigation", () => {
       isFresh: true,
       notice: null,
     });
-    expect(pullRequestStackView({ ...query, isPending: true }, saved).isFresh).toBe(false);
+    expect(pullRequestStackView({ ...query, isPending: true }, saved).isFresh).toBe(true);
+    expect(pullRequestStackView({ ...query, data: null, isPending: true }, saved)).toMatchObject({
+      data: null,
+      isFresh: true,
+    });
   });
 });

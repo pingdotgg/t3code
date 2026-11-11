@@ -1,0 +1,570 @@
+---
+/**
+ * The compare page's testing loop: one deploy → test → destroy → edit loop
+ * whose nodes and arcs restyle per tool to show exactly where each one's
+ * loop breaks. Alchemy closes it; SST leaves deploy/destroy to the CLI;
+ * Pulumi leaves the test harness to you; Terraform can't test the app.
+ */
+import { highlightTS } from "../marketing/highlightTS";
+
+type State = "ok" | "diy" | "broken";
+type Tool = {
+  id: string;
+  label: string;
+  // deploy, test, destroy, edit
+  nodes: [State, State, State, State];
+  // arc i runs from node i to node i + 1
+  arcs: [State, State, State, State];
+  times: [string, string, string, string];
+  total: string;
+  caption: string;
+  file: string;
+  code: string;
+  lang?: "hcl";
+};
+
+const TOOLS: Tool[] = [
+  {
+    id: "alchemy",
+    label: "Alchemy",
+    nodes: ["ok", "ok", "ok", "ok"],
+    arcs: ["ok", "ok", "ok", "ok"],
+    times: ["~12s", "<1s", "~4s", ""],
+    total: "~17s",
+    caption: "per loop",
+    file: "test/api.test.ts",
+    code: `const stack = beforeAll(deploy(Stack));
+afterAll(destroy(Stack));
+
+test("stores a session", Effect.gen(function* () {
+  const { url } = yield* stack;
+  const res = yield* HttpClient.post(\`\${url}/session\`);
+  expect(res.status).toBe(200);
+}));`,
+  },
+  {
+    id: "sst",
+    label: "SST",
+    nodes: ["diy", "ok", "diy", "ok"],
+    arcs: ["diy", "diy", "diy", "diy"],
+    times: ["by hand", "", "by hand", ""],
+    total: "manual",
+    caption: "outside the test",
+    file: "terminal",
+    code: `# 1. deploy the stage yourself
+sst deploy --stage test
+# 2. run tests with linked resources
+sst shell --stage test -- vitest run
+# 3. tear it down yourself, even on failure
+sst remove --stage test`,
+  },
+  {
+    id: "pulumi",
+    label: "Pulumi",
+    nodes: ["ok", "diy", "ok", "ok"],
+    arcs: ["diy", "diy", "ok", "ok"],
+    times: ["", "", "", ""],
+    total: "DIY",
+    caption: "build the harness",
+    file: "test/harness.ts",
+    code: `const stack = await LocalWorkspace.createOrSelectStack({
+  stackName: "test", projectName: "api", program,
+});
+const { outputs } = await stack.up();
+// pass outputs to your tests yourself…
+await runTests(outputs.url.value);
+// …and clean up yourself, even when they fail
+await stack.destroy();`,
+  },
+  {
+    id: "terraform",
+    label: "Terraform",
+    nodes: ["ok", "broken", "ok", "ok"],
+    arcs: ["ok", "broken", "ok", "ok"],
+    times: ["", "", "", ""],
+    total: "infra only",
+    caption: "app never tested",
+    file: "tests/api.tftest.hcl",
+    lang: "hcl",
+    code: `run "creates_table" {
+  command = apply
+  assert {
+    condition = (
+      aws_dynamodb_table.sessions.billing_mode == "PAY_PER_REQUEST"
+    )
+    error_message = "wrong billing mode"
+  }
+}
+# asserts on resource attributes only;
+# nothing here calls your running app`,
+  },
+];
+
+const c = 150;
+const r = 108;
+const pt = (deg: number) => {
+  const t = (deg * Math.PI) / 180;
+  return [+(c + r * Math.cos(t)).toFixed(1), +(c + r * Math.sin(t)).toFixed(1)] as const;
+};
+const DEGS = [-90, 0, 90, 180];
+const STEPS = ["deploy", "test", "destroy", "edit"];
+const NODES = DEGS.map(pt);
+const ARCS = DEGS.map((d) => {
+  const [x0, y0] = pt(d + 24);
+  const [x1, y1] = pt(d + 66);
+  return `M ${x0} ${y0} A ${r} ${r} 0 0 1 ${x1} ${y1}`;
+});
+
+const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const hcl = (t: string) =>
+  t
+    .split("\n")
+    .map((line) =>
+      /^\s*#/.test(line)
+        ? `<span class="alc-tok-c">${esc(line)}</span>`
+        : esc(line)
+            .replace(/("[^"]*")/g, '<span class="alc-tok-s">$1</span>')
+            .replace(/^(\s*)(run|assert)\b/, '$1<span class="alc-tok-k">$2</span>'),
+    )
+    .join("\n");
+const shell = (t: string) =>
+  t
+    .split("\n")
+    .map((line) =>
+      /^\s*#/.test(line) ? `<span class="alc-tok-c">${esc(line)}</span>` : esc(line),
+    )
+    .join("\n");
+const render = (t: Tool) =>
+  t.lang === "hcl" ? hcl(t.code) : t.file === "terminal" ? shell(t.code) : highlightTS(t.code);
+
+const verb = (s: State) =>
+  s === "ok" ? "works" : s === "diy" ? "is yours to build" : "can't test the app";
+const aria = (t: Tool) =>
+  `${t.label}: ${STEPS.map((s, i) => `${s} ${verb(t.nodes[i]!)}`).join(", ")}.`;
+---
+
+<div class="tl" data-tool="alchemy">
+  <fieldset class="tl__modes">
+    <legend class="tl__sr">Compare the testing loop</legend>
+    {
+      TOOLS.map((t, i) => (
+        <label>
+          <input type="radio" name="tl-tool" value={t.id} checked={i === 0} />
+          <span data-copy>{t.label}</span>
+        </label>
+      ))
+    }
+  </fieldset>
+
+  <div class="tl__stage">
+    <figure class="tl__loop">
+      <svg
+        viewBox="0 0 300 300"
+        role="img"
+        aria-label={aria(TOOLS[0]!)}
+        data-aria={JSON.stringify(Object.fromEntries(TOOLS.map((t) => [t.id, aria(t)])))}
+      >
+        <defs>
+          {["ok", "diy", "broken"].map((s) => (
+            <marker
+              id={`tl-arrow-${s}`}
+              class={`tl__arrow is-${s}`}
+              viewBox="0 0 10 10"
+              refX="7"
+              refY="5"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto-start-reverse"
+            >
+              <path d="M0 1 L9 5 L0 9 z" />
+            </marker>
+          ))}
+        </defs>
+        <circle class="tl__track" cx={c} cy={c} r={r} />
+        {
+          ARCS.map((d, i) => (
+            <g class="tl__arc" data-i={i}>
+              {["ok", "diy", "broken"].map((s) => (
+                <path class={`is-${s}`} d={d} marker-end={s === "broken" ? undefined : `url(#tl-arrow-${s})`} />
+              ))}
+            </g>
+          ))
+        }
+        {
+          NODES.map(([x, y], i) => (
+            <g class="tl__node" data-i={i} transform={`translate(${x} ${y})`}>
+              <circle r="30" />
+              <text y="-2" text-anchor="middle" class="tl__label">{STEPS[i]}</text>
+              {TOOLS.map((t) => (
+                <text y="13" text-anchor="middle" class="tl__time" data-for={t.id}>
+                  {t.times[i]}
+                </text>
+              ))}
+            </g>
+          ))
+        }
+        {
+          TOOLS.map((t) => (
+            <g class="tl__center" data-for={t.id}>
+              <text x={c} y={c - 4} text-anchor="middle" class="tl__total">{t.total}</text>
+              <text x={c} y={c + 16} text-anchor="middle" class="tl__caption">{t.caption}</text>
+            </g>
+          ))
+        }
+      </svg>
+    </figure>
+
+    <div class="tl__side">
+      {
+        TOOLS.map((t) => (
+          <div class="tl__panel" data-for={t.id}>
+            <div class="alc-code-block alc-code-block--compact">
+              <div class="alc-code-block__header">
+                <span class="alc-code-block__filename">{t.file}</span>
+              </div>
+              <pre class="alc-code-block__pre" tabindex="0" aria-label={`${t.label}: ${t.file}`} set:html={render(t)} />
+            </div>
+          </div>
+        ))
+      }
+    </div>
+  </div>
+
+  <div class="tl__notes" aria-live="polite">
+    <div class="tl__note" data-for="alchemy">
+      <h3 data-copy>One test file closes the loop</h3>
+      <p data-copy>
+        <code>beforeAll(deploy(Stack))</code> stands up real infrastructure,
+        the test calls it, and <code>afterAll(destroy(Stack))</code> tears it
+        down, even when a test fails.
+      </p>
+    </div>
+    <div class="tl__note" data-for="sst">
+      <h3 data-copy>Tests can't deploy &amp; destroy</h3>
+      <p data-copy>
+        <code>sst shell</code> can give tests access to resources via link,
+        but deploying and tearing down the stack still need to be done outside
+        of the test runner.
+      </p>
+    </div>
+    <div class="tl__note" data-for="pulumi">
+      <h3 data-copy>Make your own test runner</h3>
+      <p data-copy>
+        Pulumi exposes and automation api that can deploy and destroy, but
+        passing outputs to tests and cleaning up properly after failures means
+        you need to write your own testing harness.
+      </p>
+    </div>
+    <div class="tl__note" data-for="terraform">
+      <h3 data-copy>Tests must be entirely decoupled</h3>
+      <p data-copy>
+        Terraform test can assert what resources are deployed, but it doesn't
+        verify whats running in those resources is correct
+      </p>
+    </div>
+  </div>
+
+  <ul class="tl__legend" aria-label="Legend">
+    <li><span class="is-ok" aria-hidden="true"></span>part of the loop</li>
+    <li><span class="is-diy" aria-hidden="true"></span>possible, you build it</li>
+    <li><span class="is-broken" aria-hidden="true"></span>can't do what the loop needs</li>
+  </ul>
+</div>
+
+<script>
+  // The loop is one SVG: switching tools restyles its nodes and arcs (CSS
+  // transitions on data-* state) and swaps the side panel and note.
+  type State = "ok" | "diy" | "broken";
+  const STATES: Record<string, { nodes: State[]; arcs: State[] }> = {
+    alchemy: { nodes: ["ok", "ok", "ok", "ok"], arcs: ["ok", "ok", "ok", "ok"] },
+    sst: { nodes: ["diy", "ok", "diy", "ok"], arcs: ["diy", "diy", "diy", "diy"] },
+    pulumi: { nodes: ["ok", "diy", "ok", "ok"], arcs: ["diy", "diy", "ok", "ok"] },
+    terraform: { nodes: ["ok", "broken", "ok", "ok"], arcs: ["ok", "broken", "ok", "ok"] },
+  };
+  for (const root of document.querySelectorAll<HTMLElement>(".tl")) {
+    const svg = root.querySelector("svg")!;
+    const aria = JSON.parse(svg.dataset.aria!) as Record<string, string>;
+    const apply = (tool: string) => {
+      const s = STATES[tool]!;
+      root.dataset.tool = tool;
+      root.querySelectorAll<SVGGElement>(".tl__node").forEach((n, i) => {
+        n.dataset.state = s.nodes[i];
+        n.toggleAttribute("data-timed", !!n.querySelector(`[data-for="${tool}"]`)?.textContent?.trim());
+      });
+      root.querySelectorAll<SVGGElement>(".tl__arc").forEach((a, i) => (a.dataset.state = s.arcs[i]));
+      svg.setAttribute("aria-label", aria[tool]!);
+    };
+    root.addEventListener("change", (e) => apply((e.target as HTMLInputElement).value));
+    apply("alchemy");
+  }
+</script>
+
+<style>
+  .tl {
+    --ok: var(--alc-accent);
+    --diy: var(--alc-warn);
+    --broken: var(--alc-danger);
+  }
+  .tl__sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* ---------- picker ---------- */
+  .tl__modes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 12px;
+    padding: 0;
+    border: 0;
+  }
+  .tl__modes label {
+    position: relative;
+    cursor: pointer;
+  }
+  .tl__modes input {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .tl__modes span {
+    display: inline-block;
+    padding: 6px 14px;
+    border: 1px dashed var(--alc-hairline-3);
+    border-radius: 999px;
+    font-size: 13px;
+    color: var(--alc-fg-2);
+    transition:
+      border-color 200ms ease,
+      background 200ms ease,
+      color 200ms ease;
+  }
+  .tl__modes label:hover span {
+    color: var(--alc-fg-1);
+  }
+  .tl__modes input:checked + span {
+    border-style: solid;
+    border-color: var(--alc-accent);
+    background: color-mix(in srgb, var(--alc-accent) 12%, transparent);
+    color: var(--alc-fg-1);
+  }
+  .tl__modes input:focus-visible + span {
+    outline: 2px solid var(--alc-accent);
+    outline-offset: 2px;
+  }
+
+  /* ---------- layout ---------- */
+  .tl__stage {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
+    gap: 24px;
+    align-items: center;
+  }
+  .tl__loop {
+    margin: 0;
+    text-align: center;
+  }
+  .tl__loop svg {
+    width: 100%;
+    max-width: 340px;
+  }
+  /* Panels stack in one grid cell; the active one is shown. */
+  .tl__side,
+  .tl__notes {
+    display: grid;
+  }
+  .tl__panel,
+  .tl__note {
+    grid-area: 1 / 1;
+    min-width: 0;
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 220ms ease,
+      visibility 0s linear 220ms;
+  }
+  .tl[data-tool="alchemy"] [data-for="alchemy"],
+  .tl[data-tool="sst"] [data-for="sst"],
+  .tl[data-tool="pulumi"] [data-for="pulumi"],
+  .tl[data-tool="terraform"] [data-for="terraform"] {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 320ms ease 100ms;
+  }
+
+  /* ---------- loop ---------- */
+  .tl__track {
+    fill: none;
+    stroke: var(--alc-hairline);
+    stroke-width: 1;
+  }
+  /* Each arc has one path per state; the current state's path shows. */
+  .tl__arc path {
+    fill: none;
+    stroke-width: 2;
+    opacity: 0;
+    transition: opacity 320ms ease;
+  }
+  .tl__arc[data-state="ok"] .is-ok,
+  .tl__arc[data-state="diy"] .is-diy,
+  .tl__arc[data-state="broken"] .is-broken {
+    opacity: 1;
+  }
+  .tl__arc .is-ok {
+    stroke: var(--ok);
+    stroke-dasharray: 5 6;
+    animation: tl-flow 1.4s linear infinite;
+  }
+  .tl__arc .is-diy {
+    stroke: var(--diy);
+    stroke-dasharray: 5 6;
+  }
+  .tl__arc .is-broken {
+    stroke: var(--broken);
+    stroke-dasharray: 1 8;
+    stroke-linecap: round;
+  }
+  .tl__arrow.is-ok path {
+    fill: var(--ok);
+  }
+  .tl__arrow.is-diy path {
+    fill: var(--diy);
+  }
+  @keyframes tl-flow {
+    to {
+      stroke-dashoffset: -22;
+    }
+  }
+  .tl__node circle {
+    fill: var(--alc-bg);
+    stroke: color-mix(in srgb, var(--ok) 70%, transparent);
+    stroke-width: 1.5;
+    transition:
+      stroke 320ms ease,
+      fill 320ms ease,
+      stroke-dasharray 320ms ease;
+  }
+  .tl__node[data-state="diy"] circle {
+    stroke: var(--diy);
+    stroke-dasharray: 5 4;
+  }
+  .tl__node[data-state="broken"] circle {
+    stroke: var(--broken);
+    fill: color-mix(in srgb, var(--broken) 16%, var(--alc-bg));
+  }
+  .tl__label {
+    font: 600 13px var(--alc-font-sans);
+    fill: var(--alc-fg-1);
+    transform: translateY(6px);
+    transition: transform 320ms ease;
+  }
+  .tl__node[data-timed] .tl__label {
+    transform: none;
+  }
+  .tl__time {
+    font: 10.5px var(--alc-font-mono);
+    fill: var(--alc-fg-3);
+    opacity: 0;
+    transition: opacity 320ms ease;
+  }
+  .tl__node[data-state="diy"] .tl__time {
+    fill: var(--diy);
+  }
+  .tl__node[data-state="broken"] .tl__time {
+    fill: var(--broken);
+  }
+  .tl__center {
+    opacity: 0;
+    transition: opacity 320ms ease;
+  }
+  .tl__total {
+    font: 500 30px var(--alc-font-serif);
+    fill: var(--alc-fg-1);
+  }
+  .tl__caption {
+    font: 12px var(--alc-font-sans);
+    fill: var(--alc-fg-3);
+  }
+  .tl[data-tool="alchemy"] [data-for="alchemy"],
+  .tl[data-tool="sst"] [data-for="sst"],
+  .tl[data-tool="pulumi"] [data-for="pulumi"],
+  .tl[data-tool="terraform"] [data-for="terraform"] {
+    opacity: 1;
+  }
+
+  /* ---------- note ---------- */
+  .tl__notes {
+    margin-top: 20px;
+  }
+  .tl__note h3 {
+    margin: 0 0 6px;
+    font-family: var(--alc-font-serif);
+    font-weight: 500;
+    font-size: 22px;
+    line-height: 1.25;
+    color: var(--alc-fg-1);
+  }
+  .tl__note p {
+    max-width: 680px;
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--alc-fg-2);
+  }
+  .tl__note code {
+    font-family: var(--alc-font-mono);
+    font-size: 0.92em;
+    color: var(--alc-fg-1);
+  }
+
+  /* ---------- legend ---------- */
+  .tl__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin: 16px 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 13px;
+    color: var(--alc-fg-3);
+  }
+  .tl__legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tl__legend span {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+  .tl__legend .is-ok {
+    background: color-mix(in srgb, var(--ok) 45%, transparent);
+    border: 1.5px solid var(--ok);
+  }
+  .tl__legend .is-diy {
+    border: 1.5px dashed var(--diy);
+  }
+  .tl__legend .is-broken {
+    background: color-mix(in srgb, var(--broken) 25%, transparent);
+    border: 1.5px solid var(--broken);
+  }
+
+  @media (max-width: 900px) {
+    .tl__stage {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tl__arc .is-ok {
+      animation: none;
+    }
+  }
+</style>

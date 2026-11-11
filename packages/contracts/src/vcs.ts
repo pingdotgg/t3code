@@ -119,7 +119,6 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
     exitCode: Schema.Number,
     detail: Schema.String,
     failureKind: Schema.optional(VcsProcessExitFailureKind),
-    /** Process-boundary hint for a recognized transient failure; absence is not retryable. */
     retryable: Schema.optional(Schema.Boolean),
     stderrLength: Schema.optional(NonNegativeInt),
     stderrTruncated: Schema.optional(Schema.Boolean),
@@ -133,7 +132,7 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
     context: VcsProcessErrorContext,
     error: VcsProcessExitFailure,
     failureKind: VcsProcessExitFailureKind,
-    retryable?: boolean,
+    options?: { readonly retryable?: boolean; readonly notFoundDetail?: string },
   ) {
     const detail =
       failureKind === "authentication"
@@ -141,11 +140,7 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
         : failureKind === "rate-limited"
           ? "API rate limit exceeded."
           : failureKind === "not-found"
-            ? context.command === "glab"
-              ? "Merge request not found."
-              : context.command === "gh" || context.command === "az"
-                ? "Pull request not found."
-                : "VCS resource not found."
+            ? (options?.notFoundDetail ?? "VCS resource not found.")
             : "Process exited with a non-zero status.";
 
     return new VcsProcessExitError({
@@ -153,7 +148,7 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
       exitCode: error.exitCode,
       detail,
       failureKind,
-      ...(retryable === true ? { retryable: true } : {}),
+      ...(options?.retryable === true ? { retryable: true } : {}),
       stderrLength: error.stderr.length,
       stderrTruncated: error.stderrTruncated,
     });
@@ -237,14 +232,6 @@ export class VcsProcessMissingExitCodeError extends Schema.TaggedError<VcsProces
     return `VCS process completed without an exit code in ${this.operation}: ${this.command} (${this.cwd})`;
   }
 }
-
-export const VcsOutputDecodeError = Schema.Union([
-  VcsProcessStdinWriteError,
-  VcsProcessOutputReadError,
-  VcsProcessOutputLimitError,
-  VcsProcessMissingExitCodeError,
-]);
-export type VcsOutputDecodeError = typeof VcsOutputDecodeError.Type;
 
 export class VcsRepositoryDetectionError extends Schema.TaggedError<VcsRepositoryDetectionError>()(
   "VcsRepositoryDetectionError",

@@ -1,0 +1,6 @@
+.next/
+.open-next/
+.nuxt/
+.output/
+.data/
+apps/*/src/pages.gen.ts

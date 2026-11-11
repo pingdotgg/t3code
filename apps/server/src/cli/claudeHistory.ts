@@ -1,14 +1,7 @@
 import * as Effect from "effect/Effect";
-import { Argument, Command } from "effect/unstable/cli";
+import { Argument, Command } from "effect/cli";
 
-import { runClaudeHistoryWorker } from "../claudeHistoryWorker.ts";
-
-/**
- * Hosts the Claude history worker inside the CLI executable. The npm bundle
- * runs it as a sibling `claudeHistoryWorker.mjs` under the host Node; the
- * single-executable has no Node to run a script with, so the adapter invokes
- * this hidden subcommand on its own executable instead.
- */
+/** Single-executable builds lack Node, so they use this subcommand instead of claudeHistoryWorker.mjs. */
 export const claudeHistoryCommand = Command.make("__claude-history", {
   method: Argument.String("method"),
   sessionId: Argument.String("session-id"),
@@ -16,11 +9,16 @@ export const claudeHistoryCommand = Command.make("__claude-history", {
 }).pipe(
   Command.unlisted,
   Command.withHandler(({ method, sessionId, options }) =>
-    Effect.promise(() =>
-      runClaudeHistoryWorker(
-        method,
-        sessionId,
-        options._tag === "Some" ? options.value : undefined,
+    // Two effects, so an interrupt during the import never starts the worker.
+    Effect.promise(() => import("../claudeHistoryWorker.ts")).pipe(
+      Effect.flatMap(({ runClaudeHistoryWorker }) =>
+        Effect.promise(() =>
+          runClaudeHistoryWorker(
+            method,
+            sessionId,
+            options._tag === "Some" ? options.value : undefined,
+          ),
+        ),
       ),
     ),
   ),

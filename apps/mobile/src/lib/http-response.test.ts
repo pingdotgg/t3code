@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Cookies, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { Cookies, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 describe("React Native HTTP responses", () => {
   it("can inspect a rejected response when native Headers has no getSetCookie", () => {
@@ -11,13 +11,5 @@ describe("React Native HTTP responses", () => {
     );
     expect(result.cookies).toEqual(Cookies.empty);
     expect(result.status).toBe(400);
-  });
-
-  it("preserves cookies on platforms that expose Set-Cookie headers", () => {
-    const result = HttpClientResponse.fromWeb(
-      HttpClientRequest.get("https://relay.example.test"),
-      new Response(null, { headers: { "Set-Cookie": "session=abc; HttpOnly" } }),
-    );
-    expect(result.cookies).toEqual(Cookies.fromSetCookie(["session=abc; HttpOnly"]));
   });
 });

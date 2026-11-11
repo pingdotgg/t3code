@@ -1,42 +1,5 @@
-#!/usr/bin/env bun
-/**
- * AWS leak sweep — finds (and optionally deletes) alchemy-tagged TEST resources
- * left behind by crashed/interrupted test runs.
- *
- * Discovery is tag-driven: every alchemy resource is branded with
- * `alchemy::stack` / `alchemy::stage` / `alchemy::id` (see src/Tags.ts
- * createInternalTags). Test suites deploy with stage `test_$USER` (the default
- * in packages/alchemy/src/Test/Core.ts), so we sweep everything tagged
- * `alchemy::stage = test_$USER`.
- *
- * Primary discovery path: resourcegroupstaggingapi GetResources (regional).
- * Fallbacks for resources the tagging API can't see from a regional query:
- *   - IAM roles/policies (global service): listRoles/listPolicies + tag reads
- *   - EventBridge Scheduler schedules (not taggable): name-pattern heuristic
- *     (physical names embed `-{stage}-`, see src/PhysicalName.ts)
- *
- * Usage:
- *   bun scripts/aws-leak-sweep.ts                      # DRY RUN (default)
- *   bun scripts/aws-leak-sweep.ts --delete             # actually delete
- *   bun scripts/aws-leak-sweep.ts --older-than 12      # only >= 12h old (default 6)
- *   bun scripts/aws-leak-sweep.ts --stage test_sam     # tag stage filter (default test_$USER)
- *   bun scripts/aws-leak-sweep.ts --region us-west-2   # region (default env or us-west-2)
- *
- * KMS keys are ALWAYS report-only — never deleted by this tool.
- * Resources whose age can't be determined are treated as eligible (a leak with
- * an unknown birthday is still a leak) and shown with age `?`.
- */
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Result from "effect/Result";
-import * as Schedule from "effect/Schedule";
-import { FetchHttpClient } from "effect/unstable/http";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
-
-import { fromChain } from "@distilled.cloud/aws/Credentials";
-import { Region } from "@distilled.cloud/aws/Region";
-
 import * as Logs from "@distilled.cloud/aws/cloudwatch-logs";
+import { fromChain } from "@distilled.cloud/aws/Credentials";
 import * as DynamoDB from "@distilled.cloud/aws/dynamodb";
 import * as EC2 from "@distilled.cloud/aws/ec2";
 import * as ECS from "@distilled.cloud/aws/ecs";
@@ -48,6 +11,7 @@ import * as Kinesis from "@distilled.cloud/aws/kinesis";
 import * as KMS from "@distilled.cloud/aws/kms";
 import * as Lambda from "@distilled.cloud/aws/lambda";
 import * as RDS from "@distilled.cloud/aws/rds";
+import { Region } from "@distilled.cloud/aws/Region";
 import {
   getResources,
   type GetResourcesOutput,
@@ -58,6 +22,44 @@ import * as SecretsManager from "@distilled.cloud/aws/secrets-manager";
 import * as SNS from "@distilled.cloud/aws/sns";
 import * as SQS from "@distilled.cloud/aws/sqs";
 import * as SSM from "@distilled.cloud/aws/ssm";
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+/**
+ * AWS leak sweep — finds (and optionally deletes) alchemy-tagged TEST resources
+ * left behind by crashed/interrupted test runs.
+ *
+ * Discovery is tag-driven: every alchemy resource is branded with
+ * `alchemy::stack` / `alchemy::stage` / `alchemy::id` (see src/Tags.ts
+ * createInternalTags). Test suites deploy with stage `test_$USER` (the default
+ * in packages/alchemy-test/src/Core.ts), so we sweep everything tagged
+ * `alchemy::stage = test_$USER`.
+ *
+ * Primary discovery path: resourcegroupstaggingapi GetResources (regional).
+ * Fallbacks for resources the tagging API can't see from a regional query:
+ *   - IAM roles/policies (global service): listRoles/listPolicies + tag reads
+ *   - EventBridge Scheduler schedules (not taggable): name-pattern heuristic
+ *     (physical names embed `-{stage}-`, see src/PhysicalName.ts)
+ *
+ * Usage:
+ *   node scripts/aws-leak-sweep.ts                      # DRY RUN (default)
+ *   node scripts/aws-leak-sweep.ts --delete             # actually delete
+ *   node scripts/aws-leak-sweep.ts --older-than 12      # only >= 12h old (default 6)
+ *   node scripts/aws-leak-sweep.ts --stage test_sam     # tag stage filter (default test_$USER)
+ *   node scripts/aws-leak-sweep.ts --region us-west-2   # region (default env or us-west-2)
+ *
+ * KMS keys are ALWAYS report-only — never deleted by this tool.
+ * Resources whose age can't be determined are treated as eligible (a leak with
+ * an unknown birthday is still a leak) and shown with age `?`.
+ */
+import { Command, Flag } from "effect/cli";
+import * as Config from "effect/Config";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import { FetchHttpClient } from "effect/http";
+import type * as HttpClient from "effect/http/HttpClient";
+import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -70,35 +72,11 @@ interface Args {
   region: string;
 }
 
-const parseArgs = Effect.sync((): Args => {
-  const argv = process.argv.slice(2);
-  const flag = (name: string) => argv.includes(`--${name}`);
-  const opt = (name: string): string | undefined => {
-    const i = argv.indexOf(`--${name}`);
-    return i >= 0 ? argv[i + 1] : undefined;
-  };
-  return {
-    delete: flag("delete"),
-    olderThanHours: Number(opt("older-than") ?? 6),
-    stage:
-      opt("stage") ??
-      `test_${process.env.USER || process.env.USERNAME || "unknown"}`,
-    region:
-      opt("region") ??
-      process.env.AWS_REGION ??
-      process.env.AWS_DEFAULT_REGION ??
-      "us-west-2",
-  };
-});
-
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
 
-type Env =
-  | import("@distilled.cloud/aws/Credentials").Credentials
-  | Region
-  | HttpClient.HttpClient;
+type Env = import("@distilled.cloud/aws/Credentials").Credentials | Region | HttpClient.HttpClient;
 
 interface Leak {
   arn: string;
@@ -137,9 +115,7 @@ const tagRecord = (
   tags: readonly { Key?: string; Value?: string }[] | undefined,
 ): Record<string, string> =>
   Object.fromEntries(
-    (tags ?? [])
-      .filter((t) => t.Key !== undefined)
-      .map((t) => [t.Key as string, t.Value ?? ""]),
+    (tags ?? []).filter((t) => t.Key !== undefined).map((t) => [t.Key as string, t.Value ?? ""]),
   );
 
 /** best-effort: any failure (missing perms, races, region mismatch) -> undefined */
@@ -148,7 +124,7 @@ const tryDate = <E, R>(
 ): Effect.Effect<Date | undefined, never, R> =>
   eff.pipe(
     Effect.map(toDate),
-    Effect.catch(() => Effect.succeed(undefined)),
+    Effect.orElseSucceed(() => undefined),
   );
 
 // ---------------------------------------------------------------------------
@@ -225,11 +201,7 @@ const classify = (arn: string): Classified => {
       return unsupported("only functions are swept");
     case "logs":
       if (r.startsWith("log-group:")) {
-        return mk(
-          "logs:log-group",
-          r.slice("log-group:".length).replace(/:\*$/, ""),
-          2,
-        );
+        return mk("logs:log-group", r.slice("log-group:".length).replace(/:\*$/, ""), 2);
       }
       return unsupported("only log groups are swept");
     case "s3":
@@ -254,11 +226,7 @@ const classify = (arn: string): Classified => {
         return mk("ecs:cluster", r.slice("cluster/".length), 3);
       }
       if (r.startsWith("task-definition/")) {
-        return mk(
-          "ecs:task-definition",
-          r.slice("task-definition/".length),
-          2,
-        );
+        return mk("ecs:task-definition", r.slice("task-definition/".length), 2);
       }
       if (r.startsWith("task/")) {
         return mk("ecs:task", r, 99, {
@@ -348,11 +316,7 @@ const classify = (arn: string): Classified => {
         return mk("scheduler:schedule", r.slice("schedule/".length), 1);
       }
       if (r.startsWith("schedule-group/")) {
-        return mk(
-          "scheduler:schedule-group",
-          r.slice("schedule-group/".length),
-          3,
-        );
+        return mk("scheduler:schedule-group", r.slice("schedule-group/".length), 3);
       }
       return unsupported("unhandled scheduler type");
     }
@@ -407,11 +371,7 @@ const lookupCreatedAt = (
     case "logs:log-group":
       return tryDate(
         Logs.describeLogGroups({ logGroupNamePrefix: leak.name }).pipe(
-          Effect.map(
-            (r) =>
-              r.logGroups?.find((g) => g.logGroupName === leak.name)
-                ?.creationTime,
-          ),
+          Effect.map((r) => r.logGroups?.find((g) => g.logGroupName === leak.name)?.creationTime),
         ),
       );
     case "s3:bucket":
@@ -419,9 +379,7 @@ const lookupCreatedAt = (
     case "kinesis:stream":
       return tryDate(
         Kinesis.describeStreamSummary({ StreamName: leak.name }).pipe(
-          Effect.map(
-            (r) => r.StreamDescriptionSummary?.StreamCreationTimestamp,
-          ),
+          Effect.map((r) => r.StreamDescriptionSummary?.StreamCreationTimestamp),
         ),
       );
     case "ecs:service": {
@@ -465,9 +423,7 @@ const lookupCreatedAt = (
       );
     case "kms:key":
       return tryDate(
-        KMS.describeKey({ KeyId: leak.name }).pipe(
-          Effect.map((r) => r.KeyMetadata?.CreationDate),
-        ),
+        KMS.describeKey({ KeyId: leak.name }).pipe(Effect.map((r) => r.KeyMetadata?.CreationDate)),
       );
     case "secretsmanager:secret":
       return tryDate(
@@ -478,15 +434,11 @@ const lookupCreatedAt = (
     case "ssm:parameter":
       return tryDate(
         SSM.describeParameters({
-          ParameterFilters: [
-            { Key: "Name", Option: "Equals", Values: [leak.name] },
-          ],
+          ParameterFilters: [{ Key: "Name", Option: "Equals", Values: [leak.name] }],
         }).pipe(Effect.map((r) => r.Parameters?.[0]?.LastModifiedDate)),
       );
     case "scheduler:schedule": {
-      const [group, name] = leak.name.includes("/")
-        ? leak.name.split("/")
-        : ["default", leak.name];
+      const [group, name] = leak.name.includes("/") ? leak.name.split("/") : ["default", leak.name];
       return tryDate(
         Scheduler.getSchedule({ Name: name, GroupName: group }).pipe(
           Effect.map((r) => r.CreationDate),
@@ -494,7 +446,7 @@ const lookupCreatedAt = (
       );
     }
     default:
-      return Effect.succeed(undefined);
+      return Effect.undefined;
   }
 };
 
@@ -524,10 +476,7 @@ const emptyBucket = (bucket: string) =>
     // re-list from the start after each batch delete; bounded passes
     for (let pass = 0; pass < 100; pass++) {
       const listing = yield* S3.listObjectVersions({ Bucket: bucket });
-      const objects = [
-        ...(listing.Versions ?? []),
-        ...(listing.DeleteMarkers ?? []),
-      ]
+      const objects = [...(listing.Versions ?? []), ...(listing.DeleteMarkers ?? [])]
         .filter((o) => o.Key !== undefined)
         .map((o) => ({ Key: o.Key as string, VersionId: o.VersionId }));
       if (objects.length === 0) return;
@@ -568,8 +517,7 @@ const deleteIamRole = (roleName: string) =>
     const inline = yield* IAM.listRolePolicies({ RoleName: roleName });
     yield* Effect.forEach(
       inline.PolicyNames ?? [],
-      (name) =>
-        IAM.deleteRolePolicy({ RoleName: roleName, PolicyName: name }),
+      (name) => IAM.deleteRolePolicy({ RoleName: roleName, PolicyName: name }),
       { discard: true },
     );
     yield* retryDependencies(IAM.deleteRole({ RoleName: roleName }));
@@ -595,23 +543,20 @@ const deleteEcsService = (leak: Leak) =>
     // name = "service/{cluster}/{service}"
     const [, cluster, service] = leak.name.split("/");
     yield* ECS.updateService({ cluster, service, desiredCount: 0 }).pipe(
-      Effect.catch(() => Effect.succeed(undefined)),
+      Effect.orElseSucceed(() => undefined),
     );
-    yield* retryDependencies(
-      ECS.deleteService({ cluster, service, force: true }),
-    );
+    yield* retryDependencies(ECS.deleteService({ cluster, service, force: true }));
   });
 
 const deleteEventsRule = (leak: Leak) =>
   Effect.gen(function* () {
     // name is "name" (default bus) or "{bus}/{name}"
     const parts = leak.name.split("/");
-    const [bus, name] =
-      parts.length === 2 ? [parts[0], parts[1]] : ["default", parts[0]];
+    const [bus, name] = parts.length === 2 ? [parts[0], parts[1]] : ["default", parts[0]];
     const targets = yield* EventBridge.listTargetsByRule({
       Rule: name,
       EventBusName: bus,
-    }).pipe(Effect.catch(() => Effect.succeed({ Targets: [] })));
+    }).pipe(Effect.orElseSucceed(() => ({ Targets: [] })));
     const ids = (targets.Targets ?? [])
       .map((t) => t.Id)
       .filter((id): id is string => id !== undefined);
@@ -621,9 +566,13 @@ const deleteEventsRule = (leak: Leak) =>
         EventBusName: bus,
         Ids: ids,
         Force: true,
-      }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+      }).pipe(Effect.orElseSucceed(() => undefined));
     }
-    yield* EventBridge.deleteRule({ Name: name, EventBusName: bus, Force: true });
+    yield* EventBridge.deleteRule({
+      Name: name,
+      EventBusName: bus,
+      Force: true,
+    });
   });
 
 /**
@@ -648,7 +597,7 @@ const deleteVpcDeep = (vpcId: string) =>
       subnets.Subnets ?? [],
       (s) =>
         retryDependencies(EC2.deleteSubnet({ SubnetId: s.SubnetId! })).pipe(
-          Effect.catch(() => Effect.succeed(undefined)),
+          Effect.orElseSucceed(() => undefined),
         ),
       { discard: true },
     );
@@ -668,19 +617,17 @@ const deleteVpcDeep = (vpcId: string) =>
               InternetGatewayId: igw.InternetGatewayId!,
             }),
           ),
-          Effect.catch(() => Effect.succeed(undefined)),
+          Effect.orElseSucceed(() => undefined),
         ),
       { discard: true },
     );
 
     const rts = yield* EC2.describeRouteTables({ Filters: vpcFilter });
     yield* Effect.forEach(
-      (rts.RouteTables ?? []).filter(
-        (rt) => !(rt.Associations ?? []).some((a) => a.Main),
-      ),
+      (rts.RouteTables ?? []).filter((rt) => !(rt.Associations ?? []).some((a) => a.Main)),
       (rt) =>
         EC2.deleteRouteTable({ RouteTableId: rt.RouteTableId! }).pipe(
-          Effect.catch(() => Effect.succeed(undefined)),
+          Effect.orElseSucceed(() => undefined),
         ),
       { discard: true },
     );
@@ -689,9 +636,9 @@ const deleteVpcDeep = (vpcId: string) =>
     yield* Effect.forEach(
       (sgs.SecurityGroups ?? []).filter((sg) => sg.GroupName !== "default"),
       (sg) =>
-        retryDependencies(
-          EC2.deleteSecurityGroup({ GroupId: sg.GroupId! }),
-        ).pipe(Effect.catch(() => Effect.succeed(undefined))),
+        retryDependencies(EC2.deleteSecurityGroup({ GroupId: sg.GroupId! })).pipe(
+          Effect.orElseSucceed(() => undefined),
+        ),
       { discard: true },
     );
 
@@ -702,39 +649,30 @@ const deleteEfs = (fileSystemId: string) =>
   Effect.gen(function* () {
     const mts = yield* EFS.describeMountTargets({
       FileSystemId: fileSystemId,
-    }).pipe(Effect.catch(() => Effect.succeed({ MountTargets: [] })));
+    }).pipe(Effect.orElseSucceed(() => ({ MountTargets: [] })));
     yield* Effect.forEach(
       mts.MountTargets ?? [],
       (mt) => EFS.deleteMountTarget({ MountTargetId: mt.MountTargetId }),
       { discard: true },
     );
-    yield* retryDependencies(
-      EFS.deleteFileSystem({ FileSystemId: fileSystemId }),
-    );
+    yield* retryDependencies(EFS.deleteFileSystem({ FileSystemId: fileSystemId }));
   });
 
-const destroyLeak = (
-  leak: Leak,
-  region: string,
-): Effect.Effect<unknown, { _tag: string }, Env> => {
+const destroyLeak = (leak: Leak, region: string): Effect.Effect<unknown, { _tag: string }, Env> => {
   switch (leak.kind) {
     case "sqs:queue":
       return SQS.deleteQueue({ QueueUrl: sqsQueueUrl(leak, region) });
     case "sns:topic":
       return SNS.deleteTopic({ TopicArn: leak.arn });
     case "dynamodb:table":
-      return retryDependencies(
-        DynamoDB.deleteTable({ TableName: leak.name }),
-      );
+      return retryDependencies(DynamoDB.deleteTable({ TableName: leak.name }));
     case "lambda:function":
       return Lambda.deleteFunction({ FunctionName: leak.name });
     case "logs:log-group":
       return Logs.deleteLogGroup({ logGroupName: leak.name });
     case "s3:bucket":
       return emptyBucket(leak.name).pipe(
-        Effect.andThen(
-          retryDependencies(S3.deleteBucket({ Bucket: leak.name })),
-        ),
+        Effect.andThen(retryDependencies(S3.deleteBucket({ Bucket: leak.name }))),
       );
     case "kinesis:stream":
       return retryDependencies(
@@ -756,15 +694,11 @@ const destroyLeak = (
     case "elbv2:load-balancer":
       return ELBv2.deleteLoadBalancer({ LoadBalancerArn: leak.arn });
     case "elbv2:target-group":
-      return retryDependencies(
-        ELBv2.deleteTargetGroup({ TargetGroupArn: leak.arn }),
-      );
+      return retryDependencies(ELBv2.deleteTargetGroup({ TargetGroupArn: leak.arn }));
     case "ec2:nat-gateway":
       return EC2.deleteNatGateway({ NatGatewayId: leak.name });
     case "ec2:elastic-ip":
-      return retryDependencies(
-        EC2.releaseAddress({ AllocationId: leak.name }),
-      );
+      return retryDependencies(EC2.releaseAddress({ AllocationId: leak.name }));
     case "ec2:vpc":
       return deleteVpcDeep(leak.name);
     case "rds:instance":
@@ -792,15 +726,11 @@ const destroyLeak = (
     case "ssm:parameter":
       return SSM.deleteParameter({ Name: leak.name });
     case "scheduler:schedule": {
-      const [group, name] = leak.name.includes("/")
-        ? leak.name.split("/")
-        : ["default", leak.name];
+      const [group, name] = leak.name.includes("/") ? leak.name.split("/") : ["default", leak.name];
       return Scheduler.deleteSchedule({ Name: name, GroupName: group });
     }
     case "scheduler:schedule-group":
-      return retryDependencies(
-        Scheduler.deleteScheduleGroup({ Name: leak.name }),
-      );
+      return retryDependencies(Scheduler.deleteScheduleGroup({ Name: leak.name }));
     case "iam:role":
       return deleteIamRole(leak.name);
     case "iam:policy":
@@ -825,8 +755,7 @@ const MAX_PAGES = 50;
 
 const discoverTagged = (stage: string) =>
   Effect.gen(function* () {
-    const all: import("@distilled.cloud/aws/resource-groups-tagging-api").ResourceTagMapping[] =
-      [];
+    const all: import("@distilled.cloud/aws/resource-groups-tagging-api").ResourceTagMapping[] = [];
     let token: string | undefined = undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
       const res: GetResourcesOutput = yield* getResources({
@@ -856,8 +785,7 @@ const discoverIam = (stage: string, account: string) =>
       createdAt: Date | undefined;
     }[] = [];
 
-    const roles: import("@distilled.cloud/aws/iam").Role[] =
-      [];
+    const roles: import("@distilled.cloud/aws/iam").Role[] = [];
     {
       let marker: string | undefined = undefined;
       for (let page = 0; page < MAX_PAGES; page++) {
@@ -870,17 +798,13 @@ const discoverIam = (stage: string, account: string) =>
         marker = res.Marker;
       }
     }
-    const roleCandidates = roles.filter((r) =>
-      (r.RoleName ?? "").includes(marker),
-    );
+    const roleCandidates = roles.filter((r) => (r.RoleName ?? "").includes(marker));
     const roleTags = yield* Effect.forEach(
       roleCandidates,
       (r) =>
         IAM.listRoleTags({ RoleName: r.RoleName }).pipe(
           Effect.map((t) => ({ role: r, tags: tagRecord(t.Tags) })),
-          Effect.catch(() =>
-            Effect.succeed({ role: r, tags: {} as Record<string, string> }),
-          ),
+          Effect.orElseSucceed(() => ({ role: r, tags: {} as Record<string, string> })),
         ),
       { concurrency: 5 },
     );
@@ -894,8 +818,7 @@ const discoverIam = (stage: string, account: string) =>
       }
     }
 
-    const policies: import("@distilled.cloud/aws/iam").Policy[] =
-      [];
+    const policies: import("@distilled.cloud/aws/iam").Policy[] = [];
     {
       let marker: string | undefined = undefined;
       for (let page = 0; page < MAX_PAGES; page++) {
@@ -909,23 +832,23 @@ const discoverIam = (stage: string, account: string) =>
         marker = res.Marker;
       }
     }
-    const policyCandidates = policies.filter((p) =>
-      (p.PolicyName ?? "").includes(marker),
-    );
+    const policyCandidates = policies.filter((p) => (p.PolicyName ?? "").includes(marker));
     const policyTags = yield* Effect.forEach(
       policyCandidates,
       (p) =>
         IAM.listPolicyTags({ PolicyArn: p.Arn! }).pipe(
           Effect.map((t) => ({ policy: p, tags: tagRecord(t.Tags) })),
-          Effect.catch(() =>
-            Effect.succeed({ policy: p, tags: {} as Record<string, string> }),
-          ),
+          Effect.orElseSucceed(() => ({ policy: p, tags: {} as Record<string, string> })),
         ),
       { concurrency: 5 },
     );
     for (const { policy, tags } of policyTags) {
       if (tags["alchemy::stage"] === stage) {
-        leaks.push({ arn: policy.Arn!, tags, createdAt: toDate(policy.CreateDate) });
+        leaks.push({
+          arn: policy.Arn!,
+          tags,
+          createdAt: toDate(policy.CreateDate),
+        });
       }
     }
     return leaks;
@@ -939,8 +862,7 @@ const discoverIam = (stage: string, account: string) =>
 const discoverSchedules = (stage: string, region: string, account: string) =>
   Effect.gen(function* () {
     const marker = `-${stage}-`;
-    const schedules: import("@distilled.cloud/aws/scheduler").ScheduleSummary[] =
-      [];
+    const schedules: import("@distilled.cloud/aws/scheduler").ScheduleSummary[] = [];
     {
       let token: string | undefined = undefined;
       for (let page = 0; page < MAX_PAGES; page++) {
@@ -963,7 +885,7 @@ const discoverSchedules = (stage: string, region: string, account: string) =>
         name: s.Name ?? "",
         createdAt: toDate(s.CreationDate),
       }));
-  }).pipe(Effect.catch(() => Effect.succeed([])));
+  }).pipe(Effect.orElseSucceed(() => []));
 
 // ---------------------------------------------------------------------------
 // Report
@@ -972,7 +894,7 @@ const discoverSchedules = (stage: string, region: string, account: string) =>
 const fmtAge = (h: number | undefined): string =>
   h === undefined ? "?" : h >= 48 ? `${(h / 24).toFixed(1)}d` : `${h.toFixed(1)}h`;
 
-const printTable = (leaks: Leak[]) => {
+const printTable = Effect.fn(function* (leaks: Leak[]) {
   const rows = leaks.map((l) => ({
     age: fmtAge(ageHours(l.createdAt)),
     cost: l.hourly ? "HOURLY" : "",
@@ -982,32 +904,36 @@ const printTable = (leaks: Leak[]) => {
     arn: l.arn,
   }));
   const cols = ["age", "cost", "kind", "stack", "id", "arn"] as const;
-  const headers = { age: "AGE", cost: "COST", kind: "KIND", stack: "STACK", id: "ID", arn: "ARN" };
+  const headers = {
+    age: "AGE",
+    cost: "COST",
+    kind: "KIND",
+    stack: "STACK",
+    id: "ID",
+    arn: "ARN",
+  };
   const width = (c: (typeof cols)[number]) =>
     Math.max(headers[c].length, ...rows.map((r) => r[c].length));
   const line = (r: Record<(typeof cols)[number], string>) =>
     cols.map((c) => r[c].padEnd(width(c))).join("  ");
-  console.log(line(headers));
-  console.log(cols.map((c) => "-".repeat(width(c))).join("  "));
-  for (const r of rows) console.log(line(r));
-};
+  yield* Console.log(line(headers));
+  yield* Console.log(cols.map((c) => "-".repeat(width(c))).join("  "));
+  for (const r of rows) yield* Console.log(line(r));
+});
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-const main = Effect.gen(function* () {
-  const args = yield* parseArgs;
-  console.log(
+const main = Effect.fn(function* (args: Args) {
+  yield* Console.log(
     `aws-leak-sweep: region=${args.region} stage=${args.stage} older-than=${args.olderThanHours}h mode=${args.delete ? "DELETE" : "DRY-RUN"}`,
   );
 
   // -- discover ---------------------------------------------------------
   const tagged = yield* discoverTagged(args.stage);
   const account =
-    tagged
-      .map((t) => parseArn(t.ResourceARN ?? "")?.account)
-      .find((a) => a && a.length > 0) ?? "";
+    tagged.map((t) => parseArn(t.ResourceARN ?? "")?.account).find((a) => a && a.length > 0) ?? "";
 
   const leaks: Leak[] = [];
   const seen = new Set<string>();
@@ -1066,16 +992,14 @@ const main = Effect.gen(function* () {
   }
 
   if (leaks.length === 0) {
-    console.log("No alchemy-tagged test resources found. Clean.");
+    yield* Console.log("No alchemy-tagged test resources found. Clean.");
     return;
   }
 
   // -- enrich ages ------------------------------------------------------
   const bucketDates = new Map<string, Date>();
   if (leaks.some((l) => l.kind === "s3:bucket")) {
-    const buckets = yield* S3.listBuckets({}).pipe(
-      Effect.catch(() => Effect.succeed({ Buckets: [] })),
-    );
+    const buckets = yield* S3.listBuckets({}).pipe(Effect.orElseSucceed(() => ({ Buckets: [] })));
     for (const b of buckets.Buckets ?? []) {
       const d = toDate(b.CreationDate);
       if (b.Name && d) bucketDates.set(b.Name, d);
@@ -1104,32 +1028,29 @@ const main = Effect.gen(function* () {
     else skippedYoung++;
   }
 
-  eligible.sort(
-    (a, b) =>
-      (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0),
-  );
+  eligible.sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0));
 
-  console.log(
+  yield* Console.log(
     `\nFound ${leaks.length} alchemy '${args.stage}'-stage resources; ${eligible.length} older than ${args.olderThanHours}h (or unknown age), ${skippedYoung} younger (skipped).\n`,
   );
-  printTable(eligible);
+  yield* printTable(eligible);
 
   const hourlyCount = eligible.filter((l) => l.hourly).length;
   if (hourlyCount > 0) {
-    console.log(
+    yield* Console.log(
       `\n!! ${hourlyCount} resource(s) bill HOURLY (NAT/EIP/RDS/ELB) — sweep these first.`,
     );
   }
   const reportOnly = eligible.filter((l) => l.reportOnly);
   if (reportOnly.length > 0) {
-    console.log(`\nReport-only (not deleted by this tool):`);
+    yield* Console.log(`\nReport-only (not deleted by this tool):`);
     for (const l of reportOnly) {
-      console.log(`  - ${l.arn} (${l.reportOnlyReason ?? ""})`);
+      yield* Console.log(`  - ${l.arn} (${l.reportOnlyReason ?? ""})`);
     }
   }
 
   if (!args.delete) {
-    console.log(
+    yield* Console.log(
       `\nDRY RUN — nothing deleted. Re-run with --delete to remove the ${
         eligible.filter((l) => !l.reportOnly).length
       } deletable resource(s).`,
@@ -1157,39 +1078,78 @@ const main = Effect.gen(function* () {
     );
     if (Result.isFailure(result)) {
       const tag =
-        typeof result.failure === "object" &&
-        result.failure !== null &&
-        "_tag" in result.failure
+        typeof result.failure === "object" && result.failure !== null && "_tag" in result.failure
           ? String(result.failure._tag)
           : String(result.failure);
       if (GONE.test(tag)) {
         gone++;
-        console.log(`  ~ already gone ${leak.kind} ${leak.arn}`);
+        yield* Console.log(`  ~ already gone ${leak.kind} ${leak.arn}`);
       } else {
         failed++;
-        console.log(`  x FAILED ${leak.kind} ${leak.arn}: ${tag}`);
+        yield* Console.log(`  x FAILED ${leak.kind} ${leak.arn}: ${tag}`);
       }
     } else {
       ok++;
-      console.log(`  ✓ deleted ${leak.kind} ${leak.arn}`);
+      yield* Console.log(`  ✓ deleted ${leak.kind} ${leak.arn}`);
     }
   }
-  console.log(
-    `\nDelete complete: ${ok} deleted, ${gone} already gone, ${failed} failed.`,
-  );
+  yield* Console.log(`\nDelete complete: ${ok} deleted, ${gone} already gone, ${failed} failed.`);
   if (failed > 0) {
-    console.log(
+    yield* Console.log(
       "Failures are usually dependency ordering (NAT->EIP->VPC take minutes); re-run the sweep.",
     );
-    process.exitCode = 1;
+    yield* Effect.sync(() => {
+      process.exitCode = 1;
+    });
   }
 });
 
-const args = await Effect.runPromise(parseArgs);
-const layers = Layer.mergeAll(
-  fromChain(),
-  Layer.succeed(Region, Effect.succeed(args.region as any)),
-  FetchHttpClient.layer,
+const command = Command.make(
+  "aws-leak-sweep",
+  {
+    delete: Flag.Boolean("delete").pipe(
+      Flag.withDescription("Actually delete the eligible resources (default is a dry run)"),
+      Flag.withDefault(false),
+    ),
+    olderThanHours: Flag.Finite("older-than").pipe(
+      Flag.withDescription("Only sweep resources at least this many hours old"),
+      Flag.withDefault(6),
+    ),
+    stage: Flag.String("stage").pipe(
+      Flag.withDescription("alchemy::stage tag to sweep (default test_$USER)"),
+      Flag.withFallbackConfig(
+        Config.NonEmptyString("USER").pipe(
+          Config.orElse(() => Config.NonEmptyString("USERNAME")),
+          Config.withDefault("unknown"),
+          Config.map((user) => `test_${user}`),
+        ),
+      ),
+    ),
+    region: Flag.String("region").pipe(
+      Flag.withDescription("AWS region (default $AWS_REGION, $AWS_DEFAULT_REGION or us-west-2)"),
+      Flag.withFallbackConfig(
+        Config.String("AWS_REGION").pipe(
+          Config.orElse(() => Config.String("AWS_DEFAULT_REGION")),
+          Config.withDefault("us-west-2"),
+        ),
+      ),
+    ),
+  },
+  (args) =>
+    main(args).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          fromChain(),
+          Layer.succeed(Region, Effect.succeed(args.region as any)),
+          FetchHttpClient.layer,
+        ),
+      ),
+    ),
+).pipe(
+  Command.withDescription("Find (and optionally delete) leaked alchemy-tagged AWS test resources"),
 );
 
-await Effect.runPromise(main.pipe(Effect.provide(layers)));
+Command.run(command, { version: "0.0.0" }).pipe(
+  Effect.provide(NodeServices.layer),
+  NodeRuntime.runMain,
+);

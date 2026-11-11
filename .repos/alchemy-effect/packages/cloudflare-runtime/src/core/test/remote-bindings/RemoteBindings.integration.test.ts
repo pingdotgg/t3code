@@ -2,17 +2,9 @@ import * as Credentials from "@distilled.cloud/cloudflare/Credentials";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import {
-  Ai,
-  Artifacts,
-  D1,
-  Images,
-  KvNamespace,
-  R2Bucket,
-  Service,
-} from "../../bindings/index.ts";
+import { Ai, Artifacts, D1, Images, KvNamespace, R2Bucket, Service } from "../../bindings/index.ts";
 import * as Runtime from "../../Runtime.ts";
 import * as RuntimeServices from "../../RuntimeServices.ts";
 
@@ -95,16 +87,8 @@ export default {
 `;
 
 describe.skipIf(!accountId)("RemoteBindings (integration)", () => {
-  const services = RuntimeServices.layerRuntime({
-    api: { accountId: accountId! },
-  }).pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Credentials.fromEnv(),
-        NodeServices.layer,
-        FetchHttpClient.layer,
-      ),
-    ),
+  const services = RuntimeServices.layerRuntime({ api: { accountId: accountId! } }).pipe(
+    Layer.provide(Layer.mergeAll(Credentials.fromEnv(), NodeServices.layer, FetchHttpClient.layer)),
   );
 
   const remoteBindings = [
@@ -114,9 +98,7 @@ describe.skipIf(!accountId)("RemoteBindings (integration)", () => {
     ...(r2BucketName ? [R2Bucket.remote("R2", r2BucketName)] : []),
     ...(d1DatabaseId ? [D1.remote("DB", d1DatabaseId)] : []),
     ...(serviceWorker ? [Service.remote("SVC", serviceWorker)] : []),
-    ...(artifactsNamespace
-      ? [Artifacts.remote("ARTIFACTS", artifactsNamespace)]
-      : []),
+    ...(artifactsNamespace ? [Artifacts.remote("ARTIFACTS", artifactsNamespace)] : []),
   ];
 
   type RouteCase = {
@@ -130,30 +112,10 @@ describe.skipIf(!accountId)("RemoteBindings (integration)", () => {
   const cases: ReadonlyArray<RouteCase> = [
     { label: "Ai", path: "/ai", expectBodyMatches: /ai-bound/ },
     { label: "Images", path: "/images", expectBodyMatches: /images-bound/ },
-    {
-      label: "KV",
-      path: "/kv",
-      expectBodyMatches: /^ok$/,
-      skip: !kvNamespaceId,
-    },
-    {
-      label: "R2",
-      path: "/r2",
-      expectBodyMatches: /^ok-r2$/,
-      skip: !r2BucketName,
-    },
-    {
-      label: "D1",
-      path: "/d1",
-      expectBodyMatches: /"one":\s*1/,
-      skip: !d1DatabaseId,
-    },
-    {
-      label: "Service",
-      path: "/svc",
-      expectBodyMatches: /^\d{3}$/,
-      skip: !serviceWorker,
-    },
+    { label: "KV", path: "/kv", expectBodyMatches: /^ok$/, skip: !kvNamespaceId },
+    { label: "R2", path: "/r2", expectBodyMatches: /^ok-r2$/, skip: !r2BucketName },
+    { label: "D1", path: "/d1", expectBodyMatches: /"one":\s*1/, skip: !d1DatabaseId },
+    { label: "Service", path: "/svc", expectBodyMatches: /^\d{3}$/, skip: !serviceWorker },
     {
       label: "Artifacts",
       path: "/artifacts",
@@ -170,17 +132,12 @@ describe.skipIf(!accountId)("RemoteBindings (integration)", () => {
         compatibilityDate: "2026-03-10",
         compatibilityFlags: [],
         bindings: remoteBindings,
-        modules: [
-          { name: "main.js", type: "ESModule", content: ROUTER_SCRIPT },
-        ],
+        modules: [{ name: "main.js", type: "ESModule", content: ROUTER_SCRIPT }],
       });
-      const results: Array<{ label: string; status: number; body: string }> =
-        [];
+      const results: Array<{ label: string; status: number; body: string }> = [];
       for (const { label, path, skip } of cases) {
         if (skip) continue;
-        const response = yield* Effect.promise(() =>
-          fetch(new URL(path, baseUrl)),
-        );
+        const response = yield* Effect.promise(() => fetch(new URL(path, baseUrl)));
         const body = yield* Effect.promise(() => response.text());
         results.push({ label, status: response.status, body });
       }

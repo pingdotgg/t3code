@@ -1,10 +1,11 @@
 ---
 title: Test harness
-description: Reference for alchemy/Test — every helper, hook, and option exposed by Test.make for Bun and Vitest.
+description: Reference for @alchemy.run/test — every helper, hook, and option exposed by Test.make, and how to run it with alchemy-test, bun test, or Vitest.
 ---
 
-`alchemy/Test/Bun` and `alchemy/Test/Vitest` expose the same
-Effect-aware harness. For the end-to-end walkthrough, see
+`Test.make` is the same Effect-aware harness on three runners:
+[`alchemy-test`, `bun test`, and Vitest](#runners). For the
+end-to-end walkthrough, see
 [Testing a Stack](/testing/testing-a-stack); for provider-lifecycle
 testing, see [Testing Providers](/testing/testing-providers).
 
@@ -35,8 +36,8 @@ const { test, beforeAll, beforeEach, afterAll, afterEach, deploy, destroy } =
 `Test.getWhenReady` / `Test.executeWhenReady` are module-level HTTP
 cold-start helpers, taught in [Testing a Stack](/testing/testing-a-stack).
 
-`expect` (and `describe`) come from the underlying runner —
-`bun:test` or `@effect/vitest` — directly.
+`expect` (and `describe`) come from the runner directly —
+`@alchemy.run/test`, `bun:test`, or `@effect/vitest`.
 
 ## Test.make options
 
@@ -103,7 +104,11 @@ the same way the CLI does.
 
 Default stage for `deploy(Stack)` / `destroy(Stack)`. Defaults to
 `test_$USER` (e.g. `test_sam`) so two people running the same suite
-against one account don't collide. Override per file, or per call:
+against one account don't collide. `ALCHEMY_TEST_STAGE` replaces
+the default for the whole run
+([from the command line](#setting-the-stage-from-the-command-line)),
+e.g. one stage per [git worktree](/environments/worktrees). Override
+per file, or per call:
 
 ```typescript
 Test.make({ providers, stage: "ci-pr-42" });
@@ -261,7 +266,7 @@ On Vitest, `test.only` is supported but `test.todo` is a stub
 it directly:
 
 ```typescript
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 test(
   "health check",
@@ -274,34 +279,113 @@ test(
 ```
 
 The implementation comes from
-`effect/unstable/http/FetchHttpClient` — same client the CLI
+`effect/http/FetchHttpClient` — same client the CLI
 uses. For a full PUT/GET round-trip against a deployed stack,
 see [Testing a Stack → Drive the live URL](/testing/testing-a-stack).
 
-## Bun vs Vitest
+## Runners
 
-The two adapters expose the **same API**:
+[`@alchemy.run/test`](https://www.npmjs.com/package/@alchemy.run/test)
+holds `Test.make` for every runner. Install it once, whichever runner
+you use:
 
-```diff lang="typescript"
--import * as Test from "alchemy/Test/Bun";
--import { expect } from "bun:test";
-+import * as Test from "alchemy/Test/Vitest";
-+import { expect } from "@effect/vitest";
-
-const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
-  providers: Cloudflare.providers(),
-  state: Cloudflare.state(),
-});
+```sh
+bun add -d @alchemy.run/test
 ```
 
-- **Bun** uses `bun:test` directly. Every `test(...)` becomes a
-  `bun.test(...)` call wrapped with `Effect.runPromise`.
-- **Vitest** uses `@effect/vitest`'s `it.live`, so Effect-aware
-  tests stay first-class. Default hook timeout is the same
-  (120s).
+Each runner has its own adapter in the package. The `Test.make` API
+is identical on all three; only the import and the command change.
 
-Pick whichever runner your project already uses; nothing in the
-test code changes.
+### alchemy-test
+
+`alchemy-test` is the runner Alchemy's own suite uses, and it ships
+in the same package. It runs every test file in one bun process with
+files and tests in flight at once, which suits slow tests that wait
+on real clouds.
+
+Import the harness from `@alchemy.run/test/Alchemy` and `expect` from
+`@alchemy.run/test`.
+
+```typescript
+import * as Test from "@alchemy.run/test/Alchemy";
+import { expect } from "@alchemy.run/test";
+```
+
+Run it with the `alchemy-test` binary. It picks up every
+`*.test.ts` under `./test`, or the paths you pass.
+
+```sh
+bunx alchemy-test
+bunx alchemy-test test/integ.test.ts -t "serves the url"
+```
+
+Flags set the environment before any test file is imported:
+`--profile <name>` sets `ALCHEMY_PROFILE`, `--stage <name>` sets
+`ALCHEMY_TEST_STAGE`, and `--fast` sets `FAST=1`.
+
+```sh
+bunx alchemy-test --profile testing --stage test_sam_feat-x
+```
+
+Passing tests stay quiet; a failing test prints its error and
+captured output inline. Every test's output goes to a per-run log
+under `.alchemy/log/test/`, whose path is printed at the end. Add
+`--tui` for a live view in an interactive terminal.
+
+### bun test
+
+Import the harness from `@alchemy.run/test/Bun` and `expect` from
+`bun:test`.
+
+```typescript
+import * as Test from "@alchemy.run/test/Bun";
+import { expect } from "bun:test";
+```
+
+Run it with bun's built-in runner. Every `test(...)` becomes a
+`bun:test` test that runs its Effect.
+
+```sh
+bun test test/integ.test.ts
+```
+
+### Vitest
+
+Install `vitest` and `@effect/vitest` next to `@alchemy.run/test`.
+
+```sh
+npm add -D @alchemy.run/test vitest @effect/vitest
+```
+
+Import the harness from `@alchemy.run/test/Vitest` and `expect` from
+`@effect/vitest`.
+
+```typescript
+import * as Test from "@alchemy.run/test/Vitest";
+import { expect } from "@effect/vitest";
+```
+
+Every `test(...)` runs as an `@effect/vitest` `it.live` test, with
+the same 120s default hook timeout.
+
+```sh
+npx vitest run test/integ.test.ts
+```
+
+### Setting the stage from the command line
+
+The default stage is `test_$USER` on every runner. `ALCHEMY_TEST_STAGE`
+replaces it for the whole run. `alchemy-test` sets it with
+`--stage`; with `bun test` or Vitest, set the variable yourself.
+
+```sh
+bunx alchemy-test --stage ci-pr-42
+ALCHEMY_TEST_STAGE=ci-pr-42 bun test
+ALCHEMY_TEST_STAGE=ci-pr-42 npx vitest run
+```
+
+A `stage` passed to `Test.make` or to a single `deploy` still wins
+over the variable.
 
 ## Where next
 

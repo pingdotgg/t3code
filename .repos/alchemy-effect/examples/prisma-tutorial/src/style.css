@@ -1,0 +1,29 @@
+body {
+  margin: 0;
+  padding: 2rem 1rem;
+  color: #182b35;
+  background: #f4f7f8;
+  font:
+    18px/1.6 system-ui,
+    sans-serif;
+}
+main {
+  max-width: 42rem;
+  margin: 3rem auto;
+}
+button {
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: #075e54;
+  color: white;
+  font: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+#result {
+  overflow-wrap: anywhere;
+}

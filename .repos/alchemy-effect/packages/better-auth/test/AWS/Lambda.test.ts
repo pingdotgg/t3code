@@ -1,13 +1,13 @@
-import * as AWS from "alchemy/AWS";
-import * as Neon from "alchemy/Neon";
-import * as Core from "alchemy/Test/Core";
-import * as Test from "alchemy/Test/Alchemy";
-import { expect } from "alchemy-test";
+import * as AWS from "@alchemy.run/aws";
+import * as Neon from "@alchemy.run/neon";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as Core from "@alchemy.run/test/Core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import AuthFunctionLive, { AuthFunction } from "./fixtures/auth-handler.ts";
 import { AuthHttpError, getJson, postJson, toCookieHeader } from "../http.ts";
+import AuthFunctionLive, { AuthFunction } from "./fixtures/auth-handler.ts";
 
 const testOptions = {
   providers: Layer.mergeAll(AWS.providers(), Neon.providers()),
@@ -36,9 +36,7 @@ beforeAll(
     baseUrl = functionUrl!.replace(/\/+$/, "");
 
     yield* getJson<{ email: string | null }>(`${baseUrl}/me`).pipe(
-      Effect.tapError((error) =>
-        Effect.logWarning(`Lambda not ready yet: ${error.message}`),
-      ),
+      Effect.tapError((error) => Effect.logWarning(`Lambda not ready yet: ${error.message}`)),
       readinessRetry,
     );
   }),
@@ -61,9 +59,7 @@ test(
       name: "Lambda User",
     }).pipe(
       Effect.filterOrFail(
-        (response) =>
-          response.status === 200 ||
-          response.body.includes("USER_ALREADY_EXISTS"),
+        (response) => response.status === 200 || response.body.includes("USER_ALREADY_EXISTS"),
         (response) => new AuthHttpError({ url: baseUrl, ...response }),
       ),
     );
@@ -88,5 +84,8 @@ test(
     const anonymous = yield* getJson<{ email: string | null }>(`${baseUrl}/me`);
     expect(anonymous.email).toBeNull();
   }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:lambda", "provider:neon", "provider:neon:project", "live"],
+    timeout: 120_000,
+  },
 );

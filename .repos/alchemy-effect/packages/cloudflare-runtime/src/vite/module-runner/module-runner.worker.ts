@@ -1,48 +1,84 @@
 import { DurableObject } from "cloudflare:workers";
-import {
-  ModuleRunner,
-  ssrDynamicImportKey,
-  ssrModuleExportsKey,
-} from "vite/module-runner";
+import { ModuleRunner, ssrDynamicImportKey, ssrModuleExportsKey } from "vite/module-runner";
 import {
   ENVIRONMENT_NAME_HEADER,
   EXPORT_TYPES_EVENT,
   INIT_PATH,
   REQUEST_EXPORT_TYPES_EVENT,
 } from "./constants.shared.ts";
-import { stripInternalEnv, type Env } from "./env.worker.ts";
+import { getEntryEnvironment, stripInternalEnv, type Env } from "./env.worker.ts";
 
 declare global {
   // This global variable is accessed by `@vitejs/plugin-rsc`
-  var __VITE_ENVIRONMENT_RUNNER_IMPORT__: (
-    environmentName: string,
-    id: string,
-  ) => Promise<unknown>;
+  var __VITE_ENVIRONMENT_RUNNER_IMPORT__: (environmentName: string, id: string) => Promise<unknown>;
 }
 
-const callbacks = {
-  nextId: 0,
-  pending: new Map<number, () => Promise<unknown>>(),
-  results: new Map<number, unknown>(),
-  run: async <T>(env: Env, callback: () => Promise<T>): Promise<T> => {
-    const id = callbacks.nextId++;
-    callbacks.pending.set(id, callback);
-    const stub = env.__DISTILLED_MODULE_RUNNER__.get("singleton");
-    await stub.executeCallback(id);
-    return callbacks.results.get(id) as T;
-  },
-};
+/**
+ * Module imports have to run inside the module runner Durable Object's
+ * `IoContext`, but they are requested from other contexts (a Worker request,
+ * a dynamic `import()`). The requesting side registers the callback here,
+ * asks the object to run it over RPC by id, and reads the result by id once
+ * the RPC returns. Both sides share this module because they share one V8
+ * isolate.
+ *
+ * Every entry is removed once the caller has read its result, whether the
+ * callback succeeded or failed. A result is a module namespace, and a
+ * namespace keeps every module it (transitively) imported alive. Retaining
+ * the results would pin each previous module graph after an HMR update or a
+ * full runner reload until the isolate ran out of heap.
+ */
+export class CallbackRegistry {
+  private nextId = 0;
+  private readonly pending = new Map<number, () => Promise<unknown>>();
+  private readonly results = new Map<number, unknown>();
+
+  /**
+   * Registers `callback` and asks `execute` to run it under its id. Resolves
+   * with the callback's result once `execute` returns.
+   */
+  async run<T>(execute: (id: number) => Promise<void>, callback: () => Promise<T>): Promise<T> {
+    const id = this.nextId++;
+    this.pending.set(id, callback);
+    try {
+      await execute(id);
+      return this.results.get(id) as T;
+    } finally {
+      this.pending.delete(id);
+      this.results.delete(id);
+    }
+  }
+
+  /** Runs the callback registered under `id` and stores its result. */
+  async execute(id: number): Promise<void> {
+    const callback = this.pending.get(id);
+    if (!callback) {
+      throw new Error(`No pending callback with id ${id}`);
+    }
+    this.results.set(id, await callback());
+  }
+
+  /** Entries still registered. Zero whenever no `run` is in flight. */
+  get size(): number {
+    return this.pending.size + this.results.size;
+  }
+}
+
+const callbacks = new CallbackRegistry();
+
+/** Runs `callback` inside the module runner Durable Object's `IoContext`. */
+const runInModuleRunner = <T>(env: Env, callback: () => Promise<T>): Promise<T> =>
+  callbacks.run(
+    (id) => env.__DISTILLED_MODULE_RUNNER__.get("singleton").executeCallback(id),
+    callback,
+  );
 
 /**
  * Retrieves a specific export from a Worker entry module using the module runner.
  */
-export async function getWorkerEntryExport<T>(
-  env: Env,
-  exportName: string,
-): Promise<T> {
+export async function getWorkerEntryExport<T>(env: Env, exportName: string): Promise<T> {
   const module = await globalThis.__VITE_ENVIRONMENT_RUNNER_IMPORT__(
-    env.__DISTILLED_ENVIRONMENT__.environmentName,
-    env.__DISTILLED_ENVIRONMENT__.entryId,
+    getEntryEnvironment().environmentName,
+    getEntryEnvironment().entryId,
   );
 
   const exportValue =
@@ -53,7 +89,7 @@ export async function getWorkerEntryExport<T>(
 
   if (!exportValue) {
     throw new Error(
-      `"${env.__DISTILLED_ENVIRONMENT__.entryName}" does not define a "${exportName}" export.`,
+      `"${getEntryEnvironment().entryName}" does not define a "${exportName}" export.`,
     );
   }
 
@@ -69,15 +105,12 @@ export class ModuleRunnerDO extends DurableObject<Env> {
     if (pathname !== INIT_PATH) {
       throw new Error(`Invalid path: ${pathname}`);
     }
-    globalThis.__VITE_ENVIRONMENT_RUNNER_IMPORT__ = async (
-      environmentName: string,
-      id: string,
-    ) => {
+    globalThis.__VITE_ENVIRONMENT_RUNNER_IMPORT__ = async (environmentName: string, id: string) => {
       const moduleRunner = this.moduleRunners.get(environmentName);
       if (!moduleRunner) {
         throw new NotInitializedError(environmentName);
       }
-      return callbacks.run(this.env, () => moduleRunner.import(id));
+      return runInModuleRunner(this.env, () => moduleRunner.import(id));
     };
     const environmentName = request.headers.get(ENVIRONMENT_NAME_HEADER);
     if (!environmentName) {
@@ -113,15 +146,12 @@ export class ModuleRunnerDO extends DurableObject<Env> {
    * import runs here rather than being driven from user code.
    */
   private async reportExportTypes(environmentName: string): Promise<void> {
-    const { entryId, exportTypesId } = this.env.__DISTILLED_ENVIRONMENT__;
+    const { entryId, exportTypesId } = getEntryEnvironment();
     let data: unknown;
     try {
       // Both imports run inside this object's IoContext, so they can go
-      // straight to the module runner instead of through `callbacks`.
-      const { getExportTypes } = (await this.import(
-        environmentName,
-        exportTypesId,
-      )) as {
+      // straight to the module runner instead of through `runInModuleRunner`.
+      const { getExportTypes } = (await this.import(environmentName, exportTypesId)) as {
         getExportTypes: (module: unknown) => Record<string, string>;
       };
       data = getExportTypes(await this.import(environmentName, entryId));
@@ -130,17 +160,10 @@ export class ModuleRunnerDO extends DurableObject<Env> {
       // The entry failing to evaluate is reported to the user through the
       // request that triggered it; the dev server keeps its current export
       // types.
-      // oxlint-disable-next-line no-console
-      console.error(
-        "Failed to determine the Worker entry's export types:",
-        error,
-      );
+      console.error("Failed to determine the Worker entry's export types:", error);
       data = null;
     }
-    this.send(
-      environmentName,
-      JSON.stringify({ type: "custom", event: EXPORT_TYPES_EVENT, data }),
-    );
+    this.send(environmentName, JSON.stringify({ type: "custom", event: EXPORT_TYPES_EVENT, data }));
   }
 
   private async import(environmentName: string, id: string): Promise<unknown> {
@@ -152,12 +175,7 @@ export class ModuleRunnerDO extends DurableObject<Env> {
   }
 
   async executeCallback(id: number): Promise<void> {
-    const callback = callbacks.pending.get(id);
-    if (!callback) {
-      throw new Error(`No pending callback with id ${id}`);
-    }
-    const result = await callback();
-    callbacks.results.set(id, result);
+    await callbacks.execute(id);
   }
 
   makeModuleRunner(webSocket: WebSocket, environmentName: string) {
@@ -171,11 +189,7 @@ export class ModuleRunnerDO extends DurableObject<Env> {
               onMessage(JSON.parse(data.toString()));
             });
 
-            onMessage({
-              type: "custom",
-              event: "vite:ws:connect",
-              data: { webSocket },
-            });
+            onMessage({ type: "custom", event: "vite:ws:connect", data: { webSocket } });
           },
           disconnect() {
             webSocket.close();
@@ -198,9 +212,7 @@ export class ModuleRunnerDO extends DurableObject<Env> {
                 body: JSON.stringify(data),
               }),
             );
-            const result = await response.json<
-              { result: unknown } | { error: unknown }
-            >();
+            const result = await response.json<{ result: unknown } | { error: unknown }>();
 
             return result;
           },
@@ -212,9 +224,8 @@ export class ModuleRunnerDO extends DurableObject<Env> {
           // Wrap dynamic imports to route deferred dynamic imports
           // through the DO's IoContext.
           const originalDynamicImport = context[ssrDynamicImportKey];
-          context[ssrDynamicImportKey] = (dep) => {
-            return callbacks.run(env, () => originalDynamicImport(dep));
-          };
+          context[ssrDynamicImportKey] = (dep) =>
+            runInModuleRunner(env, () => originalDynamicImport(dep));
 
           // The trailing newline ensures a `//` comment on the last line of
           // `transformed` (e.g. a sourceMappingURL comment preserved by
@@ -225,21 +236,14 @@ export class ModuleRunnerDO extends DurableObject<Env> {
             await fn(...Object.values(context));
             Object.seal(context[ssrModuleExportsKey]);
           } catch (error) {
-            // oxlint-disable-next-line no-console
-            console.error(
-              `[vite-plugin] Failed to evaluate inlined module "${module.id}":`,
-              error,
-            );
+            console.error(`[vite-plugin] Failed to evaluate inlined module "${module.id}":`, error);
             throw error;
           }
         },
         runExternalModule: async (filepath) => {
           if (filepath === "cloudflare:workers") {
             const { env, ...mod } = await import("cloudflare:workers");
-            return Object.seal({
-              ...mod,
-              env: stripInternalEnv(env as Env),
-            });
+            return Object.seal({ ...mod, env: stripInternalEnv(env as Env) });
           }
           return await import(filepath);
         },
@@ -264,6 +268,7 @@ function isRequestExportTypes(data: string | ArrayBuffer): boolean {
   }
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- plain workerd script (no Effect); thrown to the Vite module runner
 class NotInitializedError extends Error {
   constructor(environmentName: string) {
     super(

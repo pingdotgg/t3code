@@ -3,7 +3,7 @@ title: Getting Started
 description: A complete quickstart for a Git host protected by a shared credential. Deploy it to Cloudflare, push a repository, and clone it back.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../components/PackageManagers.astro";
 
 For a step-by-step explanation, start with [Push your first repository](/git/tutorial/part-1).
 This page provides a complete host protected by one shared credential.
@@ -13,36 +13,23 @@ enabled. [Cloudflare setup](/cloudflare/setup) connects one.
 
 ## Install
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun add alchemy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm install alchemy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm add alchemy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn add alchemy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add="alchemy @alchemy.run/cloudflare @alchemy.run/git effect" />
 
 ## Define the host
 
 ```typescript
 // src/git.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Git from "alchemy/Git";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Git from "@alchemy.run/git";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpRouter from "effect/http/HttpRouter";
 import * as Http from "alchemy/Http";
 import * as Redacted from "effect/Redacted";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiSecurity from "effect/http-api/HttpApiSecurity";
 
 export const GitObjects = Cloudflare.R2.Bucket("GitObjects");
 export const GitSecret = Effect.gen(function* () {
@@ -86,7 +73,7 @@ export default class GitHost extends Cloudflare.Worker<GitHost>()(
   Effect.gen(function* () {
     const fetch = yield* HttpRouter.toHttpEffect(GitLive);
     return { fetch };
-  }),
+  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
 ) {}
 ```
 
@@ -111,7 +98,7 @@ so the stack can output its value:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -133,20 +120,7 @@ export default Alchemy.Stack(
 
 ## Deploy
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 The stack prints the Worker's URL and the secret. The rest of this page
 calls them `$HOST` and `$GIT_SECRET`:

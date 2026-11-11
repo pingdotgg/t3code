@@ -16,7 +16,6 @@ export interface RecordingKeyPress {
   readonly shiftKey: boolean;
 }
 
-/** Formats a single chord without duplicating a modifier pressed on its own. */
 export function recordingKeyLabel(input: RecordingKeyPress, isMac: boolean): string | null {
   if (["Dead", "Process", "Unidentified", ""].includes(input.key)) return null;
   const modifiers = [

@@ -1,13 +1,11 @@
-import { mediaKindFromPath } from "@t3tools/shared/filePreview";
+import { mediaKindFromPath } from "@t3tools/shared/mediaPreview";
 import { mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
 
-// Weak keys retain resolved media actions only while the rendered image is reachable.
 export const markdownImageItems = new WeakMap<Element, ExpandedImageItem>();
 
-/** Collect in document order only when opened, including PR sections separated by videos. */
 export function markdownImageGallery(
   element: Element,
   selected: ExpandedImageItem,

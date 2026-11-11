@@ -100,6 +100,14 @@ All three image sources work locally: `main` (a bundled Effect
 program), `context` (your own Dockerfile), and `image` (a
 pre-built remote image).
 
+### FUSE mounts
+
+A container can mount a FUSE filesystem locally, such as an R2
+bucket through `s3fs` or `tigrisfs`, just as it can once deployed.
+Every local container gets the Docker privileges FUSE needs:
+`CAP_SYS_ADMIN`, the `/dev/fuse` device, and an unconfined AppArmor
+profile.
+
 ## What's emulated
 
 These resources ship a local provider and run as simulators in
@@ -110,7 +118,7 @@ dev:
 | Workers                  | workerd, with hot reload and a `http://localhost:<port>` URL                       |
 | Durable Objects          | run inside the local workerd, including SQLite storage                             |
 | KV Namespaces            | local simulator; Node-side capability clients hit the same store                   |
-| R2 Buckets               | local simulator                                                                    |
+| R2 Buckets               | local simulator; an S3-compatible endpoint serves [presigned URLs](/cloudflare/data/r2-presigned-urls) |
 | D1 Databases             | local simulator; `migrations` and `importFiles` apply on every reconcile           |
 | Queues + consumers       | local broker with batching, retry, and dead-letter semantics                       |
 | Hyperdrive               | connects directly to your database                                                 |

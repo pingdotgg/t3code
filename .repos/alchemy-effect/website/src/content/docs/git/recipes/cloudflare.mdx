@@ -6,19 +6,19 @@ description: A git host on one Cloudflare account. One Worker, one bucket, two D
 The examples use `Authentication` from
 [Getting Started](/git/getting-started): the application's request middleware.
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 Everything on one account, with large pushes hashed by dynamically
 loaded Workers so nothing leaves Cloudflare:
 
 ```typescript
 // src/git.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Git from "alchemy/Git";
-import * as GitHasher from "alchemy/Git/Hasher";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Git from "@alchemy.run/git";
+import * as GitHasher from "@alchemy.run/git/Hasher";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpRouter from "effect/http/HttpRouter";
 import * as Http from "alchemy/Http";
 
 export const GitObjects = Cloudflare.R2.Bucket("GitObjects");
@@ -38,14 +38,14 @@ export default class GitHost extends Cloudflare.Worker<GitHost>()(
   Effect.gen(function* () {
     const fetch = yield* HttpRouter.toHttpEffect(GitLive.pipe(Layer.provide(Http.Platform)));
     return { fetch };
-  }),
+  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
 ) {}
 ```
 
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import GitHost from "./src/git.ts";
 
@@ -59,20 +59,7 @@ export default Alchemy.Stack(
 );
 ```
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 ## What gets created
 

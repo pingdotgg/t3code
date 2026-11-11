@@ -1,15 +1,16 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiError from "effect/http-api/HttpApiError";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
+import * as HttpApiSecurity from "effect/http-api/HttpApiSecurity";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
-import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
+import { UserFacingError } from "../UserFacingError.ts";
 
 /**
  * Resource-state payload shape on the wire.
@@ -30,9 +31,7 @@ export const ResourceStateSchema = Schema.Any.pipe(HttpApiSchema.asJson());
 export class BearerTokenValidator extends Context.Service<
   BearerTokenValidator,
   {
-    readonly validate: (
-      token: string,
-    ) => Effect.Effect<void, HttpApiError.Unauthorized>;
+    readonly validate: (token: string) => Effect.Effect<void, HttpApiError.Unauthorized>;
   }
 >()("alchemy/State/BearerTokenValidator") {}
 
@@ -46,19 +45,13 @@ export class StateAuth extends HttpApiMiddleware.Service<
   error: HttpApiError.UnauthorizedNoContent,
 }) {}
 
-export const StateAuthLive: Layer.Layer<
-  StateAuth,
-  never,
-  BearerTokenValidator
-> = Layer.effect(
+export const StateAuthLive: Layer.Layer<StateAuth, never, BearerTokenValidator> = Layer.effect(
   StateAuth,
   Effect.gen(function* () {
     const validator = yield* BearerTokenValidator;
     return {
       bearer: (httpEffect, { credential }) =>
-        validator
-          .validate(Redacted.value(credential))
-          .pipe(Effect.flatMap(() => httpEffect)),
+        validator.validate(Redacted.value(credential)).pipe(Effect.flatMap(() => httpEffect)),
     };
   }),
 );
@@ -86,18 +79,33 @@ const ResourceKey = Schema.Struct({
   fqn: Schema.String,
 });
 
+/**
+ * The store failed to serve a request: which operation, and the kind of
+ * failure (its tag). Never the failure's message, which can carry state; the
+ * Worker logs the full cause. Without it, any failure behind the auth
+ * middleware was encoded as its `Unauthorized` and surfaced as a bare 500.
+ */
+export class StateStoreFailure extends Schema.TaggedError<StateStoreFailure>()(
+  "StateStoreFailure",
+  { operation: Schema.String, reason: Schema.String },
+  { httpApiStatus: 500 },
+) {
+  readonly [UserFacingError] = true;
+  override get message() {
+    return `State store failed to ${this.operation} (${this.reason}); its logs have the cause`;
+  }
+}
+
 export const ListStacks = HttpApiEndpoint.get("listStacks", "/state/stacks", {
   success: Schema.Array(Schema.String),
+  error: StateStoreFailure,
 });
 
-export const ListStages = HttpApiEndpoint.get(
-  "listStages",
-  "/state/stacks/:stack/stages",
-  {
-    params: StackParams,
-    success: Schema.Array(Schema.String),
-  },
-);
+export const ListStages = HttpApiEndpoint.get("listStages", "/state/stacks/:stack/stages", {
+  params: StackParams,
+  success: Schema.Array(Schema.String),
+  error: StateStoreFailure,
+});
 
 export const ListResources = HttpApiEndpoint.get(
   "listResources",
@@ -105,6 +113,7 @@ export const ListResources = HttpApiEndpoint.get(
   {
     params: StackStage,
     success: Schema.Array(Schema.String),
+    error: StateStoreFailure,
   },
 );
 
@@ -114,6 +123,7 @@ export const GetState = HttpApiEndpoint.get(
   {
     params: ResourceKey,
     success: Schema.UndefinedOr(ResourceStateSchema),
+    error: StateStoreFailure,
   },
 );
 
@@ -124,6 +134,7 @@ export const SetState = HttpApiEndpoint.put(
     params: ResourceKey,
     payload: ResourceStateSchema,
     success: ResourceStateSchema,
+    error: StateStoreFailure,
   },
 );
 
@@ -133,18 +144,16 @@ export const DeleteState = HttpApiEndpoint.delete(
   {
     params: ResourceKey,
     success: HttpApiSchema.NoContent,
+    error: StateStoreFailure,
   },
 );
 
-export const DeleteStack = HttpApiEndpoint.delete(
-  "deleteStack",
-  "/state/stacks/:stack",
-  {
-    params: StackParams,
-    query: OptionalStageQuery,
-    success: HttpApiSchema.NoContent,
-  },
-);
+export const DeleteStack = HttpApiEndpoint.delete("deleteStack", "/state/stacks/:stack", {
+  params: StackParams,
+  query: OptionalStageQuery,
+  success: HttpApiSchema.NoContent,
+  error: StateStoreFailure,
+});
 
 export const GetReplacedResources = HttpApiEndpoint.get(
   "getReplacedResources",
@@ -152,6 +161,7 @@ export const GetReplacedResources = HttpApiEndpoint.get(
   {
     params: StackStage,
     success: Schema.Array(ResourceStateSchema),
+    error: StateStoreFailure,
   },
 );
 
@@ -161,6 +171,7 @@ export const GetStackOutput = HttpApiEndpoint.get(
   {
     params: StackStage,
     success: Schema.UndefinedOr(ResourceStateSchema),
+    error: StateStoreFailure,
   },
 );
 
@@ -171,6 +182,7 @@ export const SetStackOutput = HttpApiEndpoint.put(
     params: StackStage,
     payload: ResourceStateSchema,
     success: ResourceStateSchema,
+    error: StateStoreFailure,
   },
 );
 
@@ -213,10 +225,6 @@ export class StateGroup extends HttpApiGroup.make("state")
   .add(SetStackOutput)
   .middleware(StateAuth) {}
 
-export class VersionGroup extends HttpApiGroup.make("version").add(
-  GetVersion,
-) {}
+export class VersionGroup extends HttpApiGroup.make("version").add(GetVersion) {}
 
-export class StateApi extends HttpApi.make("alchemy-state")
-  .add(StateGroup)
-  .add(VersionGroup) {}
+export class StateApi extends HttpApi.make("alchemy-state").add(StateGroup).add(VersionGroup) {}

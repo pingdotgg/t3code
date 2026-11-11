@@ -9,7 +9,6 @@ interface PanelTabCloseButtonProps {
   tooltip?: string;
 }
 
-/** Inside a `group/tab` row, swaps the tab identity for its close action on hover or focus. */
 export function PanelTabCloseButton({
   children,
   label,

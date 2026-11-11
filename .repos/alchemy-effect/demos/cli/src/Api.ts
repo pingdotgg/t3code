@@ -1,7 +1,7 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Uploads } from "./Uploads.ts";
 import { Visits } from "./Visits.ts";
 
@@ -66,9 +66,6 @@ export default class Api extends Cloudflare.Worker<Api>()(
       }),
     };
   }).pipe(
-    Effect.provide([
-      Cloudflare.KV.ReadWriteNamespaceBinding,
-      Cloudflare.R2.ReadWriteBucketBinding,
-    ]),
+    Effect.provide([Cloudflare.KV.ReadWriteNamespaceBinding, Cloudflare.R2.ReadWriteBucketBinding]),
   ),
 ) {}

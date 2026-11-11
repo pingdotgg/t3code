@@ -9,7 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 export interface NightlyReleaseMetadata {
   readonly baseVersion: string;
@@ -96,13 +96,9 @@ export const resolveNightlyTargetVersion = (version: string) => {
   return Effect.succeed(`${major}.${minor}.${Number(patch) + 1}`);
 };
 
-/** Prerelease trains that share nightly's date-and-run versioning. */
 export const PrereleaseChannel = Schema.Literals(["nightly", "preview"]);
 export type PrereleaseChannel = typeof PrereleaseChannel.Type;
 
-// The preview label is deliberately loud: the releases page is the one place
-// a preview build can be found, and its name is the first thing a visitor
-// reads before the warning in the body.
 const CHANNEL_RELEASE_LABELS: Record<PrereleaseChannel, string> = {
   nightly: "Nightly",
   preview: "Preview (maintainer test build, do not install)",

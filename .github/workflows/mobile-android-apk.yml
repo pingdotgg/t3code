@@ -1,0 +1,50 @@
+name: Mobile Android APK
+
+# Checks closed testing hourly. Each new beta gets one versioned prerelease.
+# Unchanged checks publish nothing.
+on:
+  schedule:
+    # Avoid minute zero, when GitHub scheduled jobs are busiest.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-android-apk
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror beta APK
+    if: github.repository == 'pingdotgg/t3code'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      PACKAGE_NAME: com.t3tools.t3code
+    steps:
+      - id: credentials
+        name: Check for Play credentials
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is not available; skipping APK mirror."
+          fi
+
+      - name: Checkout
+        if: steps.credentials.outputs.present == 'true'
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Mirror the newest APK
+        if: steps.credentials.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: node .github/scripts/mirror-play-apk.cjs

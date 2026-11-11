@@ -1,30 +1,23 @@
+import * as NodePath from "node:path";
 /**
- * Shared Node HTTP serve-entry generator for container deploy targets.
+ * Shared Node HTTP serve-entry generator for the Node deploy targets
+ * (containers and AWS Lambda Web Functions).
  *
  * The finishing pass of each SSR node target writes one of these files and
  * pins it as `serverModules[0]`. The program is a complete bun/node entry
- * (`isExternal: true` on the platform Service): it listens on `PORT`
+ * (`isExternal: true` on the platform Service): it listens on
+ * `AWS_LAMBDA_HTTP_ENDPOINT` when Lambda sets it, otherwise `PORT`
  * (default 3000), answers `GET /health`, serves `clientDirectory` on GET
  * first, then falls through to the framework fetch/Node handler.
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as NodePath from "node:path";
-import {
-  toOutputFile,
-  type BuildOutput,
-  type OutputFile,
-} from "./BuildOutput.ts";
+import { toOutputFile, type BuildOutput, type OutputFile } from "./BuildOutput.ts";
 import { DeployTargetError } from "./DeployTarget.ts";
 
 /** Node resolve conditions for server code (no `workerd`). */
-export const NODE_BUNDLE_CONDITIONS = [
-  "node",
-  "import",
-  "module",
-  "default",
-] as const;
+export const NODE_BUNDLE_CONDITIONS = ["node", "import", "module", "default"] as const;
 
 /** The file name the finishing pass writes next to the framework server entry. */
 export const NODE_SERVE_ENTRY_FILE_NAME = "serve-node.mjs";
@@ -52,12 +45,16 @@ export interface NodeServeEntryOptions {
    * Omit to skip static-file serving (Next.js handles its own assets).
    */
   readonly clientDirExpression?: string | undefined;
+  /** Mount the client directory at this URL pathname. @default "/" */
+  readonly assetBasePath?: string | undefined;
   /**
    * Framework request handler. Omit for assets-only sites (Vite SPA,
    * `vite build` output): unmatched GETs 404 after static lookup / SPA
    * fallback.
    */
   readonly handler?: NodeServeHandler | undefined;
+  /** Serve a prerendered index.html at / even when a handler exists. @default false */
+  readonly serveRootIndex?: boolean | undefined;
   /**
    * Vocs/Waku: serve `about/index.html` at `/about` (CF
    * `htmlHandling: "drop-trailing-slash"`).
@@ -71,6 +68,8 @@ export interface NodeServeEntryOptions {
    * @default "none"
    */
   readonly notFoundHandling?: NodeServeNotFoundHandling | undefined;
+  /** HTML file served for a 404-page fallback, relative to the client directory. @default "404.html" */
+  readonly errorPage?: string | undefined;
   /** @default 3000 */
   readonly defaultPort?: number | undefined;
   /**
@@ -86,10 +85,7 @@ export interface NodeServeEntryOptions {
  * file via `import.meta.url`. Falls back to an absolute JSON string when
  * the two paths do not share a relative root (e.g. different Windows drives).
  */
-export const relativeClientDirExpression = (
-  fromFile: string,
-  clientDirectory: string,
-): string => {
+export const relativeClientDirExpression = (fromFile: string, clientDirectory: string): string => {
   const fromDir = NodePath.posix.dirname(fromFile.replaceAll("\\", "/"));
   const client = clientDirectory.replaceAll("\\", "/");
   let relative = NodePath.posix.relative(fromDir, client);
@@ -109,27 +105,33 @@ export const relativeClientDirExpression = (
 };
 
 /** Pin `serveModule` as `serverModules[0]`, keeping the rest of the bundle. */
-export const pinNodeServeModule = (
-  output: BuildOutput,
-  serveModule: OutputFile,
-): BuildOutput => ({
+export const pinNodeServeModule = (output: BuildOutput, serveModule: OutputFile): BuildOutput => ({
   ...output,
   serverModules: [
     serveModule,
-    ...(output.serverModules ?? []).filter(
-      (module_) => module_.name !== serveModule.name,
-    ),
+    ...(output.serverModules ?? []).filter((module_) => module_.name !== serveModule.name),
   ],
 });
+
+/** Shared URL-to-asset mapping; framework handlers retain the original request URL. */
+export const staticAssetPathSource = (assetBasePath = "/"): string => {
+  const base = assetBasePath.replace(/\/+$/, "");
+  return `const staticPathFor = (pathname) => {
+  const base = ${JSON.stringify(base)};
+  if (base === "") return pathname;
+  if (pathname === base) return "/";
+  if (!pathname.startsWith(base + "/")) return undefined;
+  return pathname.slice(base.length);
+};
+`;
+};
 
 /**
  * Generate a complete Node/Bun HTTP program: `/health`, GET static assets,
  * then the framework handler. No package imports other than `node:*` and
  * the handler module the caller passes in.
  */
-export const makeNodeServeEntrySource = (
-  options: NodeServeEntryOptions,
-): string => {
+export const makeNodeServeEntrySource = (options: NodeServeEntryOptions): string => {
   const port = options.defaultPort ?? NODE_DEFAULT_PORT;
   const htmlHandling = options.htmlHandling ?? "none";
   const notFoundHandling = options.notFoundHandling ?? "none";
@@ -143,7 +145,7 @@ export const makeNodeServeEntrySource = (
   const staticBlock = hasStatic
     ? `
 const CLIENT_DIR = ${options.clientDirExpression};
-
+${staticAssetPathSource(options.assetBasePath)}
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -196,7 +198,7 @@ const safeJoin = (urlPath) => {
 const lookupStatic = (urlPath) => {
   const base = safeJoin(urlPath);
   if (base === undefined) return undefined;
-  const isRoot = ${handler === undefined ? "false" : `(urlPath === "/" || urlPath === "")`};
+  const isRoot = ${handler === undefined || options.serveRootIndex ? "false" : `(urlPath === "/" || urlPath === "")`};
   const direct = existingFile(base, !isRoot);
   if (direct) return direct;
 ${
@@ -227,8 +229,9 @@ const sendFile = (res, filePath, status) => {
 
   const staticDispatch = hasStatic
     ? `
-    if (req.method === "GET" || req.method === "HEAD") {
-      const file = lookupStatic(urlPath);
+    const staticPath = staticPathFor(urlPath);
+    if ((req.method === "GET" || req.method === "HEAD") && staticPath !== undefined) {
+      const file = lookupStatic(staticPath);
       if (file !== undefined) {
         if (req.method === "HEAD") {
           res.writeHead(200);
@@ -254,7 +257,7 @@ ${
     : ""
 }${
         notFoundPage
-          ? `      const notFound = lookupStatic("/404.html");
+          ? `      const notFound = lookupStatic(${JSON.stringify(`/${options.errorPage ?? "404.html"}`)});
       if (notFound !== undefined) {
         if (req.method === "HEAD") {
           res.writeHead(404);
@@ -362,15 +365,22 @@ const endedGet = (req) => {
     : `server.listen(PORT, HOST);
 `;
 
-  return `// Generated by @alchemy.run/frontend-frameworks — Node container serve entry.
+  return `// Generated by @alchemy.run/frontend-frameworks — Node serve entry (containers and Lambda Web Functions).
 import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 ${handler !== undefined ? `import { Readable } from "node:stream";\n` : ""}import { fileURLToPath } from "node:url";
 ${handler?.imports ?? ""}
 
-const PORT = Number.parseInt(process.env.PORT ?? "${String(port)}", 10);
-const HOST = process.env.HOST ?? "0.0.0.0";
+// Lambda Web Functions pass the address to listen on as host:port.
+const LAMBDA_ENDPOINT = process.env.AWS_LAMBDA_HTTP_ENDPOINT;
+const LAMBDA_SEPARATOR = LAMBDA_ENDPOINT?.lastIndexOf(":") ?? -1;
+const PORT = LAMBDA_SEPARATOR > 0
+  ? Number.parseInt(LAMBDA_ENDPOINT.slice(LAMBDA_SEPARATOR + 1), 10)
+  : Number.parseInt(process.env.PORT ?? "${String(port)}", 10);
+const HOST = LAMBDA_SEPARATOR > 0
+  ? LAMBDA_ENDPOINT.slice(0, LAMBDA_SEPARATOR).replace(/^\\[(.*)\\]$/, "$1")
+  : (process.env.HOST ?? "0.0.0.0");
 ${staticBlock}${fetchHelpers}${nodeHelpers}
 const pathnameOf = (url) => {
   try {
@@ -417,11 +427,7 @@ export interface WriteNodeServeEntryOptions extends NodeServeEntryOptions {
 /** Write the serve entry to disk and pin it as `serverModules[0]`. */
 export const writeNodeServeEntry = (
   options: WriteNodeServeEntryOptions,
-): Effect.Effect<
-  BuildOutput,
-  DeployTargetError,
-  FileSystem.FileSystem | Path.Path
-> =>
+): Effect.Effect<BuildOutput, DeployTargetError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -439,5 +445,18 @@ export const writeNodeServeEntry = (
       .writeFileString(options.servePath, source)
       .pipe(Effect.mapError(fail("Failed to write the Node serve entry")));
     const serveModule = yield* toOutputFile(options.serveModuleName, source);
-    return pinNodeServeModule(options.output, serveModule);
+    return pinNodeServeModule(
+      {
+        ...options.output,
+        nodeServe: {
+          clientDirExpression: options.clientDirExpression,
+          assetBasePath: options.assetBasePath,
+          handler: options.handler,
+          serveRootIndex: options.serveRootIndex,
+          htmlHandling: options.htmlHandling,
+          notFoundHandling: options.notFoundHandling,
+        },
+      },
+      serveModule,
+    );
   });

@@ -1,15 +1,11 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
+import { LanguageModel as AiLanguageModel, Tool, Toolkit } from "effect/ai";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import {
-  LanguageModel as AiLanguageModel,
-  Tool,
-  Toolkit,
-} from "effect/unstable/ai";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 // Amazon Nova Micro through the us cross-region inference profile — cheap
 // and fast. Any conversational Bedrock model works here (Claude, Llama,
@@ -29,17 +25,12 @@ const GetWeather = Tool.make("get_weather", {
 const WeatherToolkit = Toolkit.make(GetWeather);
 
 const WeatherToolkitLayer = WeatherToolkit.toLayer({
-  get_weather: ({ city }) =>
-    Effect.succeed({ city, temperatureF: 72, condition: "sunny" }),
+  get_weather: ({ city }) => Effect.succeed({ city, temperatureF: 72, condition: "sunny" }),
 });
 
 export default class ChatFunction extends AWS.Lambda.Function<ChatFunction>()(
   "ChatFunction",
-  {
-    main: import.meta.url,
-    functionUrl: true,
-    timeout: Duration.seconds(60),
-  },
+  { main: import.meta.url, functionUrl: true, timeout: Duration.seconds(60) },
   Effect.gen(function* () {
     // Init: bind the model. This grants the Function `bedrock:InvokeModel`
     // and `bedrock:InvokeModelWithResponseStream` scoped to exactly MODEL
@@ -56,15 +47,9 @@ export default class ChatFunction extends AWS.Lambda.Function<ChatFunction>()(
 
         // GET /stream?prompt=... — stream the answer as SSE parts.
         if (url.pathname === "/stream") {
-          const parts = yield* Stream.runCollect(
-            AiLanguageModel.streamText({ prompt }),
-          );
-          const sse = [...parts]
-            .map((part) => `data: ${JSON.stringify(part)}\n\n`)
-            .join("");
-          return HttpServerResponse.text(sse, {
-            headers: { "content-type": "text/event-stream" },
-          });
+          const parts = yield* Stream.runCollect(AiLanguageModel.streamText({ prompt }));
+          const sse = [...parts].map((part) => `data: ${JSON.stringify(part)}\n\n`).join("");
+          return HttpServerResponse.text(sse, { headers: { "content-type": "text/event-stream" } });
         }
 
         // GET /weather?prompt=... — let the model call a typed tool.
@@ -75,10 +60,7 @@ export default class ChatFunction extends AWS.Lambda.Function<ChatFunction>()(
           }).pipe(Effect.provide(WeatherToolkitLayer));
           return yield* HttpServerResponse.json({
             text: response.text,
-            toolCalls: response.toolCalls.map((call) => ({
-              name: call.name,
-              params: call.params,
-            })),
+            toolCalls: response.toolCalls.map((call) => ({ name: call.name, params: call.params })),
             toolResults: response.toolResults.map((result) => ({
               name: result.name,
               result: result.result,
@@ -96,9 +78,7 @@ export default class ChatFunction extends AWS.Lambda.Function<ChatFunction>()(
         const response = yield* AiLanguageModel.generateText({ prompt }).pipe(
           AWS.Bedrock.withModelParameters({
             ...(maxTokens !== null ? { maxTokens: Number(maxTokens) } : {}),
-            ...(temperature !== null
-              ? { temperature: Number(temperature) }
-              : {}),
+            ...(temperature !== null ? { temperature: Number(temperature) } : {}),
           }),
         );
         return yield* HttpServerResponse.json({

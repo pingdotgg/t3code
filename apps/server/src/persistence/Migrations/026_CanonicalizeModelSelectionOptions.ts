@@ -1,30 +1,6 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
-/**
- * Canonicalize `modelSelection.options` / `defaultModelSelection.options` from
- * the legacy object shape (`{ effort: "max", fastMode: true, ... }`) to the
- * current array-of-selections shape (`[{ id: "effort", value: "max" }, ...]`).
- *
- * Migration 016 introduced `modelSelection` with `options` stored as a
- * per-provider object. Later the schema was reshaped so that options are a
- * generic `Array<{ id, value }>` of user-selected option entries. Stored rows
- * from before the reshape still have the object shape and fail to decode.
- *
- * For each value in the legacy object:
- *   - string values are kept if non-empty after trim
- *   - boolean values are always kept (true | false)
- *   - any other value type (number, null, nested object/array) is dropped,
- *     matching the permissive client-side normalizer in composerDraftStore.
- *
- * Touched storage:
- *   - `projection_threads.model_selection_json.options`
- *   - `projection_projects.default_model_selection_json.options`
- *   - `orchestration_events.payload_json.$.modelSelection.options`
- *     (thread.created | thread.meta-updated | thread.turn-start-requested)
- *   - `orchestration_events.payload_json.$.defaultModelSelection.options`
- *     (project.created | project.meta-updated)
- */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

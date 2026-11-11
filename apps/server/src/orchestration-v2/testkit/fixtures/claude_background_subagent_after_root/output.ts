@@ -1,5 +1,9 @@
 import { assert } from "@effect/vitest";
-import type { OrchestrationV2ThreadProjection, ProviderReplayTranscript } from "@t3tools/contracts";
+import type {
+  OrchestrationV2DomainEvent,
+  OrchestrationV2ThreadProjection,
+  ProviderReplayTranscript,
+} from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import {
@@ -12,6 +16,10 @@ import { CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT } from "./input.ts";
 
 const SUBAGENT_TEXTS = ["SUB_STEP_1", "SUB_STEP_2", "SUB_FINAL_REPORT"];
 const SUBAGENT_COMMANDS = ["sleep 3 && echo SUB_DONE_1", "sleep 3 && echo SUB_DONE_2"];
+const SUBAGENT_PROGRESS = [
+  "Running Sleep 3 seconds then echo SUB_DONE_1",
+  "Running Sleep 3 seconds then echo SUB_DONE_2",
+];
 
 function assistantTexts(projection: OrchestrationV2ThreadProjection): ReadonlyArray<string> {
   return projection.turnItems.flatMap((item) =>
@@ -25,9 +33,6 @@ function commandTexts(projection: OrchestrationV2ThreadProjection): ReadonlyArra
   );
 }
 
-// Every frame the background subagent emits arrives after the root turn's
-// result, so it reaches the adapter through the wake buffer and drains into
-// the continuation turn. None of it may land in the parent thread.
 export function assertClaudeBackgroundSubagentAfterRootOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -52,16 +57,11 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
   const subagent = projection.subagents[0];
   assert.equal(subagent?.status, "completed");
   assert.equal(subagent?.origin, "provider_native");
-  // Its completion drains into continuation run 2, but the subagent and its
-  // node stay attributed to the run that launched it.
   assert.lengthOf(projection.runs, 2);
   assert.equal(subagent?.runId, projection.runs[0]?.id);
   const subagentNode = projection.nodes.find((node) => node.id === subagent?.id);
   assert.equal(subagentNode?.status, "completed");
   assert.equal(subagentNode?.runId, projection.runs[0]?.id);
-  // The continuation carries the subagent's notification summary. The
-  // subagent's own foreground Bash steps are not background work, so they
-  // never reach the roster or take over that summary.
   const wakeMessage = projection.messages.find(
     (message) => message.id === projection.runs[1]?.userMessageId,
   );
@@ -76,7 +76,6 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
   if (subagent?.childThreadId == null) {
     throw new Error("The background subagent is missing its child thread.");
   }
-  // Its own foreground Bash steps end before it does, but only the subagent is named.
   assert.deepEqual(backgroundNotifications(projection), [
     {
       summary: 'Subagent "Background subagent test" finished',
@@ -97,4 +96,58 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
       `subagent command ${command} must be in the child thread`,
     );
   }
+  const continuationStartIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "run.updated" &&
+      event.payload.id === projection.runs[1]?.id &&
+      event.payload.status === "starting",
+  );
+  assert.isAtLeast(continuationStartIndex, 0);
+  const assertStoredWhileIdle = (
+    label: string,
+    matches: (event: OrchestrationV2DomainEvent) => boolean,
+  ) => {
+    const index = result.domainEvents.findIndex(matches);
+    assert.isAtLeast(index, 0, `${label} is stored`);
+    assert.isBelow(index, continuationStartIndex, `${label} is stored before the root wakes`);
+  };
+  for (const text of SUBAGENT_TEXTS) {
+    assertStoredWhileIdle(
+      `subagent text ${text}`,
+      (event) =>
+        event.type === "message.updated" &&
+        event.payload.threadId === subagent.childThreadId &&
+        event.payload.text.trim() === text,
+    );
+  }
+  for (const command of SUBAGENT_COMMANDS) {
+    assertStoredWhileIdle(
+      `completed subagent command ${command}`,
+      (event) =>
+        event.type === "turn-item.updated" &&
+        event.payload.threadId === subagent.childThreadId &&
+        event.payload.type === "command_execution" &&
+        event.payload.status === "completed" &&
+        event.payload.input.includes(command),
+    );
+  }
+  for (const progress of SUBAGENT_PROGRESS) {
+    assertStoredWhileIdle(
+      `subagent progress "${progress}"`,
+      (event) =>
+        event.type === "subagent.updated" &&
+        event.payload.id === subagent.id &&
+        event.payload.progress === progress,
+    );
+  }
+  assert.isFalse(
+    result.domainEvents
+      .slice(continuationStartIndex)
+      .some(
+        (event) =>
+          (event.type === "message.updated" || event.type === "turn-item.updated") &&
+          event.payload.threadId === subagent.childThreadId,
+      ),
+    "the continuation run stores none of the subagent's work",
+  );
 }

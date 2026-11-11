@@ -1,9 +1,9 @@
-import * as Drizzle from "alchemy/Drizzle/Postgres";
-import * as Railway from "alchemy/Railway";
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
+import * as Railway from "@alchemy.run/railway";
 import { desc, sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ENSURE_NOTES_SQL, Notes } from "./schema.ts";
 import { Db, Site } from "./shared.ts";
 
@@ -26,7 +26,6 @@ export default class Api extends Railway.Service<Api>()(
     project: Site,
     main: import.meta.url,
     port: 3000,
-    build: { install: ["pg"] },
     healthcheck: "/health",
   },
   Effect.gen(function* () {
@@ -45,17 +44,13 @@ export default class Api extends Railway.Service<Api>()(
           return yield* json({ ok: true });
         }
         if (path === "/notes" && request.method === "GET") {
-          const notes = yield* db
-            .select()
-            .from(Notes)
-            .orderBy(desc(Notes.createdAt));
+          const notes = yield* db.select().from(Notes).orderBy(desc(Notes.createdAt));
           return yield* json({ notes });
         }
         if (path === "/notes" && request.method === "POST") {
           const raw = yield* request.text.pipe(Effect.orDie);
           const payload = JSON.parse(raw) as { body?: unknown };
-          const body =
-            typeof payload.body === "string" ? payload.body.trim() : "";
+          const body = typeof payload.body === "string" ? payload.body.trim() : "";
           if (body.length === 0) {
             return yield* json({ error: "body required" }, 400);
           }
@@ -64,9 +59,7 @@ export default class Api extends Railway.Service<Api>()(
         }
         return yield* json({ error: "not found" }, 404);
       }).pipe(
-        Effect.catch((cause: unknown) =>
-          json({ ok: false, error: String(cause) }, 500),
-        ),
+        Effect.catch((cause: unknown) => json({ ok: false, error: String(cause) }, 500)),
         Effect.orDie,
       ),
     };

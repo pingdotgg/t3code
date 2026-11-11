@@ -58,7 +58,7 @@ CREATE TABLE merchants (
 
 ```typescript
 // src/database.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Database = Cloudflare.D1.Database("Database", {
   migrations: "./migrations",
@@ -305,11 +305,12 @@ same shape as above.
 <summary><code>examples/stripe-connect/src/Api.ts</code></summary>
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Stripe from "alchemy/Stripe";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Stripe from "@alchemy.run/stripe";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Database } from "./database.ts";
 
 interface Merchant {

@@ -94,9 +94,14 @@ function cleanupStaleDevApps() {
     return;
   }
 
-  NodeChildProcess.spawnSync("pkill", ["-f", "--", `--t3code-dev-root=${desktopDir}`], {
-    stdio: "ignore",
-  });
+  const escapedDesktopDir = desktopDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  NodeChildProcess.spawnSync(
+    "pkill",
+    ["-f", "--", `(^| )--t3code-dev-root=${escapedDesktopDir}( |$)`],
+    {
+      stdio: "ignore",
+    },
+  );
 }
 
 function startApp() {
@@ -225,7 +230,6 @@ function killChildTree(signal) {
     return;
   }
 
-  // Kill direct children as a final fallback in case normal shutdown leaves stragglers.
   NodeChildProcess.spawnSync("pkill", [`-${signal}`, "-P", String(process.pid)], {
     stdio: "ignore",
   });

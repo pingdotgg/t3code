@@ -1,3 +1,0 @@
-"@effect/ai":
-  replacement: "effect/unstable/ai"
-  note: "The @effect/ai package was merged into the effect package; import the effect/unstable/ai barrel or import specific modules directly (e.g. effect/unstable/ai/<Module>)."

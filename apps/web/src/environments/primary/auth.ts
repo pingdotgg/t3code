@@ -2,7 +2,6 @@ import type {
   AuthBrowserSessionResult,
   AuthClientMetadata,
   AuthEnvironmentScope,
-  AuthPairingCredentialResult,
   ServerAuthSessionMethod,
   AuthSessionId,
   AuthSessionState,
@@ -11,12 +10,12 @@ import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3too
 import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClientError } from "effect/unstable/http";
+import { HttpClientError } from "effect/http";
 
 import {
   getPairingTokenFromUrl,
   stripPairingTokenFromUrl as stripPairingTokenUrl,
-} from "../../pairingUrl";
+} from "@t3tools/shared/remote";
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
@@ -79,10 +78,6 @@ export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.Tag
   }
 }
 
-export const isPrimaryEnvironmentPairingCredentialRejectedError = Schema.is(
-  PrimaryEnvironmentPairingCredentialRejectedError,
-);
-
 export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedError<PrimaryEnvironmentAuthSessionTimeoutError>()(
   "PrimaryEnvironmentAuthSessionTimeoutError",
   {
@@ -140,6 +135,7 @@ type ServerAuthGateState =
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
 let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
+let explicitPairingRequested = false;
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
 
@@ -166,9 +162,7 @@ export function takePairingTokenFromUrl(): string | null {
 }
 
 function getDesktopBootstrapCredential(): string | null {
-  // Both backends share the same bootstrap token (DesktopBackendConfiguration
-  // mints one tokenRef and feeds it to both resolvers), so picking the
-  // primary entry is fine even when the WSL backend is also registered.
+  // DesktopBackendConfiguration gives primary and WSL the same bootstrap token.
   const bootstraps = window.desktopBridge?.getLocalEnvironmentBootstraps() ?? [];
   const primary = bootstraps.find((entry) => entry.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
   return typeof primary?.bootstrapToken === "string" && primary.bootstrapToken.length > 0
@@ -270,7 +264,7 @@ const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
 const BOOTSTRAP_RETRY_TIMEOUT_MS = 15_000;
 const BOOTSTRAP_RETRY_STEP_MS = 500;
 
-export async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<T> {
+async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<T> {
   const startedAt = Date.now();
   while (true) {
     try {
@@ -347,87 +341,22 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
   await waitForAuthenticatedSessionAfterBootstrap();
   resolvedAuthenticatedGateState = { status: "authenticated" };
   bootstrapPromise = null;
+  explicitPairingRequested = false;
   stripPairingTokenFromUrl();
 }
 
-export async function createServerPairingCredential(input?: {
-  readonly label?: string;
-  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
-}): Promise<AuthPairingCredentialResult> {
-  const trimmedLabel = input?.label?.trim();
-  try {
-    return await runPrimaryHttp(
-      PrimaryEnvironmentHttpClient.pipe(
-        Effect.flatMap((client) =>
-          client.auth.pairingCredential({
-            headers: {},
-            payload: {
-              ...(trimmedLabel ? { label: trimmedLabel } : {}),
-              ...(input?.scopes ? { scopes: input.scopes } : {}),
-            },
-          }),
-        ),
-      ),
-    );
-  } catch (error) {
-    throw PrimaryEnvironmentRequestError.fromCause({
-      operation: "create-pairing-credential",
-      cause: error,
-    });
-  }
-}
-
-export async function revokeServerPairingLink(id: string): Promise<void> {
-  try {
-    await runPrimaryHttp(
-      PrimaryEnvironmentHttpClient.pipe(
-        Effect.flatMap((client) => client.auth.revokePairingLink({ headers: {}, payload: { id } })),
-      ),
-    );
-  } catch (error) {
-    throw PrimaryEnvironmentRequestError.fromCause({
-      operation: "revoke-pairing-link",
-      pairingLinkId: id,
-      cause: error,
-    });
-  }
-}
-
-export async function revokeServerClientSession(sessionId: AuthSessionId): Promise<void> {
-  try {
-    await runPrimaryHttp(
-      PrimaryEnvironmentHttpClient.pipe(
-        Effect.flatMap((client) =>
-          client.auth.revokeClient({ headers: {}, payload: { sessionId } }),
-        ),
-      ),
-    );
-  } catch (error) {
-    throw PrimaryEnvironmentRequestError.fromCause({
-      operation: "revoke-client-session",
-      sessionId,
-      cause: error,
-    });
-  }
-}
-
-export async function revokeOtherServerClientSessions(): Promise<number> {
-  try {
-    const result = await runPrimaryHttp(
-      PrimaryEnvironmentHttpClient.pipe(
-        Effect.flatMap((client) => client.auth.revokeOtherClients({ headers: {} })),
-      ),
-    );
-    return result.revokedCount;
-  } catch (error) {
-    throw PrimaryEnvironmentRequestError.fromCause({
-      operation: "revoke-other-client-sessions",
-      cause: error,
-    });
-  }
-}
-
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
+  // Preserve explicit grant replacement across the auth-gate reload triggered by token removal.
+  if (window.location.pathname.replace(/\/+$/, "") !== "/pair") {
+    explicitPairingRequested = false;
+  } else if (peekPairingTokenFromUrl()) {
+    explicitPairingRequested = true;
+  }
+  if (explicitPairingRequested) {
+    const currentSession = await fetchSessionState();
+    return { status: "requires-auth", auth: currentSession.auth };
+  }
+
   const urlCredential = takePairingTokenFromUrl();
   const previousPromise = bootstrapPromise;
   if (urlCredential) {
@@ -468,4 +397,5 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
+  explicitPairingRequested = false;
 }

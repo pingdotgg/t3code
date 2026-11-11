@@ -1,0 +1,120 @@
+---
+title: "Part 6: Deploy and verify"
+description: Deploy the authenticated API, configure production OAuth callbacks, and verify session boundaries.
+sidebar:
+  order: 6
+---
+
+Continue from [Part 5](/better-auth/tutorial/part-5). Use a separate deployment stage and GitHub OAuth application for production.
+
+## Choose a production domain
+
+If your domain is managed by Cloudflare, attach it to the Worker:
+
+```diff lang="typescript"
+ // src/worker.ts
+   {
+     main: import.meta.url,
++    domain: "auth.example.com",
+     assets: "./public",
+```
+
+Replace the example with a hostname you own. Alchemy configures the Worker domain; see [custom domains](/cloudflare/networking/custom-domains) for DNS prerequisites and workers.dev alternatives.
+
+## Register the production OAuth app
+
+Create another [GitHub OAuth application](https://github.com/settings/applications/new):
+
+```text
+Application name: Auth tutorial — production
+Homepage URL: https://auth.example.com
+Authorization callback URL: https://auth.example.com/api/auth/callback/github
+```
+
+Leave the local application's callback unchanged.
+
+## Configure the production origin
+
+```diff lang="typescript"
+ // src/auth.ts
++import * as Option from "effect/Option";
++
+ const makeAuth = Effect.gen(function* () {
++  const baseURL = yield* Config.String("AUTH_BASE_URL").pipe(Config.option);
+   const clientId = yield* Config.String("GITHUB_CLIENT_ID");
+   const clientSecret = yield* Config.Redacted("GITHUB_CLIENT_SECRET");
+   return yield* BetterAuth({
+     basePath: "/api/auth",
+     emailAndPassword: { enabled: true },
++    baseURL: Option.getOrUndefined(baseURL),
+     socialProviders: {
+```
+
+An explicit origin makes production callback construction predictable. This is application URL configuration, not a replacement for Alchemy's generated signing secret.
+
+## Keep the local origin automatic
+
+Leave `AUTH_BASE_URL` unset locally; Better Auth derives it from the incoming request. Keep the local GitHub application's callback aligned with the URL Alchemy prints, updating it if a restart changes the address.
+
+## Supply production credentials
+
+```dotenv
+# .env.production
+AUTH_BASE_URL=https://auth.example.com
+GITHUB_CLIENT_ID=your-production-oauth-client-id
+GITHUB_CLIENT_SECRET=your-production-oauth-client-secret
+```
+
+Keep this file out of Git. In CI, supply the same configuration names through the deployment environment's secret store.
+
+## Add build-and-deploy commands
+
+Add these scripts to your existing package manifest:
+
+```json
+{
+  "scripts": {
+    "dev": "bun build ./src/ui.ts --target browser --outdir ./public && alchemy dev",
+    "deploy": "bun build ./src/ui.ts --target browser --outdir ./public && alchemy deploy"
+  }
+}
+```
+
+Both commands rebuild the browser bundle before starting Alchemy.
+
+## Deploy a separate stage
+
+```sh
+bun --env-file=.env.production run deploy --stage production
+```
+
+Alchemy provisions a separate database and signing secret for this stage, applies schema changes, and deploys the Worker. Subsequent deploys retain the same secret and database identities through stack state.
+
+## Check anonymous access
+
+```sh
+curl -i https://auth.example.com/api/health
+curl -i https://auth.example.com/api/me
+```
+
+The health check should return `200`; the protected endpoint should return `401`.
+
+## Check browser authentication
+
+Open your production site, create an account, and select **Call protected API**. Sign out and verify the same button asks you to sign in.
+
+Sign in with GitHub and repeat the protected request. Cancel a second GitHub sign-in attempt to verify the error message appears after the callback.
+
+## Check persistence
+
+```sh
+bun --env-file=.env.production run deploy --stage production
+```
+
+Refresh a previously signed-in browser after redeployment. Its existing session should still work; do not delete stack state or rotate the signing secret to deploy an update.
+
+## Keep future changes safe
+
+Review [migrations](/better-auth/guides/migrations) before changing the schema, and preserve the [signing identity](/better-auth/guides/configuration#preserve-the-signing-identity) across deployments. For authentication features beyond the Alchemy integration, see the [Better Auth documentation](https://better-auth.com/docs).
+
+The [complete companion application](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-better-auth) contains the assembled files. Its GitHub integration is opt-in so the email/password flow runs before external credentials are available.

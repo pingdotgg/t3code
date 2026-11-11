@@ -1,10 +1,10 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import { eq } from "drizzle-orm";
 import { Layer } from "effect";
 import * as Effect from "effect/Effect";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Hyperdrive } from "./Db.ts";
 import { relations, Users } from "./schema.ts";
 
@@ -30,10 +30,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             }
             const id = Number(request.url.split("/").pop());
             if (Number.isNaN(id)) {
-              return yield* HttpServerResponse.json(
-                { error: "Invalid user ID" },
-                { status: 400 },
-              );
+              return yield* HttpServerResponse.json({ error: "Invalid user ID" }, { status: 400 });
             }
             const user = yield* db.query.Users.findFirst({
               where: { id },
@@ -54,22 +51,13 @@ export default class Api extends Cloudflare.Worker<Api>()(
           case "DELETE": {
             const id = Number(request.url.split("/").pop());
             if (Number.isNaN(id)) {
-              return yield* HttpServerResponse.json(
-                { error: "Invalid user ID" },
-                { status: 400 },
-              );
+              return yield* HttpServerResponse.json({ error: "Invalid user ID" }, { status: 400 });
             }
-            const [user] = yield* db
-              .delete(Users)
-              .where(eq(Users.id, id))
-              .returning();
+            const [user] = yield* db.delete(Users).where(eq(Users.id, id)).returning();
             return yield* HttpServerResponse.json({ user });
           }
           default: {
-            return yield* HttpServerResponse.json(
-              { error: "Method not allowed" },
-              { status: 405 },
-            );
+            return yield* HttpServerResponse.json({ error: "Method not allowed" }, { status: 405 });
           }
         }
       }).pipe(

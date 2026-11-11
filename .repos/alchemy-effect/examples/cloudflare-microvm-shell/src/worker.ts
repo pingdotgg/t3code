@@ -1,12 +1,12 @@
-import * as AWS from "alchemy/AWS";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as AWS from "@alchemy.run/aws";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import ShellSession from "./shell-session.ts";
 import { ShellMicrovm } from "./shell-image.ts";
+import ShellSession from "./shell-session.ts";
 import { TERMINAL_HTML } from "./terminal-html.ts";
 
 /**
@@ -43,9 +43,7 @@ export default Cloudflare.Worker(
       });
       yield* getMicrovm({ microvmIdentifier: vm.microvmId }).pipe(
         Effect.flatMap((m) =>
-          m.state === "RUNNING"
-            ? Effect.void
-            : Effect.fail(new Error(`microvm ${m.state}`)),
+          m.state === "RUNNING" ? Effect.void : Effect.fail(new Error(`microvm ${m.state}`)),
         ),
         Effect.retry({ schedule: Schedule.spaced("1 second"), times: 60 }),
       );

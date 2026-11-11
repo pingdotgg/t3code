@@ -1,19 +1,19 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import type * as microvms from "@distilled.cloud/aws/lambda-microvms";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientError from "effect/http/HttpClientError";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import type * as HttpClientError from "effect/unstable/http/HttpClientError";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { BunMicrovm } from "./bun-image.ts";
-import { ExternalMicrovm } from "./external-image.ts";
 import { EffectfulBun } from "./effectful-bun.ts";
 import { EffectfulNode } from "./effectful-node.ts";
+import { ExternalMicrovm } from "./external-image.ts";
 import { NodeMicrovm } from "./node-image.ts";
 import { OpencodeMicrovm } from "./opencode-image.ts";
 
@@ -36,24 +36,14 @@ type Variant = {
   ) => Effect.Effect<microvms.GetMicrovmResponse, microvms.GetMicrovmError>;
   readonly auth: (
     req: AWS.Lambda.CreateAuthTokenRequest,
-  ) => Effect.Effect<
-    microvms.CreateMicrovmAuthTokenResponse,
-    microvms.CreateMicrovmAuthTokenError
-  >;
+  ) => Effect.Effect<microvms.CreateMicrovmAuthTokenResponse, microvms.CreateMicrovmAuthTokenError>;
   readonly term: (
     req: AWS.Lambda.TerminateMicrovmRequest,
-  ) => Effect.Effect<
-    microvms.TerminateMicrovmResponse,
-    microvms.TerminateMicrovmError
-  >;
+  ) => Effect.Effect<microvms.TerminateMicrovmResponse, microvms.TerminateMicrovmError>;
   readonly reachable: (
     endpoint: string,
     authToken: AWS.Lambda.MicrovmConnection["authToken"],
-  ) => Effect.Effect<
-    unknown,
-    HttpClientError.HttpClientError | Error,
-    HttpClient.HttpClient
-  >;
+  ) => Effect.Effect<unknown, HttpClientError.HttpClientError | Error, HttpClient.HttpClient>;
 };
 
 export default class Orchestrator extends AWS.Lambda.Function<Orchestrator>()(
@@ -66,15 +56,14 @@ export default class Orchestrator extends AWS.Lambda.Function<Orchestrator>()(
   Effect.gen(function* () {
     // Plain-HTTP reachable check shared by every non-effectful (raw) image:
     // hit `GET /` with the MicroVM auth headers and read the body.
-    const rawReachable =
-      (endpoint: string, authToken: AWS.Lambda.MicrovmConnection["authToken"]) =>
-        Effect.gen(function* () {
-          const client = yield* HttpClient.HttpClient;
-          const res = yield* client.get(`https://${endpoint}/`, {
-            headers: AWS.Lambda.microvmAuthHeaders(authToken),
-          });
-          return yield* res.text;
+    const rawReachable = (endpoint: string, authToken: AWS.Lambda.MicrovmConnection["authToken"]) =>
+      Effect.gen(function* () {
+        const client = yield* HttpClient.HttpClient;
+        const res = yield* client.get(`https://${endpoint}/`, {
+          headers: AWS.Lambda.microvmAuthHeaders(authToken),
         });
+        return yield* res.text;
+      });
 
     const effectfulBun: Variant = {
       run: yield* AWS.Lambda.RunMicrovm(EffectfulBun),
@@ -146,16 +135,11 @@ export default class Orchestrator extends AWS.Lambda.Function<Orchestrator>()(
             // base64("opencode:bench")
             authorization: "Basic b3BlbmNvZGU6YmVuY2g=",
           };
-          const health = yield* client.get(
-            `https://${endpoint}/global/health`,
-            { headers },
-          );
+          const health = yield* client.get(`https://${endpoint}/global/health`, { headers });
           const healthBody = yield* health.text;
           if (health.status !== 200 || !healthBody.includes('"healthy":true')) {
             return yield* Effect.fail(
-              new Error(
-                `opencode health ${health.status}: ${healthBody.slice(0, 120)}`,
-              ),
+              new Error(`opencode health ${health.status}: ${healthBody.slice(0, 120)}`),
             );
           }
           const session = yield* client.post(`https://${endpoint}/session`, {
@@ -165,9 +149,7 @@ export default class Orchestrator extends AWS.Lambda.Function<Orchestrator>()(
           const sessionBody = yield* session.text;
           if (session.status !== 200 || !sessionBody.includes('"id"')) {
             return yield* Effect.fail(
-              new Error(
-                `opencode session ${session.status}: ${sessionBody.slice(0, 120)}`,
-              ),
+              new Error(`opencode session ${session.status}: ${sessionBody.slice(0, 120)}`),
             );
           }
           return sessionBody;
@@ -199,9 +181,7 @@ export default class Orchestrator extends AWS.Lambda.Function<Orchestrator>()(
         return yield* Effect.gen(function* () {
           yield* v.get({ microvmIdentifier: vm.microvmId }).pipe(
             Effect.flatMap((m) =>
-              m.state === "RUNNING"
-                ? Effect.void
-                : Effect.fail(new Error(`microvm ${m.state}`)),
+              m.state === "RUNNING" ? Effect.void : Effect.fail(new Error(`microvm ${m.state}`)),
             ),
             Effect.retry({
               schedule: Schedule.spaced("500 millis"),
@@ -222,9 +202,7 @@ export default class Orchestrator extends AWS.Lambda.Function<Orchestrator>()(
           const readyMs = (yield* Effect.sync(() => Date.now())) - start;
           return yield* HttpServerResponse.json({ id: vm.microvmId, readyMs });
         }).pipe(
-          Effect.onError(() =>
-            v.term({ microvmIdentifier: vm.microvmId }).pipe(Effect.ignore),
-          ),
+          Effect.onError(() => v.term({ microvmIdentifier: vm.microvmId }).pipe(Effect.ignore)),
           Effect.provide(FetchHttpClient.layer),
         );
       });

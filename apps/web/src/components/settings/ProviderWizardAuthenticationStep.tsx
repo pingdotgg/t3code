@@ -9,7 +9,6 @@ import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsRow } from "./settingsLayout";
 
-/** Sign-in uses the saved instance's environment and credentials, just like chat. */
 export function ProviderWizardAuthenticationStep({
   environmentId,
   environmentLabel,

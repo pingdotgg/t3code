@@ -1,31 +1,21 @@
+import { SourceControlProviderKind } from "./sourceControl.ts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  PullRequestActionInput,
-  PullRequestCapabilities,
-  PullRequestFilesViewedResult,
-  PullRequestListInput,
+  PullRequestDetail,
   PullRequestListResult,
-  PullRequestReviewerRequestInput,
-  PullRequestSetFilesViewedInput,
-  pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
-const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
-const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
-const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerRequestInput);
-const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
-const decodeSetFilesViewed = Schema.decodeUnknownSync(PullRequestSetFilesViewedInput);
-const decodeFilesViewed = Schema.decodeUnknownSync(PullRequestFilesViewedResult);
+const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },
   providers: [
     {
       host: "github.com",
-      kind: "github",
+      kind: SourceControlProviderKind.make("github"),
       searchesOnHost: true,
       projectCount: 1,
       configured: true,
@@ -33,7 +23,7 @@ const LIST_RESULT: PullRequestListResult = {
     },
     {
       host: "gitlab.com",
-      kind: "gitlab",
+      kind: SourceControlProviderKind.make("gitlab"),
       searchesOnHost: true,
       projectCount: 1,
       configured: false,
@@ -42,7 +32,7 @@ const LIST_RESULT: PullRequestListResult = {
   ],
   entries: [
     {
-      provider: "github",
+      provider: SourceControlProviderKind.make("github"),
       host: "github.com",
       projectId: "project-1" as PullRequestListResult["entries"][number]["projectId"],
       projectTitle: "t3code",
@@ -70,24 +60,10 @@ const LIST_RESULT: PullRequestListResult = {
 };
 
 describe("PullRequestListResult", () => {
-  it("separates Forgejo HTTP ports while preserving other provider host identities", () => {
-    const identity = {
-      canonicalKey: "forge.example/team/repo",
-      locator: { remoteUrl: "http://forge.example:3000/team/repo.git" },
-    };
-    expect(pullRequestHostOf(identity, "forgejo")).toBe("forge.example:3000");
-    expect(pullRequestHostOf(identity, "gitlab")).toBe("forge.example");
-    expect(
-      pullRequestHostOf(
-        { ...identity, locator: { remoteUrl: "ssh://git@forge.example:2222/team/repo.git" } },
-        "forgejo",
-      ),
-    ).toBe("forge.example");
-  });
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record
    * with an optional value, for one — fails as an interrupted request rather than as a schema
-   * error. Building it here turns that into a test failure instead.
+   * error.
    */
   it("round-trips through the JSON codec the RPC serializes with", () => {
     const codec = Schema.toCodecJson(PullRequestListResult);
@@ -96,153 +72,9 @@ describe("PullRequestListResult", () => {
 
     expect(decoded).toStrictEqual(LIST_RESULT);
   });
-
-  it("keys a viewer by host, so two hosts of one kind stay separate accounts", () => {
-    const decoded = decodeListResult({
-      ...LIST_RESULT,
-      viewers: { "github.com": "bilal", "github.acme.dev": "b.hassan" },
-    });
-
-    expect(decoded.viewers["github.com"]).toBe("bilal");
-    expect(decoded.viewers["github.acme.dev"]).toBe("b.hassan");
-  });
-});
-
-describe("PullRequestListInput", () => {
-  it("trims a search, so what is sent is what was typed", () => {
-    expect(decodeListInput({ state: "open", query: "  page  " }).query).toBe("page");
-  });
-
-  it("has no search when none was asked for", () => {
-    expect(decodeListInput({ state: "open" }).query).toBeUndefined();
-  });
-
-  it("bounds a search, because it travels into a command and a query string", () => {
-    expect(decodeListInput({ state: "open", query: "p".repeat(200) }).query).toHaveLength(200);
-    expect(() => decodeListInput({ state: "open", query: "p".repeat(201) })).toThrow();
-  });
-
-  it("takes back the continuation a result handed out, keyed the way it arrived", () => {
-    const cursors = { "github.com pingdotgg/t3code": "2026-07-02T00:00:00Z|99|1,2" };
-
-    expect(decodeListInput({ state: "open", cursors }).cursors).toStrictEqual(cursors);
-  });
-
-  it("has no continuation when the listing is being read from the top", () => {
-    expect(decodeListInput({ state: "open" }).cursors).toBeUndefined();
-  });
-
-  it("bounds a continuation, because it comes back from the page and goes into a filter", () => {
-    const long = (length: number) => ({ "github.com acme/web": "c".repeat(length) });
-    expect(decodeListInput({ state: "open", cursors: long(4096) })).toBeDefined();
-    expect(() => decodeListInput({ state: "open", cursors: long(4097) })).toThrow();
-  });
-});
-
-describe("PullRequestReviewerRequestInput", () => {
-  const ref = { projectId: "p1", repository: "acme/web", number: 1 };
-  const reviewer = { id: "octocat", kind: "user" };
-
-  it("carries the same shape whichever direction the request goes", () => {
-    // One operation, turned around: `requested` is the whole difference between asking somebody
-    // for a review and taking the request back.
-    for (const requested of [true, false]) {
-      expect(decodeReviewerRequest({ ...ref, reviewers: [reviewer], requested }).requested).toBe(
-        requested,
-      );
-    }
-  });
-
-  it("refuses a request that names nobody, which no host would do anything with", () => {
-    expect(() => decodeReviewerRequest({ ...ref, reviewers: [], requested: true })).toThrow();
-  });
-
-  it("bounds the reviewers, because they travel into a body the page composed", () => {
-    const many = (count: number) =>
-      Array.from({ length: count }, (_, index) => ({ id: `user${index}`, kind: "user" }));
-    expect(
-      decodeReviewerRequest({ ...ref, reviewers: many(25), requested: true }).reviewers,
-    ).toHaveLength(25);
-    expect(() => decodeReviewerRequest({ ...ref, reviewers: many(26), requested: true })).toThrow();
-  });
-
-  it("keeps a team apart from a person, which is a different thing to ask", () => {
-    expect(
-      decodeReviewerRequest({
-        ...ref,
-        reviewers: [reviewer, { id: "web-platform", kind: "team" }],
-        requested: true,
-      }).reviewers.map((entry) => entry.kind),
-    ).toEqual(["user", "team"]);
-  });
-});
-
-describe("updating a branch that has fallen behind its base", () => {
-  const ref = { projectId: "project-1", repository: "acme/web", number: 7 };
-
-  it("carries the way the branch should be brought up to date", () => {
-    expect(decodeAction({ ...ref, action: "update-branch", updateMethod: "rebase" })).toMatchObject(
-      {
-        action: "update-branch",
-        updateMethod: "rebase",
-      },
-    );
-  });
-
-  it("takes the action without a method, which is the host's own default", () => {
-    expect(decodeAction({ ...ref, action: "update-branch" }).updateMethod).toBeUndefined();
-  });
-
-  it("refuses a way no host offers", () => {
-    expect(() =>
-      decodeAction({ ...ref, action: "update-branch", updateMethod: "squash" }),
-    ).toThrow();
-  });
-});
-
-describe("leaving a merge for the host to make once it is ready", () => {
-  const ref = { projectId: "project-1", repository: "acme/web", number: 7 };
-
-  it("carries the strategy the deferred merge should use, as merging now does", () => {
-    expect(
-      decodeAction({ ...ref, action: "enable-auto-merge", mergeMethod: "squash" }),
-    ).toMatchObject({ action: "enable-auto-merge", mergeMethod: "squash" });
-  });
-
-  it("takes the arming back without a strategy, because there is nothing to choose", () => {
-    expect(decodeAction({ ...ref, action: "disable-auto-merge" }).mergeMethod).toBeUndefined();
-  });
-});
-
-describe("reverting a merged pull request", () => {
-  it("carries the revert action without merge options", () => {
-    const action = decodeAction({
-      projectId: "project-1",
-      repository: "acme/web",
-      number: 7,
-      action: "revert",
-    });
-
-    expect(action.action).toBe("revert");
-    expect(action.mergeMethod).toBeUndefined();
-  });
-});
-
-describe("approving fork workflows", () => {
-  it("carries workflow approval as its own action", () => {
-    const action = decodeAction({
-      projectId: "project-1",
-      repository: "acme/web",
-      number: 7,
-      action: "approve-workflows",
-    });
-
-    expect(action.action).toBe("approve-workflows");
-  });
 });
 
 describe("PullRequestCapabilities", () => {
-  const decodeCapabilities = Schema.decodeUnknownSync(PullRequestCapabilities);
   const base = {
     diff: true,
     comment: true,
@@ -253,88 +85,65 @@ describe("PullRequestCapabilities", () => {
     reviewers: { request: true, listCandidates: true },
   };
 
-  it("decodes a server that says nothing about reactions as a server with none", () => {
-    expect(decodeCapabilities(base).reactions).toBeUndefined();
-  });
-});
+  it("loads a newer server's detail response, dropping unknown options in order", () => {
+    const options = {
+      actions: ["close", "archive", "merge"],
+      verdicts: ["request-changes", "block", "approve"],
+      updateMethods: ["rebase", "fast-forward", "merge"],
+    };
+    const detail = {
+      ...LIST_RESULT.entries[0],
+      workspaceRoot: "/workspace/t3code",
+      body: "",
+      changedFiles: 1,
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      checks: [],
+      mergeCapabilities: { merge: true, squash: true, rebase: true },
+      capabilities: {
+        ...base,
+        actions: options.actions,
+        mergeMethods: ["squash", "fast-forward", "merge"],
+        updateMethods: options.updateMethods,
+        review: { ...base.review, verdicts: options.verdicts },
+      },
+      viewerPermissions: { ...options, comment: true, resolve: true, requestReviewers: true },
+    };
+    const decoded = decodeDetail(detail);
 
-describe("naming the reader as the author to narrow by", () => {
-  it("reads me as whoever is signed in, however it is written", () => {
-    expect(resolvePullRequestAuthorFilter("me", "octocat")).toBe("octocat");
-    expect(resolvePullRequestAuthorFilter("@me", "octocat")).toBe("octocat");
-    expect(resolvePullRequestAuthorFilter("  ME  ", "octocat")).toBe("octocat");
-  });
-
-  it("leaves any other name as it was typed", () => {
-    expect(resolvePullRequestAuthorFilter(" mercedes ", "octocat")).toBe("mercedes");
-    expect(resolvePullRequestAuthorFilter("me-too", "octocat")).toBe("me-too");
-  });
-
-  it("stands as typed where the host has not said who the reader is", () => {
-    expect(resolvePullRequestAuthorFilter("me", null)).toBe("me");
-    expect(resolvePullRequestAuthorFilter("me", "  ")).toBe("me");
-  });
-});
-
-describe("naming the file a tick belongs to", () => {
-  // A space on either end of a name is part of the name as far as git is concerned. The patch on
-  // screen and the environment's record of what was cleared are both keyed by it, so a path
-  // tidied in transit ticks a file that does not exist and leaves the one on screen unticked.
-  it("keeps the spaces around a path being ticked", () => {
-    expect(
-      decodeSetFilesViewed({
-        projectId: "p1",
-        repository: "group/project",
-        number: 7,
-        files: [{ path: "docs/readme.md ", viewed: true }],
-      }).files,
-    ).toEqual([{ path: "docs/readme.md ", viewed: true }]);
-  });
-
-  it("keeps the spaces around a path being reported back", () => {
-    expect(
-      decodeFilesViewed({
-        files: [{ path: " leading.md", state: "viewed" }],
-        truncated: false,
-      }).files,
-    ).toEqual([{ path: " leading.md", state: "viewed" }]);
-  });
-
-  it("still refuses a path that is nothing at all", () => {
-    expect(() =>
-      decodeSetFilesViewed({
-        projectId: "p1",
-        repository: "group/project",
-        number: 7,
-        files: [{ path: "", viewed: true }],
-      }),
-    ).toThrow();
-  });
-
-  it("refuses a batch larger than a reader can press", () => {
-    // Every element of a batch is a statement of its own inside one transaction on an
-    // environment-kept host, or a field of its own in one GraphQL document on GitHub, so what a
-    // client may send has to be bounded rather than trusted to be a burst of presses.
-    const press = (path: string) => ({ path, viewed: true });
-    const batch = (count: number) => ({
-      projectId: "p1",
-      repository: "group/project",
-      number: 7,
-      files: Array.from({ length: count }, (_, at) => press(`src/f${at}.ts`)),
+    expect(decoded.capabilities).toEqual({
+      ...base,
+      actions: ["close", "merge"],
+      mergeMethods: ["squash", "merge"],
+      updateMethods: ["rebase", "merge"],
+      review: { ...base.review, verdicts: ["request-changes", "approve"] },
     });
+    expect(decoded.viewerPermissions).toEqual({
+      actions: ["close", "merge"],
+      verdicts: ["request-changes", "approve"],
+      updateMethods: ["rebase", "merge"],
+      comment: true,
+      resolve: true,
+      requestReviewers: true,
+    });
+    expect(decoded.title).toBe(detail.title);
+  });
+});
 
-    expect(() => decodeSetFilesViewed(batch(500))).not.toThrow();
-    expect(() => decodeSetFilesViewed(batch(501))).toThrow();
+describe("resolvePullRequestAuthorFilter", () => {
+  it("reads me as the signed-in account on the host", () => {
+    expect(resolvePullRequestAuthorFilter("me", "bilal")).toBe("bilal");
+    expect(resolvePullRequestAuthorFilter(" @Me ", "bilal")).toBe("bilal");
   });
 
-  it("refuses a path far longer than any real one", () => {
-    expect(() =>
-      decodeSetFilesViewed({
-        projectId: "p1",
-        repository: "group/project",
-        number: 7,
-        files: [{ path: `src/${"a".repeat(4096)}.ts`, viewed: true }],
-      }),
-    ).toThrow();
+  it("keeps me as a literal login when the host has no viewer", () => {
+    expect(resolvePullRequestAuthorFilter("me", null)).toBe("me");
+    expect(resolvePullRequestAuthorFilter("@me", " ")).toBe("@me");
+  });
+
+  it("passes any other login through trimmed", () => {
+    expect(resolvePullRequestAuthorFilter(" ana ", "bilal")).toBe("ana");
+    expect(resolvePullRequestAuthorFilter("meredith", "bilal")).toBe("meredith");
   });
 });

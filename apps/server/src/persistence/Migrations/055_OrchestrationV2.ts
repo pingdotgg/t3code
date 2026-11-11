@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import ApplicationEventSequenceIndexes from "./OrchestrationV2/ApplicationEventSequenceIndexes.ts";
 import ApplicationEventSource from "./OrchestrationV2/ApplicationEventSource.ts";
@@ -13,9 +13,6 @@ import OrchestrationV2ShellIndexes from "./OrchestrationV2/ShellIndexes.ts";
 import OrchestrationV2Subagents from "./OrchestrationV2/Subagents.ts";
 import OrchestrationV2ThreadLaunchWorkflows from "./OrchestrationV2/ThreadLaunchWorkflows.ts";
 
-// Base schema for the orchestration V2 event log and projections. The setup
-// steps below were developed separately while V2 was private, but released
-// databases run and record them as one migration from schema 49.
 const OrchestrationV2Base = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

@@ -5,7 +5,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { AtomCommand } from "./runtime.ts";
 
@@ -46,6 +46,14 @@ export function createOptimisticThreadLifecycle(
         ),
       };
     }),
+  );
+
+  // Until the durable snapshot catches up, an older pending update can still replace what shows.
+  const pendingThreadIdsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get): ReadonlySet<ThreadId> =>
+        new Set(get(pendingAtom(environmentId)).map((update) => update.threadId)),
+    ),
   );
 
   function wrap<Input extends { readonly threadId: ThreadId }, E>(
@@ -98,5 +106,5 @@ export function createOptimisticThreadLifecycle(
     };
   }
 
-  return { snapshotAtom, wrap };
+  return { snapshotAtom, pendingThreadIdsAtom, wrap };
 }

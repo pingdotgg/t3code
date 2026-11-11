@@ -1,0 +1,22 @@
+---
+/**
+ * Preloads the Latin subsets of the fonts visible in the header and above
+ * the fold, so they are fetched in parallel with the stylesheet instead of
+ * after it. Without this, every full navigation between marketing and
+ * Starlight pages briefly paints the fallback fonts (`font-display: swap`).
+ *
+ * The `?url` imports resolve to the same hashed asset URLs the fontsource
+ * `@font-face` rules reference, so the browser reuses the preloaded bytes.
+ */
+import serifItalic from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-opsz-italic.woff2?url";
+import serifNormal from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-opsz-normal.woff2?url";
+import inter from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
+
+const fonts = [serifItalic, serifNormal, inter];
+---
+
+{
+  fonts.map((href) => (
+    <link rel="preload" href={href} as="font" type="font/woff2" crossorigin />
+  ))
+}

@@ -7,10 +7,9 @@ sidebar:
 
 import Terminal from "../../../../components/Terminal.astro";
 import StateStoreBootstrap from "../../../../components/marketing-islands/StateStoreBootstrap.tsx";
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
-import { effectVersion } from "../../../../versions";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+export const pkgs = `alchemy@latest @alchemy.run/cloudflare@latest effect @effect/platform-bun @effect/platform-node`;
 
 In this first part you'll install Alchemy and Effect, create a Stack
 with a Cloudflare R2 Bucket, and deploy it, all in under five minutes.
@@ -22,51 +21,20 @@ That was this part. Skip to [Part 2](/cloudflare/tutorial/part-2).
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) (recommended) or Node.js 22+
+- [Bun](https://bun.sh) or Node.js 22+
 - A [Cloudflare](https://dash.cloudflare.com/sign-up) account
 
 ## Create a project
 
 Start with an empty directory and initialize a `package.json`:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="mkdir my-app && cd my-app && bun init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="mkdir my-app && cd my-app && npm init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="mkdir my-app && cd my-app && pnpm init" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="mkdir my-app && cd my-app && yarn init -y" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers init dir="my-app" />
 
 ## Install dependencies
 
-Install <code>alchemy@latest</code> and <code>effect@{effectVersion}</code>:
+Install `alchemy@latest`, `@alchemy.run/cloudflare`, and `effect`:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${pkgs}`} lang="sh" />
-  </TabItem>
-</Tabs>
-
-:::tip
-We recommend Bun for the best development experience, but Node.js
-works too.
-:::
+<PackageManagers add={pkgs} />
 
 ## Create the Stack
 
@@ -106,7 +74,7 @@ in a Cloudflare-hosted Worker backed by a Durable Object:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-+import * as Cloudflare from "alchemy/Cloudflare";
++import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -151,7 +119,7 @@ Let's add a Cloudflare R2 Bucket to our Stack and observe the type error:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -180,7 +148,7 @@ type error:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 -import * as Layer from "effect/Layer";
 
@@ -208,7 +176,7 @@ object from the generator to expose them:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -231,20 +199,7 @@ export default Alchemy.Stack(
 
 Run `alchemy deploy` to create the Bucket on Cloudflare:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 If you haven't connected Cloudflare yet, the deploy fails with the exact
 `alchemy profile edit` command to run. Use the `profile` command to sign in

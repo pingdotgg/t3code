@@ -11,7 +11,7 @@ overlay `Docker.Network`), targeting any engine through a `Docker.Context`.
 ## Create the swarm
 
 ```typescript
-import * as Docker from "alchemy/Docker";
+import * as Docker from "@alchemy.run/docker";
 
 const swarm = yield* Docker.Swarm("swarm");
 ```
@@ -75,6 +75,25 @@ the swarm exists, and it targets the same engine. The swarm keeps `replicas`
 copies of the container running, and the published port is reachable on every
 node through the routing mesh.
 
+## Roll out a new image
+
+```diff lang="typescript"
+const web = yield* Docker.Service("web", {
+  context: swarm,
+-  image: "ghcr.io/acme/web:1.0.0",
++  image: "ghcr.io/acme/web:1.1.0",
+  replicas: 2,
++  updateConfig: { order: "start-first", failureAction: "rollback" },
+});
+```
+
+Changing the image, replicas, environment, labels, networks, ports, mounts,
+secrets or policies updates the service in place with `docker service update`.
+Swarm starts each new task before stopping the old one, and if the new tasks
+fail it rolls the service back and the deploy fails with
+`DockerServiceUpdateFailed`. Changing the name, context, command or endpoint
+mode still replaces the service.
+
 ## Connect services on an overlay network
 
 ```typescript
@@ -98,7 +117,7 @@ database as `postgres`.
 
 ```typescript
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 const api = yield* Docker.Service(
   "api",
@@ -128,7 +147,7 @@ are no-ops.
 ## Add background work
 
 ```diff lang="typescript"
-+import { ServerHost } from "alchemy/Server/Process";
++import { ServerHost } from "alchemy/Runtime/Process";
 +import * as Schedule from "effect/Schedule";
 
 const api = yield* Docker.Service(
@@ -223,7 +242,7 @@ production.
 
 ```typescript
 import * as Alchemy from "alchemy";
-import * as Docker from "alchemy/Docker";
+import * as Docker from "@alchemy.run/docker";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(

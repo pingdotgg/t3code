@@ -1,10 +1,4 @@
-/**
- * Thread title generation on OpenCode 2's free tier, recorded live against
- * 2.0.18 with `opencode/big-pickle` on 2026-09-30: an ask-all temporary
- * session, one prompt, the reply read from the event stream, the session
- * removed. (A deny-all session is refused on the free tier: the spike's
- * `text_generation` recording.)
- */
+/** The free tier refuses deny-all sessions. */
 import type { ProviderReplayEntry } from "@t3tools/contracts";
 
 export const OPENCODE2_TITLE_GENERATION: ReadonlyArray<ProviderReplayEntry> = [

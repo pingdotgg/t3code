@@ -1,9 +1,9 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 
 const { getWhenReady } = Test;

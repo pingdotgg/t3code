@@ -1,8 +1,8 @@
-import { describe, expect, test } from "alchemy-test";
+import { describe, expect, test } from "@alchemy.run/test";
 import { fromPath, FQN_SEPARATOR, parseFqn, toFqn, toPath } from "../src/FQN";
 import type { NamespaceNode } from "../src/Namespace";
 
-describe("FQN", () => {
+describe("FQN", { tags: ["unit", "local"] }, () => {
   describe("toPath", () => {
     test("returns empty array for undefined namespace", () => {
       expect(toPath(undefined)).toEqual([]);
@@ -40,9 +40,7 @@ describe("FQN", () => {
         Id: "Child",
         Parent: { Id: "Parent" },
       };
-      expect(toFqn(ns, "MyResource")).toBe(
-        `Parent${FQN_SEPARATOR}Child${FQN_SEPARATOR}MyResource`,
-      );
+      expect(toFqn(ns, "MyResource")).toBe(`Parent${FQN_SEPARATOR}Child${FQN_SEPARATOR}MyResource`);
     });
   });
 

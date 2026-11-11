@@ -1,74 +1,54 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentProps,
-  type CSSProperties,
-} from "react";
+import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties } from "react";
+import { useStore } from "zustand";
 import { ChatCanvasContext } from "./ChatCanvasContext";
-import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
-import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
+import type { ChatCanvasPreview } from "./chatCanvasLayout";
+import { resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
+import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
+import { observeResize } from "../../lib/observeResize";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 
-/**
- * Owns the available conversation space. Cards only report where they sit; the
- * canvas decides when chat moves over to make room for them.
- */
 export function ChatCanvas({
+  store,
+  threadRef,
+  preview,
   composerOverlayElement,
+  detailsCardTopInset = 0,
   children,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "style" | "ref"> & {
+  store: ChatCanvasStore;
+  /** The thread whose details card sits on the canvas; other threads' measurements are stale. */
+  threadRef: ScopedThreadRef | null;
+  /** The thread's mini player while it renders on this canvas. */
+  preview: ChatCanvasPreview | null;
   composerOverlayElement: HTMLElement | null;
+  detailsCardTopInset?: number;
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
-  const [preview, setPreview] = useState<ChatCanvasPreview | null>(null);
-  const [detailsCard, setDetailsCard] = useState<PreviewMiniPlayerObstacles["detailsCard"]>(null);
-  const reportDetailsCard = useCallback((next: PreviewMiniPlayerObstacles["detailsCard"]) => {
-    setDetailsCard((current) =>
-      current?.left === next?.left &&
-      current?.right === next?.right &&
-      current?.bottom === next?.bottom
-        ? current
-        : next,
-    );
-  }, []);
-  const [measurements, setMeasurements] = useState({
-    width: 0,
-    height: 0,
-    padding: 20,
-    maxChatWidth: 768,
-    minChatWidth: 640,
-    composerHeight: 0,
-    timelineGutter: 0,
-  });
-  const reportPreview = useCallback((next: ChatCanvasPreview) => {
-    setPreview((current) =>
-      current?.key === next.key &&
-      current.width === next.width &&
-      current.lastInteraction === next.lastInteraction &&
-      current.position?.x === next.position?.x &&
-      current.position?.y === next.position?.y &&
-      current.source.width === next.source.width &&
-      current.source.height === next.source.height
-        ? current
-        : next,
-    );
-  }, []);
-  const clearPreview = useCallback(
-    (key: string) => setPreview((current) => (current?.key === key ? null : current)),
-    [],
-  );
+  const measurements = useStore(store, (state) => state.measurements);
+  const detailsCardMeasurement = useStore(store, (state) => state.detailsCardMeasurement);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes canvas, find bar and timeline resizes and writes the measurements to the canvas store
   useLayoutEffect(() => {
     const element = elementRef.current;
     const probe = widthProbeRef.current;
     if (!element || !probe) return;
+    const findBar =
+      detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-thread-find-bar]") : null;
     const measure = () => {
+      const canvasBounds = element.getBoundingClientRect();
+      const findBarBounds = findBar?.getBoundingClientRect();
       const styles = getComputedStyle(probe);
-      const next = {
+      store.getState().setMeasurements({
+        findBar:
+          detailsCardTopInset > 0
+            ? {
+                left: findBarBounds ? findBarBounds.left - canvasBounds.left : 0,
+                right: findBarBounds ? findBarBounds.right - canvasBounds.left : 0,
+                bottom: findBarBounds ? findBarBounds.bottom - canvasBounds.top : 0,
+              }
+            : null,
         width: element.clientWidth,
         height: element.clientHeight,
         padding: Number.parseFloat(styles.paddingLeft),
@@ -78,36 +58,38 @@ export function ChatCanvas({
         timelineGutter: timelineElement
           ? (timelineElement.offsetWidth - timelineElement.clientWidth) / 2
           : 0,
-      };
-      setMeasurements((current) =>
-        Object.keys(next).every(
-          (key) => current[key as keyof typeof current] === next[key as keyof typeof next],
-        )
-          ? current
-          : next,
-      );
+      });
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    observer.observe(probe);
-    if (composerOverlayElement) observer.observe(composerOverlayElement);
-    if (timelineElement) observer.observe(timelineElement);
-    return () => observer.disconnect();
-  }, [composerOverlayElement, timelineElement]);
-  const context = useMemo(() => {
-    const container = { width: measurements.width, height: measurements.height };
-    return {
-      container,
-      lane: { padding: measurements.padding, minChatWidth: measurements.minChatWidth },
-      layout: resolveChatCanvasLayout({ ...measurements, container, preview, detailsCard }),
-      previewKey: preview?.key ?? null,
-      reportPreview,
-      clearPreview,
-      registerTimeline,
-      reportDetailsCard,
-    };
-  }, [measurements, preview, detailsCard, reportPreview, clearPreview, reportDetailsCard]);
+    const observed: Element[] = [element, probe];
+    if (findBar) observed.push(findBar);
+    if (composerOverlayElement) observed.push(composerOverlayElement);
+    if (timelineElement) observed.push(timelineElement);
+    return observeResize(observed, measure);
+  }, [store, composerOverlayElement, timelineElement, detailsCardTopInset]);
+  const detailsCardInlineOpen = useRightPanelStore((state) =>
+    threadRef === null
+      ? false
+      : selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
+  );
+  const model = resolveChatCanvasModel({
+    measurements,
+    detailsCardMeasurement,
+    threadRef,
+    preview,
+    detailsCardInlineOpen,
+  });
+  const context = {
+    container: model.container,
+    lane: model.lane,
+    layout: model.layout,
+    previewKey: preview?.key ?? null,
+    registerTimeline,
+    measureDetailsCard: store.getState().measureDetailsCard,
+    detailsCardTopInset: model.detailsCardTopInset,
+    preferredDetailsCard: model.preferredDetailsCard,
+    detailsCardPlacement: model.detailsCardPlacement,
+  };
   const { layout } = context;
   return (
     <ChatCanvasContext value={context}>
@@ -128,7 +110,7 @@ export function ChatCanvas({
         <div
           ref={widthProbeRef}
           aria-hidden
-          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-5"
+          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
         />
         {children}
       </div>

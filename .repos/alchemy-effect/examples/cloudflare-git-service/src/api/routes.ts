@@ -1,6 +1,6 @@
 /** The app's own Effect HTTP endpoints. */
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import { Unauthorized, User } from "./auth.ts";
 
 /** Who am I. Signed-in only. */

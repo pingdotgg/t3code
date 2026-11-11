@@ -1,11 +1,11 @@
-import * as Alchemy from "alchemy";
-import * as Railway from "alchemy/Railway";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Railway from "@alchemy.run/railway";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({

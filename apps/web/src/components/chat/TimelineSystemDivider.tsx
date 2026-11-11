@@ -10,6 +10,7 @@ export function TimelineSystemDivider(props: {
   readonly tone?: "neutral" | "danger";
   readonly icon?: LucideIcon;
   readonly showDetailSeparator?: boolean;
+  readonly wrapDetail?: boolean;
   readonly actionLabel?: string;
   readonly onAction?: () => void;
 }) {
@@ -21,8 +22,9 @@ export function TimelineSystemDivider(props: {
       {props.detail ? (
         <span
           className={cn(
-            "inline-flex min-w-0 max-w-80 items-center opacity-70",
-            typeof props.detail === "string" && "truncate",
+            "inline-flex min-w-0 items-center opacity-70",
+            typeof props.detail === "string" &&
+              (props.wrapDetail ? "max-w-80 whitespace-pre-wrap" : "max-w-80 truncate"),
           )}
         >
           {props.showDetailSeparator === false ? null : "·\u00a0"}
@@ -48,7 +50,7 @@ export function TimelineSystemDivider(props: {
                 type="button"
                 aria-label={props.actionLabel}
                 onClick={props.onAction}
-                className="flex min-w-0 items-center gap-1.5 rounded-full border border-border/70 bg-background px-2.5 py-1 transition-colors hover:bg-muted"
+                className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/70 bg-background px-2.5 py-1 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
               />
             }
           >

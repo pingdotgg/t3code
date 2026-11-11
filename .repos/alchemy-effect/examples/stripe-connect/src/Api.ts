@@ -1,8 +1,8 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Stripe from "alchemy/Stripe";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Stripe from "@alchemy.run/stripe";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Database } from "./database.ts";
 
 /**
@@ -96,10 +96,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         if (request.method === "POST" && url.pathname === "/merchants") {
           const body = (yield* request.json) as { email?: string };
           if (!body.email) {
-            return yield* HttpServerResponse.json(
-              { error: "email is required" },
-              { status: 400 },
-            );
+            return yield* HttpServerResponse.json({ error: "email is required" }, { status: 400 });
           }
 
           const account = yield* createAccount({
@@ -118,9 +115,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             .run()
             .pipe(Effect.orDie);
 
-          const link = yield* onboardingLink(account.id, url.origin).pipe(
-            Effect.orDie,
-          );
+          const link = yield* onboardingLink(account.id, url.origin).pipe(Effect.orDie);
 
           return yield* HttpServerResponse.json(
             { merchantId: account.id, onboardingUrl: link.url },
@@ -142,14 +137,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
             .first<{ id: string }>()
             .pipe(Effect.orDie);
           if (row === null) {
-            return yield* HttpServerResponse.json(
-              { error: "Unknown merchant" },
-              { status: 404 },
-            );
+            return yield* HttpServerResponse.json({ error: "Unknown merchant" }, { status: 404 });
           }
-          const link = yield* onboardingLink(merchantId, url.origin).pipe(
-            Effect.orDie,
-          );
+          const link = yield* onboardingLink(merchantId, url.origin).pipe(Effect.orDie);
           return yield* HttpServerResponse.json({ onboardingUrl: link.url });
         }
 
@@ -168,21 +158,14 @@ export default class Api extends Cloudflare.Worker<Api>()(
         }
 
         // 4. Is this merchant live?
-        if (
-          request.method === "GET" &&
-          segments.length === 2 &&
-          segments[0] === "merchants"
-        ) {
+        if (request.method === "GET" && segments.length === 2 && segments[0] === "merchants") {
           const merchant = yield* db
             .prepare("SELECT * FROM merchants WHERE id = ?")
             .bind(segments[1])
             .first<Merchant>()
             .pipe(Effect.orDie);
           if (merchant === null) {
-            return yield* HttpServerResponse.json(
-              { error: "Unknown merchant" },
-              { status: 404 },
-            );
+            return yield* HttpServerResponse.json({ error: "Unknown merchant" }, { status: 404 });
           }
           return yield* HttpServerResponse.json({
             id: merchant.id,
@@ -194,10 +177,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           });
         }
 
-        return yield* HttpServerResponse.json(
-          { error: "Not found" },
-          { status: 404 },
-        );
+        return yield* HttpServerResponse.json({ error: "Not found" }, { status: 404 });
       }),
     };
   }).pipe(

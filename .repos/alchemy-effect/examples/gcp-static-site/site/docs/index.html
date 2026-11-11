@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Docs · Alchemy GCP Static Site</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <p class="eyebrow">docs</p>
+      <h1>How it works</h1>
+      <p class="lede">
+        Every file under <code>site/</code> becomes one <code>GCP.Storage.Object</code>. Redeploying
+        re-uploads only the files whose bytes or headers changed, and deletes objects for files you
+        removed.
+      </p>
+      <div class="actions">
+        <a href="../index.html">Back home</a>
+      </div>
+    </main>
+  </body>
+</html>

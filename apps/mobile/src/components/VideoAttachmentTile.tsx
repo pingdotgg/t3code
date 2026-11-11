@@ -2,11 +2,12 @@ import { Platform, Pressable, View, type StyleProp, type ViewStyle } from "react
 
 import { cn } from "../lib/cn";
 import type { DraftComposerFileAttachment } from "../lib/composerImages";
-import { useMediaActions, type MediaActionsSource } from "../lib/mediaActions";
-import { SymbolView } from "./AppSymbol";
-import { AppText } from "./AppText";
+import { useMediaActions } from "../state/mediaActions";
+import { type MediaActionsSource } from "../lib/mediaActionsSource";
+import { SymbolView } from "./ui/AppSymbol";
+import { AppText } from "./ui/AppText";
 import { MediaActionsMenu } from "./MediaActionsMenu";
-import { PresentationSource } from "./NativePresentation";
+import { PresentationSource } from "./ui/NativePresentation";
 import { VideoThumbnailImage } from "./VideoThumbnailImage";
 
 export function VideoAttachmentTile(props: {

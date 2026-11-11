@@ -4,6 +4,11 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import type { ChatAttachment } from "@t3tools/contracts";
+import {
+  htmlRenderFromToolItem,
+  mcpAppFromToolItem,
+  previewRecordingIdFromToolItem,
+} from "@t3tools/shared/toolOutput";
 
 import {
   normalizeAttachmentRelativePath,
@@ -12,7 +17,7 @@ import {
 import { inferImageExtension, SAFE_IMAGE_FILE_EXTENSIONS } from "./imageMime.ts";
 
 const ATTACHMENT_FILENAME_EXTENSIONS = [...SAFE_IMAGE_FILE_EXTENSIONS, ".bin"];
-const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS = 80;
+export const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS = 80;
 const ATTACHMENT_ID_THREAD_SEGMENT_PATTERN = "[a-z0-9_]+(?:-[a-z0-9_]+)*";
 const ATTACHMENT_ID_UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const ATTACHMENT_ID_FILE_EXTENSION_PATTERN = "[a-z0-9]{1,10}";
@@ -42,8 +47,7 @@ export function toSafeThreadAttachmentSegment(threadId: string): string | null {
 
 export function attachmentFileExtension(fileName: string): string {
   const extension = NodePath.extname(fileName).toLowerCase();
-  // ".part" is reserved for in-flight uploads; a stored "archive.part" would
-  // look stale to sweepStalePendingAttachments and get deleted.
+  // .part is reserved for pending uploads; the stale-upload sweep would delete stored files.
   if (extension === ".part" || !/^\.[a-z0-9]{1,10}$/.test(extension)) {
     return ".bin";
   }
@@ -102,6 +106,16 @@ export function createDeterministicAttachmentId(
   return `${threadSegment}-${uuid}`;
 }
 
+/** Retries keep ids; changed bytes must get new ids because clients cache images by id. */
+export function chatAttachmentStableKey(
+  messageId: string,
+  index: number,
+  bytes: Uint8Array,
+): string {
+  const digest = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+  return `${messageId}:${index}:${digest}`;
+}
+
 export function parseThreadSegmentFromAttachmentId(attachmentId: string): string | null {
   const normalizedId = normalizeAttachmentRelativePath(attachmentId);
   if (!normalizedId || normalizedId.includes("/") || normalizedId.includes(".")) {
@@ -114,7 +128,25 @@ export function parseThreadSegmentFromAttachmentId(attachmentId: string): string
   return match[1]?.toLowerCase() ?? null;
 }
 
-/** Null for attachment types this build does not know; callers skip those. */
+/** Only this thread's ids qualify, preserving source pages when deleting a fork. */
+export function threadHtmlRenderAttachmentIds(
+  threadId: string,
+  items: Iterable<{ readonly toolName: string | null | undefined; readonly output?: unknown }>,
+) {
+  const segment = toSafeThreadAttachmentSegment(threadId);
+  if (segment === null) return [];
+  return Array.from(items).flatMap((item) => {
+    const attachmentId =
+      htmlRenderFromToolItem(item)?.attachmentId ??
+      mcpAppFromToolItem(item)?.attachmentId ??
+      previewRecordingIdFromToolItem(item);
+    return attachmentId !== undefined &&
+      parseThreadSegmentFromAttachmentId(attachmentId) === segment
+      ? [attachmentId]
+      : [];
+  });
+}
+
 export function attachmentRelativePath(attachment: ChatAttachment): string | null {
   switch (attachment.type) {
     case "image": {
@@ -243,7 +275,9 @@ export function sweepStalePendingAttachments(input: {
   for (const entry of entries) {
     const isPartial = entry.endsWith(".part");
     if (!isPartial) {
-      const attachmentId = parseAttachmentIdFromRelativePath(entry);
+      const attachmentId = parseAttachmentIdFromRelativePath(
+        entry.endsWith(".txt") && entry.slice(0, -4).includes(".") ? entry.slice(0, -4) : entry,
+      );
       if (
         !attachmentId ||
         parseThreadSegmentFromAttachmentId(attachmentId) !== PENDING_ATTACHMENT_THREAD_SEGMENT

@@ -1,0 +1,136 @@
+---
+title: Create the upload backend
+description: Add a Neon project, a migrated branch, private storage, and managed authentication.
+---
+
+Start with `src/resources.ts` in the [complete example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon). Resource declarations run inside an `Effect.gen`; importing this module does not create cloud infrastructure.
+
+## Create the project
+
+```diff lang="typescript"
++const project = yield* Neon.Project("Project", { region: "aws-us-east-2" });
+```
+
+The project holds the backend's branches. Ohio supports this tutorial's combined Postgres, storage, and Function use case.
+
+## Add an application branch
+
+```diff lang="typescript"
++const branch = yield* Neon.Branch("Backend", { project });
+```
+
+The resource reference carries the project identity without manually copying an ID or connection string.
+
+## Define upload records
+
+```diff lang="sql"
++CREATE TABLE uploads (
++  id uuid PRIMARY KEY,
++  owner_id text NOT NULL,
++  object_key text NOT NULL UNIQUE,
++  filename text NOT NULL,
++  content_type text NOT NULL,
++  expected_bytes bigint NOT NULL CHECK (expected_bytes BETWEEN 1 AND 10485760),
++  actual_bytes bigint,
++  status text NOT NULL DEFAULT 'awaiting_upload'
++    CHECK (status IN ('awaiting_upload', 'ready', 'rejected')),
++  created_at timestamptz NOT NULL DEFAULT now(),
++  processed_at timestamptz
++);
+```
+
+Put this in `migrations/0001_uploads.sql`; the row records ownership and processing state independently of the stored file.
+
+## Index the owner's journal
+
+```diff lang="sql"
++CREATE INDEX uploads_owner_created ON uploads (owner_id, created_at DESC);
+```
+
+This index serves the API's owner-filtered, newest-first listing without making the filename or object key an authorization boundary.
+
+## Record delivery identities
+
+```diff lang="sql"
++CREATE TABLE upload_events (
++  invocation_id text PRIMARY KEY,
++  object_key text NOT NULL,
++  processed_at timestamptz NOT NULL DEFAULT now()
++);
+```
+
+The event's invocation ID becomes the database's deduplication key; this is application idempotency, not a claim that Neon delivers exactly once.
+
+## Apply the migration
+
+```diff lang="typescript"
+ const branch = yield* Neon.Branch("Backend", {
+   project,
++  migrations: "./migrations",
+ });
+```
+
+Alchemy applies the migration before dependent Functions deploy and stores its applied history in the branch.
+
+## Add a private bucket
+
+```diff lang="typescript"
++const uploads = yield* Neon.Bucket("Uploads", { branch, access: "private" });
+```
+
+Anonymous object URLs cannot read files from this bucket; the API will authorize a user before issuing a signed URL.
+
+## Allow browser PUT requests
+
+```diff lang="typescript"
+ const uploads = yield* Neon.Bucket("Uploads", {
+   branch,
+   access: "private",
++  cors: [{ AllowedOrigins: ["*"], AllowedMethods: ["PUT"], AllowedHeaders: ["content-type"], MaxAgeSeconds: 300 }],
+ });
+```
+
+CORS permits the browser to send a signed PUT without cookies; it grants no storage authorization. Wildcard origins avoid a bucket-to-website dependency cycle. The signed URL remains the capability required to upload.
+
+## Make tutorial cleanup explicit
+
+```diff lang="typescript"
+ const uploads = yield* Neon.Bucket("Uploads", {
+   branch,
+   access: "private",
++  forceDestroy: true,
+ });
+```
+
+The complete declaration retains the CORS rule above. `forceDestroy` allows destroy to erase the example's uploaded files; omit it for a bucket whose contents must block deletion.
+
+## Enable managed authentication
+
+```diff lang="typescript"
++const auth = yield* Neon.Auth("Auth", {
++  branch,
++  name: "Upload journal",
++  allowLocalhost: true,
++  emailAndPassword: {
++    enabled: true,
++    require_email_verification: false,
++    send_verification_email_on_sign_up: false,
++  },
++});
+```
+
+This configures Neon's managed Better Auth service, not a self-hosted authentication server. The relaxed email and localhost settings are for the tutorial only.
+
+## Select the API's browser origin policy
+
+```diff lang="typescript"
++const appOrigin = yield* Effect.sync(() => process.env.UPLOAD_APP_ORIGIN ?? "*");
+```
+
+Return `appOrigin` with the backend resources for the Function's environment. The default permits cross-origin bearer-token API calls without cookies; an explicit known origin restricts browser access without depending on the not-yet-created website URL. JWT verification remains mandatory in both modes.
+
+## Keep deployment and runtime credentials separate
+
+Neon injects database and storage credentials into same-branch Functions. `NEON_API_KEY` belongs only in your deployment environment, never in Function env props, browser variables, or stack outputs. Storage scopes cover a branch and descendants; a bucket-bound client is not provider-enforced per-bucket IAM, and a read-only client cannot remove the broader credentials injected into its host process.
+
+Continue with [Functions and processing](/neon/tutorial/functions/).

@@ -1,8 +1,8 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Stripe from "alchemy/Stripe";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Stripe from "@alchemy.run/stripe";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * What the app knows about a customer's subscription. Written by the
@@ -97,9 +97,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       },
       Effect.fn(function* (event) {
         const write = (entitlement: Entitlement) =>
-          kv
-            .put(entitlement.customerId, JSON.stringify(entitlement))
-            .pipe(Effect.orDie);
+          kv.put(entitlement.customerId, JSON.stringify(entitlement)).pipe(Effect.orDie);
 
         switch (event.type) {
           case "checkout.session.completed": {
@@ -123,8 +121,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             yield* write({
               customerId: idOf(subscription.customer)!,
               status:
-                subscription.status === "active" ||
-                subscription.status === "trialing"
+                subscription.status === "active" || subscription.status === "trialing"
                   ? "active"
                   : subscription.status === "past_due"
                     ? "past_due"
@@ -152,9 +149,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             const invoice = event.object;
             const customerId = idOf(invoice.customer);
             if (customerId === null) return;
-            const current = yield* kv
-              .get<Entitlement>(customerId, "json")
-              .pipe(Effect.orDie);
+            const current = yield* kv.get<Entitlement>(customerId, "json").pipe(Effect.orDie);
             yield* write({
               customerId,
               status: "past_due",
@@ -178,15 +173,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
         if (request.method === "POST" && url.pathname === "/checkout") {
           const body = (yield* request.json) as { email?: string };
           if (!body.email) {
-            return yield* HttpServerResponse.json(
-              { error: "email is required" },
-              { status: 400 },
-            );
+            return yield* HttpServerResponse.json({ error: "email is required" }, { status: 400 });
           }
 
-          const customer = yield* createCustomer({ email: body.email }).pipe(
-            Effect.orDie,
-          );
+          const customer = yield* createCustomer({ email: body.email }).pipe(Effect.orDie);
           const session = yield* createCheckout({
             mode: "subscription",
             customer: customer.id,
@@ -220,31 +210,19 @@ export default class Api extends Cloudflare.Worker<Api>()(
         }
 
         // What the rest of the app gates on.
-        if (
-          request.method === "GET" &&
-          url.pathname.startsWith("/subscription/")
-        ) {
+        if (request.method === "GET" && url.pathname.startsWith("/subscription/")) {
           const customerId = url.pathname.slice("/subscription/".length);
-          const entitlement = yield* kv
-            .get<Entitlement>(customerId, "json")
-            .pipe(Effect.orDie);
-          return yield* HttpServerResponse.json(
-            entitlement ?? { customerId, status: "none" },
-          );
+          const entitlement = yield* kv.get<Entitlement>(customerId, "json").pipe(Effect.orDie);
+          return yield* HttpServerResponse.json(entitlement ?? { customerId, status: "none" });
         }
 
         if (url.pathname === "/welcome" || url.pathname === "/pricing") {
           return HttpServerResponse.text(
-            url.pathname === "/welcome"
-              ? "Thanks — your subscription is active."
-              : "Pricing page.",
+            url.pathname === "/welcome" ? "Thanks — your subscription is active." : "Pricing page.",
           );
         }
 
-        return yield* HttpServerResponse.json(
-          { error: "Not found" },
-          { status: 404 },
-        );
+        return yield* HttpServerResponse.json({ error: "Not found" }, { status: 404 });
       }),
     };
   }).pipe(
@@ -262,7 +240,5 @@ export default class Api extends Cloudflare.Worker<Api>()(
  * Stripe returns related objects either as an id string or, when expanded,
  * as the full object. Normalise to the id.
  */
-const idOf = (
-  ref: string | { id: string } | { id?: string } | null | undefined,
-): string | null =>
+const idOf = (ref: string | { id: string } | { id?: string } | null | undefined): string | null =>
   ref == null ? null : typeof ref === "string" ? ref : (ref.id ?? null);

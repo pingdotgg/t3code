@@ -1,12 +1,12 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 
 // Fresh `workers.dev` URLs transiently 404 while the route propagates.
@@ -35,12 +35,28 @@ const getBodyWhenReady = (url: string, expected: string) =>
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
       schedule: Schedule.max([
-        Schedule.min([
-          Schedule.exponential("500 millis"),
-          Schedule.spaced("3 seconds"),
-        ]),
+        Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
         Schedule.recurs(20),
       ]),
+    }),
+  );
+
+class NotYetVisible extends Data.TaggedError("NotYetVisible")<{}> {}
+
+// Right after a fresh deploy, a read that follows a successful write can
+// briefly answer 404 (the object isn't visible to that read yet). Retry the
+// read-back, bounded, until the written object comes back.
+const getWhenWritten = (url: string) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const res = yield* client.get(url);
+    if (res.status === 404) return yield* new NotYetVisible();
+    return res;
+  }).pipe(
+    Effect.retry({
+      while: (error) => error._tag === "NotYetVisible",
+      schedule: Schedule.spaced("1 second"),
+      times: 10,
     }),
   );
 
@@ -90,15 +106,10 @@ test(
     // The `GREETING` env value from alchemy.run.ts, read through the
     // `cloudflare:workers` env proxy in the server function — proves the
     // Worker rendered it at request time.
-    const html = yield* getBodyWhenReady(
-      base,
-      "Hello from TanStack Start on Cloudflare!",
-    );
+    const html = yield* getBodyWhenReady(base, "Hello from TanStack Start on Cloudflare!");
     // The Card component rendered under the heading.
     expect(html).toContain("Styled with Tailwind CSS");
-    expect(html).toContain(
-      "This card is a React component styled with Tailwind utilities.",
-    );
+    expect(html).toContain("This card is a React component styled with Tailwind utilities.");
   }),
   { timeout: 180_000 },
 );
@@ -131,7 +142,6 @@ test(
   "option 1 — direct R2 binding round-trips through PUT and GET",
   Effect.gen(function* () {
     const { websiteUrl } = yield* stack;
-    const client = yield* HttpClient.HttpClient;
     const key = KEYS.binding;
 
     const put = yield* executeWhenReady(
@@ -141,7 +151,7 @@ test(
     );
     expect(put.status).toBe(204);
 
-    const get = yield* client.get(route(websiteUrl, { key, via: "binding" }));
+    const get = yield* getWhenWritten(route(websiteUrl, { key, via: "binding" }));
     expect(get.status).toBe(200);
     expect(yield* get.text).toBe("hello-binding");
   }),
@@ -152,7 +162,6 @@ test(
   "option 2 — service-binding fetch into the Backend worker",
   Effect.gen(function* () {
     const { websiteUrl } = yield* stack;
-    const client = yield* HttpClient.HttpClient;
     const key = KEYS.fetch;
 
     // Write through option 2's PUT path (Backend's fetch handler stores it
@@ -164,7 +173,7 @@ test(
     );
     expect(put.status).toBe(204);
 
-    const get = yield* client.get(route(websiteUrl, { key, via: "fetch" }));
+    const get = yield* getWhenWritten(route(websiteUrl, { key, via: "fetch" }));
     expect(get.status).toBe(200);
     expect(yield* get.text).toBe("hello-fetch");
   }),
@@ -175,7 +184,6 @@ test(
   "option 3 — service-binding RPC method via toPromiseApi",
   Effect.gen(function* () {
     const { websiteUrl } = yield* stack;
-    const client = yield* HttpClient.HttpClient;
     const key = KEYS.rpc;
 
     // Seed the bucket via option 1 (direct binding) so the RPC `hello`
@@ -188,7 +196,7 @@ test(
     expect(seed.status).toBe(204);
 
     // RPC GET reads through Backend.hello — exercises toPromiseApi.
-    const get = yield* client.get(route(websiteUrl, { key, via: "rpc" }));
+    const get = yield* getWhenWritten(route(websiteUrl, { key, via: "rpc" }));
     expect(get.status).toBe(200);
     expect(yield* get.text).toBe("hello-rpc");
   }),
@@ -199,22 +207,19 @@ test(
   "option 4 — service-binding HTTP client",
   Effect.gen(function* () {
     const { websiteUrl } = yield* stack;
-    const client = yield* HttpClient.HttpClient;
     const key = KEYS.httpClient;
 
     // Seed the bucket via option 1 (direct binding) so the RPC `hello`
     // method has something to read.
     const seed = yield* executeWhenReady(
-      HttpClientRequest.put(
-        route(websiteUrl, { key, via: "http-client" }),
-      ).pipe(HttpClientRequest.bodyText("hello-http-client", "text/plain")),
+      HttpClientRequest.put(route(websiteUrl, { key, via: "http-client" })).pipe(
+        HttpClientRequest.bodyText("hello-http-client", "text/plain"),
+      ),
     );
     expect(seed.status).toBe(204);
 
     // HTTP client GET reads through Backend.hello — exercises toPromiseApi.
-    const get = yield* client.get(
-      route(websiteUrl, { key, via: "http-client" }),
-    );
+    const get = yield* getWhenWritten(route(websiteUrl, { key, via: "http-client" }));
     expect(get.status).toBe(200);
     expect(yield* get.text).toBe("hello-http-client");
   }),
@@ -239,9 +244,7 @@ test(
     const { websiteUrl } = yield* stack;
     const client = yield* HttpClient.HttpClient;
 
-    const res = yield* client.get(
-      route(websiteUrl, { key: "integ:does-not-exist", via: "rpc" }),
-    );
+    const res = yield* client.get(route(websiteUrl, { key: "integ:does-not-exist", via: "rpc" }));
     expect(res.status).toBe(404);
   }),
 );
@@ -252,9 +255,9 @@ test(
     const { websiteUrl } = yield* stack;
 
     const res = yield* executeWhenReady(
-      HttpClientRequest.put(
-        route(websiteUrl, { key: "integ:via-options", via: "rpc" }),
-      ).pipe(HttpClientRequest.bodyText("nope")),
+      HttpClientRequest.put(route(websiteUrl, { key: "integ:via-options", via: "rpc" })).pipe(
+        HttpClientRequest.bodyText("nope"),
+      ),
     );
     expect(res.status).toBe(400);
   }),

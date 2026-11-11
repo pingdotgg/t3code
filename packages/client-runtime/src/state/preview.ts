@@ -1,5 +1,6 @@
 import { WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import * as Stream from "effect/Stream";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -9,20 +10,11 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 
-export const previewAutomationHostFocusConcurrencyKey = (value: {
-  readonly environmentId: string;
-  readonly input: {
-    readonly clientId: string;
-    readonly connectionId: string;
-  };
-}): string => JSON.stringify([value.environmentId, value.input.clientId, value.input.connectionId]);
-
 export function createPreviewEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   const lifecycleScheduler = createAtomCommandScheduler();
   const statusScheduler = createAtomCommandScheduler();
-  const automationScheduler = createAtomCommandScheduler();
   const lifecycleConcurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
@@ -37,6 +29,8 @@ export function createPreviewEnvironmentAtoms<R, E>(
     events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:preview:events",
       tag: WS_METHODS.subscribePreviewEvents,
+      // Stream atoms publish only the last value per chunk; every preview event must arrive.
+      transform: (stream) => stream.pipe(Stream.rechunk(1)),
     }),
     discoveredServers: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:preview:discovered-servers",
@@ -45,23 +39,9 @@ export function createPreviewEnvironmentAtoms<R, E>(
       // unmounted projects stop contributing probe candidates on the server.
       idleTtlMs: 0,
     }),
-    automationRequests: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:preview:automation-requests",
-      tag: WS_METHODS.previewAutomationConnect,
-      // Automation requests are commands, not cached query data. Dispose the
-      // stream immediately with its owner so stale requests cannot replay when
-      // a thread remounts and the server can clear disconnected hosts promptly.
-      idleTtlMs: 0,
-    }),
     open: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:open",
       tag: WS_METHODS.previewOpen,
-      scheduler: lifecycleScheduler,
-      concurrency: lifecycleConcurrency,
-    }),
-    navigate: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:preview:navigate",
-      tag: WS_METHODS.previewNavigate,
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
@@ -71,9 +51,9 @@ export function createPreviewEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
-    refresh: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:preview:refresh",
-      tag: WS_METHODS.previewRefresh,
+    adjust: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:adjust",
+      tag: WS_METHODS.previewAdjust,
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
@@ -83,6 +63,19 @@ export function createPreviewEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    clearProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:clear-profile",
+      tag: WS_METHODS.previewClearProfile,
+    }),
+    reportProfiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:report-profiles",
+      tag: WS_METHODS.previewReportProfiles,
+      concurrency: { mode: "latest", key: ({ environmentId }) => environmentId },
+    }),
+    stopLocalServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:stop-local-server",
+      tag: WS_METHODS.previewStopLocalServer,
+    }),
     reportStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:report-status",
       tag: WS_METHODS.previewReportStatus,
@@ -91,25 +84,6 @@ export function createPreviewEnvironmentAtoms<R, E>(
         mode: "latest",
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.threadId, input.tabId]),
-      },
-    }),
-    respondToAutomation: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:preview:automation-respond",
-      tag: WS_METHODS.previewAutomationRespond,
-      scheduler: automationScheduler,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId, input }) =>
-          JSON.stringify([environmentId, input.connectionId, input.requestId]),
-      },
-    }),
-    focusAutomationHost: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:preview:automation-focus-host",
-      tag: WS_METHODS.previewAutomationFocusHost,
-      scheduler: automationScheduler,
-      concurrency: {
-        mode: "latest",
-        key: previewAutomationHostFocusConcurrencyKey,
       },
     }),
   };

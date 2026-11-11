@@ -3,16 +3,21 @@ title: Setup
 description: Connect alchemy to Prisma — account, service tokens, and profiles.
 ---
 
+import PackageManagers from "../../../components/PackageManagers.astro";
+
 Sign up at [prisma.io](https://www.prisma.io) and create a service
 token in the [Prisma Console](https://console.prisma.io) (workspace
-settings → service tokens). Register the provider next to your
-cloud's:
+settings → service tokens). Install `@alchemy.run/prisma`:
+
+<PackageManagers add="@alchemy.run/prisma" />
+
+Then register the provider next to your cloud's:
 
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Prisma from "alchemy/Prisma";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Prisma from "@alchemy.run/prisma";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -51,4 +56,5 @@ compatible local outputs. See
 
 ## Next steps
 
+- [Tutorial: Your First Project](/prisma/tutorial/part-1) — build a full-stack Prisma application in four parts.
 - [Prisma overview](/prisma) — resources and compositions.

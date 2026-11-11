@@ -1,14 +1,14 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Planetscale from "alchemy/Planetscale";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Planetscale from "@alchemy.run/planetscale";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 import type { Post, User } from "../src/schema.ts";
 
@@ -55,9 +55,7 @@ test(
     };
     expect(Array.isArray(initialBody.users)).toBe(true);
 
-    const createResponse = yield* HttpClient.execute(
-      HttpClientRequest.post(baseUrl),
-    );
+    const createResponse = yield* HttpClient.execute(HttpClientRequest.post(baseUrl));
     expect(createResponse.status).toBe(200);
 
     const createBody = (yield* createResponse.json) as unknown as {
@@ -90,9 +88,7 @@ test(
       error: "Invalid user ID",
     });
 
-    const methodResponse = yield* HttpClient.execute(
-      HttpClientRequest.patch(baseUrl),
-    );
+    const methodResponse = yield* HttpClient.execute(HttpClientRequest.patch(baseUrl));
     expect(methodResponse.status).toBe(405);
     expect(yield* methodResponse.json).toEqual({
       error: "Method not allowed",
@@ -117,9 +113,7 @@ test(
     const finalBody = (yield* finalResponse.json) as unknown as {
       users: User[];
     };
-    expect(finalBody.users.some((user) => user.id === createdUser.id)).toBe(
-      false,
-    );
+    expect(finalBody.users.some((user) => user.id === createdUser.id)).toBe(false);
   }),
   { timeout: 20_000 },
 );
@@ -139,14 +133,11 @@ test(
       expect(Array.isArray(body.users)).toBe(true);
     });
 
-    const jitter = Effect.sync(
-      () => Math.floor(Math.random() * 401) + 100,
-    ).pipe(Effect.flatMap((ms) => Effect.sleep(Duration.millis(ms))));
-
-    yield* queryOnce.pipe(
-      Effect.zip(jitter),
-      Effect.repeat(Schedule.recurs(99)),
+    const jitter = Effect.sync(() => Math.floor(Math.random() * 401) + 100).pipe(
+      Effect.flatMap((ms) => Effect.sleep(Duration.millis(ms))),
     );
+
+    yield* queryOnce.pipe(Effect.zip(jitter), Effect.repeat(Schedule.recurs(99)));
   }),
   { timeout: 120_000 },
 );

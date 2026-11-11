@@ -50,8 +50,8 @@ body:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
-import * as SES from "alchemy/AWS/SES";
+import * as AWS from "@alchemy.run/aws";
+import * as SES from "@alchemy.run/aws/SES";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -92,10 +92,10 @@ returns a callable. Provide its implementation with
 
 ```typescript
 // src/mailer.ts
-import * as AWS from "alchemy/AWS";
-import * as SES from "alchemy/AWS/SES";
+import * as AWS from "@alchemy.run/aws";
+import * as SES from "@alchemy.run/aws/SES";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default class Mailer extends AWS.Lambda.Function<Mailer>()(
   "Mailer",

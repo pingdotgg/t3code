@@ -1,7 +1,7 @@
+import * as Planetscale from "@alchemy.run/planetscale";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import { RuntimeContext } from "alchemy";
-import * as Planetscale from "alchemy/Planetscale";
-import * as Test from "alchemy/Test/Alchemy";
-import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { BetterAuth, Database } from "@/index.ts";
@@ -26,10 +26,10 @@ test.provider(
           const database = yield* Planetscale.MySQLDatabase("BetterAuthMySQL", {
             clusterSize: "PS_10",
           });
-          const password = yield* Planetscale.MySQLPassword(
-            "BetterAuthMySQLPassword",
-            { database, role: "admin" },
-          );
+          const password = yield* Planetscale.MySQLPassword("BetterAuthMySQLPassword", {
+            database,
+            role: "admin",
+          });
           return { database, password };
         }),
       );
@@ -72,5 +72,9 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(Effect.provide(RuntimeContext.phantom)),
-  { timeout: 120_000 },
+  // Includes provisioning a fresh PlanetScale database.
+  {
+    tags: ["provider:planetscale", "provider:planetscale:mysql", "live"],
+    timeout: 240_000,
+  },
 );

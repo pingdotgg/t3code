@@ -1,0 +1,38 @@
+{
+  "name": "prisma-website-octane",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/prisma-website-octane"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "build": "vite build",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/prisma": "workspace:*",
+    "@octanejs/vite-plugin": "catalog:",
+    "@tsrx/oxc": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "octane": "catalog:",
+    "vite": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "workspace:*",
+    "@effect/platform-node": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@vercel/nft": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

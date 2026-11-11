@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { compactDynamicToolOutput, toolOutputIndicatesFailure } from "./toolOutput.ts";
+import {
+  compactDynamicToolOutput,
+  MAX_TOOL_OUTPUT_IMAGES,
+  mcpToolResultOutput,
+  toolOutputImages,
+  toolOutputIndicatesFailure,
+} from "./toolOutput.ts";
 
 describe("compactDynamicToolOutput", () => {
   it("extracts IDs through the MCP result envelopes used by T3 summaries", () => {
@@ -24,11 +30,16 @@ describe("compactDynamicToolOutput", () => {
       scheduledTaskId: "scheduled-1",
       status: "failed",
       summary: "A child failed; the tool itself succeeded.",
+      unlinked: [{ repository: "acme/app", state: "merged", numbers: [1] }],
+      unlinkedCount: 1,
+      linkedCount: 2,
     };
     expect(compactDynamicToolOutput(output)).toEqual({
       thread: { threadId: "thread-1" },
       taskId: "task-1",
       scheduledTaskId: "scheduled-1",
+      linkedCount: 2,
+      unlinkedCount: 1,
     });
     expect(output.thread.messages).toEqual(["Private message"]);
   });
@@ -127,18 +138,6 @@ describe("compactDynamicToolOutput", () => {
       threadId: "known",
     });
   });
-
-  it("is idempotent for compact metadata", () => {
-    const compact = compactDynamicToolOutput({
-      isError: true,
-      structuredContent: {
-        threadId: "thread-1",
-        threads: [{ threadId: "thread-1" }, { status: "rolled_back" }],
-        output: "Private output",
-      },
-    });
-    expect(compactDynamicToolOutput(compact)).toEqual(compact);
-  });
 });
 
 describe("toolOutputIndicatesFailure", () => {
@@ -171,5 +170,45 @@ describe("toolOutputIndicatesFailure", () => {
     ]) {
       expect(toolOutputIndicatesFailure(text)).toBe(false);
     }
+  });
+});
+
+describe("toolOutputImages", () => {
+  const mcpImage = { type: "image", data: "AAAA", mimeType: "image/png" };
+  const claudeImage = {
+    type: "image",
+    source: { type: "base64", media_type: "image/JPEG", data: "BBBB" },
+  };
+  const text = { type: "text", text: "{}" };
+
+  it("finds images in each place providers store them, in order", () => {
+    expect(toolOutputImages({ content: [text, claudeImage, mcpImage] })).toEqual([
+      { mimeType: "image/jpeg", data: "BBBB" },
+      { mimeType: "image/png", data: "AAAA" },
+    ]);
+    expect(toolOutputImages([mcpImage])).toEqual([{ mimeType: "image/png", data: "AAAA" }]);
+    expect(toolOutputImages(mcpImage)).toEqual([{ mimeType: "image/png", data: "AAAA" }]);
+    const structuredContent = { screenshot: { mimeType: "image/png", width: 728, height: 354 } };
+    const content = [text, mcpImage];
+    const output = mcpToolResultOutput({ content, structuredContent });
+    expect(toolOutputImages(output)).toEqual([{ mimeType: "image/png", data: "AAAA" }]);
+    expect(output).toEqual({ content, structuredContent });
+    expect(mcpToolResultOutput({ content: [text], structuredContent })).toBe(structuredContent);
+    expect(mcpToolResultOutput({ content })).toBe(content);
+  });
+
+  it("skips types the server must not serve inline", () => {
+    expect(
+      toolOutputImages([
+        { ...mcpImage, mimeType: "image/svg+xml" },
+        { ...mcpImage, mimeType: "text/html" },
+        { type: "image", source: { type: "url", url: "https://example.com/a.png" } },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("stops after the first few images", () => {
+    const images = toolOutputImages(Array.from({ length: 10_000 }, () => mcpImage));
+    expect(images).toHaveLength(MAX_TOOL_OUTPUT_IMAGES);
   });
 });

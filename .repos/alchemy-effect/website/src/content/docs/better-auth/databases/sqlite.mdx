@@ -1,0 +1,126 @@
+---
+title: SQLite
+description: Run Better Auth in a local Bun server with a persistent SQLite file.
+---
+
+`SQLite` uses Bun's built-in `bun:sqlite` driver, not a cloud database. This example runs a local Bun server through `Command.Dev`; a Worker, including one started by `alchemy dev`, must use [D1](/better-auth/databases/cloudflare-d1) instead.
+
+## Install
+
+```sh
+bun add @effect/platform-bun @alchemy.run/better-auth better-auth@^1.7.5 kysely
+```
+
+Bun supplies the driver, while `kysely` supports the SQL adapter and schema migration. A standard Node.js Lambda cannot load `bun:sqlite`.
+
+## Define the Bun server
+
+```typescript title="src/server.ts"
+import { BetterAuth, Database } from "@alchemy.run/better-auth";
+import { SQLite } from "@alchemy.run/better-auth/SQLite";
+import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
+import * as BunRuntime from "@effect/platform-bun/BunRuntime";
+import * as BunServices from "@effect/platform-bun/BunServices";
+import { RuntimeContext } from "alchemy";
+import { getMigrations } from "better-auth/db/migration";
+import * as Config from "effect/Config";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import * as HttpServer from "effect/http/HttpServer";
+
+const program = Effect.gen(function* () {
+  const secret = yield* Config.Redacted("AUTH_SECRET");
+  const database = yield* Database;
+
+  yield* Effect.gen(function* () {
+    const connect = yield* database.migrate!.connect;
+    const raw = yield* connect;
+    const migrations = yield* Effect.tryPromise(() => getMigrations({
+      basePath: "/api/auth",
+      emailAndPassword: { enabled: true },
+      database: raw,
+      secret: Redacted.value(secret),
+    }));
+    yield* Effect.tryPromise(() => migrations.runMigrations());
+  }).pipe(Effect.scoped);
+
+  const auth = yield* BetterAuth({
+    basePath: "/api/auth",
+    emailAndPassword: { enabled: true },
+    secret,
+    migrate: false,
+  });
+  const server = yield* BunHttpServer.make({
+    hostname: "127.0.0.1",
+    port: 0,
+  });
+  yield* server.serve(auth.fetch);
+  yield* Console.log(HttpServer.formatAddress(server.address));
+  yield* Effect.never;
+}).pipe(
+  Effect.provide(SQLite("./auth.sqlite")),
+  Effect.provide(RuntimeContext.phantom),
+  Effect.scoped,
+  Effect.provide(BunServices.layer),
+);
+
+BunRuntime.runMain(program);
+```
+
+The standalone Bun process has no Alchemy migration Action, so it applies the schema once at startup before listening. Keep schema-related options aligned between `getMigrations` and `BetterAuth` when adding plugins or fields.
+
+`SQLite` supplies migration support, and the scoped migration connection closes before requests begin.
+
+The Effect HTTP server provides a fresh scope per request; Better Auth opens and closes its SQLite connection within that scope. `RuntimeContext.phantom` satisfies the runtime-only methods here because this process has no resource Output accessors to resolve.
+
+## Define the local stack
+
+```typescript title="alchemy.run.ts"
+import * as Alchemy from "alchemy";
+import * as Command from "alchemy/Command";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "BetterAuthSQLite",
+  {
+    providers: Layer.mergeAll(Command.providers(), Alchemy.RandomProvider()),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const secret = yield* Alchemy.Random("BetterAuthSecret");
+    const server = yield* Command.Dev("AuthApi", {
+      command: "bun run src/server.ts",
+      env: { AUTH_SECRET: secret.text },
+    });
+    return { url: server.url };
+  }),
+);
+```
+
+The stack generates a stable signing secret and passes it to the child process automatically; do not create or export `AUTH_SECRET` yourself. This explicit command binding replaces the automatic binding provided by built-in Worker and Lambda hosts.
+
+## Start locally
+
+```sh
+bunx alchemy dev
+```
+
+The server asks the OS for an available port and prints its URL, which Alchemy exposes as the stack output. `Command.Dev` runs only during development; `alchemy deploy` does not publish this local server.
+
+Set `AUTH_ORIGIN` to the printed URL and check the endpoint:
+
+```sh
+curl -i "$AUTH_ORIGIN/api/auth/get-session"
+```
+
+## File and migration lifetime
+
+`./auth.sqlite` is relative to the command's working directory, and its parent directory must exist. Protect and back up both the database and `.alchemy` state; deleting the latter loses the generated signing secret.
+
+For an Alchemy host that supplies `AlchemyContext`, `SQLite()` defaults to `better-auth.sqlite` in its resolved runtime directory, normally `.alchemy`. The standalone server above uses an explicit filename so it does not require that context.
+
+Use a persistent filename rather than `:memory:` because migration and request connections are separate. Deploy-time migrations in a built-in Alchemy host affect the deployer's file; they do not copy that file to another machine.
+
+The startup migration pattern here is for local development; review schema changes before pointing it at valuable data. See [migrations](/better-auth/guides/migrations), the [upgrade guide](/better-auth/upgrades/from-1-6-to-1-7), and the [`SQLite` reference](/providers/betterauth/sqlite).

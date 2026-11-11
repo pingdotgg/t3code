@@ -1,17 +1,6 @@
 #!/usr/bin/env node
 
-// Renders the Android launcher and splash artwork from the Icon Composer SVG sources.
-//
-// Icon Composer exports already contain a rounded-square silhouette, and Android masks
-// the central 72dp of a 108dp adaptive canvas, so exporting them as a foreground produces
-// a double-framed icon with the letters cropped by the mask. Instead, each variant gets a
-// full-bleed background layer (the artwork behind the wordmark) and a shared transparent
-// foreground that keeps the wordmark inside the safe zone.
-//
-// The Android 12+ splash screen masks its icon to a circle covering the central two thirds
-// of a 288dp canvas, which is the same proportion the launcher crops. Composing the two
-// adaptive layers into one 288dp image therefore makes the splash frame the wordmark
-// exactly like the launcher icon does.
+// Android masks a 72dp safe area inside 108dp; full-bleed backgrounds and a separate wordmark avoid double silhouettes/cropping.
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -24,21 +13,13 @@ import sharp from "sharp";
 
 type IconVariant = "dev" | "nightly" | "prod";
 
-// 108dp at xxxhdpi. Expo's prebuild derives every launcher density bucket from this.
 const ADAPTIVE_CANVAS = 432;
-// 288dp at xxxhdpi: the full Android 12+ splash canvas, so the icon needs no upscaling.
 const SPLASH_CANVAS = 1152;
-// Icon Composer's layer sources use a 128pt viewBox; the wordmark path spans this box.
 const TEXT = { x: 15.53, y: 37, width: 94.5, height: 57 };
-// Wordmark width as a fraction of the 108dp canvas. The visible area is 72dp (66dp
-// guaranteed), so 0.48 leaves the letters at ~72% of the mask with room for the
-// launcher's own zoom effects.
 const WORDMARK_FRACTION = 0.48;
-// Icon Composer positions layers on a 1024pt canvas, with translation relative to center.
 const COMPOSER_CANVAS_PT = 1024;
 const SVG_DENSITY = 300;
 const OUTPUT_DIRECTORY = "apps/mobile/assets";
-// Production has no background artwork, so its splash composes onto the adaptive color.
 const PRODUCTION_BACKGROUND_COLOR = "#000000";
 
 export class AndroidIconRenderError extends Schema.TaggedError<AndroidIconRenderError>()(
@@ -56,8 +37,7 @@ const wordmarkTransform = (size: number) => {
 const canvasSvg = (size: number, inner: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" fill="none">${inner}</svg>`;
 
-// The layer sources clip to a 10pt rounded rectangle for the iOS silhouette. Android
-// applies its own mask, so the layer must bleed to the canvas edge.
+// Remove the iOS 10pt corner clip; Android's own mask needs full bleed.
 const fullBleed = (svg: string) =>
   svg.replace(/<rect width="128" height="128" rx="10"\/>/, '<rect width="128" height="128"/>');
 
@@ -118,8 +98,6 @@ const renderForeground = Effect.fn("androidIcons.renderForeground")(function* (
 
 const renderDevelopmentBackground = Effect.fn("androidIcons.renderDevelopmentBackground")(
   function* (repositoryRoot: string, size: number) {
-    // The annotation layer shares the wordmark's coordinate space, so it is scaled and
-    // centered the same way to keep the dimension lines around the letters.
     const annotations = yield* readLayerSource(repositoryRoot, "dev", "annotations.svg");
     const defs = annotations.match(/<defs>[\s\S]*?<\/defs>/)?.[0] ?? "";
     const body = annotations.replace(/^[\s\S]*?<\/defs>/, "").replace(/<\/svg>\s*$/, "");
@@ -138,8 +116,7 @@ const renderNightlyBackground = Effect.fn("androidIcons.renderNightlyBackground"
   repositoryRoot: string,
   size: number,
 ) {
-  // Positions mirror assets/nightly/app-icon.icon/icon.json. The SVG blur filter is
-  // dropped because Icon Composer ignores it and it smears at this raster size.
+  // Match assets/nightly/app-icon.icon/icon.json; omit blur, which Icon Composer ignores and rasterization smears.
   const clouds = [
     { file: "cloud-lower-left.svg", scale: 25, translation: [-309.6375, 268.66077693836917] },
     {

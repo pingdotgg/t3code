@@ -1,16 +1,16 @@
-import { DEFAULT_COMPATIBILITY_DATE } from "../core/internal/constants.ts";
-import type { BindingHooks, Module } from "../core/index.ts";
-import * as Runtime from "../core/Runtime.ts";
-import * as RuntimeServices from "../core/RuntimeServices.ts";
-import { PlatformServices } from "../Platform.ts";
+import * as NodeFs from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as Credentials from "@distilled.cloud/cloudflare/Credentials";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as NodeFs from "node:fs/promises";
-import * as NodePath from "node:path";
+import type { BindingHooks, Module } from "../core/index.ts";
+import { DEFAULT_COMPATIBILITY_DATE } from "../core/internal/constants.ts";
+import * as Runtime from "../core/Runtime.ts";
+import * as RuntimeServices from "../core/RuntimeServices.ts";
+import { PlatformServices } from "../Platform.ts";
 import type { CloudflareVitePluginOptions } from "./plugin.ts";
 
 /**
@@ -66,10 +66,7 @@ export const startPreviewServer = async <B extends BindingHooks = BindingHooks>(
   try {
     const context =
       options.context ??
-      (await makePreviewContext().pipe(
-        Layer.buildWithScope(scope),
-        Effect.runPromise,
-      ));
+      (await makePreviewContext().pipe(Layer.buildWithScope(scope), Effect.runPromise));
     const address = await serve(options, build, proxySharedSecret).pipe(
       Effect.provide(context),
       Scope.provide(scope),
@@ -130,19 +127,13 @@ const makeHandleSweep = (): (() => void) => {
 };
 
 const makePreviewContext = () =>
-  RuntimeServices.layerRuntime({
-    api: {
-      accountId: process.env.CLOUDFLARE_ACCOUNT_ID!,
-    },
-  }).pipe(
+  RuntimeServices.layerRuntime({ api: { accountId: process.env.CLOUDFLARE_ACCOUNT_ID! } }).pipe(
     Layer.provideMerge(PlatformServices),
     Layer.provide(Layer.merge(Credentials.fromEnv(), FetchHttpClient.layer)),
   );
 
-const closeScope = async (scope: Scope.Scope) => {
-  await Effect.runPromiseExit(
-    Scope.closeUnsafe(scope, Exit.void) ?? Effect.void,
-  );
+const closeScope = async (scope: Scope.Closeable) => {
+  await Effect.runPromiseExit(Scope.closeUnsafe(scope, Exit.void) ?? Effect.void);
 };
 
 // Deliberately non-generic: `CloudflareVitePluginOptions<BindingHooks>` is a
@@ -158,24 +149,21 @@ const serve = Effect.fn(function* (
 ) {
   const runtime = yield* Runtime.Runtime;
   const modules = yield* Effect.promise(() => readWorkerModules(build));
-  const assetsDirectory =
-    options.worker?.assets?.directory ?? build.assetsDirectory;
+  const assetsDirectory = options.worker?.assets?.directory ?? build.assetsDirectory;
   return yield* runtime.start({
+    // Everything the caller configured on the Worker reaches workerd; the
+    // fields below are the ones the preview server owns or extends.
+    ...options.worker,
     name: options.worker?.name ?? `vite-preview-${crypto.randomUUID()}`,
     modules,
     proxySharedSecret,
     compatibilityDate: options.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
     compatibilityFlags: options.compatibilityFlags ?? [],
     bindings: options.worker?.bindings ?? [],
-    durableObjectNamespaces: options.worker?.durableObjectNamespaces,
-    hyperdrives: options.worker?.hyperdrives,
-    queueConsumers: options.worker?.queueConsumers,
     assets:
       options.worker?.assets !== undefined || assetsDirectory !== undefined
         ? { ...options.worker?.assets, directory: assetsDirectory }
         : undefined,
-    logging: options.worker?.logging,
-    unsafe: options.worker?.unsafe,
   });
 });
 
@@ -184,31 +172,19 @@ const serve = Effect.fn(function* (
  * are skipped; everything else is typed by extension so wasm/text/data
  * modules emitted next to the chunks keep working.
  */
-export const readWorkerModules = async (
-  build: PreviewWorkerBuild,
-): Promise<Array<Module>> => {
-  const entries = await NodeFs.readdir(build.directory, {
-    recursive: true,
-    withFileTypes: true,
-  });
+export const readWorkerModules = async (build: PreviewWorkerBuild): Promise<Array<Module>> => {
+  const entries = await NodeFs.readdir(build.directory, { recursive: true, withFileTypes: true });
   const modules = await Promise.all(
     entries
       .filter((entry) => entry.isFile())
       .map((entry) => {
         const file = NodePath.join(entry.parentPath, entry.name);
-        const name = NodePath.relative(build.directory, file).replaceAll(
-          "\\",
-          "/",
-        );
+        const name = NodePath.relative(build.directory, file).replaceAll("\\", "/");
         return readWorkerModule(file, name);
       }),
   );
-  const found = modules.filter(
-    (module): module is Module => module !== undefined,
-  );
-  const entryIndex = found.findIndex(
-    (module) => module.name === build.entryModule,
-  );
+  const found = modules.filter((module): module is Module => module !== undefined);
+  const entryIndex = found.findIndex((module) => module.name === build.entryModule);
   if (entryIndex === -1) {
     throw new Error(
       `Cannot find the worker entry module "${build.entryModule}" in "${build.directory}". ` +
@@ -219,52 +195,25 @@ export const readWorkerModules = async (
   return [entry!, ...found];
 };
 
-const readWorkerModule = async (
-  file: string,
-  name: string,
-): Promise<Module | undefined> => {
+const readWorkerModule = async (file: string, name: string): Promise<Module | undefined> => {
   switch (NodePath.extname(file)) {
     case ".map":
       return undefined;
     case ".js":
     case ".mjs":
-      return {
-        name,
-        type: "ESModule",
-        content: await NodeFs.readFile(file, "utf8"),
-      };
+      return { name, type: "ESModule", content: await NodeFs.readFile(file, "utf8") };
     case ".cjs":
-      return {
-        name,
-        type: "CommonJsModule",
-        content: await NodeFs.readFile(file, "utf8"),
-      };
+      return { name, type: "CommonJsModule", content: await NodeFs.readFile(file, "utf8") };
     case ".json":
-      return {
-        name,
-        type: "Json",
-        content: await NodeFs.readFile(file, "utf8"),
-      };
+      return { name, type: "Json", content: await NodeFs.readFile(file, "utf8") };
     case ".txt":
     case ".html":
     case ".css":
     case ".sql":
-      return {
-        name,
-        type: "Text",
-        content: await NodeFs.readFile(file, "utf8"),
-      };
+      return { name, type: "Text", content: await NodeFs.readFile(file, "utf8") };
     case ".wasm":
-      return {
-        name,
-        type: "Wasm",
-        content: new Uint8Array(await NodeFs.readFile(file)),
-      };
+      return { name, type: "Wasm", content: new Uint8Array(await NodeFs.readFile(file)) };
     default:
-      return {
-        name,
-        type: "Data",
-        content: new Uint8Array(await NodeFs.readFile(file)),
-      };
+      return { name, type: "Data", content: new Uint8Array(await NodeFs.readFile(file)) };
   }
 };

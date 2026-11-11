@@ -8,4 +8,4 @@ Cloudflare Workers runtime and build integrations for Alchemy.
 
 ## Upstream references
 
-- Cloudflare Workers SDK: [`b7b4ff84477982e7c770bb93928287893fcf2e03`](https://github.com/cloudflare/workers-sdk/tree/b7b4ff84477982e7c770bb93928287893fcf2e03)
+- Cloudflare Workers SDK: [`8d98a15a05fa1f4d27654168ed16df1ff4ff1173`](https://github.com/cloudflare/workers-sdk/tree/8d98a15a05fa1f4d27654168ed16df1ff4ff1173)

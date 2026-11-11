@@ -1,10 +1,10 @@
-import * as Lambda from "alchemy/AWS/Lambda";
-import * as Neon from "alchemy/Neon";
+import * as Lambda from "@alchemy.run/aws/Lambda";
+import * as Neon from "@alchemy.run/neon";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import path from "pathe";
 import { BetterAuth } from "../../../src/index.ts";
 import { Neon as NeonDatabase } from "../../../src/Neon.ts";
@@ -21,9 +21,7 @@ const AuthDatabase = Layer.unwrap(
   Effect.map(AuthDb, (project) => NeonDatabase(project.connectionUri)),
 );
 
-export class AuthFunction extends Lambda.Function<Lambda.Function>()(
-  "BetterAuthFunction",
-) {}
+export class AuthFunction extends Lambda.Function<Lambda.Function>()("BetterAuthFunction") {}
 
 export default AuthFunction.make(
   {
@@ -52,9 +50,7 @@ export default AuthFunction.make(
         if (pathname.startsWith("/me")) {
           const session = yield* auth
             .getSession()
-            .pipe(
-              Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)),
-            );
+            .pipe(Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)));
           return yield* HttpServerResponse.json({
             email: session?.user.email ?? null,
           });

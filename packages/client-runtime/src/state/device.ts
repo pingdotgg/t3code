@@ -1,5 +1,5 @@
 import { type DeviceToolVersions, WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -16,8 +16,26 @@ export function createDeviceEnvironmentAtoms<R, E>(
     mode: "serial" as const,
     key: ({ environmentId }: { environmentId: string }) => environmentId,
   };
+  // An EAS Simulator start can take minutes; it must not hold up powering off
+  // another device or turning device support off, so each device opens in its
+  // own lane. Every EAS start opens the same catalog device, so the thread is
+  // part of the lane too.
+  const openConcurrency = {
+    mode: "serial" as const,
+    key: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: {
+        readonly threadId: string;
+        readonly hostId?: string | undefined;
+        readonly deviceId: string;
+      };
+    }) =>
+      JSON.stringify([environmentId, "open", input.threadId, input.hostId ?? null, input.deviceId]),
+  };
   return {
-    /** Server-pushed device hosts, devices, and open sessions for one environment. */
     state: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:device:state",
       tag: WS_METHODS.subscribeDeviceState,
@@ -32,6 +50,10 @@ export function createDeviceEnvironmentAtoms<R, E>(
       label: "environment-data:device:test-host",
       tag: WS_METHODS.deviceTestHost,
     }),
+    easAccount: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:eas-account",
+      tag: WS_METHODS.deviceEasAccount,
+    }),
     list: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:device:list",
       tag: WS_METHODS.deviceList,
@@ -42,7 +64,7 @@ export function createDeviceEnvironmentAtoms<R, E>(
       label: "environment-data:device:open",
       tag: WS_METHODS.deviceOpen,
       scheduler,
-      concurrency,
+      concurrency: openConcurrency,
     }),
     close: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:device:close",
@@ -71,7 +93,6 @@ export function createDeviceEnvironmentAtoms<R, E>(
   };
 }
 
-/** Unknown inventory is distinct from a completed check that found no install. */
 export function deviceToolVersionLabels(tools: DeviceToolVersions | undefined) {
   if (!tools) return ["Device tool versions have not been checked."];
   return (

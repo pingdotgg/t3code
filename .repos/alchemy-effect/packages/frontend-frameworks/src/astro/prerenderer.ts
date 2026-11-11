@@ -1,8 +1,16 @@
+import * as NodeFs from "node:fs/promises";
+import * as NodePath from "node:path";
+import { fileURLToPath } from "node:url";
+import type { BindingHooks, Module } from "@alchemy.run/cloudflare-runtime/core";
+import { DEFAULT_COMPATIBILITY_DATE } from "@alchemy.run/cloudflare-runtime/core/internal/constants";
+import * as Runtime from "@alchemy.run/cloudflare-runtime/core/Runtime";
+import * as RuntimeServices from "@alchemy.run/cloudflare-runtime/core/RuntimeServices";
+import { hasNodejsAls, hasNodejsCompat } from "@alchemy.run/cloudflare-runtime/rolldown/utils";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 /**
  * Wrangler-free workerd prerenderer: the build-side driver of the
- * `__astro_*` prerender protocol, ported from `@astrojs/cloudflare` v14.1.3
+ * `__astro_*` prerender protocol, ported from `@astrojs/cloudflare` v14.4.2
  * (`src/prerenderer.ts`).
  *
  * Upstream boots a Vite preview server wrapped around
@@ -17,42 +25,28 @@
  * Protocol (served by the vendored runtime handler when
  * `virtual:astro-cloudflare:config`'s `isPrerender` is true):
  * - `POST /__astro_static_paths` → all paths to prerender (serialized routes)
- * - `POST /__astro_prerender` → renders one page; a failure is signalled via
- *   the `x-astro-prerender-error` response header
+ * - `POST /__astro_prerender` → renders one page, framed with its render
+ *   metadata (`runtime/utils/prerender-response.ts`); a failure is signalled
+ *   via the `x-astro-prerender-error` response header
  *
  * This module is heavyweight (Effect + cloudflare-runtime); the integration
  * imports it lazily inside the `astro:build:start` hook so `astro dev` and
  * node-mode builds never load it.
  */
 import type { CloudflareVitePluginOptions } from "@alchemy.run/cloudflare-runtime/vite";
-import type {
-  BindingHooks,
-  Module,
-} from "@alchemy.run/cloudflare-runtime/core";
-import { DEFAULT_COMPATIBILITY_DATE } from "@alchemy.run/cloudflare-runtime/core/internal/constants";
-import * as Runtime from "@alchemy.run/cloudflare-runtime/core/Runtime";
-import * as RuntimeServices from "@alchemy.run/cloudflare-runtime/core/RuntimeServices";
 import * as Credentials from "@distilled.cloud/cloudflare/Credentials";
-import type { AstroConfig, AstroPrerenderer, PathWithRoute } from "astro";
+import type { AstroConfig, AstroPrerenderer, StaticPathsResult } from "astro";
 import { deserializeRouteData, serializeRouteData } from "astro/app/manifest";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as NodeFs from "node:fs/promises";
-import * as NodePath from "node:path";
-import { fileURLToPath } from "node:url";
 import { PlatformServices } from "../Platform.ts";
-import type {
-  PrerenderRequest,
-  StaticPathsResponse,
-} from "./runtime/prerender-types.ts";
-import {
-  PRERENDER_ENDPOINT,
-  STATIC_PATHS_ENDPOINT,
-} from "./runtime/utils/prerender-constants.ts";
+import { readFramedPrerenderResponse } from "./prerender-response.ts";
+import type { PrerenderRequest, StaticPathsResponse } from "./runtime/prerender-types.ts";
+import { PRERENDER_ENDPOINT, STATIC_PATHS_ENDPOINT } from "./runtime/utils/prerender-constants.ts";
 
 /** The subdirectory of the server output dir that hosts the prerender build. */
 const PRERENDER_OUTPUT_SUBDIR = "./.prerender/";
@@ -79,9 +73,7 @@ export interface WorkerdPrerendererOptions {
  * Creates the workerd prerenderer registered via `setPrerenderer` in the
  * `astro:build:start` hook when `prerenderEnvironment` is `"workerd"`.
  */
-export function createWorkerdPrerenderer(
-  options: WorkerdPrerendererOptions,
-): AstroPrerenderer {
+export function createWorkerdPrerenderer(options: WorkerdPrerendererOptions): AstroPrerenderer {
   const { serverDir, clientDir, trailingSlash, vite } = options;
   let scope: Scope.Closeable | undefined;
   let serverUrl: string | undefined;
@@ -100,9 +92,7 @@ export function createWorkerdPrerenderer(
     name: "@alchemy.run/frontend-frameworks/astro:workerd-prerenderer",
 
     async setup() {
-      const prerenderDir = fileURLToPath(
-        new URL(PRERENDER_OUTPUT_SUBDIR, serverDir),
-      );
+      const prerenderDir = fileURLToPath(new URL(PRERENDER_OUTPUT_SUBDIR, serverDir));
       const clientDirPath = fileURLToPath(clientDir);
       // The assets manifest is read from the client dir; make sure it exists
       // even for all-prerendered sites where the client build emitted nothing.
@@ -113,19 +103,22 @@ export function createWorkerdPrerenderer(
       const context = vite?.context ?? (await buildDefaultContext(scope));
       const worker = vite?.worker;
 
+      const compatibilityDate = vite?.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE;
       const program = Effect.gen(function* () {
         const runtime = yield* Runtime.Runtime;
         return yield* runtime.start({
           ...worker,
           // Suffixed so the prerender instance never collides with a
           // concurrently running dev server in the local dev registry.
-          name:
-            worker?.name !== undefined
-              ? `${worker.name}-prerender`
-              : "astro-prerender",
-          compatibilityDate:
-            vite?.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
-          compatibilityFlags: vite?.compatibilityFlags ?? [],
+          name: worker?.name !== undefined ? `${worker.name}-prerender` : "astro-prerender",
+          compatibilityDate,
+          // The render scope installed per prerender request imports
+          // `node:async_hooks`, so make sure AsyncLocalStorage is available
+          // even when the user's flags don't enable it (upstream does the same).
+          compatibilityFlags: withAsyncLocalStorage(
+            vite?.compatibilityFlags ?? [],
+            compatibilityDate,
+          ),
           bindings: (worker?.bindings ?? []) as BindingHooks,
           modules,
           assets: {
@@ -136,16 +129,14 @@ export function createWorkerdPrerenderer(
       });
 
       const url = await program.pipe(
-        Effect.provide(
-          context as Context.Context<RuntimeServices.RuntimeServices>,
-        ),
+        Effect.provide(context as Context.Context<RuntimeServices.RuntimeServices>),
         Scope.provide(scope),
         Effect.runPromise,
       );
       serverUrl = url.origin;
     },
 
-    async getStaticPaths(): Promise<Array<PathWithRoute>> {
+    async getStaticPaths(): Promise<StaticPathsResult> {
       const response = await fetch(`${origin()}${STATIC_PATHS_ENDPOINT}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -160,10 +151,12 @@ export function createWorkerdPrerenderer(
       }
 
       const data = (await response.json()) as StaticPathsResponse;
-      return data.paths.map(({ pathname, route }) => ({
+      const paths = data.paths.map(({ pathname, route, cacheKey }) => ({
         pathname,
         route: deserializeRouteData(route),
+        cacheKey,
       }));
+      return { paths, metadata: data.metadata };
     },
 
     async render(request, { routeData }) {
@@ -183,12 +176,10 @@ export function createWorkerdPrerenderer(
       // non-2xx responses while prerendering (e.g. a custom 404 page).
       const prerenderError = response.headers.get("x-astro-prerender-error");
       if (prerenderError) {
-        throw new Error(
-          `Failed to prerender ${request.url}: ${prerenderError}`,
-        );
+        throw new Error(`Failed to prerender ${request.url}: ${prerenderError}`);
       }
 
-      return response;
+      return readFramedPrerenderResponse(response);
     },
 
     async teardown() {
@@ -196,9 +187,7 @@ export function createWorkerdPrerenderer(
       if (scope === undefined) return;
       const closing = scope;
       scope = undefined;
-      await Effect.runPromiseExit(
-        Scope.closeUnsafe(closing, Exit.void) ?? Effect.void,
-      );
+      await Effect.runPromiseExit(Scope.closeUnsafe(closing, Exit.void) ?? Effect.void);
     },
   };
 }
@@ -210,9 +199,7 @@ export function createWorkerdPrerenderer(
  * entry chunk (astro core names it `prerender-entry.[hash].mjs`) is listed
  * first, which makes it the worker's main module.
  */
-export const collectOutputModules = async (
-  outputDir: string,
-): Promise<Array<Module>> => {
+export const collectOutputModules = async (outputDir: string): Promise<Array<Module>> => {
   let entries: Array<{
     parentPath: string;
     name: string;
@@ -240,9 +227,7 @@ export const collectOutputModules = async (
   }
   // Deterministic order, entry first.
   modules.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const entryIndex = modules.findIndex((module) =>
-    PRERENDER_ENTRY_PATTERN.test(module.name),
-  );
+  const entryIndex = modules.findIndex((module) => PRERENDER_ENTRY_PATTERN.test(module.name));
   if (entryIndex === -1) {
     throw new Error(
       `No prerender entry chunk (prerender-entry.*.mjs) found in "${outputDir}". ` +
@@ -256,10 +241,7 @@ export const collectOutputModules = async (
 
 const TEXT_EXTENSIONS = new Set([".css", ".html", ".svg", ".txt", ".xml"]);
 
-const moduleForFile = async (
-  absolute: string,
-  relative: string,
-): Promise<Module | undefined> => {
+const moduleForFile = async (absolute: string, relative: string): Promise<Module | undefined> => {
   const extension = NodePath.extname(relative).toLowerCase();
   if (extension === ".map") return undefined;
   const name = relative.split(NodePath.sep).join("/");
@@ -324,3 +306,15 @@ const buildDefaultContext = (
     Layer.buildWithScope(scope),
     Effect.runPromise,
   );
+
+/**
+ * Adds `nodejs_als` unless Node compat already provides AsyncLocalStorage,
+ * either through a flag or because the compatibility date turns it on.
+ */
+export const withAsyncLocalStorage = (
+  flags: ReadonlyArray<string>,
+  compatibilityDate: string,
+): Array<string> =>
+  hasNodejsCompat(flags, compatibilityDate) || hasNodejsAls(flags)
+    ? [...flags]
+    : [...flags, "nodejs_als"];

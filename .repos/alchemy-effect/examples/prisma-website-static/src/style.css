@@ -1,0 +1,18 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #0f172a;
+  background: #f8fafc;
+}
+main {
+  max-width: 40rem;
+  margin: 4rem auto;
+  padding: 2rem;
+}
+button {
+  padding: 0.75rem 1rem;
+  margin: 0.5rem;
+  cursor: pointer;
+}
+[role="status"] {
+  min-height: 1.5rem;
+}

@@ -3,9 +3,6 @@ import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from
 import type { FunctionComponent, SVGProps } from "react";
 import { LinuxIcon } from "./Icons";
 
-// Lucide has no Apple desktops, so these two are drawn to its grammar (24
-// unit grid, 2 unit stroke, round joins) and share its prop surface so callers
-// can swap freely.
 function LucideLike(props: SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -15,7 +12,7 @@ function LucideLike(props: SVGProps<SVGSVGElement>) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
+      strokeWidth="1.75"
       strokeLinecap="round"
       strokeLinejoin="round"
       {...props}
@@ -23,17 +20,15 @@ function LucideLike(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** A Mac mini: squat rounded slab with a front-edge LED. */
 function MacMiniIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <LucideLike {...props}>
-      <rect width="20" height="8" x="2" y="8" rx="2" />
-      <path d="M6 12h.01" />
+      <rect width="18" height="12" x="3" y="6" rx="2.5" />
+      <circle cx="7.5" cy="12" r="1" fill="currentColor" stroke="none" />
     </LucideLike>
   );
 }
 
-/** A Mac Studio: the same slab twice as tall, ports along the front foot. */
 function MacStudioIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <LucideLike {...props}>

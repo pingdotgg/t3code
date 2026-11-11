@@ -1,8 +1,13 @@
 import type { TerminalSummary } from "@t3tools/contracts";
 
-/** Human-readable label for a terminal tab; matches mobile and web sidebars. */
+function terminalNumber(terminalId: string): string | undefined {
+  return /^term(?:inal)?-(\d+)(?:-[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})?$/i.exec(
+    terminalId,
+  )?.[1];
+}
+
 export function getTerminalLabel(terminalId: string): string {
-  const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
+  const numericSuffix = terminalNumber(terminalId);
   if (numericSuffix) {
     return `Terminal ${numericSuffix}`;
   }
@@ -10,7 +15,6 @@ export function getTerminalLabel(terminalId: string): string {
   return terminalId;
 }
 
-/** Prefer server summary label when present; otherwise fall back to `getTerminalLabel`. */
 export function resolveTerminalSessionLabel(
   terminalId: string,
   summary: Pick<TerminalSummary, "label"> | null | undefined,
@@ -22,19 +26,16 @@ export function resolveTerminalSessionLabel(
   return getTerminalLabel(terminalId);
 }
 
-/**
- * Client-side terminal id allocator. Ids are ALWAYS chosen by the client and sent explicitly
- * on every `terminal.open` / `terminal.attach` call — the server never allocates.
- *
- * Returns the lowest unused `term-N` id (starting at `term-1`), skipping any ids already in
- * `existingTerminalIds`.
- */
-export function nextTerminalId(existingTerminalIds: ReadonlyArray<string>): string {
-  const usedIds = new Set(existingTerminalIds.filter((id) => id.trim().length > 0));
+/** Append a UUID when metadata is unavailable to avoid reusing unseen host sessions. */
+export function nextTerminalId(
+  existingTerminalIds: ReadonlyArray<string>,
+  uniqueSuffix?: string,
+): string {
+  const usedNumbers = new Set(existingTerminalIds.map(terminalNumber));
   let nextIndex = 1;
-  while (usedIds.has(`term-${nextIndex}`)) {
+  while (usedNumbers.has(String(nextIndex))) {
     nextIndex += 1;
   }
 
-  return `term-${nextIndex}`;
+  return `term-${nextIndex}${uniqueSuffix === undefined ? "" : `-${uniqueSuffix}`}`;
 }

@@ -7,10 +7,9 @@ next:
 ---
 
 import Terminal from "../../components/Terminal.astro";
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
-import { effectVersion } from "../../versions";
+import PackageManagers from "../../components/PackageManagers.astro";
 
-export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+export const pkgs = `alchemy@latest @alchemy.run/cloudflare@latest effect @effect/platform-bun @effect/platform-node`;
 
 :::tip
 Want the idea before the install? [What is Alchemy?](/what-is-alchemy)
@@ -20,42 +19,16 @@ next page.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) (recommended) or Node.js 22+
+- [Bun](https://bun.sh) or Node.js 24.11.1+
 - A [Cloudflare](https://dash.cloudflare.com/sign-up) account
 
 ## Create a project
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="mkdir my-app && cd my-app && bun init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="mkdir my-app && cd my-app && npm init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="mkdir my-app && cd my-app && pnpm init" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="mkdir my-app && cd my-app && yarn init -y" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers init dir="my-app" />
 
 ## Install
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${pkgs}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={pkgs} />
 
 ## Create your Stack
 
@@ -64,7 +37,7 @@ Every Alchemy program starts with a Stack — create `alchemy.run.ts`:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -87,20 +60,7 @@ export default Alchemy.Stack(
 
 Run `alchemy deploy` to create the Bucket on Cloudflare:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npx alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 Connect Cloudflare first with `alchemy profile edit --add Cloudflare`.
 Sign in with OAuth in the browser or paste an API token. The
@@ -146,7 +106,7 @@ Cloudflare, starting from this exact Stack.
 
 <a href="/what-is-alchemy" class="next-card next-card--recommended">
   <strong>What is Alchemy?</strong>
-  <span>Infrastructure as Code built in Effect, with Infrastructure as Effects on top.</span>
+  <span>Your infrastructure and the code that runs on it, built with Effects and Layers.</span>
 </a>
 
 <a href="/cloudflare/tutorial/part-1" class="next-card">

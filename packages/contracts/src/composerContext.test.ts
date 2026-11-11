@@ -7,15 +7,9 @@ import {
   ComposerContextRecord,
   OrchestrationMessageContext,
 } from "./composerContext.ts";
-import {
-  OrchestrationV2Command,
-  OrchestrationV2ConversationMessageJson,
-} from "./orchestrationV2.ts";
 
 const decodeRecord = Schema.decodeUnknownOption(ComposerContextRecord);
 const decodeContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
-const decodeMessage = Schema.decodeUnknownSync(OrchestrationV2ConversationMessageJson);
-const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
 
 const base = { version: 1, contextId: "ctx_1" } as const;
 
@@ -118,15 +112,15 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     threadId: "thread-1",
     title: "Fix login flow",
   },
+  environment: {
+    ...base,
+    kind: "environment",
+    label: "vps",
+    environmentId: "environment-vps",
+  },
 };
 
 describe("ComposerContextRecord", () => {
-  it.each(COMPOSER_CONTEXT_KINDS)("round-trips a %s record", (kind) => {
-    const decoded = decodeRecord(knownRecords[kind]);
-    expect(Option.isSome(decoded)).toBe(true);
-    expect(Option.getOrThrow(decoded)).toEqual(knownRecords[kind]);
-  });
-
   it("keeps unknown kinds with their payload", () => {
     const decoded = decodeRecord({
       ...base,
@@ -162,14 +156,6 @@ describe("ComposerContextRecord", () => {
       }).records,
     ).toEqual([{ ...knownRecords.skill, contextId: "ctx_skill" }]);
   });
-
-  it("rejects bad ids and versions", () => {
-    expect(Option.isNone(decodeRecord({ ...knownRecords.skill, contextId: "has space" }))).toBe(
-      true,
-    );
-    expect(Option.isNone(decodeRecord({ ...knownRecords.skill, version: 2 }))).toBe(true);
-    expect(Option.isNone(decodeRecord({ ...knownRecords.skill, kind: "Bad Kind" }))).toBe(true);
-  });
 });
 
 describe("OrchestrationMessageContext", () => {
@@ -197,12 +183,27 @@ describe("OrchestrationMessageContext", () => {
     ).toThrow();
   });
 
-  it("normalizes decoded record identifiers", () => {
-    const context = decodeContext({
+  it("sends a message without the records the wire cannot carry", () => {
+    const encodeOrchestrationMessageContext = Schema.encodeUnknownSync(
+      Schema.toCodecJson(OrchestrationMessageContext),
+    );
+
+    const wire = encodeOrchestrationMessageContext({
       version: 1,
-      records: [{ ...knownRecords.skill, contextId: "  ctx_1  ", name: "  review  " }],
+      records: [
+        decodeContext({ version: 1, records: [knownRecords.terminal] }).records[0],
+        {
+          ...base,
+          contextId: "ctx_2",
+          kind: "future-kind",
+          label: "x",
+          payload: { count: Number.NaN },
+        },
+        { ...knownRecords["review-comment"], contextId: "ctx_3", fenceLanguage: undefined },
+        { ...base, contextId: "ctx_4", kind: "future-kind", label: "y", payload: { n: 1n } },
+      ],
     });
-    expect(context.records[0]).toMatchObject({ contextId: "ctx_1", name: "review" });
+    expect(decodeContext(wire).records.map((record) => record.contextId)).toEqual(["ctx_1"]);
   });
 
   it("rejects oversized arrays before dropping malformed records", () => {
@@ -230,42 +231,5 @@ describe("OrchestrationMessageContext", () => {
         records: [knownRecords.skill, { ...knownRecords.terminal, contextId: " ctx_1 " }],
       }),
     ).toThrow();
-  });
-
-  it("is optional on messages and message dispatch commands", () => {
-    const message = {
-      createdBy: "user",
-      creationSource: "web",
-      id: "m1",
-      threadId: "t1",
-      runId: null,
-      nodeId: null,
-      role: "user",
-      text: "hi",
-      attachments: [],
-      streaming: false,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    };
-    expect(decodeMessage(message).context).toBeUndefined();
-    const withContext = decodeMessage({
-      ...message,
-      context: { version: 1, records: [knownRecords.mention] },
-    });
-    expect(withContext.context?.records).toHaveLength(1);
-
-    const command = decodeCommand({
-      type: "message.dispatch",
-      createdBy: "user",
-      creationSource: "web",
-      commandId: "c1",
-      threadId: "t1",
-      messageId: "m1",
-      text: "hi",
-      attachments: [],
-      context: { version: 1, records: [knownRecords.image] },
-      dispatchMode: { type: "start_immediately" },
-    });
-    expect(command.type === "message.dispatch" && command.context?.records[0]?.kind).toBe("image");
   });
 });

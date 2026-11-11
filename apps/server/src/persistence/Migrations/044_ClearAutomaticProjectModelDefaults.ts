@@ -1,11 +1,10 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Project creation never exposed a model choice. A later metadata event
-  // containing this field is the evidence that the user set or reset one.
+  // Creation exposed no model choice; later metadata proves the user set or reset one.
   yield* sql`
     WITH automatically_seeded_projects AS (
       SELECT created.stream_id AS project_id

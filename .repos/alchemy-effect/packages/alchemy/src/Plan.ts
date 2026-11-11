@@ -5,9 +5,9 @@ import * as Config from "effect/Config";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import { cachedInScope } from "./Util/Memoize.ts";
 import { asEffect } from ".//Util/types.ts";
 import { isAction, type ActionLike } from "./Action.ts";
 import {
@@ -15,9 +15,9 @@ import {
   OwnedBySomeoneElse,
   stripUnowned,
   Unowned,
+  UnverifiableReplacement,
 } from "./AdoptPolicy.ts";
 import { AlchemyContext } from "./AlchemyContext.ts";
-import { demandRemoteCredentials } from "./Auth/Demand.ts";
 import {
   Artifacts,
   ArtifactStore,
@@ -25,6 +25,7 @@ import {
   ensureArtifactStore,
   makeScopedArtifacts,
 } from "./Artifacts.ts";
+import { demandRemoteCredentials, failCredentialsRequired } from "./Auth/Demand.ts";
 import {
   dedupeBindings,
   diffBindings,
@@ -34,8 +35,9 @@ import {
   type ReplaceDiff,
   type UpdateDiff,
 } from "./Diff.ts";
+import { emit, type PlannedAction, type PlannedBinding, type PlannedResource } from "./Events.ts";
 import { parseFqn } from "./FQN.ts";
-import { generateInstanceId, InstanceId } from "./InstanceId.ts";
+import { generateInstanceId } from "./InstanceId.ts";
 import * as Output from "./Output.ts";
 import {
   tryFindProviderRegistrationByType,
@@ -45,23 +47,24 @@ import {
   tryFindProviderByType,
   type ProviderService,
 } from "./Provider.ts";
-import {
-  defaultProviderMode,
-  stampedMode,
-  type ProviderMode,
-} from "./ProviderMode.ts";
-import {
-  Progress,
-  type PlannedAction,
-  type PlannedBinding,
-  type PlannedResource,
-} from "./Report.ts";
+import { defaultProviderMode, stampedMode, type ProviderMode } from "./ProviderMode.ts";
 import {
   isResource,
   missingImplementation,
   type ResourceBinding,
   type ResourceLike,
 } from "./Resource.ts";
+import { ResourceContext } from "./ResourceContext.ts";
+import {
+  InvalidResourceSelection,
+  UnsafeSelectionBoundary,
+  selectResources,
+  type ResourceSelection,
+  type SelectionOutput,
+} from "./ResourceSelection.ts";
+import { capturedEnvKeys } from "./RuntimeContext.ts";
+import { cachedInScope } from "./Util/Memoize.ts";
+export { InvalidResourceSelection, UnsafeSelectionBoundary } from "./ResourceSelection.ts";
 import { type StackSpec } from "./Stack.ts";
 import {
   isActionState,
@@ -73,6 +76,7 @@ import {
   type ReplacedResourceState,
   type ReplacingResourceState,
   type ResourceState,
+  type StateStoreError,
   type UpdatedResourceState,
   type UpdatingReourceState,
 } from "./State/index.ts";
@@ -105,9 +109,7 @@ export interface BindingNode<Data = any> extends ResourceBinding {
   data: Data;
 }
 
-export interface BaseNode<
-  R extends ResourceLike<string> = ResourceLike<string>,
-> {
+export interface BaseNode<R extends ResourceLike<string> = ResourceLike<string>> {
   resource: R;
   provider: ProviderService<R>;
   /**
@@ -148,19 +150,19 @@ export interface ApplyNodeBase<
    * FQN, then delete every former row.
    */
   renamedFrom?: string[] | undefined;
+  /** Preserve the FQN-reuse exclusion across generations and state transitions. */
+  adoptionBlocked?: "migrated-fqn";
 }
 
-export interface Create<
-  R extends ResourceLike = ResourceLike,
-> extends ApplyNodeBase<R> {
+export interface Create<R extends ResourceLike = ResourceLike> extends ApplyNodeBase<R> {
   action: "create";
   props: R["Props"];
   state: CreatingResourceState | undefined;
+  /** Ownership probe deferred until upstream identities resolve during apply. */
+  deferredAdoption?: { adopt: boolean };
 }
 
-export interface Update<
-  R extends ResourceLike = ResourceLike,
-> extends ApplyNodeBase<R> {
+export interface Update<R extends ResourceLike = ResourceLike> extends ApplyNodeBase<R> {
   action: "update" | "adopted";
   /** True while this is the first reconcile after a cold adoption. */
   adopting?: boolean;
@@ -174,28 +176,24 @@ export interface Update<
     | ReplacedResourceState;
 }
 
-export interface Delete<
-  R extends ResourceLike = ResourceLike,
-> extends BaseNode<R> {
+export interface Delete<R extends ResourceLike = ResourceLike> extends BaseNode<R> {
   action: "delete" | "orphaned";
   // a resource can be deleted no matter what state it's in
   state: ResourceState;
 }
 
-export interface NoopUpdate<
-  R extends ResourceLike = ResourceLike,
-> extends ApplyNodeBase<R> {
+export interface NoopUpdate<R extends ResourceLike = ResourceLike> extends ApplyNodeBase<R> {
   action: "noop";
   state: CreatedResourceState | UpdatedResourceState;
 }
 
-export interface Replace<
-  R extends ResourceLike = ResourceLike,
-> extends ApplyNodeBase<R> {
+export interface Replace<R extends ResourceLike = ResourceLike> extends ApplyNodeBase<R> {
   action: "replace";
   props: any;
   deleteFirst: boolean;
   restart?: boolean;
+  /** Ownership probe of the replacement's physical identity, run before any mutation. */
+  deferredAdoption?: { adopt: boolean };
   state:
     | CreatingResourceState
     | CreatedResourceState
@@ -211,9 +209,7 @@ export interface Replace<
 // same DAG (downstream/upstream edges, cycle detection). Their plan nodes
 // have a different shape because they have no provider lifecycle.
 
-export type ActionApply<T extends ActionLike = ActionLike> =
-  | ActionRun<T>
-  | ActionNoop<T>;
+export type ActionApply<T extends ActionLike = ActionLike> = ActionRun<T> | ActionNoop<T>;
 
 export interface ActionNodeBase<T extends ActionLike = ActionLike> {
   readonly kind: "action";
@@ -221,9 +217,7 @@ export interface ActionNodeBase<T extends ActionLike = ActionLike> {
   downstream: string[];
 }
 
-export interface ActionRun<
-  T extends ActionLike = ActionLike,
-> extends ActionNodeBase<T> {
+export interface ActionRun<T extends ActionLike = ActionLike> extends ActionNodeBase<T> {
   action: "run";
   /** Input expression — resolved against tracker outputs during apply. */
   input: T["Input"];
@@ -233,21 +227,19 @@ export interface ActionRun<
   forced: boolean;
 }
 
-export interface ActionNoop<
-  T extends ActionLike = ActionLike,
-> extends ActionNodeBase<T> {
+export interface ActionNoop<T extends ActionLike = ActionLike> extends ActionNodeBase<T> {
   action: "noop";
   state: RanActionState;
 }
 
-export interface ActionDelete<
-  T extends ActionLike = ActionLike,
-> extends ActionNodeBase<T> {
+export interface ActionDelete<T extends ActionLike = ActionLike> extends ActionNodeBase<T> {
   action: "delete";
   state: ActionState;
 }
 
 export type Plan<Output = any> = {
+  /** Closed selection for partial apply and GC; absent for a full plan. */
+  selectedFqns?: ReadonlySet<string>;
   resources: {
     [id in string]: Apply<any>;
   };
@@ -314,9 +306,7 @@ export const describeResource = (node: CRUD): PlannedResource => ({
 });
 
 /** The serializable row view of one stack-action node. */
-export const describeAction = (
-  node: ActionApply | ActionDelete,
-): PlannedAction => ({
+export const describeAction = (node: ActionApply | ActionDelete): PlannedAction => ({
   fqn: node.def.FQN,
   logicalId: node.def.LogicalId,
   actionType: node.def.Type,
@@ -336,40 +326,114 @@ export const describePlan = (
 } => ({
   resources: [
     ...Object.values(plan.resources),
-    ...Object.values(plan.deletions).filter(
-      (node): node is Delete => node !== undefined,
-    ),
+    ...Object.values(plan.deletions).filter((node): node is Delete => node !== undefined),
   ].map(describeResource),
-  actions: [
-    ...Object.values(plan.actions ?? {}),
-    ...Object.values(plan.actionDeletions ?? {}),
-  ]
+  actions: [...Object.values(plan.actions ?? {}), ...Object.values(plan.actionDeletions ?? {})]
     .filter((node): node is ActionApply | ActionDelete => node !== undefined)
     .map(describeAction),
 });
 
 export interface MakePlanOptions {
   force?: boolean;
+  include?: never;
+  exclude?: never;
 }
 
-export const make = <A>(
+export interface FilteredPlanOptions
+  extends Omit<MakePlanOptions, keyof ResourceSelection>, ResourceSelection {
+  /**
+   * Exact FQNs, unique logical IDs, or FQN globs, plus transitive input, capture,
+   * and binding dependencies. An empty selection is an error. Other rows
+   * and persisted stack outputs are untouched; filtered apply returns void.
+   * The entire stack declaration still evaluates before selection. Renames
+   * with persisted former rows require a full deployment. Replacement/GC
+   * fails when prior or declared dependents are outside the selection.
+   * Detaching a selected intermediate also requires selecting all consumers
+   * reachable through its declared or historical downstream paths.
+   * Historical bindings require selecting every persisted resource and Action
+   * for replacement/GC. Clearing the last binding evidence also requires that
+   * complete selection, since stored payloads cannot recover binding-cycle edges.
+   * Only already-persisted, continuously retained bindings count as evidence.
+   * Reconciling a row with incomplete downstream history requires that selection.
+   * Exclusions are hard barriers, even for unchanged dependencies. Quote globs
+   * in the CLI: `--include 'App/**' --exclude 'App/Legacy'`. Each occurrence
+   * supplies one pattern; commas are literal. Dependencies hidden inside
+   * callbacks must be declared explicitly.
+   */
+  include?: ReadonlyArray<string>;
+}
+
+type FullPlanCall = [options?: MakePlanOptions];
+
+export function make<A, Call extends [options?: FilteredPlanOptions] = FullPlanCall>(
   stack: StackSpec<A>,
-  options: MakePlanOptions = {},
-): Effect.Effect<Plan<A>, never, State> =>
+  ...call: Call
+): Effect.Effect<Plan<SelectionOutput<A, Call[0]>>, never, State>;
+export function make<A>(stack: StackSpec<A>, options: FilteredPlanOptions = {}) {
+  return makePlan(stack, options);
+}
+
+/**
+ * Bind every ref to a resource this program declares in its own stack and
+ * stage, so the ref is a dependency like a direct reference: the target is
+ * created first and deleted last, and the ref resolves to the target's fresh
+ * attributes (see `Output.bindRef`). A ref is matched by its id against the
+ * declared resource's FQN, which is what the ref reads from state. A
+ * resource's ref to itself stays unbound: it reads its own persisted state.
+ */
+const bindSameStackRefs = (
+  stack: StackSpec<any>,
+  resources: ReadonlyArray<ResourceLike>,
+  actions: ReadonlyArray<ActionLike>,
+) => {
+  const byFqn = new Map(resources.map((resource) => [resource.FQN, resource]));
+  const bind = (owner: string, value: unknown) => {
+    for (const ref of Output.collectRefs(value)) {
+      if ((ref.stack ?? stack.name) !== stack.name) continue;
+      if ((ref.stage ?? stack.stage) !== stack.stage) continue;
+      if (ref.resourceId === owner) continue;
+      const target = byFqn.get(ref.resourceId);
+      if (target !== undefined) Output.bindRef(ref, target);
+    }
+  };
+  for (const resource of resources) {
+    bind(resource.FQN, resource.Props);
+    bind(resource.FQN, stack.bindings[resource.FQN] ?? []);
+  }
+  for (const action of actions) {
+    bind(action.FQN, [action.Input, action.Captures]);
+  }
+};
+
+const makePlan = <A>(
+  stack: StackSpec<A>,
+  options: FilteredPlanOptions = {},
+): Effect.Effect<Plan<A | undefined>, never, State> =>
   // @ts-expect-error
   Effect.gen(function* () {
     // Per-resource plan progress and phase markers are reported through
-    // the ambient Progress reporter as the work happens, so a renderer can show
+    // events as the work happens, so a renderer can show
     // plan computation while it runs. The default reporter is a no-op.
-    const reportPlanned = yield* Progress;
 
-    // Resolving the state service may bootstrap a remote store, and the
-    // persisted-row snapshot below reads from it — both are "loading state".
-    yield* reportPlanned({ _tag: "plan.phase", phase: "loading-state" });
+    const declaredResources = Object.values(stack.resources);
+    const declaredActions = Object.values(stack.actions ?? {});
+    const declared = [...declaredResources, ...declaredActions];
+    bindSameStackRefs(stack, declaredResources, declaredActions);
+    const upstream = (node: ResourceLike | ActionLike) =>
+      Object.keys(
+        Output.upstreamAny(
+          isAction(node)
+            ? [node.Input, node.Captures]
+            : [node.Props, stack.bindings[node.FQN] ?? []],
+        ),
+      );
+    const selected = yield* selectResources(declared, upstream, options);
+    const resources = declaredResources.filter((node) => !selected || selected.has(node.FQN));
+    const actions = declaredActions.filter((node) => !selected || selected.has(node.FQN));
+
+    // Resolving the state service may bootstrap a remote store.
+    yield* emit({ type: "plan.phase", phase: "loading-state" });
     const state = yield* yield* State;
-
-    const resources = Object.values(stack.resources);
-    const actions = Object.values(stack.actions ?? {});
 
     // A bare platform tag yields a forward reference registered with
     // `undefined` props (and `RequiresImplementation`); its `.make(props,
@@ -382,9 +446,7 @@ export const make = <A>(
     // already-deployed state), so the check is scoped to platform tags.
     for (const resource of resources) {
       if (resource.RequiresImplementation && resource.Props === undefined) {
-        yield* Effect.die(
-          missingImplementation(resource.Type, resource.LogicalId),
-        );
+        return yield* Effect.die(missingImplementation(resource.Type, resource.LogicalId));
       }
     }
 
@@ -433,13 +495,83 @@ export const make = <A>(
           }),
         ),
       );
-      const mode =
-        base.modes !== undefined
-          ? (resource.Mode ?? runDefaultMode)
-          : undefined;
+      const mode = base.modes !== undefined ? (resource.Mode ?? runDefaultMode) : undefined;
       const provider = yield* providerForMode(base, mode);
       return { provider, mode };
     });
+
+    /**
+     * Has this resource switched provider modes since it was last
+     * reconciled? Rows without a persisted mode were written by a
+     * pre-provider-mode engine (or a provider that only became dual-mode
+     * later) — their physical resource is LIVE unless its attrs carry a
+     * `dev:` identity marker proving it was reconciled locally (see
+     * {@link stampedMode}). A dev run replaces unstamped live rows exactly
+     * like stamped live rows; live runs replace unstamped marker rows.
+     */
+    const hasModeSwitched = (
+      mode: ProviderMode | undefined,
+      oldState: ResourceState | undefined,
+    ): boolean => mode !== undefined && oldState !== undefined && stampedMode(oldState) !== mode;
+
+    const resourceFqns = yield* state.list({
+      stack: stackName,
+      stage: stage,
+    });
+    const oldResources = yield* Effect.forEach(
+      resourceFqns,
+      (fqn) => state.get({ stack: stackName, stage: stage, fqn }),
+      { concurrency: "unbounded" },
+    );
+
+    // Snapshot of every persisted row, keyed by FQN. The rename resolution
+    // below reads from this map instead of issuing per-FQN `state.get`s —
+    // every renamedFrom-decorated resource (each StaticSite carries one
+    // forever) would otherwise add two round-trips per resource to every
+    // plan against a remote state store. Plan is read-only, so the
+    // snapshot cannot go stale within this run.
+    const persistedRows = new Map(resourceFqns.map((fqn, i) => [fqn, oldResources[i]]));
+
+    // Updating snapshots also retain prior bindings and downstream metadata.
+    type DependencySnapshot = {
+      downstream?: ReadonlyArray<string>;
+      bindings?: ReadonlyArray<unknown>;
+      old?: DependencySnapshot;
+    };
+    function* historicalRows(row: DependencySnapshot | undefined) {
+      while (row) {
+        yield row;
+        row = row.old;
+      }
+    }
+
+    if (selected) {
+      for (const action of actions) {
+        const row = persistedRows.get(action.FQN);
+        if (row && !isActionState(row)) {
+          return yield* Effect.die(
+            new UnsafeSelectionBoundary({
+              message: `Filtered Action '${action.FQN}' cannot overwrite persisted resource state. Finish resource cleanup before reusing its FQN for an Action.`,
+            }),
+          );
+        }
+      }
+      for (const resource of declaredResources) {
+        for (const former of resource.FormerFqns ?? []) {
+          if (former === resource.FQN) continue;
+          if (
+            (selected.has(resource.FQN) && persistedRows.has(former)) ||
+            (!selected.has(resource.FQN) && selected.has(former))
+          ) {
+            return yield* Effect.die(
+              new UnsafeSelectionBoundary({
+                message: `Filtered reconciliation cannot migrate '${former}' to '${resource.FQN}'. Run a full deployment for renames.`,
+              }),
+            );
+          }
+        }
+      }
+    }
 
     // Credential-free dev: the adoption probe below runs each new row's
     // `read` — for `Alchemy.remote()` rows that is a real cloud call, and
@@ -455,45 +587,7 @@ export const make = <A>(
       if (remote.length > 0) yield* demandRemoteCredentials(remote);
     }
 
-    /**
-     * Has this resource switched provider modes since it was last
-     * reconciled? Rows without a persisted mode were written by a
-     * pre-provider-mode engine (or a provider that only became dual-mode
-     * later) — their physical resource is LIVE unless its attrs carry a
-     * `dev:` identity marker proving it was reconciled locally (see
-     * {@link stampedMode}). A dev run replaces unstamped live rows exactly
-     * like stamped live rows; live runs replace unstamped marker rows.
-     */
-    const hasModeSwitched = (
-      mode: ProviderMode | undefined,
-      oldState: ResourceState | undefined,
-    ): boolean =>
-      mode !== undefined &&
-      oldState !== undefined &&
-      stampedMode(oldState) !== mode;
-
-    const resourceFqns = yield* state.list({
-      stack: stackName,
-      stage: stage,
-    });
-    const oldResources = yield* Effect.all(
-      resourceFqns.map((fqn) =>
-        state.get({ stack: stackName, stage: stage, fqn }),
-      ),
-      { concurrency: "unbounded" },
-    );
-
-    // Snapshot of every persisted row, keyed by FQN. The rename resolution
-    // below reads from this map instead of issuing per-FQN `state.get`s —
-    // every renamedFrom-decorated resource (each StaticSite carries one
-    // forever) would otherwise add two round-trips per resource to every
-    // plan against a remote state store. Plan is read-only, so the
-    // snapshot cannot go stale within this run.
-    const persistedRows = new Map(
-      resourceFqns.map((fqn, i) => [fqn, oldResources[i]]),
-    );
-
-    yield* reportPlanned({ _tag: "plan.phase", phase: "computing-plan" });
+    yield* emit({ type: "plan.phase", phase: "computing-plan" });
 
     // ── FQN renames ──────────────────────────────────────────────────────
     // Map every former FQN claimed via `renamedFrom(...)` to its claimant's
@@ -552,10 +646,7 @@ export const make = <A>(
       const provider = Option.getOrUndefined(
         yield* tryFindProviderRegistrationByType(resource.Type),
       );
-      const allowedTypes = new Set([
-        resource.Type,
-        ...(provider?.aliases ?? []),
-      ]);
+      const allowedTypes = new Set([resource.Type, ...(provider?.aliases ?? [])]);
       const persisted = persistedRows.get(resource.FQN);
       const persistedRow = isActionState(persisted)
         ? undefined
@@ -566,9 +657,7 @@ export const make = <A>(
       // block the migration landing here.
       const rowTaken = migratedRowFqns.has(resource.FQN);
       const ownRow =
-        !rowTaken &&
-        persistedRow !== undefined &&
-        allowedTypes.has(persistedRow.resourceType)
+        !rowTaken && persistedRow !== undefined && allowedTypes.has(persistedRow.resourceType)
           ? persistedRow
           : undefined;
 
@@ -638,9 +727,7 @@ export const make = <A>(
           new Error(
             `Rename cycle detected among [${pendingRenamers
               .map((r) => `'${r.FQN}'`)
-              .join(
-                ", ",
-              )}]: their renamedFrom(...) declarations claim each other's ` +
+              .join(", ")}]: their renamedFrom(...) declarations claim each other's ` +
               "FQNs. Swapping ids in one deploy is not supported — rename " +
               "through a temporary id across two deploys instead.",
           ),
@@ -650,9 +737,7 @@ export const make = <A>(
         yield* resolveRenamer(resource);
         resolvedRenamers.add(resource.FQN);
       }
-      pendingRenamers = pendingRenamers.filter(
-        (r) => !resolvedRenamers.has(r.FQN),
-      );
+      pendingRenamers = pendingRenamers.filter((r) => !resolvedRenamers.has(r.FQN));
     }
 
     /**
@@ -665,9 +750,7 @@ export const make = <A>(
      *   starts from scratch — the row is NOT its state, whatever the FQN
      *   says
      */
-    const getPersistedRow = Effect.fn(function* (
-      resource: Pick<ResourceLike, "FQN">,
-    ) {
+    const getPersistedRow = Effect.fn(function* (resource: Pick<ResourceLike, "FQN">) {
       const migration = renameMigrations.get(resource.FQN);
       if (migration !== undefined) {
         return {
@@ -681,9 +764,7 @@ export const make = <A>(
         stage: stage,
         fqn: resource.FQN,
       });
-      const row = isActionState(persisted)
-        ? undefined
-        : (persisted as ResourceState | undefined);
+      const row = isActionState(persisted) ? undefined : (persisted as ResourceState | undefined);
       if (row !== undefined && migratedRowFqns.has(resource.FQN)) {
         return { row: undefined, renamedFrom: undefined, renameMoved: false };
       }
@@ -698,124 +779,131 @@ export const make = <A>(
 
     const resolveResource = (
       resourceExpr: Output.ResourceExpr<any, any>,
-    ): Effect.Effect<any> =>
+    ): Effect.Effect<any, Config.ConfigError | StateStoreError> =>
       Effect.gen(function* () {
-        // Tasks share the ResourceExpr machinery but have no provider /
-        // stable-properties story at plan time. Leave the expression
-        // unsubstituted — Apply resolves it from the tracker at run time.
-        if (isAction(resourceExpr.src as any)) {
-          return resourceExpr;
+        if (selected && !selected.has(resourceExpr.src.FQN)) {
+          return yield* Effect.die(
+            new UnsafeSelectionBoundary({
+              message: `Output evaluation discovered unselected dependency '${resourceExpr.src.FQN}'. Declare the dependency explicitly or run a full deployment.`,
+            }),
+          );
+        }
+        if (isAction(resourceExpr.src)) {
+          const node = yield* diffAction(resourceExpr.src);
+          return node.action === "noop" ? node.state.output : resourceExpr;
         }
         // @ts-expect-error
-        return yield* (resolvedResources[resourceExpr.src.FQN] ??=
-          yield* cachedInScope(memoScope)(
-            Effect.gen(function* () {
-              const resource = resourceExpr.src;
+        return yield* (resolvedResources[resourceExpr.src.FQN] ??= yield* cachedInScope(memoScope)(
+          Effect.gen(function* () {
+            const resource = resourceExpr.src;
 
-              const { provider, mode } =
-                yield* resolveProviderAndMode(resource);
-              const props = materializeStableRefs(
-                yield* resolveInput(resource.Props),
-              );
-              // Falls back to the row at a former FQN (`renamedFrom`) so a
-              // renamed resource's stable attributes keep flowing to
-              // downstream diffs across the migration.
-              const { row: oldState } = yield* getPersistedRow(resource);
+            const { provider, mode } = yield* resolveProviderAndMode(resource);
+            const props = materializeStableRefs(yield* resolveInput(resource.Props));
+            // Falls back to the row at a former FQN (`renamedFrom`) so a
+            // renamed resource's stable attributes keep flowing to
+            // downstream diffs across the migration.
+            const { row: oldState } = yield* getPersistedRow(resource);
 
-              if (!oldState || oldState.status === "creating") {
-                return resourceExpr;
-              }
+            if (!oldState || oldState.status === "creating") {
+              return resourceExpr;
+            }
 
-              // The resource is switching provider modes (local ⇄ live):
-              // it will be replaced, so nothing about the persisted attrs
-              // is stable for downstream consumers.
-              if (hasModeSwitched(mode, oldState)) {
-                return resourceExpr;
-              }
+            // The resource is switching provider modes (local ⇄ live):
+            // it will be replaced, so nothing about the persisted attrs
+            // is stable for downstream consumers.
+            if (hasModeSwitched(mode, oldState)) {
+              return resourceExpr;
+            }
 
-              const oldProps =
-                oldState.status === "updating"
-                  ? oldState.old.props
-                  : oldState.props;
+            const oldProps = oldState.status === "updating" ? oldState.old.props : oldState.props;
 
-              // Normalize both sides through `dedupeBindings` so the binding
-              // sets handed to `diff` are deduped AND sid-sorted — provider
-              // diffs that hash/compare the arrays never churn on
-              // registration-order flips (or on legacy unsorted state).
-              const oldBindings = dedupeBindings(oldState.bindings ?? []);
-              const newBindings = dedupeBindings(
-                stack.bindings[resource.FQN] ?? [],
-              );
+            // Normalize both sides through `dedupeBindings` so the binding
+            // sets handed to `diff` are deduped AND sid-sorted — provider
+            // diffs that hash/compare the arrays never churn on
+            // registration-order flips (or on legacy unsorted state).
+            const oldBindings = dedupeBindings(oldState.bindings ?? []);
+            const bindings = stack.bindings[resource.FQN] ?? [];
+            const newBindings = dedupeBindings(
+              combinedCycleMembers.has(resource.FQN) ? bindings : yield* resolveInput(bindings),
+            );
 
-              const diff = yield* provider.diff
-                ? provider
-                    .diff({
-                      id: resource.LogicalId,
-                      fqn: resource.FQN,
-                      olds: oldProps,
-                      instanceId: oldState.instanceId,
-                      news: props,
-                      output: oldState.attr,
-                      oldBindings,
-                      newBindings,
-                    })
-                    .pipe(providePlanScope(resource.FQN, oldState.instanceId))
-                : Effect.succeed(undefined);
+            const diff = yield* provider.diff
+              ? provider
+                  .diff({
+                    id: resource.LogicalId,
+                    fqn: resource.FQN,
+                    olds: oldProps,
+                    instanceId: oldState.instanceId,
+                    news: props,
+                    output: oldState.attr,
+                    oldBindings,
+                    newBindings,
+                  })
+                  .pipe(providePlanScope(resource, oldState.instanceId))
+              : Effect.undefined;
 
-              // A present `diff.stables` is authoritative for this update and
-              // overrides `provider.stables`. We only fall back to the
-              // provider-level "always stable" list when the diff does not
-              // return one (e.g. no diff fn, or a diff that omits `stables`).
-              const stables: string[] = diff?.stables ?? provider.stables ?? [];
+            // A present `diff.stables` is authoritative for this update and
+            // overrides `provider.stables`. We only fall back to the
+            // provider-level "always stable" list when the diff does not
+            // return one (e.g. no diff fn, or a diff that omits `stables`).
+            const stables: string[] = diff?.stables ?? provider.stables ?? [];
 
-              const withStables = (output: any) =>
-                stables.length > 0
-                  ? new Output.ResourceExpr(
-                      resourceExpr.src,
-                      Object.fromEntries(
-                        stables.map((stable) => [stable, output?.[stable]]),
-                      ),
-                    )
-                  : // if there are no stable properties, treat every property as changed
-                    resourceExpr;
+            const withStables = (output: any) =>
+              stables.length > 0
+                ? new Output.ResourceExpr(
+                    resourceExpr.src,
+                    Object.fromEntries(stables.map((stable) => [stable, output?.[stable]])),
+                  )
+                : // if there are no stable properties, treat every property as changed
+                  resourceExpr;
 
-              if (diff == null) {
-                if (havePropsChanged(oldProps, props)) {
-                  // the props have changed but the provider did not provide any hints as to what is stable
-                  // so we must assume everything has changed
-                  return withStables(oldState?.attr);
-                }
-              } else if (diff.action === "update") {
-                return withStables(oldState?.attr);
-              } else if (diff.action === "replace") {
-                return resourceExpr;
-              }
-              // `--force` upgrades this resource's noop to an update (see the
-              // diff mapping in the resource-graph pass below), so its
-              // `reconcile` WILL re-run and may produce fresh attributes —
-              // that is the point of --force. Returning the persisted attr
-              // snapshot here would bake potentially-stale values into every
-              // consumer's plan props and binding data, so consumers would
-              // keep the stale attrs even though the upstream just
-              // re-reconciled. Expose only the stable attributes and let
-              // apply re-evaluate the rest against the forced reconcile's
-              // fresh output.
-              if (options.force) {
-                return withStables(oldState?.attr);
-              }
+            if (diff == null) {
               if (
-                oldState.status === "created" ||
-                oldState.status === "updated" ||
-                oldState.status === "replaced"
+                havePropsChanged(oldProps, props) ||
+                (!combinedCycleMembers.has(resource.FQN) &&
+                  diffBindings(oldBindings, newBindings).some(
+                    (binding) => binding.action !== "noop",
+                  ))
               ) {
-                // we can safely return the attributes if we know they have stabilized
-                return oldState?.attr;
-              } else {
-                // we must assume the resource doesn't exist if it hasn't stabilized
-                return resourceExpr;
+                // the props have changed but the provider did not provide any hints as to what is stable
+                // so we must assume everything has changed
+                return withStables(oldState?.attr);
               }
-            }),
-          ));
+            } else if (diff.action === "update") {
+              return withStables(oldState?.attr);
+            } else if (diff.action === "replace") {
+              return resourceExpr;
+            }
+            // `--force` upgrades this resource's noop to an update (see the
+            // diff mapping in the resource-graph pass below), so its
+            // `reconcile` WILL re-run and may produce fresh attributes —
+            // that is the point of --force. Returning the persisted attr
+            // snapshot here would bake potentially-stale values into every
+            // consumer's plan props and binding data, so consumers would
+            // keep the stale attrs even though the upstream just
+            // re-reconciled. Expose only the stable attributes and let
+            // apply re-evaluate the rest against the forced reconcile's
+            // fresh output. A noop diff may carry `stables` for exactly this
+            // case (conditional stables such as a rename-mutable `name`);
+            // without them the forced upstream would only expose
+            // `provider.stables` and identity-sensitive consumers would
+            // falsely plan a replacement (#1832).
+            if (options.force) {
+              return withStables(oldState?.attr);
+            }
+            if (
+              oldState.status === "created" ||
+              oldState.status === "updated" ||
+              oldState.status === "replaced"
+            ) {
+              // we can safely return the attributes if we know they have stabilized
+              return oldState?.attr;
+            } else {
+              // we must assume the resource doesn't exist if it hasn't stabilized
+              return resourceExpr;
+            }
+          }),
+        ));
       });
 
     /**
@@ -836,7 +924,7 @@ export const make = <A>(
       // a shared visited-set) keeps legitimately-shared diamond references
       // intact and is race-free under `concurrency: "unbounded"` (#1082).
       ancestors: ReadonlySet<object> = new Set(),
-    ): Effect.Effect<any, Config.ConfigError> =>
+    ): Effect.Effect<any, Config.ConfigError | StateStoreError> =>
       Effect.gen(function* () {
         if (!input) {
           return input;
@@ -869,18 +957,15 @@ export const make = <A>(
           }
           const nested = new Set(ancestors).add(input);
           if (Array.isArray(input)) {
-            return yield* Effect.all(
-              input.map((item) => resolveInput(item, nested)),
-              { concurrency: "unbounded" },
-            );
+            return yield* Effect.forEach(input, (item) => resolveInput(item, nested), {
+              concurrency: "unbounded",
+            });
           }
           return Object.fromEntries(
-            yield* Effect.all(
-              Object.entries(input).map(([key, value]) =>
-                resolveInput(value, nested).pipe(
-                  Effect.map((value) => [key, value]),
-                ),
-              ),
+            yield* Effect.forEach(
+              Object.entries(input),
+              ([key, value]) =>
+                resolveInput(value, nested).pipe(Effect.map((value) => [key, value])),
               { concurrency: "unbounded" },
             ),
           );
@@ -929,12 +1014,12 @@ export const make = <A>(
         // Effect/Layer/Context) are leaves — see isPlainData (#1082).
         return input;
       }
-      return mapPlainData(input, ancestors, (child) =>
-        materializeStableRefs(child, ancestors),
-      );
+      return mapPlainData(input, ancestors, (child) => materializeStableRefs(child, ancestors));
     };
 
-    const resolveOutput = (expr: Output.Expr<any>): Effect.Effect<any> =>
+    const resolveOutput = (
+      expr: Output.Expr<any>,
+    ): Effect.Effect<any, Config.ConfigError | StateStoreError> =>
       Effect.gen(function* () {
         if (Output.isResourceExpr(expr)) {
           return yield* resolveResource(expr);
@@ -953,16 +1038,22 @@ export const make = <A>(
           // Otherwise run `f` to produce the next Output and resolve into it.
           return Output.hasOutputs(upstream)
             ? expr
-            : yield* resolveOutput(
-                Output.asOutput(expr.f(upstream)) as Output.Expr<any>,
-              );
+            : yield* resolveOutput(Output.asOutput(expr.f(upstream)) as Output.Expr<any>);
         } else if (Output.isAllExpr(expr)) {
-          return yield* Effect.all(expr.outs.map(resolveOutput), {
+          return yield* Effect.forEach(expr.outs, resolveOutput, {
             concurrency: "unbounded",
           });
         } else if (Output.isLiteralExpr(expr)) {
           return expr.value;
         } else if (Output.isRefExpr(expr)) {
+          // A ref bound to a declared resource resolves like a direct
+          // reference: unknown while that resource is being created.
+          const target = Output.refTarget(expr);
+          if (target !== undefined) {
+            return yield* resolveResource(
+              Output.of(target as any) as Output.ResourceExpr<any, any>,
+            );
+          }
           const refStack = expr.stack ?? stackName;
           const refStage = expr.stage ?? stage;
           const refState = yield* state
@@ -1006,19 +1097,8 @@ export const make = <A>(
         } else if (Output.isNamedExpr(expr)) {
           return yield* resolveOutput(expr.expr);
         }
-        return yield* Effect.die(
-          new Error("Not implemented yet" + (expr as any).kind),
-        );
+        return yield* Effect.die(new Error("Not implemented yet" + (expr as any).kind));
       });
-
-    // map of resource FQN -> its downstream dependencies (resources that depend on it)
-    const oldDownstreamDependencies: {
-      [fqn: string]: string[];
-    } = Object.fromEntries(
-      oldResources
-        .filter((resource) => !!resource)
-        .map((resource) => [resource.fqn, resource.downstream]),
-    );
 
     // Build a set of FQNs for the new resources to detect orphans
     const newResourceFqns = new Set(resources.map((r) => r.FQN));
@@ -1046,12 +1126,8 @@ export const make = <A>(
             // any Output captured via `yield* output` inside its init Effect.
             Array.from(
               new Set([
-                ...Object.values(Output.upstreamAny(action.Input)).map(
-                  (r) => r.FQN,
-                ),
-                ...Object.values(Output.upstreamAny(action.Captures)).map(
-                  (r) => r.FQN,
-                ),
+                ...Object.values(Output.upstreamAny(action.Input)).map((r) => r.FQN),
+                ...Object.values(Output.upstreamAny(action.Captures)).map((r) => r.FQN),
               ]),
             ),
           ] as const,
@@ -1064,9 +1140,7 @@ export const make = <A>(
     } = Object.fromEntries(
       resources.map((resource) => [
         resource.FQN,
-        Object.values(
-          Output.upstreamAny(stack.bindings[resource.FQN] ?? []),
-        ).map((r) => r.FQN),
+        Object.values(Output.upstreamAny(stack.bindings[resource.FQN] ?? [])).map((r) => r.FQN),
       ]),
     );
 
@@ -1111,6 +1185,15 @@ export const make = <A>(
     // edges are considered. Used below to decide whether an acyclic
     // binding edge should also become a downstream edge.
     const combinedCycleMembers = findCycleMembers(allUpstreamDependencies);
+    const inputCycleMembers = findCycleMembers({
+      ...newUpstreamDependencies,
+      ...Object.fromEntries(
+        actions.map((action) => [
+          action.FQN,
+          Object.values(Output.upstreamAny(action.Input)).map((r) => r.FQN),
+        ]),
+      ),
+    });
 
     // Map FQN -> list of downstream FQNs (resources/actions that depend on
     // this one).
@@ -1134,29 +1217,38 @@ export const make = <A>(
     //
     // Actions don't have bindings, so for action upstreams we use only
     // prop edges (which collapse to `newUpstreamDependencies` lookups).
-    const computeDownstream = (upFqn: string): string[] => {
-      const downstream: string[] = [];
-      for (const [downFqn, upstreams] of Object.entries(
-        rawUpstreamDependencies,
-      )) {
+    //
+    // The edges are inverted in one pass (in `rawUpstreamDependencies` order,
+    // so each downstream list keeps that order) — scanning every node's
+    // upstream list per node was quadratic in resource count (#2400).
+    const directDownstream = new Map<string, string[]>();
+    for (const [downFqn, upstreams] of Object.entries(rawUpstreamDependencies)) {
+      const propDeps = new Set(newUpstreamDependencies[downFqn]);
+      for (const upFqn of upstreams) {
         if (downFqn === upFqn) continue;
-        if (!upstreams.includes(upFqn)) continue;
-        const isPropEdge = (newUpstreamDependencies[downFqn] ?? []).includes(
-          upFqn,
-        );
-        if (isPropEdge) {
-          downstream.push(downFqn);
-          continue;
-        }
         // Binding-only edge — exclude when both endpoints sit inside
         // the same SCC of the combined graph.
         if (
+          !propDeps.has(upFqn) &&
           combinedCycleMembers.has(upFqn) &&
           combinedCycleMembers.has(downFqn)
         ) {
           continue;
         }
+        let downstream = directDownstream.get(upFqn);
+        if (!downstream) directDownstream.set(upFqn, (downstream = []));
         downstream.push(downFqn);
+      }
+    }
+
+    const computeDownstream = (upFqn: string): string[] => {
+      const downstream = [...(directDownstream.get(upFqn) ?? [])];
+      if (selected) {
+        for (const row of historicalRows(persistedRows.get(upFqn))) {
+          for (const dep of row.downstream ?? []) {
+            if (!selected.has(dep) && !downstream.includes(dep)) downstream.push(dep);
+          }
+        }
       }
       return downstream;
     };
@@ -1164,20 +1256,60 @@ export const make = <A>(
     const newDownstreamDependencies: {
       [fqn: string]: string[];
     } = Object.fromEntries([
-      ...resources.map(
-        (resource) => [resource.FQN, computeDownstream(resource.FQN)] as const,
-      ),
-      ...actions.map(
-        (action) => [action.FQN, computeDownstream(action.FQN)] as const,
-      ),
+      ...resources.map((resource) => [resource.FQN, computeDownstream(resource.FQN)] as const),
+      ...actions.map((action) => [action.FQN, computeDownstream(action.FQN)] as const),
     ]);
+
+    const actionPlans: Record<
+      string,
+      Effect.Effect<ActionRun | ActionNoop, Config.ConfigError | StateStoreError>
+    > = {};
+    const diffAction = Effect.fn("plan.diff.action")(function* (action: ActionLike) {
+      return yield* (actionPlans[action.FQN] ??= yield* cachedInScope(memoScope)(
+        Effect.gen(function* () {
+          const fqn = action.FQN;
+          const downstream = newDownstreamDependencies[fqn] ?? [];
+          const oldState = yield* state.get({ stack: stackName, stage, fqn });
+          const prior = isActionState(oldState) ? oldState : undefined;
+          const resolvedInput = inputCycleMembers.has(fqn)
+            ? action.Input
+            : yield* resolveInput(action.Input);
+          // Actions are pure in their inputs. Only a completed, unforced run
+          // with fully known, identical inputs has a reusable output.
+          if (
+            prior?.status === "ran" &&
+            !options.force &&
+            !inputCycleMembers.has(fqn) &&
+            isResolved(resolvedInput) &&
+            prior.inputHash === (yield* hashInput(resolvedInput))
+          ) {
+            return {
+              kind: "action",
+              action: "noop",
+              def: action,
+              state: prior,
+              downstream,
+            } satisfies ActionNoop;
+          }
+          return {
+            kind: "action",
+            action: "run",
+            def: action,
+            input: action.Input,
+            state: prior,
+            downstream,
+            forced: !!options.force,
+          } satisfies ActionRun;
+        }),
+      ));
+    });
 
     const plannedCount = yield* Ref.make(0);
     const resourcePlanned = (node: CRUD) =>
       Ref.updateAndGet(plannedCount, (count) => count + 1).pipe(
         Effect.flatMap((completed) =>
-          reportPlanned({
-            _tag: "plan.resource.completed",
+          emit({
+            type: "plan.resource.completed",
             ...describeResource(node),
             completed,
             total: resources.length,
@@ -1185,17 +1317,15 @@ export const make = <A>(
         ),
       );
 
-    const diffResource = Effect.fn("plan.diff.resource")(function* (
-      resource: ResourceLike,
-    ) {
+    const diffResource = Effect.fn("plan.diff.resource")(function* (resource: ResourceLike) {
       const { provider, mode } = yield* resolveProviderAndMode(resource);
       const id = resource.LogicalId;
       const fqn = resource.FQN;
       // Paired with the resource-planned completion below so renderers can
       // show what is actually in flight (diffs may read the cloud and run
       // concurrently — completions alone hide the slow tail).
-      yield* reportPlanned({
-        _tag: "plan.resource.started",
+      yield* emit({
+        type: "plan.resource.started",
         fqn,
         logicalId: id,
         resourceType: resource.Type,
@@ -1229,19 +1359,14 @@ export const make = <A>(
       // values. Terminal commits still persist the payload the provider
       // actually reconciled with (#874) — Apply commits the evaluated
       // `bindingOutputs`, not these plan-time shapes.
-      const newBindings: ResourceBinding[] =
-        materializeStableRefs(applyBindings);
+      const newBindings: ResourceBinding[] = materializeStableRefs(applyBindings);
       // The row is looked up at the resource's FQN with a fallback to
       // its former FQNs (`renamedFrom`); a row found under a former
       // FQN arrives here already remapped to the new identity, and
       // `renamedFrom` rides onto the plan node so apply persists the
       // move. (A Task previously holding this FQN is treated as no
       // prior state — its row is reaped by `actionDeletions` below.)
-      const {
-        row: persistedRow,
-        renamedFrom,
-        renameMoved,
-      } = yield* getPersistedRow(resource);
+      const { row: persistedRow, renamedFrom, renameMoved } = yield* getPersistedRow(resource);
       let oldState: ResourceState | undefined = persistedRow;
 
       // Engine-level adoption. When there is no prior state, always
@@ -1289,23 +1414,24 @@ export const make = <A>(
       // unresolved upstream Outputs (e.g. a `streamArn` referencing
       // a stream being created in the same plan). Calling `read` with
       // an unresolved value would surface as `ParseError` from the
-      // SDK protocol layer. Resources whose props depend on
-      // not-yet-created upstreams cannot themselves be pre-existing
-      // — there's nothing to adopt.
+      // SDK protocol layer. Upstream creation can produce existing children
+      // (e.g. a cloned branch's Auth integration), so Apply must perform the
+      // deferred ownership probe once those identities resolve.
       // A resource declared at a former FQN whose row just migrated
       // away is genuinely NEW by declaration — skip the probe. Its
       // predecessor's physical resource still carries tags branded
       // with THIS logical id (the migrated row's reconcile hasn't
       // re-branded them yet), so a tag-based `read` would find it
       // and silently adopt the very resource that was renamed away.
-      const reusesMigratedFqn = migratedRowFqns.has(fqn);
+      const claimant = formerFqnClaims.get(fqn);
+      const claimantRow = claimant === undefined ? undefined : persistedRows.get(claimant);
+      const reusesMigratedFqn =
+        migratedRowFqns.has(fqn) ||
+        oldState?.adoptionBlocked === "migrated-fqn" ||
+        // Migration can commit before the fresh create records its exclusion.
+        (oldState === undefined && claimantRow !== undefined && !isActionState(claimantRow));
       let forceUpdateAfterAdoption = false;
-      if (
-        oldState === undefined &&
-        provider.read &&
-        isResolved(news) &&
-        !reusesMigratedFqn
-      ) {
+      if (oldState === undefined && provider.read && isResolved(news) && !reusesMigratedFqn) {
         const adoptInstanceId = yield* generateInstanceId();
         const readResult = yield* provider
           .read({
@@ -1315,7 +1441,7 @@ export const make = <A>(
             olds: news,
             output: undefined,
           })
-          .pipe(providePlanScope(fqn, adoptInstanceId));
+          .pipe(providePlanScope(resource, adoptInstanceId));
         if (readResult !== undefined) {
           const isUnowned = Unowned.is(readResult);
           // A resource-scoped `adopt(...)` (captured on the resource at
@@ -1366,9 +1492,7 @@ export const make = <A>(
       // apply-faithful rows, joined by sid — both are views of the same
       // deduped `stack.bindings[fqn]` rows, so action and payload can
       // never drift. `delete` rows keep the persisted old data.
-      const applyBindingData = new Map(
-        applyBindings.map((b) => [b.sid, b.data]),
-      );
+      const applyBindingData = new Map(applyBindings.map((b) => [b.sid, b.data]));
       const bindingDiffs = diffBindings(oldBindings, newBindings).map((b) =>
         b.action === "delete" || !applyBindingData.has(b.sid)
           ? b
@@ -1383,12 +1507,17 @@ export const make = <A>(
       // with the provider of the mode that created it (see
       // `deleteOldGenerations` / `collectGarbage`).
       const modeSwitched = hasModeSwitched(mode, oldState);
+      if (selected && modeSwitched && oldState?.status === "deleting") {
+        return yield* Effect.die(
+          new UnsafeSelectionBoundary({
+            message: `Cannot switch provider mode for '${fqn}' during filtered recovery from deleting. Finish interrupted destruction in its recorded '${stampedMode(oldState)}' mode before deploying in '${mode}' mode; a full mode-switch deployment is not a safe recovery.`,
+          }),
+        );
+      }
 
+      const adoptThis = resource.Adopt ?? (yield* shouldAdopt);
       const Node = <T extends Apply>(
-        node: Omit<
-          T,
-          "provider" | "resource" | "bindings" | "downstream" | "mode"
-        >,
+        node: Omit<T, "provider" | "resource" | "bindings" | "downstream" | "mode">,
       ) =>
         ({
           ...node,
@@ -1398,6 +1527,20 @@ export const make = <A>(
           downstream,
           mode,
           renamedFrom,
+          adoptionBlocked: reusesMigratedFqn ? "migrated-fqn" : undefined,
+          deferredAdoption:
+            (provider.read || provider.observe) &&
+            !reusesMigratedFqn &&
+            // A replacement targets a new physical identity, which may belong
+            // to someone else — admit it like a fresh create.
+            (node.action === "replace" ||
+              (node.action === "create" &&
+                // Plan reads resolved props itself; without `read`, Apply
+                // admits them through `observe`.
+                ((oldState === undefined && (!isResolved(news) || !provider.read)) ||
+                  (oldState?.status === "creating" && oldState.attr === undefined))))
+              ? { adopt: adoptThis }
+              : undefined,
         }) as any as T;
 
       // Plan against the persisted state we have, not the ideal final state we
@@ -1409,23 +1552,28 @@ export const make = <A>(
           props: applyProps,
           state: oldState,
         });
-      } else if (
-        !modeSwitched &&
-        oldState.status === "creating" &&
-        oldState.attr === undefined
-      ) {
+      } else if (!modeSwitched && oldState.status === "creating" && oldState.attr === undefined) {
         // A create may have succeeded before state persistence failed. If the
         // provider can recover an attribute snapshot, keep driving the same
         // create instead of starting over blindly.
         //
-        // `creating` state persists the RAW plan-time props, which may
+        // Early `creating` checkpoints contain raw plan-time props, which may
         // still contain unresolved Output expressions (e.g. a name
         // referencing an upstream created in the same failed deploy).
         // `read` implementations derive identity from `olds` when
         // `output` is undefined (as it is here), so handing them
         // unresolved exprs crashes. Skip the probe — same behavior as
         // a read that found nothing — and re-drive the create.
-        if (provider.read && isResolved(oldState.props)) {
+        //
+        // A checkpoint whose unresolved props were stripped (`propsIncomplete`)
+        // can't identify the attempt at all: a lookup could match a different
+        // resource. Skip it too and let the diff below decide.
+        if (
+          provider.read &&
+          !reusesMigratedFqn &&
+          !oldState.propsIncomplete &&
+          isResolved(oldState.props)
+        ) {
           const attr = yield* provider
             .read({
               id,
@@ -1435,7 +1583,7 @@ export const make = <A>(
               output: oldState.attr,
             })
             .pipe(
-              providePlanScope(fqn, oldState.instanceId),
+              providePlanScope(resource, oldState.instanceId),
               // `creating` props pass `isResolved` yet can still carry
               // holes where unresolved Outputs were stripped at commit
               // time (see stripUnresolved) — e.g. a parent reference
@@ -1512,7 +1660,7 @@ export const make = <A>(
                 oldBindings,
                 newBindings,
               })
-              .pipe(providePlanScope(fqn, oldState.instanceId)),
+              .pipe(providePlanScope(resource, oldState.instanceId)),
           ).pipe(
             Effect.map(
               (diff) =>
@@ -1524,6 +1672,15 @@ export const make = <A>(
                       ? "update"
                       : "noop",
                 } as UpdateDiff | NoopDiff),
+            ),
+            // Values a Platform's Init captured (`yield* Config.x(...)`,
+            // `yield* output`) reach the provider only through `props.env`,
+            // and a provider's diff may not compare `env` (#1831). The engine
+            // compares them itself so a changed value always deploys.
+            Effect.map((diff) =>
+              diff.action === "noop" && capturedEnvChanged(resource, oldProps, news)
+                ? ({ action: "update" } satisfies UpdateDiff)
+                : diff,
             ),
             Effect.map((diff) =>
               options.force && diff.action === "noop"
@@ -1546,8 +1703,7 @@ export const make = <A>(
             // would let the reuser's future adoption probes match the
             // wrong physical resource.
             Effect.map((diff) =>
-              (forceUpdateAfterAdoption || renameMoved) &&
-              diff.action === "noop"
+              (forceUpdateAfterAdoption || renameMoved) && diff.action === "noop"
                 ? ({ action: "update" } satisfies UpdateDiff)
                 : diff,
             ),
@@ -1714,27 +1870,144 @@ export const make = <A>(
     // interrupt-only for any other reason) that can be a bare interruption,
     // hiding the InvalidReferenceError or provider error that actually
     // broke the plan.
-    const diffExits = yield* Effect.all(
-      resources.map((resource) =>
-        Effect.exit(Effect.tap(diffResource(resource), resourcePlanned)),
-      ),
+    const diffExits = yield* Effect.forEach(
+      resources,
+      (resource) => Effect.exit(Effect.tap(diffResource(resource), resourcePlanned)),
       { concurrency: "unbounded" },
     );
     const diffFailures = diffExits.filter(Exit.isFailure);
     if (diffFailures.length > 0) {
       const reasons = diffFailures.flatMap((exit) => exit.cause.reasons);
-      const failures = reasons.filter(
-        (reason) => !Cause.isInterruptReason(reason),
-      );
-      return yield* Effect.failCause(
-        Cause.fromReasons(failures.length > 0 ? failures : reasons),
-      );
+      const failures = reasons.filter((reason) => !Cause.isInterruptReason(reason));
+      return yield* Effect.failCause(Cause.fromReasons(failures.length > 0 ? failures : reasons));
     }
     const resourceGraph = Object.fromEntries(
-      diffExits
-        .filter(Exit.isSuccess)
-        .map((exit) => [exit.value.resource.FQN, exit.value]),
+      diffExits.filter(Exit.isSuccess).map((exit) => [exit.value.resource.FQN, exit.value]),
     ) as Plan["resources"];
+
+    if (selected) {
+      const downstream = new Map<string, Set<string>>();
+      const addEdge = (source: string, consumer: string) => {
+        let edges = downstream.get(source);
+        if (!edges) downstream.set(source, (edges = new Set()));
+        edges.add(consumer);
+      };
+      for (const node of declared) {
+        for (const source of upstream(node)) addEdge(source, node.FQN);
+      }
+      let bindingEvidence: string | undefined;
+      let incompleteHistory: string | undefined;
+      for (const [fqn, row] of persistedRows) {
+        for (const snapshot of historicalRows(row)) {
+          for (const consumer of snapshot.downstream ?? []) {
+            addEdge(fqn, consumer);
+          }
+          if (snapshot.bindings?.length) bindingEvidence ??= fqn;
+          if (snapshot.downstream === undefined) incompleteHistory ??= fqn;
+        }
+      }
+      const unselectedConsumers = (fqn: string) => {
+        const reachable = new Set([fqn]);
+        const outside = new Set<string>();
+        for (const source of reachable) {
+          for (const consumer of downstream.get(source) ?? []) {
+            reachable.add(consumer);
+            if (!selected.has(consumer)) outside.add(consumer);
+          }
+        }
+        return outside;
+      };
+      for (const source of selected) {
+        for (const row of historicalRows(persistedRows.get(source))) {
+          for (const consumer of row.downstream ?? []) {
+            // SCC filtering alone does not detach an edge in the desired graph.
+            if (!selected.has(consumer) || rawUpstreamDependencies[consumer]?.includes(source))
+              continue;
+            const outside = unselectedConsumers(consumer);
+            if (outside.size > 0) {
+              return yield* Effect.die(
+                new UnsafeSelectionBoundary({
+                  message: `Cannot detach '${source}' from '${consumer}' while downstream consumers are unselected: ${[...outside].sort().join(", ")}. Select them or run a full deployment.`,
+                }),
+              );
+            }
+          }
+        }
+      }
+      const excludedRows = [...persistedRows].filter(([fqn, row]) => row && !selected.has(fqn));
+      const excluded = excludedRows[0];
+      for (const [fqn, node] of Object.entries(resourceGraph)) {
+        const pending = node.state?.status === "replacing" || node.state?.status === "replaced";
+        if (node.action !== "replace" && !pending) continue;
+        // Resolved payloads do not identify binding sources, including cycles
+        // omitted from downstream. Evidence anywhere can involve this resource.
+        if (excluded && (bindingEvidence || incompleteHistory)) {
+          return yield* Effect.die(
+            new UnsafeSelectionBoundary({
+              message: `Cannot replace or collect old generations of '${fqn}' while '${String(excluded[0])}' is unselected. ${bindingEvidence ? `Historical binding-cycle dependencies recorded on '${bindingEvidence}'` : `Historical dependencies missing from '${incompleteHistory}'`} cannot be proven safe; run a full deployment.`,
+            }),
+          );
+        }
+        const outside = unselectedConsumers(fqn);
+        if (outside.size > 0) {
+          return yield* Effect.die(
+            new UnsafeSelectionBoundary({
+              message: `Cannot replace or collect old generations of '${fqn}' while dependents are unselected: ${[...outside].sort().join(", ")}. Select them or run a full deployment.`,
+            }),
+          );
+        }
+      }
+      if (excludedRows.length > 0) {
+        for (const fqn of selected) {
+          if (
+            [...historicalRows(persistedRows.get(fqn))].some(
+              (snapshot) => snapshot.downstream === undefined,
+            )
+          ) {
+            return yield* Effect.die(
+              new UnsafeSelectionBoundary({
+                message: `Cannot reconcile '${fqn}' with incomplete historical downstream metadata while persisted nodes are unselected: ${excludedRows
+                  .map(([id]) => id)
+                  .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+                  .join(", ")}. Select them or run a full deployment.`,
+              }),
+            );
+          }
+        }
+      }
+      if (bindingEvidence && excludedRows.length > 0) {
+        const hasHistoricalBindings = (row: DependencySnapshot | undefined) =>
+          [...historicalRows(row)].some((snapshot) => snapshot.bindings?.length);
+        // Independent writes can fail before planned replacement evidence is durable.
+        const survivingBindings =
+          excludedRows.some(([, row]) => hasHistoricalBindings(row)) ||
+          Object.entries(resourceGraph).some(([fqn, node]) => {
+            const persisted = persistedRows.get(fqn);
+            if (!persisted || isActionState(persisted) || !hasHistoricalBindings(persisted))
+              return false;
+            if (node.action === "noop") return true;
+            return (
+              (node.action === "update" ||
+                node.action === "adopted" ||
+                (node.action === "create" && persisted.status === "creating")) &&
+              persisted.status !== "deleting" &&
+              persisted.status !== "replacing" &&
+              persisted.status !== "replaced" &&
+              node.bindings.some((binding) => binding.action !== "delete")
+            );
+          });
+        if (!survivingBindings) {
+          return yield* Effect.die(
+            new UnsafeSelectionBoundary({
+              message: `Cannot discard the last historical binding evidence while persisted nodes are unselected: ${excludedRows
+                .map(([fqn]) => fqn)
+                .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+                .join(", ")}. Select them or run a full deployment.`,
+            }),
+          );
+        }
+      }
+    }
 
     // ── Action plan nodes ────────────────────────────────────────────────
     // Per-action plan progress, mirroring the resource pass.
@@ -1742,8 +2015,8 @@ export const make = <A>(
     const actionPlanned = (entry: readonly [string, ActionApply]) =>
       Ref.updateAndGet(actionCount, (count) => count + 1).pipe(
         Effect.flatMap((completed) =>
-          reportPlanned({
-            _tag: "plan.action.completed",
+          emit({
+            type: "plan.action.completed",
             ...describeAction(entry[1]),
             completed,
             total: actions.length,
@@ -1751,75 +2024,14 @@ export const make = <A>(
         ),
       );
 
-    const diffAction = Effect.fn("plan.diff.action")(function* (
-      action: ActionLike,
-    ) {
-      const fqn = action.FQN;
-      const downstream = newDownstreamDependencies[fqn] ?? [];
-      // The node carries the RAW input expression (evaluated at apply);
-      // the drift hash uses the diff-facing view so stable upstream
-      // attributes hash as their known values.
-      const resolvedInput = materializeStableRefs(
-        yield* resolveInput(action.Input),
-      );
-      const inputHash = yield* hashInput(resolvedInput);
-      const oldState = yield* state.get({
-        stack: stackName,
-        stage,
-        fqn,
-      });
-
-      if (oldState && !isActionState(oldState)) {
-        // FQN collision with a resource — surface as a fatal error so
-        // the user resolves it before we touch anything.
-        return [
-          fqn,
-          {
-            kind: "action",
-            action: "run",
-            def: action,
-            input: action.Input,
-            state: undefined,
-            downstream,
-            forced: false,
-          } satisfies ActionRun,
-        ] as const;
-      }
-
-      const prior = oldState as ActionState | undefined;
-      const sameInput =
-        prior?.status === "ran" && prior.inputHash === inputHash;
-      if (sameInput && !options.force) {
-        return [
-          fqn,
-          {
-            kind: "action",
-            action: "noop",
-            def: action,
-            state: prior as RanActionState,
-            downstream,
-          } satisfies ActionNoop,
-        ] as const;
-      }
-      return [
-        fqn,
-        {
-          kind: "action",
-          action: "run",
-          def: action,
-          input: action.Input,
-          state: prior,
-          downstream,
-          forced: !!options.force,
-        } satisfies ActionRun,
-      ] as const;
-    });
-
     const actionGraph = Object.fromEntries(
-      (yield* Effect.all(
-        actions.map((action) =>
-          diffAction(action).pipe(Effect.tap(actionPlanned)),
-        ),
+      (yield* Effect.forEach(
+        actions,
+        (action) =>
+          diffAction(action).pipe(
+            Effect.map((node) => [action.FQN, node] as const),
+            Effect.tap(actionPlanned),
+          ),
         { concurrency: "unbounded" },
       )) as ReadonlyArray<readonly [string, ActionApply]>,
     ) as Plan["actions"];
@@ -1840,17 +2052,13 @@ export const make = <A>(
     {
       const createReplaceNodes = new Set(
         Object.entries(resourceGraph)
-          .filter(
-            ([, node]) => node.action === "create" || node.action === "replace",
-          )
+          .filter(([, node]) => node.action === "create" || node.action === "replace")
           .map(([fqn]) => fqn),
       );
 
       if (createReplaceNodes.size > 0) {
         const hasPrecreate = new Set(
-          [...createReplaceNodes].filter(
-            (fqn) => !!resourceGraph[fqn]?.provider?.precreate,
-          ),
+          [...createReplaceNodes].filter((fqn) => !!resourceGraph[fqn]?.provider?.precreate),
         );
 
         const resolved = new Set(hasPrecreate);
@@ -1869,13 +2077,9 @@ export const make = <A>(
           }
         }
 
-        const deadlocked = [...createReplaceNodes].filter(
-          (fqn) => !resolved.has(fqn),
-        );
+        const deadlocked = [...createReplaceNodes].filter((fqn) => !resolved.has(fqn));
         if (deadlocked.length > 0) {
-          const missingPrecreate = deadlocked.filter(
-            (fqn) => !hasPrecreate.has(fqn),
-          );
+          const missingPrecreate = deadlocked.filter((fqn) => !hasPrecreate.has(fqn));
           return yield* Effect.die(
             new UnsatisfiedResourceCycle({
               message:
@@ -1890,23 +2094,52 @@ export const make = <A>(
       }
     }
 
+    // A delete-first replacement in a cycle deletes its previous generation
+    // before precreate. Apply resolves the props that upstreams outside the
+    // cycle determine first, so only props derived from a cycle peer are
+    // still unresolved then, and only the provider's `observe` can check
+    // ownership before that delete. Without it, refuse here — before apply
+    // touches anything — unless adoption is allowed.
+    for (const [fqn, node] of Object.entries(resourceGraph)) {
+      if (
+        node.action === "replace" &&
+        node.deleteFirst &&
+        cycleMembers.has(fqn) &&
+        !node.provider.observe &&
+        node.deferredAdoption?.adopt === false &&
+        !isResolved(node.props) &&
+        Object.keys(Output.resolveUpstream(node.props)).some((dep) => cycleMembers.has(dep)) &&
+        // A resumed replacement already holds its precreated identity.
+        !(node.state.status === "replacing" && !node.restart && node.state.attr !== undefined)
+      ) {
+        return yield* new UnverifiableReplacement({
+          message:
+            `Cannot replace resource '${fqn}' (${node.resource.Type}): ` +
+            "it must be deleted before its replacement is pre-created, but " +
+            "the replacement's identity depends on outputs that are not " +
+            "resolved yet, so its ownership cannot be checked first. Re-run " +
+            "with `--adopt` (or wrap the effect in `adopt(true)`) to replace it anyway.",
+          resourceType: node.resource.Type,
+          logicalId: node.resource.LogicalId,
+        });
+      }
+    }
+
     // Both orphan passes (task rows below, resource rows further down)
     // examine every persisted row of this stack instance.
-    const persistedFqns = yield* state.list({ stack: stackName, stage });
+    const persistedFqns = selected ? [] : yield* state.list({ stack: stackName, stage });
 
     // Orphan progress mirrors the diff passes: every persisted row is
     // examined, but only rows that actually become deletion nodes are
     // reported — `completed` tracks examination so progress stays monotonic.
     const actionExaminedCount = yield* Ref.make(0);
-    const actionDeletionPlanned = (
-      entry: readonly [string, ActionDelete] | undefined,
-    ) =>
+    const actionDeletionPlanned = (entry: readonly [string, ActionDelete] | undefined) =>
       Ref.updateAndGet(actionExaminedCount, (count) => count + 1).pipe(
         Effect.flatMap((completed) =>
           entry === undefined
             ? Effect.void
-            : reportPlanned({
-                _tag: "plan.action.completed",
+            : emit({
+                type: "plan.action.completed",
                 ...describeAction(entry[1]),
                 completed,
                 total: persistedFqns.length,
@@ -1917,9 +2150,7 @@ export const make = <A>(
     // Task deletions: state rows previously written by tasks that no
     // longer appear in the stack. The body is NOT invoked — we just drop
     // the row.
-    const diffActionDeletion = Effect.fn("plan.diff.actionDeletion")(function* (
-      fqn: string,
-    ) {
+    const diffActionDeletion = Effect.fn("plan.diff.actionDeletion")(function* (fqn: string) {
       if (newActionFqns.has(fqn) || newResourceFqns.has(fqn)) return;
       const persisted = yield* state.get({
         stack: stackName,
@@ -1951,12 +2182,12 @@ export const make = <A>(
     });
 
     const actionDeletions: Plan["actionDeletions"] = Object.fromEntries(
-      (yield* Effect.all(
-        persistedFqns.map((fqn) =>
+      (yield* Effect.forEach(
+        persistedFqns,
+        (fqn) =>
           diffActionDeletion(fqn).pipe(
             Effect.tap((entry) => actionDeletionPlanned(entry ?? undefined)),
           ),
-        ),
         { concurrency: "unbounded" },
       )).filter((v): v is NonNullable<typeof v> => !!v),
     );
@@ -1971,8 +2202,8 @@ export const make = <A>(
         Effect.flatMap((completed) =>
           entry === undefined
             ? Effect.void
-            : reportPlanned({
-                _tag: "plan.resource.completed",
+            : emit({
+                type: "plan.resource.completed",
                 ...describeResource(entry[1]),
                 completed,
                 total: deletionCandidates.length,
@@ -1980,9 +2211,7 @@ export const make = <A>(
         ),
       );
 
-    const diffDeletion = Effect.fn("plan.diff.deletion")(function* (
-      fqn: string,
-    ) {
+    const diffDeletion = Effect.fn("plan.diff.deletion")(function* (fqn: string) {
       if (newResourceFqns.has(fqn) || newActionFqns.has(fqn)) {
         return;
       }
@@ -2021,14 +2250,17 @@ export const make = <A>(
         // live unless their attrs carry the marker (see stampedMode),
         // never the run default.
         const rowMode = stampedMode(oldState);
-        const providerOption = yield* tryFindProviderByType(
-          resourceType,
-          rowMode,
-        );
+        const providerOption = yield* tryFindProviderByType(resourceType, rowMode);
         if (Option.isNone(providerOption)) {
           return yield* Effect.die(missingProviderError(resourceType, fqn));
         }
         const provider = providerOption.value;
+        const downstream = new Set(oldState.downstream);
+        let generation = oldState;
+        while (generation.status === "replacing" || generation.status === "replaced") {
+          generation = generation.old;
+          for (const dep of generation.downstream) downstream.add(dep);
+        }
         // NOTE: an attr-less row (interrupted create) is NOT recovered
         // here. Apply's `deleteResource` performs the authoritative
         // read-then-delete recovery — it also covers replaced-chain
@@ -2058,7 +2290,7 @@ export const make = <A>(
               RuntimeContext: undefined!,
               Providers: undefined,
             } as ResourceLike,
-            downstream: oldDownstreamDependencies[fqn] ?? [],
+            downstream: [...downstream],
             bindings: oldState.bindings.map((binding) => ({
               sid: binding.sid,
               action: "delete" as const,
@@ -2070,12 +2302,9 @@ export const make = <A>(
     });
 
     const deletions = Object.fromEntries(
-      (yield* Effect.all(
-        deletionCandidates.map((fqn) =>
-          diffDeletion(fqn).pipe(
-            Effect.tap((entry) => deletionPlanned(entry ?? undefined)),
-          ),
-        ),
+      (yield* Effect.forEach(
+        deletionCandidates,
+        (fqn) => diffDeletion(fqn).pipe(Effect.tap((entry) => deletionPlanned(entry ?? undefined))),
         { concurrency: "unbounded" },
       )).filter((v) => !!v),
     );
@@ -2101,10 +2330,11 @@ export const make = <A>(
       actions: actionGraph,
       deletions,
       actionDeletions,
-      output: stack.output,
+      output: selected ? undefined : stack.output,
+      selectedFqns: selected,
       cycleMembers,
       defaultMode: runDefaultMode,
-    } satisfies Plan<A> as Plan<A>;
+    } satisfies Plan<A | undefined> as Plan<A | undefined>;
   }).pipe(
     // Owns the memoized resolutions' fibers for the plan's duration.
     Effect.scoped,
@@ -2134,30 +2364,60 @@ export const make = <A>(
 export const destroy = (stack: {
   name: string;
   stage: string;
+  include?: never;
+  exclude?: never;
 }): Effect.Effect<Plan<undefined>, never, State> =>
-  make({
-    name: stack.name,
-    stage: stack.stage,
-    resources: {},
-    bindings: {},
-    actions: {},
-    output: undefined,
-  }).pipe(Effect.map((plan) => ({ ...plan, destroy: true })));
+  stack.include !== undefined || stack.exclude !== undefined
+    ? Effect.die(
+        new InvalidResourceSelection({
+          message: "Filtered destroy is not supported.",
+        }),
+      )
+    : make({
+        name: stack.name,
+        stage: stack.stage,
+        resources: {},
+        bindings: {},
+        actions: {},
+        output: undefined,
+      }).pipe(Effect.map((plan) => ({ ...plan, destroy: true })));
+
+/**
+ * Whether any `env` value a Platform's Init captured differs from the
+ * persisted props. An unresolved value counts as changed.
+ */
+const capturedEnvChanged = (
+  resource: ResourceLike,
+  olds: { env?: Record<string, unknown> } | undefined,
+  news: { env?: Record<string, unknown> } | undefined,
+): boolean => {
+  const keys = capturedEnvKeys(resource);
+  if (keys.length === 0) return false;
+  const pick = (props: { env?: Record<string, unknown> } | undefined) =>
+    Object.fromEntries(keys.map((key) => [key, props?.env?.[key]]));
+  return havePropsChanged(pick(olds), pick(news));
+};
 
 const providePlanScope =
-  (fqn: string, instanceId: string) =>
-  <A, E, R>(
-    effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, Exclude<R, InstanceId | Artifacts>> =>
+  (resource: ResourceLike, instanceId: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.serviceOption(ArtifactStore).pipe(
       Effect.map(Option.getOrElse(createArtifactStore)),
       Effect.flatMap((store) =>
         effect.pipe(
-          Effect.provideService(Artifacts, makeScopedArtifacts(store, fqn)),
-          Effect.provideService(InstanceId, instanceId),
+          failCredentialsRequired(resource.FQN),
+          Effect.provide([
+            Layer.succeed(Artifacts, makeScopedArtifacts(store, resource.FQN)),
+            Layer.succeed(ResourceContext, {
+              logicalId: resource.LogicalId,
+              fqn: resource.FQN,
+              instanceId,
+              type: resource.Type,
+            }),
+          ]),
         ),
       ),
-    ) as Effect.Effect<A, E, Exclude<R, InstanceId | Artifacts>>;
+    );
 
 export class DeleteResourceHasDownstreamDependencies extends Data.TaggedError(
   "DeleteResourceHasDownstreamDependencies",
@@ -2167,9 +2427,7 @@ export class DeleteResourceHasDownstreamDependencies extends Data.TaggedError(
   dependencies: string[];
 }> {}
 
-export class UnsatisfiedResourceCycle extends Data.TaggedError(
-  "UnsatisfiedResourceCycle",
-)<{
+export class UnsatisfiedResourceCycle extends Data.TaggedError("UnsatisfiedResourceCycle")<{
   message: string;
   cycle: string[];
   missingPrecreate: string[];
@@ -2222,30 +2480,16 @@ export const printPlan = (plan: Plan): string => {
   };
 
   // Print header
-  lines.push(
-    "╔════════════════════════════════════════════════════════════════╗",
-  );
-  lines.push(
-    "║                           PLAN                                 ║",
-  );
-  lines.push(
-    "╠════════════════════════════════════════════════════════════════╣",
-  );
-  lines.push(
-    "║ Legend: + create, ~ update, - delete, ± replace, = noop,       ║",
-  );
-  lines.push(
-    "║         λ run task, · skip task                                ║",
-  );
-  lines.push(
-    "╚════════════════════════════════════════════════════════════════╝",
-  );
+  lines.push("╔════════════════════════════════════════════════════════════════╗");
+  lines.push("║                           PLAN                                 ║");
+  lines.push("╠════════════════════════════════════════════════════════════════╣");
+  lines.push("║ Legend: + create, ~ update, - delete, ± replace, = noop,       ║");
+  lines.push("║         λ run task, · skip task                                ║");
+  lines.push("╚════════════════════════════════════════════════════════════════╝");
   lines.push("");
 
   // Print resources section
-  lines.push(
-    "┌─ Resources ────────────────────────────────────────────────────┐",
-  );
+  lines.push("┌─ Resources ────────────────────────────────────────────────────┐");
   const resourceIds = Object.keys(plan.resources).sort();
   for (const id of resourceIds) {
     const node = plan.resources[id];
@@ -2262,37 +2506,27 @@ export const printPlan = (plan: Plan): string => {
   if (resourceIds.length === 0) {
     lines.push("│ (none)");
   }
-  lines.push(
-    "└────────────────────────────────────────────────────────────────┘",
-  );
+  lines.push("└────────────────────────────────────────────────────────────────┘");
   lines.push("");
 
   // Print tasks section
-  lines.push(
-    "┌─ Tasks ────────────────────────────────────────────────────────┐",
-  );
+  lines.push("┌─ Tasks ────────────────────────────────────────────────────────┐");
   const taskIds = Object.keys(plan.actions ?? {}).sort();
   for (const id of taskIds) {
     const node = plan.actions[id];
     const symbol = node.action === "run" ? "λ" : "·";
     const type = node.def.Type;
-    const downstream = node.downstream.length
-      ? ` → [${node.downstream.join(", ")}]`
-      : "";
+    const downstream = node.downstream.length ? ` → [${node.downstream.join(", ")}]` : "";
     lines.push(`│ [${symbol}] ${id} (${type})${downstream}`);
   }
   if (taskIds.length === 0) {
     lines.push("│ (none)");
   }
-  lines.push(
-    "└────────────────────────────────────────────────────────────────┘",
-  );
+  lines.push("└────────────────────────────────────────────────────────────────┘");
   lines.push("");
 
   // Print deletions section
-  lines.push(
-    "┌─ Deletions ────────────────────────────────────────────────────┐",
-  );
+  lines.push("┌─ Deletions ────────────────────────────────────────────────────┐");
   const deletionIds = Object.keys(plan.deletions).sort();
   for (const id of deletionIds) {
     const node = plan.deletions[id]!;
@@ -2310,9 +2544,7 @@ export const printPlan = (plan: Plan): string => {
   if (deletionIds.length === 0 && taskDeletionIds.length === 0) {
     lines.push("│ (none)");
   }
-  lines.push(
-    "└────────────────────────────────────────────────────────────────┘",
-  );
+  lines.push("└────────────────────────────────────────────────────────────────┘");
   lines.push("");
 
   return lines.join("\n");

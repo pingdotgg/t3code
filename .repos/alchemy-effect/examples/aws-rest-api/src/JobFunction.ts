@@ -1,6 +1,6 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 const main = import.meta.url;
 

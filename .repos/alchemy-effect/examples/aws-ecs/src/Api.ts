@@ -1,14 +1,9 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import {
-  OrdersCluster,
-  OrdersIngress,
-  OrdersNetwork,
-  OrdersTable,
-} from "./infra.ts";
+import { OrdersCluster, OrdersIngress, OrdersNetwork, OrdersTable } from "./infra.ts";
 import SeedTask from "./SeedTask.ts";
 
 /**
@@ -58,18 +53,12 @@ export default Api.make(
       desiredCount: 1,
       // Build/run on ARM64 so an image built on an Apple Silicon host
       // matches the Fargate runtime architecture (Graviton).
-      runtimePlatform: {
-        cpuArchitecture: "ARM64",
-        operatingSystemFamily: "LINUX",
-      },
+      runtimePlatform: { cpuArchitecture: "ARM64", operatingSystemFamily: "LINUX" },
       vpcId: network.vpcId,
       subnets: network.publicSubnetIds,
       // Public subnets, no NAT: a public IP is required to pull the image.
       assignPublicIp: true,
-      loadBalancer: {
-        listener,
-        rules: [{ path: "/api/*", priority: 10 }],
-      },
+      loadBalancer: { listener, rules: [{ path: "/api/*", priority: 10 }] },
     };
   }),
   Effect.gen(function* () {
@@ -101,30 +90,20 @@ export default Api.make(
             customer: item.customer?.S,
             total: item.total?.N ? Number(item.total.N) : undefined,
           }));
-          return yield* HttpServerResponse.json({
-            count: orders.length,
-            orders,
-          });
+          return yield* HttpServerResponse.json({ count: orders.length, orders });
         }
 
         // GET /api/orders/<id> — read one order.
         const match = url.pathname.match(/^\/api\/orders\/([^/]+)$/);
         if (request.method === "GET" && match) {
-          const result = yield* getItem({
-            Key: { pk: { S: `order#${match[1]}` } },
-          });
+          const result = yield* getItem({ Key: { pk: { S: `order#${match[1]}` } } });
           if (!result.Item) {
-            return yield* HttpServerResponse.json(
-              { error: "not found" },
-              { status: 404 },
-            );
+            return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
           }
           return yield* HttpServerResponse.json({
             id: match[1],
             customer: result.Item.customer?.S,
-            total: result.Item.total?.N
-              ? Number(result.Item.total.N)
-              : undefined,
+            total: result.Item.total?.N ? Number(result.Item.total.N) : undefined,
           });
         }
 
@@ -153,19 +132,12 @@ export default Api.make(
 
         // Everything else — including the ALB health check on "/" (health
         // checks hit the container directly, not through listener rules).
-        return yield* HttpServerResponse.json({
-          ok: true,
-          service: "orders-api",
-        });
+        return yield* HttpServerResponse.json({ ok: true, service: "orders-api" });
       }).pipe(Effect.orDie),
     };
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        AWS.DynamoDB.ScanHttp,
-        AWS.DynamoDB.GetItemHttp,
-        AWS.ECS.RunTaskHttp,
-      ),
+      Layer.mergeAll(AWS.DynamoDB.ScanHttp, AWS.DynamoDB.GetItemHttp, AWS.ECS.RunTaskHttp),
     ),
   ),
 );

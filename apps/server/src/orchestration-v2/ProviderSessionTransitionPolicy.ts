@@ -1,14 +1,13 @@
 import type {
   ModelSelection,
-  OrchestrationV2ProviderCapabilities,
   ProviderDriverKind,
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 
-import type { ProviderContinuationIdentity } from "../provider/ProviderDriver.ts";
-import type { ProviderSelectionTransitionPlan } from "./ProviderSelectionTransition.ts";
+import type { ProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
+import type { ProviderSelectionTransitionPlan } from "@t3tools/provider-core/server/selectionTransition";
 
 export type ProviderSessionTransition =
   | { readonly type: "reuse" }
@@ -24,7 +23,6 @@ export interface ProviderSessionTransitionState {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspace: string;
-  readonly capabilities: OrchestrationV2ProviderCapabilities;
 }
 
 export interface ProviderSessionTransitionTarget extends ProviderSessionTransitionState {
@@ -82,15 +80,9 @@ export function decideProviderSessionTransition(input: {
         return { type: "switch_model_in_session" };
       case "restart_session":
         return { type: "restart_and_resume" };
-      case "create_with_handoff":
-        return { type: "create_with_handoff" };
-      case "reject":
-        return { type: "reject", reason: input.selectionTransition.reason };
-      case undefined:
-        return { type: "restart_and_resume" };
     }
   }
 
-  // Interaction mode is turn-scoped and is applied when the next turn starts.
+  // Apply interaction mode on the next turn.
   return { type: "reuse" };
 }

@@ -11,5 +11,6 @@
     "skipLibCheck": true,
     "strict": true
   },
-  "include": ["alchemy.run.ts", "src/**/*.ts", "test"]
+  "include": ["alchemy.run.ts", "src/**/*.ts", "test"],
+  "references": [{ "path": "../../packages/alchemy" }]
 }

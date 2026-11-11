@@ -1,15 +1,3 @@
-/**
- * Inline markdown styling for the rich text composer.
- *
- * The composer's stored prompt stays plain markdown (`**bold**`), while the
- * Tiptap surface renders styled text. These helpers translate between the two:
- * parsing markdown into marked spans for the document, serializing marked
- * spans back to markdown in the document serializer.
- *
- * Deliberately small: bold, italic, strikethrough, and inline code only.
- * Unmatched markers stay literal text so nothing the user typed is ever lost.
- */
-
 export type RichTextMark = "bold" | "italic" | "strike" | "code";
 
 interface RichTextSpan {
@@ -24,35 +12,39 @@ export const RICH_TEXT_DELIMITERS: Record<RichTextMark, string> = {
   code: "`",
 };
 
-function pushSpan(spans: RichTextSpan[], text: string, marks: RichTextMark[]): void {
-  if (!text) return;
-  const last = spans[spans.length - 1];
-  if (
-    last &&
-    last.marks.length === marks.length &&
-    last.marks.every((mark, index) => mark === marks[index])
-  ) {
-    last.text += text;
-  } else {
-    spans.push({ text, marks });
-  }
+/** A run of `text` from `start` to `end` that parses with `marks`. */
+interface SourcePiece {
+  start: number;
+  end: number;
+  marks: RichTextMark[];
 }
 
-/** Parse the supported inline styles, leaving unmatched and escaped markers literal. */
-export function parseInlineMarkdown(text: string): RichTextSpan[] {
-  const root: RichTextSpan[] = [];
-  const stack: { delimiter: string; mark: RichTextMark; spans: RichTextSpan[] }[] = [];
-  const current = () => stack.at(-1)?.spans ?? root;
+function sameMarks(left: readonly RichTextMark[], right: readonly RichTextMark[]): boolean {
+  return left.length === right.length && left.every((mark, index) => mark === right[index]);
+}
+
+// Pieces keep source offsets, so callers can map parsed text back onto the
+// characters it came from; parsing only drops delimiters.
+function parseInlineMarkdownPieces(text: string): SourcePiece[] {
+  const root: SourcePiece[] = [];
+  const stack: { delimiter: string; mark: RichTextMark; start: number; pieces: SourcePiece[] }[] =
+    [];
+  const push = (start: number, end: number, marks: RichTextMark[] = []) => {
+    if (end <= start) return;
+    const pieces = stack.at(-1)?.pieces ?? root;
+    const last = pieces.at(-1);
+    if (last?.end === start && sameMarks(last.marks, marks)) last.end = end;
+    else pieces.push({ start, end, marks });
+  };
   let index = 0;
   while (index < text.length) {
     const char = text[index]!;
     if (char === "\\") {
-      pushSpan(current(), text.slice(index, index + 2), []);
+      push(index, Math.min(index + 2, text.length));
       index += 2;
       continue;
     }
     if (char === "`") {
-      // Multi-backtick code stays literal; a single-backtick span owns its contents.
       const run = text.slice(index).match(/^`+/)![0];
       const close = text.indexOf(run, index + run.length);
       if (
@@ -61,16 +53,16 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
         !text.slice(index, close).includes("\n") &&
         text[close + 1] !== "`"
       ) {
-        pushSpan(current(), text.slice(index + 1, close), ["code"]);
+        push(index + 1, close, ["code"]);
         index = close + 1;
       } else {
-        pushSpan(current(), run, []);
+        push(index, index + run.length);
         index += run.length;
       }
       continue;
     }
     if (char !== "*" && char !== "_" && char !== "~") {
-      pushSpan(current(), char, []);
+      push(index, index + 1);
       index += 1;
       continue;
     }
@@ -82,8 +74,6 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
     const canOpen = after !== "" && !/\s/.test(after) && (char !== "_" || !/\w/.test(before));
     while (index < end) {
       const top = stack.at(-1);
-      // Inside italic, a double marker opens bold before closing the single
-      // marker. Once bold is active, closing runs unwind both styles.
       const opensNestedBold =
         top?.mark === "italic" &&
         end - index === 2 &&
@@ -98,34 +88,54 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
         index + top.delimiter.length <= end
       ) {
         stack.pop();
-        for (const span of top.spans) pushSpan(current(), span.text, [top.mark, ...span.marks]);
+        for (const piece of top.pieces) push(piece.start, piece.end, [top.mark, ...piece.marks]);
         index += top.delimiter.length;
       } else if (canOpen && (char !== "~" || end - index >= 2)) {
         const length = char === "~" || end - index >= 2 ? 2 : 1;
         const mark = char === "~" ? "strike" : length === 2 ? "bold" : "italic";
-        // A mark cannot nest inside itself, including alternate delimiters.
-        // This bounds the stack to the supported styles for arbitrary input.
+        // Prevent self-nesting, including alternate delimiters, to bound the stack by supported styles.
         if (stack.some((frame) => frame.mark === mark)) {
-          pushSpan(current(), text.slice(index, end), []);
+          push(index, end);
           index = end;
           continue;
         }
-        stack.push({
-          delimiter: char.repeat(length),
-          mark,
-          spans: [],
-        });
+        stack.push({ delimiter: char.repeat(length), mark, start: index, pieces: [] });
         index += length;
       } else {
-        pushSpan(current(), text.slice(index, end), []);
+        push(index, end);
         index = end;
       }
     }
   }
   while (stack.length > 0) {
     const frame = stack.pop()!;
-    pushSpan(current(), frame.delimiter, []);
-    for (const span of frame.spans) pushSpan(current(), span.text, span.marks);
+    push(frame.start, frame.start + frame.delimiter.length);
+    for (const piece of frame.pieces) push(piece.start, piece.end, piece.marks);
   }
   return root;
+}
+
+export function parseInlineMarkdown(text: string): RichTextSpan[] {
+  const spans: RichTextSpan[] = [];
+  for (const { start, end, marks } of parseInlineMarkdownPieces(text)) {
+    const last = spans.at(-1);
+    if (last && sameMarks(last.marks, marks)) {
+      last.text += text.slice(start, end);
+    } else {
+      spans.push({ text: text.slice(start, end), marks });
+    }
+  }
+  return spans;
+}
+
+/** Marks text the composer shows as editable Markdown source while the caret is in it. */
+export const MARKDOWN_SOURCE_MARK = "markdownSource";
+
+/** Marks for each UTF-16 unit of `text`, or null for a delimiter that parsing drops. */
+export function inlineMarkdownUnitMarks(text: string): Array<RichTextMark[] | null> {
+  const result: Array<RichTextMark[] | null> = Array.from({ length: text.length }, () => null);
+  for (const { start, end, marks } of parseInlineMarkdownPieces(text)) {
+    result.fill(marks, start, end);
+  }
+  return result;
 }

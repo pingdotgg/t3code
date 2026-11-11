@@ -9,8 +9,6 @@ module.exports = function withAndroidInputBackground(config) {
       throw new Error("withAndroidInputBackground: AppTheme is missing from styles.xml.");
     }
 
-    // Inputs draw their own backgrounds and borders. Remove the native underline
-    // drawable so it cannot peek out beneath rounded corners or return on focus.
     // Set both attributes for AppCompat and framework EditText implementations.
     appTheme.item ??= [];
     for (const name of ["editTextBackground", "android:editTextBackground"]) {

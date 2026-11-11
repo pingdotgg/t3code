@@ -25,17 +25,15 @@ import type { AstroInlineConfig, AstroIntegration } from "astro";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import { runBuildChild } from "../core/BuildChild.ts";
+import { DeployTargetError, makeDeployTarget, type ServerEntryChunk } from "../core/index.ts";
 import {
   NODE_BUNDLE_CONDITIONS,
   NODE_SERVE_ENTRY_FILE_NAME,
   relativeClientDirExpression,
   writeNodeServeEntry,
+  type NodeServeHtmlHandling,
+  type NodeServeNotFoundHandling,
 } from "../core/NodeServe.ts";
-import {
-  DeployTargetError,
-  makeDeployTarget,
-  type ServerEntryChunk,
-} from "../core/index.ts";
 import { make } from "./Astro.ts";
 import type { AstroTarget, AstroTargetBuildContext } from "./Target.ts";
 
@@ -44,11 +42,13 @@ import type { AstroTarget, AstroTargetBuildContext } from "./Target.ts";
  * module the adapter pins as `serverEntrypoint`. It exports a fetch
  * `handler`.
  */
-export const SERVER_ENTRYPOINT =
-  "@alchemy.run/frontend-frameworks/astro/entrypoints/node-server";
+export const SERVER_ENTRYPOINT = "@alchemy.run/frontend-frameworks/astro/entrypoints/node-server";
 
 /** Node-specific target configuration. */
-export interface AstroNodeConfig {}
+export interface AstroNodeConfig {
+  readonly htmlHandling?: NodeServeHtmlHandling;
+  readonly notFoundHandling?: NodeServeNotFoundHandling;
+}
 
 export interface AstroNodeTarget extends AstroTarget<AstroNodeConfig> {}
 
@@ -62,9 +62,7 @@ export interface DistilledNodeOptions {
    * assets-only.
    * @internal
    */
-  readonly onBuildOutput?:
-    | ((buildOutput: "static" | "server") => void)
-    | undefined;
+  readonly onBuildOutput?: ((buildOutput: "static" | "server") => void) | undefined;
   /**
    * Reports the resolved server-entry file name (`config.build.serverEntry`,
    * `entry.mjs` by default) so the entry chunk can be pinned as
@@ -80,9 +78,7 @@ export interface DistilledNodeOptions {
  * adapter at `astro:config:done`, where it also rejects a user-declared
  * adapter with an actionable error.
  */
-export const distilledNode = (
-  options: DistilledNodeOptions = {},
-): AstroIntegration => {
+export const distilledNode = (options: DistilledNodeOptions = {}): AstroIntegration => {
   let injectedAdapterMarker = false;
   return {
     name: "@alchemy.run/frontend-frameworks/astro-node",
@@ -146,9 +142,7 @@ export const distilledNode = (
 const fail = (message: string, cause?: unknown) =>
   new DeployTargetError({ platform: "node", message, cause });
 
-const makeNodeAdapterTarget = (
-  config: AstroNodeConfig = {},
-): AstroNodeTarget => {
+const makeNodeAdapterTarget = (config: AstroNodeConfig = {}): AstroNodeTarget => {
   let buildOutput: "static" | "server" | undefined;
   let serverEntryName: string | undefined;
   return makeDeployTarget({
@@ -177,56 +171,40 @@ const makeNodeAdapterTarget = (
         const path = yield* Path.Path;
         if (buildOutput === "static") {
           if (output.clientDirectory === undefined) {
-            return yield* Effect.fail(
-              fail(
-                "The Astro static build produced no client directory for the Node serve entry",
-              ),
+            return yield* fail(
+              "The Astro static build produced no client directory for the Node serve entry",
             );
           }
-          const servePath = path.join(
-            output.clientDirectory,
-            NODE_SERVE_ENTRY_FILE_NAME,
-          );
+          const servePath = path.join(output.clientDirectory, NODE_SERVE_ENTRY_FILE_NAME);
           return yield* writeNodeServeEntry({
-            output,
+            output: { ...output, distDirectory: output.clientDirectory },
             servePath,
             serveModuleName: NODE_SERVE_ENTRY_FILE_NAME,
             clientDirExpression: `fileURLToPath(new URL("./", import.meta.url))`,
-            notFoundHandling: "spa",
+            notFoundHandling: config.notFoundHandling ?? "spa",
+            htmlHandling: config.htmlHandling,
             platform: "node",
           });
         }
-        if (
-          output.distDirectory === undefined ||
-          output.clientDirectory === undefined
-        ) {
-          return yield* Effect.fail(
-            fail(
-              "The Astro build produced no dist/client directories for the Node serve entry",
-            ),
+        if (output.distDirectory === undefined || output.clientDirectory === undefined) {
+          return yield* fail(
+            "The Astro build produced no dist/client directories for the Node serve entry",
           );
         }
         const entryName = serverEntryName ?? "entry.mjs";
-        const servePath = path.join(
-          output.distDirectory,
-          "server",
-          NODE_SERVE_ENTRY_FILE_NAME,
-        );
+        const servePath = path.join(output.distDirectory, "server", NODE_SERVE_ENTRY_FILE_NAME);
         return yield* writeNodeServeEntry({
           output,
           servePath,
-          serveModuleName: path
-            .join("server", NODE_SERVE_ENTRY_FILE_NAME)
-            .replaceAll("\\", "/"),
-          clientDirExpression: relativeClientDirExpression(
-            servePath,
-            output.clientDirectory,
-          ),
+          serveModuleName: path.join("server", NODE_SERVE_ENTRY_FILE_NAME).replaceAll("\\", "/"),
+          clientDirExpression: relativeClientDirExpression(servePath, output.clientDirectory),
           handler: {
             kind: "fetch",
             imports: `import { handler } from ${JSON.stringify(`./${entryName}`)};`,
             expr: "handler",
           },
+          notFoundHandling: config.notFoundHandling,
+          htmlHandling: config.htmlHandling,
           platform: "node",
         });
       }),
@@ -252,9 +230,7 @@ export const buildInChild = (config: AstroNodeBuildChildConfig) =>
 /**
  * Build the Node {@link AstroTarget}. See the module doc for the seams.
  */
-export const makeNodeTarget = (
-  config: AstroNodeConfig = {},
-): AstroNodeTarget => ({
+export const makeNodeTarget = (config: AstroNodeConfig = {}): AstroNodeTarget => ({
   ...makeNodeAdapterTarget(config),
   build: (context: AstroTargetBuildContext) =>
     runBuildChild({

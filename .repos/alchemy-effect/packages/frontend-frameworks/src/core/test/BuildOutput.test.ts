@@ -24,6 +24,11 @@ describe("toOutputFile", () => {
     const file = await run(toOutputFile("data.bin", new Uint8Array([1, 2, 3])));
     expect(Buffer.isBuffer(file.content)).toBe(true);
   });
+
+  it("names modules with `/` even when given a Windows-style path", async () => {
+    const file = await run(toOutputFile("server\\serve-neon.mjs", ""));
+    expect(file.name).toBe("server/serve-neon.mjs");
+  });
 });
 
 describe("sortServerModules", () => {
@@ -33,11 +38,19 @@ describe("sortServerModules", () => {
       { name: "server/index.js", content: "", hash: "" },
       { name: "server/a.js", content: "", hash: "" },
     ];
-    expect(
-      sortServerModules(modules, "server/index.js").map(
-        (module) => module.name,
-      ),
-    ).toEqual(["server/index.js", "server/a.js", "server/z.js"]);
+    expect(sortServerModules(modules, "server/index.js").map((module) => module.name)).toEqual([
+      "server/index.js",
+      "server/a.js",
+      "server/z.js",
+    ]);
+  });
+
+  it("matches a Windows-style entry against `/`-separated module names", () => {
+    const modules = [
+      { name: "server/chunks/0.js", content: "", hash: "" },
+      { name: "server/index.js", content: "", hash: "" },
+    ];
+    expect(sortServerModules(modules, "server\\index.js")[0]?.name).toBe("server/index.js");
   });
 });
 
@@ -50,9 +63,7 @@ describe("build output persistence", () => {
       clientDirectory: "/project/dist/client",
       serverModules: [
         await run(toOutputFile("server/index.js", "export default {};")),
-        await run(
-          toOutputFile("server/data.bin", new Uint8Array([0, 1, 2, 255])),
-        ),
+        await run(toOutputFile("server/data.bin", new Uint8Array([0, 1, 2, 255]))),
       ],
       externalWorkspaces: new Set(["/workspaces/b", "/workspaces/a"]),
     };
@@ -66,9 +77,7 @@ describe("build output persistence", () => {
     expect(Buffer.isBuffer(binary.content)).toBe(true);
     expect(Array.from(binary.content as Buffer)).toEqual([0, 1, 2, 255]);
     expect(binary.hash).toBe(output.serverModules![1]!.hash);
-    expect(parsed.externalWorkspaces).toEqual(
-      new Set(["/workspaces/a", "/workspaces/b"]),
-    );
+    expect(parsed.externalWorkspaces).toEqual(new Set(["/workspaces/a", "/workspaces/b"]));
   });
 
   it("creates the target's parent directory when it does not exist", async () => {
@@ -84,6 +93,38 @@ describe("build output persistence", () => {
     await run(writeBuildOutput(path, output));
     const parsed = await run(readBuildOutput(path));
     expect(parsed.externalWorkspaces).toEqual(new Set(["/workspaces/lib"]));
+  });
+
+  it("stores binary modules compactly and preserves byte views", () => {
+    const bytes = new Uint8Array(1024 * 1024 + 2).fill(255);
+    const content = bytes.subarray(1, -1);
+    const json = stringifyBuildOutput({
+      clientDirectory: undefined,
+      serverModules: [{ name: "module.wasm", content, hash: "binary-hash" }],
+      externalWorkspaces: new Set(),
+    });
+    expect(json.length).toBeLessThan(content.byteLength * 1.4);
+    expect(JSON.parse(json).serverModules[0].content.encoding).toBe("base64");
+    const restored = parseBuildOutput(json).serverModules![0]!;
+    expect(restored.content).toEqual(Buffer.from(content));
+    expect(restored.hash).toBe("binary-hash");
+  });
+
+  it("reads legacy binary byte arrays without a recursive JSON reviver", () => {
+    const parsed = parseBuildOutput(
+      JSON.stringify({
+        serverModules: [
+          {
+            name: "module.wasm",
+            content: { type: "Buffer", data: [0, 1, 255] },
+            hash: "legacy-hash",
+          },
+        ],
+        externalWorkspaces: [],
+      }),
+    );
+    expect(parsed.serverModules![0]!.content).toEqual(Buffer.from([0, 1, 255]));
+    expect(parsed.serverModules![0]!.hash).toBe("legacy-hash");
   });
 
   it("serializes Sets as sorted arrays", () => {

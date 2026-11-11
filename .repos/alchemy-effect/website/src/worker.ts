@@ -1,13 +1,12 @@
 import type { WorkerEnv } from "../alchemy.run.ts";
+import { referenceDestination } from "./reference-links.ts";
+import { SOCIAL_REDIRECTS } from "./social-redirects.ts";
 
 // Minimal `HTMLRewriter` shape — the workers runtime exposes it as a
 // global, but we don't pull in `@cloudflare/workers-types`, so declare
 // just what this file uses.
 declare class HTMLRewriter {
-  on(
-    selector: string,
-    handler: { element(el: HTMLRewriterElement): void },
-  ): HTMLRewriter;
+  on(selector: string, handler: { element(el: HTMLRewriterElement): void }): HTMLRewriter;
   transform(response: Response): Response;
 }
 interface HTMLRewriterElement {
@@ -53,29 +52,23 @@ const REDIRECTS: Record<string, string> = {
   "/tutorial/part-3": "/cloudflare/tutorial/part-3",
   "/tutorial/part-4": "/cloudflare/tutorial/part-4",
   "/tutorial/part-5": "/cloudflare/tutorial/part-5",
-  "/tutorial/cloudflare/compute/durable-objects":
-    "/cloudflare/compute/durable-objects",
+  "/tutorial/cloudflare/compute/durable-objects": "/cloudflare/compute/durable-objects",
   "/tutorial/cloudflare/data/hyperdrive": "/cloudflare/data/hyperdrive",
   "/tutorial/cloudflare/queue-consumer": "/cloudflare/messaging/queues",
-  "/tutorial/cloudflare/rpc-durable-object":
-    "/cloudflare/compute/durable-objects#schemaless-rpc",
-  "/tutorial/cloudflare/rpc-worker":
-    "/cloudflare/compute/workers#call-another-worker",
+  "/tutorial/cloudflare/rpc-durable-object": "/cloudflare/compute/durable-objects#schemaless-rpc",
+  "/tutorial/cloudflare/rpc-worker": "/cloudflare/compute/workers#call-another-worker",
   "/tutorial/cloudflare/ai-gateway": "/cloudflare/ai/ai-gateway",
   "/tutorial/cloudflare/ai-search": "/cloudflare/ai/ai-search",
   "/tutorial/cloudflare/artifacts": "/cloudflare/data/artifacts",
   "/tutorial/cloudflare/branch-from-shared-database":
     "/cloudflare/data/branch-from-shared-database",
-  "/tutorial/cloudflare/compute/containers":
-    "/cloudflare/compute/run-a-container",
+  "/tutorial/cloudflare/compute/containers": "/cloudflare/compute/run-a-container",
   "/tutorial/cloudflare/cross-worker-durable-object":
     "/cloudflare/compute/cross-worker-durable-object",
   "/tutorial/cloudflare/drizzle": "/cloudflare/data/drizzle",
-  "/tutorial/cloudflare/hibernatable-websockets":
-    "/cloudflare/compute/hibernatable-websockets",
+  "/tutorial/cloudflare/hibernatable-websockets": "/cloudflare/compute/hibernatable-websockets",
   "/tutorial/cloudflare/vite-spa": "/cloudflare/frontend/vite-spa",
-  "/tutorial/cloudflare/compute/workflows":
-    "/cloudflare/compute/add-a-workflow",
+  "/tutorial/cloudflare/compute/workflows": "/cloudflare/compute/add-a-workflow",
   "/tutorial/aws/compute/lambda": "/aws/compute/lambda",
   "/tutorial/aws/data/dynamodb": "/aws/data/dynamodb",
   "/tutorial/aws/messaging/sqs": "/aws/messaging/sqs",
@@ -128,15 +121,11 @@ const REDIRECTS: Record<string, string> = {
   "/cloudflare/durable-objects": "/cloudflare/compute/durable-objects",
   "/cloudflare/guides/ai-gateway": "/cloudflare/ai/ai-gateway",
   "/cloudflare/guides/ai-search": "/cloudflare/ai/ai-search",
-  "/cloudflare/guides/analytics-engine":
-    "/cloudflare/observability/analytics-engine",
+  "/cloudflare/guides/analytics-engine": "/cloudflare/observability/analytics-engine",
   "/cloudflare/guides/artifacts": "/cloudflare/data/artifacts",
-  "/cloudflare/guides/axiom-observability":
-    "/cloudflare/observability/axiom-observability",
-  "/cloudflare/guides/branch-from-shared-database":
-    "/cloudflare/data/branch-from-shared-database",
-  "/cloudflare/guides/browser-rendering":
-    "/cloudflare/compute/browser-rendering",
+  "/cloudflare/guides/axiom-observability": "/cloudflare/observability/axiom-observability",
+  "/cloudflare/guides/branch-from-shared-database": "/cloudflare/data/branch-from-shared-database",
+  "/cloudflare/guides/browser-rendering": "/cloudflare/compute/browser-rendering",
   "/cloudflare/guides/containers": "/cloudflare/compute/run-a-container",
   "/cloudflare/guides/cron": "/cloudflare/messaging/cron",
   "/cloudflare/guides/cross-worker-durable-object":
@@ -149,17 +138,14 @@ const REDIRECTS: Record<string, string> = {
   "/cloudflare/guides/email": "/cloudflare/email/send-and-receive",
   "/cloudflare/guides/frontends": "/cloudflare/frontend/frontends",
   "/cloudflare/guides/github-events": "/cloudflare/messaging/github-events",
-  "/cloudflare/guides/hibernatable-websockets":
-    "/cloudflare/compute/hibernatable-websockets",
-  "/cloudflare/guides/release-agent": "/cloudflare/ai/release-agent",
+  "/cloudflare/guides/hibernatable-websockets": "/cloudflare/compute/hibernatable-websockets",
   "/cloudflare/guides/secrets-store": "/cloudflare/security/secrets-store",
   "/cloudflare/guides/shared-database": "/cloudflare/data/shared-database",
   "/cloudflare/guides/tunnel": "/cloudflare/networking/tunnel",
   "/cloudflare/guides/turnstile": "/cloudflare/security/turnstile",
   "/cloudflare/guides/vectorize": "/cloudflare/ai/vectorize",
   "/cloudflare/guides/vite-spa": "/cloudflare/frontend/vite-spa",
-  "/cloudflare/guides/workers-for-platforms":
-    "/cloudflare/compute/workers-for-platforms",
+  "/cloudflare/guides/workers-for-platforms": "/cloudflare/compute/workers-for-platforms",
   "/cloudflare/guides/workflows": "/cloudflare/compute/add-a-workflow",
   "/cloudflare/hyperdrive": "/cloudflare/data/hyperdrive",
   "/cloudflare/kv": "/cloudflare/data/kv",
@@ -177,8 +163,7 @@ const REDIRECTS: Record<string, string> = {
   "/concepts/phases": "/infrastructure-as-effects/phases",
   "/concepts/platform": "/infrastructure-as-effects/runtime",
   "/infrastructure-as-effects/platform": "/infrastructure-as-effects/runtime",
-  "/infrastructure-as-effects/functions-and-servers":
-    "/infrastructure-as-effects/runtime",
+  "/infrastructure-as-effects/functions-and-servers": "/infrastructure-as-effects/runtime",
   "/rpc": "/apis",
   "/rpc/schemaless": "/apis/schemaless",
   "/rpc/effect-rpc": "/apis/effect-rpc",
@@ -196,14 +181,17 @@ const REDIRECTS: Record<string, string> = {
   "/concepts/testing": "/testing",
   "/fly/frontend": "/fly/frontend/websites",
   "/fly/websites": "/fly/frontend/websites",
+  "/gcp/guides/bindings": "/gcp/security/iam",
+  "/gcp/guides/cloud-run-api": "/gcp/compute/cloud-run",
+  "/gcp/guides/event-pipeline": "/gcp/messaging/pubsub",
+  "/gcp/guides/memorystore": "/gcp/data/memorystore",
   "/guides/ci": "/environments/ci",
   "/guides/circular-bindings": "/infrastructure-as-effects/circular-bindings",
   "/guides/custom-provider": "/infrastructure-as-code/custom-provider",
   "/guides/custom-state-store": "/state-store/custom-state-store",
   "/guides/file-layout": "/project-structure/file-layout",
   "/guides/infrastructure-layers": "/infrastructure-as-effects/layers",
-  "/infrastructure-as-effects/infrastructure-layers":
-    "/infrastructure-as-effects/layers",
+  "/infrastructure-as-effects/infrastructure-layers": "/infrastructure-as-effects/layers",
   "/guides/migrating-from-v1": "/migrating-from-v1",
   "/guides/monorepo": "/project-structure/monorepo",
   "/guides/monorepo-multi-stack": "/project-structure/monorepo-multi-stack",
@@ -240,6 +228,10 @@ const REDIRECTS: Record<string, string> = {
 };
 
 const resolveRedirect = (url: URL): string | undefined => {
+  const social = SOCIAL_REDIRECTS[url.pathname.replace(/\/$/, "")];
+  if (social) return social;
+  const reference = referenceDestination(url.pathname + url.search);
+  if (reference) return reference;
   let p = url.pathname.replace(/\/$/, "");
   const isMarkdown = p.endsWith(".md");
   if (isMarkdown) p = p.slice(0, -".md".length);
@@ -284,12 +276,7 @@ export default {
       if (v1 !== undefined) return Response.redirect(v1, 301);
     }
     return withoutIndexing(
-      withUtf8Charset(
-        await rewriteAgentTextOrigin(
-          request,
-          rewriteSocialCardHost(request, res),
-        ),
-      ),
+      withUtf8Charset(await rewriteAgentTextOrigin(request, rewriteSocialCardHost(request, res))),
       url,
       canonical,
     );
@@ -318,16 +305,10 @@ Allow: /
  * Keep them crawlable (so the directive is actually seen) but out of the index.
  * On a non-canonical host *everything* is noindex — the HTML included.
  */
-const withoutIndexing = (
-  res: Response,
-  url: URL,
-  canonicalHost: boolean,
-): Response => {
+const withoutIndexing = (res: Response, url: URL, canonicalHost: boolean): Response => {
   const ct = res.headers.get("content-type") ?? "";
   const agentText =
-    url.pathname.endsWith(".md") ||
-    ct.includes("text/markdown") ||
-    ct.includes("text/plain");
+    url.pathname.endsWith(".md") || ct.includes("text/markdown") || ct.includes("text/plain");
   if (canonicalHost && !agentText) return res;
   const next = new Response(res.body, res);
   next.headers.set("x-robots-tag", "noindex");
@@ -345,9 +326,7 @@ const resolveV1Fallback = async (url: URL): Promise<string | undefined> => {
   if (!V1_PREFIXES.some((prefix) => `${pathname}/`.startsWith(prefix))) {
     return undefined;
   }
-  const v1Path = pathname.startsWith("/docs/")
-    ? pathname.slice("/docs".length)
-    : pathname;
+  const v1Path = pathname.startsWith("/docs/") ? pathname.slice("/docs".length) : pathname;
   const target = `${V1_ORIGIN}${v1Path}${url.search}`;
   try {
     const probe = await fetch(target, { method: "HEAD", redirect: "follow" });
@@ -365,22 +344,12 @@ const resolveV1Fallback = async (url: URL): Promise<string | undefined> => {
  */
 const AGENT_TEXT_PATHS = new Set(["/llms.txt", "/llms-full.txt"]);
 
-const rewriteAgentTextOrigin = async (
-  request: Request,
-  res: Response,
-): Promise<Response> => {
+const rewriteAgentTextOrigin = async (request: Request, res: Response): Promise<Response> => {
   const reqUrl = new URL(request.url);
-  if (
-    !AGENT_TEXT_PATHS.has(reqUrl.pathname) ||
-    reqUrl.host === CANONICAL_HOST ||
-    !res.ok
-  ) {
+  if (!AGENT_TEXT_PATHS.has(reqUrl.pathname) || reqUrl.host === CANONICAL_HOST || !res.ok) {
     return res;
   }
-  const body = (await res.text()).replaceAll(
-    `${CANONICAL_ORIGIN}/`,
-    `${reqUrl.origin}/`,
-  );
+  const body = (await res.text()).replaceAll(`${CANONICAL_ORIGIN}/`, `${reqUrl.origin}/`);
   return new Response(body, res);
 };
 

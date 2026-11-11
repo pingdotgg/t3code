@@ -6,10 +6,6 @@ import {
   type OrchestratorFixtureInput,
 } from "../shared.ts";
 
-/**
- * "Edit from here" on the message after a stopped run: rolls back to the
- * stopped run's checkpoint, dropping the turn after it and keeping the stop.
- */
 export function threadRollbackToStoppedTurnInput(): OrchestratorFixtureInput {
   return {
     steps: [

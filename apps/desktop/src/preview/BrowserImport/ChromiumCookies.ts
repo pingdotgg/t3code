@@ -1,18 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - `node:crypto` implements the
 // OSCrypt primitives Chromium uses; Effect has no equivalent.
-/**
- * Chromium cookie extraction.
- *
- * Reads a Chromium-family browser's cookie database and decrypts each record
- * with the key its prefix calls for. Key acquisition — and the consent it
- * needs — lives in `ChromiumKeys`.
- *
- * Records whose scheme we hold no key for are skipped rather than failing the
- * whole import: a Linux database can mix `v10` and `v11`. A partial result
- * reported honestly is more useful than an all-or-nothing error.
- *
- * @module ChromiumCookies
- */
 import * as NodeCrypto from "node:crypto";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -21,8 +8,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as SqlClient from "effect/sql/SqlClient";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   ChromiumKeyError,
@@ -45,12 +32,7 @@ const AES_GCM_NONCE_LENGTH = 12;
 const AES_GCM_TAG_LENGTH = 16;
 const isChromiumKeyError = Schema.is(ChromiumKeyError);
 
-/**
- * Every way the read can fail: the key failures, plus the ones this module
- * raises itself.
- */
 export const ChromiumCookieReadReason = Schema.Literals([
-  // `readFailed` already comes from the key failures, so it is not repeated.
   ...ChromiumKeyFailure.literals,
   "browserRunning",
 ]);
@@ -60,13 +42,7 @@ export class ChromiumCookieReadError extends Schema.TaggedError<ChromiumCookieRe
   "ChromiumCookieReadError",
   {
     reason: ChromiumCookieReadReason,
-    /**
-     * Which database the read was for. Without it every `readFailed` and
-     * keychain failure logs identically, and a user with several browsers
-     * installed has no way to tell which one refused.
-     */
     cookieDatabasePath: Schema.String,
-    /** Kept for the log; never surfaced to the user. */
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -75,7 +51,6 @@ export class ChromiumCookieReadError extends Schema.TaggedError<ChromiumCookieRe
   }
 }
 
-/** Row shape of the cookie table, decoded rather than cast. */
 const CookieRow = Schema.Struct({
   host_key: Schema.String,
   name: Schema.String,
@@ -98,13 +73,7 @@ const decodeSchemaVersion = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ value: SchemaVersion })]),
 );
 
-/**
- * Chromium stores `SameSite` as an int: -1 = unspecified, 0 = none, 1 = lax,
- * 2 = strict. Unspecified is imported as Electron's own `unspecified` rather
- * than pinned to Lax, so the target browser applies its default just as the
- * source did; anything unrecognised lands there too, since guessing "none"
- * would widen a cookie's scope on import.
- */
+/** Preserve unspecified SameSite; guessing no_restriction would widen cookie scope. */
 const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
   if (value === 0) return "no_restriction";
   if (value === 1) return "lax";
@@ -112,22 +81,14 @@ const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
   return "unspecified";
 };
 
-/**
- * Chromium timestamps count microseconds from 1601-01-01; Electron wants
- * seconds from the UNIX epoch. The microsecond value overflows JavaScript's
- * safe integer range and `node:sqlite` refuses to narrow it, so the division
- * happens in SQL and this only ever sees seconds.
- */
+/** Convert microseconds in SQL: node:sqlite refuses integers beyond JavaScript's safe range. */
 const WEBKIT_EPOCH_OFFSET_SECONDS = 11_644_473_600;
 const toUnixSeconds = (webkitSeconds: number): number | undefined => {
   if (webkitSeconds <= 0) return undefined;
   return webkitSeconds - WEBKIT_EPOCH_OFFSET_SECONDS;
 };
 
-/**
- * Chromium >= 127 prefixes the plaintext with SHA-256 of the host key, binding
- * a cookie to its domain. Strip it when present.
- */
+// Chromium 127+ prefixes plaintext with the host-key SHA-256 to bind its domain.
 const stripDomainBinding = (
   plaintext: Buffer,
   domain: string,
@@ -176,11 +137,6 @@ const decryptGcm = (
   }
 };
 
-/**
- * Decrypts one stored value, choosing the scheme from its prefix. Returns null
- * when no key covers that scheme — including Windows' app-bound `v20`, which
- * this build has no key for at all.
- */
 export function decryptChromiumValue(
   encrypted: Uint8Array,
   keys: ChromiumKeyMaterial,
@@ -193,18 +149,14 @@ export function decryptChromiumValue(
   const prefix = buffer.subarray(0, 3).toString("latin1");
   const payload = buffer.subarray(3);
 
-  // Windows' legacy v10 format is AES-256-GCM. App-bound records use v20 and
-  // intentionally have no key here, so they fall through as undecryptable.
+  // Windows v10 uses AES-256-GCM; app-bound v20 records have no key here.
   if (platform === "win32") {
     return prefix === "v10" && keys.gcmV10
       ? decryptGcm(payload, keys.gcmV10, domain, schemaVersion)
       : null;
   }
 
-  // Chromium retries a failed record with a key derived from an empty
-  // passphrase, because some Linux clients wrote data that way
-  // (crbug.com/1195256). A record whose own key is missing entirely stays
-  // skipped, matching Chromium.
+  // Retry the empty-passphrase key used by some Linux clients (crbug.com/1195256).
   if (prefix === "v10") {
     if (!keys.cbcV10) return null;
     return (
@@ -219,18 +171,12 @@ export function decryptChromiumValue(
       (keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null)
     );
   }
-  // No recognised prefix: Chromium on macOS and Linux both treat this as
-  // legacy data stored in the clear and return it as-is, so it is a readable
-  // cookie rather than an undecryptable one. Windows is the exception — its
-  // app-bound `v20` blobs also lack these prefixes and must not be read as
-  // plaintext — but Windows Chromium is not importable here at all.
   if (platform === "darwin" || platform === "linux") {
     return stripDomainBinding(buffer, domain, schemaVersion)?.toString("utf8") ?? null;
   }
   return null;
 }
 
-/** Reads and decodes one snapshotted Chromium cookie database. */
 export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiumCookieDatabase")(
   function* (snapshotPath: string, keys: ChromiumKeyMaterial, platform: NodeJS.Platform) {
     const result = yield* Effect.gen(function* () {
@@ -288,8 +234,6 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
         sameSite: sameSiteFromColumn(row.samesite),
       });
     }
-    // Keep partial imports, but do not call a missing key a successful import
-    // when it prevented every otherwise importable cookie from being read.
     if (
       cookies.length === 0 &&
       keys.cbcV11Error !== undefined &&
@@ -315,7 +259,6 @@ export interface ChromiumCookieSource {
   readonly keychainAccount: string | undefined;
   readonly linuxSecretApplication: string | undefined;
   readonly windowsLocalStatePath?: string;
-  /** Supplied by the caller from `HostProcessPlatform` rather than read here. */
   readonly platform: NodeJS.Platform;
 }
 

@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -15,7 +15,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
 
-        // Setup base state
         {
           yield* runMigrations({ toMigrationInclusive: 15 });
 
@@ -58,8 +57,7 @@ layer("016_CanonicalizeModelSelections", (it) => {
         VALUES
           ('thread-session', 'project-codex', 'Session thread', 'gpt-5.4', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default'),
           ('thread-claude', 'project-claude', 'Claude thread', 'claude-opus-4-6', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default'),
-          ('thread-codex', 'project-codex', 'Codex thread', 'gpt-5.4', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default'),
-          ('thread-legacy-options', 'project-claude', 'Legacy options thread', 'claude-opus-4-6', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default')
+          ('thread-codex', 'project-codex', 'Codex thread', 'gpt-5.4', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default')
       `;
           yield* sql`
         INSERT INTO projection_thread_sessions (
@@ -202,10 +200,8 @@ layer("016_CanonicalizeModelSelections", (it) => {
       `;
         }
 
-        // Execute migration under test
         yield* runMigrations({ toMigrationInclusive: 16 });
 
-        // Assert expected state
         {
           const projectRows = yield* sql<{
             readonly projectId: string;
@@ -249,10 +245,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
               modelSelection: '{"provider":"codex","model":"gpt-5.4"}',
             },
             {
-              threadId: "thread-legacy-options",
-              modelSelection: '{"provider":"claudeAgent","model":"claude-opus-4-6"}',
-            },
-            {
               threadId: "thread-session",
               modelSelection: '{"provider":"claudeAgent","model":"gpt-5.4"}',
             },
@@ -265,7 +257,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
         FROM orchestration_events
         ORDER BY rowid ASC
       `;
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           assert.deepStrictEqual(JSON.parse(eventRows[0]!.payloadJson), {
             projectId: "project-1",
             title: "Project",
@@ -281,7 +272,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
           });
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           assert.deepStrictEqual(JSON.parse(eventRows[1]!.payloadJson), {
             projectId: "project-2",
             title: "Fallback Project",
@@ -297,7 +287,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
           });
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           assert.deepStrictEqual(JSON.parse(eventRows[2]!.payloadJson), {
             projectId: "project-3",
             title: "Null Model Project",
@@ -307,7 +296,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
           });
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           assert.deepStrictEqual(JSON.parse(eventRows[3]!.payloadJson), {
             threadId: "thread-1",
             projectId: "project-1",
@@ -327,7 +315,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
           });
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           assert.deepStrictEqual(JSON.parse(eventRows[4]!.payloadJson), {
             threadId: "thread-2",
             projectId: "project-1",
@@ -346,7 +333,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
           });
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           assert.deepStrictEqual(JSON.parse(eventRows[5]!.payloadJson), {
             threadId: "thread-1",
             turnId: "turn-1",
@@ -360,7 +346,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
             },
             deliveryMode: "buffered",
           });
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           assert.deepStrictEqual(JSON.parse(eventRows[6]!.payloadJson), {
             threadId: "thread-3",
             projectId: "project-1",

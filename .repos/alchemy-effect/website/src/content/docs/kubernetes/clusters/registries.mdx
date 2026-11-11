@@ -1,0 +1,147 @@
+---
+title: Container registries
+description: Give a Kubernetes connection a registry so Deployments and Jobs built from Effect programs or Dockerfiles are pushed where the cluster's nodes can pull them, such as GHCR, Docker Hub, Artifact Registry, ACR, or a registry of your own.
+---
+
+A Kubernetes node can only run an image it can pull from a registry.
+Workloads that use a pre-built `image` need nothing extra, but a
+`main` Effect program or a `context` Dockerfile is built on your
+machine and has to be pushed somewhere first. The connection's
+`registry` says where:
+
+```typescript
+const cluster = Kubernetes.KubeConfig({
+  context: "prod-us-east",
+  registry: { server: "ghcr.io/acme" },
+});
+
+const worker = yield* Kubernetes.Job(
+  "Worker",
+  { cluster, main: import.meta.url },
+  Effect.gen(function* () {
+    return { run: Effect.log("working") };
+  }),
+);
+```
+
+On deploy, Alchemy bundles the program, builds the image with your
+local Docker, pushes it to `ghcr.io/acme/<name>:<hash>`, and points
+the Job at that reference.
+
+Two kinds of cluster fill in the registry for you:
+
+- [`Kubernetes.LocalCluster`](/kubernetes/clusters/local) includes a
+  local registry.
+- [Amazon EKS](/kubernetes/clusters/eks) pushes each workload to its
+  own ECR repository.
+
+## Choose the server
+
+`server` is the registry host, optionally followed by the namespace
+images go under:
+
+- **GitHub Container Registry.** Use `ghcr.io/<owner>`.
+- **Docker Hub.** Use `docker.io/<user>`.
+- **Google Artifact Registry.** Use
+  `<region>-docker.pkg.dev/<project>/<repository>`.
+- **Azure Container Registry.** Use `<name>.azurecr.io`.
+- **A registry you run.** Use its host and port, for example
+  `registry.internal:5000`.
+
+Each workload pushes to its own repository under `server`, named
+after the stack, stage, and logical ID, and tags every image with a
+hash of its content.
+
+## Authenticate pushes
+
+Without credentials, Alchemy pushes with your machine's own Docker
+login, so any registry you've run `docker login` against works:
+
+```sh
+echo $GITHUB_TOKEN | docker login ghcr.io -u acme-bot --password-stdin
+```
+
+For CI, you can keep the credential in the program instead. Pass
+`username` and `password`:
+
+```typescript
+import * as Config from "effect/Config";
+
+const token = yield* Config.Redacted("GHCR_TOKEN");
+
+const cluster = Kubernetes.KubeConfig({
+  context: "prod-us-east",
+  registry: { server: "ghcr.io/acme", username: "acme-bot", password: token },
+});
+```
+
+The connection is stored in Alchemy's state with each resource. A
+`Redacted` password is stored as a redacted value, but anyone who can
+read the state can read it, so prefer `docker login` on machines you
+control.
+
+## Let the nodes pull
+
+Pushing and pulling are separate. The nodes need read access to the
+repository. Public repositories need nothing. For private ones, use
+your platform's node credentials. GKE and AKS can grant the nodes
+access to Artifact Registry and ACR. You can also use an image-pull
+Secret referenced from the pod template:
+
+```typescript
+const pullSecret = yield* Kubernetes.Manifest("GhcrPullSecret", {
+  cluster,
+  manifest: {
+    apiVersion: "v1",
+    kind: "Secret",
+    type: "kubernetes.io/dockerconfigjson",
+    metadata: { name: "ghcr", namespace: "apps" },
+    data: { ".dockerconfigjson": dockerConfigJsonBase64 },
+  },
+});
+
+const worker = yield* Kubernetes.Job(
+  "Worker",
+  {
+    cluster,
+    main: import.meta.url,
+    namespace: "apps",
+    podTemplate: {
+      spec: { imagePullSecrets: [{ name: pullSecret.name }] },
+    },
+  },
+  Effect.gen(function* () {
+    return { run: Effect.log("working") };
+  }),
+);
+```
+
+## Match the node architecture
+
+Images are built for `linux/amd64` unless you say otherwise. For
+Arm nodes, set `architecture` on the connection so every workload
+builds for them:
+
+```typescript
+const cluster = Kubernetes.KubeConfig({
+  context: "graviton",
+  registry: { server: "ghcr.io/acme" },
+  architecture: "arm64",
+});
+```
+
+A workload's own `architecture` prop overrides the connection's.
+`LocalCluster` sets the architecture to match your machine.
+
+## Old images
+
+Alchemy pushes a new tag whenever a workload's image changes and
+never deletes tags from registries you configure. Use your
+registry's retention or cleanup policies to prune old images.
+
+## Where next
+
+- **[Container images](/kubernetes/workloads/images).** The `image`,
+  `context`, and `main` sources.
+- **[Connecting to clusters](/kubernetes/clusters/connecting).** Every
+  connection form that accepts a `registry`.

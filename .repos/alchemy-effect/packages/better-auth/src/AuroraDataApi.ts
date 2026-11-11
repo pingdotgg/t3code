@@ -1,15 +1,11 @@
+import * as AWS from "@alchemy.run/aws";
 import type * as rdsdata from "@distilled.cloud/aws/rds-data";
 import type { RuntimeContext } from "alchemy";
-import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
-import {
-  Database,
-  type DatabaseService,
-  type DirectDatabase,
-} from "./Database.ts";
+import { Database, type DatabaseService, type DirectDatabase } from "./Database.ts";
 import { BetterAuthMigrationError } from "./Errors.ts";
 
 /**
@@ -52,12 +48,39 @@ export const makeDataApiDialect = (
 ): Effect.Effect<import("kysely").Dialect> =>
   Effect.promise(async () => {
     const {
-      CompiledQuery,
+      CastNode,
+      DataTypeNode,
+      OperationNodeTransformer,
       PostgresAdapter,
       PostgresIntrospector,
       PostgresQueryCompiler,
+      ReferenceNode,
     } = await import("kysely");
-    void CompiledQuery;
+
+    class DataApiIntrospectionTransformer extends OperationNodeTransformer {
+      protected override transformAlias(node: import("kysely").AliasNode) {
+        const alias = super.transformAlias(node);
+        const reference = alias.node;
+        if (
+          ReferenceNode.is(reference) &&
+          reference.column.kind === "ColumnNode" &&
+          reference.column.column.name === "relkind"
+        ) {
+          // The Data API cannot return PostgreSQL's internal "char" type.
+          return {
+            ...alias,
+            node: CastNode.create(reference, DataTypeNode.create("text")),
+          };
+        }
+        return alias;
+      }
+    }
+
+    const introspectionTransformer = new DataApiIntrospectionTransformer();
+    const introspectionPlugin: import("kysely").KyselyPlugin = {
+      transformQuery: ({ node }) => introspectionTransformer.transformNode(node),
+      transformResult: async ({ result }) => result,
+    };
 
     class DataApiQueryCompiler extends PostgresQueryCompiler {
       protected override getCurrentParameterPlaceholder(): string {
@@ -68,19 +91,14 @@ export const makeDataApiDialect = (
     class DataApiConnection {
       transactionId: string | undefined;
 
-      async executeQuery(compiledQuery: {
-        sql: string;
-        parameters: ReadonlyArray<unknown>;
-      }) {
+      async executeQuery(compiledQuery: { sql: string; parameters: ReadonlyArray<unknown> }) {
         const response = await executor.execute({
           sql: compiledQuery.sql,
           parameters: compiledQuery.parameters.map((value, index) =>
             AWS.RDSData.toSqlParameter(`${index + 1}`, value),
           ),
           includeResultMetadata: true,
-          ...(this.transactionId === undefined
-            ? {}
-            : { transactionId: this.transactionId }),
+          ...(this.transactionId === undefined ? {} : { transactionId: this.transactionId }),
         });
         return {
           rows: AWS.RDSData.toRows(response) as never[],
@@ -122,7 +140,8 @@ export const makeDataApiDialect = (
       createAdapter: () => new PostgresAdapter(),
       createDriver: () => new DataApiDriver(),
       createQueryCompiler: () => new DataApiQueryCompiler(),
-      createIntrospector: (db: never) => new PostgresIntrospector(db),
+      createIntrospector: (db: import("kysely").Kysely<unknown>) =>
+        new PostgresIntrospector(db.withPlugin(introspectionPlugin)),
     } as unknown as import("kysely").Dialect;
   });
 
@@ -165,8 +184,7 @@ const transientRetry = <A, E extends { _tag: string }, R>(
   effect.pipe(
     Effect.retry({
       while: (error) =>
-        error._tag === "DatabaseResumingException" ||
-        error._tag === "DatabaseNotFoundException",
+        error._tag === "DatabaseResumingException" || error._tag === "DatabaseNotFoundException",
       schedule: Schedule.exponential("2 seconds", 1.5),
       times: 8,
     }),
@@ -192,7 +210,7 @@ const transientRetry = <A, E extends { _tag: string }, R>(
  * ```typescript
  * import { BetterAuth } from "@alchemy.run/better-auth";
  * import { AuroraDataApi } from "@alchemy.run/better-auth/AuroraDataApi";
- * import * as AWS from "alchemy/AWS";
+ * import * as AWS from "@alchemy.run/aws";
  *
  * export const Db = AWS.RDS.Aurora("AuthDb", { subnetIds, securityGroupIds });
  *
@@ -245,48 +263,26 @@ export const AuroraDataApi = (
       }
       const bindingOptions = {
         secret,
-        ...(options?.database === undefined
-          ? {}
-          : { database: options.database }),
+        ...(options?.database === undefined ? {} : { database: options.database }),
       };
-      const executeStatement = yield* AWS.RDSData.ExecuteStatement(
-        db,
-        bindingOptions,
-      );
-      const beginTransaction = yield* AWS.RDSData.BeginTransaction(
-        db,
-        bindingOptions,
-      );
-      const commitTransaction = yield* AWS.RDSData.CommitTransaction(
-        db,
-        bindingOptions,
-      );
-      const rollbackTransaction = yield* AWS.RDSData.RollbackTransaction(
-        db,
-        bindingOptions,
-      );
+      const executeStatement = yield* AWS.RDSData.ExecuteStatement(db, bindingOptions);
+      const beginTransaction = yield* AWS.RDSData.BeginTransaction(db, bindingOptions);
+      const commitTransaction = yield* AWS.RDSData.CommitTransaction(db, bindingOptions);
+      const rollbackTransaction = yield* AWS.RDSData.RollbackTransaction(db, bindingOptions);
 
       const runtime = Effect.gen(function* () {
         const context = yield* Effect.context<RuntimeContext>();
-        const run = <A, E>(
-          effect: Effect.Effect<A, E, RuntimeContext>,
-        ): Promise<A> =>
-          Effect.runPromise(
-            effect.pipe(Effect.provideContext(context)) as Effect.Effect<A, E>,
-          );
+        const run = <A, E>(effect: Effect.Effect<A, E, RuntimeContext>): Promise<A> =>
+          Effect.runPromiseWith(context)(effect);
         const dialect = yield* makeDataApiDialect({
           execute: (request) =>
-            run(
-              transientRetry(
-                executeStatement(
-                  request as AWS.RDSData.ExecuteStatementRequest,
-                ),
-              ),
+            executeStatement(request as AWS.RDSData.ExecuteStatementRequest).pipe(
+              transientRetry,
+              run,
             ),
-          begin: () => run(transientRetry(beginTransaction())),
+          begin: () => beginTransaction().pipe(transientRetry, run),
           commit: (transactionId) => run(commitTransaction({ transactionId })),
-          rollback: (transactionId) =>
-            run(rollbackTransaction({ transactionId })),
+          rollback: (transactionId) => run(rollbackTransaction({ transactionId })),
         });
         return { dialect, type: "postgres" as const };
       });
@@ -307,9 +303,7 @@ export const AuroraDataApi = (
               clusterArn: db.dbClusterArn,
               // depend on the WRITER instance too: a cluster with no
               // registered instance answers DatabaseNotFoundException
-              ...(composite === undefined
-                ? {}
-                : { writerArn: composite.writer.dbInstanceArn }),
+              ...(composite === undefined ? {} : { writerArn: composite.writer.dbInstanceArn }),
             } as Record<string, unknown>,
             connect: Effect.gen(function* () {
               // Init half — capture the ARNs as Action dependencies.
@@ -317,7 +311,7 @@ export const AuroraDataApi = (
               const secretArn = yield* secret.secretArn;
               if (composite !== undefined) {
                 // capture-only: the migration must wait for the writer
-                yield* composite.writer.dbInstanceArn;
+                yield* composite.writer.dbInstanceArn.asEffect().pipe(Effect.asVoid);
               }
               const ambient = yield* Effect.context<never>();
               // Apply half — Data API dialect over distilled.
@@ -330,28 +324,19 @@ export const AuroraDataApi = (
                 const base = {
                   resourceArn,
                   secretArn: resolvedSecretArn,
-                  ...(options?.database === undefined
-                    ? {}
-                    : { database: options.database }),
+                  ...(options?.database === undefined ? {} : { database: options.database }),
                 };
                 const run = <A>(effect: Effect.Effect<A, any, any>) =>
-                  Effect.runPromise(
-                    effect.pipe(
-                      Effect.provideContext(ambient),
-                    ) as Effect.Effect<A>,
-                  );
+                  Effect.runPromiseWith(ambient)(effect as Effect.Effect<A, any, never>);
                 const dialect = yield* makeDataApiDialect({
                   execute: (request) =>
-                    run(
-                      transientRetry(
-                        rdsdata.executeStatement({
-                          ...base,
-                          ...request,
-                        } as never),
-                      ),
-                    ),
-                  begin: () =>
-                    run(transientRetry(rdsdata.beginTransaction(base))),
+                    rdsdata
+                      .executeStatement({
+                        ...base,
+                        ...request,
+                      } as never)
+                      .pipe(transientRetry, run),
+                  begin: () => rdsdata.beginTransaction(base).pipe(transientRetry, run),
                   commit: (transactionId) =>
                     run(
                       rdsdata.commitTransaction({
@@ -382,11 +367,7 @@ export const AuroraDataApi = (
                 ),
               );
             }) as Effect.Effect<
-              Effect.Effect<
-                DirectDatabase,
-                BetterAuthMigrationError,
-                Scope.Scope
-              >,
+              Effect.Effect<DirectDatabase, BetterAuthMigrationError, Scope.Scope>,
               never,
               RuntimeContext
             >,

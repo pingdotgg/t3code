@@ -7,11 +7,11 @@ import { newWebSocketRpcSession } from "capnweb";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
 import { unwrapRpcHandlers } from "../../../src/Local/RpcSerialization.ts";
 import type { RpcProxyApi } from "../../../src/Local/RpcServer.ts";
 import {
@@ -59,9 +59,7 @@ const program = Effect.gen(function* () {
   const session = newWebSocketRpcSession<RpcProxyApi>(sessionUrl.toString());
   const wrapped = yield* Effect.promise(
     () =>
-      session.getProvider("Command.Dev", providersUrl) as ReturnType<
-        RpcProxyApi["getProvider"]
-      >,
+      session.getProvider("Command.Dev", providersUrl) as ReturnType<RpcProxyApi["getProvider"]>,
   );
   const provider = unwrapRpcHandlers(wrapped, []);
 
@@ -95,10 +93,7 @@ const program = Effect.gen(function* () {
 program
   .pipe(
     Effect.provide([
-      Layer.provide(
-        layerServer({ profile: undefined, envFile: undefined }),
-        PlatformServices,
-      ),
+      Layer.provide(layerServer({ profile: undefined, envFile: undefined }), PlatformServices),
       PlatformServices,
       FetchHttpClient.layer,
     ]),

@@ -1,3 +1,7 @@
+import { describe, expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 /**
  * `--force` must refresh stale bound attributes.
  *
@@ -16,10 +20,6 @@ import * as Plan from "@/Plan";
 import * as Stack from "@/Stack";
 import { Stage } from "@/Stage";
 import { InMemoryService, State, type ResourceState } from "@/State";
-import * as Test from "@/Test/Alchemy";
-import { describe, expect } from "alchemy-test";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { BindingTarget, TestLayers, TestResource } from "./test.resources.ts";
 
 const { test } = Test.make({
@@ -52,10 +52,7 @@ const makeHarness = (name: string) => {
   ): Effect.Effect<any, any, never> =>
     compile(effect).pipe(
       Effect.flatMap((compiled: any) =>
-        Plan.make(compiled, options).pipe(
-          Effect.flatMap(apply),
-          Effect.provide(compiled.services),
-        ),
+        Plan.make(compiled, options).pipe(Effect.flatMap(apply), Effect.provide(compiled.services)),
       ),
       Effect.provide(Layer.succeed(Stage, STAGE)),
       provideFreshArtifactStore,
@@ -71,14 +68,13 @@ const makeHarness = (name: string) => {
       Effect.provide(Layer.succeed(Stage, STAGE)),
       provideFreshArtifactStore,
     ) as unknown as Effect.Effect<any, any, never>;
-  const getRow = (fqn: string) =>
-    Effect.sync(() => store[name]?.[STAGE]?.[fqn] as ResourceState);
+  const getRow = (fqn: string) => Effect.sync(() => store[name]?.[STAGE]?.[fqn] as ResourceState);
   const setRow = (fqn: string, value: ResourceState) =>
     Effect.sync(() => void (store[name][STAGE][fqn] = value));
   return { deploy, plan, getRow, setRow };
 };
 
-describe("--force refreshes stale bound attrs", () => {
+describe("--force refreshes stale bound attrs", { tags: ["unit", "local"] }, () => {
   test(
     "a consumer's props observe the forced upstream reconcile, not stale state",
     Effect.gen(function* () {

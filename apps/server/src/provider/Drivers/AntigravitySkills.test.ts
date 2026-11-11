@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
+import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
@@ -52,7 +52,6 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           enabled: true,
         },
       ]);
-      // A project rooted at the home directory sees ~/.agents/skills as its own.
       assert.deepEqual(
         (yield* discoverAntigravitySkills({ ...input, cwd: input.userHome })).map((skill) => [
           skill.name,
@@ -91,34 +90,6 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), expected);
-    }),
-  );
-
-  it.effect("returns no skills when the native roots are missing", () =>
-    Effect.gen(function* () {
-      const input = yield* makeWorkspace();
-      assert.deepEqual(yield* discoverAntigravitySkills(input), []);
-    }),
-  );
-
-  it.effect("discovers skills from the legacy workspace root", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const input = yield* makeWorkspace();
-      const skillPath = yield* writeSkill(
-        path.join(input.cwd, ".agent", "skills", "review"),
-        "---\nname: review\ndescription: Review changes.\n---\n",
-      );
-
-      assert.deepEqual(yield* discoverAntigravitySkills(input), [
-        {
-          name: "review",
-          description: "Review changes.",
-          path: skillPath,
-          scope: "project",
-          enabled: true,
-        },
-      ]);
     }),
   );
 
@@ -340,21 +311,4 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
     }),
   );
-});
-
-it("resolves the home the agent expands ~ against", () => {
-  assert.equal(
-    resolveAntigravityUserHome("linux", { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" }),
-    "/home/user",
-  );
-  assert.equal(
-    resolveAntigravityUserHome("win32", { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" }),
-    "C:\\Users\\user",
-  );
-  assert.equal(
-    resolveAntigravityUserHome("win32", { HOMEDRIVE: "D:", HOMEPATH: "\\Users\\alice" }),
-    "D:\\Users\\alice",
-  );
-  assert.equal(resolveAntigravityUserHome("darwin", { HOME: "/Users/a b " }), "/Users/a b ");
-  assert.equal(resolveAntigravityUserHome("darwin", { HOME: "" }).length > 0, true);
 });

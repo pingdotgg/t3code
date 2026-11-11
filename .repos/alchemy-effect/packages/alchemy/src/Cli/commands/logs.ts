@@ -1,20 +1,12 @@
+import { Command, Flag } from "effect/cli";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { Command, Flag } from "effect/unstable/cli";
-
-import * as Logs from "../../Alchemist/routes/logs.ts";
-import { paint } from "../CliKit/index.ts";
+import * as Alchemist from "../../Alchemist/index.ts";
+import { paint } from "../../Util/Terminal.ts";
 import { formatLocalTimestamp, TAIL_COLORS } from "../Format.ts";
-import {
-  config,
-  envFile,
-  parseSince,
-  profile,
-  resolveStage,
-  stage,
-} from "./flags.ts";
+import { config, envFile, parseSince, profile, resolveStage, stage } from "./flags.ts";
 import { instrumentCommand } from "./instrument.ts";
 
 const logsLimit = Flag.Int("limit").pipe(
@@ -30,17 +22,13 @@ const tail = Flag.Boolean("tail").pipe(
 
 const resources = Flag.String("resource").pipe(
   Flag.withAlias("r"),
-  Flag.withDescription(
-    "Comma-separated logical resource IDs to include (for example Worker,Api)",
-  ),
+  Flag.withDescription("Comma-separated logical resource IDs to include (for example Worker,Api)"),
   Flag.optional,
   Flag.map(Option.getOrUndefined),
 );
 
 const logsSince = Flag.String("since").pipe(
-  Flag.withDescription(
-    "Fetch logs since this time (e.g. '1h', '30m', '2024-01-01T00:00:00Z')",
-  ),
+  Flag.withDescription("Fetch logs since this time (e.g. '1h', '30m', '2024-01-01T00:00:00Z')"),
   Flag.optional,
   Flag.map(Option.getOrUndefined),
 );
@@ -71,50 +59,33 @@ const runLogs = Effect.fn(function* ({
     .split(",")
     .map((resource) => resource.trim())
     .filter((resource) => resource.length > 0);
-  const target = {
-    entrypoint: main,
-    stage,
-    profile,
-    envFile: Option.getOrUndefined(envFile),
+  const stack = yield* Alchemist.importStack(main);
+  const options = { stage, profile, envFile: Option.getOrUndefined(envFile) };
+  // Colors are assigned as each resource first appears, so the command
+  // builds the stack once instead of listing resources up front.
+  const colors = new Map<string, (typeof TAIL_COLORS)[number]>();
+  const format = (entry: Alchemist.Logs.LogEntry) => {
+    const fqn = entry.resource.fqn;
+    if (!colors.has(fqn)) colors.set(fqn, TAIL_COLORS[colors.size % TAIL_COLORS.length]!);
+    return `${paint(colors.get(fqn)!, `${formatLocalTimestamp(entry.timestamp)} [${fqn}]`)} ${entry.message}`;
   };
-  const available = yield* Logs.resources(target);
-  const selectedSet = new Set(selected);
-  const matching = available.filter(
-    (resource) =>
-      selectedSet.size === 0 ||
-      selectedSet.has(resource.fqn) ||
-      selectedSet.has(resource.logicalId),
-  );
-  const colors = new Map(
-    matching.map((resource, index) => [
-      resource.fqn,
-      TAIL_COLORS[index % TAIL_COLORS.length]!,
-    ]),
-  );
-  const format = (entry: {
-    resource: { fqn: string };
-    timestamp: Date;
-    message: string;
-  }) =>
-    `${paint(colors.get(entry.resource.fqn) ?? "gray", `${formatLocalTimestamp(entry.timestamp)} [${entry.resource.fqn}]`)} ${entry.message}`;
 
   if (tail) {
-    const tailing = matching.filter((resource) => resource.supportsTail);
-    if (tailing.length === 0) {
-      yield* Console.log("No matching resources support live logs.");
-      return;
-    }
-    yield* Console.log(
-      `Tailing: ${tailing.map(({ logicalId }) => logicalId).join(", ")}`,
+    // The merged stream ends at once when no selected resource can tail.
+    let received = false;
+    yield* Alchemist.Logs.tail({ ...options, stack, resources: selected }).pipe(
+      Stream.runForEach((entry) => {
+        received = true;
+        return Console.log(format(entry));
+      }),
     );
-    yield* Logs.tail({ target, resources: selected }).pipe(
-      Stream.runForEach((entry) => Console.log(format(entry))),
-    );
+    if (!received) yield* Console.log("No matching resources support live logs.");
     return;
   }
 
-  const entries = yield* Logs.entries({
-    target,
+  const entries = yield* Alchemist.Logs.entries({
+    ...options,
+    stack,
     resources: selected,
     limit,
     since: sinceDate,

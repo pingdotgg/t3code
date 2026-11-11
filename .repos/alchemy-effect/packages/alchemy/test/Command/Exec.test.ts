@@ -1,10 +1,10 @@
-import * as Command from "@/Command";
-import * as Provider from "@/Provider";
-import * as Test from "@/Test/Alchemy";
-import { expect } from "alchemy-test";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as pathe from "pathe";
+import * as Command from "@/Command";
+import * as Provider from "@/Provider";
 
 const { test } = Test.make({ providers: Command.providers() });
 
@@ -30,7 +30,7 @@ test.provider(
       const all = yield* provider.list();
       expect(all).toEqual([]);
     }),
-  { timeout: 30000 },
+  { tags: ["unit", "local"], timeout: 30000 },
 );
 
 test.provider(
@@ -113,5 +113,5 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 60000 },
+  { tags: ["unit", "local"], timeout: 60000 },
 );

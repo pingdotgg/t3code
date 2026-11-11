@@ -11,8 +11,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import * as SqlClient from "effect/sql/SqlClient";
+import { Argument, Command, Flag } from "effect/cli";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -201,6 +201,8 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   const program = Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql.unsafe("PRAGMA busy_timeout = 5000").unprepared;
+    // This connection can checkpoint statev2.sqlite, so it needs Sqlite.ts's F_FULLFSYNC barrier.
+    yield* sql.unsafe("PRAGMA checkpoint_fullfsync = ON").unprepared;
 
     if (input.operation === "query") {
       const rows = yield* sql.unsafe<RawSqliteRow>(source).unprepared.pipe(

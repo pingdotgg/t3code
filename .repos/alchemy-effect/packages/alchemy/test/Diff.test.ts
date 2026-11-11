@@ -1,3 +1,9 @@
+import { describe, expect, test } from "@alchemy.run/test";
+import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import {
   deepEqual,
   hasUnresolvedInputs,
@@ -6,14 +12,8 @@ import {
   stripUnresolved,
 } from "@/Diff";
 import * as Output from "@/Output";
-import { describe, expect, test } from "alchemy-test";
-import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
 
-describe("Diff", () => {
+describe("Diff", { tags: ["unit", "local"] }, () => {
   describe("havePropsChanged with Redacted values", () => {
     // Config values yielded in a Worker's init phase (e.g.
     // `yield* Config.String("MY_VARIABLE")`) land in `props.env`
@@ -49,20 +49,14 @@ describe("Diff", () => {
     });
 
     test("detects a changed top-level Redacted value", () => {
-      expect(
-        havePropsChanged(
-          { secret: Redacted.make("a") },
-          { secret: Redacted.make("b") },
-        ),
-      ).toBe(true);
+      expect(havePropsChanged({ secret: Redacted.make("a") }, { secret: Redacted.make("b") })).toBe(
+        true,
+      );
     });
 
     test("detects a Redacted value changing to a different inner type", () => {
       expect(
-        havePropsChanged(
-          { secret: Redacted.make("123") },
-          { secret: Redacted.make(123) },
-        ),
+        havePropsChanged({ secret: Redacted.make("123") }, { secret: Redacted.make(123) }),
       ).toBe(true);
     });
 
@@ -77,10 +71,7 @@ describe("Diff", () => {
 
     test("does not flag unchanged plain env values", () => {
       expect(
-        havePropsChanged(
-          { env: { MY_VARIABLE: "value" } },
-          { env: { MY_VARIABLE: "value" } },
-        ),
+        havePropsChanged({ env: { MY_VARIABLE: "value" } }, { env: { MY_VARIABLE: "value" } }),
       ).toBe(false);
     });
 
@@ -111,12 +102,7 @@ describe("Diff", () => {
     });
 
     test("distinguishes Redacted values nested in objects", () => {
-      expect(
-        deepEqual(
-          { secret: Redacted.make("a") },
-          { secret: Redacted.make("b") },
-        ),
-      ).toBe(false);
+      expect(deepEqual({ secret: Redacted.make("a") }, { secret: Redacted.make("b") })).toBe(false);
     });
   });
 
@@ -137,9 +123,7 @@ describe("Diff", () => {
     });
 
     test("hasUnresolvedInputs treats Layer/Context as resolved leaves", () => {
-      expect(
-        hasUnresolvedInputs({ context: Context.empty(), layer: Layer.empty }),
-      ).toBe(false);
+      expect(hasUnresolvedInputs({ context: Context.empty(), layer: Layer.empty })).toBe(false);
     });
 
     test("stripUnresolved drops Effect/Layer/Context", () => {
@@ -171,9 +155,7 @@ describe("Diff", () => {
     });
 
     test("deepEqual does not recurse into Context internals", () => {
-      expect(
-        deepEqual({ ctx: Context.empty() }, { ctx: Context.empty() }),
-      ).toBe(true);
+      expect(deepEqual({ ctx: Context.empty() }, { ctx: Context.empty() })).toBe(true);
     });
 
     test("havePropsChanged terminates on cyclic plain objects", () => {
@@ -185,9 +167,7 @@ describe("Diff", () => {
       // The full comparison — stripUnresolved cuts the cycle, so the
       // JSON.stringify comparison sees identical truncated shapes.
       expect(havePropsChanged(make(), make())).toBe(false);
-      expect(havePropsChanged(make(), { ...make(), extra: "x" } as any)).toBe(
-        true,
-      );
+      expect(havePropsChanged(make(), { ...make(), extra: "x" } as any)).toBe(true);
       expect(hasUnresolvedInputs(make())).toBe(false);
     });
   });
@@ -195,16 +175,12 @@ describe("Diff", () => {
   describe("hasUnresolvedInputs across nesting shapes", () => {
     test("finds an Output expr deep in arrays-in-objects-in-arrays", () => {
       const expr = Output.literal("x");
-      expect(
-        hasUnresolvedInputs({ layers: [{ config: { hosts: [expr] } }] }),
-      ).toBe(true);
+      expect(hasUnresolvedInputs({ layers: [{ config: { hosts: [expr] } }] })).toBe(true);
       expect(hasUnresolvedInputs({ matrix: [[[expr]]] })).toBe(true);
     });
 
     test("finds an Effect deep in nested containers", () => {
-      expect(hasUnresolvedInputs({ a: [{ b: { c: [Effect.void] } }] })).toBe(
-        true,
-      );
+      expect(hasUnresolvedInputs({ a: [{ b: { c: [Effect.void] } }] })).toBe(true);
     });
 
     test("a shared diamond subtree containing an expr is found from either parent", () => {
@@ -214,13 +190,17 @@ describe("Diff", () => {
     });
 
     test("fully-plain deep structures are resolved", () => {
-      expect(
-        hasUnresolvedInputs({ a: [{ b: [[{ c: 1 }]], d: new Date(0) }] }),
-      ).toBe(false);
+      expect(hasUnresolvedInputs({ a: [{ b: [[{ c: 1 }]], d: new Date(0) }] })).toBe(false);
     });
   });
 
   describe("stripUnresolved semantics", () => {
+    test("preserves byte arrays by identity", () => {
+      const bytes = new Uint8Array([1, 2, 3]);
+      const stripped: any = stripUnresolved({ nested: [{ bytes }] });
+      expect(stripped.nested[0].bytes).toBe(bytes);
+    });
+
     test("preserves Date/Redacted/Duration by identity", () => {
       const date = new Date(0);
       const secret = Redacted.make("s");
@@ -290,21 +270,18 @@ describe("Diff", () => {
     });
 
     test("deepEqual compares Dates by value", () => {
-      expect(
-        deepEqual({ d: new Date("2027-01-01") }, { d: new Date("2027-01-01") }),
-      ).toBe(true);
-      expect(
-        deepEqual({ d: new Date("2027-01-01") }, { d: new Date("2027-01-02") }),
-      ).toBe(false);
+      expect(deepEqual({ d: new Date("2027-01-01") }, { d: new Date("2027-01-01") })).toBe(true);
+      expect(deepEqual({ d: new Date("2027-01-01") }, { d: new Date("2027-01-02") })).toBe(false);
+    });
+
+    test("deepEqual compares byte arrays by content", () => {
+      expect(deepEqual({ b: new Uint8Array([1, 2]) }, { b: new Uint8Array([1, 2]) })).toBe(true);
+      expect(deepEqual({ b: new Uint8Array([1, 2]) }, { b: new Uint8Array([1, 3]) })).toBe(false);
     });
 
     test("deepEqual compares Durations by value", () => {
-      expect(
-        deepEqual({ d: Duration.seconds(5) }, { d: Duration.seconds(5) }),
-      ).toBe(true);
-      expect(
-        deepEqual({ d: Duration.seconds(5) }, { d: Duration.seconds(6) }),
-      ).toBe(false);
+      expect(deepEqual({ d: Duration.seconds(5) }, { d: Duration.seconds(5) })).toBe(true);
+      expect(deepEqual({ d: Duration.seconds(5) }, { d: Duration.seconds(6) })).toBe(false);
     });
 
     test("deepEqual terminates on cyclic values on either side", () => {
@@ -325,26 +302,16 @@ describe("Diff", () => {
     });
 
     test("havePropsChanged detects array length and order changes", () => {
-      expect(
-        havePropsChanged({ arr: [[1, 2]] }, { arr: [[2, 1]] } as any),
-      ).toBe(true);
-      expect(havePropsChanged({ arr: [[1]] }, { arr: [[1], []] } as any)).toBe(
-        true,
-      );
+      expect(havePropsChanged({ arr: [[1, 2]] }, { arr: [[2, 1]] } as any)).toBe(true);
+      expect(havePropsChanged({ arr: [[1]] }, { arr: [[1], []] } as any)).toBe(true);
     });
 
     test("havePropsChanged detects a changed Date", () => {
       expect(
-        havePropsChanged(
-          { expires: new Date("2027-01-01") },
-          { expires: new Date("2027-01-01") },
-        ),
+        havePropsChanged({ expires: new Date("2027-01-01") }, { expires: new Date("2027-01-01") }),
       ).toBe(false);
       expect(
-        havePropsChanged(
-          { expires: new Date("2027-01-01") },
-          { expires: new Date("2028-01-01") },
-        ),
+        havePropsChanged({ expires: new Date("2027-01-01") }, { expires: new Date("2028-01-01") }),
       ).toBe(true);
     });
 
@@ -355,10 +322,7 @@ describe("Diff", () => {
       // Runtime-only wiring: stripped at the commit boundary, so two deploys
       // constructing fresh instances must not report a phantom change.
       expect(
-        havePropsChanged(
-          { config: new SdkConfig(1) } as any,
-          { config: new SdkConfig(2) } as any,
-        ),
+        havePropsChanged({ config: new SdkConfig(1) } as any, { config: new SdkConfig(2) } as any),
       ).toBe(false);
     });
   });

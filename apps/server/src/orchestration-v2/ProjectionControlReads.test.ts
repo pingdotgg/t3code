@@ -18,9 +18,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -186,13 +185,12 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
   ];
 }
 
-const storageCases = (["sqlite", "memory"] as const).map((storage) => ({
-  storage,
-  storeLayer:
-    storage === "sqlite"
-      ? ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory))
-      : ProjectionStore.layerMemory,
-}));
+const storageCases = [
+  {
+    storage: "sqlite" as const,
+    storeLayer: ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  },
+];
 
 it.effect.each(storageCases)(
   "$storage: finds the active root turn without an attempt reverse link",
@@ -274,25 +272,28 @@ it.effect.each(storageCases)(
       assert.instanceOf(missingThread, ProjectionStore.ProjectionStoreThreadNotFoundError);
 
       const calls: string[] = [];
-      const sessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+      const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
-          Effect.succeed(
-            Option.some({
-              interruptTurn: () =>
-                Effect.sync(() => {
-                  calls.push("interrupt");
-                }),
-              steerTurn: (input: { message: { text: string }; runId: RunId }) =>
-                Effect.sync(() => {
-                  assert.equal(input.runId, runId);
-                  calls.push(input.message.text);
-                }),
-              respondToRuntimeRequest: () =>
-                Effect.sync(() => {
-                  calls.push("reply");
-                }),
-            } as never),
-          ),
+          Effect.succeedSome({
+            interruptTurn: () =>
+              Effect.sync(() => {
+                calls.push("interrupt");
+              }),
+            steerTurn: (input: {
+              message: {
+                text: string;
+              };
+              runId: RunId;
+            }) =>
+              Effect.sync(() => {
+                assert.equal(input.runId, runId);
+                calls.push(input.message.text);
+              }),
+            respondToRuntimeRequest: () =>
+              Effect.sync(() => {
+                calls.push("reply");
+              }),
+          } as never),
       });
       yield* Effect.gen(function* () {
         const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
@@ -339,16 +340,14 @@ it.effect.each(storageCases)(
           occurredAt: now,
           payload: { ...turn, status: "completed", completedAt: now },
         });
-        // A settled turn's Stop still reaches the adapter, which alone knows
-        // whether it runs background work for the thread.
         yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
         assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply", "interrupt"]);
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
-            Layer.provide(sessions),
+            Layer.provide(layerSessions),
           ),
         ),
       );
-    }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistenceMemory))),
+    }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistence.layerMemory))),
 );

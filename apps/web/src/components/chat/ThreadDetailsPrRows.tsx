@@ -1,19 +1,22 @@
+import { pipe } from "effect/Function";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import type { EnvironmentId, ThreadPullRequestLink } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
+  pullRequestListLines,
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
-import { Minus, Plus } from "lucide";
+} from "@t3tools/client-runtime/thread-pull-requests";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
-import { findProjectOnChangeRequestHost, parseChangeRequestUrl } from "~/lib/openPullRequestLink";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { findProjectOnChangeRequestHost } from "@t3tools/client-runtime/change-request-links";
 
 import { useProjects } from "~/state/entities";
+import { threadEnvironment } from "~/state/threads";
+import { useAtomCommand } from "~/state/use-atom-command";
 
-import { pullRequestListLines } from "../pullRequest/pullRequestListLines";
-import { MorphIcon } from "~/components/MorphIcon";
 import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
@@ -23,16 +26,18 @@ function ThreadDetailsPrLinkRow({
   link,
   onOpen,
   onActed,
+  onStopWatching,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
+  onStopWatching?: (() => void) | undefined;
 }) {
   const projects = useProjects();
-  const parsed = parseChangeRequestUrl(link.url);
+  const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
   const project =
-    parsed === null
+    parsed === undefined
       ? null
       : (findProjectOnChangeRequestHost(
           projects.filter((candidate) => candidate.environmentId === environmentId),
@@ -51,44 +56,66 @@ function ThreadDetailsPrLinkRow({
       label={`#${link.number}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
       openAriaLabel={link.url}
       onOpen={onOpen}
+      onStopWatching={onStopWatching}
       {...(onActed ? { onActed } : {})}
     />
   );
 }
 
 export function ThreadDetailsPrRows({
+  threadRef,
   links,
   currentLink,
   onOpenLink,
   ...row
 }: ComponentProps<typeof ThreadDetailsPrRow> & {
+  threadRef: ScopedThreadRef;
   links: ReadonlyArray<ThreadPullRequestLink>;
   currentLink: ThreadPullRequestLink | null;
   onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
+  const stopWatching = (link: ThreadPullRequestLink | null) =>
+    link?.watch === undefined
+      ? undefined
+      : () =>
+          void watch({
+            environmentId: threadRef.environmentId,
+            input: {
+              threadId: threadRef.threadId,
+              host: link.host,
+              repository: link.repository,
+              number: link.number,
+              watching: false,
+            },
+          });
+  const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
   const rest =
     currentLink === null
       ? []
-      : pullRequestListLines(resolveThreadPullRequestChains(visibleThreadPullRequests(links)))
+      : pipe(visibleThreadPullRequests(links), resolveThreadPullRequestChains, pullRequestListLines)
           .map((line) => line.link)
           .filter((link) => threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink));
-  if (rest.length === 0) return <ThreadDetailsPrRow {...row} />;
+  if (rest.length === 0) return currentRow;
 
   return (
     <>
-      <ThreadDetailsPrRow {...row} />
-      {expanded
-        ? rest.map((link) => (
+      {currentRow}
+      {expanded ? (
+        <div data-thread-details-pr-list className="flex flex-col">
+          {rest.map((link) => (
             <ThreadDetailsPrLinkRow
               key={threadPullRequestKeyOf(link)}
               environmentId={row.environmentId}
               link={link}
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}
+              onStopWatching={stopWatching(link)}
             />
-          ))
-        : null}
+          ))}
+        </div>
+      ) : null}
       <ThreadDetailsControl
         variant="ghost"
         size="sm"
@@ -97,7 +124,12 @@ export function ThreadDetailsPrRows({
         tone="muted"
         className="w-full active:scale-100"
       >
-        <MorphIcon aria-hidden className="size-4 shrink-0" icon={expanded ? Minus : Plus} />
+        {/* Chevrons, not plus and minus: the plus already means "add" in this card. */}
+        {expanded ? (
+          <ChevronUpIcon aria-hidden className="size-4 shrink-0" />
+        ) : (
+          <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
+        )}
         {expanded ? "Show less" : `Show ${rest.length} more`}
       </ThreadDetailsControl>
     </>

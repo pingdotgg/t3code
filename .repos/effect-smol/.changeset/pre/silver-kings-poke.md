@@ -1,5 +1,0 @@
----
-"effect": patch
----
-
-simplify SubscriptionRef

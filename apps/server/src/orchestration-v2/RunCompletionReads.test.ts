@@ -12,16 +12,16 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-const databaseLayer = Layer.mergeAll(
-  SqlitePersistenceMemory,
-  ProjectionStore.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+const layerDatabase = Layer.mergeAll(
+  SqlitePersistence.layerMemory,
+  ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect.each(["sqlite", "memory"] as const)(
+it.effect.each(["sqlite"] as const)(
   "checks queue eligibility and delivery ownership without unrelated history in %s",
   (storage) =>
     Effect.gen(function* () {
@@ -152,11 +152,5 @@ it.effect.each(["sqlite", "memory"] as const)(
         yield* store.getRunMessage(missing, runId).pipe(Effect.flip),
         ProjectionStore.ProjectionStoreThreadNotFoundError,
       );
-    }).pipe(
-      Effect.provide(
-        storage === "sqlite"
-          ? databaseLayer
-          : Layer.merge(SqlitePersistenceMemory, ProjectionStore.layerMemory),
-      ),
-    ),
+    }).pipe(Effect.provide(layerDatabase)),
 );

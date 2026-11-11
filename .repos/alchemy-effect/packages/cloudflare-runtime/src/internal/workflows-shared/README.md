@@ -1,7 +1,7 @@
 # @distilled.cloud/vendor-workflows-shared
 
 Private workspace package vendoring raw TypeScript source from
-[`@cloudflare/workflows-shared`](https://github.com/cloudflare/workers-sdk/tree/b7b4ff84477982e7c770bb93928287893fcf2e03/packages/workflows-shared).
+[`@cloudflare/workflows-shared`](https://github.com/cloudflare/workers-sdk/tree/8d98a15a05fa1f4d27654168ed16df1ff4ff1173/packages/workflows-shared).
 This package does not bundle or publish; consumer packages in this monorepo
 import the `.ts` files directly and apply their own bundling.
 
@@ -13,7 +13,7 @@ files. Project metadata and imports are adapted to this monorepo's tooling.
 ## Provenance
 
 Sourced from [`cloudflare/workers-sdk`](https://github.com/cloudflare/workers-sdk)
-at commit [`b7b4ff84477982e7c770bb93928287893fcf2e03`](https://github.com/cloudflare/workers-sdk/commit/b7b4ff84477982e7c770bb93928287893fcf2e03) (path:
+at commit [`8d98a15a05fa1f4d27654168ed16df1ff4ff1173`](https://github.com/cloudflare/workers-sdk/commit/8d98a15a05fa1f4d27654168ed16df1ff4ff1173) (path:
 `packages/workflows-shared`). Upstream license: MIT OR Apache-2.0.
 
 ## Consumer imports

@@ -11,10 +11,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * Supervised: each shell call asks. The approved one runs; the declined one and
- * the model's two retries fail without running, and the turn still completes.
- */
 export function assertOpenCode2PermissionOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -57,7 +53,6 @@ export function assertOpenCode2PermissionOutput(
       ["cancelled", "echo THIRD_PROBE"],
     ],
   );
-  // "Always" is this session's own rule, not OpenCode's project-wide grant.
   const options = approvals[0]?.type === "approval_request" ? (approvals[0].options ?? []) : [];
   assert.deepInclude(options, {
     decision: "acceptForSession",

@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
@@ -12,12 +12,13 @@ import {
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 
 class FakeLauncherProcess {
-  readonly connected = true;
+  readonly connected: boolean;
   readonly env: Record<string, string | undefined>;
   readonly sent: ServiceLauncherChildMessage[] = [];
   readonly #listeners = new Map<string, Set<(...args: ReadonlyArray<unknown>) => void>>();
 
-  constructor(context: unknown) {
+  constructor(context: unknown, connected = true) {
+    this.connected = connected;
     this.env = { [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) };
   }
 
@@ -45,7 +46,7 @@ class FakeLauncherProcess {
 const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
   ServiceLauncherClient.make({ currentVersion }).pipe(
     Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, host),
-    Effect.provideService(HostProcessEnvironment, host.env),
+    Effect.provideService(HostProcess.Environment, host.env),
   );
 
 it.effect("waits for the launcher to durably commit the trial update ID", () =>
@@ -134,5 +135,20 @@ it.effect("rejects contradictory trial context instead of leaving activation clo
     });
     const error = yield* makeClient(host, "1.1.0").pipe(Effect.flip);
     expect(error.message).toBe("The service launcher supplied invalid startup context.");
+  }),
+);
+
+it.effect("ignores launcher context inherited without an IPC channel", () =>
+  Effect.gen(function* () {
+    const host = new FakeLauncherProcess(
+      { protocol: SERVICE_LAUNCHER_PROTOCOL, childVersion: "1.0.0" },
+      false,
+    );
+    const client = yield* makeClient(host, "1.1.0");
+    const error = yield* client
+      .requestUpdate({ targetVersion: "1.2.0", dbPath: "/tmp/state.sqlite" })
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({ _tag: "ServiceLauncherClientError", operation: "unmanaged" });
+    expect(host.sent).toEqual([]);
   }),
 );

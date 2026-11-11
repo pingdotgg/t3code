@@ -1,14 +1,33 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-
-import * as ts from "typescript-api/unstable/ast";
-import type { Node, SourceFile } from "typescript-api/unstable/ast";
+// Generates the provider API reference under website/src/content/docs/providers
+// (plus the providers sidebar and reference redirects) from source JSDoc.
+//
+// Usage: node scripts/generate-api-reference.ts [--copy-markers]
+//   --copy-markers (or API_REFERENCE_COPY_MARKERS=1) emits the website's
+//   dev-time copy-editor markers.
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { Command, Flag } from "effect/cli";
+import * as Config from "effect/Config";
+import * as Console from "effect/Console";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
+import * as ts from "tsrs/unstable/ast";
+import type { Node, SourceFile } from "tsrs/unstable/ast";
+import {
+  docCommentLines,
+  jsdocCopyId,
+  LINK_TAG_RE,
+  markDocLines,
+  normalizeLinkTarget,
+  parseLinkTag,
+} from "./jsdoc-blocks.ts";
 import { createSyntaxProject } from "./typescript-source.ts";
 
-const websiteRoot = path.join(import.meta.dir, "../website");
-
 interface SourceRoot {
-  /** Directory scanned for documented source files. */
+  /** Directory scanned for documented source files (repo-relative). */
   srcRoot: string;
   /**
    * Synthetic provider name for flat single-provider packages (their files
@@ -20,21 +39,105 @@ interface SourceRoot {
   sourceDisplayPrefix: string;
 }
 
-const config = {
-  outRoot: path.join(websiteRoot, "src/content/docs/providers"),
-  roots: [
-    {
-      srcRoot: path.join(import.meta.dir, "../packages/alchemy/src"),
-      providerPrefix: "",
-      sourceDisplayPrefix: "src",
-    },
-    {
-      srcRoot: path.join(import.meta.dir, "../packages/better-auth/src"),
-      providerPrefix: "BetterAuth",
-      sourceDisplayPrefix: "packages/better-auth/src",
-    },
-  ] satisfies SourceRoot[],
-};
+/** Source roots, relative to the repo root (resolved in `main`). */
+const sourceRoots: SourceRoot[] = [
+  { srcRoot: "packages/alchemy/src", providerPrefix: "", sourceDisplayPrefix: "src" },
+  {
+    srcRoot: "packages/better-auth/src",
+    providerPrefix: "BetterAuth",
+    sourceDisplayPrefix: "packages/better-auth/src",
+  },
+  { srcRoot: "packages/git/src", providerPrefix: "Git", sourceDisplayPrefix: "packages/git/src" },
+  {
+    srcRoot: "packages/drizzle/src",
+    providerPrefix: "Drizzle",
+    sourceDisplayPrefix: "packages/drizzle/src",
+  },
+  {
+    srcRoot: "packages/acme/src",
+    providerPrefix: "ACME",
+    sourceDisplayPrefix: "packages/acme/src",
+  },
+  {
+    srcRoot: "packages/axiom/src",
+    providerPrefix: "Axiom",
+    sourceDisplayPrefix: "packages/axiom/src",
+  },
+  {
+    srcRoot: "packages/doppler/src",
+    providerPrefix: "Doppler",
+    sourceDisplayPrefix: "packages/doppler/src",
+  },
+  {
+    srcRoot: "packages/infisical/src",
+    providerPrefix: "Infisical",
+    sourceDisplayPrefix: "packages/infisical/src",
+  },
+  {
+    srcRoot: "packages/turso/src",
+    providerPrefix: "Turso",
+    sourceDisplayPrefix: "packages/turso/src",
+  },
+  {
+    srcRoot: "packages/planetscale/src",
+    providerPrefix: "Planetscale",
+    sourceDisplayPrefix: "packages/planetscale/src",
+  },
+  {
+    srcRoot: "packages/neon/src",
+    providerPrefix: "Neon",
+    sourceDisplayPrefix: "packages/neon/src",
+  },
+  {
+    srcRoot: "packages/prisma/src",
+    providerPrefix: "Prisma",
+    sourceDisplayPrefix: "packages/prisma/src",
+  },
+  {
+    srcRoot: "packages/hetzner/src",
+    providerPrefix: "Hetzner",
+    sourceDisplayPrefix: "packages/hetzner/src",
+  },
+  {
+    srcRoot: "packages/railway/src",
+    providerPrefix: "Railway",
+    sourceDisplayPrefix: "packages/railway/src",
+  },
+  { srcRoot: "packages/fly/src", providerPrefix: "Fly", sourceDisplayPrefix: "packages/fly/src" },
+  {
+    srcRoot: "packages/github/src",
+    providerPrefix: "GitHub",
+    sourceDisplayPrefix: "packages/github/src",
+  },
+  {
+    srcRoot: "packages/stripe/src",
+    providerPrefix: "Stripe",
+    sourceDisplayPrefix: "packages/stripe/src",
+  },
+  {
+    srcRoot: "packages/cloudflare/src",
+    providerPrefix: "Cloudflare",
+    sourceDisplayPrefix: "packages/cloudflare/src",
+  },
+  { srcRoot: "packages/gcp/src", providerPrefix: "GCP", sourceDisplayPrefix: "packages/gcp/src" },
+  { srcRoot: "packages/aws/src", providerPrefix: "AWS", sourceDisplayPrefix: "packages/aws/src" },
+  {
+    srcRoot: "packages/domain/src",
+    providerPrefix: "Domain",
+    sourceDisplayPrefix: "packages/domain/src",
+  },
+  {
+    srcRoot: "packages/kubernetes/src",
+    providerPrefix: "Kubernetes",
+    sourceDisplayPrefix: "packages/kubernetes/src",
+  },
+  {
+    srcRoot: "packages/docker/src",
+    providerPrefix: "Docker",
+    sourceDisplayPrefix: "packages/docker/src",
+  },
+  { srcRoot: "packages/sql/src", providerPrefix: "SQL", sourceDisplayPrefix: "packages/sql/src" },
+];
 
 interface FileEntry {
   /** Output-relative path (provider-prefixed for flat packages). */
@@ -69,27 +172,29 @@ interface PageDoc {
   peers: string[];
 }
 
-const normalizeSlashes = (value: string) => value.split(path.sep).join("/");
+// Paths are POSIX on every platform we run on; also fold Windows separators.
+const normalizeSlashes = (value: string) => value.replaceAll("\\", "/");
 
 const isSourceFile = (baseName: string) =>
   (baseName.endsWith(".ts") || baseName.endsWith(".tsx")) &&
   !baseName.endsWith(".d.ts") &&
   baseName !== "index.ts";
 
-async function discoverFiles(root: SourceRoot): Promise<FileEntry[]> {
+const discoverFiles = Effect.fn(function* (repoRoot: string, root: SourceRoot) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const srcRoot = path.join(repoRoot, root.srcRoot);
   const entries: FileEntry[] = [];
 
   // Flat single-provider packages: every file under srcRoot belongs to the
   // synthetic provider directory.
   if (root.providerPrefix) {
-    const files = (await fs.readdir(root.srcRoot, {
-      recursive: true,
-    })) as string[];
+    const files = yield* fs.readDirectory(srcRoot, { recursive: true });
     for (const file of files) {
       if (!isSourceFile(path.basename(file))) continue;
       entries.push({
         relativePath: path.join(root.providerPrefix, file),
-        absolutePath: path.join(root.srcRoot, file),
+        absolutePath: path.join(srcRoot, file),
         sourceDisplay: `${root.sourceDisplayPrefix}/${normalizeSlashes(file)}`,
       });
     }
@@ -97,21 +202,13 @@ async function discoverFiles(root: SourceRoot): Promise<FileEntry[]> {
     return entries;
   }
 
-  const topLevelEntries = await fs.readdir(root.srcRoot, {
-    withFileTypes: true,
-  });
-  const dirs = topLevelEntries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name);
-
-  for (const dir of dirs) {
-    const dirPath = path.join(root.srcRoot, dir);
-    let files: string[];
-    try {
-      files = (await fs.readdir(dirPath, { recursive: true })) as string[];
-    } catch {
-      continue;
-    }
+  for (const dir of yield* fs.readDirectory(srcRoot)) {
+    const dirPath = path.join(srcRoot, dir);
+    const info = yield* fs.stat(dirPath);
+    if (info.type !== "Directory") continue;
+    const files = yield* fs
+      .readDirectory(dirPath, { recursive: true })
+      .pipe(Effect.orElseSucceed((): string[] => []));
 
     for (const file of files) {
       if (!isSourceFile(path.basename(file))) continue;
@@ -119,7 +216,7 @@ async function discoverFiles(root: SourceRoot): Promise<FileEntry[]> {
       const relativePath = path.join(dir, file);
       entries.push({
         relativePath,
-        absolutePath: path.join(root.srcRoot, relativePath),
+        absolutePath: path.join(srcRoot, relativePath),
         sourceDisplay: `${root.sourceDisplayPrefix}/${normalizeSlashes(relativePath)}`,
       });
     }
@@ -127,7 +224,7 @@ async function discoverFiles(root: SourceRoot): Promise<FileEntry[]> {
 
   entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
   return entries;
-}
+});
 
 function getJsDocText(node: Node): string {
   return node.jsDoc?.map((doc) => doc.getText()).join("\n") ?? "";
@@ -149,15 +246,48 @@ interface ParsedJSDoc {
   hasBindingTag: boolean;
   /** `@layer` — a Layer factory providing a Context service. */
   hasLayerTag: boolean;
+  /**
+   * `@primitive` — a building block exported as a module's `make` (e.g.
+   * `Domain.Event`). Its page is named after the file, not the export.
+   */
+  hasPrimitiveTag: boolean;
   /** `@provides <Service.Tag>` — service tags the Layer satisfies. */
   provides: string[];
   /** `@peer <package>` — optional peer dependencies the Layer needs. */
   peers: string[];
   category: string;
   product: string;
+  /** `@title <Heading>` — overrides the section heading (the export name). */
+  title: string;
 }
 
-function parseJSDoc(node: Node): ParsedJSDoc {
+/** Where a declaration's JSDoc lives, for copy markers. */
+interface MarkerContext {
+  /** Repo-relative path of the source file. */
+  file: string;
+  /** Full source text (JSDoc offsets index into it). */
+  text: string;
+}
+
+function docLines(node: Node, raw: string, markers?: MarkerContext): string[] {
+  const docs = node.jsDoc ?? [];
+  // Markers need one comment per declaration to map blocks to source.
+  const start = docs[0]?.getStart();
+  // `getStart()` can land on leading `//` trivia; only map clean comments.
+  if (
+    markers &&
+    docs.length === 1 &&
+    start !== undefined &&
+    markers.text.startsWith("/**", start)
+  ) {
+    return markDocLines(docCommentLines(markers.text, start), (block) =>
+      jsdocCopyId(markers.file, start, block),
+    );
+  }
+  return cleanDocComment(raw).split("\n");
+}
+
+function parseJSDoc(node: Node, markers?: MarkerContext): ParsedJSDoc {
   const raw = getJsDocText(node);
   if (!raw) {
     return {
@@ -166,14 +296,16 @@ function parseJSDoc(node: Node): ParsedJSDoc {
       hasResourceTag: false,
       hasBindingTag: false,
       hasLayerTag: false,
+      hasPrimitiveTag: false,
       provides: [],
       peers: [],
       category: "",
       product: "",
+      title: "",
     };
   }
 
-  const lines = cleanDocComment(raw).split("\n");
+  const lines = docLines(node, raw, markers);
 
   const summaryLines: string[] = [];
   const sections: ExampleSection[] = [];
@@ -182,8 +314,10 @@ function parseJSDoc(node: Node): ParsedJSDoc {
   let hasResourceTag = false;
   let hasBindingTag = false;
   let hasLayerTag = false;
+  let hasPrimitiveTag = false;
   let category = "";
   let product = "";
+  let title = "";
   let sawTag = false;
   let currentSection: ExampleSection | undefined;
   let currentExample: ExampleBlock | undefined;
@@ -231,27 +365,18 @@ function parseJSDoc(node: Node): ParsedJSDoc {
       sawTag = true;
       flushExample();
       flushSectionDesc();
-      currentSection = {
-        title: section[1]!.trim(),
-        description: "",
-        examples: [],
-      };
+      currentSection = { title: section[1]!.trim(), description: "", examples: [] };
       sections.push(currentSection);
       collectingSectionDesc = true;
       continue;
     }
 
-    const example = insideFence
-      ? null
-      : line.trim().match(/^\*\*Example:\*\*\s*(.*)$/);
+    const example = insideFence ? null : line.trim().match(/^\*\*Example:\*\*\s*(.*)$/);
     if (example) {
       sawTag = true;
       flushSectionDesc();
       flushExample();
-      currentExample = {
-        title: example[1]!.trim() || "Example",
-        body: "",
-      };
+      currentExample = { title: example[1]!.trim() || "Example", body: "" };
       continue;
     }
 
@@ -270,6 +395,9 @@ function parseJSDoc(node: Node): ParsedJSDoc {
         case "layer":
           hasLayerTag = true;
           break;
+        case "primitive":
+          hasPrimitiveTag = true;
+          break;
         case "provides":
           if (value) provides.push(value);
           break;
@@ -284,14 +412,13 @@ function parseJSDoc(node: Node): ParsedJSDoc {
         case "label":
           if (value) product = value;
           break;
+        case "title":
+          if (value) title = value;
+          break;
         case "section":
           flushExample();
           flushSectionDesc();
-          currentSection = {
-            title: value || "Examples",
-            description: "",
-            examples: [],
-          };
+          currentSection = { title: value || "Examples", description: "", examples: [] };
           sections.push(currentSection);
           collectingSectionDesc = true;
           break;
@@ -325,10 +452,12 @@ function parseJSDoc(node: Node): ParsedJSDoc {
     hasResourceTag,
     hasBindingTag,
     hasLayerTag,
+    hasPrimitiveTag,
     provides,
     peers,
     category,
     product,
+    title,
   };
 }
 
@@ -338,6 +467,7 @@ function declName(node: Node): string {
   }
   if (
     ts.isClassDeclaration(node) ||
+    ts.isFunctionDeclaration(node) ||
     ts.isInterfaceDeclaration(node) ||
     ts.isTypeAliasDeclaration(node)
   ) {
@@ -353,8 +483,7 @@ interface Primary {
   product: string;
 }
 
-const hasContent = (doc: ParsedJSDoc) =>
-  Boolean(doc.summary) || doc.sections.length > 0;
+const hasContent = (doc: ParsedJSDoc) => Boolean(doc.summary) || doc.sections.length > 0;
 
 /**
  * Map a public export name back to its local declaration name when a file
@@ -368,19 +497,14 @@ export function exportedNames(sourceFile: SourceFile): string[] {
     if (ts.isIdentifier(name)) names.add(name.text);
     else
       for (const element of name.elements) {
-        if (ts.isBindingElement(element) && element.name)
-          addBinding(element.name);
+        if (ts.isBindingElement(element) && element.name) addBinding(element.name);
       }
   };
   for (const statement of sourceFile.statements) {
     if (ts.isExportDeclaration(statement)) {
       if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
-        for (const spec of statement.exportClause.elements)
-          names.add(spec.name.text);
-      } else if (
-        statement.exportClause &&
-        ts.isNamespaceExport(statement.exportClause)
-      ) {
+        for (const spec of statement.exportClause.elements) names.add(spec.name.text);
+      } else if (statement.exportClause && ts.isNamespaceExport(statement.exportClause)) {
         names.add(statement.exportClause.name.text);
       }
     } else if (ts.isExportAssignment(statement)) {
@@ -396,8 +520,7 @@ export function exportedNames(sourceFile: SourceFile): string[] {
         ts.isImportEqualsDeclaration(statement)) &&
       statement.modifierFlags & ts.ModifierFlags.Export
     ) {
-      if (statement.modifierFlags & ts.ModifierFlags.Default)
-        names.add("default");
+      if (statement.modifierFlags & ts.ModifierFlags.Default) names.add("default");
       else if (ts.isVariableStatement(statement)) {
         for (const declaration of statement.declarationList.declarations)
           addBinding(declaration.name);
@@ -417,10 +540,7 @@ export function exportedNames(sourceFile: SourceFile): string[] {
   return [...names];
 }
 
-function localNameForExport(
-  sourceFile: SourceFile,
-  publicName: string,
-): string | undefined {
+function localNameForExport(sourceFile: SourceFile, publicName: string): string | undefined {
   for (const ed of sourceFile.statements.filter(ts.isExportDeclaration)) {
     if (ed.moduleSpecifier) continue;
     for (const spec of ed.exportClause && ts.isNamedExports(ed.exportClause)
@@ -443,7 +563,10 @@ function localNameForExport(
  * When the tagged declaration itself has no content, pull it from that related
  * declaration so the page isn't dropped as empty.
  */
-export function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
+export function findTaggedPrimary(
+  sourceFile: SourceFile,
+  markers?: MarkerContext,
+): Primary | undefined {
   const candidates: Node[] = [
     ...sourceFile.statements
       .filter(ts.isVariableStatement)
@@ -454,22 +577,33 @@ export function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
     ...sourceFile.statements
       .filter(ts.isInterfaceDeclaration)
       .filter((i) => Boolean(i.modifierFlags & ts.ModifierFlags.Export)),
+    // An overloaded function carries its JSDoc on the first signature.
+    ...sourceFile.statements
+      .filter(ts.isFunctionDeclaration)
+      .filter((f) => Boolean(f.modifierFlags & ts.ModifierFlags.Export)),
   ];
 
   for (const node of candidates) {
-    const doc = parseJSDoc(node);
-    if (!doc.hasResourceTag && !doc.hasBindingTag && !doc.hasLayerTag) {
+    const doc = parseJSDoc(node, markers);
+    if (!doc.hasResourceTag && !doc.hasBindingTag && !doc.hasLayerTag && !doc.hasPrimitiveTag) {
       continue;
     }
-    const name = declName(node);
-    if (!name) continue;
+    // A primitive is its module's `make`; the page is named after the module.
+    const exportName = doc.hasPrimitiveTag
+      ? normalizeSlashes(sourceFile.fileName)
+          .split("/")
+          .pop()!
+          .replace(/\.tsx?$/, "")
+      : declName(node);
+    if (!exportName) continue;
+    const name = doc.title || exportName;
     const category = doc.category;
     const product = doc.product;
     if (hasContent(doc)) return { name, doc, category, product };
 
     // Tagged declaration has no prose — look for the related declaration that
     // carries the docs (same name, or re-exported under this name).
-    const localName = localNameForExport(sourceFile, name);
+    const localName = localNameForExport(sourceFile, exportName);
     const related: Node[] = [
       ...sourceFile.statements.filter(ts.isVariableStatement),
       ...sourceFile.statements.filter(ts.isClassDeclaration),
@@ -478,12 +612,12 @@ export function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
     ].filter((d) => {
       if (d === node) return false;
       const dn = declName(d);
-      return dn === name || (localName !== undefined && dn === localName);
+      return dn === exportName || (localName !== undefined && dn === localName);
     });
 
     let best: ParsedJSDoc | undefined;
     for (const d of related) {
-      const pd = parseJSDoc(d);
+      const pd = parseJSDoc(d, markers);
       if (pd.sections.length > 0) {
         best = pd;
         break;
@@ -496,44 +630,13 @@ export function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
       hasResourceTag: doc.hasResourceTag,
       hasBindingTag: doc.hasBindingTag,
       hasLayerTag: doc.hasLayerTag,
+      hasPrimitiveTag: doc.hasPrimitiveTag,
       provides: doc.provides,
       peers: doc.peers,
     };
     return { name, doc: merged, category, product };
   }
   return undefined;
-}
-
-const LINK_TAG_RE = /\{@link\s+([^}]+)\}/g;
-
-/** Split a `{@link ...}` tag's inner text into target + optional label. */
-function parseLinkTag(inner: string): { target: string; label?: string } {
-  const trimmed = inner.trim();
-  const pipe = trimmed.indexOf("|");
-  if (pipe !== -1) {
-    return {
-      target: trimmed.slice(0, pipe).trim(),
-      label: trimmed.slice(pipe + 1).trim() || undefined,
-    };
-  }
-  const space = trimmed.search(/\s/);
-  if (space !== -1) {
-    return {
-      target: trimmed.slice(0, space).trim(),
-      label: trimmed.slice(space + 1).trim() || undefined,
-    };
-  }
-  return { target: trimmed };
-}
-
-/**
- * Reduce a typedoc-style `import("./Secrets.ts").Secrets` target to the bare
- * symbol name — resolution (same-directory first) and display both want the
- * name, not the module expression.
- */
-function normalizeLinkTarget(target: string): string {
-  const match = target.match(/^import\((["'])[^"']+\1\)\.(.+)$/);
-  return match ? match[2] : target;
 }
 
 /** Resolves a `{@link}` symbol target to a generated page URL, if any. */
@@ -549,9 +652,7 @@ type LinkResolver = (target: string) => string | undefined;
  * (`Cluster#capacityProviders`), provider-qualified names (`Cloudflare.Worker`)
  * and `FooProps` interfaces resolve to the base resource's page.
  */
-function makeLinkResolverFactory(
-  pages: PageEntry[],
-): (fromDir: string) => LinkResolver {
+function makeLinkResolverFactory(pages: PageEntry[]): (fromDir: string) => LinkResolver {
   const byName = new Map<string, PageEntry[]>();
   const byExport = new Map<string, PageEntry[]>();
   for (const p of pages) {
@@ -579,9 +680,7 @@ function makeLinkResolverFactory(
       if (sameDirExporting.length === 1) return sameDirExporting[0];
       const providerNamed = named.filter((c) => c.provider === fromProvider);
       if (providerNamed.length === 1) return providerNamed[0];
-      const providerExporting = exporting.filter(
-        (c) => c.provider === fromProvider,
-      );
+      const providerExporting = exporting.filter((c) => c.provider === fromProvider);
       if (providerExporting.length === 1) return providerExporting[0];
       if (named.length === 1) return named[0];
       return undefined;
@@ -642,10 +741,7 @@ function linkifyMarkdown(markdown: string, resolve: LinkResolver): string {
       const target = normalizeLinkTarget(parsed.target);
       const url = resolve(target);
       if (!url) {
-        unresolvedLinkTargets.set(
-          target,
-          (unresolvedLinkTargets.get(target) ?? 0) + 1,
-        );
+        unresolvedLinkTargets.set(target, (unresolvedLinkTargets.get(target) ?? 0) + 1);
       }
       const text = label ?? `\`${target}\``;
       return url ? `[${text}](${url})` : text;
@@ -679,25 +775,11 @@ function linkifyMarkdown(markdown: string, resolve: LinkResolver): string {
   return out.join("\n");
 }
 
-/** Reduce `{@link ...}` tags to plain text for frontmatter descriptions. */
-function stripLinkTags(text: string): string {
-  return text.replace(LINK_TAG_RE, (_, inner: string) => {
-    const { target, label } = parseLinkTag(inner.replace(/\s+/g, " "));
-    return (label ?? normalizeLinkTarget(target)).replace(/`/g, "");
-  });
-}
-
 function yamlString(value: string): string {
   if (/[\n:"{}[\],&*?|>!%@`#]/.test(value) || value.trim() !== value) {
     return JSON.stringify(value);
   }
   return value;
-}
-
-function firstParagraph(value: string): string {
-  const idx = value.indexOf("\n\n");
-  const para = idx === -1 ? value : value.slice(0, idx);
-  return para.replace(/\s+/g, " ").trim();
 }
 
 function renderPageBody(doc: PageDoc): string {
@@ -724,44 +806,35 @@ function renderPageBody(doc: PageDoc): string {
   return parts.join("\n\n");
 }
 
-function renderPage(doc: PageDoc, resolve: LinkResolver): string {
-  const description =
-    stripLinkTags(firstParagraph(doc.summary)) ||
-    `API reference for ${doc.title}`;
-  const frontmatter = [
+function renderReferenceFrontmatter(title: string): string {
+  return [
     "---",
-    `title: ${yamlString(doc.title)}`,
-    `description: ${yamlString(description)}`,
-    // Generated reference pages are ~4k near-identical one-paragraph +
-    // one-snippet stubs (92% of the site). Indexed as separate documents
-    // they read as programmatic thin content, dilute crawl budget, and are
-    // what surfaces as "random" search results instead of the hub and
-    // guide pages. Keep them navigable and crawlable (`follow`) but out of
-    // search indexes; the sitemap integration drops any page carrying this
-    // meta. Revisit once pages are consolidated per service / carry real
-    // prose — this is the only line to change.
+    `title: ${yamlString(`${title} reference`)}`,
+    `description: ${yamlString(`Resources and capabilities for ${title}.`)}`,
+    // Keep the existing search-engine indexing policy during this experiment.
     "head:",
     "  - tag: meta",
     "    attrs:",
     "      name: robots",
     '      content: "noindex, follow"',
+    "prev: false",
+    "next: false",
+    "tableOfContents:",
+    "  minHeadingLevel: 2",
+    "  maxHeadingLevel: 2",
     "---",
   ].join("\n");
+}
 
+function renderResource(doc: PageDoc, resolve: LinkResolver): string {
   const headerLines = [`> **Source:** \`${doc.sourceDisplay}\``];
   if (doc.isLayer) {
     const meta = ["**Kind:** Layer"];
     if (doc.provides.length > 0) {
-      meta.push(
-        `**Provides:** ${doc.provides.map((tag) => `\`${tag}\``).join(", ")}`,
-      );
+      meta.push(`**Provides:** ${doc.provides.map((tag) => `\`${tag}\``).join(", ")}`);
     }
     if (doc.peers.length > 0) {
-      meta.push(
-        `**Peer dependencies:** ${doc.peers
-          .map((peer) => `\`${peer}\``)
-          .join(", ")}`,
-      );
+      meta.push(`**Peer dependencies:** ${doc.peers.map((peer) => `\`${peer}\``).join(", ")}`);
     }
     headerLines.push(`> ${meta.join(" · ")}`);
   }
@@ -769,19 +842,63 @@ function renderPage(doc: PageDoc, resolve: LinkResolver): string {
   const body = linkifyMarkdown(renderPageBody(doc).trim(), resolve);
 
   if (body) {
-    return `${frontmatter}\n\n${sourceBlock}\n\n${body}\n`;
+    return `${sourceBlock}\n\n${body}\n`;
   }
-  return `${frontmatter}\n\n${sourceBlock}\n`;
+  return `${sourceBlock}\n`;
+}
+
+/** Change this grouping to experiment with larger or smaller reference pages. */
+function referenceLocation(outputRelative: string, product: string) {
+  const parts = normalizeSlashes(outputRelative).replace(/\.md$/, "").split("/");
+  // Flat providers declare service-sized pages with @product instead of
+  // folders; a resource without one gets its own page.
+  const group =
+    parts.length > 2
+      ? parts.slice(0, 2)
+      : product
+        ? [
+            parts[0],
+            "reference",
+            product
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, ""),
+          ]
+        : parts;
+  const title = parts.slice(parts.length > 2 ? 2 : 1).join("-");
+  return {
+    outputRelative: `${group.join("/")}.md`,
+    title:
+      parts.length > 2 ? group.join(".") : product ? `${parts[0]}.${product}` : parts.join("."),
+    resourceTitle: title,
+    link: `/providers/${group.join("/").toLowerCase()}#${title.toLowerCase()}`,
+  };
+}
+
+/** Keep example headings below their resource, with resource-scoped slugs. */
+function nestResourceHeadings(markdown: string, resource: string): string {
+  let fence: string | undefined;
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+      if (marker) {
+        if (!fence) fence = marker[1];
+        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = undefined;
+        return line;
+      }
+      if (fence) return line;
+      return line.replace(
+        /^(#{1,6})\s+(.+)$/,
+        (_, hashes: string, title: string) =>
+          `${"#".repeat(Math.min(6, Math.max(3, hashes.length + 1)))} ${resource}: ${title}`,
+      );
+    })
+    .join("\n");
 }
 
 /** Providers shown first in the sidebar; the rest follow alphabetically. */
 const PROVIDER_ORDER = ["AWS", "Cloudflare"];
-
-/**
- * Uncategorized providers with at most this many pages render as a flat
- * resource list instead of per-service folders (see buildProvidersSidebar).
- */
-const FLAT_PROVIDER_MAX_PAGES = 16;
 
 interface SidebarLeaf {
   label: string;
@@ -807,8 +924,7 @@ interface PageEntry {
   exports: string[];
 }
 
-const byLabel = (a: { label: string }, b: { label: string }) =>
-  a.label.localeCompare(b.label);
+const byLabel = (a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label);
 
 function orderedKeys(keys: string[], order: string[]): string[] {
   const ranked = keys.filter((k) => order.includes(k));
@@ -817,45 +933,11 @@ function orderedKeys(keys: string[], order: string[]): string[] {
   return [...ranked, ...rest];
 }
 
-/**
- * Build sidebar items for one set of pages sharing a provider+category:
- * every product is its own collapsible folder containing its resource
- * pages, mirroring how Cloudflare's API reference gives each product its
- * own section — even single-page products like D1 or Organization — so
- * the grouping is uniform.
- *
- * Grouping is by resolved product LABEL (`@product`, falling back to the
- * service dir name), not by directory: two directories declaring the same
- * product merge into one group instead of rendering duplicate siblings.
- *
- * A group that would hold exactly one page named the same as the group
- * (a flat provider dir where the label falls back to the resource name,
- * e.g. "Certificate > Certificate") carries no information — collapse it
- * to a plain leaf. Genuine single-page products keep their folder (the
- * label differs, e.g. Cloudflare's "D1 > Database").
- */
+/** The sidebar lists documents; resource anchors live in the page's TOC. */
 function buildServiceItems(pages: PageEntry[]): SidebarItem[] {
-  const byLabelKey = new Map<string, PageEntry[]>();
-  for (const p of pages) {
-    const key = p.product || p.service || p.resource;
-    if (!byLabelKey.has(key)) byLabelKey.set(key, []);
-    byLabelKey.get(key)!.push(p);
-  }
-  const items: SidebarItem[] = [];
-  for (const [label, productPages] of byLabelKey) {
-    if (productPages.length === 1 && productPages[0].resource === label) {
-      items.push({ label, link: productPages[0].link });
-      continue;
-    }
-    items.push({
-      label,
-      collapsed: true,
-      items: productPages
-        .map((p) => ({ label: p.resource, link: p.link }))
-        .sort(byLabel),
-    });
-  }
-  return items.sort(byLabel);
+  return pages
+    .map((page) => ({ label: page.product || page.service || page.resource, link: page.link }))
+    .sort(byLabel);
 }
 
 function buildProvidersSidebar(entries: PageEntry[]): SidebarItem[] {
@@ -867,57 +949,21 @@ function buildProvidersSidebar(entries: PageEntry[]): SidebarItem[] {
 
   const providers: SidebarGroup[] = [];
   for (const provider of orderedKeys([...byProvider.keys()], PROVIDER_ORDER)) {
-    const pages = byProvider.get(provider)!;
+    const byPage = new Map<string, PageEntry[]>();
+    for (const entry of byProvider.get(provider)!) {
+      const link = entry.link.split("#")[0];
+      if (!byPage.has(link)) byPage.set(link, []);
+      byPage.get(link)!.push(entry);
+    }
+    const pages = [...byPage].map(([link, resources]) => ({
+      ...resources[0],
+      link,
+      product: resources.every((resource) => resource.product === resources[0].product)
+        ? resources[0].product
+        : "",
+    }));
 
-    // `@category` is per-file; a documented file that omits it must not fall
-    // out of its service's category and render a duplicate service group at
-    // the provider root. Inherit the category any sibling page of the same
-    // service dir declares.
-    const categoryByService = new Map<string, string>();
-    for (const p of pages) {
-      if (p.service && p.category && !categoryByService.has(p.service)) {
-        categoryByService.set(p.service, p.category);
-      }
-    }
-
-    const categorized = new Map<string, PageEntry[]>();
-    const uncategorized: PageEntry[] = [];
-    for (const p of pages) {
-      const category = p.category || categoryByService.get(p.service) || "";
-      if (category) {
-        if (!categorized.has(category)) categorized.set(category, []);
-        categorized.get(category)!.push(p);
-      } else {
-        uncategorized.push(p);
-      }
-    }
-
-    const items: SidebarItem[] = [];
-    for (const cat of [...categorized.keys()].sort((a, b) =>
-      a.localeCompare(b),
-    )) {
-      items.push({
-        label: cat,
-        collapsed: true,
-        items: buildServiceItems(categorized.get(cat)!),
-      });
-    }
-    if (categorized.size === 0 && pages.length <= FLAT_PROVIDER_MAX_PAGES) {
-      // Small uncategorized providers (Neon, Planetscale, Axiom, GitHub, …)
-      // render as a flat resource list — per-service folders around one or
-      // two pages ("Branch > Branch") are redundant nesting, and prefixed
-      // resource names (MySQLBranch/PostgresBranch) already carry the
-      // grouping information.
-      items.push(
-        ...uncategorized
-          .map((p) => ({ label: p.resource, link: p.link }))
-          .sort(byLabel),
-      );
-    } else {
-      // Pages without a category fall back to service grouping directly under
-      // the provider (this is how AWS renders until it gets categorized).
-      items.push(...buildServiceItems(uncategorized));
-    }
+    const items = buildServiceItems(pages);
 
     providers.push({ label: provider, collapsed: true, items });
   }
@@ -951,163 +997,251 @@ function assertNoDuplicateSiblings(items: SidebarItem[], path: string[]) {
   }
 }
 
-async function main() {
-  await fs.rm(config.outRoot, { recursive: true, force: true });
-  await fs.mkdir(config.outRoot, { recursive: true });
+/**
+ * Writes `content` only when it differs from what's on disk, so a dev server
+ * watching the output reloads just the pages that changed.
+ */
+const writeIfChanged = Effect.fn(function* (file: string, content: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const current = yield* fs
+    .readFileString(file)
+    .pipe(Effect.orElseSucceed((): string | undefined => undefined));
+  if (current === content) return false;
+  yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+  yield* fs.writeFileString(file, content);
+  return true;
+});
 
-  const seen = new Map<string, string>();
-  const pageEntries: PageEntry[] = [];
-  const pending: { outputRelative: string; doc: PageDoc }[] = [];
-  let written = 0;
-  let skipped = 0;
-
-  for (const root of config.roots) {
-    const entries = await discoverFiles(root);
-    console.log(
-      `Discovered ${entries.length} source files in ${normalizeSlashes(
-        path.relative(path.join(import.meta.dir, ".."), root.srcRoot),
-      )}.`,
-    );
-
-    await using syntax = await createSyntaxProject(
-      entries.map((entry) => entry.absolutePath),
-    );
-
-    for (const entry of entries) {
-      const sourceFile = await syntax.project.program.getSourceFile(
-        entry.absolutePath,
-      );
-      if (!sourceFile) {
-        throw new Error(`Missing source file ${entry.absolutePath}`);
+/** Deletes files under `dir` not in `keep`, then any directories left empty. */
+const pruneOutput = (
+  dir: string,
+  keep: Set<string>,
+): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed((): string[] => []));
+    for (const name of entries) {
+      const full = path.join(dir, name);
+      const info = yield* fs.stat(full);
+      if (info.type === "Directory") {
+        yield* pruneOutput(full, keep);
+        const left = yield* fs.readDirectory(full).pipe(Effect.orElseSucceed((): string[] => []));
+        if (left.length === 0) yield* fs.remove(full, { recursive: true }).pipe(Effect.ignore);
+      } else if (!keep.has(full)) {
+        yield* fs.remove(full, { force: true });
       }
-
-      const primary = findTaggedPrimary(sourceFile);
-      if (!primary) {
-        skipped++;
-        continue;
-      }
-
-      // Only emit a page when there's actual documented content; a bare
-      // frontmatter + source link stub is noise.
-      if (!primary.doc.summary && primary.doc.sections.length === 0) {
-        skipped++;
-        continue;
-      }
-
-      // Mirror the source directory structure; name the page after the
-      // tagged declaration (e.g. Cloudflare.AI.Search/AiSearchInstance.md).
-      const relDir = path.dirname(entry.relativePath);
-      const outputRelative = path.join(relDir, `${primary.name}.md`);
-
-      const existing = seen.get(outputRelative);
-      if (existing) {
-        console.warn(
-          `  collision: ${outputRelative} from ${entry.relativePath} (already from ${existing})`,
-        );
-      }
-      seen.set(outputRelative, entry.relativePath);
-
-      const doc: PageDoc = {
-        title: primary.name,
-        sourceDisplay: entry.sourceDisplay,
-        summary: primary.doc.summary,
-        sections: primary.doc.sections,
-        isLayer: primary.doc.hasLayerTag,
-        provides: primary.doc.provides,
-        peers: primary.doc.peers,
-      };
-      pending.push({ outputRelative, doc });
-
-      const exportNames = exportedNames(sourceFile);
-
-      const segments = normalizeSlashes(outputRelative).split("/");
-      pageEntries.push({
-        provider: segments[0] ?? "",
-        service: segments.length > 2 ? segments[1] : "",
-        resource: primary.name,
-        category: primary.category,
-        product: primary.product,
-        link: `/providers/${normalizeSlashes(outputRelative)
-          .replace(/\.md$/, "")
-          .toLowerCase()}`,
-        dir: normalizeSlashes(relDir),
-        exports: exportNames,
-      });
     }
-  }
+  });
 
-  // Second pass: render with `{@link}` resolution — the full page set must be
-  // known before symbol targets can resolve to their pages.
-  const resolverFor = makeLinkResolverFactory(pageEntries);
-  for (const page of pending) {
-    const resolve = resolverFor(
-      normalizeSlashes(path.dirname(page.outputRelative)),
+class DuplicateReferenceAnchor extends Data.TaggedError("DuplicateReferenceAnchor")<{
+  readonly message: string;
+}> {}
+
+const command = Command.make(
+  "generate-api-reference",
+  {
+    copyMarkers: Flag.Boolean("copy-markers").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription(
+        "Emit copy-editor markers for the website's dev server (also API_REFERENCE_COPY_MARKERS=1)",
+      ),
+    ),
+  },
+  Effect.fn(function* (flags) {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const websiteRoot = path.join(repoRoot, "website");
+    const envCopyMarkers = yield* Config.String("API_REFERENCE_COPY_MARKERS").pipe(
+      Config.withDefault(""),
     );
-    const outputPath = path.join(config.outRoot, page.outputRelative);
-    await fs.mkdir(path.dirname(outputPath), { recursive: true });
-    await fs.writeFile(outputPath, renderPage(page.doc, resolve), "utf8");
-    written++;
-  }
+    const config = {
+      outRoot: path.join(websiteRoot, "src/content/docs/providers"),
+      /**
+       * Emit `<!--copy:jsdoc:...-->` markers after each prose block so the
+       * website's dev-time copy editor can map rendered text back to the JSDoc
+       * it came from. Dev only — production builds never set this.
+       */
+      copyMarkers: envCopyMarkers === "1" || flags.copyMarkers,
+    };
 
-  const sidebar = buildProvidersSidebar(pageEntries);
+    yield* fs.makeDirectory(config.outRoot, { recursive: true });
+    const outputs = new Set<string>();
 
-  // Landing page for the Reference tab (/providers): a provider directory.
-  // Each provider's reference belongs to its docs hub — the directory just
-  // routes there (or into the tree, for providers without a hub). The
-  // ProviderDirectory component reads the generated sidebar for counts.
-  // Regenerated with the rest of the tree on every run.
-  const referenceIndex = [
-    "---",
-    "title: API Reference",
-    "description: Every provider alchemy can manage — pick a provider to open its docs hub and resource reference.",
-    "---",
-    "",
-    'import ProviderDirectory from "../../../components/ProviderDirectory.astro";',
-    "",
-    "Every resource alchemy can manage, documented from the source JSDoc and",
-    "organized by provider. A provider's reference lives in its docs hub —",
-    "pick one below, or search with `⌘K`.",
-    "",
-    "<ProviderDirectory />",
-    "",
-  ].join("\n");
-  await fs.rm(path.join(config.outRoot, "index.md"), { force: true });
-  await fs.writeFile(
-    path.join(config.outRoot, "index.mdx"),
-    referenceIndex,
-    "utf8",
-  );
+    const seen = new Map<string, string>();
+    const pageEntries: PageEntry[] = [];
+    const pending: { outputRelative: string; product: string; doc: PageDoc }[] = [];
+    let written = 0;
+    const redirects: Record<string, string> = {};
+    const anchors = new Set<string>();
+    let skipped = 0;
 
-  const sidebarPath = path.join(
-    websiteRoot,
-    "src/generated/providers-sidebar.json",
-  );
-  await fs.mkdir(path.dirname(sidebarPath), { recursive: true });
-  await fs.writeFile(
-    sidebarPath,
-    `${JSON.stringify(sidebar, null, 2)}\n`,
-    "utf8",
-  );
+    for (const root of sourceRoots) {
+      const entries = yield* discoverFiles(repoRoot, root);
+      yield* Console.log(`Discovered ${entries.length} source files in ${root.srcRoot}.`);
 
-  console.log(
-    `Done. Wrote ${written} resource pages (skipped ${skipped} untagged) to ${normalizeSlashes(
-      path.relative(path.join(import.meta.dir, ".."), config.outRoot),
-    )}.`,
-  );
-  if (unresolvedLinkTargets.size > 0) {
-    const list = [...unresolvedLinkTargets.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([target, n]) => (n > 1 ? `${target} ×${n}` : target))
-      .join(", ");
-    console.log(
-      `{@link} targets without a page (rendered as inline code): ${list}`,
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const syntax = yield* createSyntaxProject(entries.map((entry) => entry.absolutePath));
+
+          for (const entry of entries) {
+            const sourceFile = yield* syntax.getSourceFile(entry.absolutePath);
+
+            const primary = findTaggedPrimary(
+              sourceFile,
+              config.copyMarkers
+                ? {
+                    file: normalizeSlashes(path.relative(repoRoot, entry.absolutePath)),
+                    text: sourceFile.text,
+                  }
+                : undefined,
+            );
+            if (!primary) {
+              skipped++;
+              continue;
+            }
+
+            // Only emit a page when there's actual documented content; a bare
+            // frontmatter + source link stub is noise.
+            if (!primary.doc.summary && primary.doc.sections.length === 0) {
+              skipped++;
+              continue;
+            }
+
+            // Mirror the source directory structure; name the page after the
+            // tagged declaration (e.g. Cloudflare.AI.Search/AiSearchInstance.md).
+            const relDir = path.dirname(entry.relativePath);
+            const outputRelative = path.join(relDir, `${primary.name}.md`);
+
+            const existing = seen.get(outputRelative);
+            if (existing) {
+              yield* Console.warn(
+                `  collision: ${outputRelative} from ${entry.relativePath} (already from ${existing})`,
+              );
+            }
+            seen.set(outputRelative, entry.relativePath);
+
+            const doc: PageDoc = {
+              title: primary.name,
+              sourceDisplay: entry.sourceDisplay,
+              summary: primary.doc.summary,
+              sections: primary.doc.sections,
+              isLayer: primary.doc.hasLayerTag,
+              provides: primary.doc.provides,
+              peers: primary.doc.peers,
+            };
+            pending.push({ outputRelative, product: primary.product, doc });
+
+            const exportNames = exportedNames(sourceFile);
+
+            const segments = normalizeSlashes(outputRelative).split("/");
+            const location = referenceLocation(outputRelative, primary.product);
+            const oldLink = `/providers/${normalizeSlashes(outputRelative).replace(/\.md$/, "").toLowerCase()}`;
+            if (anchors.has(location.link)) {
+              return yield* new DuplicateReferenceAnchor({
+                message: `Duplicate reference anchor: ${location.link}`,
+              });
+            }
+            anchors.add(location.link);
+            // A resource whose page kept its old URL needs no redirect.
+            if (oldLink !== location.link.split("#")[0]) redirects[oldLink] = location.link;
+            pageEntries.push({
+              provider: segments[0] ?? "",
+              service: segments.length > 2 ? segments[1] : "",
+              resource: primary.name,
+              category: primary.category,
+              product: primary.product,
+              link: location.link,
+              dir: normalizeSlashes(relDir),
+              exports: exportNames,
+            });
+          }
+        }),
+      );
+    }
+
+    // Second pass: render with `{@link}` resolution — the full page set must be
+    // known before symbol targets can resolve to their pages.
+    const resolverFor = makeLinkResolverFactory(pageEntries);
+    const groups = new Map<string, { title: string; sections: string[] }>();
+    for (const page of pending) {
+      const location = referenceLocation(page.outputRelative, page.product);
+      const resolve = resolverFor(normalizeSlashes(path.dirname(page.outputRelative)));
+      const group = groups.get(location.outputRelative) ?? { title: location.title, sections: [] };
+      group.sections.push(
+        `## ${location.resourceTitle}\n\n${nestResourceHeadings(renderResource(page.doc, resolve), location.resourceTitle)}`,
+      );
+      groups.set(location.outputRelative, group);
+    }
+    for (const [relative, group] of groups) {
+      const outputPath = path.join(config.outRoot, relative);
+      outputs.add(outputPath);
+      if (
+        yield* writeIfChanged(
+          outputPath,
+          `${renderReferenceFrontmatter(group.title)}\n\n${group.sections.join("\n\n")}\n`,
+        )
+      ) {
+        written++;
+      }
+    }
+
+    const sidebar = buildProvidersSidebar(pageEntries);
+
+    // Landing page for the Reference tab (/providers): a provider directory.
+    // Each provider's reference belongs to its docs hub — the directory just
+    // routes there (or into the tree, for providers without a hub). The
+    // ProviderDirectory component reads the generated sidebar for counts.
+    // Regenerated with the rest of the tree on every run.
+    const referenceIndex = [
+      "---",
+      "title: API Reference",
+      "description: Every provider alchemy can manage — pick a provider to open its docs hub and resource reference.",
+      "---",
+      "",
+      'import ProviderDirectory from "../../../components/ProviderDirectory.astro";',
+      "",
+      "Every resource alchemy can manage, documented from the source JSDoc and",
+      "organized by provider. A provider's reference lives in its docs hub —",
+      "pick one below, or search with `⌘K`.",
+      "",
+      "<ProviderDirectory />",
+      "",
+    ].join("\n");
+    const indexPath = path.join(config.outRoot, "index.mdx");
+    outputs.add(indexPath);
+    yield* writeIfChanged(indexPath, referenceIndex);
+    yield* pruneOutput(config.outRoot, outputs);
+
+    const sidebarPath = path.join(websiteRoot, "src/generated/providers-sidebar.json");
+    yield* writeIfChanged(
+      path.join(websiteRoot, "src/generated/reference-redirects.json"),
+      `${JSON.stringify(redirects, null, 2)}\n`,
     );
-  }
-  console.log(
-    `Wrote provider sidebar to ${normalizeSlashes(
-      path.relative(path.join(import.meta.dir, ".."), sidebarPath),
-    )}.`,
-  );
-}
+    // astro.config imports the sidebar, so rewriting it restarts a dev server.
+    yield* writeIfChanged(sidebarPath, `${JSON.stringify(sidebar, null, 2)}\n`);
 
-if (import.meta.main) await main();
+    yield* Console.log(
+      `Done. Wrote ${written} changed reference pages containing ${pending.length} resources (skipped ${skipped} untagged${
+        config.copyMarkers ? ", with copy markers" : ""
+      }) to ${normalizeSlashes(path.relative(repoRoot, config.outRoot))}.`,
+    );
+    if (unresolvedLinkTargets.size > 0) {
+      const list = [...unresolvedLinkTargets.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([target, n]) => (n > 1 ? `${target} ×${n}` : target))
+        .join(", ");
+      yield* Console.log(`{@link} targets without a page (rendered as inline code): ${list}`);
+    }
+    yield* Console.log(
+      `Wrote provider sidebar to ${normalizeSlashes(path.relative(repoRoot, sidebarPath))}.`,
+    );
+  }),
+).pipe(Command.withDescription("Generate the provider API reference from source JSDoc"));
+
+Command.run(command, { version: "0.0.0" }).pipe(
+  Effect.provide(NodeServices.layer),
+  NodeRuntime.runMain,
+);

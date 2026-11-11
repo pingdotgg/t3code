@@ -1,0 +1,19 @@
+---
+import DefaultMarkdownContent from "starlight-blog/overrides/MarkdownContent.astro";
+
+const reference = Astro.url.pathname.startsWith("/providers/");
+---
+
+<div class:list={{ "reference-content": reference }}>
+  <DefaultMarkdownContent><slot /></DefaultMarkdownContent>
+</div>
+
+<style>
+  /* Starlight sizes the permalink from the wrapper, so scale both together. */
+  .reference-content :global(.sl-markdown-content :is(h3, .sl-heading-wrapper.level-h3)) {
+    --sl-line-height-headings: 1.5;
+    font-size: 1.125rem;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+</style>

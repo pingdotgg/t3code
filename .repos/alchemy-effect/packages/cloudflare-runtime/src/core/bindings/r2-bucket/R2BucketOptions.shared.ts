@@ -10,7 +10,32 @@ export interface R2BucketProps {
    * persisted on disk.
    */
   readonly id?: string;
+  /**
+   * Serve the bucket over the local S3-compatible endpoint at
+   * `{worker url}/cdn-cgi/local/r2/s3/{id}`, authenticated with these AWS
+   * SigV4 credentials (Authorization header or presigned URL). Omit to keep
+   * the bucket off the endpoint.
+   */
+  readonly s3Credentials?: S3Credentials;
 }
+
+/** AWS SigV4 credentials guarding a bucket on the local S3 endpoint. */
+export interface S3Credentials {
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+}
+
+/** A bucket exposed on the local S3 endpoint. */
+export interface R2S3Bucket {
+  /** Name of the S3 worker's `r2Bucket` binding for this bucket. */
+  readonly binding: string;
+  readonly credentials: S3Credentials;
+}
+
+/** Path prefix of the local S3-compatible endpoint (same as Miniflare). */
+export const PATH_R2_S3 = "/cdn-cgi/local/r2/s3";
+export const BINDING_R2_S3_BUCKETS = "BUCKETS";
+export const BINDING_R2_S3_UPSTREAM = "UPSTREAM";
 
 /**
  * Service designator props passed to the R2 service entrypoint (`ctx.props`).
@@ -107,12 +132,9 @@ export function testR2Conditional(
   }
 
   const { etag, uploaded: lastModifiedRaw } = metadata;
-  const ifMatch =
-    cond.etagMatches === undefined ||
-    includesEtag(cond.etagMatches, etag, "strong");
+  const ifMatch = cond.etagMatches === undefined || includesEtag(cond.etagMatches, etag, "strong");
   const ifNoneMatch =
-    cond.etagDoesNotMatch === undefined ||
-    !includesEtag(cond.etagDoesNotMatch, etag, "weak");
+    cond.etagDoesNotMatch === undefined || !includesEtag(cond.etagDoesNotMatch, etag, "weak");
 
   const maybeTruncate = cond.secondsGranularity ? truncateToSeconds : identity;
   const lastModified = maybeTruncate(lastModifiedRaw);

@@ -1,15 +1,20 @@
+import { createCommandPermissions } from "./commandPermissions.ts";
+import { RpcPermissionGuard } from "../rpc/client.ts";
+import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  AuthSourceControlWriteScope,
+  AuthOrchestrationOperateScope,
   ProjectId,
   PullRequestOperationError,
   WS_METHODS,
-  type PullRequestStack,
+  type AuthSessionState,
+  type PullRequestListInput,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
-import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
@@ -17,7 +22,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -36,12 +41,12 @@ import type { RpcSession } from "../rpc/session.ts";
 import {
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
-  createPullRequestStackAtomFamily,
 } from "./pullRequests.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
-import { executeAtomQuery } from "./runtime.ts";
+import { executeAtomQuery, queryPersistenceKey } from "./runtime.ts";
+import { EnvironmentQueryStore } from "./queryPersistence.ts";
 import { createPullRequestRouter } from "./pullRequestRouting.ts";
-import { GitHubRoutingPermissions } from "../connection/githubRoutingPermissions.ts";
+import { PullRequestRoutingPermissions } from "../connection/pullRequestRoutingPermissions.ts";
 
 const trustedRouting = {
   get: () => Effect.succeed("read-write" as const),
@@ -50,7 +55,7 @@ const trustedRouting = {
   forget: () => Effect.void,
 };
 
-class MutationRefused extends Data.TaggedError("MutationRefused") {}
+class MutationRefused extends Schema.TaggedError<MutationRefused>()("MutationRefused", {}) {}
 
 for (const scenario of [
   "prefers the local environment with the same github account",
@@ -194,7 +199,8 @@ for (const scenario of [
             : route(WS_METHODS.pullRequestsRunAction, input)
         ).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-          Effect.provideService(GitHubRoutingPermissions, {
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+          Effect.provideService(PullRequestRoutingPermissions, {
             ...trustedRouting,
             get: () => Effect.succeed(trusted ? "read-write" : "off"),
           }),
@@ -236,82 +242,259 @@ for (const scenario of [
   );
 }
 
-it.effect.each(["github", "gitlab", "bitbucket", "azure-devops"] as const)(
-  "routes %s viewed marks to their storage environment",
-  (provider) =>
+it.effect.each([
+  { probe: "origin", cancelled: "first" },
+  { probe: "origin", cancelled: "waiter" },
+  { probe: "alternate", cancelled: "first" },
+  { probe: "alternate", cancelled: "waiter" },
+] as const)(
+  "preserves a shared $probe probe's other reader when the $cancelled cancels",
+  ({ probe, cancelled }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const reference = {
-          projectId: ProjectId.make("project-1"),
-          host: "github.com",
-          repository: "acme/web",
-          number: 7,
-        };
-        const calls: { environment: string; operation: string; input: unknown }[] = [];
-        const clientFor = (environment: string) =>
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let probes = 0;
+        const clientFor = (local: boolean) =>
           ({
-            [WS_METHODS.pullRequestsRouting]: () =>
-              Effect.succeed({
-                host: reference.host,
-                provider,
-                accountId: "123",
-                viewer: "maria-rcks",
+            [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
+              Effect.gen(function* () {
+                if (local === (probe === "alternate")) {
+                  probes++;
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(release);
+                }
+                return {
+                  host: "github.com",
+                  provider: "github",
+                  viewer: "maria",
+                  accountId: "123",
+                };
               }),
-            [WS_METHODS.pullRequestsRoutingIdentity]: () =>
-              Effect.succeed({
-                host: reference.host,
-                provider,
-                accountId: "123",
-                viewer: "maria-rcks",
+            [WS_METHODS.pullRequestsSummary]: () => Effect.succeed(null),
+          }) as unknown as WsRpcProtocolClient;
+        const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+          clientFor(false),
+          clientFor(true),
+        );
+        const read = () =>
+          createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
+            projectId: ProjectId.make("project-1"),
+            repository: "acme/web",
+            number: 7,
+          }).pipe(
+            Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
+          );
+        const first = yield* read().pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const waiter = yield* read().pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Fiber.interrupt(cancelled === "first" ? first : waiter);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(cancelled === "first" ? waiter : first)).toBeNull();
+        expect(probes).toBe(cancelled === "first" ? 2 : 1);
+        yield* read();
+        expect(probes).toBe(cancelled === "first" ? 3 : 2);
+      }),
+    ),
+);
+
+it.effect.each(["revoked", "disabled"] as const)(
+  "rechecks routing after an alternate with a shared probe is %s",
+  (change) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const reads: string[] = [];
+        let trusted = true;
+        let probes = 0;
+        const clientFor = (local: boolean) =>
+          ({
+            [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
+              Effect.gen(function* () {
+                if (local) {
+                  probes++;
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(release);
+                }
+                return {
+                  host: "github.com",
+                  provider: "github",
+                  viewer: "maria",
+                  accountId: "123",
+                };
               }),
-            [WS_METHODS.pullRequestsFilesViewed]: (input: unknown) =>
+            [WS_METHODS.pullRequestsSummary]: () =>
               Effect.sync(() => {
-                calls.push({ environment, operation: "read", input });
-                return { files: [{ path: "a.ts", state: "viewed" }], truncated: false };
-              }),
-            [WS_METHODS.pullRequestsSetFilesViewed]: (input: unknown) =>
-              Effect.sync(() => {
-                calls.push({ environment, operation: "write", input });
-              }),
-            [WS_METHODS.pullRequestsInvalidate]: (input: unknown) =>
-              Effect.sync(() => {
-                calls.push({ environment, operation: "invalidate", input });
+                reads.push(local ? "local" : "origin");
+                return null;
               }),
           }) as unknown as WsRpcProtocolClient;
         const { environmentRegistry, supervisor } = yield* makeTestRuntime(
-          clientFor("origin"),
-          clientFor("local"),
+          clientFor(false),
+          clientFor(true),
         );
-        const files = [{ path: "a.ts", viewed: false }];
-        const route = createPullRequestRouter();
-        yield* Effect.gen(function* () {
-          expect(yield* route(WS_METHODS.pullRequestsFilesViewed, reference)).toEqual({
-            files: [{ path: "a.ts", state: "viewed" }],
-            truncated: false,
-          });
-          yield* route(WS_METHODS.pullRequestsSetFilesViewed, { ...reference, files });
-        }).pipe(
+        const readers = yield* Effect.all(
+          Array.from({ length: 2 }, () =>
+            createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
+              projectId: ProjectId.make("project-1"),
+              repository: "acme/web",
+              number: 7,
+            }),
+          ),
+          { concurrency: "unbounded" },
+        ).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-          Effect.provideService(GitHubRoutingPermissions, trustedRouting),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.provideService(PullRequestRoutingPermissions, {
+            ...trustedRouting,
+            get: () => Effect.sync(() => (trusted ? "read-write" : "off")),
+          }),
+          Effect.forkChild,
         );
-        const environment = provider === "github" ? "local" : "origin";
-        const guard = provider === "github" ? { expectedAccountId: "123" } : {};
-        expect(calls.filter((call) => call.operation !== "invalidate")).toEqual([
-          { environment, operation: "read", input: { ...reference, allowStale: false, ...guard } },
-          { environment, operation: "write", input: { ...reference, files, ...guard } },
-        ]);
-        const invalidations = calls.filter((call) => call.operation === "invalidate");
-        if (provider === "github") expect(invalidations.length).toBeGreaterThan(0);
-        else expect(invalidations).toEqual([]);
-        for (const call of invalidations) {
-          expect(call.input).toEqual({
-            reference: expect.objectContaining(reference),
-            filesViewedOnly: true,
-          });
-        }
+        yield* Deferred.await(started);
+        yield* Effect.yieldNow;
+        if (change === "revoked") trusted = false;
+        else
+          yield* SubscriptionRef.update(
+            environmentRegistry.entries,
+            (entries) =>
+              new Map(
+                [...entries].map(([id, entry]) => [
+                  id,
+                  id === TARGET.environmentId ? entry : { ...entry, enabled: false },
+                ]),
+              ),
+          );
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(readers)).toEqual([null, null]);
+        expect(probes).toBe(1);
+        expect(reads).toEqual(["origin", "origin"]);
       }),
     ),
+);
+
+it.effect.each(["origin", "alternate"] as const)(
+  "keeps pending metadata from an old %s connection separate from its replacement",
+  (reconnected) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const probes: string[] = [];
+        const clientFor = (local: boolean, replacement = false) =>
+          ({
+            [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
+              Effect.gen(function* () {
+                if (local === (reconnected === "alternate")) {
+                  probes.push(replacement ? "new" : "old");
+                  if (!replacement) {
+                    yield* Deferred.succeed(started, undefined);
+                    yield* Deferred.await(release);
+                  }
+                }
+                return {
+                  host: "github.com",
+                  provider: "github",
+                  viewer: "maria",
+                  accountId: "123",
+                };
+              }),
+            [WS_METHODS.pullRequestsSummary]: () => Effect.succeed(null),
+          }) as unknown as WsRpcProtocolClient;
+        const { environmentRegistry, supervisor, localSupervisor } = yield* makeTestRuntime(
+          clientFor(false),
+          clientFor(true),
+        );
+        const read = () =>
+          createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
+            projectId: ProjectId.make("project-1"),
+            repository: "acme/web",
+            number: 7,
+          }).pipe(
+            Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
+          );
+        const first = yield* read().pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* SubscriptionRef.set(
+          (reconnected === "origin" ? supervisor : localSupervisor).session,
+          Option.some(session(clientFor(reconnected === "alternate", true))),
+        );
+        expect(yield* read()).toBeNull();
+        expect(probes).toEqual(["old", "new"]);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(first)).toBeNull();
+      }),
+    ),
+);
+
+it.effect("forgets routed viewed marks when a viewed-files batch fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const reference = {
+        projectId: ProjectId.make("project-1"),
+        host: "github.com",
+        repository: "acme/web",
+        number: 7,
+      };
+      const invalidations: { environment: string; input: unknown }[] = [];
+      const identity = () =>
+        Effect.succeed({
+          host: reference.host,
+          provider: "github",
+          accountId: "123",
+          viewer: "maria-rcks",
+        });
+      const clientFor = (environment: string) =>
+        ({
+          [WS_METHODS.pullRequestsRouting]: identity,
+          [WS_METHODS.pullRequestsRoutingIdentity]: identity,
+          [WS_METHODS.pullRequestsFilesViewed]: () =>
+            Effect.succeed({ files: [{ path: "a.ts", state: "unviewed" }], truncated: false }),
+          // The host may have applied part of the batch before refusing the rest.
+          [WS_METHODS.pullRequestsSetFilesViewed]: () => Effect.fail("second path refused"),
+          [WS_METHODS.pullRequestsInvalidate]: (input: unknown) =>
+            Effect.sync(() => {
+              invalidations.push({ environment, input });
+            }),
+        }) as unknown as WsRpcProtocolClient;
+      const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+        clientFor("origin"),
+        clientFor("local"),
+      );
+      const route = createPullRequestRouter();
+      const write = yield* Effect.gen(function* () {
+        yield* route(WS_METHODS.pullRequestsFilesViewed, reference);
+        return yield* Effect.exit(
+          route(WS_METHODS.pullRequestsSetFilesViewed, {
+            ...reference,
+            files: [
+              { path: "a.ts", viewed: true },
+              { path: "b.ts", viewed: true },
+            ],
+          }),
+        );
+      }).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      expect(write._tag).toBe("Failure");
+      expect(invalidations).toContainEqual({
+        environment: "local",
+        input: { reference: expect.objectContaining(reference), filesViewedOnly: true },
+      });
+      for (const call of invalidations) {
+        expect(call.input).toMatchObject({ filesViewedOnly: true });
+      }
+    }),
+  ),
 );
 
 const TARGET = new PrimaryConnectionTarget({
@@ -329,9 +512,10 @@ function session(client: WsRpcProtocolClient): RpcSession {
         client[WS_METHODS.pullRequestsInvalidate] ?? (() => Effect.void),
     },
     initialConfig: client[WS_METHODS.serverGetConfig]?.({}).pipe(Effect.orDie) ?? Effect.never,
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
 }
@@ -340,6 +524,8 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
   client: WsRpcProtocolClient,
   localClient?: WsRpcProtocolClient,
   localOrigin = false,
+  onAnswer: Parameters<typeof createPullRequestEnvironmentAtoms>[1] = {},
+  queryStore: typeof EnvironmentQueryStore.Service = null,
 ) {
   const originTarget = localOrigin
     ? new PrimaryConnectionTarget({
@@ -405,23 +591,31 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
       Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
   } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
   const runtime = Atom.runtime(
-    Layer.merge(
+    Layer.mergeAll(
       Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
       Layer.succeed(
         PullRequestDiffLoader.PullRequestDiffLoader,
         PullRequestDiffLoader.PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
       ),
+      Layer.succeed(EnvironmentQueryStore, queryStore),
     ),
   );
-  const atoms = createPullRequestEnvironmentAtoms(runtime);
+  const atoms = createPullRequestEnvironmentAtoms(runtime, onAnswer);
   const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
     Effect.sync(() => registry.dispose()),
   );
-  return { runtime, atoms, registry, environmentRegistry, supervisor };
+  return { runtime, atoms, registry, environmentRegistry, supervisor, localSupervisor };
 });
 
-it.effect.each(["default", "origin-off", "destination-off", "read-only"] as const)(
-  "does not probe another environment with %s routing permission",
+it.effect.each([
+  "default",
+  "origin-off",
+  "destination-off",
+  "read-only",
+  "destination-disabled",
+  "destination-unsupported",
+] as const)(
+  "preserves source requests when routing to another environment is blocked by %s",
   (permission) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -431,9 +625,10 @@ it.effect.each(["default", "origin-off", "destination-off", "read-only"] as cons
           detail: "source failed",
         });
         const client = {
-          [WS_METHODS.pullRequestsSummary]: () =>
+          [WS_METHODS.pullRequestsSummary]: (input: { allowStale?: boolean }) =>
             Effect.suspend(() => {
               calls.push("source-read");
+              expect(input.allowStale).toBeUndefined();
               return Effect.fail(failure);
             }),
           [WS_METHODS.pullRequestsRunAction]: () =>
@@ -445,7 +640,31 @@ it.effect.each(["default", "origin-off", "destination-off", "read-only"] as cons
           [WS_METHODS.pullRequestsRoutingIdentity]: () =>
             Effect.die("untrusted environment was contacted"),
         } as unknown as WsRpcProtocolClient;
-        const { environmentRegistry, supervisor } = yield* makeTestRuntime(client, alternate);
+        const { environmentRegistry, supervisor, localSupervisor } = yield* makeTestRuntime(
+          client,
+          alternate,
+        );
+        if (permission === "destination-disabled" || permission === "destination-unsupported") {
+          yield* SubscriptionRef.update(
+            environmentRegistry.entries,
+            (entries) =>
+              new Map(
+                [...entries].map(([id, entry]) => [
+                  id,
+                  id === TARGET.environmentId
+                    ? entry
+                    : {
+                        ...entry,
+                        enabled: permission !== "destination-disabled",
+                        ...(permission === "destination-unsupported"
+                          ? { unsupportedReason: "Protocol version mismatch" }
+                          : {}),
+                      },
+                ]),
+              ),
+          );
+          yield* SubscriptionRef.set(localSupervisor.session, Option.none());
+        }
         const ref = {
           projectId: ProjectId.make("project-1"),
           repository: "private/repo",
@@ -459,20 +678,25 @@ it.effect.each(["default", "origin-off", "destination-off", "read-only"] as cons
         }).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
         );
         yield* permission === "default"
           ? request
           : request.pipe(
-              Effect.provideService(GitHubRoutingPermissions, {
+              Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+              Effect.provideService(PullRequestRoutingPermissions, {
                 ...trustedRouting,
                 get: (entry) =>
                   Effect.succeed(
                     permission === "read-only"
                       ? "read"
-                      : (entry.target.environmentId === TARGET.environmentId) ===
-                          (permission === "origin-off")
-                        ? "off"
-                        : "read-write",
+                      : permission === "destination-disabled" ||
+                          permission === "destination-unsupported"
+                        ? "read-write"
+                        : (entry.target.environmentId === TARGET.environmentId) ===
+                            (permission === "origin-off")
+                          ? "off"
+                          : "read-write",
                   ),
               }),
             );
@@ -579,8 +803,8 @@ it.effect.each(
       }).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        // This also represents a user enabling the stale catalog entry after re-resolution.
-        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
       );
       yield* stored === "unavailable"
         ? route
@@ -600,169 +824,68 @@ it.effect.each(
   ),
 );
 
-it.live.each(["origin", "alternate"] as const)(
-  "bounds a stalled %s metadata probe without repeating a strict source read",
-  (probe) =>
+it.live.each([undefined, true, false])(
+  "keeps source workspace metadata and reports draft %s when an alternate answers a detail read",
+  (isDraft) =>
     Effect.scoped(
       Effect.gen(function* () {
-        let sourceReads = 0;
-        const identity = {
-          host: "github.com",
-          provider: "github",
-          viewer: "maria",
-          accountId: "123",
-        };
-        const client = {
-          [WS_METHODS.pullRequestsRouting]: () =>
-            probe === "origin" ? Effect.never : Effect.succeed(identity),
-          [WS_METHODS.pullRequestsSummary]: () =>
-            Effect.suspend(() => {
-              sourceReads += 1;
-              return Effect.fail(
-                new PullRequestOperationError({ operation: "summary", detail: "source failed" }),
-              );
-            }),
-        } as unknown as WsRpcProtocolClient;
-        const alternate = {
-          [WS_METHODS.pullRequestsRoutingIdentity]: () => Effect.never,
-        } as unknown as WsRpcProtocolClient;
-        const { environmentRegistry, supervisor } = yield* makeTestRuntime(client, alternate);
-        const error = yield* createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
+        const noted = yield* Deferred.make<unknown>();
+        const clientFor = (local: boolean) =>
+          ({
+            [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
+              Effect.succeed({
+                host: "github.com",
+                provider: "github",
+                viewer: "maria-rcks",
+                accountId: "123",
+                projectTitle: local ? "local project" : "source project",
+                workspaceRoot: local ? "/Users/local/repo" : "/srv/source/repo",
+              }),
+            [WS_METHODS.pullRequestsDetail]: () =>
+              local
+                ? Effect.succeed({
+                    projectId: "local-project",
+                    projectTitle: "local project",
+                    workspaceRoot: "/Users/local/repo",
+                    title: "github title",
+                    state: "closed",
+                    ...(isDraft === undefined ? {} : { isDraft }),
+                    updatedAt: "2026-10-10T01:52:36Z",
+                  })
+                : Effect.never,
+            [WS_METHODS.pullRequestsReportState]: (input: unknown) =>
+              Deferred.succeed(noted, input).pipe(Effect.asVoid),
+          }) as unknown as WsRpcProtocolClient;
+        const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+          clientFor(false),
+          clientFor(true),
+        );
+        const result = yield* createPullRequestRouter()(WS_METHODS.pullRequestsDetail, {
           projectId: ProjectId.make("project-1"),
           repository: "acme/web",
           number: 7,
-          allowStale: false,
         }).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+          Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-          Effect.provideService(GitHubRoutingPermissions, trustedRouting),
-          Effect.flip,
         );
-        expect(error._tag).toBe("PullRequestOperationError");
-        expect(sourceReads).toBe(1);
+        expect(result).toEqual({
+          projectId: "project-1",
+          projectTitle: "source project",
+          workspaceRoot: "/srv/source/repo",
+          title: "github title",
+          state: "closed",
+          ...(isDraft === undefined ? {} : { isDraft }),
+          updatedAt: "2026-10-10T01:52:36Z",
+        });
+        expect(yield* Deferred.await(noted)).toEqual({
+          reference: { projectId: "project-1", repository: "acme/web", number: 7 },
+          state: "closed",
+          ...(isDraft === undefined ? {} : { isDraft }),
+        });
       }),
     ),
-);
-
-it.effect.each(
-  (["pending", "pending-local", "failed-local", "failed", "offline"] as const).map(
-    (source) =>
-      [
-        source === "offline"
-          ? "returns held source data only after both fresh paths fail"
-          : `uses one shared reader with a ${source} source`,
-        source,
-      ] as const,
-  ),
-)("%s", ([, source]) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const calls: string[] = [];
-      const clientFor = (local: boolean) =>
-        ({
-          [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
-            Effect.succeed({
-              host: "github.com",
-              provider: "github",
-              viewer: "maria-rcks",
-              accountId: "123",
-            }),
-          [WS_METHODS.pullRequestsSummary]: (input: { allowStale?: boolean }) =>
-            Effect.gen(function* () {
-              calls.push(local ? "local" : input.allowStale === false ? "origin" : "held");
-              if (source === "offline" && !local && input.allowStale === undefined) {
-                return { state: "open" };
-              }
-              expect(input.allowStale).toBe(false);
-              if (local && source !== "offline") return null;
-              if (source !== "pending" && source !== "pending-local")
-                return yield* new PullRequestOperationError({
-                  operation: "summary",
-                  detail: "github unreachable",
-                });
-              yield* Deferred.succeed(started, undefined);
-              return yield* Effect.never;
-            }),
-        }) as unknown as WsRpcProtocolClient;
-      const { environmentRegistry, supervisor } = yield* makeTestRuntime(
-        clientFor(false),
-        clientFor(true),
-        source === "failed-local" || source === "pending-local",
-      );
-      const request = createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
-        projectId: ProjectId.make("project-1"),
-        repository: "acme/web",
-        number: 7,
-      }).pipe(
-        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
-        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-      );
-      const fiber = yield* request.pipe(Effect.forkChild);
-      if (source === "pending-local") {
-        yield* Deferred.await(started);
-        yield* TestClock.adjust("30 seconds");
-      }
-      const result = yield* Fiber.join(fiber);
-      if (source === "offline") {
-        expect(result).toEqual({ state: "open" });
-        expect(calls).toEqual(["local", "origin", "held"]);
-      } else {
-        expect(result).toBeNull();
-        expect(calls).toEqual(
-          source === "failed-local" || source === "pending-local" ? ["origin", "local"] : ["local"],
-        );
-      }
-    }),
-  ),
-);
-
-it.live("keeps source workspace metadata when an alternate answers a detail read", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const clientFor = (local: boolean) =>
-        ({
-          [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
-            Effect.succeed({
-              host: "github.com",
-              provider: "github",
-              viewer: "maria-rcks",
-              accountId: "123",
-              projectTitle: local ? "local project" : "source project",
-              workspaceRoot: local ? "/Users/local/repo" : "/srv/source/repo",
-            }),
-          [WS_METHODS.pullRequestsDetail]: () =>
-            local
-              ? Effect.succeed({
-                  projectId: "local-project",
-                  projectTitle: "local project",
-                  workspaceRoot: "/Users/local/repo",
-                  title: "github title",
-                })
-              : Effect.never,
-        }) as unknown as WsRpcProtocolClient;
-      const { environmentRegistry, supervisor } = yield* makeTestRuntime(
-        clientFor(false),
-        clientFor(true),
-      );
-      const result = yield* createPullRequestRouter()(WS_METHODS.pullRequestsDetail, {
-        projectId: ProjectId.make("project-1"),
-        repository: "acme/web",
-        number: 7,
-      }).pipe(
-        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
-        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-      );
-      expect(result).toEqual({
-        projectId: "project-1",
-        projectTitle: "source project",
-        workspaceRoot: "/srv/source/repo",
-        title: "github title",
-      });
-    }),
-  ),
 );
 
 it.live(
@@ -839,7 +962,8 @@ it.live(
           expect(invalidations).toContainEqual({ environment: "local", input: {} });
         }).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-          Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         );
       }),
@@ -889,6 +1013,702 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
       expect(calls).toEqual(["github.com", "github.example.com"]);
     }),
   ),
+);
+
+it.effect.each(["closed", "draft", "permission", "stack", "method"] as const)(
+  "rejects an unsafe quick merge with %s and keeps later actions running",
+  (reason) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const client = {
+          [WS_METHODS.pullRequestsDetail]: () =>
+            Effect.succeed({
+              state: reason === "closed" ? "closed" : "open",
+              isDraft: reason === "draft",
+              capabilities: { actions: ["merge"], stackActions: true },
+              viewerPermissions: { actions: reason === "permission" ? [] : ["merge"] },
+            }),
+          [WS_METHODS.pullRequestsStack]: () => Effect.succeed(reason === "stack" ? {} : null),
+          [WS_METHODS.pullRequestsRunAction]: (input: { action: string }) =>
+            Effect.sync(() => calls.push(input.action)),
+        } as unknown as WsRpcProtocolClient;
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = {
+          environmentId: TARGET.environmentId,
+          input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
+        };
+        const merge = atoms.runAction.run(registry, {
+          ...target,
+          input: {
+            ...target.input,
+            action: "merge",
+            resolveMergeMethod: () => {
+              if (reason === "method") throw new Error("No merge method is available.");
+              return "squash";
+            },
+          },
+        });
+        const close = atoms.runAction.run(registry, {
+          ...target,
+          input: { ...target.input, action: "close" },
+        });
+        const results = yield* Effect.promise(() => Promise.all([merge, close]));
+        expect(results.map((result) => result._tag)).toEqual(["Failure", "Success"]);
+        expect(calls).toEqual(["close"]);
+      }),
+    ),
+);
+
+it.effect("keeps a close batch ordered and continues after a refused close", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const calls: number[] = [];
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.pullRequestsRunAction]: (input: { number: number; action: string }) =>
+          Effect.gen(function* () {
+            expect(input.action).toBe("close");
+            calls.push(input.number);
+            if (input.number === 6) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+            }
+            if (input.number === 5)
+              return yield* new PullRequestOperationError({
+                operation: "runAction",
+                detail: "You cannot close this pull request.",
+              });
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const batch = [6, 5, 4].map((number) =>
+        atoms.runAction.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: {
+            projectId: ProjectId.make("project-1"),
+            repository: "acme/web",
+            number,
+            action: "close",
+          },
+        }),
+      );
+      yield* Deferred.await(started);
+      expect(calls).toEqual([6]);
+      yield* Deferred.succeed(release, undefined);
+      const results = yield* Effect.promise(() => Promise.all(batch));
+      expect(results.map((result) => result._tag)).toEqual(["Success", "Failure", "Success"]);
+      expect(calls).toEqual([6, 5, 4]);
+    }),
+  ),
+);
+
+const actionReference = {
+  projectId: ProjectId.make("project-1"),
+  host: "github.example.com",
+  repository: "acme/web",
+  number: 1,
+};
+const actionReply = {
+  ...actionReference,
+  provider: "github",
+  title: "Ship it",
+  url: "https://github.example.com/acme/web/pull/1",
+  headBranch: "feature",
+  baseBranch: "main",
+  state: "merged" as const,
+  isDraft: false,
+  updatedAt: "2026-10-27T10:00:00Z",
+  observedAt: 200,
+};
+
+function actionReplyClient(overrides: Record<string, unknown> = {}) {
+  return {
+    [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
+    [WS_METHODS.pullRequestsRunAction]: () => Effect.succeed(actionReply),
+    ...overrides,
+  } as unknown as WsRpcProtocolClient;
+}
+
+it.effect("shows an action's reply in loaded readers and moves list rows without reads", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const reads: string[] = [];
+      const open = { ...actionReference, state: "open", isDraft: true, observedAt: 100 };
+      const read = (name: string) => () =>
+        Effect.sync(() => {
+          reads.push(name);
+          return open;
+        });
+      const replies: unknown[] = [];
+      const listAnswers: unknown[] = [];
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: read("detail"),
+        [WS_METHODS.pullRequestsPreview]: read("preview"),
+        [WS_METHODS.pullRequestsSummary]: read("summary"),
+        [WS_METHODS.pullRequestsList]: (input: { readonly state: string }) =>
+          Effect.sync(() => {
+            reads.push(`list:${input.state}`);
+            return {
+              entries: input.state === "merged" ? [] : [open],
+              viewers: {},
+              providers: [],
+              errors: [],
+              truncated: false,
+              nextCursors: {},
+            };
+          }),
+      });
+      const saved = new Map<string, string>();
+      const { atoms, registry, runtime } = yield* makeTestRuntime(
+        client,
+        undefined,
+        false,
+        {
+          actionReply: (target, reply) => Effect.sync(() => replies.push({ target, reply })),
+          list: (_target, value) => Effect.sync(() => listAnswers.push(value.entries)),
+        },
+        {
+          load: (_environmentId, key) => Effect.sync(() => Option.fromUndefinedOr(saved.get(key))),
+          save: (_environmentId, key, payload) => Effect.sync(() => void saved.set(key, payload)),
+        },
+      );
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const list = (input: PullRequestListInput) =>
+        atoms.list({ environmentId: target.environmentId, input });
+      const readers: ReadonlyArray<Atom.Atom<AsyncResult.AsyncResult<object, unknown>>> = [
+        atoms.detail(target),
+        atoms.preview(target),
+        createLinkedPullRequestSummaryAtomFamily(runtime, atoms.refreshes)(target),
+      ];
+      const all = list({ state: "all" });
+      const openDrafts = list({ state: "open", filters: { draft: "only" } });
+      const merged = list({ state: "merged" });
+      for (const atom of [...readers, all, openDrafts, merged]) {
+        registry.mount(atom);
+        yield* Effect.promise(() => executeAtomQuery(registry, atom));
+      }
+      reads.length = 0;
+
+      const answer = yield* Effect.promise(() =>
+        atoms.runAction.run(registry, { ...target, input: { ...target.input, action: "merge" } }),
+      );
+
+      expect(answer).toMatchObject({ _tag: "Success", value: actionReply });
+      for (const atom of readers) {
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(atom)))).toMatchObject({
+          state: "merged",
+          isDraft: false,
+          title: "Ship it",
+        });
+      }
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(all))).entries).toMatchObject([
+        // The row keeps its own read time: the reply does not carry its checks or labels.
+        { state: "merged", isDraft: false, observedAt: 100 },
+      ]);
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(openDrafts))).entries).toEqual([]);
+      expect(replies).toEqual([{ target, reply: actionReply }]);
+      // A cold start paints the saved copy, so the patch must replace the saved answer.
+      const summaryKey = queryPersistenceKey(
+        "environment-data:pull-requests:linked-summary",
+        actionReference,
+      );
+      expect(JSON.parse(saved.get(summaryKey) ?? "null")).toMatchObject({ state: "merged" });
+      // Snapshot writers see the patched rows the way they see an answer.
+      expect(listAnswers).toContainEqual([expect.objectContaining({ state: "merged" })]);
+      // Only a read can place a row the listing did not hold.
+      yield* AtomRegistry.getResult(registry, merged, { suspendOnWaiting: true });
+      expect(reads).toEqual(["list:merged"]);
+    }),
+  ),
+);
+
+it.effect("keeps an action's reply when a refresh started before the action answers late", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let state: "open" | "merged" = "open";
+      let reads = 0;
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const settled = yield* Deferred.make<void>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.gen(function* () {
+            reads++;
+            const snapshot = { ...actionReference, state, isDraft: false, observedAt: 100 };
+            if (reads === 2) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release).pipe(
+                Effect.onExit(() => Deferred.succeed(settled, undefined)),
+              );
+            }
+            return snapshot;
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.sync(() => {
+            state = "merged";
+            return actionReply;
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const detail = atoms.detail(target);
+      registry.mount(detail);
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+      registry.refresh(detail);
+      yield* Deferred.await(started);
+
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "merge" },
+        }),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(settled);
+
+      expect(
+        (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).state,
+      ).toBe("merged");
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("merged");
+    }),
+  ),
+);
+
+it.effect("keeps a list read the server's refresh started before the action replied", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const refreshEvents = yield* PubSub.unbounded<number>();
+      let state: "open" | "merged" = "open";
+      let reads = 0;
+      const actionInputs: unknown[] = [];
+      const listWaiting = Latch.makeUnsafe();
+      const release = yield* Deferred.make<void>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(refreshEvents),
+        [WS_METHODS.pullRequestsList]: () =>
+          Effect.gen(function* () {
+            reads++;
+            const entries = [
+              { ...actionReference, state, isDraft: false, updatedAt: actionReply.updatedAt },
+            ];
+            if (reads === 2) yield* Deferred.await(release);
+            return {
+              entries,
+              viewers: {},
+              providers: [],
+              errors: [],
+              truncated: false,
+              nextCursors: {},
+            };
+          }),
+        [WS_METHODS.pullRequestsRunAction]: (input: unknown) =>
+          Effect.gen(function* () {
+            actionInputs.push(input);
+            state = "merged";
+            // The server announces its refresh before it replies.
+            yield* PubSub.publish(refreshEvents, 1);
+            yield* listWaiting.await;
+            return actionReply;
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const list = atoms.list({ environmentId: target.environmentId, input: { state: "all" } });
+      const unmount = registry.mount(list);
+      yield* Effect.addFinalizer(() => Effect.sync(unmount));
+      yield* Effect.promise(() => executeAtomQuery(registry, list));
+      const stop = registry.subscribe(list, (result) => {
+        if (result.waiting) listWaiting.openUnsafe();
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(stop));
+
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "merge" },
+        }),
+      );
+      yield* Deferred.succeed(release, undefined);
+
+      expect(
+        (yield* AtomRegistry.getResult(registry, list, { suspendOnWaiting: true })).entries,
+      ).toMatchObject([{ state: "merged" }]);
+      expect(reads).toBe(2);
+      expect(actionInputs).toEqual([expect.objectContaining({ replyWithSummary: true })]);
+    }),
+  ),
+);
+
+it.effect("restarts a list page read sent while the action was in flight", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const refreshEvents = yield* PubSub.unbounded<number>();
+      let state: "open" | "closed" = "open";
+      let pageReads = 0;
+      const actionSent = yield* Deferred.make<void>();
+      const pageStarted = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const settled = yield* Deferred.make<void>();
+      const listResult = (entries: ReadonlyArray<object>) => ({
+        entries,
+        viewers: {},
+        providers: [],
+        errors: [],
+        truncated: false,
+        nextCursors: {},
+      });
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(refreshEvents),
+        [WS_METHODS.pullRequestsList]: (input: PullRequestListInput) =>
+          Effect.gen(function* () {
+            const entries =
+              state === "open"
+                ? [{ ...actionReference, state, isDraft: false, updatedAt: "2026-10-27T09:00:00Z" }]
+                : [];
+            if (input.cursors !== undefined && ++pageReads === 2) {
+              yield* Deferred.succeed(pageStarted, undefined);
+              yield* Deferred.await(release).pipe(
+                Effect.onExit(() => Deferred.succeed(settled, undefined)),
+              );
+            }
+            return listResult(input.cursors === undefined ? [] : entries);
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(actionSent, undefined);
+            yield* Deferred.await(pageStarted);
+            state = "closed";
+            yield* PubSub.publish(refreshEvents, 1);
+            return { ...actionReply, state: "closed" };
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const listInput = { state: "open" } as const;
+      const head = atoms.list({ environmentId: target.environmentId, input: listInput });
+      const page = atoms.list({
+        environmentId: target.environmentId,
+        input: { ...listInput, cursors: { "github.example.com": "page-2" } },
+      });
+      for (const atom of [head, page]) {
+        const unmount = registry.mount(atom);
+        yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        yield* Effect.promise(() => executeAtomQuery(registry, atom));
+      }
+
+      const action = yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "close" },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(actionSent);
+      // Loading more rows re-reads a page while the close is on the wire.
+      registry.refresh(page);
+      yield* Fiber.join(action);
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(settled);
+
+      expect(
+        (yield* AtomRegistry.getResult(registry, page, { suspendOnWaiting: true })).entries,
+      ).toEqual([]);
+    }),
+  ),
+);
+
+it.effect("shows a reopen reply at once and re-reads the fields it lacks", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let reads = 0;
+      const release = yield* Deferred.make<void>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.gen(function* () {
+            reads++;
+            if (reads === 1) return { ...actionReference, state: "closed", observedAt: 100 };
+            yield* Deferred.await(release);
+            return { ...actionReference, state: "open", observedAt: 300 };
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () => Effect.succeed({ ...actionReply, state: "open" }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const detail = atoms.detail(target);
+      registry.mount(detail);
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "reopen" },
+        }),
+      );
+
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("open");
+      expect(reads).toBe(2);
+      yield* Deferred.succeed(release, undefined);
+      expect(
+        (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).observedAt,
+      ).toBe(300);
+    }),
+  ),
+);
+
+it.effect("keeps each reader's read time when a reply leaves its checks as they were", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const shown = {
+        ...actionReference,
+        state: "open",
+        isDraft: true,
+        updatedAt: "2026-10-27T09:00:00Z",
+        observedAt: 100,
+        checks: [{ status: "success" }],
+        checksState: "passing",
+      };
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: () => Effect.succeed(shown),
+        [WS_METHODS.pullRequestsSummary]: () => Effect.succeed(shown),
+        [WS_METHODS.pullRequestsList]: () =>
+          Effect.succeed({
+            entries: [shown],
+            viewers: {},
+            providers: [],
+            errors: [],
+            truncated: false,
+            nextCursors: {},
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.succeed({ ...actionReply, state: "open", observedAt: 300 }),
+      });
+      const answeredAt: Array<number | undefined> = [];
+      const { atoms, registry, runtime } = yield* makeTestRuntime(client, undefined, false, {
+        detail: (_target, value) => Effect.sync(() => answeredAt.push(value.observedAt)),
+      });
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const readers: ReadonlyArray<Atom.Atom<AsyncResult.AsyncResult<object, unknown>>> = [
+        atoms.detail(target),
+        createLinkedPullRequestSummaryAtomFamily(runtime, atoms.refreshes)(target),
+      ];
+      const list = atoms.list({ environmentId: target.environmentId, input: { state: "all" } });
+      for (const atom of [...readers, list]) {
+        registry.mount(atom);
+        yield* Effect.promise(() => executeAtomQuery(registry, atom));
+      }
+
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "ready" },
+        }),
+      );
+
+      // Checks read at 100 must not pass for a read at 300 against a newer checks read.
+      for (const atom of readers) {
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(atom)))).toMatchObject({
+          isDraft: false,
+          observedAt: 100,
+        });
+      }
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(list))).entries).toMatchObject([
+        { isDraft: false, checksState: "passing", observedAt: 100 },
+      ]);
+      expect(answeredAt).toEqual([100, 100]);
+    }),
+  ),
+);
+
+it.effect("re-reads an unstamped preview rather than order a reply against it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let reads = 0;
+      const client = actionReplyClient({
+        // Previews from servers before action replies carry neither update nor read time.
+        [WS_METHODS.pullRequestsPreview]: () =>
+          Effect.sync(() => {
+            reads++;
+            return {
+              ...actionReference,
+              title: "Reopened elsewhere",
+              url: actionReply.url,
+              author: null,
+              state: "open",
+              isDraft: false,
+              createdAt: "2026-10-27T08:00:00Z",
+            };
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.succeed({ ...actionReply, state: "closed" }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const preview = atoms.preview(target);
+      registry.mount(preview);
+      yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true });
+
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "close" },
+        }),
+      );
+
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(preview))).state).toBe("open");
+      expect(
+        (yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true })).state,
+      ).toBe("open");
+      expect(reads).toBe(2);
+    }),
+  ),
+);
+
+it.effect("leaves a loaded list page alone when the reply concerns none of its rows", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let pageReads = 0;
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsList]: () =>
+          Effect.sync(() => {
+            pageReads++;
+            return {
+              entries: [
+                {
+                  ...actionReference,
+                  number: 2,
+                  state: "open",
+                  isDraft: false,
+                  updatedAt: "2026-10-27T09:00:00Z",
+                },
+              ],
+              viewers: {},
+              providers: [],
+              errors: [],
+              truncated: false,
+              nextCursors: {},
+            };
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () => Effect.succeed({ ...actionReply, state: "open" }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const page = atoms.list({
+        environmentId: target.environmentId,
+        input: { state: "open", cursors: { "github.example.com": "page-2" } },
+      });
+      const unmount = registry.mount(page);
+      yield* Effect.addFinalizer(() => Effect.sync(unmount));
+      yield* Effect.promise(() => executeAtomQuery(registry, page));
+
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "ready" },
+        }),
+      );
+
+      yield* AtomRegistry.getResult(registry, page, { suspendOnWaiting: true });
+      expect(pageReads).toBe(1);
+    }),
+  ),
+);
+
+it.effect("keeps the server's post-commit read when a reopen reply lacks fields", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const refreshEvents = yield* PubSub.unbounded<number>();
+      let reads = 0;
+      const detailWaiting = Latch.makeUnsafe();
+      const release = yield* Deferred.make<void>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(refreshEvents),
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.gen(function* () {
+            reads++;
+            if (reads === 1) return { ...actionReference, state: "closed", observedAt: 100 };
+            yield* Deferred.await(release);
+            return { ...actionReference, state: "open", observedAt: 300 };
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.gen(function* () {
+            // The server announces its refresh before it replies.
+            yield* PubSub.publish(refreshEvents, 1);
+            yield* detailWaiting.await;
+            return { ...actionReply, state: "open" };
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const detail = atoms.detail(target);
+      const unmount = registry.mount(detail);
+      yield* Effect.addFinalizer(() => Effect.sync(unmount));
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+      const stop = registry.subscribe(detail, (result) => {
+        if (result.waiting) detailWaiting.openUnsafe();
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(stop));
+
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          ...target,
+          input: { ...actionReference, action: "reopen" },
+        }),
+      );
+      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).state).toBe("open");
+      yield* Deferred.succeed(release, undefined);
+
+      expect(
+        (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).observedAt,
+      ).toBe(300);
+      expect(reads).toBe(2);
+    }),
+  ),
+);
+
+it.effect.each([
+  ["a newer update", "open", "2026-10-27T10:00:01Z", 100, "open"],
+  ["a merge", "merged", "2026-10-27T09:00:00Z", 100, "open"],
+] as const)(
+  "keeps %s when an older or reverting action reply arrives",
+  ([, shownState, updatedAt, observedAt, replyState]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const shown = {
+          ...actionReference,
+          state: shownState,
+          isDraft: true,
+          updatedAt,
+          observedAt,
+        };
+        const client = actionReplyClient({
+          [WS_METHODS.pullRequestsDetail]: () => Effect.succeed(shown),
+          [WS_METHODS.pullRequestsPreview]: () => Effect.succeed(shown),
+          [WS_METHODS.pullRequestsRunAction]: () =>
+            Effect.succeed({ ...actionReply, state: replyState }),
+        });
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const readers = [atoms.detail(target), atoms.preview(target), atoms.previewCard(target)];
+        for (const reader of readers) {
+          registry.mount(reader);
+          yield* AtomRegistry.getResult(registry, reader, { suspendOnWaiting: true });
+        }
+
+        yield* Effect.promise(() =>
+          atoms.runAction.run(registry, {
+            ...target,
+            input: { ...actionReference, action: "ready" },
+          }),
+        );
+        for (const reader of readers) {
+          expect(Option.getOrThrow(AsyncResult.value(registry.get(reader)))).toMatchObject({
+            state: shownState,
+            isDraft: true,
+          });
+        }
+      }),
+    ),
 );
 
 it.effect("keeps hover previews fresh after edits and turns", () =>
@@ -965,6 +1785,59 @@ it.effect("keeps hover previews fresh after edits and turns", () =>
       title = "After turn";
       yield* PubSub.publish(refreshEvents, 1);
       yield* refreshed.await;
+    }),
+  ),
+);
+
+it.effect("shares one refresh stream between independently created pull request readers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const revision = yield* SubscriptionRef.make(0);
+      let subscriptions = 0;
+      let title = "Original title";
+      const client = {
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () =>
+          Stream.unwrap(
+            Effect.sync(() => {
+              subscriptions++;
+              return SubscriptionRef.changes(revision);
+            }),
+          ),
+        [WS_METHODS.pullRequestsSummary]: () => Effect.sync(() => ({ title, state: "open" })),
+        [WS_METHODS.pullRequestsDetail]: () => Effect.sync(() => ({ title, state: "open" })),
+      } as unknown as WsRpcProtocolClient;
+      const { runtime, atoms, registry } = yield* makeTestRuntime(client);
+      const target = {
+        environmentId: TARGET.environmentId,
+        input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
+      };
+      const summary = createLinkedPullRequestSummaryAtomFamily(runtime)(target);
+      const detail = atoms.detail(target);
+      for (const atom of [summary, detail]) {
+        const unmount = registry.mount(atom);
+        yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        expect((yield* AtomRegistry.getResult(registry, atom)).title).toBe(title);
+      }
+      yield* AtomRegistry.getResult(
+        registry,
+        atoms.refreshes({ environmentId: target.environmentId, input: {} }),
+      );
+      expect(subscriptions).toBe(1);
+
+      const changed = [summary, detail].map((atom) => {
+        const ready = Latch.makeUnsafe();
+        const stop = registry.subscribe(atom, (result) => {
+          if (AsyncResult.isSuccess(result) && result.value.title === "Updated title") {
+            ready.openUnsafe();
+          }
+        });
+        return { ready, stop };
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => changed.forEach(({ stop }) => stop())));
+      title = "Updated title";
+      yield* SubscriptionRef.update(revision, (value) => value + 1);
+      for (const { ready } of changed) yield* ready.await;
+      expect(subscriptions).toBe(1);
     }),
   ),
 );
@@ -1056,7 +1929,6 @@ it.effect("shares close, reopen, and merge with an untouched client's mounted PR
           }),
         );
         expect(AsyncResult.isSuccess(result)).toBe(true);
-        // The second client receives only the server push: no local refresh or timer tick.
         yield* detailChanged.await;
         yield* summaryChanged.await;
         yield* listChanged.await;
@@ -1071,195 +1943,112 @@ it.effect("shares close, reopen, and merge with an untouched client's mounted PR
   ),
 );
 
-it.effect("refreshes pull request activity after a comment is updated", () =>
+it.effect("shares checks reads across reference property order", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const refreshEvents = yield* PubSub.unbounded<number>();
-      let commentBody = "old comment";
-      const client = {
-        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(refreshEvents),
-        [WS_METHODS.pullRequestsActivity]: () =>
-          Effect.succeed({
-            author: null,
-            reviewers: [],
-            comments: [
-              {
-                id: "comment-1",
-                kind: "issue-comment",
-                author: null,
-                body: commentBody,
-                createdAt: "2026-08-24T00:00:00Z",
-                url: null,
-                path: null,
-                reviewState: null,
-                reactions: [],
-              },
-            ],
-            commentCount: 1,
-            commentsTruncated: false,
-            reviewThreads: [],
-            commits: [],
-            reactions: [],
-          }),
-        [WS_METHODS.pullRequestsUpdateComment]: (input: { readonly body: string }) =>
-          Effect.sync(() => {
-            commentBody = input.body;
-          }),
-      } as unknown as WsRpcProtocolClient;
-      const { atoms, registry } = yield* makeTestRuntime(client);
-      const reference = {
-        projectId: ProjectId.make("project-1"),
-        host: "github.example.com",
-        repository: "acme/web",
-        number: 1,
-      } as const;
-      const activity = atoms.activity({ environmentId: TARGET.environmentId, input: reference });
-      const unmount = registry.mount(activity);
-      yield* Effect.addFinalizer(() => Effect.sync(unmount));
-
-      const initial = yield* Effect.promise(() => executeAtomQuery(registry, activity));
-      expect(AsyncResult.isSuccess(initial)).toBe(true);
-      if (!AsyncResult.isSuccess(initial)) {
-        return yield* Effect.die("activity did not load");
-      }
-      expect(initial.value.comments[0]?.body).toBe("old comment");
-
-      const update = yield* Effect.promise(() =>
-        atoms.updateComment.run(registry, {
-          environmentId: TARGET.environmentId,
-          input: { ...reference, commentId: "comment-1", kind: "issue-comment", body: "updated" },
-        }),
-      );
-
-      expect(AsyncResult.isSuccess(update)).toBe(true);
-      expect(
-        (yield* AtomRegistry.getResult(registry, activity, { suspendOnWaiting: true })).comments[0]
-          ?.body,
-      ).toBe("updated");
-      const refreshed = Latch.makeUnsafe();
-      const stop = registry.subscribe(activity, (result) => {
-        if (AsyncResult.isSuccess(result) && result.value.comments[0]?.body === "after turn") {
-          refreshed.openUnsafe();
-        }
-      });
-      yield* Effect.addFinalizer(() => Effect.sync(stop));
-
-      commentBody = "after turn";
-      yield* PubSub.publish(refreshEvents, 1);
-      yield* refreshed.await;
-
-      expect(
-        (yield* AtomRegistry.getResult(registry, activity, { suspendOnWaiting: true })).comments[0]
-          ?.body,
-      ).toBe("after turn");
-    }),
-  ),
-);
-
-it.effect("refreshes checks without refreshing full detail", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      let detailReads = 0;
-      let checksReads = 0;
+      let reads = 0;
       const client = {
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
-        [WS_METHODS.pullRequestsDetail]: () =>
-          Effect.sync(() => {
-            detailReads++;
-            return { title: "PR" };
-          }),
         [WS_METHODS.pullRequestsChecks]: () =>
           Effect.sync(() => {
-            checksReads++;
-            return { state: checksReads === 1 ? "open" : "merged", checks: [] };
+            reads += 1;
+            return { state: "open", checks: [], observedAt: 1_000 };
           }),
       } as unknown as WsRpcProtocolClient;
       const { atoms, registry } = yield* makeTestRuntime(client);
-      const target = {
+      const projectId = ProjectId.make("project-1");
+      const row = atoms.checks({
         environmentId: TARGET.environmentId,
-        input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
-      };
-      const detail = atoms.detail(target);
-      const checks = atoms.checks(target);
-      yield* AtomRegistry.mount(registry, detail);
-      yield* AtomRegistry.mount(registry, checks);
-      yield* AtomRegistry.getResult(registry, detail);
-      expect((yield* AtomRegistry.getResult(registry, checks))?.state).toBe("open");
-      registry.refresh(checks);
-      expect(
-        (yield* AtomRegistry.getResult(registry, checks, { suspendOnWaiting: true }))?.state,
-      ).toBe("merged");
-      expect(detailReads).toBe(1);
-      expect(checksReads).toBe(2);
+        input: { host: "github.com", repository: "acme/web", number: 1, projectId },
+      });
+      const panel = atoms.checks({
+        environmentId: TARGET.environmentId,
+        input: { projectId, host: "github.com", repository: "acme/web", number: 1 },
+      });
+      yield* AtomRegistry.getResult(registry, row);
+      yield* AtomRegistry.getResult(registry, panel);
+      expect(reads).toBe(1);
     }),
   ),
-);
-
-it.effect.each([false, true])(
-  "routes checks through one reader with old alternate: %s",
-  (oldAlternate) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const calls: string[] = [];
-        const clientFor = (local: boolean) =>
-          ({
-            [WS_METHODS.serverGetConfig]: () =>
-              Effect.succeed({
-                environment: {
-                  capabilities: local && oldAlternate ? {} : { pullRequestChecks: true },
-                },
-              }),
-            [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
-              Effect.succeed({
-                host: "github.com",
-                provider: "github",
-                viewer: "viewer",
-                accountId: "123",
-              }),
-            [WS_METHODS.pullRequestsChecks]: () =>
-              Effect.gen(function* () {
-                calls.push(local ? "local" : "origin");
-                if (local && oldAlternate)
-                  return yield* Effect.die("Unknown request tag: pullRequests.checks");
-                return { state: "open", checks: [] };
-              }),
-          }) as unknown as WsRpcProtocolClient;
-        const { environmentRegistry, supervisor } = yield* makeTestRuntime(
-          clientFor(false),
-          clientFor(true),
-        );
-        const result = yield* createPullRequestRouter()(WS_METHODS.pullRequestsChecks, {
-          projectId: ProjectId.make("project-1"),
-          repository: "acme/web",
-          number: 1,
-        }).pipe(
-          Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-          Effect.provideService(GitHubRoutingPermissions, trustedRouting),
-          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        );
-        expect(result).toEqual({ state: "open", checks: [] });
-        expect(calls).toEqual(oldAlternate ? ["origin"] : ["local"]);
-      }),
-    ),
 );
 
 it.effect("keeps live detail reads separate from reads that allow stale data", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      let reads = 0;
+      let hostStamp: number | undefined;
+      let hold = false;
+      const readStarted = yield* Latch.make();
+      const releaseRead = yield* Latch.make();
       const client = {
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
         [WS_METHODS.pullRequestsDetail]: (input: { allowStale?: boolean }) =>
-          Effect.succeed({ title: input.allowStale === false ? "latest checks" : "cached checks" }),
+          Effect.gen(function* () {
+            reads++;
+            if (hold) {
+              yield* readStarted.open;
+              yield* releaseRead.await;
+            }
+            return {
+              title: input.allowStale === false ? "latest checks" : "cached checks",
+              ...(hostStamp === undefined ? {} : { observedAt: hostStamp }),
+            };
+          }),
       } as unknown as WsRpcProtocolClient;
-      const { atoms, registry } = yield* makeTestRuntime(client);
+      const { atoms, registry, supervisor } = yield* makeTestRuntime(client);
       const target = {
         environmentId: TARGET.environmentId,
         input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
       };
       const cached = atoms.detail(target);
       const live = atoms.detail({ ...target, input: { ...target.input, allowStale: false } });
-      expect((yield* AtomRegistry.getResult(registry, cached)).title).toBe("cached checks");
+      const first = yield* AtomRegistry.getResult(registry, cached);
+      expect(first.title).toBe("cached checks");
+      expect(first.observedAt).toBeUndefined();
+      const reading = atoms.detailReadVersion(target);
+      const firstVersion = registry.get(reading);
+      expect(firstVersion).toBeGreaterThan(0);
       expect((yield* AtomRegistry.getResult(registry, live)).title).toBe("latest checks");
+      expect(reads).toBe(2);
+      hold = true;
+      registry.refresh(cached);
+      yield* readStarted.await;
+      expect(registry.get(reading)).toBe(firstVersion);
+      yield* releaseRead.open;
+      expect(yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true })).toBe(
+        first,
+      );
+      const settledVersion = registry.get(reading);
+      expect(settledVersion).toBeGreaterThan(firstVersion);
+      hold = false;
+
+      yield* SubscriptionRef.update(supervisor.state, (state) => ({
+        ...state,
+        phase: "offline" as const,
+      }));
+      yield* Effect.yieldNow;
+      registry.refresh(cached);
+      const offline = yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true });
+      expect(offline.observedAt).toBeUndefined();
+      expect(registry.get(reading)).toBe(settledVersion);
+      expect(reads).toBe(3);
+
+      yield* SubscriptionRef.update(supervisor.state, (state) => ({
+        ...state,
+        phase: "connected" as const,
+      }));
+      yield* Effect.yieldNow;
+      registry.refresh(cached);
+      const reread = yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true });
+      expect(reread).toBe(first);
+      expect(reread.observedAt).toBeUndefined();
+      expect(registry.get(reading)).toBeGreaterThan(settledVersion);
+
+      hostStamp = 27;
+      registry.refresh(cached);
+      expect(
+        (yield* AtomRegistry.getResult(registry, cached, { suspendOnWaiting: true })).observedAt,
+      ).toBe(hostStamp);
     }),
   ),
 );
@@ -1311,7 +2100,7 @@ it.effect("updates cached labels after successful edits without rereading the ho
           host: "github.example.com",
         },
       };
-      const detail = atoms.detail(target);
+      const detail = atoms.detail({ ...target, input: { ...target.input, allowStale: false } });
       const candidates = atoms.labelCandidates(target);
       registry.mount(detail);
       const unmountCandidates = registry.mount(candidates);
@@ -1366,15 +2155,11 @@ it.effect("updates cached labels after successful edits without rereading the ho
       registry.refresh(detail);
       yield* detailRefreshStarted.await;
       expect(registry.get(detail).waiting).toBe(true);
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).labels).toEqual([
-        addedLabel,
-      ]);
+      expect(AsyncResult.getOrThrow(registry.get(detail)).labels).toEqual([addedLabel]);
       yield* releaseDetailRefresh.open;
       yield* Effect.exit(AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true }));
       expect(AsyncResult.isFailure(registry.get(detail))).toBe(true);
-      expect(Option.getOrThrow(AsyncResult.value(registry.get(detail))).labels).toEqual([
-        addedLabel,
-      ]);
+      expect(AsyncResult.getOrThrow(registry.get(detail)).labels).toEqual([addedLabel]);
       failDetail = false;
       registry.refresh(detail);
       expect(
@@ -1385,184 +2170,120 @@ it.effect("updates cached labels after successful edits without rereading the ho
   ),
 );
 
-it.effect("updates reviewer requests and enriched reviewers without rereading the host", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      let reads = 0;
-      let refuse = false;
-      const actor = { login: "reviewer", name: "Reviewer", avatarUrl: null };
-      const hostActor = { ...actor, login: "Reviewer" };
-      let hostRequested = false;
-      let reviewed = false;
-      let pauseActivity = false;
-      const activityStarted = yield* Latch.make();
-      const client = {
-        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
-        [WS_METHODS.pullRequestsDetail]: () =>
-          Effect.sync(() => {
-            reads++;
-            return { reviewers: hostRequested ? [hostActor] : [] };
-          }),
-        [WS_METHODS.pullRequestsActivity]: () =>
-          Effect.gen(function* () {
-            reads++;
-            if (pauseActivity) {
-              pauseActivity = false;
-              yield* activityStarted.open;
-              return yield* Effect.never;
-            }
-            return {
-              reviewers: hostRequested ? [hostActor] : [],
-              comments: reviewed ? [{ kind: "review-comment", author: hostActor }] : [],
-            };
-          }),
-        [WS_METHODS.pullRequestsReviewerCandidates]: (input: { number: number }) =>
-          input.number === 2
-            ? Effect.never
-            : Effect.sync(() => {
-                reads++;
-                return {
-                  candidates: [{ ...actor, id: "12", kind: "user", isRequested: false }],
-                  truncated: false,
-                };
-              }),
-        [WS_METHODS.pullRequestsRequestReviewers]: (input: { requested: boolean }) =>
-          refuse
-            ? Effect.fail(new MutationRefused())
-            : Effect.sync(() => {
-                hostRequested = input.requested;
-              }),
-      } as unknown as WsRpcProtocolClient;
-      const { atoms, registry } = yield* makeTestRuntime(client);
-      const target = {
-        environmentId: TARGET.environmentId,
-        input: {
-          projectId: ProjectId.make("project-1"),
-          repository: "acme/web",
-          number: 1,
-          host: "github.example.com",
-        },
-      };
-      const detail = atoms.detail(target);
-      const activity = atoms.activity(target);
-      const candidates = atoms.reviewerCandidates(target);
-      registry.mount(detail);
-      registry.mount(activity);
-      registry.mount(candidates);
-      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
-      yield* AtomRegistry.getResult(registry, activity, { suspendOnWaiting: true });
-      yield* AtomRegistry.getResult(registry, candidates, { suspendOnWaiting: true });
-      const request = (requested: boolean, reference = target) =>
-        Effect.promise(() =>
-          atoms.requestReviewers.run(registry, {
-            ...reference,
-            input: { ...reference.input, reviewers: [{ id: "12", kind: "user" }], requested },
-          }),
-        );
-      for (const operation of ["request", "refuse", "remove"]) {
-        refuse = operation === "refuse";
-        expect((yield* request(operation === "request"))._tag).toBe(refuse ? "Failure" : "Success");
-        const expected = operation === "remove" ? [] : [actor];
-        expect((yield* AtomRegistry.getResult(registry, detail)).reviewers).toEqual(expected);
-        expect((yield* AtomRegistry.getResult(registry, activity)).reviewers).toEqual(expected);
-        expect((yield* AtomRegistry.getResult(registry, candidates)).candidates).toMatchObject([
-          { isRequested: operation !== "remove" },
-        ]);
-      }
-      expect(reads).toBe(3);
-      // A slow activity read started before the write must not hide the new request.
-      pauseActivity = true;
-      registry.refresh(activity);
-      yield* activityStarted.await;
-      expect(AsyncResult.isSuccess(yield* request(true))).toBe(true);
-      expect(
-        (yield* AtomRegistry.getResult(registry, activity, { suspendOnWaiting: true })).reviewers,
-      ).toEqual([hostActor]);
-      expect(reads).toBe(5);
-      expect(AsyncResult.isSuccess(yield* request(false))).toBe(true);
-      expect((yield* AtomRegistry.getResult(registry, activity)).reviewers).toEqual([]);
-
-      reviewed = true;
-      yield* request(true);
-      registry.refresh(activity);
-      yield* AtomRegistry.getResult(registry, activity, { suspendOnWaiting: true });
-      yield* request(false);
-      expect((yield* AtomRegistry.getResult(registry, activity)).reviewers).toEqual([hostActor]);
-
-      // A caller without an open picker still needs authoritative reviewer identities.
-      const otherTarget = { ...target, input: { ...target.input, number: 2 } };
-      const otherDetail = atoms.detail(otherTarget);
-      registry.mount(otherDetail);
-      yield* AtomRegistry.getResult(registry, otherDetail, { suspendOnWaiting: true });
-      yield* request(true, otherTarget);
-      expect(
-        (yield* AtomRegistry.getResult(registry, otherDetail, { suspendOnWaiting: true }))
-          .reviewers,
-      ).toEqual([hostActor]);
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: grantedSessions }),
+}));
+const grantedSessions = Atom.family((_id: EnvironmentId) =>
+  Atom.make<AsyncResult.AsyncResult<AuthSessionState>>(
+    AsyncResult.success({
+      authenticated: true,
+      auth: {
+        policy: "remote-reachable" as const,
+        bootstrapMethods: [],
+        sessionMethods: [],
+        sessionCookieName: "test",
+      },
+      scopes: [AuthSourceControlWriteScope],
     }),
   ),
 );
 
-it.effect("refreshes stack state after reopening and head SHAs after a turn", () =>
+it.effect("denies a routed write when only the origin has source-control permission", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const refreshEvents = yield* PubSub.unbounded<number>();
-      let state: "closed" | "open" = "closed";
-      let headSha = "old-head";
+      let writes = 0;
+      const identity = { host: "github.com", provider: "github", viewer: "test", accountId: "123" };
       const client = {
-        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(refreshEvents),
-        [WS_METHODS.pullRequestsStack]: () =>
-          Effect.sync(
-            () =>
-              ({
-                id: "stack-1",
-                number: 1,
-                url: "https://github.com/acme/web/pull/1",
-                base: "main",
-                layers: [
-                  {
-                    number: 1,
-                    headBranch: "feature",
-                    headSha,
-                    state,
-                    isDraft: false,
-                  },
-                ],
-              }) satisfies PullRequestStack,
-          ),
+        [WS_METHODS.pullRequestsRouting]: () => Effect.succeed(identity),
+        [WS_METHODS.pullRequestsRoutingIdentity]: () => Effect.succeed(identity),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.sync(() => {
+            writes++;
+          }),
       } as unknown as WsRpcProtocolClient;
-      const { runtime, registry } = yield* makeTestRuntime(client);
-      const stacks = createPullRequestStackAtomFamily(runtime);
-      const stack = stacks({
-        environmentId: TARGET.environmentId,
-        input: {
-          projectId: ProjectId.make("project-1"),
-          repository: "acme/web",
-          number: 1,
-        },
-      });
-      const unmount = registry.mount(stack);
-      yield* Effect.addFinalizer(() => Effect.sync(unmount));
-      yield* Effect.promise(() => executeAtomQuery(registry, stack));
-      expect((yield* AtomRegistry.getResult(registry, stack))?.layers[0]?.state).toBe("closed");
-      state = "open";
-      registry.refresh(stack);
-      expect(
-        (yield* AtomRegistry.getResult(registry, stack, { suspendOnWaiting: true }))?.layers[0]
-          ?.state,
-      ).toBe("open");
-
-      const refreshed = Latch.makeUnsafe();
-      const stop = registry.subscribe(stack, (result) => {
-        if (AsyncResult.isSuccess(result) && result.value?.layers[0]?.headSha === "new-head") {
-          refreshed.openUnsafe();
-        }
-      });
+      const fixture = yield* makeTestRuntime(client, client);
+      const local = EnvironmentId.make("local-environment");
+      const stop = fixture.registry.mount(grantedSessions(local));
       yield* Effect.addFinalizer(() => Effect.sync(stop));
-      headSha = "new-head";
-      yield* PubSub.publish(refreshEvents, 1);
-      yield* refreshed.await;
-      expect((yield* AtomRegistry.getResult(registry, stack))?.layers[0]?.headSha).toBe("new-head");
+      fixture.registry.set(
+        grantedSessions(local),
+        AsyncResult.success({
+          authenticated: true,
+          scopes: [],
+          auth: {
+            policy: "remote-reachable" as const,
+            bootstrapMethods: [],
+            sessionMethods: [],
+            sessionCookieName: "test",
+          },
+        }),
+      );
+      const error = yield* createPullRequestRouter()(WS_METHODS.pullRequestsRunAction, {
+        projectId: ProjectId.make("project"),
+        repository: "acme/repo",
+        number: 1,
+        action: "merge",
+      }).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, fixture.environmentRegistry),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, fixture.supervisor),
+        Effect.provideService(PullRequestRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, {
+          authorize: (id, method, input) =>
+            createCommandPermissions(fixture.runtime, method).authorize(
+              fixture.registry,
+              id,
+              input,
+            ),
+        }),
+        Effect.flip,
+      );
+      expect(error._tag).toBe("EnvironmentAuthorizationError");
+      expect(writes).toBe(0);
+    }),
+  ),
+);
+
+it.effect("publishes the accepted guide run before the follow-up read finishes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const accepted = {
+        guide: null,
+        currentHeadSha: "head",
+        run: { _tag: "Running" as const, headSha: "head", startedAt: "2026-10-11T00:00:00.000Z" },
+      };
+      let reads = 0;
+      const refreshStarted = yield* Latch.make();
+      const client = {
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
+        [WS_METHODS.pullRequestsReviewGuide]: () =>
+          Effect.gen(function* () {
+            if (++reads > 1) {
+              yield* refreshStarted.open;
+              return yield* Effect.never;
+            }
+            return { guide: null, run: null, currentHeadSha: "head" };
+          }),
+        [WS_METHODS.pullRequestsGenerateReviewGuide]: () => Effect.succeed(accepted),
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = {
+        environmentId: TARGET.environmentId,
+        input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
+      };
+      registry.update(
+        grantedSessions(target.environmentId),
+        AsyncResult.map((session) => ({
+          ...session,
+          scopes: [...(session.scopes ?? []), AuthOrchestrationOperateScope],
+        })),
+      );
+      const query = atoms.reviewGuide(target);
+      registry.mount(query);
+      yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
+      const result = yield* Effect.promise(() => atoms.generateReviewGuide.run(registry, target));
+      expect(result._tag).toBe("Success");
+      yield* refreshStarted.await;
+      expect(AsyncResult.getOrElse(registry.get(query), () => null)).toEqual(accepted);
     }),
   ),
 );

@@ -1,0 +1,265 @@
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -11,7 +11,7 @@
+     ".": {
+       "types": "./dist/index.d.ts",
+       "import": "./dist/index.js",
+-      "require": "./dist/index.cjs",
++      "require": "./dist/index.js",
+       "default": "./dist/index.js"
+     },
+     "./package.json": "./package.json"
+diff --git a/dist/fff-api.d.ts b/dist/fff-api.d.ts
+--- a/dist/fff-api.d.ts
++++ b/dist/fff-api.d.ts
+@@ -199,7 +199,7 @@ export type Location = {
+ export interface SearchResult {
+     /** Matched file items */
+     items: FileItem[];
+-    /** Corresponding scores for each item */
++    /** Corresponding scores for each item. Empty when the page has more than 200 items (patched in T3 Code to skip per-item score FFI calls). */
+     scores: Score[];
+     /** Total number of files that matched */
+     totalMatched: number;
+@@ -238,7 +238,7 @@ export interface DirSearchOptions {
+ export interface DirSearchResult {
+     /** Matched directory items */
+     items: DirItem[];
+-    /** Corresponding scores for each item */
++    /** Corresponding scores for each item. Empty when the page has more than 200 items (patched in T3 Code to skip per-item score FFI calls). */
+     scores: Score[];
+     /** Total number of directories that matched */
+     totalMatched: number;
+@@ -262,7 +262,7 @@ export type MixedItem = {
+ export interface MixedSearchResult {
+     /** Matched items (files and directories interleaved by score) */
+     items: MixedItem[];
+-    /** Corresponding scores for each item */
++    /** Corresponding scores for each item. Empty when the page has more than 200 items (patched in T3 Code to skip per-item score FFI calls). */
+     scores: Score[];
+     /** Total number of items (files + dirs) that matched */
+     totalMatched: number;
+diff --git a/dist/index.js b/dist/index.js
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,7 +1,7 @@
+ // src/binary.ts
+ import { existsSync, readFileSync } from "fs";
+ import { createRequire } from "module";
+-import { dirname, join } from "path";
++import { dirname, join, sep } from "path";
+ import { fileURLToPath } from "url";
+ 
+ // src/platform.ts
+@@ -120,6 +120,16 @@ function getPackageDir() {
+ function binaryExists() {
+   return findBinary() !== null;
+ }
++function resolveUnpackedAsarPath(binaryPath) {
++  const pathSegments = binaryPath.split(sep);
++  const asarIndex = pathSegments.findLastIndex((segment) => segment.endsWith(".asar"));
++  if (asarIndex === -1) {
++    return binaryPath;
++  }
++  pathSegments[asarIndex] = `${pathSegments[asarIndex]}.unpacked`;
++  const unpackedPath = pathSegments.join(sep);
++  return existsSync(unpackedPath) ? unpackedPath : binaryPath;
++}
+ function resolveFromNpmPackage() {
+   const packageName = getNpmPackageName();
+   try {
+@@ -128,7 +138,7 @@ function resolveFromNpmPackage() {
+     const packageDir = dirname(packageJsonPath);
+     const binaryPath = join(packageDir, getLibFilename());
+     if (existsSync(binaryPath)) {
+-      return binaryPath;
++      return resolveUnpackedAsarPath(binaryPath);
+     }
+   } catch {
+   }
+@@ -262,6 +272,7 @@ function snakeToCamel(obj) {
+   return result;
+ }
+ function readCString(ptr) {
++  if (typeof ptr === "string") return ptr;
+   if (isNullPointer(ptr)) return null;
+   try {
+     const [str] = restorePointer({
+@@ -426,9 +437,9 @@ function ffiDestroy(handle) {
+   });
+ }
+ var FFF_FILE_ITEM_STRUCT = {
+-  relative_path: DataType.External,
+-  file_name: DataType.External,
+-  git_status: DataType.External,
++  relative_path: DataType.String,
++  file_name: DataType.String,
++  git_status: DataType.String,
+   size: DataType.U64,
+   modified: DataType.U64,
+   access_frecency_score: DataType.I64,
+@@ -445,8 +456,9 @@ var FFF_SCORE_STRUCT = {
+   distance_penalty: DataType.I32,
+   current_file_penalty: DataType.I32,
+   combo_match_boost: DataType.I32,
++  path_alignment_bonus: DataType.I32,
+   exact_match: DataType.U8,
+-  match_type: DataType.External
++  match_type: DataType.String
+ };
+ var FFF_SEARCH_RESULT_STRUCT = {
+   items: DataType.External,
+@@ -462,8 +474,8 @@ var FFF_SEARCH_RESULT_STRUCT = {
+   location_end_col: DataType.I32
+ };
+ var FFF_DIR_ITEM_STRUCT = {
+-  relative_path: DataType.External,
+-  dir_name: DataType.External,
++  relative_path: DataType.String,
++  dir_name: DataType.String,
+   max_access_frecency: DataType.I32
+ };
+ var FFF_DIR_SEARCH_RESULT_STRUCT = {
+@@ -475,9 +487,9 @@ var FFF_DIR_SEARCH_RESULT_STRUCT = {
+ };
+ var FFF_MIXED_ITEM_STRUCT = {
+   item_type: DataType.U8,
+-  relative_path: DataType.External,
+-  display_name: DataType.External,
+-  git_status: DataType.External,
++  relative_path: DataType.String,
++  display_name: DataType.String,
++  git_status: DataType.String,
+   size: DataType.U64,
+   modified: DataType.U64,
+   access_frecency_score: DataType.I64,
+@@ -500,10 +512,10 @@ var FFF_MIXED_SEARCH_RESULT_STRUCT = {
+   location_end_col: DataType.I32
+ };
+ var FFF_GREP_MATCH_STRUCT = {
+-  relative_path: DataType.External,
+-  file_name: DataType.External,
+-  git_status: DataType.External,
+-  line_content: DataType.External,
++  relative_path: DataType.String,
++  file_name: DataType.String,
++  git_status: DataType.String,
++  line_content: DataType.String,
+   match_ranges: DataType.External,
+   context_before: DataType.External,
+   context_after: DataType.External,
+@@ -598,18 +610,13 @@ function readMixedItemFromRaw(raw) {
+ }
+ function callAccessor(funcName, resultPtr, index, structDef) {
+   loadLibrary();
+-  const elemPtr = load({
++  return load({
+     library: LIBRARY_KEY,
+     funcName,
+-    retType: DataType.External,
++    retType: structDef,
+     paramsType: [DataType.External, DataType.U32],
+     paramsValue: [resultPtr, index]
+   });
+-  const [raw] = restorePointer({
+-    retType: [structDef],
+-    paramsValue: wrapPointer([elemPtr])
+-  });
+-  return raw;
+ }
+ function ptrOffset(base, bytes) {
+   return load({
+@@ -766,6 +773,7 @@ function parseSearchResult(rawPtr) {
+   }
+   const items = [];
+   const scores = [];
++  const includeScores = count <= 200;
+   for (let i = 0; i < count; i++) {
+     const rawItem = callAccessor(
+       "fff_search_result_get_item",
+@@ -774,13 +782,15 @@ function parseSearchResult(rawPtr) {
+       FFF_FILE_ITEM_STRUCT
+     );
+     items.push(readFileItemFromRaw(rawItem));
+-    const rawScore = callAccessor(
+-      "fff_search_result_get_score",
+-      handlePtr,
+-      i,
+-      FFF_SCORE_STRUCT
+-    );
+-    scores.push(readScoreFromRaw(rawScore));
++    if (includeScores) {
++      const rawScore = callAccessor(
++        "fff_search_result_get_score",
++        handlePtr,
++        i,
++        FFF_SCORE_STRUCT
++      );
++      scores.push(readScoreFromRaw(rawScore));
++    }
+   }
+   load({
+     library: LIBRARY_KEY,
+@@ -824,6 +834,7 @@ function parseDirSearchResult(rawPtr) {
+   const count = sr.count;
+   const items = [];
+   const scores = [];
++  const includeScores = count <= 200;
+   for (let i = 0; i < count; i++) {
+     const rawItem = callAccessor(
+       "fff_dir_search_result_get_item",
+@@ -832,13 +843,15 @@ function parseDirSearchResult(rawPtr) {
+       FFF_DIR_ITEM_STRUCT
+     );
+     items.push(readDirItemFromRaw(rawItem));
+-    const rawScore = callAccessor(
+-      "fff_dir_search_result_get_score",
+-      handlePtr,
+-      i,
+-      FFF_SCORE_STRUCT
+-    );
+-    scores.push(readScoreFromRaw(rawScore));
++    if (includeScores) {
++      const rawScore = callAccessor(
++        "fff_dir_search_result_get_score",
++        handlePtr,
++        i,
++        FFF_SCORE_STRUCT
++      );
++      scores.push(readScoreFromRaw(rawScore));
++    }
+   }
+   load({
+     library: LIBRARY_KEY,
+@@ -897,6 +910,7 @@ function parseMixedSearchResult(rawPtr) {
+   }
+   const items = [];
+   const scores = [];
++  const includeScores = count <= 200;
+   for (let i = 0; i < count; i++) {
+     const rawItem = callAccessor(
+       "fff_mixed_search_result_get_item",
+@@ -905,13 +919,15 @@ function parseMixedSearchResult(rawPtr) {
+       FFF_MIXED_ITEM_STRUCT
+     );
+     items.push(readMixedItemFromRaw(rawItem));
+-    const rawScore = callAccessor(
+-      "fff_mixed_search_result_get_score",
+-      handlePtr,
+-      i,
+-      FFF_SCORE_STRUCT
+-    );
+-    scores.push(readScoreFromRaw(rawScore));
++    if (includeScores) {
++      const rawScore = callAccessor(
++        "fff_mixed_search_result_get_score",
++        handlePtr,
++        i,
++        FFF_SCORE_STRUCT
++      );
++      scores.push(readScoreFromRaw(rawScore));
++    }
+   }
+   load({
+     library: LIBRARY_KEY,

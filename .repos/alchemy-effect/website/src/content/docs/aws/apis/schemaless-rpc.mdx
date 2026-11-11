@@ -15,9 +15,9 @@ riding the generic fetch transport — each call is a
 
 ```typescript
 // sandbox.ts — the MicroVM image
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export class Sandbox extends AWS.Lambda.MicrovmImage<
   Sandbox,

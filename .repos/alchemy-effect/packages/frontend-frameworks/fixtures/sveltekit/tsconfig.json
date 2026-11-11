@@ -1,4 +1,5 @@
 {
+  "extends": "$app/tsconfig",
   "include": [
     "src/**/*.ts",
     "src/app.d.ts",
@@ -11,7 +12,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["node"],
+    "types": ["node", "$app/types"],
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,

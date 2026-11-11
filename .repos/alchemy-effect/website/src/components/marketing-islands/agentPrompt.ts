@@ -26,7 +26,7 @@ For everything else (Cloudflare deep-dives, guides, concepts), fetch ${origin}/l
 Important:
 - Confirm with me before each deploy. Don't batch.
 - Do NOT instruct me to export CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN. Alchemy stores credentials in profiles — \`alchemy profile edit\` (or the first \`alchemy deploy\`) prompts interactively for OAuth or an API token and saves it to ~/.alchemy/profiles.json.
-- Use \`bun alchemy deploy\` (or the npm/pnpm/yarn equivalent).
+- Use pnpm: \`pnpm add\` to install packages and \`pnpm alchemy deploy\` to deploy.
 - If I'm migrating from Alchemy v1 (async/await), find the v1 migration guide via llms.txt and read it first.`;
 
 /**

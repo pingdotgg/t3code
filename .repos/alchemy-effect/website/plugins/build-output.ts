@@ -1,13 +1,14 @@
-import type { AstroIntegration } from "astro";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AstroIntegration } from "astro";
+import { rewriteReferenceLinks } from "../src/reference-links.ts";
+import { SOCIAL_REDIRECTS } from "../src/social-redirects.ts";
 import { rewriteForPagefind } from "./pagefind-ignore-noise.ts";
 
 /** Populated before the sitemap integration runs. */
 export const noindexPaths = new Set();
-const noindexRegex =
-  /<meta\b(?=[^>]*\bname="robots")(?=[^>]*\bcontent="[^"]*noindex)/i;
+const noindexRegex = /<meta\b(?=[^>]*\bname="robots")(?=[^>]*\bcontent="[^"]*noindex)/i;
 
 /**
  * Build-output checks — one pass over every rendered HTML page:
@@ -48,10 +49,7 @@ export function buildOutputChecks(): AstroIntegration {
 
         // One directory inventory and one HTML read per page. Keep only paths
         // globally; HTML buffers are limited to the small worker batch below.
-        const entries = await fs.readdir(distPath, {
-          recursive: true,
-          withFileTypes: true,
-        });
+        const entries = await fs.readdir(distPath, { recursive: true, withFileTypes: true });
         for (const entry of entries) {
           const rel =
             "/" +
@@ -69,21 +67,14 @@ export function buildOutputChecks(): AstroIntegration {
         const oddIndents: { file: string; line: string }[] = [];
         const badOgImages: { file: string; url: string }[] = [];
         const htmlFiles = [...paths].filter((p) => p.endsWith(".html")).sort();
-        const hasOgImages = [...paths].some(
-          (p) => p.startsWith("/og/") && p.endsWith(".webp"),
-        );
+        const hasOgImages = [...paths].some((p) => p.startsWith("/og/") && p.endsWith(".webp"));
 
         async function checkFile(htmlFile: string) {
-          const before = await fs.readFile(
-            path.join(distPath, htmlFile.slice(1)),
-            "utf8",
-          );
-          const html = rewriteForPagefind(before);
+          const before = await fs.readFile(path.join(distPath, htmlFile.slice(1)), "utf8");
+          const html = rewriteForPagefind(rewriteReferenceLinks(before));
           if (noindexRegex.test(html)) {
             noindexPaths.add(
-              htmlFile.endsWith("/index.html")
-                ? htmlFile.slice(0, -"index.html".length)
-                : htmlFile,
+              htmlFile.endsWith("/index.html") ? htmlFile.slice(0, -"index.html".length) : htmlFile,
             );
           }
           const links = [
@@ -97,6 +88,7 @@ export function buildOutputChecks(): AstroIntegration {
             if (exists === undefined) {
               const clean = link.replace(/\/$/, "");
               exists =
+                Object.hasOwn(SOCIAL_REDIRECTS, clean) ||
                 paths.has(clean) ||
                 paths.has(clean + "/index.html") ||
                 paths.has(clean + ".html") ||
@@ -110,9 +102,7 @@ export function buildOutputChecks(): AstroIntegration {
           }
 
           // og:image check (see integration docstring).
-          for (const m of html.matchAll(
-            /property="og:image"\s+content="([^"]+)"/g,
-          )) {
+          for (const m of html.matchAll(/property="og:image"\s+content="([^"]+)"/g)) {
             const url = m[1];
             let pathname;
             try {
@@ -121,28 +111,16 @@ export function buildOutputChecks(): AstroIntegration {
               badOgImages.push({ file: htmlFile, url });
               continue;
             }
-            if (
-              /\b(?:undefined|null)\b/.test(pathname) ||
-              (hasOgImages && !paths.has(pathname))
-            ) {
+            if (/\b(?:undefined|null)\b/.test(pathname) || (hasOgImages && !paths.has(pathname))) {
               badOgImages.push({ file: htmlFile, url });
             }
           }
 
           // Diff-block indent check (see integration docstring).
-          if (
-            html.includes("highlight ins") ||
-            html.includes("highlight del")
-          ) {
-            for (const fig of html.matchAll(
-              /<figure class="frame[^"]*">.*?<\/figure>/gs,
-            )) {
+          if (html.includes("highlight ins") || html.includes("highlight del")) {
+            for (const fig of html.matchAll(/<figure class="frame[^"]*">.*?<\/figure>/gs)) {
               const block = fig[0];
-              if (
-                !block.includes("highlight ins") &&
-                !block.includes("highlight del")
-              )
-                continue;
+              if (!block.includes("highlight ins") && !block.includes("highlight del")) continue;
               for (const m of block.matchAll(
                 /<div class="ec-line[^"]*"><div class="code">(.*?)<\/div><\/div>/gs,
               )) {
@@ -164,8 +142,7 @@ export function buildOutputChecks(): AstroIntegration {
               }
             }
           }
-          if (html !== before)
-            await fs.writeFile(path.join(distPath, htmlFile.slice(1)), html);
+          if (html !== before) await fs.writeFile(path.join(distPath, htmlFile.slice(1)), html);
         }
 
         // Read/scan in bounded parallel batches — serial reads dominate
@@ -182,9 +159,7 @@ export function buildOutputChecks(): AstroIntegration {
             for (const doc of docs) msg += `      - ${doc}\n`;
           }
           logger.error(msg);
-          throw new Error(
-            `Case-sensitive broken links detected (${broken.size})`,
-          );
+          throw new Error(`Case-sensitive broken links detected (${broken.size})`);
         }
         if (badOgImages.length > 0) {
           let msg = "Broken og:image URLs detected:\n";
@@ -192,9 +167,7 @@ export function buildOutputChecks(): AstroIntegration {
             msg += `  ${file}: ${url}\n`;
           }
           logger.error(msg);
-          throw new Error(
-            `Broken og:image URLs detected (${badOgImages.length})`,
-          );
+          throw new Error(`Broken og:image URLs detected (${badOgImages.length})`);
         }
         if (oddIndents.length > 0) {
           let msg =
@@ -205,9 +178,7 @@ export function buildOutputChecks(): AstroIntegration {
             msg += `  ${file}: ${JSON.stringify(line)}\n`;
           }
           logger.error(msg);
-          throw new Error(
-            `Misindented diff-block lines detected (${oddIndents.length})`,
-          );
+          throw new Error(`Misindented diff-block lines detected (${oddIndents.length})`);
         }
         logger.info(
           `Build-output checks passed (${htmlFiles.length} pages: links + diff indents + search exclusions; ${noindexPaths.size} noindex) in ${((performance.now() - started) / 1000).toFixed(2)}s`,

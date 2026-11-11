@@ -2,7 +2,6 @@ import { SUBAGENT_V2_APPROVAL_PROMPT, type OrchestratorFixtureInput } from "../s
 
 export const SUBAGENT_APPROVAL_PENDING_SHELL_KEY = "subagent-approval-pending";
 
-/** The adapter's approval-required turn policy, which the recording ran under. */
 export const SUBAGENT_V2_APPROVAL_POLICY = {
   approvalPolicy: "untrusted",
   sandboxPolicy: { type: "readOnly" },

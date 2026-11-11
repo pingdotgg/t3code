@@ -1,3 +1,8 @@
+import { describe, expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 /**
  * A tagged platform resource declared as a bare tag — no props, no inline
  * impl — gets both from its `.make(props, impl)` Layer. Yielding it without
@@ -14,11 +19,6 @@ import { Platform } from "@/Platform.ts";
 import * as Provider from "@/Provider.ts";
 import type { Resource } from "@/Resource.ts";
 import { InMemoryService, State } from "@/State/index.ts";
-import * as Test from "@/Test/Alchemy";
-import { describe, expect } from "alchemy-test";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 
 interface Widget extends Resource<
   "Test.PlatformWidget",
@@ -75,10 +75,7 @@ const MissingImplStack = Alchemy.Stack(
 );
 
 class ProvidedWidget extends Widget()("ProvidedWidget") {}
-const ProvidedWidgetLive = ProvidedWidget.make(
-  { name: "provided" },
-  Effect.succeed({}),
-);
+const ProvidedWidgetLive = ProvidedWidget.make({ name: "provided" }, Effect.succeed({}));
 
 const ProvidedStack = Alchemy.Stack(
   "PlatformProvidedStack",
@@ -148,7 +145,24 @@ const DoubleBareStack = Alchemy.Stack(
   }),
 );
 
-describe("tagged platform resource yielded without its impl layer", () => {
+/** The same bare tag on a platform that installs a `transformProps` hook. */
+const TransformedWidget: any = Platform<Widget>("Test.PlatformWidget", {
+  createRuntimeContext: () => ({}) as any,
+  transformProps: (_id, props) => Effect.succeed(props),
+});
+
+class BareTransformedWidget extends TransformedWidget()("BareTransformedWidget") {}
+
+const TransformedMissingImplStack = Alchemy.Stack(
+  "PlatformTransformedMissingImplStack",
+  { providers, state },
+  Effect.gen(function* () {
+    const widget = yield* yieldWidget(BareTransformedWidget);
+    return { name: widget.name };
+  }),
+);
+
+describe("tagged platform resource yielded without its impl layer", { tags: ["local"] }, () => {
   test(
     "fails fast, naming the class and its layer",
     Effect.gen(function* () {
@@ -216,6 +230,18 @@ describe("tagged platform resource yielded without its impl layer", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       const message = String(Exit.isFailure(exit) ? exit.cause : "");
       expect(message).toContain("Test.PlatformWidget<DoubleBareWidget>");
+      expect(observed.ran).toBe(false);
+    }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "fails fast when the platform transforms props",
+    Effect.gen(function* () {
+      const exit = yield* runDeploy(TransformedMissingImplStack);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const message = String(Exit.isFailure(exit) ? exit.cause : "");
+      expect(message).toContain("Test.PlatformWidget<BareTransformedWidget>");
       expect(observed.ran).toBe(false);
     }),
     { timeout: 60_000 },

@@ -2,9 +2,9 @@ import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 const run = Effect.fn(function* (bin: string, args: string[], cwd?: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -29,9 +29,7 @@ const run = Effect.fn(function* (bin: string, args: string[], cwd?: string) {
   );
   if (result.exitCode !== 0) {
     return yield* Effect.fail(
-      new Error(
-        `${bin} ${args.join(" ")} exited ${result.exitCode}: ${result.stderr}`,
-      ),
+      new Error(`${bin} ${args.join(" ")} exited ${result.exitCode}: ${result.stderr}`),
     );
   }
 });
@@ -43,19 +41,17 @@ const run = Effect.fn(function* (bin: string, args: string[], cwd?: string) {
  * cluster will attach) and vendors its subcharts. Returns the local chart
  * path for `Kubernetes.HelmChart` to render.
  */
-export const FetchHyperPodChart = Alchemy.Action(
-  "FetchHyperPodChart",
-  (input: { repo: string }) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* Effect.sync(() => process.cwd());
-      const cloneDir = path.join(cwd, ".alchemy", "cache", "hyperpod-cli");
-      if (!(yield* fs.exists(path.join(cloneDir, "helm_chart")))) {
-        yield* run("git", ["clone", "--depth", "1", input.repo, cloneDir]);
-      }
-      const chartPath = path.join(cloneDir, "helm_chart", "HyperPodHelmChart");
-      yield* run("helm", ["dependency", "update", chartPath]);
-      return { chartPath };
-    }),
+export const FetchHyperPodChart = Alchemy.Action("FetchHyperPodChart", (input: { repo: string }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* Effect.sync(() => process.cwd());
+    const cloneDir = path.join(cwd, ".alchemy", "cache", "hyperpod-cli");
+    if (!(yield* fs.exists(path.join(cloneDir, "helm_chart")))) {
+      yield* run("git", ["clone", "--depth", "1", input.repo, cloneDir]);
+    }
+    const chartPath = path.join(cloneDir, "helm_chart", "HyperPodHelmChart");
+    yield* run("helm", ["dependency", "update", chartPath]);
+    return { chartPath };
+  }),
 );

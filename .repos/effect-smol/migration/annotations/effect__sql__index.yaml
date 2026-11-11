@@ -1,3 +1,0 @@
-"@effect/sql/index":
-  replacement: "effect/unstable/sql"
-  note: "The package barrel was removed; import the same namespaces from the effect/unstable/sql barrel or import specific modules directly."

@@ -1,21 +1,17 @@
-import {
-  AuthProviderLayer,
-  AuthProviders,
-  NeedsReauth,
-} from "@/Auth/AuthProvider.ts";
+import { expect, it } from "@alchemy.run/test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import { AuthProviderLayer, AuthProvidersLive, NeedsReauth } from "@/Auth/AuthProvider.ts";
 import {
   type CredentialDemand,
   type CredentialsRequired,
   demandCredentials,
 } from "@/Auth/Demand.ts";
 import { ProfileStore, ProfileStoreLive } from "@/Auth/Profile.ts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "alchemy-test";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
 
 const PROBE = "DemandProbe";
 
@@ -52,28 +48,25 @@ const ENV_PROBE_TOKEN = "DEMAND_PROBE_TOKEN";
 const envState = { reads: 0 };
 
 /** A provider that also supports environment credentials. */
-const EnvProbeAuth = AuthProviderLayer<{ method: "stored" }, string>()(
-  ENV_PROBE,
-  {
-    configSchema: Schema.Struct({ method: Schema.Literal("stored") }),
-    configure: () => Effect.succeed({ method: "stored" as const }),
-    login: () => Effect.void,
-    logout: () => Effect.void,
-    details: () => Effect.succeed({ lines: [] }),
-    read: () => Effect.succeed("profile-credentials"),
-    readEnvironment: Effect.sync(() => {
-      envState.reads += 1;
-      return "env-credentials";
-    }),
-    environment: [{ name: ENV_PROBE_TOKEN, required: true, secret: true }],
-  },
-);
+const EnvProbeAuth = AuthProviderLayer<{ method: "stored" }, string>()(ENV_PROBE, {
+  configSchema: Schema.Struct({ method: Schema.Literal("stored") }),
+  configure: () => Effect.succeed({ method: "stored" as const }),
+  login: () => Effect.void,
+  logout: () => Effect.void,
+  details: () => Effect.succeed({ lines: [] }),
+  read: () => Effect.succeed("profile-credentials"),
+  readEnvironment: Effect.sync(() => {
+    envState.reads += 1;
+    return "env-credentials";
+  }),
+  environment: [{ name: ENV_PROBE_TOKEN, required: true, secret: true }],
+});
 
 const makeTestLayer = (config: Record<string, unknown> = {}) =>
   Layer.mergeAll(ProfileStoreLive, ProbeAuth, EnvProbeAuth).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        Layer.succeed(AuthProviders, {}),
+        AuthProvidersLive,
         // Fully replaces the ambient provider: an exported CI=1 (or
         // ALCHEMY_PROFILE) in the developer's shell must not leak into the
         // demand seam under test.
@@ -134,7 +127,7 @@ it.live(
         expect(state.reads).toBe(0);
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -147,7 +140,7 @@ it.live(
         expect(state.reads).toBe(1);
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -160,14 +153,12 @@ it.live(
         const error = yield* Effect.flip(demandCredentials([demand]));
         expect(error._tag).toBe("NeedsReauth");
         expect(error.message).toContain("Probe refresh token is dead.");
-        expect(error.message).toContain(
-          `These resources require ${PROBE} credentials:`,
-        );
+        expect(error.message).toContain(`These resources require ${PROBE} credentials:`);
         expect(error.message).toContain("Website");
         expect(error.message).toContain("Alchemy.remote()");
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -175,16 +166,14 @@ it.live(
   () =>
     withTempHome(
       Effect.gen(function* () {
-        const error = (yield* Effect.flip(
-          demandCredentials([demand]),
-        )) as CredentialsRequired;
+        const error = (yield* Effect.flip(demandCredentials([demand]))) as CredentialsRequired;
         expect(error._tag).toBe("CredentialsRequired");
         expect(error.resources).toEqual(["Website"]);
         expect(error.message).toContain(`--add ${PROBE}`);
         expect(state.reads).toBe(0);
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -192,9 +181,7 @@ it.live(
   () =>
     withTempHome(
       Effect.gen(function* () {
-        const error = (yield* Effect.flip(
-          demandCredentials([demand]),
-        )) as CredentialsRequired;
+        const error = (yield* Effect.flip(demandCredentials([demand]))) as CredentialsRequired;
         // NOT a generic ProfileError: the user must still learn which
         // resources demanded credentials and which command fixes it.
         expect(error._tag).toBe("CredentialsRequired");
@@ -204,7 +191,7 @@ it.live(
       }),
       { ALCHEMY_PROFILE: "ghost" },
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -224,5 +211,5 @@ it.live(
       }),
       { [ENV_PROBE_TOKEN]: "token" },
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );

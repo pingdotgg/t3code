@@ -8,9 +8,7 @@ import type { BetterAuthStorageError } from "./Errors.ts";
  * key-value store used for sessions, rate limiting, and OAuth state when
  * configured.
  *
- * All five operations are required (Better Auth marks `getAndDelete` and
- * `increment` optional today but documents them as required in the next
- * major). TTLs are in SECONDS, matching Better Auth.
+ * All five operations are required. TTLs are in SECONDS.
  */
 export interface SecondaryStorageService {
   readonly get: (
@@ -21,20 +19,19 @@ export interface SecondaryStorageService {
     value: string,
     ttlSeconds?: number,
   ) => Effect.Effect<void, BetterAuthStorageError, RuntimeContext>;
-  readonly delete: (
-    key: string,
-  ) => Effect.Effect<void, BetterAuthStorageError, RuntimeContext>;
-  /** Atomic read-and-delete where the backing store supports it. */
+  readonly delete: (key: string) => Effect.Effect<void, BetterAuthStorageError, RuntimeContext>;
+  /** Atomic read-and-delete. */
   readonly getAndDelete: (
     key: string,
   ) => Effect.Effect<string | null, BetterAuthStorageError, RuntimeContext>;
   /**
-   * Increment a counter, creating it at `1` with `ttlSeconds` on first
-   * write. Later increments never extend the TTL (fixed window).
+   * Atomically increment a counter. When the key is absent it is created
+   * at `1` with `ttlSeconds`; later increments never extend the TTL
+   * (fixed window).
    */
   readonly increment: (
     key: string,
-    ttlSeconds?: number,
+    ttlSeconds: number,
   ) => Effect.Effect<number, BetterAuthStorageError, RuntimeContext>;
 }
 
@@ -53,10 +50,9 @@ export interface SecondaryStorageService {
  * propagation and rate-limit windows need atomic counters. A strongly
  * consistent Cloudflare option would be a Durable Object-backed layer.
  */
-export class SecondaryStorage extends Context.Service<
-  SecondaryStorage,
-  SecondaryStorageService
->()("BetterAuth.SecondaryStorage") {}
+export class SecondaryStorage extends Context.Service<SecondaryStorage, SecondaryStorageService>()(
+  "BetterAuth.SecondaryStorage",
+) {}
 
 /**
  * Bridge the Effect-native service to the promise interface Better Auth
@@ -69,10 +65,8 @@ export const toPromiseStorage = (
   runPromise: <A, E>(effect: Effect.Effect<A, E, RuntimeContext>) => Promise<A>,
 ) => ({
   get: (key: string) => runPromise(storage.get(key)),
-  set: (key: string, value: string, ttl?: number) =>
-    runPromise(storage.set(key, value, ttl)),
+  set: (key: string, value: string, ttl?: number) => runPromise(storage.set(key, value, ttl)),
   delete: (key: string) => runPromise(storage.delete(key)),
   getAndDelete: (key: string) => runPromise(storage.getAndDelete(key)),
-  increment: (key: string, ttl: number) =>
-    runPromise(storage.increment(key, ttl)),
+  increment: (key: string, ttl: number) => runPromise(storage.increment(key, ttl)),
 });

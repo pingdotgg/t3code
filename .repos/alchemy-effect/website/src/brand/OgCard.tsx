@@ -11,9 +11,8 @@
  *
  *   - `blog` — dark variant inspired by Bun's release-note cards. Title
  *     anchored top-left, dense multi-line description filling the body,
- *     publish date + yantra mark in the footer. Designed to look full
- *     and editorial; relies on posts having a meaty `description`/
- *     `excerpt` in frontmatter.
+ *     publish date + yantra mark in the footer. The description is
+ *     clamped to three lines so long excerpts can't push into the footer.
  *
  * Title and description are rendered verbatim from the source page's
  * frontmatter. Fonts come from npm bundles, with variable Source Serif for
@@ -21,6 +20,7 @@
  */
 
 import type { ReactNode } from "react";
+import { sriYantraPattern } from "./sriYantra";
 import { yantraSvg } from "./yantra";
 
 const COLORS = {
@@ -55,9 +55,43 @@ export interface OgCardProps {
 const W = 1200;
 const H = 630;
 
+/**
+ * The landing page's lotus pattern (`yantra-2`: lotus rings around the nine
+ * triangles), drawn from the same exact construction. Returned as an SVG data
+ * URL so Takumi can draw it as an <img>.
+ */
+function yantraField(stroke: string, opacity: number): string {
+  const svg = sriYantraPattern("yantra-2", { color: stroke, strokeWidth: 1.6 }).replace(
+    "<svg ",
+    `<svg opacity="${opacity}" `,
+  );
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
+/** The geometry, large and bleeding off the card's right edge. */
+function Field({
+  stroke,
+  opacity,
+  right = -250,
+}: {
+  stroke: string;
+  opacity: number;
+  right?: number;
+}) {
+  return (
+    <img
+      src={yantraField(stroke, opacity)}
+      width={820}
+      height={820}
+      style={{ position: "absolute", right, top: -95, display: "flex" }}
+    />
+  );
+}
+
 export function OgCard(props: OgCardProps): any {
   const kind = props.kind ?? "doc";
   if (kind === "blog") return BlogCard(props);
+  if (kind === "marketing") return MarketingCard(props);
   return DocCard(props);
 }
 
@@ -82,6 +116,7 @@ function DocCard({ title, description, eyebrow, kind }: OgCardProps) {
         position: "relative",
       }}
     >
+      <Field stroke={COLORS.accentDeep} opacity={0.16} />
       <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
         <img
           src={yantraSvg({
@@ -174,6 +209,100 @@ function DocCard({ title, description, eyebrow, kind }: OgCardProps) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Marketing variant — the dark hero: mark, headline, subtitle, and the
+// yantra rings glowing behind it.
+// ────────────────────────────────────────────────────────────────────────────
+
+function MarketingCard({ title, description, eyebrow }: OgCardProps) {
+  return (
+    <div
+      style={{
+        width: W,
+        height: H,
+        display: "flex",
+        flexDirection: "column",
+        backgroundColor: COLORS.darkBg,
+        padding: "60px 72px",
+        fontFamily: "'Source Serif 4'",
+        color: COLORS.darkFg1,
+        position: "relative",
+      }}
+    >
+      <Field stroke={COLORS.darkAccent} opacity={0.3} right={-360} />
+      <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+        <img
+          src={yantraSvg({ size: 96, theme: "dark", output: "url" })}
+          width={60}
+          height={60}
+          style={{ display: "flex" }}
+        />
+        <div
+          style={{
+            fontFamily: "JetBrains Mono",
+            fontSize: 18,
+            letterSpacing: 3,
+            color: COLORS.darkAccent,
+          }}
+        >
+          {(eyebrow ?? defaultEyebrow("marketing")).toUpperCase()}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          marginTop: 48,
+          maxWidth: 820,
+          fontVariationSettings: "'opsz' 60",
+          fontWeight: 500,
+          fontSize: 96,
+          lineHeight: 1.02,
+          letterSpacing: -2,
+        }}
+      >
+        {title}
+      </div>
+      {description ? (
+        <div
+          style={{
+            display: "flex",
+            marginTop: 26,
+            maxWidth: 740,
+            fontSize: 28,
+            lineHeight: 1.4,
+            color: COLORS.darkFg2,
+          }}
+        >
+          {description}
+        </div>
+      ) : null}
+      <div style={{ display: "flex", flexGrow: 1 }} />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          borderTop: `1px solid ${COLORS.darkHairline}`,
+          paddingTop: 22,
+        }}
+      >
+        <div style={{ fontStyle: "italic", fontSize: 32 }}>alchemy</div>
+        <div
+          style={{
+            fontFamily: "JetBrains Mono",
+            fontSize: 20,
+            letterSpacing: 2,
+            color: COLORS.darkAccent,
+          }}
+        >
+          alchemy.run
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Blog variant — dark, dense, Bun-inspired release card.
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -189,8 +318,10 @@ function BlogCard({ title, description, date }: OgCardProps): any {
         padding: "72px 80px",
         fontFamily: "'Source Serif 4'",
         color: COLORS.darkFg1,
+        position: "relative",
       }}
     >
+      <Field stroke={COLORS.darkAccent} opacity={0.12} />
       <div
         style={{
           display: "flex",
@@ -215,6 +346,9 @@ function BlogCard({ title, description, date }: OgCardProps): any {
             lineHeight: 1.5,
             color: COLORS.darkFg2,
             maxWidth: 1040,
+            lineClamp: 3,
+            textOverflow: "ellipsis",
+            overflow: "hidden",
           }}
         >
           {description}
@@ -301,7 +435,7 @@ function formatDate(iso: string | undefined): string {
 function defaultEyebrow(kind: OgCardKind): string {
   switch (kind) {
     case "marketing":
-      return "alchemy · zero to production";
+      return "infrastructure as effects";
     case "blog":
       return "blog · alchemy.run";
     case "doc":

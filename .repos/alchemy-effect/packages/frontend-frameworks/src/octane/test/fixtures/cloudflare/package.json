@@ -1,0 +1,5 @@
+{
+  "name": "octane-cloudflare-fixture",
+  "private": true,
+  "type": "module"
+}

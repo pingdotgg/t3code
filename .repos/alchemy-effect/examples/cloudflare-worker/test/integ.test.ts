@@ -1,12 +1,12 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import * as Effect from "effect/Effect";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 import { WORKFLOW_SECRET_VALUE } from "../src/NotifyWorkflow.ts";
 
@@ -154,33 +154,29 @@ test(
       expect(instanceId).toBeString();
 
       const client = yield* HttpClient.HttpClient;
-      const lastStatus = yield* client
-        .get(`${url}/workflow/status/${instanceId}`)
-        .pipe(
-          // Only decode JSON on a 200; a transient 5xx (HTML error page) while
-          // the worker settles is treated as non-terminal so the poll keeps
-          // swinging instead of dying on a JSON decode error.
-          Effect.flatMap((res) =>
-            res.status === 200
-              ? (res.json as Effect.Effect<unknown, unknown>).pipe(
-                  Effect.map((body) => body as WorkflowStatus),
-                )
-              : Effect.succeed({ status: "pending" } as WorkflowStatus),
-          ),
-          Effect.repeat({
-            schedule: Schedule.spaced("2 seconds"),
-            until: (s) => s.status === "complete" || s.status === "errored",
-            times: 30,
-          }),
-        );
+      const lastStatus = yield* client.get(`${url}/workflow/status/${instanceId}`).pipe(
+        // Only decode JSON on a 200; a transient 5xx (HTML error page) while
+        // the worker settles is treated as non-terminal so the poll keeps
+        // swinging instead of dying on a JSON decode error.
+        Effect.flatMap((res) =>
+          res.status === 200
+            ? (res.json as Effect.Effect<unknown, unknown>).pipe(
+                Effect.map((body) => body as WorkflowStatus),
+              )
+            : Effect.succeed({ status: "pending" } as WorkflowStatus),
+        ),
+        Effect.repeat({
+          schedule: Schedule.spaced("2 seconds"),
+          until: (s) => s.status === "complete" || s.status === "errored",
+          times: 30,
+        }),
+      );
 
       // Surface a non-complete terminal state as a failure so the outer retry
       // can restart with a fresh instance.
       if (lastStatus.status !== "complete") {
         return yield* Effect.fail(
-          new Error(
-            `workflow ${lastStatus.status}: ${JSON.stringify(lastStatus.error)}`,
-          ),
+          new Error(`workflow ${lastStatus.status}: ${JSON.stringify(lastStatus.error)}`),
         );
       }
       return lastStatus;
@@ -203,9 +199,7 @@ test(
     // way through to the workflow body's runtime read. The workflow body
     // unwraps `Redacted.value(secret)` and embeds it in the returned
     // `processed` payload.
-    expect(lastStatus.output?.secret).toBe(
-      Redacted.value(WORKFLOW_SECRET_VALUE),
-    );
+    expect(lastStatus.output?.secret).toBe(Redacted.value(WORKFLOW_SECRET_VALUE));
   }),
   { timeout: 120_000 },
 );
@@ -256,9 +250,7 @@ test(
         sent.push(yield* send);
       }
       for (const message of sent) {
-        const resultResponse = yield* HttpClient.get(
-          `${url}/queue/result/${message.id}`,
-        );
+        const resultResponse = yield* HttpClient.get(`${url}/queue/result/${message.id}`);
         if (resultResponse.status === 200) {
           return (yield* resultResponse.json) as Message;
         }
@@ -282,9 +274,7 @@ test(
     // can delete the bucket — otherwise Cloudflare rejects the
     // bucket delete with "bucket is not empty".
     yield* Effect.forEach(sent, (message) =>
-      HttpClient.execute(
-        HttpClientRequest.make("DELETE")(`${url}/queue/result/${message.id}`),
-      ),
+      HttpClient.execute(HttpClientRequest.make("DELETE")(`${url}/queue/result/${message.id}`)),
     );
   }),
   { timeout: 180_000 },

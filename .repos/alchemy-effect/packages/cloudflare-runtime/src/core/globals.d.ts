@@ -1,3 +1,8 @@
+declare module "cloudflare-internal:sockets" {
+  const sockets: { connect: typeof import("cloudflare:sockets").connect };
+  export default sockets;
+}
+
 declare module "workerd" {
   const bin:
     | string // it should be the binary path

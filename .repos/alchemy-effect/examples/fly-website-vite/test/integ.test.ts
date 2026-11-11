@@ -1,12 +1,12 @@
-import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Fly from "@alchemy.run/fly";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 
 const { getWhenReady } = Test;
@@ -28,10 +28,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
       schedule: Schedule.max([
-        Schedule.min([
-          Schedule.exponential("500 millis"),
-          Schedule.spaced("3 seconds"),
-        ]),
+        Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
         Schedule.recurs(20),
       ]),
     }),
@@ -82,10 +79,7 @@ test(
   Effect.gen(function* () {
     const { url } = yield* stack;
     if (!url) throw new Error("expected the site to expose a fly.dev url");
-    const html = yield* getBodyWhenReady(
-      String(url).replace(/\/+$/, ""),
-      "Notes — Fly",
-    );
+    const html = yield* getBodyWhenReady(String(url).replace(/\/+$/, ""), "Notes — Fly");
     expect(html).toContain("Notes — Fly");
   }),
   { timeout: 120_000 },

@@ -1,13 +1,13 @@
 import { BetterAuth } from "@alchemy.run/better-auth";
 import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import Agent from "./Agent.ts";
 import { Gateway } from "./AiGateway.ts";
 import { Bucket } from "./Bucket.ts";
@@ -61,16 +61,14 @@ export default class Api extends Cloudflare.Worker<Api>()(
     // handler; success ack()s every message in the batch, failure
     // retry()s. The persisted JSON at /queue/<id> on R2 lets the
     // integ test verify the producer→consumer round-trip.
-    yield* Cloudflare.Queues.consumeQueueMessages<QueueMessageBody>(
-      queueResource,
-      (stream) =>
-        Stream.runForEach(stream, (msg) =>
-          bucket
-            .put(`/queue/${msg.body.id}`, JSON.stringify(msg.body), {
-              httpMetadata: { contentType: "application/json" },
-            })
-            .pipe(Effect.asVoid),
-        ),
+    yield* Cloudflare.Queues.consumeQueueMessages<QueueMessageBody>(queueResource, (stream) =>
+      Stream.runForEach(stream, (msg) =>
+        bucket
+          .put(`/queue/${msg.body.id}`, JSON.stringify(msg.body), {
+            httpMetadata: { contentType: "application/json" },
+          })
+          .pipe(Effect.asVoid),
+      ),
     );
 
     return {
@@ -84,22 +82,16 @@ export default class Api extends Cloudflare.Worker<Api>()(
             const key = request.url.split("/").pop()!;
             return yield* kv.get(key).pipe(
               Effect.map((value) =>
-                value
-                  ? HttpServerResponse.text(value)
-                  : HttpServerResponse.empty({ status: 404 }),
+                value ? HttpServerResponse.text(value) : HttpServerResponse.empty({ status: 404 }),
               ),
-              Effect.catch(() =>
-                Effect.succeed(HttpServerResponse.empty({ status: 404 })),
-              ),
+              Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 404 }))),
             );
           } else if (request.method === "POST") {
             const key = request.url.split("/").pop()!;
             const value = yield* request.text;
             return yield* kv.put(key, value).pipe(
               Effect.map(() => HttpServerResponse.empty({ status: 200 })),
-              Effect.catch(() =>
-                Effect.succeed(HttpServerResponse.empty({ status: 500 })),
-              ),
+              Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 500 }))),
             );
           }
         } else if (request.url.startsWith("/object/")) {
@@ -168,10 +160,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         } else if (request.url.startsWith("/workflow/start/")) {
           const roomId = request.url.split("/workflow/start/")[1];
           if (!roomId) {
-            return yield* HttpServerResponse.json(
-              { error: "roomId is required" },
-              { status: 400 },
-            );
+            return yield* HttpServerResponse.json({ error: "roomId is required" }, { status: 400 });
           }
           const instance = yield* notifier.create({
             params: {
@@ -219,10 +208,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
                   HttpClientRequest.setBody(HttpBody.text(code)),
                 ),
               )
-              .pipe(
-                Effect.map(HttpServerResponse.fromClientResponse),
-                Effect.orDie,
-              );
+              .pipe(Effect.map(HttpServerResponse.fromClientResponse), Effect.orDie);
           }
         } else if (request.url.startsWith("/connect/")) {
           const agentId = request.url.split("/").pop()!;
@@ -233,10 +219,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           const upgradeHeader = request.headers.upgrade;
           const roomId = request.url.split("/").pop()!;
           if (!upgradeHeader || upgradeHeader !== "websocket") {
-            return HttpServerResponse.text(
-              "Worker expected Upgrade: websocket",
-              { status: 426 },
-            );
+            return HttpServerResponse.text("Worker expected Upgrade: websocket", { status: 426 });
           } else if (request.method !== "GET") {
             return HttpServerResponse.text("Method not allowed", {
               status: 405,
@@ -249,10 +232,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         // Cloudflare Artifacts — Git-compatible versioned repos.
         // Exercises Cloudflare.ArtifactsConnection by creating a repo,
         // looking it up, and minting short-lived clone tokens.
-        if (
-          request.url.startsWith("/repos/create") &&
-          request.method === "POST"
-        ) {
+        if (request.url.startsWith("/repos/create") && request.method === "POST") {
           const text = yield* request.text;
           const body = JSON.parse(text || "{}") as {
             name?: string;
@@ -260,10 +240,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           };
           const name = body.name?.trim();
           if (!name) {
-            return yield* HttpServerResponse.json(
-              { error: "name is required" },
-              { status: 400 },
-            );
+            return yield* HttpServerResponse.json({ error: "name is required" }, { status: 400 });
           }
           return yield* repos
             .create(name, {
@@ -282,10 +259,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
                 }),
               ),
               Effect.catchTag("ArtifactsError", (err) =>
-                HttpServerResponse.json(
-                  { error: err.message },
-                  { status: 409 },
-                ),
+                HttpServerResponse.json({ error: err.message }, { status: 409 }),
               ),
             );
         }
@@ -298,41 +272,34 @@ export default class Api extends Cloudflare.Worker<Api>()(
           );
         }
         if (request.url.startsWith("/repos/info") && request.method === "GET") {
-          const name = new URL(request.url, "http://x").searchParams.get(
-            "name",
-          );
+          const name = new URL(request.url, "http://x").searchParams.get("name");
           if (!name) {
-            return yield* HttpServerResponse.json(
-              { error: "name is required" },
-              { status: 400 },
-            );
+            return yield* HttpServerResponse.json({ error: "name is required" }, { status: 400 });
           }
           return yield* repos.get(name).pipe(
-            Effect.flatMap((repo) =>
+            Effect.flatMap((repo) => repo.info()),
+            Effect.flatMap((info) =>
               HttpServerResponse.json({
-                id: repo.raw.id,
-                name: repo.raw.name,
-                description: repo.raw.description,
-                defaultBranch: repo.raw.defaultBranch,
-                remote: repo.raw.remote,
-                createdAt: repo.raw.createdAt,
-                updatedAt: repo.raw.updatedAt,
-                lastPushAt: repo.raw.lastPushAt,
-                readOnly: repo.raw.readOnly,
+                id: info.id,
+                name: info.name,
+                description: info.description,
+                defaultBranch: info.defaultBranch,
+                remote: info.remote,
+                createdAt: info.createdAt,
+                updatedAt: info.updatedAt,
+                lastPushAt: info.lastPushAt,
+                readOnly: info.readOnly,
               }),
             ),
             Effect.catchTag("ArtifactsError", (err) =>
               HttpServerResponse.json(
                 { name, error: err.message },
-                { status: 404 },
+                { status: err.code === "NOT_FOUND" ? 404 : 500 },
               ),
             ),
           );
         }
-        if (
-          request.url.startsWith("/repos/token") &&
-          request.method === "POST"
-        ) {
+        if (request.url.startsWith("/repos/token") && request.method === "POST") {
           const text = yield* request.text;
           const body = JSON.parse(text || "{}") as {
             name?: string;
@@ -341,23 +308,13 @@ export default class Api extends Cloudflare.Worker<Api>()(
           };
           const name = body.name?.trim();
           if (!name) {
-            return yield* HttpServerResponse.json(
-              { error: "name is required" },
-              { status: 400 },
-            );
+            return yield* HttpServerResponse.json({ error: "name is required" }, { status: 400 });
           }
           return yield* repos.get(name).pipe(
-            Effect.flatMap((repo) =>
-              repo.createToken(body.scope ?? "read", body.ttl ?? 3600),
-            ),
-            Effect.flatMap((token) =>
-              HttpServerResponse.json({ name, ...token }),
-            ),
+            Effect.flatMap((repo) => repo.createToken(body.scope ?? "read", body.ttl ?? 3600)),
+            Effect.flatMap((token) => HttpServerResponse.json({ name, ...token })),
             Effect.catchTag("ArtifactsError", (err) =>
-              HttpServerResponse.json(
-                { name, error: err.message },
-                { status: 404 },
-              ),
+              HttpServerResponse.json({ name, error: err.message }, { status: 404 }),
             ),
           );
         }
@@ -385,8 +342,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
               return {} as { prompt?: string };
             }
           })();
-          const prompt =
-            body.prompt?.trim() || "Say hello in one short sentence.";
+          const prompt = body.prompt?.trim() || "Say hello in one short sentence.";
           const response = yield* aiGateway.run({
             provider: "workers-ai",
             endpoint: "@cf/meta/llama-3.1-8b-instruct",
@@ -414,9 +370,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             return yield* bucket.get(`/queue/${id}`).pipe(
               Effect.flatMap((object) =>
                 object === null
-                  ? Effect.succeed(
-                      HttpServerResponse.text("not yet", { status: 404 }),
-                    )
+                  ? Effect.succeed(HttpServerResponse.text("not yet", { status: 404 }))
                   : object.text().pipe(
                       Effect.map((body) =>
                         HttpServerResponse.text(body, {
@@ -426,9 +380,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
                     ),
               ),
               Effect.catchTag("R2Error", (error) =>
-                Effect.succeed(
-                  HttpServerResponse.text(error.message, { status: 500 }),
-                ),
+                Effect.succeed(HttpServerResponse.text(error.message, { status: 500 })),
               ),
             );
           }
@@ -439,9 +391,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             return yield* bucket.delete(`/queue/${id}`).pipe(
               Effect.map(() => HttpServerResponse.empty({ status: 204 })),
               Effect.catchTag("R2Error", (error) =>
-                Effect.succeed(
-                  HttpServerResponse.text(error.message, { status: 500 }),
-                ),
+                Effect.succeed(HttpServerResponse.text(error.message, { status: 500 })),
               ),
             );
           }

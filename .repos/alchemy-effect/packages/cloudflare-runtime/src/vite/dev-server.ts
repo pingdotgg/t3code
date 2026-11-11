@@ -1,46 +1,43 @@
-import { DEFAULT_COMPATIBILITY_DATE } from "../core/internal/constants.ts";
-import { loadInternalWorker } from "../core/internal/internal-worker.ts";
-import type { ExportTypes } from "../rolldown/export-types.ts";
-import { EXPORT_TYPES_MODULE_ID } from "../rolldown/export-types.ts";
-import { MODULE_REFERENCE_REGEX } from "../rolldown/plugins/index.ts";
-import type { BindingHooks, Module } from "../core/index.ts";
-import * as Runtime from "../core/Runtime.ts";
-import * as RuntimeServices from "../core/RuntimeServices.ts";
-import * as DurableObjectNamespace from "../core/bindings/DurableObjectNamespace.ts";
-import * as Json from "../core/bindings/Json.ts";
-import * as Loopback from "../core/bindings/Loopback.ts";
-import * as UnsafeEval from "../core/bindings/UnsafeEval.ts";
-import { PlatformServices } from "../Platform.ts";
+import * as NodeFs from "node:fs/promises";
+import * as NodeHttp from "node:http";
 import * as Credentials from "@distilled.cloud/cloudflare/Credentials";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Headers from "effect/http/Headers";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as Headers from "effect/unstable/http/Headers";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as NodeFs from "node:fs/promises";
-import * as NodeHttp from "node:http";
 import type * as vite from "vite";
+import * as DurableObjectNamespace from "../core/bindings/DurableObjectNamespace.ts";
+import * as Loopback from "../core/bindings/Loopback.ts";
+import * as UnsafeEval from "../core/bindings/UnsafeEval.ts";
+import type { BindingHooks, Module } from "../core/index.ts";
+import { DEFAULT_COMPATIBILITY_DATE } from "../core/internal/constants.ts";
+import { loadInternalWorker } from "../core/internal/internal-worker.ts";
+import * as Runtime from "../core/Runtime.ts";
+import * as RuntimeServices from "../core/RuntimeServices.ts";
+import { PlatformServices } from "../Platform.ts";
+import type { ExportTypes } from "../rolldown/export-types.ts";
+import { EXPORT_TYPES_MODULE_ID } from "../rolldown/export-types.ts";
+import { MODULE_REFERENCE_REGEX } from "../rolldown/plugins/index.ts";
 const ModuleRunnerWorker = {
   worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-vite-worker/module-runner/module-runner.worker",
-    ),
+    loadInternalWorker("#cloudflare-runtime-vite-worker/module-runner/module-runner.worker"),
 };
 const WrapperWorker = {
-  worker: () =>
-    loadInternalWorker(
-      "#cloudflare-runtime-vite-worker/module-runner/wrapper.worker",
-    ),
+  worker: () => loadInternalWorker("#cloudflare-runtime-vite-worker/module-runner/wrapper.worker"),
 };
 import * as ViteAssets from "./assets/ViteAssets.ts";
 import { renderExportWrappers } from "./export-types.ts";
 import type { EntryEnvironment } from "./module-runner/constants.shared.ts";
-import { ENVIRONMENT_NAME_HEADER } from "./module-runner/constants.shared.ts";
+import {
+  ENTRY_ENVIRONMENT_KEY,
+  ENVIRONMENT_NAME_HEADER,
+} from "./module-runner/constants.shared.ts";
 import type { CloudflareVitePluginOptions } from "./plugin.ts";
 
 export type ServerHandle = Awaited<ReturnType<typeof startServer>>;
@@ -51,6 +48,8 @@ export const startServer = async <B extends BindingHooks = BindingHooks>(
   server: vite.ViteDevServer,
   context: Context.Context<RuntimeServices.RuntimeServices>,
   exportTypes: ExportTypes,
+  /** See `RuntimeWorker.onRestart`. */
+  onRestart?: () => void,
 ) => {
   const scope = Scope.makeUnsafe();
   const proxySharedSecret = crypto.randomUUID();
@@ -60,23 +59,20 @@ export const startServer = async <B extends BindingHooks = BindingHooks>(
     server,
     exportTypes,
     proxySharedSecret,
+    onRestart,
   ).pipe(
     // `provideMerge`: the assets layer's construction reads `Loopback` (and
     // friends) from the runtime context, so the context must feed the layer,
     // not just sit beside it.
     Effect.provide(
-      ViteAssets.ViteAssetsLive(server).pipe(
-        Layer.provideMerge(Layer.succeedContext(context)),
-      ),
+      ViteAssets.ViteAssetsLive(server, {
+        hasUserWorker: entryEnvironment.entryName !== undefined,
+      }).pipe(Layer.provideMerge(Layer.succeedContext(context))),
     ),
     Scope.provide(scope),
     Effect.runPromise,
   );
-  return {
-    address,
-    proxySharedSecret,
-    close: () => closeScope(scope),
-  };
+  return { address, proxySharedSecret, close: () => closeScope(scope) };
 };
 
 export const createDefaultContext = async (): Promise<
@@ -85,9 +81,7 @@ export const createDefaultContext = async (): Promise<
   const scope = Scope.makeUnsafe();
 
   return await RuntimeServices.layerRuntime({
-    api: {
-      accountId: process.env.CLOUDFLARE_ACCOUNT_ID!,
-    },
+    api: { accountId: process.env.CLOUDFLARE_ACCOUNT_ID! },
   }).pipe(
     Layer.provideMerge(PlatformServices),
     Layer.provide(Layer.merge(Credentials.fromEnv(), FetchHttpClient.layer)),
@@ -96,10 +90,8 @@ export const createDefaultContext = async (): Promise<
   );
 };
 
-const closeScope = async (scope: Scope.Scope) => {
-  await Effect.runPromiseExit(
-    Scope.closeUnsafe(scope, Exit.void) ?? Effect.void,
-  );
+const closeScope = async (scope: Scope.Closeable) => {
+  await Effect.runPromiseExit(Scope.closeUnsafe(scope, Exit.void) ?? Effect.void);
 };
 
 const makeModuleFallbackService = Effect.gen(function* () {
@@ -159,9 +151,7 @@ const makeModuleFallbackService = Effect.gen(function* () {
       }
     } catch (error) {
       res.writeHead(500, { "Content-Type": "text/plain" });
-      res.end(
-        error instanceof Error ? (error.stack ?? error.message) : String(error),
-      );
+      res.end(error instanceof Error ? (error.stack ?? error.message) : String(error));
     }
   });
 
@@ -186,9 +176,7 @@ const makeModuleFallbackService = Effect.gen(function* () {
 
   const address = server.address();
   if (address === null || typeof address === "string") {
-    return yield* Effect.die(
-      new Error("Module fallback server address unavailable"),
-    );
+    return yield* Effect.die(new Error("Module fallback server address unavailable"));
   }
   return `127.0.0.1:${address.port}`;
 });
@@ -199,15 +187,32 @@ const serve = Effect.fn(function* <B extends BindingHooks = BindingHooks>(
   server: vite.ViteDevServer,
   exportTypes: ExportTypes,
   proxySharedSecret: string,
+  onRestart?: () => void,
 ) {
   const runtime = yield* Runtime.Runtime;
   const moduleFallback = yield* makeModuleFallbackService;
 
   const name = options.worker?.name ?? `vite-dev-${crypto.randomUUID()}`;
   return yield* runtime.start({
+    // Everything the caller configured on the Worker (crons, tail consumers,
+    // Cache API, request.cf, ...) reaches workerd; the fields below are the
+    // ones the dev server owns or extends.
+    ...options.worker,
     name,
     proxySharedSecret,
-    modules: yield* Effect.promise(() => makeWorkerModules(exportTypes)),
+    // The stable proxy in front relays TLS as-is, so a dev server on HTTPS
+    // is public on HTTPS.
+    publicUrl:
+      options.worker?.publicUrl && server.config.server.https
+        ? options.worker.publicUrl.replace(/^http:/, "https:")
+        : options.worker?.publicUrl,
+    onRestart,
+    modules: yield* Effect.promise(() =>
+      makeWorkerModules(exportTypes, {
+        ...entryEnvironment,
+        exportTypesId: EXPORT_TYPES_MODULE_ID,
+      }),
+    ),
     compatibilityDate: options.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
     compatibilityFlags: options.compatibilityFlags ?? [],
     bindings: [
@@ -216,19 +221,14 @@ const serve = Effect.fn(function* <B extends BindingHooks = BindingHooks>(
         binding: "__DISTILLED_MODULE_RUNNER__",
         className: "ModuleRunnerDO",
       }),
-      Json.local("__DISTILLED_ENVIRONMENT__", {
-        ...entryEnvironment,
-        exportTypesId: EXPORT_TYPES_MODULE_ID,
-      } satisfies EntryEnvironment),
       Loopback.local({
         binding: "__DISTILLED_INVOKE_MODULE__",
         name: `vite:invoke-module:${name}`,
         handler: Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
-          const targetEnvironment = Headers.get(
-            request.headers,
-            ENVIRONMENT_NAME_HEADER,
-          ).pipe(Option.getOrThrow);
+          const targetEnvironment = Headers.get(request.headers, ENVIRONMENT_NAME_HEADER).pipe(
+            Option.getOrThrow,
+          );
           const json = (yield* request.json) as unknown as vite.CustomPayload;
           const devEnvironment = server.environments[targetEnvironment];
           const result = yield* Effect.promise(
@@ -240,26 +240,10 @@ const serve = Effect.fn(function* <B extends BindingHooks = BindingHooks>(
       ...(options.worker?.bindings ?? []),
     ],
     durableObjectNamespaces: [
-      {
-        className: "ModuleRunnerDO",
-        sql: false,
-        ephemeralLocal: true,
-      },
+      { className: "ModuleRunnerDO", sql: false, ephemeralLocal: true },
       ...(options.worker?.durableObjectNamespaces ?? []),
     ],
-    workflows: options.worker?.workflows,
-    hyperdrives: options.worker?.hyperdrives,
-    // Without this the worker starts with no consumers, so a producer
-    // binding for a queue this worker consumes resolves to the dev-registry
-    // proxy instead of a local broker — and that accepts-and-drops every
-    // message, with `send()` never settling.
-    queueConsumers: options.worker?.queueConsumers,
-    crons: options.worker?.crons,
-    assets: options.worker?.assets,
-    unsafe: {
-      moduleFallback,
-      ...(options.worker?.unsafe ?? {}),
-    },
+    unsafe: { moduleFallback, ...options.worker?.unsafe },
   });
 });
 
@@ -308,10 +292,7 @@ const parseModuleFallbackRequest = async (
     if (typeof json === "object" && json !== null && "specifier" in json) {
       return {
         protocol: "v2",
-        ...(json as Omit<
-          Extract<ModuleFallbackRequest, { protocol: "v2" }>,
-          "protocol"
-        >),
+        ...(json as Omit<Extract<ModuleFallbackRequest, { protocol: "v2" }>, "protocol">),
       };
     }
   }
@@ -319,6 +300,7 @@ const parseModuleFallbackRequest = async (
 
 async function makeWorkerModules(
   exportTypes: ExportTypes,
+  entryEnvironment: EntryEnvironment,
 ): Promise<Array<Module>> {
   const [moduleRunnerWorker, wrapperWorker] = await Promise.all([
     ModuleRunnerWorker.worker(),
@@ -328,15 +310,12 @@ async function makeWorkerModules(
     "index.worker.mjs": [
       `import { createWorkerEntrypointWrapper, createDurableObjectWrapper, createWorkflowEntrypointWrapper } from "./module-runner/wrapper.worker.mjs";`,
       'export { ModuleRunnerDO } from "./module-runner/module-runner.worker.mjs";',
+      `globalThis[Symbol.for(${JSON.stringify(ENTRY_ENVIRONMENT_KEY)})] = ${JSON.stringify(entryEnvironment)};`,
       'export default createWorkerEntrypointWrapper("default");',
       ...renderExportWrappers(exportTypes),
     ].join("\n"),
     ...moduleRunnerWorker.modules,
     ...wrapperWorker.modules,
   };
-  return Object.entries(modules).map(([name, content]) => ({
-    name,
-    type: "ESModule",
-    content,
-  }));
+  return Object.entries(modules).map(([name, content]) => ({ name, type: "ESModule", content }));
 }

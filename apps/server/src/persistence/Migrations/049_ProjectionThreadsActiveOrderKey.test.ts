@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
@@ -28,8 +28,6 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
         SELECT active_order_key AS "activeOrderKey" FROM projection_threads WHERE thread_id = 'thread-1'
       `;
         assert.deepEqual(migrated, [{ activeOrderKey: null }]);
-        // Recovery may run the same migration against a database that already
-        // has the column, including a placement written after the upgrade.
         yield* sql`UPDATE projection_threads SET active_order_key = 'gm' WHERE thread_id = 'thread-1'`;
         yield* migrateActiveOrderKey;
         const rows = yield* sql<{

@@ -12,7 +12,6 @@ interface AutoSettleSyncTarget {
   readonly settings: AutoSettleSettings | null;
 }
 
-/** Receives connected, capable targets. Applying these defaults must preserve other settings. */
 export function planAutoSettleSettingsSync(
   reference: {
     readonly environmentId: EnvironmentId;

@@ -10,10 +10,26 @@
 @import "@fontsource-variable/jetbrains-mono";
 @import "@fontsource-variable/caveat";
 
+/* iOS Safari enlarges text in blocks it judges too wide to read ("text
+   autosizing"). Code lines wider than their card got a bigger font than the
+   lines around them. Keep every font at its declared size. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Thin hairline scrollbars everywhere. `scrollbar-width` doesn't inherit,
+   so it's set on every element; per-component `scrollbar-width: none`
+   still wins on specificity. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--alc-hairline-3) transparent;
+}
+
 :root {
   /* ---------- Brand: muted forest greens ---------- */
   --alc-accent: #5c7a3e; /* moss — primary brand */
-  --alc-accent-deep: #3f5a2a; /* deep forest — pressed/emphasis */
+  --alc-accent-deep: #38511f; /* deep forest — pressed/emphasis (AAA ≥7:1 on parchment) */
   --alc-accent-warm: #7a9a5e; /* sage — lighter, sunny */
   --alc-accent-bright: #8fb15e; /* lit leaves — accents on cream */
   /* Translucent so surfaces using `accent-soft` (hero CTA cards, asides,
@@ -23,6 +39,8 @@
   --alc-accent-60: color-mix(in srgb, #5c7a3e 60%, transparent);
   --alc-accent-40: color-mix(in srgb, #5c7a3e 40%, transparent);
   --alc-accent-12: color-mix(in srgb, #5c7a3e 12%, transparent);
+  /* Moss for small text and filled markers on the page: ≥7:1 (WCAG AAA). */
+  --alc-accent-text: #38511f;
 
   /* Bindu (yantra centroid dot). Kept in sync with YANTRA_THEMES in
      src/brand/yantra.ts, which paints the generated favicons and app icons. */
@@ -57,8 +75,8 @@
   /* ---------- Text ---------- */
   --alc-fg-1: #2a2620; /* primary — walnut */
   --alc-fg-2: #4e402c; /* body — deep tan */
-  --alc-fg-3: #85714f; /* muted — mushroom */
-  --alc-fg-4: #a89572; /* tertiary / captions */
+  --alc-fg-3: #52442e; /* muted — dark mushroom (AAA ≥7:1 incl. footer bg) */
+  --alc-fg-4: #564733; /* tertiary / captions (AAA ≥7:1 incl. footer bg) */
   --alc-fg-invert: #fbf6ea; /* on dark (code/term) */
   --alc-fg-on-accent: #fbf6ea; /* on moss */
 
@@ -82,18 +100,25 @@
   --alc-code-comment: #b3a27a; /* bright readable tan */
   --alc-code-var: #faf5e3; /* near-white parchment — identifiers */
   --alc-code-literal: #ff9a6b; /* coral sunrise — numbers/literals */
+  /* RGB triples for hairlines (`edge`) and raised fills (`lift`) drawn on
+     the code surface, used as rgba(var(--alc-code-edge), alpha). Marketing
+     pages swap them in light mode, where the code surface is light. */
+  --alc-code-edge: 232, 220, 192;
+  --alc-code-lift: 255, 255, 255;
+  /* Window-chrome dots: decorative, the same in both themes. */
+  --alc-dot-red: #e0654f;
+  --alc-dot-yellow: #e8b04a;
+  --alc-dot-green: #8fb15e;
+  --alc-code-sink: 0, 0, 0; /* recessed fills: tab bars, inset logs */
+  --alc-code-shadow: rgba(0, 0, 0, 0.28);
 
   /* ---------- Type ---------- */
   --alc-font-sans:
-    "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
-    sans-serif;
+    "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --alc-font-serif:
-    "Source Serif 4 Variable", "Source Serif Pro", Georgia, "Times New Roman",
-    serif;
-  --alc-font-mono:
-    "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --alc-font-hand:
-    "Caveat Variable", "Comic Sans MS", cursive; /* hand-drawn diagram labels */
+    "Source Serif 4 Variable", "Source Serif Pro", Georgia, "Times New Roman", serif;
+  --alc-font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --alc-font-hand: "Caveat Variable", "Comic Sans MS", cursive; /* hand-drawn diagram labels */
 
   /* ---------- Radius ---------- */
   --alc-radius-xs: 2px;
@@ -118,8 +143,7 @@
   --alc-shadow-sm: 0 1px 2px rgba(78, 64, 44, 0.08);
   --alc-shadow: 0 4px 14px rgba(78, 64, 44, 0.1);
   --alc-shadow-lg: 0 20px 40px rgba(78, 64, 44, 0.14);
-  --alc-glow:
-    0 0 0 1px var(--alc-accent-40), 0 0 24px -4px var(--alc-accent-40);
+  --alc-glow: 0 0 0 1px var(--alc-accent-40), 0 0 24px -4px var(--alc-accent-40);
 
   /* ---------- Motion ---------- */
   --alc-ease: cubic-bezier(0.2, 0, 0, 1);
@@ -150,6 +174,8 @@
   /* Bindu, lifted for the dark page. */
   --alc-yantra-dot: #d8835a;
 
+  --alc-accent-text: #b9d68d;
+
   /* Secondary: warm terracotta — lifted */
   --alc-terracotta: #d8835a;
   --alc-terracotta-deep: #e89a72;
@@ -168,8 +194,8 @@
   /* Text — cream scale */
   --alc-fg-1: #faf6ec; /* primary — parchment */
   --alc-fg-2: #e2d7bc; /* body — washed parchment */
-  --alc-fg-3: #a89572; /* muted — walnut-400 still reads */
-  --alc-fg-4: #85714f; /* tertiary / captions */
+  --alc-fg-3: #c0af89; /* muted — lifted walnut (AAA ≥7:1 on elevated cards) */
+  --alc-fg-4: #b9a881; /* tertiary / captions (AAA ≥7:1 on elevated cards) */
   /* `--alc-fg-invert` is text on the dark code surface, which stays dark in
      both modes — so this token is the same in light and dark. */
   --alc-fg-invert: #fbf6ea;
@@ -191,8 +217,7 @@
   --alc-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --alc-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
   --alc-shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.6);
-  --alc-glow:
-    0 0 0 1px var(--alc-accent-40), 0 0 24px -4px var(--alc-accent-40);
+  --alc-glow: 0 0 0 1px var(--alc-accent-40), 0 0 24px -4px var(--alc-accent-40);
 }
 
 /* ============================================================
@@ -360,4 +385,25 @@ body.alc-root,
 .alc-code ::selection {
   background: #5c7a3e66; /* editor.selectionBackground from the walnut EC theme */
   color: var(--alc-code-var);
+}
+
+/* ---------- Reduced motion (site-wide) ----------
+   Visitors who ask for less motion get every CSS animation and transition
+   jumped to its end state (entrance animations land on their final frame,
+   looping pulses and spinners stop) and instant scrolling. Canvas and
+   scripted demos check the same media query in JS. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+  html,
+  * {
+    scroll-behavior: auto !important;
+  }
 }

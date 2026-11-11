@@ -1,7 +1,7 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { CloudflareD1 } from "../../../src/CloudflareD1.ts";
 import { BetterAuth } from "../../../src/index.ts";
 
@@ -31,9 +31,7 @@ export default class AuthWorker extends Cloudflare.Worker<AuthWorker>()(
         if (request.url.startsWith("/me")) {
           const session = yield* auth
             .getSession()
-            .pipe(
-              Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)),
-            );
+            .pipe(Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)));
           return yield* HttpServerResponse.json({
             email: session?.user.email ?? null,
           });

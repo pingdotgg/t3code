@@ -1,121 +1,46 @@
 ---
 title: Better Auth
-description: Typed authentication as an Effect — one BetterAuth() call, a database Layer per platform, and schema migrations that run themselves at deploy.
+description: Build authentication with an Effect service, automatic database bindings, and deploy-time migrations.
 ---
 
-[Better Auth](https://better-auth.com) is a framework-agnostic
-authentication library. `@alchemy.run/better-auth` wraps it in one
-Effect-native idea: `yield* BetterAuth(options)` gives you a fully-typed
-auth instance, and the database behind it is a Layer you pick per
-platform — D1, Neon, Aurora, Hyperdrive, plain Postgres/MySQL, SQLite,
-or your own Drizzle db.
+Build sign-in and protected APIs with [Better Auth](https://better-auth.com), using ordinary Effect services and layers. Alchemy supplies database bindings, a stable signing secret, and supported schema migrations.
+
+## Start the tutorial
 
 ```typescript
 import { BetterAuth } from "@alchemy.run/better-auth";
-import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
-import * as Cloudflare from "alchemy/Cloudflare";
 
-export const AuthDb = Cloudflare.D1.Database("AuthDb");
-
-export default class Api extends Cloudflare.Worker<Api>()(
-  "Api",
-  { main: import.meta.url, compatibility: { flags: ["nodejs_compat"] } },
-  Effect.gen(function* () {
-    const auth = yield* BetterAuth({
-      basePath: "/auth",
-      emailAndPassword: { enabled: true },
-    });
-
-    return {
-      fetch: Effect.gen(function* () {
-        const request = yield* HttpServerRequest;
-        if (request.url.startsWith("/auth")) {
-          return yield* auth.fetch;
-        }
-        const session = yield* auth.getSession();
-        return yield* HttpServerResponse.json({ user: session?.user ?? null });
-      }),
-    };
-  }).pipe(Effect.provide(CloudflareD1(AuthDb))),
-) {}
-```
-
-Deploying this stack creates the D1 database, applies Better Auth's
-schema (an internal alchemy Action — see
-[Migrations](/better-auth/migrations)), provisions a stable signing
-secret, and serves sign-up/sign-in/session routes under `/auth/*`.
-
-## Typed end to end
-
-`BetterAuth(options)` preserves Better Auth's `Auth<Options>` generic:
-the plugins you pass surface as typed endpoints on `auth.api`, and
-session/user types flow from your options.
-
-```typescript
-import { anonymous } from "better-auth/plugins/anonymous";
-
-const auth = yield* BetterAuth({
+const makeAuth = BetterAuth({
+  basePath: "/api/auth",
   emailAndPassword: { enabled: true },
-  plugins: [anonymous()],
 });
-
-// only exists because anonymous() is in the plugins — and it type-checks
-const result = yield* auth.api.signInAnonymous({});
 ```
 
-Every `auth.api.*` endpoint is an Effect with a tagged
-`BetterAuthApiError` failure carrying the status key, numeric
-`statusCode`, JSON `body` (including the machine-readable `body.code`),
-and the response `Headers` — including the `set-cookie` values
-better-call normally hides on a symbol:
+The [six-part tutorial](/better-auth/tutorial/part-1) turns this into a running application with browser sign-in, session middleware, and GitHub authentication.
 
-```typescript
-const result = yield* auth.api
-  .signInEmail({ body: { email, password } })
-  .pipe(
-    Effect.catchTag("BetterAuthApiError", (error) =>
-      error.statusCode === 401
-        ? Effect.succeed(null)          // wrong credentials
-        : Effect.fail(error),
-    ),
-  );
-```
+| Part | Build |
+| --- | --- |
+| [1. Create an Auth service](/better-auth/tutorial/part-1) | Install the module and provide a database layer |
+| [2. Mount the HTTP API](/better-auth/tutorial/part-2) | Serve authentication and application routes |
+| [3. Build sign-in](/better-auth/tutorial/part-3) | Sign up, sign in, read sessions, and sign out |
+| [4. Protect API endpoints](/better-auth/tutorial/part-4) | Provide the current user through Effect middleware |
+| [5. Add GitHub sign-in](/better-auth/tutorial/part-5) | Register an OAuth app and bind its credentials |
+| [6. Deploy and verify](/better-auth/tutorial/part-6) | Configure production callbacks and check persistence |
 
-`error.toResponse()` renders the failure exactly as Better Auth would
-have (status, JSON body, merged headers) for pass-through handlers.
+## Choose a sign-in provider
 
-## The HTTP surface
+Use [email/password](/better-auth/sign-in-providers/email-password), [GitHub](/better-auth/sign-in-providers/github), [Google](/better-auth/sign-in-providers/google), [Microsoft](/better-auth/sign-in-providers/microsoft), or [custom OAuth](/better-auth/sign-in-providers/custom-oauth). Each guide covers registration, configuration, and browser sign-in.
 
-`auth.fetch` is an alchemy `HttpEffect` serving the whole Better Auth
-route tree — mount it under your `basePath`. It is host-portable: the
-same handler runs on Cloudflare Workers and AWS Lambda function URLs
-unchanged.
+## Choose a database
 
-`auth.getSession()` reads the session from the ambient request (or an
-explicit `Headers`), resolving `null` for anonymous requests — failures
-are real errors, never missing sessions.
+Keep the Auth service and change the database layer. The [database guides](/better-auth/databases) cover D1, Hyperdrive, Neon, Aurora, Postgres, MySQL, Drizzle, SQLite, and memory.
 
-Anything the effectful surface doesn't cover is reachable through
-`auth.auth` — the raw per-execution `Auth` instance.
+## Extend the application
 
-## The signing secret
+Use [Config and secrets](/better-auth/guides/configuration) for deployment bindings, [HTTP API middleware](/better-auth/guides/http-api-middleware) for Effect handlers, and [secondary storage](/better-auth/guides/secondary-storage) for custom storage layers.
 
-`secret` defaults to an auto-provisioned `Alchemy.Random` resource:
-generated once, persisted in state, stable across deploys, and bound
-into the host environment as a secret. Override it with a literal, a
-`Redacted` value, or another resource's output accessor.
+For Better Auth's authentication features and options, see the [Better Auth documentation](https://better-auth.com/docs).
 
-## Execution scoping
+## Upgrade an existing installation
 
-The Better Auth instance (and any database pool beneath it) is built
-once per execution — a Worker event or Lambda invocation — and released
-when the event settles. That is the only legal pooling shape on workerd,
-and it means Better Auth's background tasks drain through the event's
-`waitUntil` automatically.
-
-## Where to go next
-
-- [Database layers](/better-auth/database-layers) — pick the optimal
-  layer for your environment → database pair
-- [Migrations](/better-auth/migrations) — how deploy-time schema
-  migration works, and how to opt out
+The [1.6 → 1.7.5 upgrade guide](/better-auth/upgrades/from-1-6-to-1-7) separates package and API changes from manual data preparation. [Migrations](/better-auth/guides/migrations) explains what deployment applies automatically.

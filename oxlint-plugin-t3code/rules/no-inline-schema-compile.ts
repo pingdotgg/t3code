@@ -4,8 +4,6 @@ import * as Schema from "effect/Schema";
 
 import { getPropertyName, isIdentifier, unwrapExpression } from "../utils.ts";
 
-// Effect Schema decoder/encoder APIs allocate compiled functions. Keep them
-// outside function bodies so hot paths do not rebuild compilers per call.
 const COMPILER_METHODS = new Set<keyof typeof Schema>([
   "is",
   "asserts",

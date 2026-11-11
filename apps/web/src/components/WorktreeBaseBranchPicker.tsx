@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
-import { useDeferredValue, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { usePaginatedBranches } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
@@ -11,7 +11,6 @@ import { MiddleTruncate } from "./ui/middle-truncate";
 import { Button } from "./ui/button";
 import { ComboboxTrigger } from "./ui/combobox";
 
-/** Select a future worktree's base without changing the project's current checkout. */
 export function WorktreeBaseBranchPicker({
   environmentId,
   cwd,
@@ -33,11 +32,10 @@ export function WorktreeBaseBranchPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query.trim());
   const branches = usePaginatedBranches({
     environmentId,
     cwd,
-    query: sanitizeNewRefName(deferredQuery),
+    query: sanitizeNewRefName(query.trim()),
   });
   const selectedRefQuery = useEnvironmentQuery(
     cwd && value
@@ -57,10 +55,7 @@ export function WorktreeBaseBranchPicker({
     resolvedActiveBranchIsRemote: selectedRef ? selectedRef.isRemote === true : null,
     startFromOrigin,
   });
-  const branchByName = useMemo(
-    () => new Map(branches.refs.map((branch) => [branch.name, branch])),
-    [branches.refs],
-  );
+  const branchByName = new Map(branches.refs.map((branch) => [branch.name, branch]));
   const items = [...branchByName.keys()];
   const hasNextPage = branches.data?.nextCursor != null;
   const statusText =
@@ -82,7 +77,6 @@ export function WorktreeBaseBranchPicker({
       filteredItems={items}
       value={value || null}
       query={query}
-      resultsQuery={deferredQuery}
       onQueryChange={setQuery}
       open={open && !disabled}
       onOpenChange={handleOpenChange}

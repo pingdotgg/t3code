@@ -1,9 +1,9 @@
-import { describe, expect, test } from "alchemy-test";
 import { fileURLToPath } from "node:url";
+import { describe, expect, test } from "@alchemy.run/test";
 
 const fixturesDir = fileURLToPath(new URL("./fixtures/", import.meta.url));
 
-describe("Bun adapter fallback cleanup", () => {
+describe("Bun adapter fallback cleanup", { tags: ["unit", "local"] }, () => {
   test(
     "closes the shared scope when a user afterAll throws",
     async () => {
@@ -12,15 +12,12 @@ describe("Bun adapter fallback cleanup", () => {
       // (which closes the shared scope + sidecar) never runs. The fixture's
       // shared-scope finalizer printing proves the guard closed the scope;
       // the non-zero exit proves the teardown failure still fails the run.
-      const child = Bun.spawn(
-        ["bun", "test", "./bun-teardown-guard.fixture.ts"],
-        {
-          cwd: fixturesDir,
-          stdout: "pipe",
-          stderr: "pipe",
-          env: { ...process.env, NO_COLOR: "1", ALCHEMY_DEV: "" },
-        },
-      );
+      const child = Bun.spawn(["bun", "test", "./bun-teardown-guard.fixture.ts"], {
+        cwd: fixturesDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, NO_COLOR: "1", ALCHEMY_DEV: "" },
+      });
       const [exitCode, stdout, stderr] = await Promise.all([
         child.exited,
         new Response(child.stdout).text(),

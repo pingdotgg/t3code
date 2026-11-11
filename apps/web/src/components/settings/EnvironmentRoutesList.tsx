@@ -23,6 +23,7 @@ import {
   connectionRouteLabel,
   connectionRoutes,
   isLearned,
+  pendingRouteOrder,
 } from "@t3tools/client-runtime/connection";
 import { GripVerticalIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
@@ -36,11 +37,6 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-/**
- * The ways this client reaches one saved machine, preferred first. Drag to
- * reorder; the first route that answers is used and the connection moves back
- * up when a better one is reachable again. Shown under the machine's row.
- */
 export function EnvironmentRoutesList({
   environment,
   onAddRoute,
@@ -50,15 +46,11 @@ export function EnvironmentRoutesList({
 }) {
   const saved = connectionRoutes(environment.entry);
   const savedIds = saved.map((route) => connectionRouteId(route.target));
-  // A dropped order shows until the catalog matches it, so the row does not
-  // jump back while the reorder is being saved.
   const [pending, setPending] = useState<ReadonlyArray<string> | null>(null);
-  const order: Array<string> =
-    pending !== null &&
-    pending.length === savedIds.length &&
-    pending.some((id, index) => id !== savedIds[index])
-      ? [...pending]
-      : savedIds;
+  const shownPending = pendingRouteOrder(pending, savedIds);
+  // Dropped during render so a stale order never outlives the save it was for.
+  if (pending !== null && shownPending === null) setPending(null);
+  const order: Array<string> = shownPending === null ? savedIds : [...shownPending];
   const byId = new Map(saved.map((route) => [connectionRouteId(route.target), route]));
   const routes = order.flatMap((id) => byId.get(id) ?? []);
 
@@ -74,8 +66,6 @@ export function EnvironmentRoutesList({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  // Removing a paired route forgets its credential, so it asks first, like
-  // on mobile. No mounted confirm host means no removal.
   const confirmRemove = async (route: ConnectionRoute) => {
     const address = connectionRouteAddress(route);
     const confirmed = await requestConfirmDialog(
@@ -103,7 +93,7 @@ export function EnvironmentRoutesList({
   };
 
   return (
-    <div className="mt-2 rounded-md border border-border/70">
+    <div className="mt-2 border-t border-border/50 py-2">
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -118,9 +108,6 @@ export function EnvironmentRoutesList({
                 route={route}
                 position={index + 1}
                 inUse={connectionRouteId(route.target) === activeRouteId}
-                // The last route goes with the machine; that is "Remove from
-                // this device", not a route action. A learned route would be
-                // learned again, so it is only reordered.
                 removable={routes.length > 1 && !isLearned(route)}
                 onRemove={() => void confirmRemove(route)}
               />
@@ -128,7 +115,7 @@ export function EnvironmentRoutesList({
           </ol>
         </SortableContext>
       </DndContext>
-      <div className="border-t border-border/70 px-1 py-1">
+      <div className="-ml-1.5 pt-1">
         <Button size="xs" variant="ghost-muted" onClick={onAddRoute}>
           <PlusIcon className="size-3" />
           Add route
@@ -169,20 +156,10 @@ function SortableRouteRow({
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "flex items-center gap-2 border-b border-border/70 px-1 py-1.5 last:border-b-0",
+        "flex items-center gap-2 py-2",
         isDragging && "relative z-10 rounded-md bg-background shadow-md",
       )}
     >
-      <button
-        type="button"
-        ref={setActivatorNodeRef}
-        {...attributes}
-        {...listeners}
-        aria-label={`Reorder ${label}, position ${position}`}
-        className="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
-      >
-        <GripVerticalIcon className="size-3.5" />
-      </button>
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
           {label}
@@ -199,6 +176,16 @@ function SortableRouteRow({
           </p>
         ) : null}
       </div>
+      <button
+        type="button"
+        ref={setActivatorNodeRef}
+        {...attributes}
+        {...listeners}
+        aria-label={`Reorder ${label}, position ${position}`}
+        className="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing"
+      >
+        <GripVerticalIcon className="size-3.5" />
+      </button>
       {removable ? (
         <Tooltip>
           <TooltipTrigger

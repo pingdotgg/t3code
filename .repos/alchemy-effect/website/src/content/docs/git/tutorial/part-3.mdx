@@ -3,7 +3,7 @@ title: "Part 3: Publish a repository"
 description: Allow anonymous clones of public repositories while preserving authenticated writes.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 The credential from [Part 2](/git/tutorial/part-2) protects every request.
 Now make `acme/web` readable by anyone while keeping writes protected.
@@ -26,10 +26,10 @@ Create `src/public-read.ts`:
 
 ```typescript
 // src/public-read.ts
-import * as Git from "alchemy/Git";
+import * as Git from "@alchemy.run/git";
 import * as Effect from "effect/Effect";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpRouter from "effect/http/HttpRouter";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
 
 export const PublicRead = Effect.gen(function* () {
   const registry = yield* Git.RegistryStore;
@@ -88,20 +88,7 @@ the public reads you just defined.
 
 ## Deploy the policy
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npx alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn alchemy deploy`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 This updates the Worker. The public flag you set earlier remains stored in the
 registry.

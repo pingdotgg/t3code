@@ -1,28 +1,60 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
-export const SPINNER_FRAMES = [
-  "⠋",
-  "⠙",
-  "⠹",
-  "⠸",
-  "⠼",
-  "⠴",
-  "⠦",
-  "⠧",
-  "⠇",
-  "⠏",
-];
+export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export const prefersReducedMotion = () =>
+  typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** Pauses of at least this long are a demo holding a finished frame. */
+const HOLD_MS = 2000;
+
+/** Set by the page's "Pause motion" control (WCAG 2.2.2). */
+const isMotionPaused = () =>
+  typeof document !== "undefined" &&
+  document.documentElement.classList.contains("alc-motion-paused");
+
+/** A wait that stops while motion is paused and resumes where it left off. */
+const pausableWait = (ms: number) =>
+  new Promise<void>((resolve) => {
+    let left = ms;
+    let since = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const sync = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+        left -= performance.now() - since;
+      }
+      if (isMotionPaused()) return;
+      since = performance.now();
+      timer = setTimeout(() => {
+        removeEventListener("alc-motion-change", sync);
+        resolve();
+      }, left);
+    };
+    addEventListener("alc-motion-change", sync);
+    sync();
+  });
+
+/**
+ * Timeline pause for the scripted terminal demos. With reduced motion the
+ * script fast-forwards to its first finished frame and stays there: short
+ * steps resolve immediately and the first hold never resolves, so a loop
+ * must reach a hold or stop on its own or it never yields and freezes the
+ * tab. Otherwise the wait honors the page's pause control.
+ */
+export const sleep = (ms: number): Promise<void> =>
+  prefersReducedMotion()
+    ? ms >= HOLD_MS
+      ? new Promise<void>(() => {})
+      : Promise.resolve()
+    : pausableWait(ms);
 
 export function useSpinner(active: boolean, intervalMs = 80): string {
   const [i, setI] = useState(0);
   useEffect(() => {
-    if (!active) return;
-    const t = setInterval(
-      () => setI((v) => (v + 1) % SPINNER_FRAMES.length),
-      intervalMs,
-    );
+    if (!active || prefersReducedMotion()) return;
+    const t = setInterval(() => setI((v) => (v + 1) % SPINNER_FRAMES.length), intervalMs);
     return () => clearInterval(t);
   }, [active, intervalMs]);
   return SPINNER_FRAMES[i]!;
@@ -55,7 +87,6 @@ export function useInViewLoop(
       signal.aborted = true;
       obs.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
 
@@ -116,18 +147,9 @@ export function TermChrome({
     // fragments ("~/my-appDEV", "○localhost:1337/ HMR").
     <div className="alc-term not-content" data-nosnippet="">
       <div className="alc-term__header">
-        <span
-          className="alc-code-block__dot"
-          style={{ background: "var(--alc-danger)" }}
-        />
-        <span
-          className="alc-code-block__dot"
-          style={{ background: "var(--alc-warn)" }}
-        />
-        <span
-          className="alc-code-block__dot"
-          style={{ background: "var(--alc-accent-bright)" }}
-        />
+        <span className="alc-code-block__dot" style={{ background: "var(--alc-dot-red)" }} />
+        <span className="alc-code-block__dot" style={{ background: "var(--alc-dot-yellow)" }} />
+        <span className="alc-code-block__dot" style={{ background: "var(--alc-dot-green)" }} />
         <span className="alc-term__title">{title}</span>
         <span style={{ flex: 1 }} />
         {badge && badgeColor && (
@@ -156,16 +178,6 @@ export function TermChrome({
   );
 }
 
-export function Line({
-  children,
-  style,
-}: {
-  children?: ReactNode;
-  style?: CSSProperties;
-}) {
-  return (
-    <div style={{ minHeight: "1.55em", whiteSpace: "pre", ...style }}>
-      {children}
-    </div>
-  );
+export function Line({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
+  return <div style={{ minHeight: "1.55em", whiteSpace: "pre", ...style }}>{children}</div>;
 }

@@ -53,7 +53,7 @@ export class Task extends Schema.Class<Task>("Task")({
   completed: Schema.Boolean,
 }) {}
 
-export class TaskNotFound extends Schema.TaggedErrorClass<TaskNotFound>()(
+export class TaskNotFound extends Schema.TaggedError<TaskNotFound>()(
   "TaskNotFound",
   { id: Schema.String },
   { httpApiStatus: 404 },
@@ -61,7 +61,7 @@ export class TaskNotFound extends Schema.TaggedErrorClass<TaskNotFound>()(
 ```
 
 `Schema.Class` gives you a runtime-validated class with an inferred
-TypeScript type. `Schema.TaggedErrorClass` gives you a typed error you
+TypeScript type. `Schema.TaggedError` gives you a typed error you
 can return from handlers and discriminate against on the client —
 `httpApiStatus: 404` maps it to a 404 response instead of a generic 500.
 
@@ -75,9 +75,9 @@ server *and* a typed client.
 ```typescript
 // src/api.ts
 import * as Schema from "effect/Schema";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import { Task, TaskNotFound } from "./task.ts";
 
 export const decodeTask = Schema.decodeUnknownEffect(Task);
@@ -117,7 +117,7 @@ Now we wire it up. Create `src/worker.ts` with an empty Construction phase:
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Cloudflare.Worker(
@@ -137,14 +137,14 @@ binding factories like `R2.ReadWriteBucket(...)`, never per-request work.
 
 ### 3a. Bind an R2 bucket for storage
 
-Tasks need to live somewhere durable. Declare an `Bucket` resource
-and bind it inside the constructor — `bind()` returns a typed handle whose
-`get` / `put` / `delete` / `list` methods we'll call from the
-handlers below.
+Tasks need to live somewhere durable. Declare a `Bucket` resource
+and bind it inside the constructor — `Cloudflare.R2.ReadWriteBucket(Tasks)`
+returns a typed handle whose `get` / `put` / `delete` / `list` methods
+we'll call from the handlers below.
 
 ```typescript
 // src/bucket.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Tasks = Cloudflare.R2.Bucket("Tasks");
 ```
@@ -186,12 +186,14 @@ safe to call inside the constructor.
 +     handlers
 +       .handle("getTask", ({ params }) =>
 +         Effect.gen(function* () {
-+           const object = yield* tasks.get(params.id);
++           const object = yield* tasks.get(params.id).pipe(Effect.orDie);
 +           if (!object) {
 +             return yield* Effect.fail(new TaskNotFound({ id: params.id }));
 +           }
-+           return Schema.decodeUnknownSync(Task)(JSON.parse(yield* object.text()));
-+         }).pipe(Effect.orDie),
++           return Schema.decodeUnknownSync(Task)(
++             JSON.parse(yield* object.text().pipe(Effect.orDie)),
++           );
++         }),
 +       )
 +       .handle("createTask", ({ payload }) =>
 +         Effect.gen(function* () {
@@ -298,15 +300,15 @@ Here's the complete `src/worker.ts`:
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Etag from "effect/unstable/http/Etag";
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as Etag from "effect/http/Etag";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { TaskApi } from "./api.ts";
 import { Tasks } from "./bucket.ts";
 import { Task, TaskNotFound } from "./task.ts";
@@ -327,14 +329,14 @@ export default Cloudflare.Worker(
       handlers
         .handle("getTask", ({ params }) =>
           Effect.gen(function* () {
-            const object = yield* tasks.get(params.id);
+            const object = yield* tasks.get(params.id).pipe(Effect.orDie);
             if (!object) {
               return yield* Effect.fail(new TaskNotFound({ id: params.id }));
             }
             return Schema.decodeUnknownSync(Task)(
-              JSON.parse(yield* object.text()),
+              JSON.parse(yield* object.text().pipe(Effect.orDie)),
             );
-          }).pipe(Effect.orDie),
+          }),
         )
         .handle("createTask", ({ payload }) =>
           Effect.gen(function* () {
@@ -373,7 +375,7 @@ export default Cloudflare.Worker(
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import Worker from "./src/worker.ts";
 
@@ -418,7 +420,7 @@ the endpoint schemas.
 ```typescript
 // scripts/client.ts
 import * as Effect from "effect/Effect";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { TaskApi } from "../src/api.ts";
 
 const program = Effect.gen(function* () {
@@ -499,16 +501,16 @@ instead of R2.
 
 ```typescript
 // src/object.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Etag from "effect/unstable/http/Etag";
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as Etag from "effect/http/Etag";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { TaskDOApi, decodeTask, encodeTask } from "./api.ts";
-import { Task } from "./task.ts";
+import { Task, TaskNotFound } from "./task.ts";
 
 const HttpPlatformStub = Layer.succeed(HttpPlatform.HttpPlatform, {
   fileResponse: () => Effect.die("HttpPlatform.fileResponse not supported"),
@@ -525,8 +527,11 @@ export default class TasksObject extends Cloudflare.DurableObject<TasksObject>()
         handlers
           .handle("getTask", ({ params }) =>
             state.storage.get<Task>(params.id).pipe(
-              Effect.flatMap(decodeTask),
-              Effect.orDie,
+              Effect.flatMap((task) =>
+                task
+                  ? decodeTask(task).pipe(Effect.orDie)
+                  : Effect.fail(new TaskNotFound({ id: params.id })),
+              ),
             ),
           )
           .handle("createTask", ({ payload }) => {
@@ -560,7 +565,7 @@ and you get a fully typed client whose every call is a DO `fetch`
 under the hood:
 
 ```diff lang="typescript"
-+import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
++import * as HttpApiClient from "effect/http-api/HttpApiClient";
 +import TasksObject, { TaskDOApi } from "./object.ts";
 
  Effect.gen(function* () {

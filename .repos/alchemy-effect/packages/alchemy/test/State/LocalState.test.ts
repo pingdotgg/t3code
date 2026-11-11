@@ -1,12 +1,12 @@
+import { describe, expect, it } from "@alchemy.run/test";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { STATE_STORE_VERSION } from "@/State/HttpStateApi.ts";
 import { makeLocalState } from "@/State/LocalState.ts";
 import type { ResourceState } from "@/State/ResourceState.ts";
 import { initialCwd } from "@/Util/Node.ts";
 import { PlatformServices } from "@/Util/PlatformServices";
-import { describe, expect, it } from "alchemy-test";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 
 const resource = (
   fqn: string,
@@ -42,21 +42,17 @@ const statePath = (...segments: string[]) =>
     return path.join(initialCwd, ".alchemy", "state", ...segments);
   });
 
-describe("makeLocalState", () => {
+describe("makeLocalState", { tags: ["unit", "local"] }, () => {
   it.effect("reads of absent state recover to empty results", () =>
     Effect.gen(function* () {
       const state = yield* makeLocalState();
       const stack = "local-state-test-absent";
 
-      expect(
-        yield* state.get({ stack, stage: "test", fqn: "nope" }),
-      ).toBeUndefined();
+      expect(yield* state.get({ stack, stage: "test", fqn: "nope" })).toBeUndefined();
       expect(yield* state.list({ stack, stage: "test" })).toEqual([]);
       expect(yield* state.listStages(stack)).toEqual([]);
       expect(yield* state.getOutput({ stack, stage: "test" })).toBeUndefined();
-      expect(
-        yield* state.getReplacedResources({ stack, stage: "test" }),
-      ).toEqual([]);
+      expect(yield* state.getReplacedResources({ stack, stage: "test" })).toEqual([]);
     }).pipe(Effect.provide(PlatformServices)),
   );
 
@@ -74,9 +70,7 @@ describe("makeLocalState", () => {
       yield* state.set({ stack, stage, fqn: nested.fqn, value: nested });
 
       expect(yield* state.get({ stack, stage, fqn: plain.fqn })).toEqual(plain);
-      expect(yield* state.get({ stack, stage, fqn: nested.fqn })).toEqual(
-        nested,
-      );
+      expect(yield* state.get({ stack, stage, fqn: nested.fqn })).toEqual(nested);
       expect((yield* state.list({ stack, stage })).toSorted()).toEqual([
         "resource-a",
         "scope/nested/resource-b",
@@ -145,9 +139,7 @@ describe("makeLocalState", () => {
       const path = yield* Path.Path;
       yield* fs.writeFileString(path.join(dir, "resource-a.json"), "");
 
-      expect(
-        yield* state.get({ stack, stage, fqn: "resource-a" }),
-      ).toBeUndefined();
+      expect(yield* state.get({ stack, stage, fqn: "resource-a" })).toBeUndefined();
 
       yield* state.deleteStack({ stack });
     }).pipe(Effect.provide(PlatformServices)),
@@ -167,9 +159,7 @@ describe("makeLocalState", () => {
       yield* state.set({ stack, stage, fqn: created.fqn, value: created });
       yield* state.set({ stack, stage, fqn: replaced.fqn, value: replaced });
 
-      expect(yield* state.getReplacedResources({ stack, stage })).toEqual([
-        replaced,
-      ]);
+      expect(yield* state.getReplacedResources({ stack, stage })).toEqual([replaced]);
 
       yield* state.deleteStack({ stack });
     }).pipe(Effect.provide(PlatformServices)),
@@ -380,9 +370,7 @@ describe("makeLocalState", () => {
 
       const rounds = Array.from({ length: 20 }, (_, i) => i + 1);
       yield* Effect.all(
-        rounds.map((round) =>
-          state.set({ stack, stage, fqn, value: resource(fqn, { round }) }),
-        ),
+        rounds.map((round) => state.set({ stack, stage, fqn, value: resource(fqn, { round }) })),
         { concurrency: "unbounded" },
       );
 
@@ -439,9 +427,7 @@ describe("makeLocalState", () => {
         const value = resource("foo__bar", { value: "u" });
 
         yield* state.set({ stack, stage, fqn: "foo__bar", value });
-        expect(yield* state.get({ stack, stage, fqn: "foo__bar" })).toEqual(
-          value,
-        );
+        expect(yield* state.get({ stack, stage, fqn: "foo__bar" })).toEqual(value);
         // Known encoding collision: `/` is stored as `__`, so decodeFqn
         // cannot distinguish a literal `__` in a logical id from a
         // namespace separator. `list` reports this resource as "foo/bar".
@@ -480,9 +466,7 @@ describe("makeLocalState", () => {
           .pipe(Effect.flip);
         expect(setError._tag).toBe("StateStoreError");
 
-        const getError = yield* state
-          .get({ stack, stage, fqn })
-          .pipe(Effect.flip);
+        const getError = yield* state.get({ stack, stage, fqn }).pipe(Effect.flip);
         expect(getError._tag).toBe("StateStoreError");
 
         yield* state.deleteStack({ stack });

@@ -1,3 +1,5 @@
+import { AuthFilesystemReadScope } from "@t3tools/contracts";
+import { readEnvironmentScope } from "../../state/session";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -10,7 +12,7 @@ import { projectEnvironment } from "../../state/projects";
 import { isVideoPreviewFile } from "./filePath";
 import { prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
-import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
+import type { HighlightScheme } from "../../lib/highlights";
 
 const inFlightPreloads = new Map<string, Promise<void>>();
 const MAX_HIGHLIGHT_PRELOAD_CHARACTERS = 256 * 1024;
@@ -27,9 +29,10 @@ export function preloadWorkspaceFileContents(input: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   readonly relativePath: string;
-  readonly theme: ReviewDiffTheme;
+  readonly theme: HighlightScheme;
 }): void {
   if (
+    !readEnvironmentScope(input.environmentId, AuthFilesystemReadScope) ||
     isWorkspaceBrowserPreviewPath(input.relativePath) ||
     isWorkspaceImagePreviewPath(input.relativePath) ||
     isVideoPreviewFile(input.relativePath)

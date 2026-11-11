@@ -6,6 +6,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { useClosedViewStore } from "~/closedViewStore";
 import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";
 
 interface ClosePreviewSessionInput<E> {
@@ -18,10 +19,6 @@ interface ClosePreviewSessionInput<E> {
   readonly threadRef: ScopedThreadRef;
 }
 
-/**
- * Optimistically closes a preview while suppressing stale list responses for
- * the same tab. A failed close restores the last known snapshot.
- */
 export async function closePreviewSession<E>(
   input: ClosePreviewSessionInput<E>,
 ): Promise<AtomCommandResult<void, E>> {
@@ -32,6 +29,12 @@ export async function closePreviewSession<E>(
   });
   if (result._tag === "Failure") {
     cancelPreviewSessionClose(input.threadRef, input.snapshot, input.tabId);
+  } else if (input.snapshot) {
+    useClosedViewStore.getState().remember({
+      kind: "browser",
+      threadRef: input.threadRef,
+      snapshot: input.snapshot,
+    });
   }
   return result;
 }

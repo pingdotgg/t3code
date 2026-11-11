@@ -29,6 +29,18 @@ The controls retreat as the composer docks after you send the first message.
 Turn on **Composer context** to keep those controls visible after the thread starts. This preference
 applies to the web and desktop clients.
 
+## Math
+
+Turn on **Render math** in **Settings → Appearance** to typeset LaTeX in messages and Markdown
+previews on web, desktop, and mobile. It reads `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`, outside of code.
+Fenced `math` blocks also render. Formulas work in tables, including absolute-value bars.
+Dollar amounts such as `$5 and $10` stay text; write `\$` to keep any other dollar sign literal.
+Wide formulas scroll horizontally while the surrounding text wraps. Copying a formula or
+exporting a table preserves the TeX.
+
+The composer keeps TeX source editable, including when rich text is enabled. The Render math
+preference is saved separately on each device.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
@@ -45,7 +57,9 @@ change. Export your theme as JSON to share it.
 ## Environment themes
 
 Environment themes and defaults come from the server serving your web app or the desktop app's
-main local environment. app.t3.codes and additional connections do not use them.
+main local environment. With the desktop app's local environment off, they come from the
+[background service](./background-service.md) on the same machine while the app is connected to
+it. app.t3.codes and other connections do not use them.
 
 Select a published theme in **Settings → Appearance** to follow its palette as the server updates
 it. **Duplicate** makes an independent copy you can edit. A saved custom theme with the same ID

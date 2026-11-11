@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+button {
+  min-height: 44px;
+  border: 1px solid #94a3b8;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0.5rem 0.5rem 0;
+  background: #e2e8f0;
+  cursor: pointer;
+}
+button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}

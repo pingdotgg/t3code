@@ -20,9 +20,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as Docker from "../Docker.ts";
 import * as Globals from "../globals/Globals.ts";
 import * as Internet from "../globals/Internet.ts";
@@ -94,9 +94,7 @@ const baseWorker = {
 const consumerWorker = (name: string) => ({
   ...baseWorker,
   name,
-  modules: [
-    { name: "main.js", type: "ESModule", content: CONSUMER_SCRIPT } as const,
-  ],
+  modules: [{ name: "main.js", type: "ESModule", content: CONSUMER_SCRIPT } as const],
 });
 
 const producerWorker = (name: string, consumer: string, marker: string) => ({
@@ -115,118 +113,97 @@ const producerWorker = (name: string, consumer: string, marker: string) => ({
 const eventTypes = (events: ReadonlyArray<RecordedTailEvent>) =>
   events.map((tailEvent) => tailEvent.event?.type);
 
-layer(localRuntimeLayer, { excludeTestServices: true })(
-  "Streaming tail workers",
-  (it) => {
-    it.effect(
-      "streams onset and outcome events from a producer to its streaming tail consumer",
-      () =>
-        Effect.gen(function* () {
-          const consumer = yield* startTestWorker(
-            consumerWorker("streaming-tails-consumer"),
-          );
-          yield* waitForRegistryEntry({
-            kind: "worker",
-            scriptName: "streaming-tails-consumer",
-          });
+layer(localRuntimeLayer, { excludeTestServices: true })("Streaming tail workers", (it) => {
+  it.effect(
+    "streams onset and outcome events from a producer to its streaming tail consumer",
+    () =>
+      Effect.gen(function* () {
+        const consumer = yield* startTestWorker(consumerWorker("streaming-tails-consumer"));
+        yield* waitForRegistryEntry({
+          kind: "worker",
+          scriptName: "streaming-tails-consumer",
+        });
 
-          const producer = yield* startTestWorker(
-            producerWorker(
-              "streaming-tails-producer",
-              "streaming-tails-consumer",
-              "streaming-tails-basic-marker",
-            ),
-          );
-          expect(yield* producer.fetchText("/hello")).toBe(
-            "hello from producer",
-          );
+        const producer = yield* startTestWorker(
+          producerWorker(
+            "streaming-tails-producer",
+            "streaming-tails-consumer",
+            "streaming-tails-basic-marker",
+          ),
+        );
+        expect(yield* producer.fetchText("/hello")).toBe("hello from producer");
 
-          // The outcome event lands after the response completes; poll until
-          // the consumer has recorded a full session (onset through outcome).
-          const events = yield* poll<Array<RecordedTailEvent>>(
-            consumer,
-            "/events",
-            (recorded) => eventTypes(recorded).includes("outcome"),
-            20_000,
-          );
+        // The outcome event lands after the response completes; poll until
+        // the consumer has recorded a full session (onset through outcome).
+        const events = yield* poll<Array<RecordedTailEvent>>(
+          consumer,
+          "/events",
+          (recorded) => eventTypes(recorded).includes("outcome"),
+          20_000,
+        );
 
-          const onset = events.find(
-            (tailEvent) => tailEvent.event?.type === "onset",
-          );
-          expect(onset).toBeDefined();
-          expect(onset?.event?.info?.type).toBe("fetch");
-          expect(onset?.event?.info?.url).toContain("/hello");
-          expect(onset?.invocationId).toBeTruthy();
+        const onset = events.find((tailEvent) => tailEvent.event?.type === "onset");
+        expect(onset).toBeDefined();
+        expect(onset?.event?.info?.type).toBe("fetch");
+        expect(onset?.event?.info?.url).toContain("/hello");
+        expect(onset?.invocationId).toBeTruthy();
 
-          const log = events.find(
-            (tailEvent) => tailEvent.event?.type === "log",
-          );
-          expect(log?.event?.message).toEqual(["streaming-tails-basic-marker"]);
+        const log = events.find((tailEvent) => tailEvent.event?.type === "log");
+        expect(log?.event?.message).toEqual(["streaming-tails-basic-marker"]);
 
-          const outcome = events.find(
-            (tailEvent) => tailEvent.event?.type === "outcome",
-          );
-          expect(outcome?.event?.outcome).toBe("ok");
+        const outcome = events.find((tailEvent) => tailEvent.event?.type === "outcome");
+        expect(outcome?.event?.outcome).toBe("ok");
 
-          // Every streamed event belongs to the same invocation as the onset.
-          for (const tailEvent of events) {
-            expect(tailEvent.invocationId).toBe(onset?.invocationId);
-          }
-        }),
-      { timeout: 60_000 },
-    );
+        // Every streamed event belongs to the same invocation as the onset.
+        for (const tailEvent of events) {
+          expect(tailEvent.invocationId).toBe(onset?.invocationId);
+        }
+      }),
+    { timeout: 60_000 },
+  );
 
-    it.effect(
-      "drops sessions while the consumer is down and streams once it starts",
-      () =>
-        Effect.gen(function* () {
-          // The consumer is not running yet: starting the producer and serving
-          // requests must both succeed — sessions are dropped with a warning.
-          const producer = yield* startTestWorker(
-            producerWorker(
-              "streaming-tails-late-producer",
-              "streaming-tails-late-consumer",
-              "streaming-tails-late-marker",
-            ),
-          );
-          expect(yield* producer.fetchText("/hello")).toBe(
-            "hello from producer",
-          );
+  it.effect(
+    "drops sessions while the consumer is down and streams once it starts",
+    () =>
+      Effect.gen(function* () {
+        // The consumer is not running yet: starting the producer and serving
+        // requests must both succeed — sessions are dropped with a warning.
+        const producer = yield* startTestWorker(
+          producerWorker(
+            "streaming-tails-late-producer",
+            "streaming-tails-late-consumer",
+            "streaming-tails-late-marker",
+          ),
+        );
+        expect(yield* producer.fetchText("/hello")).toBe("hello from producer");
 
-          const consumer = yield* startTestWorker(
-            consumerWorker("streaming-tails-late-consumer"),
-          );
-          yield* waitForRegistryEntry({
-            kind: "worker",
-            scriptName: "streaming-tails-late-consumer",
-          });
+        const consumer = yield* startTestWorker(consumerWorker("streaming-tails-late-consumer"));
+        yield* waitForRegistryEntry({
+          kind: "worker",
+          scriptName: "streaming-tails-late-consumer",
+        });
 
-          // The producer's registry proxy picks the consumer up asynchronously;
-          // keep producing until a full session lands.
-          const events = yield* producer.fetch("/hello").pipe(
-            Effect.andThen(
-              consumer.fetchJson<Array<RecordedTailEvent>>("/events"),
-            ),
-            Effect.flatMap((recorded) =>
-              eventTypes(recorded).includes("outcome")
-                ? Effect.succeed(recorded)
-                : Effect.fail(new PredicateFailed({ value: recorded })),
-            ),
-            Effect.retry({
-              while: (error) => error._tag === "PredicateFailed",
-              schedule: Schedule.spaced("250 millis"),
-              times: 120,
-            }),
-          );
-          const log = events.find(
-            (tailEvent) => tailEvent.event?.type === "log",
-          );
-          expect(log?.event?.message).toEqual(["streaming-tails-late-marker"]);
-        }),
-      { timeout: 90_000 },
-    );
-  },
-);
+        // The producer's registry proxy picks the consumer up asynchronously;
+        // keep producing until a full session lands.
+        const events = yield* producer.fetch("/hello").pipe(
+          Effect.andThen(consumer.fetchJson<Array<RecordedTailEvent>>("/events")),
+          Effect.flatMap((recorded) =>
+            eventTypes(recorded).includes("outcome")
+              ? Effect.succeed(recorded)
+              : Effect.fail(new PredicateFailed({ value: recorded })),
+          ),
+          Effect.retry({
+            while: (error) => error._tag === "PredicateFailed",
+            schedule: Schedule.spaced("250 millis"),
+            times: 120,
+          }),
+        );
+        const log = events.find((tailEvent) => tailEvent.event?.type === "log");
+        expect(log?.event?.message).toEqual(["streaming-tails-late-marker"]);
+      }),
+    { timeout: 90_000 },
+  );
+});
 
 // A runtime composed without the registry proxy plugin (`streamingTails` has
 // nothing to resolve through) must fail fast with a typed `ConfigError`
@@ -241,9 +218,7 @@ describe("Streaming tail workers without a registry proxy", () => {
     Layer.provide(
       Layer.effect(
         Storage.Storage,
-        Effect.suspend(() => makeTempDirectory()).pipe(
-          Effect.map(Storage.make),
-        ),
+        Effect.suspend(() => makeTempDirectory()).pipe(Effect.map(Storage.make)),
       ),
     ),
     Layer.provide(Internet.InternetLive),
@@ -251,9 +226,7 @@ describe("Streaming tail workers without a registry proxy", () => {
     Layer.provideMerge(Docker.DockerLive),
     Layer.provide(Workerd.WorkerdLive),
     Layer.provide(configProvider()),
-    Layer.provideMerge(
-      Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer),
-    ),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
   );
 
   it.effect(
@@ -262,13 +235,7 @@ describe("Streaming tail workers without a registry proxy", () => {
       Effect.gen(function* () {
         const runtime = yield* Runtime.Runtime;
         const error = yield* runtime
-          .start(
-            producerWorker(
-              "streaming-tails-no-registry",
-              "streaming-tails-nowhere",
-              "unused",
-            ),
-          )
+          .start(producerWorker("streaming-tails-no-registry", "streaming-tails-nowhere", "unused"))
           .pipe(Effect.flip);
         expect(error._tag).toBe("ConfigError");
         expect(error.subtag).toBe("PluginNotFound");

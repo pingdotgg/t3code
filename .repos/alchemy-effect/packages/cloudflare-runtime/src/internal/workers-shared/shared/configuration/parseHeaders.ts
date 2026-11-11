@@ -7,12 +7,8 @@ import {
   SPLAT_REGEX,
   UNSET_OPERATOR,
 } from "./constants.ts";
+import type { HeadersRule, InvalidHeadersRule, ParsedHeaders } from "./types.ts";
 import { validateUrl } from "./validateURL.ts";
-import type {
-  HeadersRule,
-  InvalidHeadersRule,
-  ParsedHeaders,
-} from "./types.ts";
 
 // Not strictly necessary to check for all protocols-like beginnings, since _technically_ that could be a legit header (e.g. name=http, value=://I'm a value).
 // But we're checking here since some people might be caught out and it'll help 99.9% of people who get it wrong.
@@ -130,8 +126,7 @@ export function parseHeaders(
           invalid.push({
             line,
             lineNumber: i + 1,
-            message:
-              "Expected a colon-separated header pair (e.g. name: value)",
+            message: "Expected a colon-separated header pair (e.g. name: value)",
           });
         }
       }

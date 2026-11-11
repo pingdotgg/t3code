@@ -2,10 +2,15 @@ import {
   WS_METHODS,
   PullRequestRef,
   PullRequestInvalidateInput,
+  PullRequestState,
   type EnvironmentId,
+  type PullRequestRoutingResult,
+  type PullRequestRoutingIdentityResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -13,13 +18,14 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
-  GitHubRoutingPermissions,
-  gitHubRoutingConnectionKey,
-} from "../connection/githubRoutingPermissions.ts";
+  PullRequestRoutingPermissions,
+  pullRequestRoutingConnectionKey,
+} from "../connection/pullRequestRoutingPermissions.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import * as ConnectionProfileStore from "../connection/profileStore.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import {
-  request,
+  requestGuarded as request,
   EnvironmentRpcUnavailableError,
   type EnvironmentRpcInput,
   type EnvironmentUnaryRpcTag,
@@ -35,9 +41,12 @@ const reads = new Set<string>([
   WS_METHODS.pullRequestsThreadComments,
   WS_METHODS.pullRequestsDiffFileContents,
   WS_METHODS.pullRequestsFilesViewed,
+  WS_METHODS.pullRequestsChangeBreakdown,
   WS_METHODS.pullRequestsReviewerCandidates,
   WS_METHODS.pullRequestsLabelCandidates,
 ]);
+// Review guides are not routed: each server keeps its own, so another server answering would
+// report none, or start a run nobody on the pull request's own server can see.
 const writes = new Set<string>([
   WS_METHODS.pullRequestsSetFilesViewed,
   WS_METHODS.pullRequestsRunAction,
@@ -52,6 +61,9 @@ const writes = new Set<string>([
   WS_METHODS.pullRequestsSetLabels,
 ]);
 const isRef = Schema.is(PullRequestRef);
+const hasState = Schema.is(
+  Schema.Struct({ state: PullRequestState, isDraft: Schema.optional(Schema.Boolean) }),
+);
 const isInvalidation = Schema.is(PullRequestInvalidateInput);
 const readTimeout = (environmentId: EnvironmentId) =>
   Effect.timeoutOrElse({
@@ -77,6 +89,43 @@ const isUnregistered = Schema.is(EnvironmentRegistry.EnvironmentNotRegisteredErr
 const encodeKey = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(Schema.NullOr(Schema.String))),
 );
+type PendingMetadata<A> = WeakMap<RpcSession, Map<string, Deferred.Deferred<Exit.Exit<A>>>>;
+const pendingRouting: PendingMetadata<PullRequestRoutingResult | null> = new WeakMap();
+const pendingIdentities: PendingMetadata<PullRequestRoutingIdentityResult | null> = new WeakMap();
+
+function shareMetadataRead<A, R>(
+  pending: PendingMetadata<A>,
+  key: string,
+  probe: Effect.Effect<A, never, R>,
+): Effect.Effect<A, never, R | EnvironmentSupervisor.EnvironmentSupervisor> {
+  return Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+      const session = yield* SubscriptionRef.get(supervisor.session);
+      if (Option.isNone(session)) return yield* restore(probe);
+      const entries =
+        pending.get(session.value) ?? new Map<string, Deferred.Deferred<Exit.Exit<A>>>();
+      pending.set(session.value, entries);
+      const existing = entries.get(key);
+      if (existing !== undefined) {
+        const result = yield* restore(Deferred.await(existing));
+        // A cancelled first reader must not cancel the other readers waiting on its probe.
+        return yield* restore(
+          Exit.hasInterrupts(result) ? shareMetadataRead(pending, key, probe) : result,
+        );
+      }
+      const result = Deferred.makeUnsafe<Exit.Exit<A>>();
+      entries.set(key, result);
+      return yield* restore(probe).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => entries.delete(key)).pipe(
+            Effect.andThen(Deferred.succeed(result, exit)),
+          ),
+        ),
+      );
+    }),
+  );
+}
 
 function isLocal(entry: ConnectionCatalogEntry): boolean {
   const url =
@@ -93,7 +142,6 @@ function isLocal(entry: ConnectionCatalogEntry): boolean {
   }
 }
 
-/** A guard rejection is returned before the operation starts. Other write failures are ambiguous. */
 function rejectedBeforeDispatch(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -116,8 +164,14 @@ const routingAllowed = Effect.fn("PullRequestRouting.allowed")(function* (
   const entries = yield* SubscriptionRef.get(registry.entries);
   const origin = entries.get(originId);
   const destination = entries.get(destinationId);
-  if (!origin?.enabled || !destination?.enabled) return false;
-  const permissions = yield* GitHubRoutingPermissions;
+  if (
+    !origin?.enabled ||
+    !destination?.enabled ||
+    origin.unsupportedReason !== undefined ||
+    destination.unsupportedReason !== undefined
+  )
+    return false;
+  const permissions = yield* PullRequestRoutingPermissions;
   const source = yield* permissions.get(origin);
   const target = yield* permissions.get(destination);
   const allowed = write
@@ -131,8 +185,9 @@ const routingAllowed = Effect.fn("PullRequestRouting.allowed")(function* (
     const profile = yield* profiles.value
       .get(entry.target.connectionId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
-    const key = gitHubRoutingConnectionKey(entry);
-    if (key === null || key !== gitHubRoutingConnectionKey({ ...entry, profile })) return false;
+    const key = pullRequestRoutingConnectionKey(entry);
+    if (key === null || key !== pullRequestRoutingConnectionKey({ ...entry, profile }))
+      return false;
   }
   return true;
 });
@@ -157,13 +212,27 @@ const invalidateTarget = Effect.fn("PullRequestRouting.invalidateTarget")(functi
     inputs,
     (input) =>
       registry.run(target, request(WS_METHODS.pullRequestsInvalidate, input)).pipe(
-        // GitHub already accepted the write. A stalled reader must not delay its confirmation.
+        // A stalled reader must not delay the write's answer.
         Effect.timeoutOption("1 second"),
         Effect.orElseSucceed(() => undefined),
       ),
     { concurrency: 3, discard: true },
   );
 });
+
+/**
+ * The origin owns the threads linked to this pull request, but a routed read never reaches it.
+ * Tell it which state the read saw so it checks again.
+ */
+const reportState = (
+  { allowStale: _allowStale, expectedAccountId: _expectedAccountId, ...reference }: PullRequestRef,
+  status: { readonly state: PullRequestState; readonly isDraft?: boolean | undefined },
+) =>
+  request(WS_METHODS.pullRequestsReportState, {
+    reference,
+    state: status.state,
+    ...(status.isDraft === undefined ? {} : { isDraft: status.isDraft }),
+  }).pipe(Effect.timeoutOption("5 seconds"), Effect.ignore, Effect.forkDetach, Effect.asVoid);
 
 /** Credentials stay on their environments. Only a verified host and account cross the wire. */
 export function createPullRequestRouter() {
@@ -212,42 +281,39 @@ export function createPullRequestRouter() {
       ref.repository.toLowerCase(),
       String(ref.number),
     ]);
-    const finish = (operation: ReturnType<typeof request<T>>) =>
-      operation.pipe(
-        Effect.tap(() => {
-          if (!writes.has(tag) || used.size === 0) return Effect.void;
-          const targets = new Map<EnvironmentId, PullRequestRef[]>([
-            [origin.target.environmentId, [ref]],
-          ]);
-          for (const entry of used.values()) {
-            if (
-              entry.origin !== origin.target.environmentId ||
-              !matchesReference(entry.reference, ref)
-            )
-              continue;
-            for (const target of [...entry.targets, origin.target.environmentId]) {
-              const refs = targets.get(target) ?? [];
-              if (!refs.some((existing) => existing.host === entry.reference.host))
-                refs.push(entry.reference);
-              targets.set(target, refs);
-            }
-          }
-          return Effect.forEach(
-            targets,
-            ([target, refs]) =>
-              invalidateTarget(registry, origin.target.environmentId, target, [
-                ...refs.map((reference) => ({
-                  reference,
-                  ...(tag === WS_METHODS.pullRequestsSetFilesViewed
-                    ? { filesViewedOnly: true }
-                    : {}),
-                })),
-                ...(tag === WS_METHODS.pullRequestsSetFilesViewed ? [] : [{}]),
-              ]),
-            { concurrency: 4, discard: true },
-          );
-        }),
+    const invalidateReaders = Effect.suspend(() => {
+      if (!writes.has(tag) || used.size === 0) return Effect.void;
+      const targets = new Map<EnvironmentId, PullRequestRef[]>([
+        [origin.target.environmentId, [ref]],
+      ]);
+      for (const entry of used.values()) {
+        if (entry.origin !== origin.target.environmentId || !matchesReference(entry.reference, ref))
+          continue;
+        for (const target of [...entry.targets, origin.target.environmentId]) {
+          const refs = targets.get(target) ?? [];
+          if (!refs.some((existing) => existing.host === entry.reference.host))
+            refs.push(entry.reference);
+          targets.set(target, refs);
+        }
+      }
+      return Effect.forEach(
+        targets,
+        ([target, refs]) =>
+          invalidateTarget(registry, origin.target.environmentId, target, [
+            ...refs.map((reference) => ({
+              reference,
+              ...(tag === WS_METHODS.pullRequestsSetFilesViewed ? { filesViewedOnly: true } : {}),
+            })),
+            ...(tag === WS_METHODS.pullRequestsSetFilesViewed ? [] : [{}]),
+          ]),
+        { concurrency: 4, discard: true },
       );
+    });
+    // A failed viewed-files batch may have applied some paths. Other writes invalidate on success.
+    const finish = (operation: ReturnType<typeof request<T>>) =>
+      tag === WS_METHODS.pullRequestsSetFilesViewed
+        ? operation.pipe(Effect.ensuring(invalidateReaders))
+        : operation.pipe(Effect.tap(() => invalidateReaders));
     const alternatives = [];
     for (const [id, entry] of entries) {
       if (id === origin.target.environmentId) continue;
@@ -276,14 +342,21 @@ export function createPullRequestRouter() {
     }
     if (alternatives.length === 0) return yield* finish(source);
 
-    const identity = yield* request(WS_METHODS.pullRequestsRouting, ref).pipe(
+    const identityProbe = request(WS_METHODS.pullRequestsRouting, ref).pipe(
       Effect.timeout("2 seconds"),
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(null),
       ),
     );
-    // Old servers and unknown accounts retain the existing path.
-    if (identity === null || identity.provider !== "github") return yield* finish(source);
+    const identity = yield* reads.has(tag)
+      ? shareMetadataRead(
+          pendingRouting,
+          encodeKey([ref.projectId, ref.host?.toLowerCase() ?? null, ref.repository.toLowerCase()]),
+          identityProbe,
+        )
+      : identityProbe;
+    // The source server answers only for a host whose account it can verify.
+    if (identity === null) return yield* finish(source);
 
     const routedInput = {
       ...input,
@@ -306,6 +379,11 @@ export function createPullRequestRouter() {
         ? guardedSource
         : registry.run(id, request(tag, routedInput))
       ).pipe(
+        Effect.tap((result) =>
+          id !== origin.target.environmentId && hasState(result)
+            ? reportState(ref, result)
+            : Effect.void,
+        ),
         Effect.tap(() =>
           Effect.sync(() => {
             const entry = used.get(refKey) ?? {
@@ -338,8 +416,21 @@ export function createPullRequestRouter() {
           if (!(yield* routingAllowed(registry, origin.target.environmentId, id, writes.has(tag))))
             return yield* visit(index + 1);
           // An older server would discard expectedAccountId. Verify it implements the guard first.
+          const alternateProbe = request(WS_METHODS.pullRequestsRoutingIdentity, {
+            host: identity.host,
+          }).pipe(
+            Effect.timeout("2 seconds"),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(null),
+            ),
+          );
           const alternate = yield* registry
-            .run(id, request(WS_METHODS.pullRequestsRoutingIdentity, { host: identity.host }))
+            .run(
+              id,
+              reads.has(tag)
+                ? shareMetadataRead(pendingIdentities, identity.host.toLowerCase(), alternateProbe)
+                : alternateProbe,
+            )
             .pipe(
               Effect.timeout("2 seconds"),
               Effect.catchCause((cause) =>
@@ -348,7 +439,7 @@ export function createPullRequestRouter() {
             );
           if (
             alternate === null ||
-            alternate.provider !== "github" ||
+            alternate.provider !== identity.provider ||
             alternate.host.toLowerCase() !== identity.host.toLowerCase() ||
             alternate.accountId !== identity.accountId
           ) {

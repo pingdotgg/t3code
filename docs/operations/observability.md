@@ -56,6 +56,18 @@ records instead carry OTLP resource, scope, and optional status fields.
 The `TraceRecord`, `EffectTraceRecord`, and `OtlpTraceRecord` schemas live in
 `packages/shared/src/observability.ts`.
 
+SQL statement spans (named `sqlite`) and `sql.transaction` spans carry `db.connection` and
+`db.lock_wait_ms`. `db.connection` is `writer` for the main connection, which runs on the event loop,
+or `reader` for the read-only connection in a worker thread. `db.lock_wait_ms` is the part of the
+span spent waiting for that connection, behind other SQL. That wait does not block the event loop,
+so subtract it before you blame a slow span on the query. Statements inside a transaction use its
+connection and do not carry these attributes.
+
+An MCP request over HTTP has a `McpHttpServer.authenticateRequest` span that covers only admitting
+it: the credential check, the mode limit, and the Linked environments gate. The request runs after
+it, under the `McpServer.…/<method>` span, and each tool call has its own `mcp.tool.<name>` span
+that times it. That span's attributes name the tool, never its arguments.
+
 DPoP proof failures include the safe `environment.dpop.failure_code` span
 attribute. A `time_window` failure means that a signed proof was too old or too
 far in the future for the environment server's allowed window. It can point to
@@ -94,6 +106,11 @@ the loop stalled for more than 2 s since the previous sample, it records a root
 `server.eventLoop.stall` span with a warning. The span has trace level `Warn`, so it stays when
 `T3CODE_TRACE_MIN_LEVEL` is `Warn`. The warning shows in Settings > Diagnostics unless OTLP logs are
 on. The span time is when the sample ran, not when the stall happened.
+
+The trace file rotates in well under an hour on a busy server, so each stall is also appended as one
+NDJSON line to `event-loop-stalls.ndjson`, next to the trace file. A line has `time` and the span
+attributes. The file keeps the last 1000 or more stalls, with one rotated backup
+(`event-loop-stalls.ndjson.1`). Use it to see how often a server stalls over days.
 
 Some delay is not recorded:
 
@@ -139,7 +156,7 @@ You do not need any extra env vars. Just run the app normally and inspect `serve
 Examples:
 
 ```bash
-npx t3
+t3
 ```
 
 ```bash
@@ -172,6 +189,10 @@ Default Grafana login:
 
 #### 2. Export OTLP env vars
 
+For endpoint settings and startup precedence, see the
+[user telemetry guide](../user/telemetry.md#export-diagnostics-to-your-own-receiver).
+In a worktree, use `vp run dev` instead of `t3` to keep state isolated.
+
 ```bash
 export T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces
 export T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
@@ -191,7 +212,7 @@ export T3CODE_TRACE_TIMING_ENABLED=true
 CLI:
 
 ```bash
-npx t3
+t3
 ```
 
 Monorepo web/server dev:
@@ -377,14 +398,35 @@ Traces are best for one request. Metrics are best for trends.
 Good metric families to watch:
 
 - `t3_rpc_request_duration`
-- `t3_provider_turn_duration`
+- `t3_orchestration_command_duration`
+- `t3_provider_turn_duration` (how long the provider adapter takes to start a turn, not the turn's run time)
 - `t3_git_command_duration`
 
 Counters tell you volume and failure rate:
 
 - `t3_rpc_requests_total`
+- `t3_orchestration_commands_total`
 - `t3_provider_turns_total`
 - `t3_git_commands_total`
+
+Webhooks have their own families:
+
+- `t3_webhook_deliveries_total` by `outcome` and `source` (`relay` or `direct`). Beyond what the
+  sender sees, `queue_full` means a task already had its limit of deliveries waiting,
+  `prompt_too_long` means the filled-in prompt passed the provider limit, and `duplicate` means
+  the relay delivered a request this environment had already run.
+- `t3_webhook_runs_total` by `outcome` (`started`, `skipped`, `failed`) for the runs those
+  deliveries start, which happen after the sender has its answer.
+- `t3_webhook_held_delay` for how long requests the relay held waited before arriving.
+
+- `t3_secret_requests_total` by `status` (`saved`, `declined`, `cancelled`, `timed_out`) for secrets
+  agents asked users for, and `t3_secret_refs_consumed_total` by `result` (`used`, `rejected`) for
+  tools redeeming them. Neither ever carries a value.
+
+`ScheduledTaskService.triggerWebhook` spans carry the same outcome per request, and each run
+started from a delivery is its own `ScheduledTaskService.runWebhookDelivery` trace. For a request
+the relay forwarded, the span also goes to the T3 Connect trace export as a child of the relay's
+span; requests that reach the environment directly never join a sender's trace.
 
 Use metrics when the question is:
 
@@ -533,7 +575,7 @@ const program = doWork().pipe(
 
 ### Runtime Wiring
 
-The server observability layer is assembled in `apps/server/src/observability/Layers/Observability.ts`.
+The server observability layer is assembled in `apps/server/src/observability/Observability.ts`.
 
 It provides:
 
@@ -560,7 +602,7 @@ Local trace file:
 - `T3CODE_TRACE_FILE`: override trace file path
 - `T3CODE_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
 - `T3CODE_TRACE_MAX_FILES`: rotated file count, default `10`
-- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
+- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `1000`
 - `T3CODE_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
 - `T3CODE_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
 
@@ -590,7 +632,30 @@ with a startup warning, rather than sending it to the Settings endpoint.
 Service names are fixed: `t3code-server` for the backend and `t3code-desktop` for the desktop main
 process, both in `service.namespace` `t3code`. `OTEL_SERVICE_NAME` and a `service.name` or
 `service.namespace` in `OTEL_RESOURCE_ATTRIBUTES` are ignored. Tell installations apart with other
-resource attributes, such as `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development`.
+resource attributes, such as `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=staging`.
+
+Each process reports its own build, not the one it talks to: the server, the desktop main process,
+the UI, and the mobile app each carry `t3code.release.channel` (`dev`, `stable`, `nightly`, or
+`preview`, from their own version; desktop PR builds count as `preview`, and a server not built by a
+release workflow reports `dev`) and `deployment.environment.name` (`development`, `production`, or
+`staging` for `preview`). On the server and the desktop main process either key in
+`OTEL_RESOURCE_ATTRIBUTES` wins. The UI and mobile app never read that variable: Vercel PR previews
+set `VITE_RELEASE_CHANNEL=preview` because their `APP_VERSION` must stay comparable with the
+server's, and the mobile app maps its build variant (`development`, `preview`, `production`), or
+reports `dev` from a development bundle.
+
+Attributes specific to T3 Code use the `t3code.` prefix. The UI runs as `t3code-web` in both a
+browser and the desktop window, since it is the same code, and `t3code.client.surface` is `desktop`
+or `web`. The server's `t3code.server.managed_by` is `desktop` when the desktop app launched it and
+`standalone` otherwise. The desktop main process reports `t3code.desktop.mode` as `development` or
+`packaged` (formerly `service.mode`; dashboards filtering on that key must switch). Node processes
+also report the semantic `process.runtime.name`, `process.runtime.version`, and
+`process.runtime.description`, and UI traces report `browser.language`, `user_agent.original`, and,
+in Chromium, `browser.platform`, `browser.mobile`, and `browser.brands`.
+
+Every resource also carries a `service.instance.id`: random per process for the server and desktop,
+per page load for the UI, and the Expo session on mobile. A `service.instance.id` in
+`OTEL_RESOURCE_ATTRIBUTES` replaces the generated one on the server and desktop.
 
 If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
 on stdout only.
@@ -616,14 +681,15 @@ wins for its signal. `otlp` is the default, and any other exporter name, such as
 
 Current high-value span and metric boundaries include:
 
-- Effect RPC websocket request spans from `effect/rpc`
-- RPC request metrics in `apps/server/src/observability/RpcInstrumentation.ts`
+- WebSocket RPC request spans (`ws.rpc.<method>`) and metrics in
+  `apps/server/src/observability/RpcInstrumentation.ts`
 - startup phases
 - orchestration command processing
 - provider session and turn operations
 - git command execution and git hook events
 - terminal session lifecycle
-- sqlite query execution
+- sqlite query execution, except the statements inside `orchestrationV2.EventSink.write`, which
+  its `sql.transaction` span times as one
 - event loop stalls (`server.eventLoop.stall`)
 
 ### Current Constraints

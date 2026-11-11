@@ -1,8 +1,8 @@
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as Schema from "effect/Schema";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import { PackageName } from "./Manifest.ts";
 
 /**
@@ -29,13 +29,10 @@ export type RunRef = typeof RunRef.Type;
  * an artifact carrying the manifest's hash is GitHub's record that this run
  * approved exactly these package hashes.
  */
-export const manifestArtifactName = (sha256: string) =>
-  `pkg-manifest-${sha256}`;
+export const manifestArtifactName = (sha256: string) => `pkg-manifest-${sha256}`;
 
 /** Lowercase hex SHA-256. */
-export const Sha256 = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
-);
+export const Sha256 = Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-f0-9]{64}$/)));
 
 export const TarballRef = Schema.Struct({
   name: PackageName,
@@ -106,14 +103,7 @@ export type PublishResponse = typeof PublishResponse.Type;
 export const publish = HttpApiEndpoint.post("publish", "/api/publish", {
   payload: Schema.Struct({ run: RunRef, manifest: Schema.String }),
   success: PublishResponse,
-  error: [
-    BadRequest,
-    Forbidden,
-    RunNotInProgress,
-    MissingTarballs,
-    PackageTooLarge,
-    Upstream,
-  ],
+  error: [BadRequest, Forbidden, RunNotInProgress, MissingTarballs, PackageTooLarge, Upstream],
 });
 
 export const TarballResponse = Schema.Struct({
@@ -129,25 +119,19 @@ export type TarballResponse = typeof TarballResponse.Type;
  * may upload; bytes only become reachable once a vouched manifest tags
  * them. The run travels in the query because the body is the tarball.
  */
-export const uploadTarball = HttpApiEndpoint.put(
-  "uploadTarball",
-  "/api/tarballs/:name/:sha256",
-  {
-    params: TarballRef,
-    query: RunRef,
-    payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
-    success: TarballResponse,
-    error: [BadRequest, Forbidden, RunNotInProgress, PackageTooLarge, Upstream],
-  },
-);
+export const uploadTarball = HttpApiEndpoint.put("uploadTarball", "/api/tarballs/:name/:sha256", {
+  params: TarballRef,
+  query: RunRef,
+  payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+  success: TarballResponse,
+  error: [BadRequest, Forbidden, RunNotInProgress, PackageTooLarge, Upstream],
+});
 
 export const health = HttpApiEndpoint.get("health", "/api/health", {
   success: Schema.Struct({ ok: Schema.Boolean }),
 });
 
-export class Registry extends HttpApiGroup.make("Registry")
-  .add(publish)
-  .add(uploadTarball) {}
+export class Registry extends HttpApiGroup.make("Registry").add(publish).add(uploadTarball) {}
 
 export class Health extends HttpApiGroup.make("Health").add(health) {}
 

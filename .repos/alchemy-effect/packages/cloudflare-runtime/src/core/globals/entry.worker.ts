@@ -14,19 +14,25 @@ import {
   BINDING_EMAIL_DIRECTORY,
   BINDING_EMAIL_DISK,
   PATH_EMAIL,
+  PATH_EMAIL_HANDLER,
   PATH_HANDLER_PREFIX,
 } from "./EmailOptions.shared.ts";
-import { BINDING_USER_WORKER_DIRECT } from "./EntryOptions.shared.ts";
 import {
-  PATH_SCHEDULED,
-  PATH_SCHEDULED_LEGACY,
-} from "./ScheduledOptions.shared.ts";
-
+  BINDING_ACCESS_BLOB,
+  BINDING_USER_WORKER_DIRECT,
+  HEADER_ACCESS_BLOB,
+  PATH_MODULE_RUNNER_INIT,
+} from "./EntryOptions.shared.ts";
 import {
   BINDING_PROXY_SHARED_SECRET,
   HEADER_ORIGINAL_URL,
   HEADER_PROXY_SHARED_SECRET,
 } from "./ProxyHeaders.shared.ts";
+import {
+  PATH_SCHEDULED,
+  PATH_SCHEDULED_HANDLER,
+  PATH_SCHEDULED_LEGACY,
+} from "./ScheduledOptions.shared.ts";
 
 interface Env {
   [BINDING_PROXY_SHARED_SECRET]: string;
@@ -43,6 +49,8 @@ interface Env {
    */
   [BINDING_USER_WORKER_DIRECT]: Fetcher;
   CF_BLOB: Record<string, unknown>;
+  /** Simulated Cloudflare Access state (`{ app_aud, jwt_claims }`). */
+  [BINDING_ACCESS_BLOB]?: Record<string, unknown>;
   // Omitted when the runtime storage isn't disk-backed (never the case with
   // the built-in storage layers) — replies then fail with a clear error.
   [BINDING_EMAIL_DISK]?: Fetcher;
@@ -99,16 +107,11 @@ function joinPath(base: string, ...segments: Array<string>): string {
  * (`workers/email/validate.ts` `isEmailReplyable`; the log callback is
  * replaced with a direct `console.error`).
  */
-function isEmailReplyable(
-  email: Email,
-  incomingEmailHeaders: Headers,
-): boolean {
+function isEmailReplyable(email: Email, incomingEmailHeaders: Headers): boolean {
   // The x-auto-response-suppress header is set by MS Exchange and some other
   // email services on outgoing email to opt-out of automatic responses. If
   // it's set, don't allow the user Worker to reply to the email
-  const autoResponseSuppress = incomingEmailHeaders
-    .get("x-auto-response-suppress")
-    ?.toLowerCase();
+  const autoResponseSuppress = incomingEmailHeaders.get("x-auto-response-suppress")?.toLowerCase();
   if (autoResponseSuppress !== undefined && autoResponseSuppress !== "none") {
     return false;
   }
@@ -116,9 +119,7 @@ function isEmailReplyable(
   // The auto-submitted header is set by some services to indicate that the
   // email is auto generated. If it's set, don't allow the user Worker to
   // reply to the email
-  const autoSubmittedValue = incomingEmailHeaders
-    .get("auto-submitted")
-    ?.toLowerCase();
+  const autoSubmittedValue = incomingEmailHeaders.get("auto-submitted")?.toLowerCase();
   if (autoSubmittedValue !== undefined && autoSubmittedValue !== "no") {
     return false;
   }
@@ -165,9 +166,7 @@ async function validateReply(
 ): Promise<Uint8Array> {
   const rawEmail: ReadableStream<Uint8Array> = replyMessage[RAW_EMAIL];
 
-  const rawEmailBuffer = new Uint8Array(
-    await new Response(rawEmail).arrayBuffer(),
-  );
+  const rawEmailBuffer = new Uint8Array(await new Response(rawEmail).arrayBuffer());
 
   let parsedReply: Email;
   try {
@@ -305,21 +304,15 @@ async function handleEmail(
     parsedIncomingEmail = await PostalMime.parse(incomingEmailRaw);
   } catch (e) {
     const error = e as Error;
-    return new Response(
-      `Email could not be parsed: ${error.name}: ${error.message}`,
-      {
-        status: 400,
-      },
-    );
+    return new Response(`Email could not be parsed: ${error.name}: ${error.message}`, {
+      status: 400,
+    });
   }
 
   if (parsedIncomingEmail.messageId === undefined) {
-    return new Response(
-      "Email could not be parsed: invalid or no message id provided",
-      {
-        status: 400,
-      },
-    );
+    return new Response("Email could not be parsed: invalid or no message id provided", {
+      status: 400,
+    });
   }
 
   // Emails can contain both an "envelope" from/to and a "header" from/to.
@@ -344,7 +337,7 @@ async function handleEmail(
   );
 
   // Propagate `.setReject()` reasons to the caller
-  let maybeClientError: string | undefined = undefined;
+  let maybeClientError = undefined as string | undefined;
 
   // Construct a ForwardableEmailMessage-like object. We need
   // - it to be able to be passed across JSRPC (to support e.g.
@@ -360,23 +353,16 @@ async function handleEmail(
     rawSize: incomingEmailRaw.byteLength,
     headers: incomingEmailHeaders,
     setReject: (reason: string): void => {
-      console.error(
-        `Email handler rejected message with the following reason: "${reason}"`,
-      );
+      console.error(`Email handler rejected message with the following reason: "${reason}"`);
       maybeClientError = reason;
     },
-    forward: async (
-      rcptTo: string,
-      headers?: Headers,
-    ): Promise<EmailSendResult> => {
+    forward: async (rcptTo: string, headers?: Headers): Promise<EmailSendResult> => {
       console.log(
         `Email handler forwarded message with\n  rcptTo: ${rcptTo}${renderEmailHeaders(headers)}`,
       );
       return { messageId: synthesizeLocalMessageId() };
     },
-    reply: async (
-      replyMessage: LocalEmailMessage,
-    ): Promise<EmailSendResult> => {
+    reply: async (replyMessage: LocalEmailMessage): Promise<EmailSendResult> => {
       if (!isEmailReplyable(parsedIncomingEmail, incomingEmailHeaders)) {
         throw new Error("Original email is not replyable");
       }
@@ -385,9 +371,7 @@ async function handleEmail(
       const disk = env[BINDING_EMAIL_DISK];
       const directory = env[BINDING_EMAIL_DIRECTORY];
       if (disk === undefined || directory === undefined) {
-        throw new Error(
-          "Cannot persist the email reply: the runtime storage has no disk path.",
-        );
+        throw new Error("Cannot persist the email reply: the runtime storage has no disk path.");
       }
       const fileName = `${crypto.randomUUID()}.eml`;
       await disk.fetch(new URL(fileName, "http://placeholder/").toString(), {
@@ -396,9 +380,7 @@ async function handleEmail(
       });
       const file = joinPath(directory, fileName);
 
-      console.log(
-        `Email handler replied to sender with the following message:\n  ${file}`,
-      );
+      console.log(`Email handler replied to sender with the following message:\n  ${file}`);
 
       return { messageId: synthesizeLocalMessageId() };
     },
@@ -408,21 +390,27 @@ async function handleEmail(
   // user worker's `email()` handler as a valid JSRPC call (Miniflare relies
   // on the same mechanism).
   await (
-    env[BINDING_USER_WORKER_DIRECT] as unknown as {
-      email: (message: unknown) => Promise<void>;
-    }
+    env[BINDING_USER_WORKER_DIRECT] as unknown as { email: (message: unknown) => Promise<void> }
   ).email(message);
 
   if (maybeClientError !== undefined) {
-    return new Response(
-      `Worker rejected email with the following reason: ${maybeClientError}`,
-      {
-        status: 400,
-      },
-    );
+    return new Response(`Worker rejected email with the following reason: ${maybeClientError}`, {
+      status: 400,
+    });
   }
 
   return new Response("Worker successfully processed email", { status: 200 });
+}
+
+/**
+ * Parses the original client protocol from an `X-Forwarded-Proto` header
+ * (Miniflare's `shared/forwarded-proto.ts`): the first entry of a proxy
+ * chain, or `undefined` if it is missing or unsupported.
+ */
+function parseForwardedProto(value: string | null | undefined): "http:" | "https:" | undefined {
+  const protocol = value?.split(",")[0]?.trim().toLowerCase();
+  if (protocol === "http" || protocol === "https") return `${protocol}:`;
+  return undefined;
 }
 
 export default <ExportedHandler<Env>>{
@@ -430,14 +418,28 @@ export default <ExportedHandler<Env>>{
     // The proxy connects to a private runtime address. Only a trusted proxy
     // may restore the client-facing URL and Host (matching Miniflare).
     let url = new URL(request.url);
+    let originalUrl: string | null = null;
     const secret = request.headers.get(HEADER_PROXY_SHARED_SECRET);
     if (secret !== null) {
       if (!secret || secret !== env[BINDING_PROXY_SHARED_SECRET]) {
         return new Response("Invalid proxy shared secret", { status: 400 });
       }
-      const originalUrl = request.headers.get(HEADER_ORIGINAL_URL);
+      originalUrl = request.headers.get(HEADER_ORIGINAL_URL);
       if (originalUrl !== null) {
         url = new URL(originalUrl);
+      }
+    }
+    // Match the Vite dev server's handling of TLS-terminating proxies
+    // (Miniflare's `getUserRequest`). Explicit URLs supplied by a trusted
+    // proxy remain authoritative.
+    if (originalUrl === null) {
+      const protocol = parseForwardedProto(request.headers.get("X-Forwarded-Proto"));
+      if (protocol !== undefined) {
+        url.protocol = protocol;
+        // Parsing request.url may have removed a default port for the
+        // physical protocol. Restore the original authority after changing
+        // the scheme.
+        url.host = request.headers.get("Host") ?? url.host;
       }
     }
     if (url.pathname === "/cdn-cgi/handler/queue") {
@@ -445,16 +447,13 @@ export default <ExportedHandler<Env>>{
         const json = await request.json<EntryQueuePayload>();
         const result = await env[BINDING_USER_WORKER_DIRECT].queue(
           json.queue,
-          json.messages.map((message) => ({
-            ...message,
-            timestamp: new Date(message.timestamp),
-          })),
+          json.messages.map((message) => ({ ...message, timestamp: new Date(message.timestamp) })),
           json.metadata,
         );
         return Response.json({ ok: true, result });
       } catch (error) {
         return makeErrorResponse(
-          new SystemError({
+          SystemError.make({
             subtag: "UserQueueHandler",
             message: `User worker's queue handler threw: ${
               error instanceof Error ? error.message : String(error)
@@ -465,12 +464,13 @@ export default <ExportedHandler<Env>>{
       }
     }
     // Trigger the user worker's `scheduled()` handler, mirroring Miniflare's
-    // `/cdn-cgi/handler/scheduled` route (`workers/core/scheduled.ts`).
+    // `/cdn-cgi/local/scheduled` route (`workers/core/scheduled.ts`).
     // Like the queue route above, this is always on: the entry socket only
     // binds 127.0.0.1 during local development, so there is no equivalent of
     // Miniflare's `unsafeTriggerHandlers` gate.
     if (
       url.pathname === PATH_SCHEDULED ||
+      url.pathname === PATH_SCHEDULED_HANDLER ||
       url.pathname === PATH_SCHEDULED_LEGACY
     ) {
       try {
@@ -480,16 +480,12 @@ export default <ExportedHandler<Env>>{
           cron: url.searchParams.get("cron") ?? undefined,
         });
         if (url.searchParams.get("format") === "json") {
-          return Response.json(result, {
-            status: result.outcome === "ok" ? 200 : 500,
-          });
+          return Response.json(result, { status: result.outcome === "ok" ? 200 : 500 });
         }
-        return new Response(result.outcome, {
-          status: result.outcome === "ok" ? 200 : 500,
-        });
+        return new Response(result.outcome, { status: result.outcome === "ok" ? 200 : 500 });
       } catch (error) {
         return makeErrorResponse(
-          new SystemError({
+          SystemError.make({
             subtag: "UserScheduledHandler",
             message: `User worker's scheduled handler threw: ${
               error instanceof Error ? error.message : String(error)
@@ -500,22 +496,16 @@ export default <ExportedHandler<Env>>{
       }
     }
     // Dispatch an inbound email to the user worker's `email()` handler,
-    // mirroring Miniflare's `/cdn-cgi/handler/email` route
+    // mirroring Miniflare's `/cdn-cgi/local/email` route
     // (`workers/core/email.ts`). Like the scheduled route above, this is
     // always on. Errors thrown by the user's handler (including reply
     // validation failures propagated back over JSRPC) surface as a 500 with
     // the error stack, matching Miniflare's entry worker catch-all.
-    if (url.pathname === PATH_EMAIL) {
+    if (url.pathname === PATH_EMAIL || url.pathname === PATH_EMAIL_HANDLER) {
       try {
-        return await handleEmail(
-          url.searchParams,
-          request as unknown as WorkersRequest,
-          env,
-        );
+        return await handleEmail(url.searchParams, request as unknown as WorkersRequest, env);
       } catch (e) {
-        return new Response((e as Error | undefined)?.stack ?? String(e), {
-          status: 500,
-        });
+        return new Response((e as Error | undefined)?.stack ?? String(e), { status: 500 });
       }
     }
     // Unknown trigger-handler paths get a 404 pointing at the valid handlers
@@ -540,23 +530,24 @@ export default <ExportedHandler<Env>>{
     const clientCfBlobHeader = request.headers.get(HEADER_CF_BLOB);
     const cf: Record<string, unknown> = clientCfBlobHeader
       ? JSON.parse(clientCfBlobHeader)
-      : {
-          ...env.CF_BLOB,
-          clientAcceptEncoding: request.headers.get("Accept-Encoding") ?? "",
-        };
+      : { ...env.CF_BLOB, clientAcceptEncoding: request.headers.get("Accept-Encoding") ?? "" };
 
     const headers = new Headers(request.headers);
     headers.delete(HEADER_CF_BLOB);
     headers.delete(HEADER_ORIGINAL_URL);
     headers.delete(HEADER_PROXY_SHARED_SECRET);
+    // workerd populates `ctx.access` from this header, so only the
+    // configured blob may set it (as Miniflare's entry worker does).
+    headers.delete(HEADER_ACCESS_BLOB);
+    if (env[BINDING_ACCESS_BLOB] !== undefined) {
+      headers.set(HEADER_ACCESS_BLOB, JSON.stringify(env[BINDING_ACCESS_BLOB]));
+    }
     if (secret !== null) headers.set("Host", url.host);
     if (clientIp && !headers.get("CF-Connecting-IP")) {
       // `clientIp` includes the port, e.g. `127.0.0.1:52621` or `[::1]:52621`
       const ipv4Regex = /(?<ip>.*?):\d+/;
       const ipv6Regex = /\[(?<ip>.*?)\]:\d+/;
-      const ip =
-        clientIp.match(ipv6Regex)?.groups?.ip ??
-        clientIp.match(ipv4Regex)?.groups?.ip;
+      const ip = clientIp.match(ipv6Regex)?.groups?.ip ?? clientIp.match(ipv4Regex)?.groups?.ip;
       if (ip) {
         headers.set("CF-Connecting-IP", ip);
       }
@@ -564,15 +555,35 @@ export default <ExportedHandler<Env>>{
 
     // The experimental and standard workers-types `Request` generics
     // disagree; at runtime these are the same class.
-    const userRequest = new Request(
-      new Request(url, request as unknown as Request),
-      {
-        headers,
-        cf,
-      },
-    );
-    return await env.USER_WORKER.fetch(
-      userRequest as unknown as typeof request,
+    const userRequest = new Request(new Request(url, request as unknown as Request), {
+      headers,
+      cf,
+    });
+    if (url.pathname === PATH_MODULE_RUNNER_INIT) {
+      return await env[BINDING_USER_WORKER_DIRECT].fetch(userRequest as unknown as typeof request);
+    }
+    // The experimental and standard workers-types `Response` disagree too.
+    return combineRepeatedHeaders(
+      (await env.USER_WORKER.fetch(
+        userRequest as unknown as typeof request,
+      )) as unknown as Response,
     );
   },
+};
+
+/**
+ * Sends each repeated response header (other than `Set-Cookie`) as one
+ * comma-joined line. HTTP treats the two forms as equivalent, but Bun's HTTP
+ * parser (its `node:http` client and `fetch`) keeps only the last of repeated
+ * lines, so a client running on Bun, such as the Vite dev proxy, would drop
+ * `a` and `b` from `x: a`, `x: b`, `x: c`. Iterating `Headers` yields each
+ * name once with its values joined, which `set` stores as a single line.
+ */
+const combineRepeatedHeaders = (response: Response): Response => {
+  if (response.status === 101) return response;
+  const combined = new Response(response.body, response);
+  for (const [name, value] of response.headers) {
+    if (name !== "set-cookie") combined.headers.set(name, value);
+  }
+  return combined;
 };

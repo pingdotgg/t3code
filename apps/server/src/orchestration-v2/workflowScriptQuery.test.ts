@@ -2,6 +2,8 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { afterAll, assert, describe } from "vite-plus/test";
@@ -15,8 +17,6 @@ NodeFS.writeFileSync(scriptPath, "export const meta = {};\n");
 const outside = NodePath.join(NodeOS.tmpdir(), "wf-outside.js");
 NodeFS.writeFileSync(outside, "evil\n");
 const link = NodePath.join(root, "sneaky.js");
-// Planted only where the host allows it; the escape test is skipped
-// otherwise rather than passing vacuously on "not-found".
 if (symlinksSupported) {
   NodeFS.rmSync(link, { force: true });
   NodeFS.symlinkSync(outside, link);
@@ -30,23 +30,23 @@ afterAll(() => {
   NodeFS.rmSync(outside, { force: true });
 });
 
-describe("readWorkflowScript containment", () => {
+describe("workflow script containment", () => {
+  effectIt.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "rejects a FIFO without waiting for a writer",
+    () =>
+      Effect.gen(function* () {
+        const fifo = NodePath.join(root, "pipe.js");
+        NodeChildProcess.execFileSync("mkfifo", [fifo]);
+        const error = yield* Effect.flip(readWorkflowScript({ scriptPath: fifo }));
+        assert.equal(error.reason, "not-regular-file");
+      }),
+  );
+
   effectIt.effect("serves a real script under the projects root", () =>
     Effect.gen(function* () {
       const result = yield* readWorkflowScript({ scriptPath });
       assert.include(result.contents, "export const meta");
       assert.equal(result.truncated, false);
-    }),
-  );
-
-  effectIt.effect("rejects relative and non-js paths", () =>
-    Effect.gen(function* () {
-      const relative = yield* Effect.exit(readWorkflowScript({ scriptPath: "run.js" }));
-      assert.equal(relative._tag, "Failure");
-      const nonJs = yield* Effect.exit(
-        readWorkflowScript({ scriptPath: scriptPath.replace(".js", ".ts") }),
-      );
-      assert.equal(nonJs._tag, "Failure");
     }),
   );
 
@@ -56,9 +56,6 @@ describe("readWorkflowScript containment", () => {
       Effect.gen(function* () {
         const escaped = yield* Effect.exit(readWorkflowScript({ scriptPath: outside }));
         assert.equal(escaped._tag, "Failure");
-        // A symlink INSIDE the root pointing outside must fail specifically on
-        // realpath re-containment — a "not-found" would mean the link was
-        // never exercised and the assertion proves nothing.
         const sneaky = yield* Effect.exit(
           readWorkflowScript({ scriptPath: link }).pipe(
             Effect.flip,

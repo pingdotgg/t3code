@@ -1,7 +1,7 @@
 import { Pressable, View } from "react-native";
 
-import { AppText } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 
 export function DevicePreviewButton(props: {
   readonly count: number;
@@ -32,7 +32,7 @@ export function DevicePreviewButton(props: {
           {props.count === 1 ? "One device open" : `${props.count} devices open`}
         </AppText>
       ) : props.count > 1 ? (
-        <View className="absolute right-0.5 top-0.5 min-w-4 items-center rounded-full bg-primary px-1">
+        <View className="absolute right-1.5 top-1.5 min-w-4 items-center rounded-full bg-primary px-1">
           <AppText className="text-2xs font-t3-bold text-primary-foreground">{props.count}</AppText>
         </View>
       ) : null}

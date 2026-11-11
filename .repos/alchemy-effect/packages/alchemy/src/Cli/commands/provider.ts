@@ -1,12 +1,9 @@
+import { Command, Flag } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Command, Flag } from "effect/unstable/cli";
-
-import * as Provider from "../../Alchemist/routes/provider.ts";
-import { CliKit } from "../CliKit/CliKit.ts";
-
-import { awsCommand } from "./aws.ts";
-import { cloudflareCommand } from "./cloudflare.ts";
+import * as Alchemist from "../../Alchemist/index.ts";
+import * as Contributions from "../../Contributions.ts";
+import { Interaction } from "../../Interaction.ts";
 import { setExitCode } from "./errors.ts";
 import { config, envFile, profile } from "./flags.ts";
 import { instrumentCommand } from "./instrument.ts";
@@ -24,8 +21,8 @@ const checkEnvCommand = Command.make(
   { provider: checkedProviders, main: config, envFile, profile },
   instrumentCommand("provider.check-env")(
     Effect.fn(function* ({ provider: requested, main, envFile, profile }) {
-      const cli = yield* CliKit;
-      const result = yield* Provider.checkEnvironment({
+      const cli = yield* Interaction;
+      const result = yield* Alchemist.Provider.checkEnvironment({
         entrypoint: main,
         envFile: Option.getOrUndefined(envFile),
         profile,
@@ -57,7 +54,30 @@ const checkEnvCommand = Command.make(
   ),
 );
 
-export const providerCommand = Command.make("provider", {}).pipe(
-  Command.withDescription("Manage cloud provider prerequisites and utilities"),
-  Command.withSubcommands([checkEnvCommand, awsCommand, cloudflareCommand]),
-);
+/**
+ * `alchemy provider`: `check-env` plus each provider's provider subcommand. A
+ * provider whose CLI fails to load never blocks another's: it runs as a
+ * command failing with its error.
+ */
+export const providerCommand = async (providers: ReadonlyArray<Contributions.Contributions>) => {
+  const subcommands = await Effect.runPromise(
+    Effect.forEach(providers, (provider) => {
+      const cli = provider.cli?.provider;
+      if (cli === undefined) return Effect.succeed([]);
+      return Contributions.resolve(provider, "cli.provider", cli.load).pipe(
+        Effect.catch((error) =>
+          Effect.succeed<Contributions.AnyCommand>(
+            Command.make(provider.name, {}, () => Effect.fail(error)).pipe(
+              Command.withDescription(cli.description),
+            ),
+          ),
+        ),
+        Effect.map((command) => [command]),
+      );
+    }).pipe(Effect.map((commands) => commands.flat())),
+  );
+  return Command.make("provider", {}).pipe(
+    Command.withDescription("Manage cloud provider prerequisites and utilities"),
+    Command.withSubcommands([checkEnvCommand, ...subcommands]),
+  );
+};
