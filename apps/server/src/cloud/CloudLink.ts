@@ -72,6 +72,7 @@ import { makeRelayEnvironmentClient } from "../relay/relayEnvironmentClient.ts";
 import { loopbackUrlHostForAddress } from "../startupAccess.ts";
 import {
   type CliDesiredLinkMode,
+  dropRevokedCloudLink,
   readCliDesiredCloudLink,
   readCliDesiredLinkMode,
   setCliDesiredCloudLink,
@@ -754,8 +755,10 @@ const make = Effect.gen(function* () {
   ) {
     const apply = Effect.gen(function* () {
       yield* validateRelayConfigPayload(payload);
-      yield* validateLinkedCloudUser(payload.cloudUserId);
       yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
+      // A revoked link no longer binds this environment to its old account.
+      yield* dropRevokedCloudLink.pipe(withSecrets);
+      yield* validateLinkedCloudUser(payload.cloudUserId);
       // Reject unsupported runtimes before they can stop a healthy tunnel.
       if (
         payload.endpointRuntime !== null &&

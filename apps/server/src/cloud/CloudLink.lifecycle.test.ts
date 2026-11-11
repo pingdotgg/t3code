@@ -613,27 +613,45 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
-  it.effect("clears the revoked mark when the environment is linked again", () => {
-    const { store } = makeMemorySecretStore([
+  it.effect.each([
+    { name: "replaces a revoked link to another account", revoked: true },
+    { name: "rejects switching an active link to another account", revoked: false },
+  ])("$name", ({ revoked }) => {
+    const { store, values } = makeMemorySecretStore([
       [RELAY_URL_SECRET, "https://relay.example.test"],
       [CLOUD_LINKED_USER_ID, "user-123"],
-      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "revoked-credential"],
-      [CLOUD_LINK_REVOKED, "true"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
+      ...(revoked ? [[CLOUD_LINK_REVOKED, "true"] as const] : []),
     ]);
     const cloudMintPublicKey =
       "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
 
     return Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      expect((yield* link.linkState()).linkRevoked).toBe(true);
-      yield* link.applyRelayConfig({
-        relayUrl: "https://relay.example.test",
-        cloudUserId: "user-123",
-        environmentCredential: "fresh-credential",
-        cloudMintPublicKey,
-        endpointRuntime: null,
-      });
-      expect(yield* link.linkState()).toMatchObject({ linked: true, linkRevoked: false });
+      expect((yield* link.linkState()).linkRevoked).toBe(revoked);
+      const result = yield* link
+        .applyRelayConfig({
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "user-456",
+          environmentCredential: "fresh-credential",
+          cloudMintPublicKey,
+          endpointRuntime: null,
+        })
+        .pipe(Effect.flip, Effect.option);
+      if (revoked) {
+        expect(result).toEqual(Option.none());
+        expect(yield* link.linkState()).toMatchObject({
+          linked: true,
+          linkRevoked: false,
+          cloudUserId: "user-456",
+        });
+        expect(new TextDecoder().decode(values.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET))).toBe(
+          "fresh-credential",
+        );
+      } else {
+        expect(Option.getOrThrow(result)).toBeInstanceOf(CloudLink.CloudLinkAccountMismatchError);
+        expect((yield* link.linkState()).cloudUserId).toBe("user-123");
+      }
     }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
   });
 
