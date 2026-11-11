@@ -1681,7 +1681,9 @@ export default function FilePreviewPanel({
                 </FileSurfaceAction>
               ) : null}
               {absolutePath &&
-              (environmentId === primaryEnvironmentId || environmentId === hostEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
+              (environmentId === primaryEnvironmentId ||
+                environmentId === hostEnvironmentId ||
+                remoteOpenState.mode !== "local-exec") ? (
                 <OpenInPicker
                   enableShortcut={openInShortcutEnabled}
                   environmentId={environmentId}
