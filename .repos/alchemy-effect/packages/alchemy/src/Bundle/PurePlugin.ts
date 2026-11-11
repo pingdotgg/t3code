@@ -1,3 +1,5 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type {
   CallExpression,
   ExportDefaultDeclaration,
@@ -9,8 +11,6 @@ import type {
   Statement,
   VariableDeclaration,
 } from "@oxc-project/types";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import picomatch from "picomatch";
 import type * as rolldown from "rolldown";
 
@@ -91,9 +91,7 @@ const SUPPORTED_FILE_RE = /\.(?:m?[jt]sx?|cjs|cts)$/;
  * package owning the bundle entry gets no special treatment — apps that
  * want their own bound calls tree-shaken list themselves explicitly.
  */
-export const purePlugin = (
-  options: PurePluginOptions = {},
-): rolldown.Plugin => {
+export const purePlugin = (options: PurePluginOptions = {}): rolldown.Plugin => {
   const patterns = options.replaceDefaults
     ? [...(options.packages ?? DEFAULT_PURE_PACKAGES)]
     : [...DEFAULT_PURE_PACKAGES, ...(options.packages ?? [])];
@@ -119,10 +117,7 @@ export const purePlugin = (
       filter: { id: SUPPORTED_FILE_RE },
       async handler(code, id, meta) {
         const cleanId = stripIdSuffix(id);
-        const info = await resolvePackageInfo(
-          path.dirname(cleanId),
-          pkgInfoCache,
-        );
+        const info = await resolvePackageInfo(path.dirname(cleanId), pkgInfoCache);
         // A nameless package.json (e.g. a nested `dist/package.json`
         // holding only `{"type": "module"}`) can't be matched against the
         // configured patterns — fall back to the path-derived
@@ -137,8 +132,7 @@ export const purePlugin = (
         // files in packages that did not declare so.
         const isEntry = entryPaths.has(cleanId);
         const sideEffectFreePkg = isSideEffectFree(info?.sideEffects);
-        const markSideEffectFree =
-          markSideEffectFreeOpt && !isEntry && sideEffectFreePkg;
+        const markSideEffectFree = markSideEffectFreeOpt && !isEntry && sideEffectFreePkg;
 
         const anchors = await collectPureAnchorsCached(code, cleanId);
         // Annotating a call whose result is BOUND (variable initializer,
@@ -166,9 +160,7 @@ export const purePlugin = (
         // `code`. Returning it as `code` hands sourcemap generation to
         // rolldown's native side (computed on a background thread). The
         // fallback covers direct hook invocations (unit tests).
-        const s =
-          meta.magicString ??
-          new (await loadRolldown()).RolldownMagicString(code);
+        const s = meta.magicString ?? new (await loadRolldown()).RolldownMagicString(code);
         for (const anchor of positions) s.appendLeft(anchor, PURE_COMMENT);
         return {
           code: s,
@@ -199,10 +191,7 @@ function inputFilePaths(opts: rolldown.InputOptions): string[] {
           : [];
   const cwd = opts.cwd ?? process.cwd();
   return raw
-    .filter(
-      (entry): entry is string =>
-        typeof entry === "string" && !entry.startsWith("\0"),
-    )
+    .filter((entry): entry is string => typeof entry === "string" && !entry.startsWith("\0"))
     .map((entry) => path.resolve(cwd, entry));
 }
 
@@ -397,23 +386,16 @@ export async function collectPureAnchors(
   const bound: number[] = [];
   const discarded: number[] = [];
 
-  const visitCall = (
-    call: CallExpression | NewExpression,
-    isDiscarded: boolean,
-  ) => {
+  const visitCall = (call: CallExpression | NewExpression, isDiscarded: boolean) => {
     if (isIIFE(call)) return;
     // For `new X()`, anchor BEFORE the `new` keyword so we get
     // `/*#__PURE__*/ new X()` (matches babel-plugin-annotate-pure-calls).
-    const anchor =
-      call.type === "NewExpression" ? call.start : call.callee.start;
+    const anchor = call.type === "NewExpression" ? call.start : call.callee.start;
     if (alreadyAnnotated(code, anchor)) return;
     (isDiscarded ? discarded : bound).push(anchor);
   };
 
-  const visitExpression = (
-    expr: Expression | null | undefined,
-    isDiscarded: boolean,
-  ) => {
+  const visitExpression = (expr: Expression | null | undefined, isDiscarded: boolean) => {
     if (!expr) return;
     switch (expr.type) {
       case "CallExpression":
@@ -500,9 +482,7 @@ export async function collectPureAnchors(
     visitTopLevel(node as Statement);
   }
 
-  return bound.length === 0 && discarded.length === 0
-    ? null
-    : { bound, discarded };
+  return bound.length === 0 && discarded.length === 0 ? null : { bound, discarded };
 }
 
 function isIIFE(node: CallExpression | NewExpression): boolean {
@@ -510,10 +490,7 @@ function isIIFE(node: CallExpression | NewExpression): boolean {
   while (callee.type === "ParenthesizedExpression") {
     callee = callee.expression;
   }
-  return (
-    callee.type === "FunctionExpression" ||
-    callee.type === "ArrowFunctionExpression"
-  );
+  return callee.type === "FunctionExpression" || callee.type === "ArrowFunctionExpression";
 }
 
 function alreadyAnnotated(code: string, pos: number): boolean {

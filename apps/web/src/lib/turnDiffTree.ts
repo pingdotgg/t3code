@@ -30,7 +30,7 @@ interface MutableDirectoryNode {
   files: TurnDiffTreeFileNode[];
 }
 
-const SORT_LOCALE_OPTIONS: Intl.CollatorOptions = { numeric: true, sensitivity: "base" };
+let sortCollator: Intl.Collator | undefined;
 
 function normalizePathSegments(pathValue: string): string[] {
   return pathValue
@@ -40,7 +40,9 @@ function normalizePathSegments(pathValue: string): string[] {
 }
 
 function compareByName(a: { name: string }, b: { name: string }): number {
-  return a.name.localeCompare(b.name, undefined, SORT_LOCALE_OPTIONS);
+  // Defer ICU initialization until the first name comparison.
+  sortCollator ??= new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  return sortCollator.compare(a.name, b.name);
 }
 
 function readStat(file: TurnDiffFileChange): TurnDiffStat | null {
@@ -54,14 +56,7 @@ function readStat(file: TurnDiffFileChange): TurnDiffStat | null {
 }
 
 function compactDirectoryNode(node: TurnDiffTreeDirectoryNode): TurnDiffTreeDirectoryNode {
-  const compactedChildren = node.children.map((child) =>
-    child.kind === "directory" ? compactDirectoryNode(child) : child,
-  );
-
-  let compactedNode: TurnDiffTreeDirectoryNode = {
-    ...node,
-    children: compactedChildren,
-  };
+  let compactedNode = node;
 
   while (compactedNode.children.length === 1 && compactedNode.children[0]?.kind === "directory") {
     const onlyChild = compactedNode.children[0];
@@ -94,20 +89,6 @@ function toTreeNodes(directory: MutableDirectoryNode): TurnDiffTreeNode[] {
 
   const files = directory.files.toSorted(compareByName);
   return [...subdirectories, ...files];
-}
-
-export function summarizeTurnDiffStats(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffStat {
-  return files.reduce(
-    (acc, file) => {
-      const stat = readStat(file);
-      if (!stat) return acc;
-      return {
-        additions: acc.additions + stat.additions,
-        deletions: acc.deletions + stat.deletions,
-      };
-    },
-    { additions: 0, deletions: 0 },
-  );
 }
 
 export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffTreeNode[] {
