@@ -474,7 +474,7 @@ describe("V2 thread find", () => {
           .mocked(searchableMessageSegments)
           .mock.calls.filter(([message]) => message.text.startsWith("idle needle")).length;
       const search = (query: string) => projection.searchThread({ threadId, query });
-      // A search still in progress holds the caches past the idle time.
+      // One idle minute passes inside this search. The later counts fail if it let the caches go.
       yield* projection.searchThreadStream({ threadId, query: "needle" }).pipe(
         Stream.tap((frame) =>
           frame.complete === false ? TestClock.adjust("1 minute") : Effect.void,
@@ -486,7 +486,10 @@ describe("V2 thread find", () => {
       yield* search("idle");
       yield* TestClock.adjust("40 seconds");
       // A repeated query is answered from the completed scan and still counts as use.
-      yield* search("needle");
+      const repeated = yield* projection
+        .searchThreadStream({ threadId, query: "needle" })
+        .pipe(Stream.runCollect);
+      assert.equal(repeated.length, 1);
       yield* TestClock.adjust("40 seconds");
       yield* search("one");
       assert.equal(parses(), 2);
