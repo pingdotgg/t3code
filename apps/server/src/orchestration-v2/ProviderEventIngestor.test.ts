@@ -2145,6 +2145,50 @@ layer("ProviderEventIngestorV2", (it) => {
   );
 
   it.effect(
+    "moves a thread to the selection its agent reported, once and only for its instance",
+    () =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const rootEvent = yield* threadCreatedEvent(now);
+        yield* eventSink.write({ events: [rootEvent] });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: rootEvent.threadId,
+        });
+        const ingest = (reported: ModelSelection) =>
+          ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId: rootEvent.threadId,
+            event: {
+              type: "thread_model_selection.updated",
+              driver: CODEX_DRIVER,
+              threadId: rootEvent.threadId,
+              modelSelection: reported,
+            },
+          });
+        const reported = { ...modelSelection, options: [{ id: "mode", value: "default" }] };
+        assert.deepEqual(
+          (yield* ingest(reported)).map((stored) => stored.event.type),
+          ["thread.model-selection-updated"],
+        );
+        assert.deepEqual(
+          (yield* projectionStore.getThread(rootEvent.threadId)).modelSelection,
+          reported,
+        );
+        assert.deepEqual(yield* ingest(reported), []);
+        assert.deepEqual(
+          yield* ingest({ ...reported, instanceId: ProviderInstanceId.make("other-instance") }),
+          [],
+        );
+      }),
+  );
+
+  it.effect(
     "recovers a missing Claude child once and preserves saved metadata on later recovery",
     () =>
       Effect.gen(function* () {
