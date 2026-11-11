@@ -230,7 +230,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
     }).pipe(Effect.scoped),
   );
 
-  it.effect("shows the Cursor SDK's reason when browser login fails and logs its cause", () => {
+  it.effect("shows a fixed reason when browser login fails and logs the SDK cause", () => {
     const warnings: string[] = [];
     return Effect.gen(function* () {
       const sdkMessage =
@@ -240,7 +240,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
       });
       yield* harness.auth.controller.start(owner);
       const failed = yield* phase(harness.auth, "failed");
-      expect(failed.message).toContain(sdkMessage);
+      expect(failed.message).toContain("could not create an API key");
+      expect(failed.message).not.toContain("permission_denied");
       expect(yield* harness.auth.readApiKey).toBeUndefined();
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain(sdkMessage);
