@@ -901,11 +901,11 @@ const make = Effect.gen(function* () {
     const deletedByPath = Map.groupBy(deletedThreads, (_thread, index) => deletedKeys[index]!);
     const candidates = [
       ...[...groups].map(
-        ([worktreePath, group]) =>
+        ([worktreeKey, group]) =>
           // A deleted thread still owns the worktree its remaining subagents share,
           // but only deletion cleanup acts on it; otherwise the live rules apply.
           deletedByPath
-            .get(worktreePath)
+            .get(worktreeKey)
             ?.find(
               (deleted) =>
                 resolveWorktreeCleanup(serverSettings, deleted.projectId).worktreeOnDelete &&
