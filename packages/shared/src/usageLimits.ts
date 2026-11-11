@@ -676,6 +676,56 @@ export function formatDuration(ms: number): string {
   return `${minutes}m`;
 }
 
+/** One redeemable reset as clients offer it; `input` already names the chosen credit. */
+export interface ResetCreditChoice {
+  readonly key: string;
+  readonly summary: string;
+  readonly actionLabel: string;
+  readonly confirmDescription: string;
+  readonly availableCount: number;
+  readonly input: ProviderConsumeResetCreditInput;
+}
+
+export function resetCreditChoices(
+  credits: ServerProviderResetCredits,
+  input: ProviderConsumeResetCreditInput,
+  now: number,
+  compact = false,
+): ReadonlyArray<ResetCreditChoice> {
+  const expiresIn = (at: string | undefined) => (at ? formatDuration(Date.parse(at) - now) : null);
+  if (credits.options && "instanceId" in input) {
+    return credits.options.map((option) => {
+      const expires = expiresIn(option.expiresAt);
+      return {
+        key: option.creditId,
+        summary: `${option.label} · ${option.availableCount} left${expires ? ` · expires in ${expires}` : ""}`,
+        actionLabel: "Use",
+        confirmDescription: `${option.label}: ${option.description} This cannot be undone.`,
+        availableCount: option.availableCount,
+        input: { ...input, creditId: option.creditId },
+      };
+    });
+  }
+  const count = credits.availableCount;
+  const expires = expiresIn(credits.nextExpiresAt);
+  return [
+    {
+      key: "next",
+      summary:
+        count === 0
+          ? "No reset credits banked"
+          : compact
+            ? `${count} banked${expires ? ` · expires in ${expires}` : ""}`
+            : `${count} ${count === 1 ? "reset credit" : "reset credits"} banked${expires ? ` · next expires in ${expires}` : ""}`,
+      actionLabel: "Use reset",
+      confirmDescription:
+        "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      availableCount: count,
+      input,
+    },
+  ];
+}
+
 export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;
@@ -886,96 +936,35 @@ export function collectProviderUsageLimits(
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }
 
-export interface ResetCreditGrantSummary {
-  readonly id: string | undefined;
-  readonly count: number;
-  /** Set when the grant only clears part of the account, e.g. "Fable". */
-  readonly scope: string | undefined;
-  readonly effect: string | undefined;
-  readonly expiresAt: string | undefined;
-}
-
 export interface WindowResetCredits {
   readonly count: number;
-  /** The scope every counted grant shares, for a compact badge. */
+  /** Set when every counted reset only clears part of the account, e.g. "Fable". */
   readonly scope: string | undefined;
-  readonly grants: ReadonlyArray<ResetCreditGrantSummary>;
 }
 
-const joinLabels = (labels: ReadonlyArray<string>) =>
-  labels.length < 2 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
-
-/** Grants without a clears list reset every window. Omit `windowId` to describe the whole account. */
+/** Resets without a clears list count against every window. */
 export function resetCreditsForWindow(
   credits: ServerProviderResetCredits | undefined,
   windows: ReadonlyArray<ServerProviderUsageWindow>,
-  windowId?: string,
+  windowId: string,
 ): WindowResetCredits {
-  if (!credits) return { count: 0, scope: undefined, grants: [] };
-  if (!credits.grants) {
-    return {
-      count: credits.availableCount,
-      scope: undefined,
-      grants:
-        credits.availableCount === 0
-          ? []
-          : [
-              {
-                id: undefined,
-                count: credits.availableCount,
-                scope: undefined,
-                effect: undefined,
-                expiresAt: credits.nextExpiresAt,
-              },
-            ],
-    };
-  }
+  if (!credits?.options) return { count: credits?.availableCount ?? 0, scope: undefined };
   const resettable = windows.filter((window) => window.kind !== "monthly");
-  const grants = credits.grants
-    .filter((grant) => grant.availableCount > 0)
-    .flatMap((grant): ResetCreditGrantSummary[] => {
-      const clears = grant.clearsWindowIds;
-      const listed = clears ? resettable.filter((window) => clears.includes(window.id)) : [];
-      const scope =
-        listed.length < resettable.length
-          ? listed.map((window) => window.label.split(" · ")[1]).find(Boolean)
-          : undefined;
-      // Claude lists the shared Session in a model-scoped grant's clears, but redeeming leaves it.
-      const cleared = scope
-        ? listed.filter((window) => window.label.split(" · ")[1] === scope)
-        : listed;
-      if (windowId !== undefined && clears && !cleared.some((window) => window.id === windowId)) {
-        return [];
-      }
-      const keptWeekly = clears
-        ? resettable.find((window) => window.kind === "weekly" && !cleared.includes(window))
-        : undefined;
-      const givesBack =
-        grant.givesBackWeekly && keptWeekly
-          ? ` and gives back ${scope ? `${scope}'s` : "its"} share of ${keptWeekly.label}`
-          : "";
-      return [
-        {
-          id: grant.id,
-          count: grant.availableCount,
-          scope,
-          effect:
-            cleared.length > 0
-              ? `Clears ${joinLabels(cleared.map((window) => window.label))}${givesBack}.`
-              : undefined,
-          expiresAt: grant.expiresAt,
-        },
-      ];
-    });
-  const scopes = new Set(grants.map((grant) => grant.scope));
-  return {
-    count: grants.reduce((sum, grant) => sum + grant.count, 0),
-    scope: scopes.size === 1 ? [...scopes][0] : undefined,
-    grants,
-  };
+  const scopeOf = (window: ServerProviderUsageWindow) => window.label.split(" · ")[1];
+  let count = 0;
+  const scopes = new Set<string | undefined>();
+  for (const option of credits.options) {
+    const clears = option.clearsWindowIds;
+    let scope: string | undefined;
+    if (clears) {
+      const listed = resettable.filter((window) => clears.includes(window.id));
+      scope = listed.length < resettable.length ? listed.map(scopeOf).find(Boolean) : undefined;
+      // Claude lists the shared Session in a model-scoped reset's clears, but redeeming leaves it.
+      const cleared = scope ? listed.filter((window) => scopeOf(window) === scope) : listed;
+      if (!cleared.some((window) => window.id === windowId)) continue;
+    }
+    count += option.availableCount;
+    scopes.add(scope);
+  }
+  return { count, scope: scopes.size === 1 ? [...scopes][0] : undefined };
 }
-
-export const withResetCreditId = (
-  input: ProviderConsumeResetCreditInput,
-  creditId: string | undefined,
-): ProviderConsumeResetCreditInput => (creditId ? { ...input, creditId } : input);

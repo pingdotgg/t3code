@@ -1,7 +1,11 @@
 import { expect, it } from "vite-plus/test";
 import { AuthMcpClientAccess, RuntimeMode } from "@t3tools/contracts";
 
-import { resolveApprovalDecision, resolveMcpAccess } from "./ConnectAgentSurface.logic";
+import {
+  agentRedirectUrl,
+  resolveApprovalDecision,
+  resolveMcpAccess,
+} from "./ConnectAgentSurface.logic";
 
 it.each(RuntimeMode.literals)("keeps MCP access within the %s policy ceiling", (maxRuntimeMode) => {
   const ceiling = { organization: "Example", maxRuntimeMode };
@@ -40,4 +44,21 @@ it("checks a typed code even in a signed-in browser, and approves without one at
     csrfToken: "csrf",
   });
   expect(resolveApprovalDecision({ code: "", access, details: signedOut })).toBeNull();
+});
+
+it("follows only https or loopback http redirects to an agent", () => {
+  expect(agentRedirectUrl("https://www.cursor.com/cb?code=x")).toBe(
+    "https://www.cursor.com/cb?code=x",
+  );
+  expect(agentRedirectUrl("http://localhost:51234/callback?code=x")).toBe(
+    "http://localhost:51234/callback?code=x",
+  );
+  for (const url of [
+    "javascript:alert(document.domain)",
+    "data:text/html,hi",
+    "http://evil.example/cb",
+    "not a url",
+  ]) {
+    expect(agentRedirectUrl(url), url).toBeNull();
+  }
 });

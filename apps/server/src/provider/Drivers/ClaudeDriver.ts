@@ -315,7 +315,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         const grantId =
           creditId === undefined
             ? credits?.nextCreditId
-            : credits?.grants?.find((grant) => grant.id === creditId)?.id;
+            : credits?.options?.some((option) => option.creditId === creditId)
+              ? creditId
+              : undefined;
         if (!grantId || !current.version) return "noCredit" as const;
         const version = current.version;
         return yield* resetCreditCoordinator.redeem(

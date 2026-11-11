@@ -62,47 +62,56 @@ describe("claudeResetCreditsToContract", () => {
       availableCount: 2,
       nextCreditId: "grant_a",
       nextExpiresAt: "2026-10-01T00:00:00.000Z",
-      grants: [{ id: "grant_a", availableCount: 2, expiresAt: "2026-10-01T00:00:00.000Z" }],
+      options: [
+        expect.objectContaining({
+          creditId: "grant_a",
+          label: "Full reset",
+          availableCount: 2,
+          expiresAt: "2026-10-01T00:00:00.000Z",
+        }),
+      ],
     });
   });
 
-  it("keeps the usage windows each grant clears", () => {
+  it("offers each kind of reset by its own grant", () => {
+    const credits = ClaudeResetCredits.claudeResetCreditsToContract(
+      {
+        eligible: true,
+        next_grant_id: "weekly_a",
+        grants: [
+          grant({ id: "weekly_a", clears: ["seven_day"], ends_at: "2026-12-10T22:00:00Z" }),
+          grant({
+            id: "fable_a",
+            clears: ["seven_day_overage_included"],
+            gives_back_weekly: true,
+            ends_at: "2027-03-09T07:59:00Z",
+          }),
+          grant({
+            id: "fable_b",
+            clears: ["seven_day_overage_included"],
+            gives_back_weekly: true,
+            type: "weekly",
+          }),
+          grant({ id: "session_a", type: "session" }),
+          grant({ id: "spent", clears: ["seven_day"], resets_left: 0 }),
+        ],
+      },
+      NOW,
+      "Fable",
+    );
     expect(
-      ClaudeResetCredits.claudeResetCreditsToContract(
-        {
-          eligible: true,
-          next_grant_id: "launch-fable",
-          grants: [
-            grant({ id: "standard", clears: ["five_hour", "seven_day"] }),
-            grant({
-              id: "launch-fable",
-              clears: ["five_hour", "seven_day_overage_included"],
-              gives_back_weekly: true,
-            }),
-            grant({ id: "legacy" }),
-          ],
-        },
-        NOW,
-        "Fable",
-      ),
-    ).toEqual({
-      availableCount: 3,
-      nextCreditId: "launch-fable",
-      grants: [
-        {
-          id: "standard",
-          availableCount: 1,
-          clearsWindowIds: ["five_hour", "seven_day"],
-        },
-        {
-          id: "launch-fable",
-          availableCount: 1,
-          clearsWindowIds: ["five_hour", "seven_day_fable"],
-          givesBackWeekly: true,
-        },
-        { id: "legacy", availableCount: 1 },
-      ],
-    });
+      credits?.options?.map(({ creditId, label, availableCount, clearsWindowIds }) => [
+        creditId,
+        label,
+        availableCount,
+        clearsWindowIds,
+      ]),
+    ).toEqual([
+      ["session_a", "5-hour reset", 1, undefined],
+      ["weekly_a", "Weekly reset", 1, ["seven_day"]],
+      ["fable_a", "Fable reset", 2, ["seven_day_fable"]],
+    ]);
+    expect(credits).toMatchObject({ availableCount: 4, nextCreditId: "weekly_a" });
   });
 
   it("offers nothing to redeem without a usable next grant or an eligible account", () => {
@@ -147,38 +156,22 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
           ),
         );
       });
-      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(
-        configDir,
-        "2.1.0",
-        undefined,
-      ).pipe(
+      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toEqual({
-        availableCount: 1,
-        nextCreditId: "grant_a",
-        grants: [{ id: "grant_a", availableCount: 1 }],
-      });
+      expect(credits).toMatchObject({ availableCount: 1, nextCreditId: "grant_a" });
     }),
   );
 
   it.effect("reads nothing from keychain logins or failed requests", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(
-        configDir,
-        "2.1.0",
-        undefined,
-      ).pipe(
+      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
       );
-      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(
-        configDir,
-        "2.1.0",
-        undefined,
-      ).pipe(
+      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );

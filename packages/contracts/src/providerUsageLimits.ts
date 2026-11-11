@@ -20,23 +20,25 @@ export const ServerProviderUsageWindow = Schema.Struct({
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
-export const ServerProviderResetCreditGrant = Schema.Struct({
-  id: TrimmedNonEmptyString,
+/** One kind of banked reset, such as Claude's weekly reset or its Fable-only reset. */
+export const ServerProviderResetCreditOption = Schema.Struct({
+  creditId: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
   availableCount: NonNegativeInt,
   expiresAt: Schema.optional(IsoDateTime),
-  /** Usage window ids this grant clears. Absent means it clears every window. */
+  /** Usage window ids this reset clears. Absent means it clears every window. */
   clearsWindowIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
-  /** Also removes the cleared windows' usage from the weekly window it does not clear. */
-  givesBackWeekly: Schema.optional(Schema.Boolean),
 });
-export type ServerProviderResetCreditGrant = typeof ServerProviderResetCreditGrant.Type;
+export type ServerProviderResetCreditOption = typeof ServerProviderResetCreditOption.Type;
 
 export const ServerProviderResetCredits = Schema.Struct({
   availableCount: NonNegativeInt,
   nextExpiresAt: Schema.optional(IsoDateTime),
   /** Pins hub redemption to the displayed credit, including retries from another client. */
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
-  grants: Schema.optional(ForwardCompatibleArray(ServerProviderResetCreditGrant)),
+  /** Present when resets differ in what they refill; redeem one by its `creditId`. */
+  options: Schema.optional(ForwardCompatibleArray(ServerProviderResetCreditOption)),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 

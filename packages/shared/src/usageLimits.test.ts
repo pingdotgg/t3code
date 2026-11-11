@@ -345,6 +345,45 @@ describe("pools", () => {
     expect(collectLimitAccounts(input)).toHaveLength(1);
   });
 
+  it("merges a local Antigravity login with its hub account by Google account fingerprint", () => {
+    const antigravity = ProviderDriverKind.make("antigravity");
+    const local = provider({
+      driver: antigravity,
+      instanceId: ProviderInstanceId.make("antigravity"),
+      auth: { status: "authenticated" },
+      usageLimits: {
+        checkedAt,
+        credentialFingerprint: "google-key",
+        windows: [{ ...window, id: "gemini-weekly", usedPercent: 20 }],
+      },
+    });
+    const hubAccount = {
+      id: "antigravity-g@example.com.json",
+      driver: antigravity,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        credentialFingerprint: "google-key",
+        windows: [{ ...window, id: "gemini-weekly", usedPercent: 30 }],
+      },
+    };
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [local],
+              usageLimitSources: [{ ...source, accounts: [hubAccount] }],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(30);
+  });
+
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
     const native = provider({
       driver: claude,
@@ -1526,65 +1565,51 @@ describe("reset credits per window", () => {
     { ...window, id: "seven_day_fable", kind: "weekly", label: "Weekly · Fable" },
     { id: "monthly_spend", kind: "monthly", label: "Monthly spend", usedPercent: 10 },
   ] as const;
-  const fable = {
-    id: "launch-fable",
-    availableCount: 1,
-    expiresAt: "2026-09-10T00:00:00.000Z",
-    clearsWindowIds: ["five_hour", "seven_day_fable"],
-    givesBackWeekly: true,
-  };
-  const standard = {
-    id: "standard",
-    availableCount: 2,
-    clearsWindowIds: ["five_hour", "seven_day"],
-  };
-  const credits = { availableCount: 3, nextCreditId: "launch-fable", grants: [fable, standard] };
-
-  it("counts each grant only on the windows it clears", () => {
-    expect(resetCreditsForWindow(credits, windows, "seven_day")).toMatchObject({
-      count: 2,
-      scope: undefined,
-    });
-    expect(resetCreditsForWindow(credits, windows, "seven_day_fable")).toMatchObject({
-      count: 1,
-      scope: "Fable",
-      grants: [
-        {
-          scope: "Fable",
-          effect: "Clears Weekly · Fable and gives back Fable's share of Weekly.",
-          expiresAt: "2026-09-10T00:00:00.000Z",
-        },
-      ],
-    });
-    expect(resetCreditsForWindow(credits, windows, "five_hour")).toMatchObject({
-      count: 2,
-      scope: undefined,
-      grants: [{ id: "standard" }],
-    });
-    expect(resetCreditsForWindow(credits, windows).count).toBe(3);
-    const everything = {
-      availableCount: 1,
-      grants: [
-        { id: "full", availableCount: 1, clearsWindowIds: windows.map((window) => window.id) },
-      ],
-    };
-    expect(resetCreditsForWindow(everything, windows, "five_hour")).toMatchObject({
-      count: 1,
-      scope: undefined,
-      grants: [{ effect: "Clears Session, Weekly and Weekly · Fable." }],
-    });
+  const option = (creditId: string, availableCount: number, clearsWindowIds?: string[]) => ({
+    creditId,
+    label: creditId,
+    description: creditId,
+    availableCount,
+    ...(clearsWindowIds ? { clearsWindowIds } : {}),
   });
+  const credits = {
+    availableCount: 4,
+    nextCreditId: "fable",
+    options: [
+      option("fable", 1, ["five_hour", "seven_day_fable"]),
+      option("weekly", 2, ["seven_day"]),
+      option("everything", 1, ["five_hour", "seven_day", "seven_day_fable"]),
+    ],
+  };
 
-  it("treats credits without grant details as clearing every window", () => {
-    expect(
-      resetCreditsForWindow({ availableCount: 2, nextCreditId: "grant_a" }, windows, "seven_day"),
-    ).toMatchObject({ count: 2, scope: undefined, grants: [{ id: undefined }] });
+  it("counts each reset only on the windows it clears", () => {
+    expect(resetCreditsForWindow(credits, windows, "seven_day")).toEqual({
+      count: 3,
+      scope: undefined,
+    });
+    expect(resetCreditsForWindow(credits, windows, "five_hour")).toEqual({
+      count: 1,
+      scope: undefined,
+    });
     expect(
       resetCreditsForWindow(
-        { availableCount: 1, grants: [{ id: "grant_a", availableCount: 1 }] },
+        { ...credits, options: credits.options.slice(0, 2) },
         windows,
         "seven_day_fable",
       ),
-    ).toMatchObject({ count: 1, scope: undefined, grants: [{ id: "grant_a" }] });
+    ).toEqual({ count: 1, scope: "Fable" });
+  });
+
+  it("counts resets without clears details against every window", () => {
+    expect(
+      resetCreditsForWindow({ availableCount: 2, nextCreditId: "grant_a" }, windows, "seven_day"),
+    ).toEqual({ count: 2, scope: undefined });
+    expect(
+      resetCreditsForWindow(
+        { availableCount: 1, options: [option("grant_a", 1)] },
+        windows,
+        "seven_day_fable",
+      ),
+    ).toEqual({ count: 1, scope: undefined });
   });
 });

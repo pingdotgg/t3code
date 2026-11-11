@@ -11,14 +11,13 @@ import {
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import {
-  formatDuration,
+  type ResetCreditChoice,
+  resetCreditChoices,
   formatResetsIn,
   limitsNotice,
   paceOf,
   paceRemainingPercent,
   remainingPercent,
-  resetCreditsForWindow,
-  withResetCreditId,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -223,7 +222,7 @@ export function AccountLimits(props: {
 }
 
 const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: "Reset applied.",
+  reset: "Reset applied. Your windows have cleared.",
   nothingToReset: "Nothing to reset right now.",
   noCredit: "No reset credit left.",
   alreadyRedeemed: "That credit was already redeemed.",
@@ -233,27 +232,24 @@ export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
-  readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
   readonly dense?: boolean;
 }) {
-  const { environmentId, input, credits, windows, now, dense = false } = props;
+  const { environmentId, input, credits, now, dense = false } = props;
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
-  const [busyCreditId, setBusyCreditId] = useState<string | null | undefined>(null);
+  const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const { grants } = resetCreditsForWindow(credits, windows);
-  if (dense && grants.length === 0 && status === null) return null;
-  const busy = busyCreditId !== null;
+  if (dense && credits.availableCount === 0 && status === null) return null;
 
-  const redeem = async (creditId: string | undefined) => {
+  const redeem = async (choice: ResetCreditChoice) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    setBusyCreditId(creditId);
+    setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input: withResetCreditId(input, creditId) });
-    setBusyCreditId(null);
+    const result = await consume({ environmentId, input: choice.input });
+    setBusy(false);
     if (result._tag === "Success") {
       setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       return;
@@ -265,40 +261,25 @@ export function ResetCredits(props: {
     );
   };
 
-  const confirm = (creditId: string | undefined, effect: string | undefined) => {
+  const confirm = (choice: ResetCreditChoice) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    Dialog.alert(
-      "Use a reset credit?",
-      `${effect ?? "Clears the current rate-limit windows."} This can't be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Use credit", onPress: () => void redeem(creditId) },
-      ],
-    );
+    Dialog.alert("Use a reset credit?", choice.confirmDescription, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Use credit", onPress: () => void redeem(choice) },
+    ]);
   };
 
   return (
-    <View className="gap-2">
-      {grants.length === 0 ? (
-        <Text className="text-xs text-foreground-tertiary">No reset credits banked</Text>
-      ) : null}
-      {grants.map((grant) => {
-        const expiresIn = grant.expiresAt
-          ? formatDuration(Date.parse(grant.expiresAt) - now)
-          : null;
-        const scope = grant.scope ? `${grant.scope} ` : "";
-        return (
-          <View key={grant.id ?? "all"} className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
-            <Text className="min-w-0 shrink text-xs tabular-nums text-foreground-tertiary">
-              {`${grant.count} ${scope}${grant.count === 1 ? "reset credit" : "reset credits"} banked${
-                expiresIn ? ` · expires in ${expiresIn}` : ""
-              }`}
-            </Text>
+    <View className="gap-1">
+      {resetCreditChoices(credits, input, now).map((choice) => (
+        <View key={choice.key} className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
+          <Text className="text-xs tabular-nums text-foreground-tertiary">{choice.summary}</Text>
+          {choice.availableCount > 0 ? (
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: busy || !canManageProviders }}
               disabled={busy || !canManageProviders}
-              onPress={() => confirm(grant.id, grant.effect)}
+              onPress={() => confirm(choice)}
               className={
                 dense
                   ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
@@ -312,12 +293,12 @@ export function ResetCredits(props: {
                     : "text-sm font-t3-medium text-foreground"
                 }
               >
-                {busy && busyCreditId === grant.id ? "Using…" : "Use reset"}
+                {busy ? "Using…" : choice.actionLabel}
               </Text>
             </Pressable>
-          </View>
-        );
-      })}
+          ) : null}
+        </View>
+      ))}
       {!canManageProviders ? (
         <Text className="text-xs text-foreground-tertiary">
           This connection cannot manage provider accounts.

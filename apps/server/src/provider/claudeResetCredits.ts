@@ -1,5 +1,6 @@
 import type {
   ProviderConsumeResetCreditOutcome,
+  ServerProviderResetCreditOption,
   ServerProviderResetCredits,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -33,8 +34,9 @@ const Grant = Schema.Struct({
   ends_at: Schema.optional(Schema.NullOr(Schema.String)),
   paused: Schema.optional(Schema.Boolean),
   usable_now: Schema.optional(Schema.Boolean),
-  clears: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
-  gives_back_weekly: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  clears: Schema.optional(Schema.Array(Schema.Unknown)),
+  type: Schema.optional(Schema.Unknown),
+  gives_back_weekly: Schema.optional(Schema.Boolean),
 });
 const decodeGrant = Schema.decodeUnknownOption(Grant);
 const CedarEmber = Schema.Struct({
@@ -99,6 +101,31 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
   );
 };
 
+// Claude Code's own grouping: a grant that gives back weekly usage is a Fable reset, else its
+// declared type, else what it clears.
+const RESET_KINDS = {
+  session: { label: "5-hour reset", description: "Refills your 5-hour limit." },
+  weekly: { label: "Weekly reset", description: "Refills your weekly limit." },
+  fable: {
+    label: "Fable reset",
+    description:
+      "Refills your Fable allowance and gives back what Fable used on your weekly limit. It doesn't reset your whole week.",
+  },
+  full: { label: "Full reset", description: "Refills your 5-hour and weekly limits." },
+} as const;
+type ResetKind = keyof typeof RESET_KINDS;
+
+const grantKind = (grant: typeof Grant.Type): ResetKind => {
+  if (grant.gives_back_weekly) return "fable";
+  if (grant.type === "session" || grant.type === "weekly" || grant.type === "full") {
+    return grant.type;
+  }
+  const clears = grant.clears ?? [];
+  const session = clears.includes("five_hour");
+  const other = clears.some((limit) => limit !== "five_hour");
+  return session && !other ? "session" : other && !session ? "weekly" : "full";
+};
+
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
@@ -115,28 +142,48 @@ export function claudeResetCreditsToContract(
         (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
   const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
-  if (!next) return { availableCount: 0 };
-  const expiresAt = (grant: typeof next) => {
-    const date = grant.ends_at ? DateTime.make(grant.ends_at) : Option.none();
-    return Option.isSome(date) ? DateTime.formatIso(date.value) : undefined;
+  const expiresAt = (grant: typeof Grant.Type | undefined) => {
+    const at = grant?.ends_at ? DateTime.make(grant.ends_at) : Option.none();
+    return Option.isSome(at) ? DateTime.formatIso(at.value) : undefined;
   };
+  const byKind = new Map<ResetKind, Array<typeof Grant.Type>>();
+  for (const grant of live) {
+    if (grant.resets_left === 0) continue;
+    const kind = grantKind(grant);
+    byKind.set(kind, [...(byKind.get(kind) ?? []), grant]);
+  }
+  const options = (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap(
+    (kind): Array<ServerProviderResetCreditOption> => {
+      const grants = byKind.get(kind);
+      const target = grants?.[0];
+      if (!grants || !target) return [];
+      const optionExpiresAt = expiresAt(target);
+      const clears = grants.every((grant) => grant.clears?.length)
+        ? new Set(
+            grants.flatMap((grant) =>
+              (grant.clears ?? []).flatMap((bucket) =>
+                typeof bucket === "string" ? [claudeUsageWindowId(bucket, overageIncluded)] : [],
+              ),
+            ),
+          )
+        : undefined;
+      return [
+        {
+          creditId: target.id,
+          ...RESET_KINDS[kind],
+          availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
+          ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
+          ...(clears?.size ? { clearsWindowIds: [...clears] } : {}),
+        },
+      ];
+    },
+  );
   const nextExpiresAt = expiresAt(next);
-  const grants = live.map((grant) => {
-    const grantExpiresAt = expiresAt(grant);
-    const clears = grant.clears?.map((bucket) => claudeUsageWindowId(bucket, overageIncluded));
-    return {
-      id: grant.id,
-      availableCount: grant.resets_left,
-      ...(grantExpiresAt ? { expiresAt: grantExpiresAt } : {}),
-      ...(clears?.length ? { clearsWindowIds: clears } : {}),
-      ...(grant.gives_back_weekly ? { givesBackWeekly: true } : {}),
-    };
-  });
   return {
-    availableCount: live.reduce((sum, grant) => sum + grant.resets_left, 0),
+    availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
-    nextCreditId: next.id,
-    grants,
+    ...(next ? { nextCreditId: next.id } : {}),
+    ...(next ? { options } : {}),
   };
 }
 
@@ -171,7 +218,7 @@ const withClaudeHeaders = (token: string, version: string) =>
   });
 
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string, overageIncluded: string | undefined) {
+  function* (configDir: string, version: string, overageIncluded?: string) {
     const token = yield* readAccessToken(configDir);
     if (!token) return undefined;
     const client = yield* HttpClient.HttpClient;
