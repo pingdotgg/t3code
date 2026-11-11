@@ -11,6 +11,7 @@ import { View } from "react-native";
 
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
+import { threadDetailBodyFingerprint } from "./thread-detail-body-fingerprint";
 
 type ThreadScreenSnapshot = {
   readonly bodyProps: ThreadDetailScreenProps | null;
@@ -132,81 +133,6 @@ function ThreadScreenOutlet() {
       <ScreenContent surface="canvas">{body}</ScreenContent>
     </>
   );
-}
-
-/**
- * Body remount fingerprint. Callbacks and header are ignored; `selectedThread` is
- * compared by fields because route content may wrap the shell each render.
- */
-function threadDetailBodyFingerprint(props: ThreadDetailScreenProps): readonly unknown[] {
-  const thread = props.selectedThread;
-  return [
-    thread.id,
-    thread.title,
-    thread.source,
-    thread.modelSelection,
-    thread.runtimeMode,
-    thread.interactionMode,
-    thread.goal,
-    thread.snoozedUntil,
-    thread.settledOverride,
-    thread.lastVisitedAt,
-    thread.latestUserMessageAt,
-    thread.latestRun,
-    thread.runtime,
-    thread.limitRecovery,
-    thread.pendingBackgroundTasks,
-    thread.lineage.parentThreadId,
-    props.selectedThreadDetailRef,
-    props.contentPresentation,
-    props.activityRun,
-    props.activeWorkStartedAt,
-    props.runlessWorkActive,
-    props.providerSubagentStatus,
-    props.extensionStatuses,
-    props.isCompacting,
-    props.creationState,
-    props.activePendingApproval,
-    props.activePendingApprovals,
-    props.respondingApprovalId,
-    props.activePendingUserInput,
-    props.activePendingUserInputDrafts,
-    props.activePendingUserInputAnswers,
-    props.respondingUserInputId,
-    props.connectionStateLabel,
-    props.threadSyncStatus,
-    props.historyControls,
-    props.activeThreadBusy,
-    props.canStopThread,
-    props.queuedRunEdit,
-    props.composerDraftKey,
-    props.followUpBehavior,
-    props.canSteerActiveTurn,
-    props.isSavingQueuedEdit,
-    props.environmentId,
-    props.projectWorkspaceRoot,
-    props.threadCwd,
-    props.selectedThreadQueueCount,
-    props.queuedMessages,
-    props.dispatchingMessageId,
-    props.serverConfig,
-    props.layoutVariant,
-    props.usesAutomaticContentInsets,
-    props.canOperateThread,
-    props.screenTone,
-    props.connectionError,
-    props.environmentLabel,
-    props.feedbackSubmissions,
-    props.pendingHandoff,
-    props.worktreeSetup,
-    props.setupWorkingStartedAt,
-    props.draftMode,
-    props.canSwitchThreadProvider,
-    props.offersSideChat,
-    props.showContent,
-    props.showFeed,
-    props.selectedThreadFeed,
-  ];
 }
 
 function fingerprintsEqual(left: readonly unknown[], right: readonly unknown[]): boolean {

@@ -858,7 +858,8 @@ function ThreadRouteContent(
   const handleOpenConnectionEditor = () => {
     void navigation.navigate("Connections");
   };
-  const handleStopThread = () => {
+  // Effect-event handlers so ThreadScreenHost can retain body props without stale Stop/Resume targets.
+  const handleStopThread = useEffectEvent(() => {
     if (
       !selectedThread ||
       !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope) ||
@@ -873,9 +874,9 @@ function ThreadRouteContent(
         runId: composer.interruptibleRunId,
       },
     });
-  };
+  });
 
-  const handleResumeQueue = async () => {
+  const handleResumeQueue = useEffectEvent(async () => {
     if (!selectedThread) return;
     const result = await resumeThread({
       thread: selectedThread,
@@ -898,7 +899,7 @@ function ThreadRouteContent(
         error instanceof Error ? error.message : "Try again.",
       );
     }
-  };
+  });
 
   const handleOpenTerminal = useEffectEvent((nextTerminalId?: string | null) => {
     if (
@@ -1115,13 +1116,21 @@ function ThreadRouteContent(
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
       : (selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup);
-  const handleCancelWorktreeSetup = () => {
+  const handleCancelWorktreeSetup = useEffectEvent(() => {
     if (!selectedThread) return;
     void cancelWorktreeSetup({
       environmentId: selectedThread.environmentId,
       input: { threadId: selectedThread.id },
     });
-  };
+  });
+  // One stable Stop handler: kind flips with awaitingBootstrapTurn without remounting the body.
+  const handleStopOrCancelSetup = useEffectEvent(() => {
+    if (awaitingBootstrapTurn) {
+      handleCancelWorktreeSetup();
+      return;
+    }
+    handleStopThread();
+  });
   const startLocalThread = useAtomCommand(threadEnvironment.startTurn, "work locally");
   const localResendBusy = useRef(false);
   const setupMessage = selectedThreadDetail?.messages.find((message) => message.role === "user");
@@ -1341,7 +1350,7 @@ function ThreadRouteContent(
           onNativePasteText={composer.onNativePasteText}
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
-          onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
+          onStopThread={handleStopOrCancelSetup}
           onResumeQueue={
             composer.queueHeld || composer.resumableRunId !== null ? handleResumeQueue : null
           }
