@@ -71,9 +71,20 @@ describe("composer rich text markdown", () => {
       { text: " ", marks: [] },
       { text: "c", marks: ["bold"] },
     ]);
-    expect(parseInlineMarkdown("_see src/a_b.ts_ now")).toEqual([
-      { text: "see src/a_b.ts", marks: ["italic"] },
-      { text: " now", marks: [] },
+    for (const [text, styled, mark, rest] of [
+      ["_see src/a_b.ts_ now", "see src/a_b.ts", "italic", " now"],
+      ["_read/write access_ now", "read/write access", "italic", " now"],
+      ["__read/write access__ now", "read/write access", "bold", " now"],
+      ["_see src/a.ts_(optional)", "see src/a.ts", "italic", "(optional)"],
+    ] as const) {
+      expect(parseInlineMarkdown(text)).toEqual([
+        { text: styled, marks: [mark] },
+        { text: rest, marks: [] },
+      ]);
+    }
+    expect(parseInlineMarkdown("_build_/file.ts and _x_")).toEqual([
+      { text: "_build_/file.ts and ", marks: [] },
+      { text: "x", marks: ["italic"] },
     ]);
   });
 

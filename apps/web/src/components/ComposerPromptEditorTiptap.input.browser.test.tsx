@@ -349,6 +349,27 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(expected);
 });
 
+// regression: #25180 paste rules are off, so dropped text must still parse its Markdown
+it("styles Markdown in text dropped from another app", async () => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  const rect = editor.view.dom.getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "a **bold** and *soft* word");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: rect.left + 4,
+        clientY: rect.top + 4,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(editor.state.doc.textContent).toBe("a bold and soft word");
+});
+
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
   const value = "echo $HOME now";
   await using screen = await mountEditor(value);

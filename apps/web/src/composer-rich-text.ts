@@ -26,13 +26,28 @@ function sameMarks(left: readonly RichTextMark[], right: readonly RichTextMark[]
   return left.length === right.length && left.every((mark, index) => mark === right[index]);
 }
 
+// Underscores that pair up inside one URL, path, or filename word are part of the name,
+// while emphasis that wraps such a word still parses.
+function literalUnderscores(text: string): Set<number> {
+  const literal = new Set<number>();
+  for (const word of text.matchAll(/\S+/g)) {
+    if (!LITERAL_UNDERSCORE_WORD.test(word[0])) continue;
+    const kept = Array.from({ length: word[0].length }, () => false);
+    for (const piece of parseInlineMarkdownPieces(word[0], new Set()))
+      kept.fill(true, piece.start, piece.end);
+    kept.forEach((isKept, offset) => {
+      if (!isKept && word[0][offset] === "_") literal.add(word.index + offset);
+    });
+  }
+  return literal;
+}
+
 // Pieces keep source offsets, so callers can map parsed text back onto the
 // characters it came from; parsing only drops delimiters.
-function parseInlineMarkdownPieces(text: string): SourcePiece[] {
-  const literalWords = Array.from(text.matchAll(/\S+/g)).filter((word) =>
-    LITERAL_UNDERSCORE_WORD.test(word[0]),
-  );
-  let literalWord = 0;
+function parseInlineMarkdownPieces(
+  text: string,
+  literal: ReadonlySet<number> = literalUnderscores(text),
+): SourcePiece[] {
   const root: SourcePiece[] = [];
   const stack: { delimiter: string; mark: RichTextMark; start: number; pieces: SourcePiece[] }[] =
     [];
@@ -73,29 +88,19 @@ function parseInlineMarkdownPieces(text: string): SourcePiece[] {
       index += 1;
       continue;
     }
+    if (literal.has(index)) {
+      let literalEnd = index;
+      while (literal.has(literalEnd)) literalEnd += 1;
+      push(index, literalEnd);
+      index = literalEnd;
+      continue;
+    }
     let end = index;
-    while (text[end] === char) end += 1;
+    while (text[end] === char && !literal.has(end)) end += 1;
     const before = text[index - 1] ?? "";
     const after = text[end] ?? "";
     const canClose = before !== "" && !/\s/.test(before) && (char !== "_" || !/\w/.test(after));
     const canOpen = after !== "" && !/\s/.test(after) && (char !== "_" || !/\w/.test(before));
-    if (char === "_") {
-      let word = literalWords[literalWord];
-      while (word && word.index + word[0].length <= index) word = literalWords[++literalWord];
-      const top = stack.at(-1);
-      // A run ending the word may still close emphasis opened before it, as in `_see src/a.ts_`.
-      const closesOpenSpan =
-        canClose &&
-        top !== undefined &&
-        text.startsWith(top.delimiter, index) &&
-        word !== undefined &&
-        /^\W*$/.test(text.slice(end, word.index + word[0].length));
-      if (word && word.index <= index && !closesOpenSpan) {
-        push(index, end);
-        index = end;
-        continue;
-      }
-    }
     while (index < end) {
       const top = stack.at(-1);
       const opensNestedBold =
