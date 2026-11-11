@@ -1051,7 +1051,8 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         XCTAssertEqual(initial.connection.state, .connected)
         XCTAssertNil(initial.environments.first(where: { $0.id == "two" })?.connectionState)
 
-        let passive = try XCTUnwrap(await fixture.client.settledStartupSnapshot())
+        let settled = await fixture.client.settledStartupSnapshot()
+        let passive = try XCTUnwrap(settled)
         XCTAssertEqual(Set(passive.threads.compactMap(\.wireID)), ["thread-one", "thread-two"])
         XCTAssertEqual(passive.environments.first(where: { $0.id == "two" })?.connectionState, .connected)
         XCTAssertEqual(passive.connection.state, .connected)
