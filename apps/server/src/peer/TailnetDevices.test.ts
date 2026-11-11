@@ -1506,6 +1506,9 @@ describe("crossing the upgrade without trusting a claim", () => {
     yield* tailnet.join(impostor.url);
     yield* knowsMember(b, a, null);
     yield* admit(tailnet, a, b);
+    // Each break below changes one of these; without both, a row would pass on nothing.
+    expect(Option.isSome(yield* a.links.get(studio.environmentId))).toBe(true);
+    expect(Option.isSome(yield* b.links.get(laptop.environmentId))).toBe(true);
     yield* a.sql`UPDATE network_members SET node_id = NULL`;
     yield* b.sql`UPDATE network_members SET node_id = NULL`;
     const studioNode = a.membership
