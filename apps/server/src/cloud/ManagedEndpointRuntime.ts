@@ -571,10 +571,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const switchToHttp2 = Effect.fnUntraced(function* (connector: ActiveConnector) {
-    const active = yield* Ref.get(activeRef);
-    const desiredConfig = yield* Ref.get(desiredConfigRef);
-    if ((yield* Ref.get(http2Ref)) || active !== connector || !desiredConfig) return;
+  const rememberHttp2Fallback = Effect.fnUntraced(function* () {
     yield* Ref.set(http2Ref, true);
     yield* secrets
       .set(
@@ -586,6 +583,13 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catch(() => Effect.logWarning("Could not persist the relay client HTTP/2 fallback")),
       );
+  });
+
+  const switchToHttp2 = Effect.fnUntraced(function* (connector: ActiveConnector) {
+    const active = yield* Ref.get(activeRef);
+    const desiredConfig = yield* Ref.get(desiredConfigRef);
+    if ((yield* Ref.get(http2Ref)) || active !== connector || !desiredConfig) return;
+    yield* rememberHttp2Fallback();
     yield* Effect.logWarning("Relay client keeps losing QUIC connections; switching to HTTP/2", {
       pid: Number(connector.child.pid),
       tunnelId: connector.config.tunnelId,
@@ -630,11 +634,18 @@ export const make = Effect.gen(function* () {
           output,
         };
         switch (classifyRelayClientOutput(line)) {
-          case "connected":
+          case "connected": {
             rejectedRegistrations = 0;
+            const protocol = RELAY_CLIENT_PROTOCOL.exec(line)?.[1] ?? null;
             return Deferred.succeed(connector.registered, undefined).pipe(
+              Effect.andThen(Ref.set(connector.protocol, protocol)),
+              // cloudflared started with `auto` fell back on its own; later starts skip QUIC too.
               Effect.andThen(
-                Ref.set(connector.protocol, RELAY_CLIENT_PROTOCOL.exec(line)?.[1] ?? null),
+                protocol === "http2" && !transportChosenByUser
+                  ? Ref.get(http2Ref).pipe(
+                      Effect.flatMap((http2) => (http2 ? Effect.void : rememberHttp2Fallback())),
+                    )
+                  : Effect.void,
               ),
               Effect.andThen(
                 Effect.logInfo("Relay client tunnel connection registered", attributes),
@@ -652,6 +663,7 @@ export const make = Effect.gen(function* () {
               ),
               Effect.asVoid,
             );
+          }
           case "unregistered":
             return Effect.logInfo("Relay client tunnel connection unregistered", attributes);
           case "warning":
