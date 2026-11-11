@@ -212,7 +212,12 @@ it.effect(
           port: 3_773,
         }),
       });
+      const upload = NodePath.join(baseDir, "userdata", "attachments", "upload.part");
+      yield* fs.makeDirectory(NodePath.dirname(upload));
+      yield* fs.writeFileString(upload, "");
+      yield* fs.utimes(upload, 0, 0);
       const now = "2026-01-01T00:00:00.000Z";
+      yield* TestClock.setTime(Date.parse(now));
       const fetch: typeof globalThis.fetch = async (_input, init) =>
         Response.json(
           init?.method === "POST"
@@ -238,6 +243,7 @@ it.effect(
         yield* fs.exists(NodePath.join(baseDir, "userdata", "statev2.sqlite")),
         "t3 project must not create statev2.sqlite while a server is registered",
       );
+      assert.isTrue(yield* fs.exists(upload), "an expired upload is not swept before the check");
       assert.equal(result._tag, "Failure");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );

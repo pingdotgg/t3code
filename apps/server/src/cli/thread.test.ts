@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
@@ -148,6 +149,11 @@ it.effect("refuses a registered server whose statev2.sqlite is missing", () =>
         port: 3_773,
       }),
     });
+    const upload = path.join(baseDir, "userdata", "attachments", "upload.part");
+    yield* fs.makeDirectory(path.dirname(upload));
+    yield* fs.writeFileString(upload, "");
+    yield* fs.utimes(upload, 0, 0);
+    yield* TestClock.setTime(Date.parse("2026-01-01T00:00:00.000Z"));
 
     const error = yield* Command.runWith(threadCommand, { version: "0.0.0" })([
       "list",
@@ -157,6 +163,7 @@ it.effect("refuses a registered server whose statev2.sqlite is missing", () =>
 
     assert.instanceOf(error, ServerDatabaseMissingError);
     assert.isFalse(yield* fs.exists(path.join(baseDir, "userdata", "statev2.sqlite")));
+    assert.isTrue(yield* fs.exists(upload), "an expired upload is not swept before the check");
   }).pipe(
     Effect.scoped,
     Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer)),

@@ -44,6 +44,7 @@ import {
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import {
   type CliAuthLocationFlags,
+  prepareServerDirectories,
   projectLocationFlags,
   requireServerDatabase,
   resolveCliAuthConfig,
@@ -399,12 +400,13 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   >,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const config = yield* resolveCliAuthConfig(flags, logLevel, { deferSetup: true });
   const minimumLogLevel = config.logLevel;
   const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isSome(runtimeState)) {
     yield* requireServerDatabase(config.dbPath);
   }
+  yield* prepareServerDirectories(config);
 
   return yield* Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;

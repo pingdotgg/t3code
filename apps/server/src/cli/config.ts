@@ -269,6 +269,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
     readonly rejectRunningServer?: boolean;
+    /** Leave directory setup to the caller's `prepareServerDirectories`, after its preflight. */
+    readonly deferSetup?: boolean;
     readonly selectAutomaticPort?: (
       preferred: number,
     ) => Effect.Effect<number, NetService.NetError | CliError.UserError>;
@@ -277,7 +279,6 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const { findAvailablePort } = yield* NetService.NetService;
   const selectAutomaticPort = options?.selectAutomaticPort ?? findAvailablePort;
   const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
   const env = yield* EnvServerConfig;
   const normalizedFlags = {
     mode: flags.mode ?? Option.none(),
@@ -362,13 +363,10 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
       });
     }
   }
-  yield* fs.makeDirectory(cwd, { recursive: true });
-  yield* ServerConfig.ensureServerDirectories(derivedPaths);
   const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
     derivedPaths.settingsPath,
   );
   const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
-  yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
   const startupPresentation = options?.startupPresentation ?? "browser";
   const isHeadlessStartup = startupPresentation === "headless";
   const noBrowser = Option.getOrElse(
@@ -527,13 +525,27 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     tailscaleServePort,
   };
 
+  if (!options?.deferSetup) {
+    yield* prepareServerDirectories(config);
+  }
   return config;
+});
+
+/** Creates the directories a resolved config writes to and sweeps expired uploads. */
+export const prepareServerDirectories = Effect.fn("config.prepareServerDirectories")(function* (
+  config: ServerConfig.ServerConfig["Service"],
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(config.cwd, { recursive: true });
+  yield* ServerConfig.ensureServerDirectories(config);
+  yield* fs.makeDirectory(path.dirname(config.serverTracePath), { recursive: true });
 });
 
 export const resolveCliAuthConfig = (
   flags: CliAuthLocationFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
-  options?: { readonly quietLogs?: boolean },
+  options?: { readonly quietLogs?: boolean; readonly deferSetup?: boolean },
 ) => {
   const resolved = resolveServerConfig(
     {
@@ -552,6 +564,7 @@ export const resolveCliAuthConfig = (
       lan: Option.none(),
     },
     cliLogLevel,
+    { deferSetup: options?.deferSetup ?? false },
   );
   // Logs go to stdout, where --json and --token-only print, and resolving can
   // log, for example when it sweeps abandoned attachment uploads.
