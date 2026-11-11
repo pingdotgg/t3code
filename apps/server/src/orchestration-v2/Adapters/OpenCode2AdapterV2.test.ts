@@ -326,6 +326,7 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly borrowers?: { current: number };
   },
 ) =>
   Effect.gen(function* () {
@@ -352,6 +353,7 @@ const resumed = (
       ],
       {
         ...(options?.version === undefined ? {} : { version: options.version }),
+        ...(options?.borrowers === undefined ? {} : { borrowers: options.borrowers }),
         ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
         ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
         ...(options?.external === undefined ? {} : { external: options.external }),
@@ -3000,7 +3002,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.each(["history", "list"] as const)(
+  it.effect.each(["history", "list", "late-preview"] as const)(
     "recovers native image job outcomes from %s after reconnect",
     (source) =>
       Effect.gen(function* () {
@@ -3026,14 +3028,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   },
                 ],
               });
-              if (source === "list")
+              if (source !== "history")
                 frames.splice(2, 0, out("rpc.call", "<any>"), reply("rpc.call", { output: null }));
               return frames;
             })(),
             out("message.list", { sessionID: SESSION, type: "synthetic", limit: "100" }),
             reply("message.list", {
               data:
-                source === "list"
+                source !== "history"
                   ? []
                   : [
                       {
@@ -3052,7 +3054,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                     ],
               cursor: {},
             }),
-            ...(source === "list"
+            ...(source !== "history"
               ? [
                   out("imageJobs", { sessionID: SESSION, kind: "image" }),
                   reply("imageJobs", {
@@ -3061,7 +3063,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                         kind: "image",
                         id: "image_gap",
                         sessionID: SESSION,
-                        status: "error",
+                        status: source === "late-preview" ? "completed" : "error",
                         path: "/tmp/image",
                         model: "test/image",
                         time: { started: 2, completed: 3 },
@@ -3070,15 +3072,45 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   }),
                 ]
               : []),
+            ...(source === "late-preview"
+              ? [
+                  event("session.inbox.enqueued", {
+                    sessionID: SESSION,
+                    inboxID: "msg_image_late",
+                    item: {
+                      type: "synthetic",
+                      delivery: "steer",
+                      payload: {
+                        description: "Image generation",
+                        text: "Image request finished. Saved image: /tmp/image.png (test/image).",
+                        metadata: {
+                          source: "experimental_image_generate",
+                          jobID: "image_gap",
+                          state: "completed",
+                          path: "/tmp/image",
+                        },
+                      },
+                    },
+                  }),
+                  out("image.read", {
+                    path: "/api/fs/read/image.png",
+                    "location[directory]": "/tmp",
+                  }),
+                  reply("image.read", { imageBase64: "iVBORw0KGgo=" }),
+                ]
+              : []),
           ],
-          source === "list" ? { version: "2.2.6" } : undefined,
+          { ...(source !== "history" ? { version: "2.2.6" as const } : {}), external: true },
         );
         const events = yield* runtime.events.pipe(
           Stream.takeUntil(
             (e) =>
               e.type === "turn_item.updated" &&
               e.turnItem.nativeItemRef?.nativeId === "call-image-gap" &&
-              e.turnItem.status === "failed",
+              (source === "late-preview"
+                ? e.turnItem.type === "dynamic_tool" &&
+                  toolOutputImages(e.turnItem.output).length > 0
+                : e.turnItem.status === "failed"),
           ),
           Stream.runCollect,
           Effect.forkScoped,
@@ -3087,7 +3119,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         const collected = yield* Fiber.join(events);
         assert.include(
           JSON.stringify(collected.at(-1)),
-          source === "list" ? "Image generation error" : "Recovered image failure",
+          source === "late-preview"
+            ? "Saved image: /tmp/image.png"
+            : source !== "history"
+              ? "Image generation error"
+              : "Recovered image failure",
         );
         assert.isTrue(
           collected.some(
@@ -3097,6 +3133,168 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("settles a recovered image outcome when preview I/O is interrupted", () =>
+    Effect.gen(function* () {
+      const reading = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const fs = yield* FileSystem.FileSystem;
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          ...reconnected({}, "succeeded", {
+            content: [
+              {
+                type: "tool",
+                id: "call-image-slow",
+                name: "experimental_image_generate",
+                executed: false,
+                state: {
+                  status: "completed",
+                  input: { prompt: "A tree" },
+                  content: [{ type: "text", text: "Launched" }],
+                  metadata: { jobID: "image_slow", path: "/tmp/image", model: "test/image" },
+                },
+                time: { created: 2, ran: 2, completed: 2 },
+              },
+            ],
+          }),
+          out("message.list", { sessionID: SESSION, type: "synthetic", limit: "100" }),
+          reply("message.list", {
+            data: [
+              {
+                id: "msg_image_slow",
+                type: "synthetic",
+                time: { created: 3 },
+                text: "Image request finished. Saved image: /tmp/image.png (test/image).",
+                description: "Image generation",
+                metadata: {
+                  source: "experimental_image_generate",
+                  jobID: "image_slow",
+                  state: "completed",
+                  path: "/tmp/image",
+                },
+              },
+            ],
+            cursor: {},
+          }),
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { providerID: "opencode", id: "big-pickle", variant: "recovery-observed" },
+          }),
+        ],
+        {
+          fileSystem: {
+            ...fs,
+            stat: (path) =>
+              path === "/tmp/image.png"
+                ? Deferred.succeed(reading, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+                  )
+                : fs.stat(path),
+          },
+        },
+      );
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (e) =>
+            e.type === "provider_thread.updated" &&
+            e.providerThread.nativeMetadata?.modelSelection?.options?.some(
+              (option) => option.value === "recovery-observed",
+            ) === true,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      yield* Deferred.await(reading);
+      yield* TestClock.adjust("5 seconds");
+      yield* Deferred.await(interrupted);
+      const collected = yield* Fiber.join(events);
+      assert.isTrue(
+        collected.some(
+          (e) =>
+            e.type === "turn_item.updated" &&
+            e.turnItem.nativeItemRef?.nativeId === "call-image-slow" &&
+            e.turnItem.status === "completed",
+        ),
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("settles native image tasks when reconnect attempts fail", () =>
+    Effect.gen(function* () {
+      const attempts = yield* Effect.forEach([0, 1, 2, 3, 4], () => Deferred.make<void>());
+      let count = 0;
+      let failures = 0;
+      const borrowers = {
+        get current() {
+          return count;
+        },
+        set current(next: number) {
+          if (next < count && count === 2) {
+            const attempt = attempts[failures++];
+            if (attempt !== undefined) Deferred.doneUnsafe(attempt, Effect.void);
+          }
+          count = next;
+        },
+      };
+      const tool = {
+        sessionID: SESSION,
+        assistantMessageID: "msg_assistant",
+        id: "call-image-lost",
+      };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.tool.input.started", { ...tool, name: "experimental_image_generate" }),
+          event(
+            "session.tool.success",
+            {
+              ...tool,
+              content: [{ type: "text", text: "Launched" }],
+              metadata: { jobID: "image_lost", path: "/tmp/image", model: "test/image" },
+              executed: false,
+            },
+            undefined,
+            2,
+          ),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          { type: "runtime_exit", status: "success" },
+        ],
+        { borrowers },
+      );
+      const events = yield* runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* Deferred.await(attempts[0]!);
+      for (const attempt of attempts.slice(1)) {
+        yield* TestClock.adjust("2 seconds");
+        yield* Deferred.await(attempt);
+      }
+      const collected = yield* Fiber.join(events);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      assert.isTrue(
+        collected.some(
+          (e) =>
+            e.type === "turn_item.updated" &&
+            e.turnItem.nativeItemRef?.nativeId === tool.id &&
+            e.turnItem.status === "failed",
+        ),
+      );
+      assert.deepEqual(
+        collected
+          .flatMap((e) =>
+            e.type === "provider_thread.updated" ? [e.providerThread.pendingBackgroundTasks] : [],
+          )
+          .at(-1),
+        [],
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("projects successful native todo updates into one checklist", () =>

@@ -198,6 +198,22 @@ describe("OpenCode2Client native image jobs", () => {
     }),
   );
 
+  it.effect("rejects remote previews above the shared image limit", () =>
+    Effect.gen(function* () {
+      const transport = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response(new Uint8Array(11 * 1024 * 1024))),
+        ),
+      );
+      const service = yield* OpenCode2Client.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, transport),
+      );
+      const api = yield* service.connect({ baseUrl: "http://remote.test", password: "secret" });
+      const result = yield* api.readImage("/work/image.png", "/work").pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+    }),
+  );
+
   it.effect("reads scoped image jobs without accepting other sessions or job kinds", () =>
     Effect.gen(function* () {
       const job = {

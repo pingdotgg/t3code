@@ -1,4 +1,5 @@
 import * as Path from "effect/Path";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import { OpenCode, type OpenCodeClient } from "@opencode/client/effect";
 import { OpenCodeEvent } from "@opencode/protocol/groups/event";
 import * as Context from "effect/Context";
@@ -55,6 +56,15 @@ export class OpenCode2ImageError extends Schema.TaggedError<OpenCode2ImageError>
   "OpenCode2ImageError",
   { cause: Schema.Defect() },
 ) {}
+
+const IMAGE_MIME: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+};
+export const imagePreviewMime = (extension: string) => IMAGE_MIME[extension.toLowerCase()];
 
 const NativeImageJob = Schema.Struct({
   kind: Schema.Literal("image"),
@@ -260,15 +270,7 @@ export const make = Effect.gen(function* () {
               ),
           readImage: Effect.fn("OpenCode2Client.readImage")(
             function* (path: string, directory: string) {
-              const mime = (
-                {
-                  ".png": "image/png",
-                  ".jpg": "image/jpeg",
-                  ".jpeg": "image/jpeg",
-                  ".webp": "image/webp",
-                  ".gif": "image/gif",
-                } as Record<string, string>
-              )[paths.extname(path).toLowerCase()];
+              const mime = imagePreviewMime(paths.extname(path));
               if (mime === undefined)
                 return yield* new OpenCode2ImageError({ cause: "Unsupported image format" });
               const relative = paths.relative(directory, path);
@@ -285,7 +287,7 @@ export const make = Effect.gen(function* () {
                 })
                 .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
               const bytes = yield* response.arrayBuffer;
-              if (bytes.byteLength > 20 * 1024 * 1024)
+              if (bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)
                 return yield* new OpenCode2ImageError({ cause: "Image exceeds preview limit" });
               return { uri: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`, mime };
             },

@@ -17,6 +17,7 @@ import {
 } from "@opencode/client/effect";
 import { Mcp } from "@opencode/schema/mcp";
 import {
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   isOrchestrationV2WorkActive,
   parseGoalCommand,
   type ChatAttachment,
@@ -311,6 +312,8 @@ interface ThreadState {
     {
       readonly turn: ActiveTurn;
       readonly toolId: string;
+      readonly tool: { readonly name: string; input: Record<string, unknown> };
+      previewed: boolean;
       readonly path: string;
       readonly model: string;
       status: "running" | "completed" | "error" | "cancelled";
@@ -1191,7 +1194,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           )
             return;
           if (!state.imageJobs.has(jobID))
-            state.imageJobs.set(jobID, { turn, toolId: id, path, model, status: "running" });
+            state.imageJobs.set(jobID, {
+              turn,
+              toolId: id,
+              tool,
+              previewed: false,
+              path,
+              model,
+              status: "running",
+            });
           status = "running";
           yield* syncRoster(state);
         }
@@ -2455,53 +2466,71 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const outcome = stringField(payload.metadata, "state");
       if (
         job === undefined ||
-        job.status !== "running" ||
         (outcome !== "completed" && outcome !== "error" && outcome !== "cancelled")
       )
         return;
-      job.status = outcome;
+      // Native job inventory exposes the stem, while a completion notice names the saved file.
+      const saved = /Saved image: (.+) \([^\n]+\)\./.exec(payload.text)?.[1];
+      const previewPath =
+        saved !== undefined && saved.startsWith(job.path + ".") ? saved : undefined;
+      if (
+        job.status !== "running" &&
+        !(
+          job.status === "completed" &&
+          outcome === "completed" &&
+          !job.previewed &&
+          previewPath !== undefined
+        )
+      )
+        return;
       const files: Array<{ uri: string; mime: string }> = [];
-      if (outcome === "completed") {
-        // The notice metadata keeps the stem; the saved path in its text has the real extension.
-        const saved = /Saved image: (.+) \([^\n]+\)\./.exec(payload.text)?.[1];
-        if (saved !== undefined && saved.startsWith(job.path + ".")) {
-          const image = yield* (
-            connection.external
-              ? connection.readImage(saved, state.directory)
-              : Effect.gen(function* () {
-                  const mime = (
-                    {
-                      ".png": "image/png",
-                      ".jpg": "image/jpeg",
-                      ".jpeg": "image/jpeg",
-                      ".webp": "image/webp",
-                      ".gif": "image/gif",
-                    } as Record<string, string>
-                  )[paths.extname(saved).toLowerCase()];
-                  const info = yield* fileSystem.stat(saved);
-                  if (mime === undefined || info.size > 20 * 1024 * 1024)
-                    return yield* new OpenCode2Client.OpenCode2ImageError({
-                      cause: "Unsupported image preview",
-                    });
-                  const bytes = yield* fileSystem.readFile(saved);
-                  return {
-                    uri: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
-                    mime,
-                  };
-                })
-          ).pipe(Effect.option);
-          if (Option.isSome(image)) files.push(image.value);
-        }
-      }
-      yield* emitTool(
-        state,
-        job.turn,
-        job.toolId,
-        outcome === "completed" ? "completed" : outcome === "error" ? "failed" : "interrupted",
-        { output: payload.text, metadata: undefined, files },
+      yield* Effect.gen(function* () {
+        if (outcome !== "completed" || previewPath === undefined) return;
+        const image = yield* (
+          connection.external
+            ? connection.readImage(previewPath, state.directory)
+            : Effect.gen(function* () {
+                const mime = OpenCode2Client.imagePreviewMime(paths.extname(previewPath));
+                const info = yield* fileSystem.stat(previewPath);
+                if (mime === undefined || info.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)
+                  return yield* new OpenCode2Client.OpenCode2ImageError({
+                    cause: "Unsupported image preview",
+                  });
+                const bytes = yield* fileSystem.readFile(previewPath);
+                if (bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)
+                  return yield* new OpenCode2Client.OpenCode2ImageError({
+                    cause: "Image exceeds preview limit",
+                  });
+                return {
+                  uri: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+                  mime,
+                };
+              })
+        ).pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.option);
+        if (Option.isSome(image)) files.push(image.value);
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            // A known outcome must still settle its tool if preview I/O is interrupted.
+            job.status = outcome;
+            job.previewed ||= files.length > 0;
+            job.turn.tools.set(job.toolId, job.tool);
+            yield* emitTool(
+              state,
+              job.turn,
+              job.toolId,
+              outcome === "completed"
+                ? "completed"
+                : outcome === "error"
+                  ? "failed"
+                  : "interrupted",
+              { output: payload.text, metadata: undefined, files },
+            );
+            job.turn.tools.delete(job.toolId);
+            yield* syncRoster(state);
+          }),
+        ),
       );
-      job.turn.tools.delete(job.toolId);
-      yield* syncRoster(state);
     });
 
     const onReport = Effect.fnUntraced(function* (
@@ -2801,8 +2830,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       for (const state of threads.values()) {
         for (const call of runningCalls(state)) yield* settleCall(call, "failed");
+        for (const [jobID, job] of state.imageJobs) {
+          if (job.status !== "running") continue;
+          yield* imageReport(state, { text: message, metadata: { jobID, state: "error" } });
+        }
         for (const wake of state.wakes.splice(0)) wake.dropped = true;
         state.reports.clear();
+        yield* syncRoster(state);
       }
       yield* setSessionStatus("error", message);
       yield* Queue.end(events);
