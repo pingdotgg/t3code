@@ -6309,19 +6309,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     // A compacted thread needs only its recent runs, plus any older run the command names.
+    const targetRunId =
+      command.dispatchMode.type === "steer_active" || command.dispatchMode.type === "restart_active"
+        ? command.dispatchMode.targetRunId
+        : undefined;
+    const keepRunIds = [
+      command.manualContinuationOfRunId,
+      command.restartContinuationOfRunId,
+      command.usageLimitContinuationOfRunId,
+      command.delegatedCompletion?.parentRunId,
+      targetRunId,
+      command.steerFollowUpOfRunId,
+    ].flatMap((runId) => (runId === undefined ? [] : [runId]));
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events, {
-      keepRunIds: [
-        command.manualContinuationOfRunId,
-        command.restartContinuationOfRunId,
-        command.usageLimitContinuationOfRunId,
-        command.delegatedCompletion?.parentRunId,
-        command.steerFollowUpOfRunId,
-        ...(command.dispatchMode.type === "steer_active" ||
-        command.dispatchMode.type === "restart_active"
-          ? [command.dispatchMode.targetRunId]
-          : []),
-      ].flatMap((runId) => (runId === undefined ? [] : [runId])),
+      keepRunIds,
     });
+    // Replacing the target's input settles the wake it carried, which needs that wake's parent run.
+    const targetWakeParentRunId = projection.messages.find(
+      (message) =>
+        message.id === projection.runs.find((run) => run.id === targetRunId)?.userMessageId,
+    )?.delegatedCompletion?.parentRunId;
+    if (
+      targetWakeParentRunId !== undefined &&
+      !projection.runs.some((run) => run.id === targetWakeParentRunId)
+    ) {
+      projection = yield* getProjectionWithPendingEvents(command.threadId, events, {
+        keepRunIds: [...keepRunIds, targetWakeParentRunId],
+      });
+    }
     if (command.steerFollowUpOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
       if (

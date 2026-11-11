@@ -802,6 +802,9 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
     const now = yield* DateTime.now;
     const nodeId = NodeId.make("node:compacted");
     const runId = (ordinal: number) => RunId.make(`run:compacted:${ordinal}`);
+    // Run 7 answers an async question, which the timeline folds into its question.
+    const messageId = (ordinal: number) =>
+      MessageId.make(ordinal === 7 ? "async-answer:compacted:7" : `message:compacted:${ordinal}`);
     const read = (keepRunIds: ReadonlyArray<RunId>) =>
       store.getThreadRecords(threadId, ["runs", "messages"], {
         messageRoles: ["user"],
@@ -835,7 +838,7 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
           providerInstanceId,
           modelSelection,
           providerThreadId: null,
-          userMessageId: MessageId.make(`message:compacted:${ordinal}`),
+          userMessageId: messageId(ordinal),
           rootNodeId: nodeId,
           activeAttemptId: null,
           status,
@@ -854,7 +857,7 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
         runId: runId(ordinal),
         occurredAt: now,
         payload: {
-          id: MessageId.make(`message:compacted:${ordinal}`),
+          id: messageId(ordinal),
           threadId,
           runId: runId(ordinal),
           nodeId,
@@ -915,15 +918,12 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
     // The window starts at run 5, the prompt before the compaction.
     const recent = yield* read([rolledBackId]);
     assert.deepEqual(ids(recent.runs), [rolledBackId, ...runIdsOf([2, 3, 5, 6, 7, 8, 9])]);
-    assert.deepEqual(
-      ids(recent.messages),
-      [2, 3, 5, 6, 7, 8, 9].map((ordinal) => `message:compacted:${ordinal}`),
-    );
+    assert.deepEqual(ids(recent.messages), [2, 3, 5, 6, 7, 8, 9].map(messageId));
     assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9]));
 
-    // Run 8 is a `/compact` run, so the model-switch baseline is the prompt before it, run 7.
+    // Runs 8 and 7 are not shown (`/compact`, async answer), so the baseline is run 5.
     yield* compact(9);
-    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 7, 8, 9]));
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9]));
 
     // The search for a prompt before the compaction may walk past an unreadable run.
     const legacyThreadId = yield* addRolledBackRecoveryCandidate("compacted-legacy");
