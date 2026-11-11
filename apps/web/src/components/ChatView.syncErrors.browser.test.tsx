@@ -16,6 +16,8 @@ import { AppRoot } from "~/AppRoot";
 import "~/components/ChatView";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { environmentThreadDetails } from "~/state/threads";
 import {
   ENVIRONMENT_ID,
   fakeDriver,
@@ -137,6 +139,11 @@ it("keeps synchronization failures separate from local errors and first-load sen
   await act(() => Deferred.doneUnsafe(firstFailure, Effect.void));
   const syncFailure = page.getByText("Could not synchronize the thread.", { exact: true });
   await expect.element(syncFailure).toBeVisible();
+  const threadState = environmentThreadDetails.stateAtom({
+    environmentId: ENVIRONMENT_ID,
+    threadId: warm.id,
+  });
+  const firstSyncFailure = appAtomRegistry.get(threadState).error;
   await page.getByTestId("composer-editor").fill("Retry the work");
   await page.getByRole("button", { name: "Submit message", exact: true }).click();
   await expect.element(page.getByTestId("composer-editor")).toHaveTextContent("Retry the work");
@@ -153,8 +160,12 @@ it("keeps synchronization failures separate from local errors and first-load sen
   document.dispatchEvent(new Event("visibilitychange"));
   await vi.waitFor(() => expect(warmSubscriptions).toBe(2));
   await act(() => Deferred.doneUnsafe(nextFailure, Effect.void));
-  await expect.element(syncFailure, { timeout: 5_000 }).toBeVisible();
-  await page.getByRole("button", { name: "Dismiss error" }).click();
+  await vi.waitFor(() => {
+    const failure = appAtomRegistry.get(threadState).error;
+    expect(failure).toMatchObject({ _tag: "Some", value: "Could not synchronize the thread." });
+    expect(failure).not.toBe(firstSyncFailure);
+  });
+  await expect.element(syncFailure).not.toBeInTheDocument();
   await expect
     .element(page.getByText("Local send failed", { exact: true }))
     .not.toBeInTheDocument();

@@ -7,11 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import type { Dispatch, SetStateAction } from "react";
 import { ProviderStatusBanner } from "./ProviderStatusBanner";
-import {
-  dismissThreadErrorBannerForSession,
-  ThreadErrorBanner,
-  type ThreadErrorBannerKey,
-} from "./ThreadErrorBanner";
+import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadErrorBanner";
 
 /**
  * The banners pinned above the timeline. The dismiss handlers are built here from plain
@@ -27,7 +23,7 @@ export function ChatBannerLane(props: {
   threadError: string | null;
   threadErrorClass: OrchestrationV2ProviderFailureClass | null;
   threadErrorCode: string | null;
-  threadErrorBannerKey: ThreadErrorBannerKey | null;
+  threadErrorBannerKey: string | null;
   threadErrorIsLocal: boolean;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   setThreadErrorBannerDismissTick: Dispatch<SetStateAction<number>>;

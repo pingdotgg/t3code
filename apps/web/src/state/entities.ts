@@ -9,8 +9,6 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import {
   EMPTY_THREAD_HISTORY_META,
-  EMPTY_ENVIRONMENT_THREAD_STATE,
-  type EnvironmentThreadState,
   type EnvironmentThreadStatus,
   type ThreadHistoryMeta,
 } from "@t3tools/client-runtime/state/threads";
@@ -29,7 +27,6 @@ import type {
 } from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { Atom } from "effect/reactivity";
-import * as Option from "effect/Option";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentPresentations } from "./presentation";
@@ -59,8 +56,8 @@ const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).p
 const EMPTY_THREAD_PROJECTION_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("web-thread-projection:empty"),
 );
-const EMPTY_THREAD_STATE_ATOM = Atom.make(EMPTY_ENVIRONMENT_THREAD_STATE).pipe(
-  Atom.withLabel("web-thread-state:empty"),
+const EMPTY_THREAD_ERROR_ATOM = Atom.make<string | null>(null).pipe(
+  Atom.withLabel("web-thread-error:empty"),
 );
 const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
   Atom.withLabel("web-thread-status:empty"),
@@ -212,14 +209,9 @@ export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadS
   );
 }
 
-// Preserve each published failure's identity so repeating messages can be dismissed independently.
-const selectThreadError = (state: EnvironmentThreadState) =>
-  Option.isSome(state.error) ? state.error : null;
-
-export function useThreadError(ref: ScopedThreadRef | null) {
+export function useThreadError(ref: ScopedThreadRef | null): string | null {
   return useAtomValue(
-    ref === null ? EMPTY_THREAD_STATE_ATOM : environmentThreadDetails.stateAtom(ref),
-    selectThreadError,
+    ref === null ? EMPTY_THREAD_ERROR_ATOM : environmentThreadDetails.errorAtom(ref),
   );
 }
 

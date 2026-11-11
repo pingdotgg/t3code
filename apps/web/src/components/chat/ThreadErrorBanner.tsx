@@ -58,29 +58,18 @@ export function shouldShowThreadErrorBanner(
 }
 
 const sessionDismissedThreadErrorBannerKeys = new Set<string>();
-const sessionDismissedThreadFailures = new WeakSet<object>();
 
-export type ThreadErrorBannerKey = string | object;
-
-export function dismissThreadErrorBannerForSession(bannerKey: ThreadErrorBannerKey | null): void {
-  if (typeof bannerKey === "string") {
-    sessionDismissedThreadErrorBannerKeys.add(bannerKey);
-  } else if (bannerKey !== null) {
-    sessionDismissedThreadFailures.add(bannerKey);
-  }
+export function dismissThreadErrorBannerForSession(bannerKey: string | null): void {
+  if (bannerKey !== null) sessionDismissedThreadErrorBannerKeys.add(bannerKey);
 }
 
-export function isThreadErrorBannerDismissedForSession(
-  bannerKey: ThreadErrorBannerKey | null,
-): boolean {
-  return typeof bannerKey === "string"
-    ? sessionDismissedThreadErrorBannerKeys.has(bannerKey)
-    : bannerKey !== null && sessionDismissedThreadFailures.has(bannerKey);
+export function isThreadErrorBannerDismissedForSession(bannerKey: string | null): boolean {
+  return bannerKey !== null && sessionDismissedThreadErrorBannerKeys.has(bannerKey);
 }
 
 export function resolveThreadErrorBanner(input: {
   readonly threadKey: string;
-  readonly detailFailure: { readonly value: string } | null;
+  readonly detailError: string | null;
   readonly localError: string | null;
   readonly runtimeError: string | null;
 }) {
@@ -90,7 +79,11 @@ export function resolveThreadErrorBanner(input: {
       message: input.localError,
       key: getThreadErrorBannerKey(input.threadKey, input.localError),
     },
-    { source: "detail", message: input.detailFailure?.value ?? null, key: input.detailFailure },
+    {
+      source: "detail",
+      message: input.detailError,
+      key: getThreadErrorBannerKey(input.threadKey, input.detailError),
+    },
     {
       source: "runtime",
       message: input.runtimeError,

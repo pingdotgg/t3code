@@ -506,8 +506,7 @@ export default function ChatView(props: ChatViewProps) {
     ? deriveReportedModelSelection(serverProjection)
     : null;
   const threadStatus = useThreadStatus(routeThreadDetailRef);
-  const threadDetailFailure = useThreadError(routeThreadDetailRef);
-  const threadDetailError = threadDetailFailure?.value ?? null;
+  const threadDetailError = useThreadError(routeThreadDetailRef);
   const threadSyncPhase = resolveThreadSyncPhase({
     detailExists: serverProjection !== null,
     detailError: threadDetailError,
@@ -928,7 +927,7 @@ export default function ChatView(props: ChatViewProps) {
     : localDraftError;
   const threadErrorBanner = resolveThreadErrorBanner({
     threadKey: routeThreadKey,
-    detailFailure: isServerThread ? threadDetailFailure : null,
+    detailError: isServerThread ? threadDetailError : null,
     localError: isServerThread ? localServerError : localDraftError,
     runtimeError: isServerThread ? (serverRuntime?.lastError ?? null) : null,
   });
