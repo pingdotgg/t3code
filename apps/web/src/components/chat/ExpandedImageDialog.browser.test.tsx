@@ -53,7 +53,9 @@ describe("ExpandedImageDialog", () => {
       await userEvent.keyboard("{Tab}");
       await userEvent.keyboard("{Enter}");
     }
-    await expect.element(page.getByRole("button", { name: "Close image preview" })).toHaveFocus();
+    await expect
+      .element(page.getByRole("button", { name: "Back, close image preview" }))
+      .toHaveFocus();
     await userEvent.keyboard("{Escape}");
     await expect.element(opener).toHaveFocus();
     expect(opener.element().matches(":focus-visible")).toBe(c.focusVisible);
