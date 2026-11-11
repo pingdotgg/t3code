@@ -22,11 +22,6 @@ const runPreferences = <A, E>(
   use: (store: MobilePreferences.MobilePreferencesStore["Service"]) => Effect.Effect<A, E>,
 ) => runtime.runPromise(MobilePreferences.MobilePreferencesStore.pipe(Effect.flatMap(use)));
 
-export const loadSavedConnections = () => runStorage((storage) => storage.loadSavedConnections);
-export const saveConnection = (
-  connection: Parameters<MobileStorage.MobileStorage["Service"]["saveConnection"]>[0],
-) => runStorage((storage) => storage.saveConnection(connection));
-
 export const loadPreferences = () => runPreferences((store) => store.load);
 export const savePreferencesPatch = (patch: Partial<MobilePreferences.Preferences>) =>
   runPreferences((store) => store.savePatch(patch));
