@@ -568,8 +568,16 @@ function isMissingGitCwdError(error: GitCommandError): boolean {
   );
 }
 
-function isNonRepositoryGitStderr(stderr: string): boolean {
-  return stderr.toLowerCase().includes("not a git repository");
+// Git 2.56+ reports a `.git` gitfile pointing nowhere as "gitfile does not point to a valid
+// repository"; older releases said "not a git repository". Both mean the cwd is not a repository.
+const NON_REPOSITORY_STDERR_PHRASES = [
+  "not a git repository",
+  "gitfile does not point to a valid repository",
+] as const;
+
+export function isNonRepositoryGitStderr(stderr: string): boolean {
+  const normalized = stderr.toLowerCase();
+  return NON_REPOSITORY_STDERR_PHRASES.some((phrase) => normalized.includes(phrase));
 }
 function isUnbornHeadStderr(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
@@ -2723,6 +2731,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { remoteName, branchName, publishes: true, upstream: null };
     }
 
+    if ((yield* readConfigValue(cwd, `branch.${branch}.remote`)) === ".") {
+      const localUpstream = yield* readCurrentUpstreamRef(cwd).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (localUpstream === null) return null;
+      // A local upstream is a base; publish under the full local name so `origin/main` never lands on remote `main`.
+      const remoteName = yield* resolvePushRemoteName(cwd, branch).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (!remoteName) return null;
+      return {
+        remoteName,
+        branchName: branch,
+        publishes: true,
+        upstream: { remoteName: ".", branchName: localUpstream, upstreamRef: localUpstream },
+      };
+    }
+
     const upstream = yield* resolveCurrentUpstream(cwd).pipe(Effect.orElseSucceed(() => null));
     if (!upstream) return null;
     // Differently named upstreams are bases, not publish targets; pushing HEAD there would write features to shared branches.
@@ -2837,7 +2863,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
 
-    if (!details.hasUpstream && !destination) {
+    if (
+      !destination &&
+      (!details.hasUpstream || (yield* readConfigValue(cwd, `branch.${branch}.remote`)) === ".")
+    ) {
       return yield* new GitCommandError({
         ...gitCommandContext({
           operation: "GitVcsDriver.pushCurrentBranch",
@@ -2861,7 +2890,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           yield* writeConfigValue({
             cwd,
             key: `branch.${branch}.t3-merge-base-ref`,
-            value: `refs/remotes/${upstream.upstreamRef}`,
+            value:
+              upstream.remoteName === "."
+                ? `refs/heads/${upstream.branchName}`
+                : `refs/remotes/${upstream.upstreamRef}`,
           });
         }
       }

@@ -7739,8 +7739,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ordinal: toolCall.ordinal,
               output: input.output,
               status:
-                toolNonExecutionKind === "cancelled"
-                  ? "cancelled"
+                toolNonExecutionKind === "cancelled" || toolNonExecutionKind === "interrupted"
+                  ? toolNonExecutionKind
                   : isClaudeToolResultError(input.toolResult)
                     ? "failed"
                     : "completed",
