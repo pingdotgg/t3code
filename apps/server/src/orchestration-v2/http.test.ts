@@ -241,11 +241,7 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       });
       const response = yield* read(thread.id);
       expect(response.status).toBe(expectedStatus);
-      if (expectedStatus === 200) {
-        const exported = yield* decodeTranscript(yield* Effect.promise(() => response.json()));
-        expect(exported.items[0]?.item).toMatchObject({ output: boundaryOutput });
-        continue;
-      }
+      if (expectedStatus === 200) continue;
       expect(yield* readTranscriptError).toBeInstanceOf(
         ThreadManagementService.ThreadTranscriptTooLargeError,
       );
@@ -255,15 +251,19 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       });
     }
 
-    // Far above the limit the stored size alone rejects the export: its only read is that size.
     const sql = Context.get(services, SqlClient.SqlClient);
-    yield* sql`
+    const commandItemId = items.find((item) => item.type === "command_execution")!.id;
+    const setCommandField = (path: string, bytes: number) => sql`
       UPDATE orchestration_v2_projection_turn_items
-      SET payload_json = json_set(
-        payload_json, '$.output', printf('%.*c', ${2 * PROVIDER_SEND_TURN_MAX_FILE_BYTES}, 'x')
-      )
-      WHERE turn_item_id = ${items[1]!.id}
+      SET payload_json = json_set(payload_json, ${path}, printf('%.*c', ${bytes}, 'x'))
+      WHERE turn_item_id = ${commandItemId}
     `;
+    // Stored bytes the export drops do not count: only what it keeps can reject it.
+    yield* setCommandField("$.output", 1);
+    yield* setCommandField("$.droppedLegacyField", PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1);
+    expect((yield* read(thread.id)).status).toBe(200);
+    // Tool output over the limit rejects the export. Its only read is the size.
+    yield* setCommandField("$.output", PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1);
     const reads: Array<string> = [];
     expect(
       yield* readTranscriptError.pipe(

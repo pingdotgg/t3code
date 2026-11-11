@@ -41,8 +41,8 @@ The v2 checks pin these invariants:
   requested.
   Explicit cross-environment transcript exports preserve full tool bodies so the destination
   agent can read the context. The export rejects timeline JSON above the file attachment limit
-  before sending it, and before reading any payload when the stored rows alone are over twice
-  that limit; the client still applies its attachment limit to the complete file.
+  before sending it, and before decoding any row when the tool output text alone is over that
+  limit; the client still applies its attachment limit to the complete file.
 - Live command output reaches a client only through `orchestration.subscribeCommandOutput`, which
   an expanded command row opens and closes with itself. Raw output deltas are never orchestration
   events: adapters send them to the

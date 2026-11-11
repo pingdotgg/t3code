@@ -472,9 +472,10 @@ export interface ProjectionStoreV2Shape {
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
-  /** Stored bytes of the turn items every transcript export includes. Reads no payload. */
+  /** Bytes of tool output a transcript export is sure to hold, or 0 when it can fit in `limit`. */
   readonly getTranscriptByteFloor: (
     threadId: ThreadId,
+    limit: number,
   ) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Child threads of the thread's app-owned tasks, in task order, without decoding the tasks. */
@@ -5759,19 +5760,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => rows[0]?.count ?? 0),
         Effect.mapError(controlReadError(threadId)),
       );
-    // Skips every row createOrchestrationV2TurnItemVisibility can hide, so the sum never counts a
-    // row the export leaves out. Rows a fork inherits are left out; they only add to the export.
-    // octet_length reads the row header, not the payload.
-    const getTranscriptByteFloor: ProjectionStoreV2Shape["getTranscriptByteFloor"] = (threadId) =>
+    // Tool output text reaches the export unchanged, so its bytes are a floor for the export. Other
+    // stored bytes are not: decoding drops fields. Rows that createOrchestrationV2TurnItemVisibility
+    // can hide and rows a fork inherits are left out. The output sum parses payloads, so it runs
+    // only when the stored rows, sized from their row headers, are over `limit`.
+    const getTranscriptByteFloor: ProjectionStoreV2Shape["getTranscriptByteFloor"] = (
+      threadId,
+      limit,
+    ) =>
       sql<{ bytes: number }>`
-        SELECT COALESCE(SUM(octet_length(payload_json)), 0) AS bytes
-        FROM orchestration_v2_projection_turn_items
-        WHERE thread_id = ${threadId}
-          AND type NOT IN ('user_message', 'run_interrupt_result')
-          AND (run_id IS NULL OR run_id NOT IN (
-            SELECT run_id FROM orchestration_v2_projection_runs
-            WHERE thread_id = ${threadId} AND status = 'rolled_back'
-          ))
+        WITH exported AS (
+          SELECT type, payload_json FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId}
+            AND type NOT IN ('user_message', 'run_interrupt_result')
+            AND (run_id IS NULL OR run_id NOT IN (
+              SELECT run_id FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId} AND status = 'rolled_back'
+            ))
+        )
+        SELECT CASE
+          WHEN (SELECT COALESCE(SUM(octet_length(payload_json)), 0) FROM exported) <= ${limit}
+            THEN 0
+          ELSE (
+            SELECT COALESCE(SUM(octet_length(json_extract(payload_json, '$.output'))), 0)
+            FROM exported
+            WHERE type IN ('command_execution', 'dynamic_tool')
+              AND json_type(payload_json, '$.output') = 'text'
+          )
+        END AS bytes
       `.pipe(
         Effect.map((rows) => rows[0]?.bytes ?? 0),
         Effect.mapError(controlReadError(threadId)),
