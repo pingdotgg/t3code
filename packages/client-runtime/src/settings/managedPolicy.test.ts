@@ -1,7 +1,7 @@
 import { ProviderDriverKind, type ManagedPolicySummary } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { managedInstanceLocks } from "./managedPolicy";
+import { managedInstanceLocks } from "./managedPolicy.js";
 
 const codex = ProviderDriverKind.make("codex");
 const claude = ProviderDriverKind.make("claudeAgent");
