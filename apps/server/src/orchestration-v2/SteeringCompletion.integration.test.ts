@@ -1520,6 +1520,42 @@ it.effect(
     ),
 );
 
+it.effect("sends a pending steer before the Stop that follows it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { steered, interrupted, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("steer-before-stop");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("waiting-steer"),
+          threadId,
+          messageId: MessageId.make("message:waiting-steer"),
+          text: "steer",
+          attachments: [],
+          dispatchMode: { type: "steer_active", targetRunId: run.id },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-after-steer"),
+          threadId,
+        });
+        yield* worker.drain();
+
+        const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        assert.deepEqual(steered, ["steer"]);
+        assert.deepEqual(interrupted, [turn.id]);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 // Codex flushes held drafts after the final answer; reserve their pre-steer position before turn end.
 it.effect("keeps a held commentary draft before the steer when turn end flushes it", () =>
   Effect.scoped(
