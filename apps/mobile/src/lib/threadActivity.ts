@@ -1161,6 +1161,10 @@ function deriveThreadFeedRunFolds(
       continue;
     }
     const terminalAssistantId = terminalAssistantMessageIdByRun.get(runId);
+    // Folded dividers lose their place in the turn, so only the latest stays visible.
+    const visibleCompactionId = group.entries.findLast(
+      (entry) => entry.type === "activity-group" && isContextCompactionActivityGroup(entry),
+    )?.id;
     const hiddenEntryIds = new Set(
       group.entries
         .filter(
@@ -1168,7 +1172,7 @@ function deriveThreadFeedRunFolds(
             entry.id !== terminalAssistantId &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
-            !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
+            entry.id !== visibleCompactionId &&
             !(
               entry.type === "activity-group" &&
               entry.activities.some(
