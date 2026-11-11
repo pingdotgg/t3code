@@ -27,6 +27,7 @@ const NativeVersion = Schema.String.check(Schema.isPattern(/^\d+\.\d+\.\d+$/));
 const update = makePackageManagedProviderMaintenanceResolver({
   provider: ProviderDriverKind.make("claudeAgent"),
   npmPackageName: "@anthropic-ai/claude-code",
+  mise: { tool: "claude" },
   nativeUpdate: {
     args: ["update"],
     isCommandPath: (commandPath) => {
