@@ -5,7 +5,6 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   type ExecutionEnvironmentCapabilities,
-  type ExecutionEnvironmentDescriptor,
   MCP_PEER_LINK_SOFTWARE_ID,
   type PeerLink,
   type PeerLinkCreateInput,
@@ -56,6 +55,20 @@ const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
  */
 const probeTimeout = (origin: string) =>
   isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
+
+/** Why a probe got no T3 Code answer: the innermost cause, which names the network error. */
+const probeFailure = (error: unknown): string => {
+  if (Predicate.isTagged(error, "TimeoutError")) return "no answer in time";
+  let current = error;
+  for (let depth = 0; depth < 6; depth++) {
+    const cause = Predicate.hasProperty(current, "cause") ? current.cause : undefined;
+    if (!Predicate.isObject(cause)) break;
+    current = cause;
+  }
+  if (Predicate.hasProperty(current, "code") && typeof current.code === "string")
+    return current.code;
+  return current instanceof Error ? current.message : String(current);
+};
 
 /** Node's TLS verification code in a failed request's cause chain, if any. */
 export const certificateErrorCode = (error: unknown) => {
@@ -242,15 +255,15 @@ const make = Effect.gen(function* () {
    * as T3 Code. A certificate this machine rejects fails instead, since
    * the peer may well be there.
    */
-  const describe = (origin: string) =>
+  const probe = (origin: string) =>
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
       Effect.timeout(probeTimeout(origin)),
-      Effect.asSome,
+      Effect.map((descriptor) => Result.succeed(descriptor)),
       Effect.catch((error) => {
         const code = certificateErrorCode(error);
         return code === undefined
-          ? Effect.succeed(Option.none<ExecutionEnvironmentDescriptor>())
+          ? Effect.succeed(Result.fail(probeFailure(error)))
           : Effect.fail(
               new PeerLinkError({
                 reason: "unreachable",
@@ -259,6 +272,8 @@ const make = Effect.gen(function* () {
             );
       }),
     );
+
+  const describe = (origin: string) => probe(origin).pipe(Effect.map(Result.getSuccess));
 
   /** Whether `url` answers as `environmentId`, counting an untrusted certificate as no. */
   const answersAs = Effect.fn("PeerLinks.answersAs")(function* (
@@ -469,14 +484,14 @@ const make = Effect.gen(function* () {
   const answeringAt = Effect.fn("PeerLinks.answeringAt")(function* (urls: ReadonlyArray<string>) {
     const origins = yield* Effect.forEach(urls, peerOrigin);
     const primary = origins[0]!;
-    const descriptor = yield* describe(primary);
-    if (Option.isNone(descriptor)) {
+    const probed = yield* probe(primary);
+    if (Result.isFailure(probed)) {
       return yield* new PeerLinkError({
         reason: "not_a_t3_environment",
-        message: `Nothing at ${primary} answered as a T3 Code environment.`,
+        message: `Nothing at ${primary} answered as a T3 Code environment (${probed.failure}).`,
       });
     }
-    return { primary, peer: descriptor.value, origins };
+    return { primary, peer: probed.success, origins };
   });
 
   const link: PeerLinks["Service"]["link"] = Effect.fn("PeerLinks.link")(function* (input) {

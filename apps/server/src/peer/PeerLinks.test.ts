@@ -688,6 +688,16 @@ it.effect("names an untrusted certificate instead of calling the peer something 
       expect(failed.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(yield* a.links.list).toEqual([]);
 
+      // Something else answering says what it answered.
+      const other = yield* serveRaw(() =>
+        Effect.succeed(HttpServerResponse.empty({ status: 404 })),
+      );
+      const notT3 = yield* a.links
+        .link({ url: other, pairingCode: "unused", access: "auto" })
+        .pipe(Effect.flip);
+      expect(notT3.reason).toBe("not_a_t3_environment");
+      expect(notT3.message).toContain("404");
+
       // A stored link tries its next address past an untrusted one.
       const b = yield* serveB(box);
       const pairing = yield* b.auth.issuePairingCredential();
