@@ -6361,6 +6361,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (message) => message.id === command.messageId,
     );
     const redispatchedSteer = redispatchedMessage !== undefined;
+    // Earlier refused steers stay ahead. Only a steer has its user_message item while queued; an
+    // ordinary queued message gets one when its run starts.
+    const steersAhead = redispatchedSteer
+      ? projection.runs.filter(
+          (run) =>
+            run.status === "queued" &&
+            projection.turnItems.some(
+              (item) => item.type === "user_message" && item.messageId === run.userMessageId,
+            ),
+        ).length
+      : 0;
     const steerRunId = redispatchedMessage?.runId ?? null;
     const stoppedSteerRun =
       steerRunId !== null && (yield* stopReachedRun(command, command.threadId, steerRunId))
@@ -6540,14 +6551,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? { queueHeld: true }
           : {}),
         queuePosition:
-          goalStopRunId !== undefined || redispatchedSteer
+          goalStopRunId !== undefined
             ? 1
-            : Math.max(
-                0,
-                ...projection.runs
-                  .filter((candidate) => candidate.status === "queued")
-                  .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
-              ) + 1,
+            : redispatchedSteer
+              ? steersAhead + 1
+              : Math.max(
+                  0,
+                  ...projection.runs
+                    .filter((candidate) => candidate.status === "queued")
+                    .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
+                ) + 1,
         requestedAt: now,
         startedAt: null,
         completedAt: null,
@@ -6705,6 +6718,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           effects,
           projection: yield* getProjectionWithPendingEvents(command.threadId, events),
           queuedRunId: runId,
+          queuePosition: run.queuePosition ?? 1,
           targetRunId: goalStopRunId,
           reason: "Stopped to apply /goal",
           now,
@@ -12333,16 +12347,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       readonly effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>;
       readonly projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">;
       readonly queuedRunId: RunId;
+      readonly queuePosition?: number;
       readonly targetRunId: RunId | undefined;
       readonly reason: string;
       readonly now: DateTime.Utc;
     }) {
       const { command, events, effects, projection, now, targetRunId } = input;
+      const ahead = (input.queuePosition ?? 1) - 1;
       const others = queuedRunsInDeliveryOrder(projection).filter(
         (run) => run.id !== input.queuedRunId && !isAutomaticCompletionRun(projection, run),
       );
       for (const [index, run] of others.entries()) {
-        const queuePosition = index + 2;
+        const queuePosition = index < ahead ? index + 1 : index + 2;
         if (run.queuePosition === queuePosition) continue;
         yield* emit(
           events,

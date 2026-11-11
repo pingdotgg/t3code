@@ -1564,18 +1564,33 @@ it.effect("queues a steer the provider can only run as its own turn behind the r
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const threadId = yield* startFirstTurn;
         const first = started[0]!;
+        const queuedId = MessageId.make("message:queued");
         const steerId = MessageId.make("message:skill");
+        const secondSteerId = MessageId.make("message:skill-2");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
-          commandId: CommandId.make("steer-skill"),
+          commandId: CommandId.make("queue-earlier"),
           threadId,
-          messageId: steerId,
-          text: "$zebra-probe",
+          messageId: queuedId,
+          text: "queued earlier",
           attachments: [],
-          dispatchMode: { type: "steer_active", targetRunId: first.runId },
+          dispatchMode: { type: "queue_after_active" },
           createdBy: "user",
           creationSource: "web",
         });
+        for (const messageId of [steerId, secondSteerId]) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`steer-${messageId}`),
+            threadId,
+            messageId,
+            text: "$zebra-probe",
+            attachments: [],
+            dispatchMode: { type: "steer_active", targetRunId: first.runId },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
         yield* worker.drain();
 
         const queued = yield* orchestrator.getThreadProjection(threadId);
@@ -1585,6 +1600,10 @@ it.effect("queues a steer the provider can only run as its own turn behind the r
         const next = queued.runs.find((run) => run.userMessageId === steerId);
         assert.equal(next?.status, "queued");
         assert.equal(queued.messages.find((message) => message.id === steerId)?.runId, next?.id);
+        assert.deepEqual(
+          queuedRunsInDeliveryOrder(queued).map((run) => run.userMessageId),
+          [steerId, secondSteerId, queuedId],
+        );
 
         const settled = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(

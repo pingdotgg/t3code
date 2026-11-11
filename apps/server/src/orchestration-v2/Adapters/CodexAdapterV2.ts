@@ -7496,7 +7496,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   client,
                   turnInput.message.text,
                   activeTurn.input.runtimePolicy.cwd,
-                ).pipe(Effect.orElseSucceed(() => false)));
+                ).pipe(
+                  // A slow skill scan must not stall the steer; it falls back to steering.
+                  Effect.timeout("2 seconds"),
+                  Effect.orElseSucceed(() => false),
+                ));
               if (requiresNewTurn) {
                 return yield* new ProviderAdapter.ProviderAdapterSteerRunError({
                   driver: CODEX_PROVIDER,
