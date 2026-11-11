@@ -15,7 +15,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import { claudeUsageWindowId } from "./claudeUsageLimits.ts";
+import { claudeUsageWindowId, OVERAGE_INCLUDED_EVENT_TYPE } from "./claudeUsageLimits.ts";
 
 const API_BASE = "https://api.anthropic.com";
 const PROGRAM = "cedar_ember";
@@ -127,6 +127,12 @@ const RESET_KINDS = {
   full: { label: "Full reset", description: "Refills your 5-hour and weekly limits." },
 } as const;
 type ResetKind = keyof typeof RESET_KINDS;
+const KIND_BUCKETS: Record<ResetKind, ReadonlyArray<string>> = {
+  session: ["five_hour"],
+  weekly: ["seven_day"],
+  fable: [OVERAGE_INCLUDED_EVENT_TYPE],
+  full: ["five_hour", "seven_day"],
+};
 
 const grantKind = (grant: typeof Grant.Type): ResetKind => {
   if (grant.gives_back_weekly) return "fable";
@@ -171,22 +177,33 @@ export function claudeResetCreditsToContract(
       const target = grants?.[0];
       if (!grants || !target) return [];
       const optionExpiresAt = expiresAt(target);
-      const clears = grants.every((grant) => grant.clears?.length)
-        ? new Set(
-            grants.flatMap((grant) =>
-              (grant.clears ?? []).flatMap((bucket) =>
-                typeof bucket === "string" ? [claudeUsageWindowId(bucket, overageIncluded)] : [],
-              ),
-            ),
-          )
-        : undefined;
+      const buckets = new Set(
+        grants.flatMap((grant) => {
+          const listed = (grant.clears ?? []).flatMap((bucket) =>
+            typeof bucket === "string" && bucket.trim() ? [bucket.trim()] : [],
+          );
+          return listed.length > 0 ? listed : KIND_BUCKETS[kind];
+        }),
+      );
+      // Claude lists the shared Session in a model-scoped reset's clears, but redeeming leaves it.
+      const modelOnly =
+        buckets.has(OVERAGE_INCLUDED_EVENT_TYPE) &&
+        [...buckets].every(
+          (bucket) => bucket === OVERAGE_INCLUDED_EVENT_TYPE || bucket === "five_hour",
+        );
+      // A model's row only counts that model's own resets, so a wider reset stays off it.
+      const cleared = [...buckets].filter(
+        (bucket) => (bucket === OVERAGE_INCLUDED_EVENT_TYPE) === modelOnly,
+      );
+      const scope = modelOnly ? overageIncluded?.trim() : undefined;
       return [
         {
           creditId: target.id,
           ...RESET_KINDS[kind],
           availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
           ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
-          ...(clears?.size ? { clearsWindowIds: [...clears] } : {}),
+          clearsWindowIds: cleared.map((bucket) => claudeUsageWindowId(bucket, overageIncluded)),
+          ...(scope ? { scope } : {}),
         },
       ];
     },
@@ -230,15 +247,12 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
-export const claudeResetCreditsCacheFile = Effect.fnUntraced(function* (
-  stateDir: string,
-  configDir: string,
-) {
-  const path = yield* Path.Path;
-  return path.join(stateDir, `claude-reset-credits-${sha256(configDir).slice(0, 16)}.json`);
-});
+export const claudeResetCreditsCacheFile = (path: Path.Path, stateDir: string, configDir: string) =>
+  path.join(stateDir, `claude-reset-credits-${sha256(configDir).slice(0, 16)}.json`);
 
-export const forgetClaudeResetCredits = Effect.fnUntraced(function* (cacheFile: string) {
+export const forgetClaudeResetCredits = Effect.fn("claudeResetCredits.forget")(function* (
+  cacheFile: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   yield* fs.remove(cacheFile, { force: true }).pipe(Effect.ignore);
 });
@@ -273,7 +287,7 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
       yield* HttpClientResponse.filterStatusOk(response),
     );
     if (cacheFile) {
-      yield* encodeCachedGrants({ at: now, key, block: body.cedar_ember }).pipe(
+      yield* encodeCachedGrants({ at: now, key, block: body.cedar_ember ?? null }).pipe(
         Effect.flatMap((json) => fs.writeFileString(cacheFile, json)),
         Effect.ignore,
       );

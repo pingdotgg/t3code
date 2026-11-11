@@ -252,7 +252,6 @@ function PoolWindowCard({
         const timeLeft = paceRemainingPercent(window, now);
         const { count: credits, scope } = resetCreditsForWindow(
           account.limits.resetCredits,
-          account.limits.windows,
           window.id,
         );
         const resetsIn = resetLabels(window, now, m)?.compact;
@@ -363,7 +362,6 @@ function PoolWindowCard({
         const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
         const { count: credits, scope } = resetCreditsForWindow(
           account.limits.resetCredits,
-          account.limits.windows,
           window.id,
         );
         const reset = resetLabels(window, now, m);

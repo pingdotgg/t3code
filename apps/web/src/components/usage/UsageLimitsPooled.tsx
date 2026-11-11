@@ -375,11 +375,7 @@ function SegmentTriggers({
   const m = useMessages();
   const resetsIn = formatResetsIn(window, now, m);
   const refillIn = formatResetsIn(window, now, m, "refill");
-  const { count: credits, scope } = resetCreditsForWindow(
-    account.limits.resetCredits,
-    account.limits.windows,
-    window.id,
-  );
+  const { count: credits, scope } = resetCreditsForWindow(account.limits.resetCredits, window.id);
   const gt = useGT();
   const segmentLabel = [
     gt("{name}: {remaining}% left", {
@@ -506,11 +502,7 @@ function LegendRow({
   const remaining = remainingPercent(window);
   const m = useMessages();
   const resetsIn = formatResetsIn(window, now, m, "refill");
-  const { count: credits, scope } = resetCreditsForWindow(
-    account.limits.resetCredits,
-    account.limits.windows,
-    window.id,
-  );
+  const { count: credits, scope } = resetCreditsForWindow(account.limits.resetCredits, window.id);
   const gt = useGT();
   return (
     <PopoverTrigger

@@ -30,8 +30,10 @@ export const ServerProviderResetCreditOption = Schema.Struct({
   description: TrimmedNonEmptyString,
   availableCount: NonNegativeInt,
   expiresAt: Schema.optional(IsoDateTime),
-  /** Usage window ids this reset clears. Absent means it clears every window. */
+  /** Usage windows this reset is counted on. Absent means every window. */
   clearsWindowIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** Set when the reset only covers one model, such as "Fable". */
+  scope: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderResetCreditOption = typeof ServerProviderResetCreditOption.Type;
 
