@@ -15,12 +15,18 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { ArrowDown, ArrowDownAZ, ArrowUp, ChevronsDownUp, ChevronsUpDown, Clock } from "lucide";
+import {
+  ArrowDownAZIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+  ClockIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
-import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -159,7 +165,11 @@ function FileSortButtons(props: {
             />
           }
         >
-          <MorphIcon className="size-3.5" icon={sortsByName ? ArrowDownAZ : Clock} />
+          {sortsByName ? (
+            <ArrowDownAZIcon className="size-3.5" />
+          ) : (
+            <ClockIcon className="size-3.5" />
+          )}
         </TooltipTrigger>
         <TooltipPopup>{keyLabel}</TooltipPopup>
       </Tooltip>
@@ -175,7 +185,11 @@ function FileSortButtons(props: {
             />
           }
         >
-          <MorphIcon className="size-3.5" icon={ascending ? ArrowUp : ArrowDown} />
+          {ascending ? (
+            <ArrowUpIcon className="size-3.5" />
+          ) : (
+            <ArrowDownIcon className="size-3.5" />
+          )}
         </TooltipTrigger>
         <TooltipPopup>{directionLabel}</TooltipPopup>
       </Tooltip>
@@ -662,10 +676,11 @@ export default function FileBrowserPanel({
                 />
               }
             >
-              <MorphIcon
-                className="size-3.5"
-                icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
-              />
+              {allDirectoriesExpanded ? (
+                <ChevronsDownUpIcon className="size-3.5" />
+              ) : (
+                <ChevronsUpDownIcon className="size-3.5" />
+              )}
             </TooltipTrigger>
             <TooltipPopup>
               {expandAll || allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
