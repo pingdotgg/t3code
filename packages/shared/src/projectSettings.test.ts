@@ -121,14 +121,18 @@ describe("resolveProjectSettings", () => {
 
   // regression: #17556 a hidden project default silently became the catalog's first model
   it.each([
-    ["hidden", ["gpt-5.6-terra", "gpt-5.6-sol"], "gpt-6.1-sol", "environment"],
-    ["visible", ["gpt-5.6-terra"], "gpt-5.6-sol", "project"],
+    ["hidden", ["gpt-5.6-terra", "gpt-5.6-sol"], [], "gpt-6.1-sol", "environment"],
+    ["visible", ["gpt-5.6-terra"], [], "gpt-5.6-sol", "project"],
+    ["custom", ["gpt-5.6-sol"], ["gpt-5.6-sol"], "gpt-5.6-sol", "project"],
   ] as const)(
     "resolves a %s project default model against the environment default",
-    (_visibility, hiddenModels, expectedModel, expectedSource) => {
+    (_visibility, hiddenModels, customModels, expectedModel, expectedSource) => {
       const codex = ProviderInstanceId.make("codex");
       const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
         defaultModelSelection: createModelSelection(codex, "gpt-6.1-sol"),
+        providerInstances: {
+          [codex]: { driver: ProviderDriverKind.make("codex"), config: { customModels } },
+        },
         providerModelPreferences: { [codex]: { hiddenModels, modelOrder: [] } },
         projectSettingsOverrides: {
           [projectId]: { defaultModelSelection: createModelSelection(codex, "gpt-5.6-sol") },
