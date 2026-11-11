@@ -11572,7 +11572,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return next;
             });
             if (!(yield* Deferred.isDone(existing.closed))) {
-              yield* existing.query.interrupt.pipe(Effect.timeoutOption("10 seconds"));
+              yield* existing.query.interrupt.pipe(
+                Effect.timeoutOption("10 seconds"),
+                // Teardown can close the CLI between the check and the write.
+                Effect.catch((error) =>
+                  Deferred.isDone(existing.closed).pipe(
+                    Effect.flatMap((closed) => (closed ? Effect.void : Effect.fail(error))),
+                  ),
+                ),
+              );
               yield* existing.query.close.pipe(Effect.ignore);
             }
             const closed = yield* Deferred.await(existing.closed).pipe(
@@ -11769,9 +11777,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const closeSession = Effect.fnUntraced(function* () {
           const existing = yield* Ref.get(queryContext);
           if (existing !== null) {
-            yield* existing.query.close.pipe(Effect.ignore);
-            // The scope interrupts the stream fiber first, so it may never mark its query closed.
+            // Marked first so a concurrent Stop skips or tolerates writes to the closing CLI;
+            // the scope interrupts the stream fiber, so it may never mark its query closed.
             yield* Deferred.succeed(existing.closed, undefined);
+            yield* existing.query.close.pipe(Effect.ignore);
           }
           yield* Effect.yieldNow;
           yield* queryRunner.assertComplete.pipe(

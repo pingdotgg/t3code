@@ -10789,7 +10789,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("Stop after the session scope closed its query does not write to the closed CLI", () =>
+  it.effect.each([
+    { teardown: "before Stop" as const },
+    { teardown: "during Stop's interrupt write" as const },
+  ])("Stop with session teardown $teardown does not fail on the closed CLI", ({ teardown }) =>
     Effect.gen(function* () {
       const sessionScope = yield* Scope.make();
       let queryClosed = false;
@@ -10799,14 +10802,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             queryClosed = true;
           }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
         interrupt: Effect.suspend(() =>
-          queryClosed
-            ? Effect.fail(
-                new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                  method: "interrupt",
-                  cause: new Error("ProcessTransport is not ready for writing"),
-                }),
-              )
-            : Effect.void,
+          teardown === "before Stop" ? Effect.void : Scope.close(sessionScope, Exit.void),
+        ).pipe(
+          Effect.andThen(
+            Effect.suspend(() =>
+              queryClosed
+                ? Effect.fail(
+                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "interrupt",
+                      cause: new Error("ProcessTransport is not ready for writing"),
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
         ),
       }).pipe(Scope.provide(sessionScope));
       const now = yield* DateTime.now;
@@ -10823,8 +10832,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       // A workspace handoff detaches the session, closing its scope while the turn streams.
-      yield* Scope.close(sessionScope, Exit.void);
-      assert.isTrue(queryClosed);
+      if (teardown === "before Stop") {
+        yield* Scope.close(sessionScope, Exit.void);
+        assert.isTrue(queryClosed);
+      }
 
       const interrupted = yield* Effect.exit(
         harness.runtime.interruptTurn({
@@ -10838,6 +10849,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
 
       assert.isTrue(Exit.isSuccess(interrupted), String(interrupted));
+      assert.isTrue(queryClosed);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
