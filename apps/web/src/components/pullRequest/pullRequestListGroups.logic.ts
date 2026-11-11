@@ -7,6 +7,7 @@ import type {
 import type { PullRequestTabStatusSeed } from "~/components/RightPanelTabs";
 import { pullRequestSurfaceId } from "~/rightPanelStore";
 import {
+  comparePullRequestsByRecency,
   filterPullRequestsByInvolvement,
   groupPullRequestsByInvolvement,
   matchesPullRequestFilters,
@@ -71,9 +72,7 @@ export function pullRequestGroups({
   const entries = (() => {
     const narrowedEntries = narrowRows(known);
     if (text.length === 0) {
-      return narrowedEntries.toSorted((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt),
-      );
+      return narrowedEntries.toSorted(comparePullRequestsByRecency);
     }
     // Host text searches cover fields absent from rows, so do not narrow their matches locally.
     // Filter text locally while results are pending or when the host has no text search.

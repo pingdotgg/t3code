@@ -1,11 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": [
-    "alchemy.run.ts",
-    "src/**/*.ts",
-    "scripts/**/*.ts",
-    "test/**/*.ts"
-  ],
+  "include": ["alchemy.run.ts", "src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"],
   "compilerOptions": {
     "noEmit": true,
     "rootDir": ".",
@@ -18,6 +13,9 @@
   "references": [
     {
       "path": "../../packages/alchemy/tsconfig.json"
-    }
+    },
+    { "path": "../../packages/cloudflare/tsconfig.json" },
+    { "path": "../../packages/planetscale/tsconfig.json" },
+    { "path": "../../packages/drizzle/tsconfig.json" }
   ]
 }

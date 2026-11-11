@@ -5,11 +5,7 @@ import { useState } from "react";
 export function Counter() {
   const [count, setCount] = useState(0);
   return (
-    <button
-      data-testid="counter"
-      onClick={() => setCount((value) => value + 1)}
-      type="button"
-    >
+    <button data-testid="counter" onClick={() => setCount((value) => value + 1)} type="button">
       count: {count}
     </button>
   );
