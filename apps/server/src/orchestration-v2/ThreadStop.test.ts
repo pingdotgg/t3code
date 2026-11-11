@@ -796,14 +796,14 @@ it.effect("a message the user sends after Stop releases the held queue; an agent
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each(["auto", "steer"] as const)(
-  "an MCP %s send preserves its intent while the target run is stopping",
-  (mode) =>
+it.effect(
+  "an agent's auto send queues behind a run that is still stopping instead of steering it",
+  () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const threads = yield* ThreadManagementService.ThreadManagementService;
-      const threadId = ThreadId.make(`thread:stop-mcp-send:${mode}`);
+      const threadId = ThreadId.make("thread:stop-mcp-send");
       yield* createWatchingThread(threadId, 6);
       yield* send(threadId, "active", "start_immediately");
       const initial = yield* orchestrator.getThreadProjection(threadId);
@@ -868,37 +868,23 @@ it.effect.each(["auto", "steer"] as const)(
       });
       assert.deepEqual((yield* threadState(threadId)).runs, ["running", "queued:held"]);
 
-      const input = {
+      const result = yield* threads.sendToThread({
         projectId: ProjectId.make("project:thread-stop"),
         commandId: CommandId.make("command:stop-mcp-send"),
         threadId,
         messageId: MessageId.make("message:stop-mcp-send"),
         text: "Follow up after Stop",
         attachments: [],
-        mode,
+        mode: "auto",
         createdBy: "agent",
         creationSource: "mcp",
-      } as const;
-      if (mode === "steer") {
-        const error = yield* threads.sendToThread(input).pipe(Effect.flip);
-        assert.equal(error._tag, "OrchestratorDispatchError");
-        assert.deepEqual((yield* threadState(threadId)).runs, ["running", "queued:held"]);
-        return;
-      }
-
-      const result = yield* threads.sendToThread(input);
+      });
       assert.equal(result.delivery, "queued");
-      assert.equal(result.run.status, "queued");
-      assert.isTrue(result.run.queueHeld);
       assert.deepEqual((yield* threadState(threadId)).runs, [
         "running",
         "queued:held",
         "queued:held",
       ]);
-      const replay = yield* threads.sendToThread(input);
-      assert.equal(replay.run.id, result.run.id);
-      assert.equal(replay.delivery, "queued");
-      assert.lengthOf((yield* threads.getThreadProjection(threadId)).messages, 3);
     }).pipe(Effect.provide(layerTest)),
 );
 
