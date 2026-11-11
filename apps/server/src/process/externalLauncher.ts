@@ -51,6 +51,8 @@ interface EditorLaunch {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly detached?: boolean;
+  /** Process cwd when args alone would not root the editor (Neovide <0.16 lacks `--chdir`). */
+  readonly cwd?: string;
 }
 
 interface ProcessLaunch {
@@ -139,7 +141,6 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 function resolveCommandEditorArgs(
   editor: Exclude<(typeof EDITORS)[number], { launchStyle: "terminal" }>,
   target: string,
-  isDirectory: boolean,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
 
@@ -164,8 +165,8 @@ function resolveCommandEditorArgs(
       });
     case "neovim":
       return Option.match(parsedTarget, {
-        // Neovim keeps the launcher's cwd when opening a folder, which misroots project search.
-        onNone: () => (isDirectory ? ["--chdir", target, target] : [target]),
+        // Folder opens set EditorLaunch.cwd; --chdir would break Neovide before 0.16.
+        onNone: () => [target],
         onSome: ({ path, line, column }) => [
           path,
           "--",
@@ -515,7 +516,8 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory)],
+      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
+      ...(isDirectory ? { cwd: input.cwd } : {}),
     };
   }
 
@@ -809,6 +811,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
+        ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}),
       },
     },
     (cause) =>

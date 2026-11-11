@@ -681,7 +681,7 @@ it.effect.skipIf(windowsHost)("neovide roots folders and positions files", () =>
     yield* fs.writeFileString(executable, "#!/bin/sh\n");
     yield* fs.chmod(executable, 0o755);
 
-    const argsFor = (cwd: string) =>
+    const spawnFor = (cwd: string) =>
       Effect.gen(function* () {
         let spawned: ChildProcess.StandardCommand | undefined;
         yield* Effect.gen(function* () {
@@ -698,12 +698,20 @@ it.effect.skipIf(windowsHost)("neovide roots folders and positions files", () =>
             }),
           ),
         );
-        return spawned?.args;
+        return spawned;
       });
 
-    assert.deepEqual(yield* argsFor(binDir), ["--chdir", binDir, binDir]);
-    assert.deepEqual(yield* argsFor(executable), [executable]);
-    assert.deepEqual(yield* argsFor(`${executable}:12`), [executable, "--", "+call cursor(12,1)"]);
+    const folderSpawn = yield* spawnFor(binDir);
+    assert.deepEqual(folderSpawn?.args, [binDir]);
+    assert.equal(folderSpawn?.options.cwd, binDir);
+    const fileSpawn = yield* spawnFor(executable);
+    assert.deepEqual(fileSpawn?.args, [executable]);
+    assert.equal(fileSpawn?.options.cwd, undefined);
+    assert.deepEqual((yield* spawnFor(`${executable}:12`))?.args, [
+      executable,
+      "--",
+      "+call cursor(12,1)",
+    ]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
