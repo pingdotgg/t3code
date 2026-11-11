@@ -278,15 +278,6 @@ import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 
-// Root actions listed under Settings, after Actions.
-const SETTINGS_ACTION_VALUES: ReadonlySet<string> = new Set([
-  "action:change-theme",
-  "action:change-appearance",
-  "action:theme-editor",
-  "action:settings",
-  "action:project-settings",
-]);
-
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
 const NEW_THREAD_IN_GROUP = "projects";
@@ -1874,11 +1865,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  const rootGroups = buildRootGroups({
-    actionItems: actionItems.filter((item) => !SETTINGS_ACTION_VALUES.has(item.value)),
-    recentThreadItems,
-    settingsItems: actionItems.filter((item) => SETTINGS_ACTION_VALUES.has(item.value)),
-  });
+  const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   // Settings use the same matcher as threads, including word starts and typo tolerance.
   const settingsSearchItems: CommandPaletteActionItem[] = settingsForThisPlatform(
     availableSettingsSearchItems,
