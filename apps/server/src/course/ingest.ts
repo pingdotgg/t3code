@@ -651,6 +651,7 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
         let current = onOcw(initial);
         const hops: { url: string; status: number | null; ips: string[] }[] = [];
         let finalResponse: Response | undefined;
+        let body: Buffer | undefined;
         try {
           for (let count = 0; count <= 5; count += 1) {
             const ips = await NodeDnsPromises.lookup(current.hostname, { all: true })
@@ -664,7 +665,8 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
             auditHops.push(hops.at(-1)!);
             if (![301, 302, 303, 307, 308].includes(response.status)) {
               finalResponse = response;
-              return { response, hops, url: current };
+              body = Buffer.from(await response.arrayBuffer());
+              return { response, html: body.toString("utf8"), hops, url: current };
             }
             const location = response.headers.get("location");
             await response.body?.cancel();
@@ -679,6 +681,7 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
               hops,
               status: finalResponse?.status ?? hops.at(-1)?.status ?? null,
               contentType: finalResponse?.headers.get("content-type") ?? null,
+              ...(body ? { bytes: body.byteLength, body } : {}),
             });
         }
       };
@@ -691,9 +694,8 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
       const page = new URL(parsed.origin);
       page.pathname = `${parsed.pathname.replace(/\/$/, "")}/download/`;
       const fetched = await fetchPage(page);
-      const response = fetched.response;
+      const { response, html } = fetched;
       if (!response.ok) throw new Error(`OCW download page returned HTTP ${response.status}.`);
-      const html = await response.text();
       const match = html.match(/href=["']([^"']+\.zip(?:\?[^"']*)?)["']/i);
       if (!match) throw new Error("The OCW download page did not contain a course zip.");
       return onOcw(new URL(match[1]!, page)).toString();

@@ -138,6 +138,7 @@ const handlers = {
       const ingested = yield* ingestCourse(source, {
         ytDlp: settings.courseYtDlp,
         workDir: path.join(config.stateDir, "courses", ".tmp"),
+        // The course id comes from the downloaded course, so ingest lines name the lesson only.
         audit: { stateDir: config.stateDir, threadId: thread.threadId, courseId: null },
       }).pipe(Effect.mapError(fail));
       return yield* service

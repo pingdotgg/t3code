@@ -48,8 +48,10 @@ describe("course download audit", () => {
       await NodeFSP.mkdir(auditDir);
       await NodeFSP.writeFile(NodePath.join(auditDir, "downloads-2020-01.jsonl"), "old\n");
       await auditDownload({ stateDir: dir }, { url: "https://example.com/ok" });
-      assert.deepStrictEqual(await NodeFSP.readdir(auditDir), ["downloads-2026-11.jsonl"]);
-      const current = NodePath.join(auditDir, "downloads-2026-11.jsonl");
+      const [currentName] = await NodeFSP.readdir(auditDir);
+      assert.match(currentName!, /^downloads-\d{4}-\d{2}\.jsonl$/);
+      assert.notStrictEqual(currentName, "downloads-2020-01.jsonl");
+      const current = NodePath.join(auditDir, currentName!);
       await NodeFSP.truncate(current, 100 * 1024 * 1024 + 1);
       await NodeFSP.utimes(current, 0, 0);
       await auditDownload({ stateDir: dir }, { url: "https://example.com/capped" });
