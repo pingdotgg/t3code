@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const OPEN_LIMIT = 8;
+const OPEN_LIMIT = 3;
 const CONFLICT_WINDOW_MS = 7 * DAY_MS;
 const CLOSING_WINDOW_MS = 72 * 60 * 60 * 1000;
 // A first run meets the whole backlog; cap it so one run cannot post hundreds of comments.

@@ -151,7 +151,7 @@ a PR labeled `triage:keep-open`. They do not assess eligibility. They and the cl
 enforced only while the repository variable `PR_LIMITS_ENFORCE` is `true`; until then triage closes
 PRs directly.
 
-A contributor who is not vouched can have 8 open PRs. A further PR is closed when it is opened. Get
+A contributor who is not vouched can have 3 open PRs. A further PR is closed when it is opened. Get
 one of the open PRs merged or closed, then open it again. A maintainer who reopens a PR overrides the
 limit for that PR.
 
