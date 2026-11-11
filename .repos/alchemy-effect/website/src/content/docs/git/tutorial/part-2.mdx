@@ -3,7 +3,7 @@ title: "Part 2: Control access"
 description: Protect the existing Git host with one shared credential, then verify both accepted and rejected requests.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 The host from [Part 1](/git/tutorial/part-1) accepts requests from anyone.
 Add a single shared credential so only people who have it can use the host.
@@ -122,20 +122,7 @@ for the tutorial. Anyone with this credential has full access to the host.
 
 ## Deploy the access policy
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npx alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn alchemy deploy`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 Copy the printed credential:
 
