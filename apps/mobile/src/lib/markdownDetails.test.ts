@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { splitMarkdownDetails } from "./markdownDetails";
+import { markdownReferenceDefinitions, withReferenceDefinitions } from "./markdownDocument";
 
 describe("splitMarkdownDetails", () => {
   // regression: #28059 mobile chat showed every <details> fold open
@@ -76,5 +77,43 @@ describe("splitMarkdownDetails", () => {
     expect(
       splitMarkdownDetails('<details title="is open">\n<summary>Plan</summary>\n</details>'),
     ).toMatchObject([{ kind: "details", open: false }]);
+  });
+
+  it("gives each fragment the reference definitions it mentions, as written", () => {
+    const markdown =
+      "See [config][c] and [Docs][a\\]b].\n\n<details>\n<summary>A</summary>\n\n![B][a\\]b]\n\n</details>\n\nUnrelated.\n\n[c]: C:\\work\\settings.json\n> [a\\]b]: https://example.com/a";
+    const definitions = markdownReferenceDefinitions(markdown);
+    const [before, fold, after] = splitMarkdownDetails(markdown);
+    expect(
+      before?.kind === "markdown" && withReferenceDefinitions(before.markdown, definitions),
+    ).toBe(
+      "[c]: C:\\work\\settings.json\n[a\\]b]: https://example.com/a\n\nSee [config][c] and [Docs][a\\]b].\n\n",
+    );
+    expect(fold?.kind === "details" && withReferenceDefinitions(fold.body, definitions)).toBe(
+      "[a\\]b]: https://example.com/a\n\n\n\n![B][a\\]b]\n\n",
+    );
+    // The fragment holding the definitions mentions them and keeps them unduplicated.
+    expect(
+      after?.kind === "markdown" && withReferenceDefinitions(after.markdown, definitions),
+    ).toBe("\n\nUnrelated.\n\n[c]: C:\\work\\settings.json\n> [a\\]b]: https://example.com/a");
+  });
+
+  it("finds definitions that wrap, sit in quotes, or hide in a compact HTML block", () => {
+    for (const [markdown, definition] of [
+      [
+        'See [d].\n\n<details><summary>A</summary>a</details>\n\n> [d]:\n> https://example.com\n> "Title"',
+        '[d]: https://example.com "Title"',
+      ],
+      [
+        "See [the\n  doc].\n\n<details><summary>A</summary>a</details>\n[The Doc]: https://example.com",
+        "[The Doc]: https://example.com",
+      ],
+    ] as const) {
+      const [before] = splitMarkdownDetails(markdown);
+      const text = before?.kind === "markdown" ? before.markdown : "";
+      expect(withReferenceDefinitions(text, markdownReferenceDefinitions(markdown))).toBe(
+        `${definition}\n\n${text}`,
+      );
+    }
   });
 });

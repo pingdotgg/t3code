@@ -150,6 +150,11 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { splitMarkdownDetails } from "../../lib/markdownDetails";
+import {
+  markdownReferenceDefinitions,
+  withReferenceDefinitions,
+  type MarkdownReferenceDefinition,
+} from "../../lib/markdownDocument";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   SelectableMarkdownText,
@@ -1143,6 +1148,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   const models = useModelMentions(props.environmentId, props.markdown);
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
+  const definitions = useMemo(() => markdownReferenceDefinitions(liveMarkdown), [liveMarkdown]);
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
     linkCustomization: (href) =>
@@ -1152,6 +1158,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   return (
     <AssistantMarkdownBlocks
       markdown={liveMarkdown}
+      definitions={definitions}
       markdownStyles={props.markdownStyles}
       linkHandlers={linkHandlers}
       onUseArtifactTemplate={props.onUseArtifactTemplate}
@@ -1165,6 +1172,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
 // Folds split first, so an artifact card inside a fold stays inside it.
 function AssistantMarkdownBlocks(props: {
   readonly markdown: string;
+  readonly definitions: ReadonlyArray<MarkdownReferenceDefinition>;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -1208,7 +1216,9 @@ function AssistantMarkdownBlocks(props: {
       return (
         <SelectableMarkdownText
           key={`markdown:${offset}`}
-          markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
+          markdown={renderCodexInlineDirectivesAsMarkdown(
+            withReferenceDefinitions(segment.markdown, props.definitions),
+          )}
           skills={props.skills}
           models={props.models}
           textStyle={props.markdownStyles.nativeTextStyle}
