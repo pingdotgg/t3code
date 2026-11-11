@@ -9399,6 +9399,34 @@ it.layer(layerTest)("queued edit holds", (it) => {
     }),
   );
 
+  it.effect("saving an edit after a send does not re-hold a released failure pause", () =>
+    Effect.gen(function* () {
+      const q = yield* editableQueue("send-after-failure");
+      yield* q.orchestrator.dispatch(q.begin);
+      yield* endQueueActiveRun(q.active, "provider_error");
+      yield* q.orchestrator.resumeQueuedRuns;
+      yield* TestClock.adjust("1 second");
+      yield* q.orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${q.threadId}:new-message`),
+        threadId: q.threadId,
+        messageId: MessageId.make(`${q.threadId}:new-message`),
+        text: "Send after failure",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* q.orchestrator.dispatch(q.finish("save"));
+      const after = yield* q.orchestrator.getThreadProjection(q.threadId);
+      assert.deepEqual(
+        after.runs.slice(1).map((run) => run.status),
+        ["starting", "queued", "queued"],
+      );
+    }),
+  );
+
   it.effect("lets an explicit Resume release a missing-worktree pause", () =>
     Effect.gen(function* () {
       const q = yield* editableQueue("resume-missing-worktree", null);

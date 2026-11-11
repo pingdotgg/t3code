@@ -1936,6 +1936,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const worktreeMissing =
         failedRun?.workspacePreparation?.type === "worktree" &&
         projection.thread.worktreePath === null;
+      // A client message sent after the failure already released its pause.
+      const failedAt = failedRun?.completedAt ?? null;
+      const sentByUserAfterFailure =
+        failedAt !== null &&
+        projection.messages.some(
+          (message) =>
+            message.createdBy === "user" &&
+            (message.creationSource === "web" || message.creationSource === "mobile") &&
+            message.scheduledTaskId === undefined &&
+            DateTime.isGreaterThan(message.createdAt, failedAt),
+        );
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
       const projectOverride =
         settings.projectSettingsOverrides[projection.thread.projectId]?.providerInstances?.[
@@ -1955,6 +1966,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (worktreeMissing && options?.userResumed !== true) ||
         instanceDisabledForProject ||
         (options?.userResumed !== true &&
+          !sentByUserAfterFailure &&
           failureClass !== undefined &&
           failureClass !== "validation_error" &&
           failedRun?.providerInstanceId === queuedRun.providerInstanceId)
