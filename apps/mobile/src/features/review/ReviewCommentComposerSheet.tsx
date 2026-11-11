@@ -2,14 +2,14 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo, useState } from "react";
-import { Platform, Pressable, ScrollView, View, useWindowDimensions } from "react-native";
+import { Platform, ScrollView, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Dialog from "../../components/ui/Dialog";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
-import { SymbolView } from "../../components/ui/AppSymbol";
+import { SheetHeader } from "../../components/ui/SheetHeader";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
@@ -131,32 +131,15 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
 
   return (
     <View className="flex-1 bg-sheet">
+      <SheetHeader title="Add Comment" onClose={dismissComposer} />
       <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
         <View
           className="flex-1 px-5"
           style={{
-            paddingTop: isAndroid ? insets.top + 8 : 8,
+            paddingTop: 8,
             paddingBottom: target ? (isAndroid ? 72 : 0) : Math.max(insets.bottom, 18),
           }}
         >
-          <View className="flex-row items-center justify-between py-2">
-            <Pressable
-              className="bg-subtle h-12 w-12 items-center justify-center rounded-full"
-              onPress={dismissComposer}
-            >
-              <SymbolView
-                name="xmark"
-                size={18}
-                tintColorClassName={"accent-icon"}
-                type="monochrome"
-              />
-            </Pressable>
-
-            <Text className="text-lg font-t3-bold text-foreground">Add Comment</Text>
-
-            <View className="h-12 w-12" />
-          </View>
-
           {!target ? (
             <View className="rounded-[22px] border border-border bg-card px-4 py-5">
               <Text className="text-base font-t3-bold text-foreground">No selection</Text>

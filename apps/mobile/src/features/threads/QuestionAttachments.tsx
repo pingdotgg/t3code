@@ -7,15 +7,15 @@ import { useNativePaste } from "../../lib/useNativePaste";
 import { convertPastedImagesToAttachments } from "../../lib/composerImages";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type UserInputQuestion } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { View } from "react-native";
+import { View, type TextInputInstance } from "react-native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useNavigation } from "@react-navigation/native";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
-import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { useServerConfigs } from "../../state/entities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -64,6 +64,18 @@ export function QuestionAttachments(props: {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases keyboard ownership on unmount, since an unmounted native input never emits blur
   useEffect(() => () => releaseFocus(), []);
+  // A controlled value makes Fabric rebuild the native text on every keystroke, which discards
+  // iOS's pending autocorrection. The input owns its text; the only outside write is an option
+  // selection clearing the draft.
+  const inputRef = useRef<TextInputInstance>(null);
+  const [initialText] = useState(props.value);
+  const nativeText = useRef(props.value);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes an option selection's cleared draft into the uncontrolled native input
+  useEffect(() => {
+    if (props.value !== "" || nativeText.current === "") return;
+    nativeText.current = "";
+    inputRef.current?.clear();
+  }, [props.value]);
   const append = (
     key: string,
     attachments: Parameters<typeof appendComposerDraftAttachments>[1],
@@ -198,11 +210,15 @@ export function QuestionAttachments(props: {
       <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
       <TextInputWrapper onPaste={paste}>
         <TextInput
-          value={props.value}
+          ref={inputRef}
+          defaultValue={initialText}
           multiline={props.question.initialAnswer !== undefined}
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
-          onChangeText={props.onChangeText}
+          onChangeText={(text) => {
+            nativeText.current = text;
+            props.onChangeText(text);
+          }}
           onFocus={() => {
             focusedRef.current = true;
             onInputFocusChange?.(true);

@@ -127,10 +127,8 @@ export async function persistComposerAttachmentFile(
   const { Directory, File, FileMode, Paths } = await import("expo-file-system");
   const directory = new Directory(Paths.document, COMPOSER_ATTACHMENT_DIRECTORY);
   directory.create({ idempotent: true, intermediates: true });
-  const safeName =
-    Array.from(name, (character) =>
-      character === "/" || character === "\\" || character.charCodeAt(0) < 32 ? "-" : character,
-    ).join("") || "file";
+  // Android's java.net.URI rejects characters expo-file-system leaves unencoded, such as `[` and `]`.
+  const safeName = name.replace(/[^\w. -]/g, "-") || "file";
   const destination = new File(directory, `${uuidv4()}-${safeName}`);
   const source = new File(uri);
   const sourceSize = source.size;
@@ -501,7 +499,13 @@ export async function pickComposerMedia(input: {
           previewUri: fitted?.uri ?? asset.uri,
         };
       } else {
-        image = await renderComposerJpeg(asset.uri, name);
+        const rendered = await renderPhoto(asset.uri);
+        image = {
+          base64: rendered.base64,
+          mimeType: "image/jpeg",
+          name: /\.jpe?g$/i.test(name) ? name : `${name.replace(/\.[^.]+$/, "")}.jpg`,
+          previewUri: rendered.uri,
+        };
       }
     } catch {
       error = `Failed to read '${name}'.`;
@@ -528,16 +532,6 @@ export async function pickComposerMedia(input: {
   return {
     attachments,
     error,
-  };
-}
-
-async function renderComposerJpeg(uri: string, name: string) {
-  const rendered = await renderPhoto(uri);
-  return {
-    base64: rendered.base64,
-    mimeType: "image/jpeg",
-    name: /\.jpe?g$/i.test(name) ? name : `${name.replace(/\.[^.]+$/, "")}.jpg`,
-    previewUri: rendered.uri,
   };
 }
 
@@ -588,28 +582,36 @@ export async function convertPastedImagesToAttachments(input: {
   let error: string | null = null;
 
   for (const [index, uri] of input.uris.entries()) {
-    const ownedTemporaryFile = isOwnedPastedImageUri(uri);
-    const renders: string[] = [];
-    let keptRender: string | null = null;
+    const temporaryUris = isOwnedPastedImageUri(uri) ? [uri] : [];
     try {
       if (index >= Math.max(0, remainingSlots)) {
         continue;
       }
-      const mimeType = mimeTypeFromUri(uri);
-      const pastedBase64 = await new File(uri).base64();
-      const fitted = await fitComposerImage({ uri, mimeType, base64: pastedBase64 });
-      if (fitted) renders.push(fitted.uri);
-      let image = {
-        base64: fitted?.base64 ?? pastedBase64,
-        mimeType,
-        name: `pasted-image.${mimeType.split("/")[1] ?? "png"}`,
-        previewUri: fitted?.uri ?? uri,
-      };
-      if (estimateBase64ByteSize(image.base64) > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-        image = await renderComposerJpeg(uri, image.name);
-        renders.push(image.previewUri);
+      const file = new File(uri);
+      const reportedMimeType = file.type;
+      const sourceMimeType = reportedMimeType?.startsWith("image/")
+        ? reportedMimeType
+        : mimeTypeFromUri(uri);
+      let mimeType = isProviderSendTurnSupportedImageMimeType(sourceMimeType)
+        ? sourceMimeType
+        : "image/jpeg";
+      const rendered = mimeType === sourceMimeType ? null : await renderPhoto(uri);
+      const pastedBase64 = rendered?.base64 ?? (await file.base64());
+      const fitted = rendered ?? (await fitComposerImage({ uri, mimeType, base64: pastedBase64 }));
+      if (fitted !== null) {
+        temporaryUris.push(fitted.uri);
       }
-      const sizeBytes = estimateBase64ByteSize(image.base64);
+      let base64 = fitted?.base64 ?? pastedBase64;
+      if (
+        rendered === null &&
+        estimateBase64ByteSize(base64) > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+      ) {
+        const jpeg = await renderPhoto(uri);
+        temporaryUris.push(jpeg.uri);
+        mimeType = "image/jpeg";
+        base64 = jpeg.base64;
+      }
+      const sizeBytes = estimateBase64ByteSize(base64);
       if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
         error =
           sizeBytes > 0
@@ -617,30 +619,28 @@ export async function convertPastedImagesToAttachments(input: {
             : "Could not read a pasted image.";
         continue;
       }
-      const dataUrl = `data:${image.mimeType};base64,${image.base64}`;
-      if (!ownedTemporaryFile) keptRender = image.previewUri;
+      const dataUrl = `data:${mimeType};base64,${base64}`;
       attachments.push({
         id: uuidv4(),
         type: "image",
-        name: image.name,
-        mimeType: image.mimeType,
+        name: `pasted-image.${mimeType.split("/")[1] ?? "png"}`,
+        mimeType,
         sizeBytes,
         dataUrl,
-        previewUri: ownedTemporaryFile ? dataUrl : image.previewUri,
+        previewUri: dataUrl,
       });
     } catch (cause) {
       console.warn("Failed to read pasted image", uri, cause);
       error = "Could not read a pasted image.";
     } finally {
-      for (const discarded of [...(ownedTemporaryFile ? [uri] : []), ...renders]) {
-        if (discarded === keptRender) continue;
+      for (const temporaryUri of temporaryUris) {
         try {
-          const file = new File(discarded);
+          const file = new File(temporaryUri);
           if (file.exists) {
             file.delete();
           }
         } catch (error) {
-          console.warn("Failed to remove temporary pasted image", discarded, error);
+          console.warn("Failed to remove temporary pasted image", temporaryUri, error);
         }
       }
     }
