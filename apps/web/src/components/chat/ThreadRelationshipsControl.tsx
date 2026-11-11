@@ -109,6 +109,8 @@ import {
 // stay bounded inside the card and popup.
 const THREAD_LINEAGE_INITIAL_COUNT = 6;
 const THREAD_LINEAGE_PAGE_COUNT = 12;
+// Two lines fill the 40px row; the multiline variant's padding on top would space the rows apart.
+const THREAD_LINEAGE_ROW_CLASS = "h-auto min-h-10 flex-1 sm:h-auto sm:min-h-10";
 
 function resolveThreadLineageWindow<Row>(
   rows: ReadonlyArray<Row>,
@@ -328,8 +330,7 @@ function RemoteSubagentRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              multiline
-              className="min-h-10 sm:min-h-10"
+              className={THREAD_LINEAGE_ROW_CLASS}
               aria-disabled={environment === null || undefined}
               render={props.inMenu ? <MenuItem /> : undefined}
               onClick={() => {
@@ -1021,8 +1022,7 @@ export function ThreadRelationshipsPanel(props: {
               size="sm"
               variant="ghost"
               part="row"
-              multiline
-              className={cn("min-h-10 sm:min-h-10", workflowGroup && "flex-1")}
+              className={THREAD_LINEAGE_ROW_CLASS}
               aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus)}`}
               render={
                 groups
