@@ -9,7 +9,7 @@ import {
 
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -199,7 +199,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const terminalManager = yield* TerminalManager.TerminalManager;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const serviceScope = yield* Effect.scope;
 
   const observeTerminalCompletion = Effect.fn("ProjectSetupScriptRunner.observeTerminalCompletion")(
@@ -430,7 +430,7 @@ export const make = Effect.gen(function* () {
     // Earlier settle shells may still run foreground programs; do not type resumed settles into them.
     const terminalId =
       trigger === "settle"
-        ? `settle-${script.id}-${(yield* crypto.randomUUIDv4().pipe(Effect.orDie)).slice(0, 8)}`
+        ? `settle-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`
         : `setup-${script.id}`;
     const cwd = input.worktreePath;
     const env = {
@@ -442,9 +442,7 @@ export const make = Effect.gen(function* () {
       COLORTERM: "",
     };
     const observe = input.observeCompletion;
-    const completionToken = observe
-      ? (yield* crypto.randomUUIDv4().pipe(Effect.orDie)).replaceAll("-", "")
-      : null;
+    const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;
     const echoedWrapperLines: string[] = [];
     // Subscribe before opening so neither startup activity nor the sentinel can race the listeners.
     const observed =
@@ -468,6 +466,7 @@ export const make = Effect.gen(function* () {
         .open({
           threadId: input.threadId,
           terminalId,
+          stopOnSettle: script.stopOnSettle ?? false,
           cwd,
           worktreePath: input.worktreePath,
           env: { ...env, NO_COLOR: "1", FORCE_COLOR: "0" },

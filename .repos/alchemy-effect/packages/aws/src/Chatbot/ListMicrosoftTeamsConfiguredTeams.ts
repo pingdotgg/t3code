@@ -1,0 +1,37 @@
+import type * as chatbot from "@distilled.cloud/aws/chatbot";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `chatbot:ListMicrosoftTeamsConfiguredTeams`.
+ *
+ * Lists the Microsoft Teams teams onboarded to AWS Chatbot in the account —
+ * useful for identity/team audit automation. Provide the implementation
+ * with `Effect.provide(AWS.Chatbot.ListMicrosoftTeamsConfiguredTeamsHttp)`.
+ * ### Microsoft Teams Identity Management
+ * **Example:** List configured Microsoft Teams teams
+ * ```typescript
+ * const listMicrosoftTeamsConfiguredTeams =
+ *   yield* AWS.Chatbot.ListMicrosoftTeamsConfiguredTeams();
+ * const result = yield* listMicrosoftTeamsConfiguredTeams();
+ * const teamIds = (result.ConfiguredTeams ?? []).map((t) => t.TeamId);
+ * ```
+ *
+ * @binding
+ */
+export interface ListMicrosoftTeamsConfiguredTeams extends Binding.Service<
+  ListMicrosoftTeamsConfiguredTeams,
+  "AWS.Chatbot.ListMicrosoftTeamsConfiguredTeams",
+  () => Effect.Effect<
+    (
+      request?: chatbot.ListMicrosoftTeamsConfiguredTeamsRequest,
+    ) => Effect.Effect<
+      chatbot.ListMicrosoftTeamsConfiguredTeamsResult,
+      chatbot.ListMicrosoftTeamsConfiguredTeamsError
+    >
+  >
+> {}
+
+export const ListMicrosoftTeamsConfiguredTeams = Binding.Service<ListMicrosoftTeamsConfiguredTeams>(
+  "AWS.Chatbot.ListMicrosoftTeamsConfiguredTeams",
+);

@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
+import * as WindowsTcpListeners from "../process/windowsTcpListeners.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -76,8 +77,6 @@ const LSOF_TIMEOUT_MS = 5_000;
 const PROC_FD_WALK_LIMIT = 50_000;
 const SOCKET_OWNER_ATTEMPTS = 3;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
-/** `netstat -ano` lists every connection, not just listeners; ~80 bytes per row, sized for ~200k rows. */
-const WINDOWS_NETSTAT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const WEB_PROBE_TIMEOUT = Duration.seconds(1);
 const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
 /** Bounds how long a cached Windows image name can outlive its process if Windows reuses the PID. */
@@ -272,53 +271,6 @@ const parsePortFromLsofName = (name: string): number | null => {
   return port;
 };
 
-const parseWindowsListenerLine = (
-  line: string,
-): {
-  readonly host: string;
-  readonly port: number;
-  readonly pid: number | null;
-  readonly processName: string | null;
-} | null => {
-  const trimmed = line.trim();
-  if (trimmed.length === 0) return null;
-
-  if (trimmed.includes("|")) {
-    const [hostRaw, portRaw, pidRaw, processNameRaw] = trimmed.split("|", 4);
-    const host = hostRaw?.trim() ?? "";
-    if (!LSOF_LOCAL_HOST_TOKENS.has(host) && host !== "::") return null;
-    const port = Number(portRaw);
-    const pid = Number(pidRaw);
-    if (!Number.isInteger(port) || port <= 0 || port >= 65536) return null;
-    return {
-      host,
-      port,
-      pid: Number.isInteger(pid) && pid > 0 ? pid : null,
-      processName: processNameRaw?.trim() || null,
-    };
-  }
-
-  // Foreign port `:0` identifies a listening TCP socket regardless of Windows locale.
-  const fields = trimmed.split(/\s+/);
-  if (fields.length < 4 || fields[0]?.toUpperCase() !== "TCP") return null;
-  const localEndpoint = fields[1] ?? "";
-  const foreignEndpoint = fields[2] ?? "";
-  if (!foreignEndpoint.endsWith(":0")) return null;
-  const lastColon = localEndpoint.lastIndexOf(":");
-  if (lastColon <= 0) return null;
-  const host = localEndpoint.slice(0, lastColon);
-  if (!LSOF_LOCAL_HOST_TOKENS.has(host) && host !== "::") return null;
-  const port = Number(localEndpoint.slice(lastColon + 1));
-  if (!Number.isInteger(port) || port <= 0 || port >= 65536) return null;
-  const pid = Number(fields.at(-1));
-  return {
-    host,
-    port,
-    pid: Number.isInteger(pid) && pid > 0 ? pid : null,
-    processName: null,
-  };
-};
-
 const exitedWithError = (result: ProcessRunner.ProcessRunOutput): boolean =>
   result.code !== null && result.code !== 0;
 
@@ -330,16 +282,13 @@ const parseTasklistProcessName = (raw: string, pid: number): string | null => {
   return null;
 };
 
-const parseWindowsListenerOutput = (
-  raw: string,
-  owners: ReadonlyMap<number, ServerOwner> = new Map(),
+const discoveredWindowsListeners = (
+  listeners: ReadonlyArray<WindowsTcpListeners.WindowsTcpListener>,
+  owners: ReadonlyMap<number, ServerOwner>,
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const seen = new Map<number, DiscoveredLocalServer>();
-  for (const line of raw.split(/\r?\n/g)) {
-    const parsed = parseWindowsListenerLine(line);
-    if (!parsed) continue;
-    const { port, pid: normalizedPid, processName } = parsed;
-    const owner = normalizedPid === null ? undefined : owners.get(normalizedPid);
+  for (const { port, pid } of listeners) {
+    const owner = pid === null ? undefined : owners.get(pid);
     const existing = seen.get(port);
     if (existing) {
       if (owner === undefined) seen.set(port, { ...existing, ...UNOWNED });
@@ -349,8 +298,8 @@ const parseWindowsListenerOutput = (
       host: "localhost",
       port,
       url: `http://localhost:${port}`,
-      processName,
-      pid: normalizedPid,
+      processName: null,
+      pid,
       ...(owner ?? UNOWNED),
     });
   }
@@ -362,7 +311,7 @@ const PROC_TCP_LISTEN = "0A";
 /** Each 32-bit word of the hex address is little-endian. */
 const procLocalAddress = (hex: string): boolean => {
   if (hex.length === 8) {
-    return hex === "00000000" || hex.endsWith("7F");
+    return hex === "00000000" || hex === "0100007F";
   }
   if (hex.length !== 32) return false;
   if (hex === "0".repeat(32) || hex === `${"0".repeat(24)}01000000`) return true;
@@ -594,11 +543,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     inodes: ReadonlySet<string>,
   ) {
     const owners = new Map<string, { pid: number; processName: string | null }>();
-    const pids = (yield* fileSystem
-      .readDirectory("/proc")
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((entry) =>
-      /^\d+$/.test(entry),
-    );
+    const entries = yield* fileSystem.readDirectory("/proc").pipe(Effect.option);
+    if (Option.isNone(entries)) return null;
+    const pids = entries.value.filter((entry) => /^\d+$/.test(entry));
     let budget = PROC_FD_WALK_LIMIT;
     for (const pidText of pids) {
       if (owners.size === inodes.size || budget <= 0) break;
@@ -622,7 +569,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
       for (const inode of matched) owners.set(inode, { pid: Number(pidText), processName });
     }
-    return owners;
+    const lsofMissing = yield* Ref.get(lsofMissingRef);
+    return budget <= 0 && owners.size < inodes.size && !lsofMissing ? null : owners;
   });
 
   const scanProcListeners = Effect.fn("PortDiscovery.scanProcListeners")(function* (
@@ -630,12 +578,27 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   ) {
     if (hostPlatform !== "linux") return null;
     const tables = yield* Effect.forEach(["/proc/net/tcp", "/proc/net/tcp6"], (path) =>
-      fileSystem.readFileString(path).pipe(Effect.option),
+      fileSystem.readFileString(path).pipe(
+        // Kernels without IPv6 omit tcp6; a denied table can hide listeners on a shared port.
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.succeed(null),
+        ),
+        Effect.option,
+      ),
     );
-    if (tables.every(Option.isNone)) return null;
-    const listeners = tables.flatMap((table) =>
-      Option.isSome(table) ? parseProcNetTcp(table.value) : [],
+    if (tables.some(Option.isNone)) return null;
+    const readable = tables.flatMap((table) =>
+      Option.isSome(table) && table.value !== null ? [table.value] : [],
     );
+    if (
+      readable.length === 0 ||
+      readable.some(
+        (table) => !/^\s*sl\s+local_address\s+(?:rem|remote)_address\s+st\s/.test(table),
+      )
+    )
+      return null;
+    const listeners = readable.flatMap(parseProcNetTcp);
     const known = yield* Ref.get(socketOwnersRef);
     const knownMisses = yield* Ref.get(socketOwnerMissesRef);
     const inodes = new Set(listeners.map((listener) => listener.inode));
@@ -646,6 +609,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       ),
     );
     const found = unseen.size === 0 ? new Map() : yield* findSocketOwners(unseen);
+    if (found === null) return null;
     const owners = new Map([...known, ...found].filter(([inode]) => inodes.has(inode)));
     const misses = new Map([...knownMisses].filter(([inode]) => inodes.has(inode)));
     for (const inode of unseen) {
@@ -735,7 +699,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // Only configured URLs are requested. Owned listeners are listed as plain HTTP without a
   // request: owning a process says nothing about its protocol, and HTTP or TLS bytes break
   // binary ones such as Unity's test runner or Steam's IPC.
-  const probeWebServers = Effect.fn("PortDiscovery.probeWebServers")(function* (
+  // Idle polls omit this span; requested scans and uncached probes retain their own spans.
+  const probeWebServers = Effect.fnUntraced(function* (
     servers: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
   ) {
@@ -832,9 +797,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         platform: hostPlatform,
       }).pipe(Effect.as(null));
 
-  const scanUnlocked = Effect.fn("PortDiscovery.scanUnlocked")(function* (
-    configuredUrls: ReadonlyArray<string>,
-  ) {
+  // Routine polling helpers share operation/probe spans instead of tracing every tick.
+  const scanUnlocked = Effect.fnUntraced(function* (configuredUrls: ReadonlyArray<string>) {
     if (!listenerDiscovery) return yield* probeWebServers([], configuredUrls);
     const state = yield* Ref.get(stateRef);
     const terminalOwners = new Map<number, ServerOwner>();
@@ -857,21 +821,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       agentsPossible ? withAgentOwners(terminalOwners, pids) : Effect.succeed(terminalOwners);
     if (hostPlatform === "win32") {
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
-      const runNetstat = (protocol: "tcp" | "tcpv6") =>
-        processRunner.run({
-          command: "netstat.exe",
-          args: ["-ano", "-p", protocol],
-          timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
-          maxOutputBytes: WINDOWS_NETSTAT_MAX_OUTPUT_BYTES,
-        });
-      const listeners = yield* Effect.all([runNetstat("tcp"), runNetstat("tcpv6")], {
-        concurrency: 2,
-      }).pipe(
-        // Failed queries can hide other IPv4/IPv6 listeners on the port; fall back to configured URLs.
-        Effect.map(([tcp4, tcp6]) =>
-          exitedWithError(tcp4) || exitedWithError(tcp6)
-            ? null
-            : parseWindowsListenerOutput(`${tcp4.stdout}\n${tcp6.stdout}`, terminalOwners),
+      const listeners = yield* WindowsTcpListeners.queryWindowsTcpListeners(
+        processRunner,
+        "netstat.exe",
+      ).pipe(
+        Effect.map((snapshot) =>
+          snapshot === null ? null : discoveredWindowsListeners(snapshot, terminalOwners),
         ),
         Effect.catchTags({
           ProcessSpawnError: recoverWindowsProbeFailure,
@@ -885,11 +840,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         yield* probeWebServers(listeners ?? [], configuredUrls),
       );
     }
+    const fromProc = yield* scanProcListeners(resolveOwners);
+    if (fromProc !== null) return yield* probeWebServers(fromProc, configuredUrls);
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
-    if (yield* Ref.get(lsofMissingRef)) {
-      const fromProc = yield* scanProcListeners(resolveOwners);
-      return yield* probeWebServers(fromProc ?? [], configuredUrls);
-    }
+    if (yield* Ref.get(lsofMissingRef)) return yield* probeWebServers([], configuredUrls);
     const lsofResult = yield* processRunner
       .run({
         command: "lsof",
@@ -916,23 +870,25 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         }),
       );
     if (lsofResult !== null) return yield* probeWebServers(lsofResult, configuredUrls);
-    const fromProc = yield* scanProcListeners(resolveOwners);
-    return yield* probeWebServers(fromProc ?? [], configuredUrls);
+    // A missing lsof makes a bounded, partial /proc owner walk the only available discovery.
+    const withoutLsof = (yield* Ref.get(lsofMissingRef))
+      ? yield* scanProcListeners(resolveOwners)
+      : null;
+    return yield* probeWebServers(withoutLsof ?? [], configuredUrls);
   });
 
-  const scanSnapshot = Effect.fn("PortDiscovery.scanSnapshot")(
-    (configuredUrls: ReadonlyArray<string>) =>
-      scanSemaphore.withPermits(1)(scanUnlocked(configuredUrls)),
-  );
+  const scanSnapshot = (configuredUrls: ReadonlyArray<string>) =>
+    scanSemaphore.withPermits(1)(scanUnlocked(configuredUrls));
 
   const scanOnce: PortDiscovery["Service"]["scan"] = (configuredUrls = []) => {
     const normalized = normalizeConfiguredUrls(configuredUrls);
     return scanSnapshot(normalized).pipe(
       Effect.map((snapshot) => projectWebProbeSnapshot(snapshot, normalized)),
+      Effect.withSpan("PortDiscovery.scan"),
     );
   };
 
-  const pollTick = Effect.fn("PortDiscovery.pollTick")(
+  const pollTick = Effect.fnUntraced(
     function* () {
       const configuredUrls = [
         ...new Set(
@@ -983,8 +939,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       return [retainCount === 0, { ...state, retainCount }];
     });
     if (!idle) return;
-    const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
-    if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
+    yield* scanSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        yield* Ref.set(socketOwnersRef, new Map());
+        yield* Ref.set(socketOwnerMissesRef, new Map());
+        const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
+        if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
+      }),
+    );
   });
 
   const retain: PortDiscovery["Service"]["retain"] = Effect.acquireRelease(
