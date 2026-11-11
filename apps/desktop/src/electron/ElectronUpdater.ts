@@ -83,7 +83,7 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const context = yield* Effect.context<never>();
   const runSync = Effect.runSyncWith(context);
@@ -104,6 +104,7 @@ export const make = Effect.gen(function* () {
   let restoreLogger = () => {};
   yield* Effect.addFinalizer(() => Effect.sync(() => restoreLogger()));
 
+  // electron-updater picks the platform updater on first access of `autoUpdater`.
   const getUpdater = () => {
     if (instance !== undefined) return instance;
     const updater = autoUpdater;
@@ -126,47 +127,47 @@ export const make = Effect.gen(function* () {
   };
 
   return ElectronUpdater.of({
-    setFeedURL: (options) =>
-      Effect.suspend(() => {
-        getUpdater().setFeedURL(options);
-        return Effect.void;
-      }),
-    setAutoDownload: (value) =>
-      Effect.suspend(() => {
+    setFeedURL: Effect.fn("ElectronUpdater.setFeedURL")(function (options) {
+      return Effect.sync(() => getUpdater().setFeedURL(options));
+    }),
+    setAutoDownload: Effect.fn("ElectronUpdater.setAutoDownload")(function (value) {
+      return Effect.sync(() => {
         getUpdater().autoDownload = value;
-        return Effect.void;
-      }),
-    setAutoInstallOnAppQuit: (value) =>
-      Effect.suspend(() => {
+      });
+    }),
+    setAutoInstallOnAppQuit: Effect.fn("ElectronUpdater.setAutoInstallOnAppQuit")(function (value) {
+      return Effect.sync(() => {
         getUpdater().autoInstallOnAppQuit = value;
-        return Effect.void;
-      }),
-    setChannel: (channel) =>
-      Effect.suspend(() => {
+      });
+    }),
+    setChannel: Effect.fn("ElectronUpdater.setChannel")(function (channel) {
+      return Effect.sync(() => {
         getUpdater().channel = channel;
-        return Effect.void;
-      }),
-    setAllowPrerelease: (value) =>
-      Effect.suspend(() => {
+      });
+    }),
+    setAllowPrerelease: Effect.fn("ElectronUpdater.setAllowPrerelease")(function (value) {
+      return Effect.sync(() => {
         getUpdater().allowPrerelease = value;
-        return Effect.void;
-      }),
+      });
+    }),
     allowDowngrade: Effect.sync(() => getUpdater().allowDowngrade),
-    setAllowDowngrade: (value) =>
-      Effect.suspend(() => {
+    setAllowDowngrade: Effect.fn("ElectronUpdater.setAllowDowngrade")(function (value) {
+      return Effect.sync(() => {
         getUpdater().allowDowngrade = value;
-        return Effect.void;
-      }),
-    setFullChangelog: (value) =>
-      Effect.suspend(() => {
+      });
+    }),
+    setFullChangelog: Effect.fn("ElectronUpdater.setFullChangelog")(function (value) {
+      return Effect.sync(() => {
         getUpdater().fullChangelog = value;
-        return Effect.void;
-      }),
-    setDisableDifferentialDownload: (value) =>
-      Effect.suspend(() => {
-        getUpdater().disableDifferentialDownload = value;
-        return Effect.void;
-      }),
+      });
+    }),
+    setDisableDifferentialDownload: Effect.fn("ElectronUpdater.setDisableDifferentialDownload")(
+      function (value) {
+        return Effect.sync(() => {
+          getUpdater().disableDifferentialDownload = value;
+        });
+      },
+    ),
     checkForUpdates: Effect.suspend(() => {
       const updater = getUpdater();
       const channel = updater.channel;
@@ -183,8 +184,11 @@ export const make = Effect.gen(function* () {
         catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
       }).pipe(Effect.asVoid);
     }),
-    quitAndInstall: ({ isSilent, isForceRunAfter }) =>
-      Effect.suspend(() => {
+    quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
+      isSilent,
+      isForceRunAfter,
+    }) {
+      return Effect.suspend(() => {
         const updater = getUpdater();
         const channel = updater.channel;
         return Effect.try({
@@ -197,9 +201,10 @@ export const make = Effect.gen(function* () {
               cause,
             }),
         });
-      }),
-    on: (eventName, listener) =>
-      Effect.suspend(() => {
+      });
+    }),
+    on: Effect.fn("ElectronUpdater.on")(function (eventName, listener) {
+      return Effect.suspend(() => {
         const eventTarget = getUpdater() as unknown as {
           on: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
           removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
@@ -214,7 +219,8 @@ export const make = Effect.gen(function* () {
               eventTarget.removeListener(eventName, untypedListener);
             }),
         ).pipe(Effect.asVoid);
-      }),
+      });
+    }),
   });
 });
 

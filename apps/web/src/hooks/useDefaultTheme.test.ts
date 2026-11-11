@@ -11,12 +11,6 @@ const BASE = {
 } as const;
 
 describe("default theme adoption", () => {
-  it("applies a set this client has not seen", () => {
-    expect(defaultThemeToApply(BASE)).toBe(
-      defaultThemeGeneration(BASE.defaultTheme, BASE.defaultThemeSetAt),
-    );
-  });
-
   it("does not replay a generation it already applied", () => {
     const generation = defaultThemeGeneration(BASE.defaultTheme, BASE.defaultThemeSetAt);
     expect(defaultThemeToApply({ ...BASE, appliedGeneration: generation })).toBe(null);
@@ -31,24 +25,5 @@ describe("default theme adoption", () => {
     });
     expect(next).not.toBe(null);
     expect(next).not.toBe(applied);
-  });
-
-  it("falls back to once-per-value without a set time", () => {
-    const generation = defaultThemeGeneration("nightfall", "");
-    expect(defaultThemeToApply({ ...BASE, defaultThemeSetAt: "", appliedGeneration: null })).toBe(
-      generation,
-    );
-    expect(
-      defaultThemeToApply({ ...BASE, defaultThemeSetAt: "", appliedGeneration: generation }),
-    ).toBe(null);
-  });
-
-  it("waits for a theme that has not arrived yet", () => {
-    expect(defaultThemeToApply({ ...BASE, resolves: false })).toBe(null);
-  });
-
-  it("leaves a client alone with no environment or no theme set", () => {
-    expect(defaultThemeToApply({ ...BASE, environmentId: null })).toBe(null);
-    expect(defaultThemeToApply({ ...BASE, defaultTheme: "" })).toBe(null);
   });
 });

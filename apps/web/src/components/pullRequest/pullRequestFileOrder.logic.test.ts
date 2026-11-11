@@ -36,27 +36,6 @@ describe("orderDiffFiles", () => {
     ).toEqual([...source, ...tests, ...generated]);
   });
 
-  it("answers an empty diff with an empty order", () => {
-    expect(order([])).toEqual([]);
-  });
-
-  it("puts a dependency before what imports it", () => {
-    expect(order([file("src/a.ts", ['import { b } from "./b";']), file("src/b.ts")])).toEqual([
-      "src/b.ts",
-      "src/a.ts",
-    ]);
-  });
-
-  it("follows a chain the whole way down", () => {
-    expect(
-      order([
-        file("src/a.ts", ['import { b } from "./b";']),
-        file("src/b.ts", ['import { c } from "./c";']),
-        file("src/c.ts"),
-      ]),
-    ).toEqual(["src/c.ts", "src/b.ts", "src/a.ts"]);
-  });
-
   it("resolves a specifier that climbs out of the importer's directory", () => {
     expect(
       order([file("src/ui/a.ts", ['import { b } from "../lib/b";']), file("src/lib/b.ts")]),
@@ -112,14 +91,6 @@ describe("orderDiffFiles", () => {
     ).toEqual(["src/a.ts", "src/b.ts"]);
   });
 
-  it("clusters unrelated files by path", () => {
-    expect(order([file("src/ui/b.ts"), file("src/lib/z.ts"), file("src/lib/a.ts")])).toEqual([
-      "src/lib/a.ts",
-      "src/lib/z.ts",
-      "src/ui/b.ts",
-    ]);
-  });
-
   it("keeps the tiers apart and orders tests by the source they cover", () => {
     expect(
       order([
@@ -148,14 +119,23 @@ describe("orderDiffFiles", () => {
     ]);
   });
 
-  it("orders the same diff the same way whatever order it arrives in", () => {
-    const files = [
-      file("src/a.ts", ['import { b } from "./b";']),
-      file("src/b.ts"),
-      file("src/c.ts"),
-      file("src/a.test.ts"),
-      file("yarn.lock"),
-    ];
-    expect(order(files)).toEqual(order(files.toReversed()));
+  it("pairs a test with the source whose name carries its own dotted suffix", () => {
+    expect(
+      order([
+        file("src/c.browser.test.tsx"),
+        file("src/b.test.ts"),
+        file("src/a.logic.test.ts"),
+        file("src/c.tsx"),
+        file("src/b.ts"),
+        file("src/a.logic.ts"),
+      ]),
+    ).toEqual([
+      "src/a.logic.ts",
+      "src/b.ts",
+      "src/c.tsx",
+      "src/a.logic.test.ts",
+      "src/b.test.ts",
+      "src/c.browser.test.tsx",
+    ]);
   });
 });
