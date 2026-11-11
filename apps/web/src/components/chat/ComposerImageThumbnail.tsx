@@ -33,11 +33,7 @@ export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
     let disposed = false;
     let localUrl: string | undefined;
     const cached = readComposerImageThumbnail(file);
-    if (
-      file.size <= MAX_COMPRESSIBLE_SOURCE_BYTES &&
-      !isHeicImageFile(file) &&
-      cached === undefined
-    ) {
+    if (file.size <= MAX_COMPRESSIBLE_SOURCE_BYTES && !isHeicImageFile(file) && !cached) {
       localUrl = URL.createObjectURL(file);
       // oxlint-disable-next-line react/set-state-in-effect -- the blob URL is created and revoked by this effect
       setPreview({ file, src: localUrl });
@@ -66,17 +62,20 @@ export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
   }, [file]);
 
   return src && failedSrc !== src ? (
-    <img
-      ref={(image) => {
-        if (image?.complete && image.naturalWidth > 0) setLoadedSrc(src);
-      }}
-      src={src}
-      alt={alt}
-      onLoad={() => setLoadedSrc(src)}
-      onError={() => setFailedSrc(src)}
-      className={cn(className, loadedSrc !== src && "invisible")}
-    />
-  ) : src === undefined ? null : (
+    <span className="relative block size-full">
+      {loadedSrc !== src && fallback}
+      <img
+        ref={(image) => {
+          if (image?.complete && image.naturalWidth > 0) setLoadedSrc(src);
+        }}
+        src={src}
+        alt={alt}
+        onLoad={() => setLoadedSrc(src)}
+        onError={() => setFailedSrc(src)}
+        className={cn(className, loadedSrc !== src && "invisible absolute inset-0")}
+      />
+    </span>
+  ) : (
     fallback
   );
 });

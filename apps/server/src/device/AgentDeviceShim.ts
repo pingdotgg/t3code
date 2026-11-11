@@ -12,7 +12,7 @@ const STALE_RUNTIME =
 
 const quoteShell = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
 
-/** agent-device 0.21.31's flags that take a value, so the launcher can find the command past them. */
+/** agent-device 0.21.36's flags that take a value, so the launcher can find the command past them. */
 const VALUE_FLAGS: ReadonlyArray<string> = [
   "--activity",
   "--all",
@@ -53,6 +53,7 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--header",
   "--hold-ms",
   "--host",
+  "--image-tag",
   "--in-app",
   "--include",
   "--interval-ms",
@@ -79,6 +80,7 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--metro-port",
   "--network-profile",
   "--on-error",
+  "--os",
   "--os-version",
   "--out",
   "--pattern",
@@ -101,6 +103,7 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--provider-geo-location",
   "--provider-language",
   "--provider-locale",
+  "--provider-network-hosts",
   "--provider-network-profile",
   "--provider-os-version",
   "--provider-project",
