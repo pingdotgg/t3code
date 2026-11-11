@@ -147,6 +147,31 @@ export const recreateMessageSearchTriggers = Effect.fn("MessageSearchIndex.recre
   },
 );
 
+/** Indexes a thread's messages that `indexedMessageCondition` skipped while it was a subagent. */
+export const indexThreadMessages = Effect.fn("MessageSearchIndex.indexThread")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: string,
+) {
+  const index = yield* sql`
+    SELECT 1 FROM sqlite_master WHERE name = 'orchestration_v2_message_search'
+  `;
+  if (index.length === 0) return;
+  const text = yield* indexedText(sql);
+  yield* sql`
+    DELETE FROM orchestration_v2_message_search WHERE rowid IN (
+      SELECT rowid FROM orchestration_v2_projection_messages WHERE thread_id = ${threadId}
+    )
+  `;
+  yield* sql`
+    INSERT INTO orchestration_v2_message_search (rowid, text)
+    SELECT messages.rowid, ${text("messages")}
+    FROM orchestration_v2_projection_messages AS messages
+    WHERE messages.thread_id = ${threadId}
+      AND ${indexedMessageCondition(sql)}
+      AND json_extract(messages.payload_json, '$.text') IS NOT NULL
+  `;
+});
+
 /**
  * Refills the search index from the messages table. The index is keyed by
  * message rowid, so anything that may renumber or copy rows (VACUUM, a dev

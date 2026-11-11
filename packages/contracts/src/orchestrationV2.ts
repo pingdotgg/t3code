@@ -156,6 +156,8 @@ export const OrchestrationV2AppThreadLineage = Schema.Struct({
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   rootThreadId: ThreadId,
   sideChat: Schema.optional(Schema.Boolean),
+  /** The parent a delegated child was popped out of; it keeps the parent's `rootThreadId`. */
+  detachedFrom: Schema.optional(Schema.Struct({ threadId: ThreadId })),
 });
 export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLineage.Type;
 
@@ -530,6 +532,38 @@ export function isProviderNativeSubagentThread(
   thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
 ): boolean {
   return thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider";
+}
+
+/** A T3 delegate_task child still under its parent, the kind that can be popped out to top level. */
+export function isDelegatedChildThread(
+  thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
+): boolean {
+  return (
+    thread.lineage.relationshipToParent === "subagent" &&
+    thread.lineage.parentThreadId !== null &&
+    thread.creationSource !== "provider"
+  );
+}
+
+/**
+ * Whether a delegated task ended and its result reached the parent. A task with no delivery
+ * record leaves its result to the turn that spawned it, so it counts once that turn has ended.
+ */
+export function isDelegatedTaskReported(
+  task: Pick<OrchestrationV2Subagent, "status" | "completionDelivery">,
+  spawningRunLive: boolean,
+): boolean {
+  if (
+    task.status !== "completed" &&
+    task.status !== "failed" &&
+    task.status !== "cancelled" &&
+    task.status !== "interrupted"
+  )
+    return false;
+  const delivery = task.completionDelivery?.state;
+  return delivery === undefined
+    ? !spawningRunLive
+    : delivery === "acknowledged" || delivery === "delivered" || delivery === "disposed";
 }
 
 export const IDLE_COMPACTION_TEXT = "/compact";
@@ -1906,6 +1940,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.unsettled",
       "thread.snoozed",
       "thread.unsnoozed",
+      "thread.detached",
       "thread.pinned",
       "thread.auto-settle-set",
       "thread.unpinned",
@@ -2800,6 +2835,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.unsettled",
       "thread.snoozed",
       "thread.unsnoozed",
+      "thread.detached",
       "thread.pinned",
       "thread.auto-settle-set",
       "thread.unpinned",
@@ -3036,6 +3072,11 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     enabled: Schema.Boolean,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.detach"),
+    commandId: CommandId,
+    threadId: ThreadId,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin"),

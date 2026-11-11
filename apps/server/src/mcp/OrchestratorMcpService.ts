@@ -2587,6 +2587,19 @@ const make = Effect.gen(function* () {
         }
         return yield* remoteDelegation.cancel(scope, remoteTask, input);
       }
+      // Pop-out needs every task in the child to have ended, and it leaves this thread's control.
+      const childShell = yield* threadManagement
+        .getThreadShell(childThreadId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      if (
+        childShell?.lineage.detachedFrom?.threadId === scope.thread.threadId &&
+        isTerminalTaskStatus(current.status)
+      ) {
+        return {
+          taskId: input.taskId,
+          status: current.status,
+        } satisfies OrchestratorMcpTaskCancelResult;
+      }
       const key = yield* requestKey(input.clientRequestId);
       const parentProjection = yield* loadThreadRecords(scope.thread.threadId, []);
       // Cancelling stops the child and every task under it, each a write to a
