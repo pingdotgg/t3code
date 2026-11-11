@@ -275,11 +275,26 @@ export function HtmlRenderTimelineRow({
 export function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mcp-app" }> }) {
   const ctx = use(TimelineRowCtx);
   const { awaitingUser } = use(TimelineRowActivityCtx);
+  const app = row.mcpApp;
+  const sessionKey = JSON.stringify([
+    ctx.activeThreadEnvironmentId,
+    row.sourceThreadId,
+    row.itemId,
+    app.attachmentId,
+    app.server,
+    app.tool,
+    app.resourceUri,
+    app.csp?.connectDomains ?? [],
+    app.csp?.resourceDomains ?? [],
+    app.csp?.frameDomains ?? [],
+    app.csp?.baseUriDomains ?? [],
+    Object.keys(app.permissions ?? {}).sort(),
+  ]);
 
   return (
     <div className="min-w-0 px-1">
       <McpAppFrame
-        key={row.mcpApp.attachmentId}
+        key={sessionKey}
         environmentId={ctx.activeThreadEnvironmentId}
         threadId={row.sourceThreadId}
         conversationThreadId={ctx.threadRef?.threadId ?? row.sourceThreadId}
