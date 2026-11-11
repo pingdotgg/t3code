@@ -350,6 +350,23 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
   };
 }
 
+const advertisedModel = (provider: ServerProvider, model: string) =>
+  provider.models.find((candidate) => candidate.slug === model) ??
+  provider.models.find((candidate) =>
+    candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
+  );
+
+/** A provider that lists no models accepts any slug. */
+export const requireAdvertisedModel = (provider: ServerProvider, model: string) =>
+  provider.models.length > 0 && advertisedModel(provider, model) === undefined
+    ? Effect.fail(
+        failure(
+          "model_unavailable",
+          `Model ${model} is not advertised by provider ${provider.instanceId}.`,
+        ),
+      )
+    : Effect.void;
+
 function providerConstraints(
   provider: ServerProvider | undefined,
   supportsOrchestrationV2: boolean,
@@ -1142,17 +1159,13 @@ const make = Effect.gen(function* () {
   const resolveProjectTarget = (
     parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
     projectId: ProjectId | undefined,
+    missingMessage = "Pass projectId: this MCP client is not running inside a T3 thread.",
   ) =>
     projectId !== undefined
       ? Effect.succeed(projectId)
       : parent !== undefined
         ? Effect.succeed(parent.thread.projectId)
-        : Effect.fail(
-            failure(
-              "target_required",
-              "Pass projectId: this MCP client is not running inside a T3 thread.",
-            ),
-          );
+        : Effect.fail(failure("target_required", missingMessage));
 
   const loadTargetThread = Effect.fn("OrchestratorMcpService.loadTargetThread")(function* (
     threadId: ThreadId,
@@ -1391,19 +1404,9 @@ const make = Effect.gen(function* () {
         `Provider ${instanceId} has no model available for inheritance.`,
       );
     }
-    if (
-      requestedModel !== undefined &&
-      provider.models.length > 0 &&
-      !provider.models.some((candidate) => candidate.slug === requestedModel)
-    ) {
-      return yield* failure(
-        "model_unavailable",
-        `Model ${requestedModel} is not advertised by provider ${instanceId}.`,
-      );
-    }
-
-    const descriptors = provider.models.find((candidate) => candidate.slug === model)?.capabilities
-      ?.optionDescriptors;
+    if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, requestedModel);
+    const advertised = advertisedModel(provider, model);
+    const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
     if (requestedOptions !== undefined) {
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
@@ -1416,7 +1419,9 @@ const make = Effect.gen(function* () {
     }
 
     const inheritsOptions =
-      instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
+      instanceId === inheritedSelection.instanceId &&
+      (advertised?.slug ?? model) ===
+        (advertisedModel(provider, inheritedSelection.model)?.slug ?? inheritedSelection.model);
     let options = inheritsOptions
       ? knownOptions(
           withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
@@ -1534,7 +1539,11 @@ const make = Effect.gen(function* () {
               : childRun,
           )
         : workState === "result_available"
-          ? taskStatusForRun(taskResultRun ?? childRun)
+          ? // A cancelled task's finished turn settles it as interrupted.
+            task.cancelledRunId !== undefined &&
+            taskStatusForRun(taskResultRun ?? childRun) === "completed"
+            ? "interrupted"
+            : taskStatusForRun(taskResultRun ?? childRun)
           : taskStatusForRun(taskResultRun ?? childRun) === "queued"
             ? "queued"
             : "running";
@@ -2640,29 +2649,31 @@ const make = Effect.gen(function* () {
       const stopChild = Effect.gen(function* () {
         const commandId = stableCommandId({ scope, requestKey: key, operation: "cancel-task" });
         const reason = agentStopReason(input.reason);
+        const command = {
+          type: "thread.stop" as const,
+          commandId,
+          threadId: childThreadId,
+          stopDelegatedTasks: false,
+          reason,
+        };
         yield* threadManagement
-          .dispatch({
-            type: "thread.stop",
-            commandId,
-            threadId: childThreadId,
-            stopDelegatedTasks: false,
-            reason,
+          .cancelDelegatedTask({
+            parentThreadId: scope.thread.threadId,
+            taskId: input.taskId,
+            command,
+            stopDescendants: (remoteDispatch) =>
+              threadManagement.stopDelegatedTasks({
+                threadId: childThreadId,
+                commandId,
+                reason,
+                remoteDispatch,
+              }),
           })
           .pipe(
             Effect.mapError((error) =>
               failure(
                 "task_not_cancellable",
                 `Unable to stop delegated task ${input.taskId}: ${errorMessage(error)}`,
-              ),
-            ),
-          );
-        yield* threadManagement
-          .stopDelegatedTasks({ threadId: childThreadId, commandId, reason })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "task_not_cancellable",
-                `Stopped delegated task ${input.taskId}, but not every task it delegated: ${errorMessage(error)}`,
               ),
             ),
           );
@@ -2958,7 +2969,11 @@ const make = Effect.gen(function* () {
       const { parent } = yield* loadCaller(scope, []);
       const projectId = input.allProjects
         ? null
-        : yield* resolveProjectTarget(parent, input.projectId);
+        : yield* resolveProjectTarget(
+            parent,
+            input.projectId,
+            "Pass projectId, or allProjects: true for every project. This MCP client is not running inside a T3 thread.",
+          );
       const projectThreads = yield* threadManagement
         .listProjectThreads({
           projectId: projectId ?? undefined,
