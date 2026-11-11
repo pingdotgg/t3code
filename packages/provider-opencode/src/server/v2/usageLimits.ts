@@ -52,6 +52,15 @@ const ResponseBody = Schema.Struct({
   ),
 });
 
+const Providers = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      integrationID: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+
 const resetTime = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 const budgetPercent = (spent: number, limit: number) =>
   limit <= 0 ? 100 : clampPercent((spent / limit) * 100);
@@ -82,6 +91,25 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         message: "No OpenCode Console workspace is signed in.",
       });
     const { go, budgets, workspace } = body.data;
+    const consoleProviders = budgets.some(
+      (budget) => budget.coverage === "all" && budget.per === "set",
+    )
+      ? yield* HttpClient.get("/api/provider", {
+          urlParams: { "location[directory]": directory },
+        }).pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap(HttpClientResponse.schemaBodyJson(Providers)),
+          Effect.map((page) =>
+            page.data
+              .filter(
+                (provider) =>
+                  provider.integrationID === "opencode" && provider.id !== "opencode-go",
+              )
+              .map((provider) => provider.id),
+          ),
+          Effect.orElseSucceed(() => []),
+        )
+      : [];
     const windows: ServerProviderUsageWindow[] = [];
     if (go) {
       for (const [key, kind, label, duration] of [
@@ -134,7 +162,7 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
               ? {
                   modelIds: budget.models.map((model) => `${model.providerID}/${model.modelID}`),
                 }
-              : {}),
+              : { providerIds: consoleProviders }),
           usedPercent: budgetPercent(budget.spent, budget.limit),
           resetsAt: resetTime(budget.resetsAt),
         });

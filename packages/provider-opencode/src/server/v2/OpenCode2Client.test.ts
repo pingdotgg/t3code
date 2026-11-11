@@ -254,14 +254,29 @@ describe("OpenCode2Client usage limits", () => {
     Effect.gen(function* () {
       let workspace = "wrk_remote";
       const transport = HttpClient.make((request) => {
-        assert.strictEqual(
-          request.url,
-          "https://remote.example/prefix/api/experimental/usage/limits",
-        );
         assert.strictEqual(request.headers.authorization, utf8Basic("remote-password"));
         assert.deepStrictEqual(Array.from(request.urlParams), [
           ["location[directory]", "/remote/project"],
         ]);
+        if (request.url === "https://remote.example/prefix/api/provider")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                data: [
+                  { id: "opencode", integrationID: "opencode" },
+                  { id: "console-custom", integrationID: "opencode" },
+                  { id: "opencode-go", integrationID: "opencode" },
+                  { id: "anthropic", integrationID: "anthropic" },
+                  { id: "byok" },
+                ],
+              }),
+            ),
+          );
+        assert.strictEqual(
+          request.url,
+          "https://remote.example/prefix/api/experimental/usage/limits",
+        );
         return Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
@@ -358,6 +373,7 @@ describe("OpenCode2Client usage limits", () => {
       assert.include(first?.windows[4]?.label ?? "", "Model A");
       assert.deepStrictEqual(first?.windows[4]?.modelIds, ["opencode/a"]);
       assert.strictEqual(first?.windows[3]?.modelIds, undefined);
+      assert.deepStrictEqual(first?.windows[3]?.providerIds, ["opencode", "console-custom"]);
       assert.deepStrictEqual(first?.windows[7]?.modelIds, []);
       assert.include(first?.windows[7]?.label ?? "", "Most used model");
       assert.strictEqual(first?.credentialFingerprint, undefined);

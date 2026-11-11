@@ -579,6 +579,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         if (scenario.reason === undefined) {
           assert.strictEqual(snapshot?.usageLimits?.windows[0]?.usedPercent, 75);
           assert.strictEqual(snapshot?.usageLimits?.externalUsage?.label, "Remote workspace");
+          assert.deepStrictEqual(snapshot?.usageLimits?.windows[0]?.providerIds, []);
         } else {
           assert.deepStrictEqual(snapshot?.usageLimits?.windows, []);
         }

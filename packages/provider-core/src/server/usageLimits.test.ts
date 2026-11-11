@@ -34,6 +34,14 @@ describe("applyUsageLimitsUpdate", () => {
     });
     expect(next).toBe(published);
     const scoped = { checkedAt, windows: [{ ...weekly, modelIds: ["opencode/a"] }] };
+    const providerScoped = { checkedAt, windows: [{ ...weekly, providerIds: ["opencode"] }] };
+    expect(
+      applyUsageLimitsUpdate({
+        previous: providerScoped,
+        checkedAt,
+        update: { windows: [{ ...weekly, providerIds: ["console-custom"] }] },
+      })?.windows[0]?.providerIds,
+    ).toEqual(["console-custom"]);
     expect(
       applyUsageLimitsUpdate({
         previous: scoped,

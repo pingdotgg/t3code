@@ -16,6 +16,7 @@ export const ServerProviderUsageWindow = Schema.Struct({
   label: TrimmedNonEmptyString,
   /** When present, this limit applies only to these provider model IDs. */
   modelIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  providerIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),

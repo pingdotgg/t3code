@@ -99,6 +99,11 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
         b.modelIds !== undefined &&
         a.modelIds.length === b.modelIds.length &&
         a.modelIds.every((id, index) => id === b.modelIds?.[index]))) &&
+    (a.providerIds === b.providerIds ||
+      (a.providerIds !== undefined &&
+        b.providerIds !== undefined &&
+        a.providerIds.length === b.providerIds.length &&
+        a.providerIds.every((id, index) => id === b.providerIds?.[index]))) &&
     a.resetsAt === b.resetsAt &&
     a.windowDurationMins === b.windowDurationMins
   );
