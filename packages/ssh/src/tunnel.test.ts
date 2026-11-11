@@ -245,7 +245,16 @@ process.stdout.write(args[0] === "__ssh-helper"
         // This fixture owns its PID. Even a broken ownership guard cannot signal
         // the test runner or a real T3 environment.
         const external = yield* realSpawner.spawn(
-          ChildProcess.make(process.execPath, ["-e", "process.stdin.resume()"]),
+          ChildProcess.make(process.execPath, [
+            "-e",
+            "process.stdin.resume()",
+            "--",
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "41773",
+          ]),
         );
         yield* fs.writeFileString(
           path.join(customHome, "userdata/server-runtime.json"),
@@ -1079,6 +1088,7 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       process.kill(firstPid, "SIGKILL");
       yield* fs.remove(`${home}/.t3/userdata/server-runtime.json`);
       yield* fs.writeFileString(`${stateDir}/pid`, `${staleId}\n`);
+      yield* fs.writeFileString(`${stateDir}/server-home`, `${home}/old-home`);
       yield* fs.writeFileString(`${stateDir}/port`, `${holderPort}\n`);
 
       const relaunched = yield* launch;

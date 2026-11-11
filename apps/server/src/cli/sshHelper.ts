@@ -29,11 +29,23 @@ export const resolveSshServerHome = Effect.gen(function* () {
   const path = yield* Path.Path;
   const home = yield* HostProcess.HomeDirectory;
   const platform = yield* HostProcess.Platform;
+  const uid = yield* HostProcess.UserId;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const userManagerEnv =
+    platform === "linux" &&
+    !environment.XDG_RUNTIME_DIR &&
+    uid !== undefined &&
+    !(uid === 0 && environment.SUDO_USER)
+      ? { XDG_RUNTIME_DIR: `/run/user/${uid}` }
+      : undefined;
+  const runner: ProcessRunner.ProcessRunner["Service"] = {
+    run: (request) => processRunner.run({ ...request, env: { ...userManagerEnv, ...request.env } }),
+  };
   const serviceFile =
     platform === "darwin"
       ? path.join(home, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
       : path.join(
-          (yield* readSystemdUnitDirectory(yield* ProcessRunner.ProcessRunner, path)) ??
+          (yield* readSystemdUnitDirectory(runner, path)) ??
             defaultSystemdUnitDir(path, home, environment.XDG_CONFIG_HOME ?? ""),
           BOOT_SERVICE_UNIT_FILE,
         );

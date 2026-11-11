@@ -1400,6 +1400,32 @@ it.effect.each(["linux", "darwin"] as const)(
         yield* fs.makeDirectory(path.join(xdgConfigHome, "systemd/user"), { recursive: true });
         yield* fs.rename(servicePath, path.join(xdgConfigHome, "systemd/user/t3code.service"));
         assert.strictEqual(yield* resolve({ XDG_CONFIG_HOME: xdgConfigHome }), serviceHome);
+        const managerDirectory = path.join(xdgConfigHome, "systemd/user");
+        const managerRunner = ProcessRunner.ProcessRunner.of({
+          run: (request) =>
+            Effect.succeed({
+              stdout: JSON.stringify({ data: [managerDirectory, managerDirectory + ".control"] }),
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(
+                request.env?.XDG_RUNTIME_DIR === "/run/user/1234" ? 0 : 1,
+              ),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            }),
+        });
+        assert.strictEqual(
+          yield* resolveSshServerHome.pipe(
+            Effect.provideService(ProcessRunner.ProcessRunner, managerRunner),
+            Effect.provideService(HostProcess.HomeDirectory, directory),
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.UserId, 1234),
+            Effect.provideService(HostProcess.Environment, {}),
+          ),
+          serviceHome,
+        );
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

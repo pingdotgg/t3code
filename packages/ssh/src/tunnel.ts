@@ -650,12 +650,13 @@ server_running() {
     *Z*) return 1 ;;
   esac
 }
+@@T3_MANAGED_SERVER_RUNNING_SCRIPT@@
 PREVIOUS_SERVER_HOME="$(cat "$SERVER_HOME_FILE" 2>/dev/null || printf '%s' "$HOME/.t3")"
 # A home change must not redirect pairing to another environment while the
 # previously managed server is still running. Leave it for an explicit stop.
 if [ "$PREVIOUS_SERVER_HOME" != "$DEFAULT_SERVER_HOME" ] && [ "$(cat "$MANAGED_FILE" 2>/dev/null || true)" = "managed" ]; then
   PREVIOUS_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-  if server_running "$PREVIOUS_PID"; then
+  if managed_server_running "$PREVIOUS_PID"; then
     printf 'The SSH-managed server still uses %s. Stop it before changing the T3 home to %s.\\n' "$PREVIOUS_SERVER_HOME" "$DEFAULT_SERVER_HOME" >&2
     exit 1
   fi
@@ -692,7 +693,6 @@ wait_for_pid_exit() {
     sleep 0.1
   done
 }
-@@T3_MANAGED_SERVER_RUNNING_SCRIPT@@
 resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then
     "$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"
