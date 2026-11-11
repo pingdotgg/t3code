@@ -110,7 +110,7 @@ type SaveOptions = Parameters<ReturnType<typeof useUpdateScopedSettings>>[1];
 const RETENTION_PRESET_DAYS = [1, 3, 7, 14, 30, 60, 90, 180, 365] as const;
 const MIN_RETENTION_DAYS = 1;
 const MAX_RETENTION_DAYS = 3650;
-/** The days a retention starts at when turned on from Off, matching main. */
+// Opening a custom draft must not enable cleanup before its first save.
 const DEFAULT_RETENTION_DAYS = 8;
 
 function formatRetentionDays(days: number): string {
@@ -137,17 +137,30 @@ function RetentionControl({
   const [savedValue, setSavedValue] = useState(value);
   const edited = useRef(false);
   const menuOpen = useRef(false);
+  const pending = useRef<{ days: number | null } | null>(null);
+  const [submitted, setSubmitted] = useState<{ days: number | null } | null>(null);
+  const input = useRef<HTMLInputElement>(null);
   const row = useRef<HTMLDivElement>(null);
   if (savedValue !== value) {
     setSavedValue(value);
+    pending.current = null;
+    setSubmitted(null);
     setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
   }
-  const isPreset = value !== null && (RETENTION_PRESET_DAYS as readonly number[]).includes(value);
-  const custom = customRequested || (value !== null && !isPreset);
-  const selected = custom ? "custom" : value === null ? "off" : String(value);
+  const currentValue = submitted ? submitted.days : value;
+  const isPreset =
+    currentValue !== null && (RETENTION_PRESET_DAYS as readonly number[]).includes(currentValue);
+  const custom = customRequested || (currentValue !== null && !isPreset);
+  const selected = custom ? "custom" : currentValue === null ? "off" : String(currentValue);
   const save = (days: number | null) => {
     edited.current = false;
+    const submission = { days };
+    pending.current = submission;
+    setSubmitted(submission);
     onChange(days, () => {
+      if (pending.current !== submission) return;
+      pending.current = null;
+      setSubmitted(null);
       setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
       if (value === null) setCustomRequested(false);
     });
@@ -162,8 +175,8 @@ function RetentionControl({
       parsed <= MAX_RETENTION_DAYS
     ) {
       setDraft(String(parsed));
-      if (parsed !== value) save(parsed);
-    } else setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
+      if (parsed !== currentValue) save(parsed);
+    } else setDraft(String(currentValue ?? DEFAULT_RETENTION_DAYS));
   };
   return (
     <div
@@ -172,7 +185,7 @@ function RetentionControl({
       onBlur={(event) => {
         if (menuOpen.current || event.currentTarget.contains(event.relatedTarget)) return;
         if (edited.current) commit();
-        else if (value === null) setCustomRequested(false);
+        else if (value === null && pending.current === null) setCustomRequested(false);
       }}
     >
       <Select
@@ -184,7 +197,7 @@ function RetentionControl({
           edited.current = false;
           if (next === "off") {
             setCustomRequested(false);
-            if (value !== null) save(null);
+            if (currentValue !== null) save(null);
           } else if (next === "custom") {
             setCustomRequested(true);
             setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
@@ -208,7 +221,11 @@ function RetentionControl({
                 : formatRetentionDays(Number(selected))}
           </SelectValue>
         </SelectTrigger>
-        <SelectPopup align="end" alignItemWithTrigger={false}>
+        <SelectPopup
+          align="end"
+          alignItemWithTrigger={false}
+          finalFocus={custom ? input : undefined}
+        >
           <SelectItem value="off">Off</SelectItem>
           {RETENTION_PRESET_DAYS.map((days) => (
             <SelectItem key={days} value={String(days)}>
@@ -221,6 +238,8 @@ function RetentionControl({
       {custom ? (
         <InputGroup className="w-24">
           <InputGroupInput
+            ref={input}
+            autoFocus
             size="sm"
             type="number"
             min={minimum}
