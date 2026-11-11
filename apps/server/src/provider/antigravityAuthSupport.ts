@@ -95,6 +95,7 @@ export interface AntigravityAuthConfig {
   readonly apiKey: string;
   readonly gcpProject: string;
   readonly gcpLocation: string;
+  readonly credentialsFile: string;
 }
 
 const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
@@ -102,6 +103,7 @@ const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
   apiKey: "",
   gcpProject: "",
   gcpLocation: "",
+  credentialsFile: "",
 };
 
 export function antigravityAuthUsesBrowser(authMethod: AntigravityAuthMethod): boolean {
@@ -210,7 +212,9 @@ function antigravityEnvironment(
       ? { GEMINI_API_KEY: auth.apiKey }
       : auth.authMethod === "agent-platform" && auth.apiKey
         ? { GOOGLE_API_KEY: auth.apiKey }
-        : {};
+        : auth.authMethod === "agent-platform" && auth.credentialsFile
+          ? { GOOGLE_APPLICATION_CREDENTIALS: auth.credentialsFile }
+          : {};
   // Each launch unpacks about 1 GB; use T3-owned temp so the driver can reclaim files after force-kill.
   const tempDirectory = runtimeTempDirectory ?? profile.tempDirectory;
   return {

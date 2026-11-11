@@ -146,6 +146,7 @@ export const AntigravityDriver: ProviderDriver<
       apiKey: settingsSecretLiteral(settings.apiKey),
       gcpProject: settings.gcpProject,
       gcpLocation: settings.gcpLocation,
+      credentialsFile: settings.credentialsFile,
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);

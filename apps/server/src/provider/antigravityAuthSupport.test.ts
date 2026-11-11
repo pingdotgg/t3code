@@ -139,28 +139,45 @@ describe("Antigravity process environment", () => {
       apiKey: "gemini-secret",
       gcpProject: "proj",
       gcpLocation: "us-central1",
+      credentialsFile: "/ignored.json",
     });
     expect(geminiKey.GEMINI_API_KEY).toBe("gemini-secret");
     expect(geminiKey.GOOGLE_API_KEY).toBeUndefined();
     expect(geminiKey.GOOGLE_CLOUD_PROJECT).toBeUndefined();
+    expect(geminiKey.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
 
+    // An API key belongs to one project, so it wins over a credentials file.
     const vertexKey = spawnFor({
       authMethod: "agent-platform",
       apiKey: "vertex-secret",
       gcpProject: "",
       gcpLocation: "",
+      credentialsFile: "/ignored.json",
     });
     expect(vertexKey.GOOGLE_API_KEY).toBe("vertex-secret");
     expect(vertexKey.GEMINI_API_KEY).toBeUndefined();
+    expect(vertexKey.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
+
+    const vertexAdc = spawnFor({
+      authMethod: "agent-platform",
+      apiKey: "",
+      gcpProject: "proj",
+      gcpLocation: "global",
+      credentialsFile: "/keys/service-account.json",
+    });
+    expect(vertexAdc.GOOGLE_APPLICATION_CREDENTIALS).toBe("/keys/service-account.json");
+    expect(vertexAdc.GOOGLE_API_KEY).toBeUndefined();
 
     const business = spawnFor({
       authMethod: "oauth-business",
       apiKey: "ignored",
       gcpProject: "proj",
       gcpLocation: "us-central1",
+      credentialsFile: "/ignored.json",
     });
     expect(business.GEMINI_API_KEY).toBeUndefined();
     expect(business.GOOGLE_API_KEY).toBeUndefined();
+    expect(business.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
   });
 
   it("isolates TEMP and TMP to the profile directory on Windows", () => {
@@ -661,6 +678,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
           apiKey: "vertex-secret",
           gcpProject: "proj",
           gcpLocation: "us-central1",
+          credentialsFile: "",
         },
       });
       const settingsPath = path.join(profile.acpDirectory, "settings.json");

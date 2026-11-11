@@ -893,6 +893,15 @@ export const AntigravitySettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "us-central1", clearWhenEmpty: "omit" },
       }),
     ),
+    credentialsFile: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Credentials file",
+        description:
+          "Application Default Credentials or service account JSON. Agent Platform uses it when no API key is set, in place of GOOGLE_APPLICATION_CREDENTIALS.",
+        providerSettingsForm: { placeholder: "Default ADC", clearWhenEmpty: "omit" },
+      }),
+    ),
     binaryPath: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
@@ -906,7 +915,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
-  { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
+  { order: ["authMethod", "apiKey", "credentialsFile", "gcpProject", "gcpLocation", "binaryPath"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 

@@ -36,16 +36,18 @@ T3 Code's confirmation.
 
 Choose **Sign-in method** in the Antigravity provider settings:
 
-| Method                     | Credentials                                                                                  |
-| -------------------------- | -------------------------------------------------------------------------------------------- |
-| Google account             | Personal Google sign-in in the browser                                                       |
-| Gemini Enterprise          | Browser sign-in, GCP project, and GCP location                                               |
-| Gemini API key             | API key; choose Connect without a browser                                                    |
-| Agent Platform / Vertex AI | API key, or GCP project and location with Application Default Credentials on the environment |
+| Method                     | Credentials                                                                                                                                    |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Google account             | Personal Google sign-in in the browser                                                                                                         |
+| Gemini Enterprise          | Browser sign-in, GCP project, and GCP location                                                                                                 |
+| Gemini API key             | API key; choose Connect without a browser                                                                                                      |
+| Agent Platform / Vertex AI | API key; with no API key, GCP project and location with Application Default Credentials from **Credentials file** or the environment's default |
 
 The environment stores the Antigravity API key outside its settings file, and
 clients only see whether one is saved. The agent uses the method and credentials selected for this instance;
 ambient `GEMINI_API_KEY` and Google credential variables do not override them.
+That includes `GOOGLE_APPLICATION_CREDENTIALS` in the instance's **Environment variables**; set the
+path in **Credentials file** instead.
 Changing the method stops the instance's sessions. Sign out before replacing an
 account.
 
