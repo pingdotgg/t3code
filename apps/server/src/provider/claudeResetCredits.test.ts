@@ -7,7 +7,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -40,12 +40,13 @@ const respond = (status: number, body: unknown) =>
   );
 const refuseRequests = HttpClient.make(() => Effect.die("must not send a request"));
 
-// Answers `security find-generic-password` like the Keychain would, recording each lookup.
-const keychain = (entries: Record<string, string>, lookups: Array<ReadonlyArray<string>>) =>
+// Answers `security find-generic-password` like the Keychain would, recording each service looked up.
+const keychain = (entries: Record<string, string>, lookups: Array<string>) =>
   ChildProcessSpawner.make((command) => {
-    const args = (command as unknown as { args: ReadonlyArray<string> }).args;
-    lookups.push(args);
-    const secret = entries[args[args.indexOf("-s") + 1]!];
+    const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
+    const service = args[args.indexOf("-s") + 1] ?? "";
+    lookups.push(service);
+    const secret = entries[service];
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
@@ -187,7 +188,7 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
           ),
         );
       });
-      const lookups: Array<ReadonlyArray<string>> = [];
+      const lookups: Array<string> = [];
       const credits = yield* ClaudeResetCredits.readClaudeResetCredits(
         configDir,
         undefined,
@@ -213,7 +214,7 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         "Claude Code-credentials": login("default-token"),
         [custom]: login("work-token"),
       };
-      const lookups: Array<ReadonlyArray<string>> = [];
+      const lookups: Array<string> = [];
       const read = (customConfigDir: string | undefined, token: string) =>
         ClaudeResetCredits.readClaudeResetCredits(configDir, customConfigDir, "2.1.0").pipe(
           Effect.provideService(HostProcess.Platform, "darwin"),
@@ -236,7 +237,7 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         availableCount: 1,
         nextCreditId: "grant_a",
       });
-      expect(lookups.map((args) => args[args.indexOf("-s") + 1])).toEqual([
+      expect(lookups).toEqual([
         "Claude Code-credentials",
         custom,
         ClaudeResetCredits.claudeKeychainService("/Users/me/.claude-other"),
