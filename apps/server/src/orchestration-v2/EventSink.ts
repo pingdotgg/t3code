@@ -352,13 +352,14 @@ const layerBase: Layer.Layer<
             event.threadId,
             event.payload.id,
           );
-          if (
-            current?.status !== "pending" ||
-            (event.payload.kind === "user_input" &&
-              (current.kind !== "user_input" ||
+          const stale =
+            event.payload.kind === "user_input"
+              ? current?.status !== "pending" ||
+                current.kind !== "user_input" ||
                 current.providerTurnId !== event.payload.providerTurnId ||
-                current.responseCapability.type === "message"))
-          ) {
+                current.responseCapability.type === "message"
+              : current?.status === "resolved";
+          if (stale) {
             staleRequests.add(event.payload.id);
             staleNodes.add(event.payload.nodeId);
           }
