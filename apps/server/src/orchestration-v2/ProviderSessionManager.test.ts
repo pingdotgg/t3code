@@ -30,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
@@ -1508,8 +1509,14 @@ it.effect.each(["resume", "start"] as const)(
         yield* fixture.terminal(fixture.first);
         const clock = yield* TestClock.adjust("1 second").pipe(Effect.forkChild);
         yield* Deferred.await(unloading);
-        const interrupted = yield* fixture.runtime.startTurn(fixture.second).pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
+        // Eager execution without scheduler yields reaches the attachment lock's permit wait.
+        const interrupted = yield* fixture.runtime
+          .startTurn(fixture.second)
+          .pipe(
+            Effect.provideService(Scheduler.PreventSchedulerYield, true),
+            Effect.forkChild({ startImmediately: true }),
+          );
+        assert.isUndefined(interrupted.pollUnsafe(), "start must wait for the in-flight unload");
         yield* Fiber.interrupt(interrupted);
         const next = yield* (
           operation === "resume"
@@ -1578,8 +1585,13 @@ it.effect("ProviderSessionManagerV2 serializes a queued idle unload with resume 
         })
         .pipe(Effect.forkChild);
       yield* Deferred.await(entered);
-      const start = yield* fixture.runtime.startTurn(fixture.second).pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
+      // Eager execution without scheduler yields reaches the attachment lock's permit wait.
+      const start = yield* fixture.runtime
+        .startTurn(fixture.second)
+        .pipe(
+          Effect.provideService(Scheduler.PreventSchedulerYield, true),
+          Effect.forkChild({ startImmediately: true }),
+        );
       assert.isUndefined(start.pollUnsafe(), "start must wait for the in-flight resume");
       yield* fixture.terminal(fixture.first);
       yield* TestClock.adjust("1 second");
