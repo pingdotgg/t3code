@@ -664,11 +664,7 @@ it.live("removes clean submodules recursively, including deinitialized repositor
       yield* command(submodule, ["submodule", "deinit", "stored"]);
       const admin = (yield* command(worktree, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
       const report = yield* service.runNow;
-      if (editedDuringClean) {
-        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("late edit\n");
-        expect(report.entries.find((entry) => entry.path === worktree)?.outcome).toBe("kept");
-        return;
-      }
+      expect(editedDuringClean).toBe(false);
       expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
         outcome: "removed",
       });
