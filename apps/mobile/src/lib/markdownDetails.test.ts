@@ -1,7 +1,25 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { splitMarkdownDetails } from "./markdownDetails";
-import { markdownReferenceDefinitions, withReferenceDefinitions } from "./markdownDocument";
+import {
+  markdownReferenceDefinitions,
+  parseMarkdownDocument,
+  withReferenceDefinitions,
+  type MarkdownNode,
+} from "./markdownDocument";
+
+/** Where each label in a fragment resolves once it carries the reply's definitions; first wins. */
+function destinations(reply: string, fragment: string): Record<string, string> {
+  const urls: Record<string, string> = {};
+  const visit = (node: MarkdownNode) => {
+    if (node.type === "definition") urls[node.identifier] ??= node.url;
+    if ("children" in node) for (const child of node.children) visit(child);
+  };
+  visit(
+    parseMarkdownDocument(withReferenceDefinitions(fragment, markdownReferenceDefinitions(reply))),
+  );
+  return urls;
+}
 
 describe("splitMarkdownDetails", () => {
   // regression: #28059 mobile chat showed every <details> fold open
@@ -98,22 +116,33 @@ describe("splitMarkdownDetails", () => {
     ).toBe("\n\nUnrelated.\n\n[c]: C:\\work\\settings.json\n> [a\\]b]: https://example.com/a");
   });
 
-  it("finds definitions that wrap, sit in quotes, or hide in a compact HTML block", () => {
-    for (const [markdown, definition] of [
-      [
-        'See [d].\n\n<details><summary>A</summary>a</details>\n\n> [d]:\n> https://example.com\n> "Title"',
-        '[d]: https://example.com "Title"',
-      ],
+  it("resolves references the way the whole reply does", () => {
+    const fold = "\n\n<details><summary>A</summary>a</details>\n\n";
+    for (const [markdown, pick, expected] of [
+      // A quoted definition that wraps onto continuation lines.
+      [`See [d].${fold}> [d]:\n> https://example.com\n> "Title"`, 0, { d: "https://example.com" }],
+      // A definition hidden in a compact HTML block, with a label that wraps.
       [
         "See [the\n  doc].\n\n<details><summary>A</summary>a</details>\n[The Doc]: https://example.com",
-        "[The Doc]: https://example.com",
+        0,
+        { "the doc": "https://example.com" },
+      ],
+      // A literal ">" in a wrapped label is part of the label, not a quote marker.
+      [
+        `[part rest] and [part > rest]${fold}[part\n    > rest]: https://example.com/a\n\n[part rest]: https://example.com/b`,
+        0,
+        { "part > rest": "https://example.com/a", "part rest": "https://example.com/b" },
+      ],
+      // A fold that defines a label keeps its own definition.
+      [
+        "Top\n\n<details>\n<summary>S</summary>\n\nSee [x].\n\n[x]: https://second\n\n</details>\n\n[x]: https://first",
+        1,
+        { x: "https://second" },
       ],
     ] as const) {
-      const [before] = splitMarkdownDetails(markdown);
-      const text = before?.kind === "markdown" ? before.markdown : "";
-      expect(withReferenceDefinitions(text, markdownReferenceDefinitions(markdown))).toBe(
-        `${definition}\n\n${text}`,
-      );
+      const segment = splitMarkdownDetails(markdown)[pick];
+      const fragment = segment?.kind === "details" ? segment.body : (segment?.markdown ?? "");
+      expect(destinations(markdown, fragment)).toEqual(expected);
     }
   });
 });

@@ -289,15 +289,13 @@ export interface MarkdownReferenceDefinition {
   readonly source: string;
 }
 
-function referenceDefinition(source: string): MarkdownReferenceDefinition | null {
+function referenceDefinition(written: string, quotes: number): MarkdownReferenceDefinition | null {
+  // Prepended as one line, so drop the indent and the enclosing quotes' markers, not a literal ">".
+  const source = written.replace(new RegExp(`\\n(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "g"), " ");
   let end = 1;
   while (end < source.length && source[end] !== "]") end += source[end] === "\\" ? 2 : 1;
   if (source[0] !== "[" || end >= source.length) return null;
-  return {
-    label: source.slice(1, end).replace(/\s+/g, " ").toLowerCase(),
-    // Prepended as one line, so drop the quote markers and indent of its continuations.
-    source: source.replace(/\n[ \t>]*/g, " "),
-  };
+  return { label: source.slice(1, end).replace(/\s+/g, " ").toLowerCase(), source };
 }
 
 /** Read after HTML flattening, which exposes definitions a raw HTML block hides from the parse. */
@@ -305,16 +303,18 @@ export function markdownReferenceDefinitions(markdown: string): MarkdownReferenc
   if (!markdown.includes("]:")) return [];
   const flattened = markdownWithHtml(markdown);
   const definitions: MarkdownReferenceDefinition[] = [];
-  const visit = (node: MarkdownNode) => {
+  const visit = (node: MarkdownNode, quotes: number) => {
     if (node.type === "definition") {
       const definition = referenceDefinition(
         flattened.slice(node.position?.start.offset, node.position?.end.offset),
+        quotes,
       );
       if (definition) definitions.push(definition);
     }
-    if ("children" in node) for (const child of node.children) visit(child);
+    if (!("children" in node)) return;
+    for (const child of node.children) visit(child, quotes + (node.type === "blockquote" ? 1 : 0));
   };
-  visit(parser.parse(flattened));
+  visit(parser.parse(flattened), 0);
   return definitions;
 }
 
@@ -325,8 +325,10 @@ export function withReferenceDefinitions(
 ): string {
   if (definitions.length === 0 || !markdown.includes("[")) return markdown;
   const text = markdown.toLowerCase().replace(/\s+/g, " ");
+  // A label the fragment defines itself keeps its own definition, as in the whole reply.
   const used = definitions.filter(
-    (definition) => text.includes(`[${definition.label}]`) && !markdown.includes(definition.source),
+    (definition) =>
+      text.includes(`[${definition.label}]`) && !text.includes(`[${definition.label}]:`),
   );
   return used.length === 0
     ? markdown
