@@ -1144,7 +1144,9 @@ export default function DiffPanel({
           wordWrap={wordWrap}
           onWordWrapChange={setWordWrap}
           ignoreWhitespace={diffIgnoreWhitespace}
-          onIgnoreWhitespaceChange={(value) => useDiffPanelSessionStore.getState().setIgnoreWhitespace(value)}
+          onIgnoreWhitespaceChange={(value) =>
+            useDiffPanelSessionStore.getState().setIgnoreWhitespace(value)
+          }
           hasFiles={diffFileKeys.length > 0}
           testFileCount={testFileCount}
           hideTestFiles={hideTestFiles}
