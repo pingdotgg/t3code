@@ -105,8 +105,7 @@ export const AgentSkill = Schema.Struct({
 export type AgentSkill = typeof AgentSkill.Type;
 
 /** Placeholder body of a stub; it satisfies the schema but is never a real SKILL.md. */
-const AGENT_SKILL_OMITTED_CONTENT =
-  "(skill body omitted; fetch it with server.getAgentSkills)";
+const AGENT_SKILL_OMITTED_CONTENT = "(skill body omitted; fetch it with server.getAgentSkills)";
 
 export const isAgentSkillStub = (skill: AgentSkill) => skill.contentOmitted === true;
 
