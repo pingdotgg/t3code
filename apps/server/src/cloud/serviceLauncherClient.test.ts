@@ -55,34 +55,67 @@ const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
     Effect.provide(NodeServices.layer),
   );
 
-it.effect("waits for the launcher to durably commit the trial update ID", () =>
-  Effect.gen(function* () {
-    const pending = {
-      id: "update-1",
-      fromVersion: "1.0.0",
-      targetVersion: "1.1.0",
-      dbPath: "/tmp/state.sqlite",
-      status: "pending" as const,
-    };
-    const host = new FakeLauncherProcess({
-      protocol: SERVICE_LAUNCHER_PROTOCOL,
-      childVersion: "1.1.0",
-      update: pending,
-    });
-    const client = yield* makeClient(host, "1.1.0");
-    const prepared = yield* Effect.forkChild(client.prepareTrial, { startImmediately: true });
-    yield* Effect.yieldNow;
-    expect(host.sent).toEqual([{ type: "prepared", updateId: "update-1" }]);
+it.effect(
+  "waits for the launcher to durably commit the trial update ID, then moves owned launchers",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-trial-" });
+      const baseDir = path.join(root, ".t3");
+      const exe = (version: string) => path.join(baseDir, "runtime/versions", version, "t3");
+      const installed = path.join(root, ".local/bin/t3");
+      for (const file of [exe("1.0.0"), exe("1.1.0")]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "");
+      }
+      yield* fs.makeDirectory(path.dirname(installed), { recursive: true });
+      yield* fs.symlink(exe("1.0.0"), installed);
 
-    const committed = {
-      id: pending.id,
-      fromVersion: pending.fromVersion,
-      targetVersion: pending.targetVersion,
-      status: "committed" as const,
-    };
-    host.emit({ type: "committed", updateId: committed.id });
-    expect(yield* Fiber.join(prepared)).toEqual(committed);
-  }),
+      const pending = {
+        id: "update-1",
+        fromVersion: "1.0.0",
+        targetVersion: "1.1.0",
+        dbPath: "/tmp/state.sqlite",
+        status: "pending" as const,
+      };
+      const host = new FakeLauncherProcess({
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        childVersion: "1.1.0",
+        update: pending,
+      });
+      host.env["HOME"] = root;
+      const client = yield* makeClient(host, "1.1.0");
+      const prepared = yield* Effect.forkChild(client.prepareTrial({ baseDir }), {
+        startImmediately: true,
+      });
+      yield* Effect.yieldNow;
+      expect(host.sent).toEqual([{ type: "prepared", updateId: "update-1" }]);
+      assert.equal(yield* fs.readLink(installed), exe("1.0.0"));
+
+      const committed = {
+        id: pending.id,
+        fromVersion: pending.fromVersion,
+        targetVersion: pending.targetVersion,
+        status: "committed" as const,
+      };
+      host.emit({ type: "committed", updateId: committed.id });
+      expect(yield* Fiber.join(prepared)).toEqual(committed);
+      assert.equal(yield* fs.readLink(installed), exe("1.1.0"));
+
+      // A later start replays the stored outcome; user pins made since then stay put.
+      yield* fs.remove(installed);
+      yield* fs.symlink(exe("1.0.0"), installed);
+      const restarted = new FakeLauncherProcess({
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        childVersion: "1.1.0",
+        update: committed,
+      });
+      restarted.env["HOME"] = root;
+      const restartedClient = yield* makeClient(restarted, "1.1.0");
+      expect(yield* restartedClient.prepareTrial({ baseDir })).toEqual(committed);
+      assert.equal(yield* fs.readLink(installed), exe("1.0.0"));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("returns the launcher-generated ID only after update acceptance", () =>
@@ -180,13 +213,7 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
         yield* fs.makeDirectory(path.dirname(onPath), { recursive: true });
         yield* fs.symlink(exe("1.0.0"), onPath);
 
-        yield* Effect.gen(function* () {
-          const client = yield* ServiceLauncherClient.make();
-          yield* client.repointLaunchers({
-            baseDir,
-            targetVersion: "2.0.0",
-          });
-        }).pipe(
+        yield* ServiceLauncherClient.repointLaunchers({ baseDir, targetVersion: "2.0.0" }).pipe(
           Effect.provideService(HostProcess.Environment, {
             HOME: root,
             T3CODE_INSTALL_BIN_DIR: path.dirname(installed),
@@ -237,13 +264,7 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
             : fs.rename(source, destination),
       });
 
-      yield* Effect.gen(function* () {
-        const client = yield* ServiceLauncherClient.make();
-        yield* client.repointLaunchers({
-          baseDir,
-          targetVersion: "2.0.0",
-        });
-      }).pipe(
+      yield* ServiceLauncherClient.repointLaunchers({ baseDir, targetVersion: "2.0.0" }).pipe(
         Effect.provideService(HostProcess.Environment, {
           HOME: root,
           PATH: path.dirname(onPath),
@@ -276,13 +297,7 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
       yield* fs.makeDirectory(path.dirname(onPath), { recursive: true });
       yield* fs.symlink(foreign, onPath);
 
-      yield* Effect.gen(function* () {
-        const client = yield* ServiceLauncherClient.make();
-        yield* client.repointLaunchers({
-          baseDir,
-          targetVersion: "2.0.0",
-        });
-      }).pipe(
+      yield* ServiceLauncherClient.repointLaunchers({ baseDir, targetVersion: "2.0.0" }).pipe(
         Effect.provideService(HostProcess.Environment, {
           HOME: root,
           PATH: path.dirname(onPath),

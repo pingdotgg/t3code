@@ -146,11 +146,11 @@ it.effect("parks automatic pull until activation without delaying command readin
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
           managed: true,
-          trialPending: false,
-          prepareTrial: Deferred.succeed(prepared, undefined).pipe(
-            Effect.andThen(Deferred.await(commitTrial)),
-            Effect.as(undefined),
-          ),
+          prepareTrial: () =>
+            Deferred.succeed(prepared, undefined).pipe(
+              Effect.andThen(Deferred.await(commitTrial)),
+              Effect.as(undefined),
+            ),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           statusDetails: (root) =>

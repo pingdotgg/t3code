@@ -122,8 +122,6 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   });
   const launcher = ServiceLauncherClient.ServiceLauncherClient.of({
     managed: options.managed ?? true,
-    trialPending: false,
-    repointLaunchers: () => Effect.void,
     requestUpdate:
       options.requestUpdate ??
       (() =>
@@ -131,7 +129,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           order.push("accept");
           return "launcher-id";
         })),
-    prepareTrial: Effect.undefined,
+    prepareTrial: () => Effect.undefined,
   });
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
