@@ -183,7 +183,7 @@ function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
   );
 }
 
-const DEFERRED_WORK_ITEM_TYPES = [
+export const DEFERRED_WORK_ITEM_TYPES = [
   "command_execution",
   "reasoning",
   "file_change",
