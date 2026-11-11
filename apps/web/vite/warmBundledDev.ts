@@ -91,11 +91,8 @@ async function warmLazyEntries(
   return [...warmed];
 }
 
-// Bundled dev builds only the small bootstrap entry at startup. The app and its
-// routes are lazy chunks, compiled on first request, one import level at a
-// time. Cold, that chain costs ~25s of serial compile before first paint
-// (`server.warmup` does nothing in bundled dev). Warming it as soon as the
-// server listens leaves the browser mostly codegen.
+// Bundled dev compiles lazy chunks on first request and ignores `server.warmup`.
+// Warm them on listening to avoid serial compilation before first paint.
 export function warmBundledDevPlugin(): Plugin {
   return {
     name: "t3code:warm-bundled-dev",
