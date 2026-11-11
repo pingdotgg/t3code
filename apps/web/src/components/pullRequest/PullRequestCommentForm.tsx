@@ -56,17 +56,18 @@ export function PullRequestCommentForm({
   const [answeredQuoteRequest, setAnsweredQuoteRequest] = useState(quoteRequest);
   const [pendingQuotes, setPendingQuotes] = useState<ReadonlyArray<string>>([]);
   const [caretAfterQuote, setCaretAfterQuote] = useState(false);
+  let quotes = pendingQuotes;
   if (quoteRequest !== answeredQuoteRequest) {
     setAnsweredQuoteRequest(quoteRequest);
-    if (quoteRequest) setPendingQuotes((quotes) => [...quotes, quoteRequest.text]);
+    if (quoteRequest) quotes = [...quotes, quoteRequest.text];
   }
   // A successful post clears the draft, so quotes wait until posting settles.
-  if (pendingQuotes.length > 0 && !locked) {
+  if (quotes.length > 0 && !locked) {
     setPendingQuotes([]);
-    setBody((draft) =>
-      [draft.trimEnd(), ...pendingQuotes].filter((part) => part.length > 0).join("\n\n"),
-    );
+    setBody((draft) => [draft.trimEnd(), ...quotes].filter((part) => part.length > 0).join("\n\n"));
     setCaretAfterQuote(true);
+  } else if (quotes !== pendingQuotes) {
+    setPendingQuotes(quotes);
   }
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals the composer and moves the DOM caret after a quote lands
   useEffect(() => {
