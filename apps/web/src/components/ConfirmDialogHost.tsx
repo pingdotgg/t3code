@@ -19,6 +19,7 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Button } from "./ui/button";
+import { useDialogActionInitialFocus } from "./ui/dialog";
 
 type ConfirmationCopy = {
   readonly title: string;
@@ -61,6 +62,7 @@ export function ConfirmDialogHost() {
   );
 
   const openerRef = useRef<Element | null>(null);
+  const { popupRef, initialFocus } = useDialogActionInitialFocus();
 
   const copy =
     state.status !== "idle" && state.title
@@ -85,10 +87,11 @@ export function ConfirmDialogHost() {
       }}
     >
       <AlertDialogPopup
+        ref={popupRef}
         className="sm:max-w-105"
-        initialFocus={() => {
+        initialFocus={(openType) => {
           openerRef.current = document.activeElement;
-          return true;
+          return initialFocus(openType);
         }}
         finalFocus={() => {
           const opener = openerRef.current;
