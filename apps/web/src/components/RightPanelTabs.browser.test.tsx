@@ -1,9 +1,12 @@
 import "~/index.css";
 
+import { type ComponentProps, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { render, stubGlobal } from "../../test/render";
+import { createWorkspaceFocusController } from "~/lib/workspaceFocus";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import { RightPanelTabs } from "./RightPanelTabs";
 
@@ -59,6 +62,55 @@ const surfaces: RightPanelSurface[] = Array.from({ length: 16 }, (_, index) => (
   activeTerminalId: `${index}`,
 }));
 
+function Tabs(props: Partial<ComponentProps<typeof RightPanelTabs>>) {
+  const noop = () => {};
+  return (
+    <RightPanelTabs
+      mode="embedded"
+      keybindings={[]}
+      getShortcutContext={() => ({
+        terminalFocus: false,
+        terminalOpen: false,
+        previewFocus: false,
+        previewOpen: false,
+        isWeb: true,
+        isDesktop: false,
+      })}
+      surfaces={surfaces}
+      environmentId={null}
+      activeSurfaceId={null}
+      pendingSurfaceIds={new Set()}
+      previewSessions={{}}
+      desktopByTabId={{}}
+      terminalLabelsById={new Map(surfaces.map((surface) => [surface.id, "Terminal"]))}
+      onActivate={noop}
+      onCloseSurface={noop}
+      onCloseOtherSurfaces={noop}
+      onCloseSurfacesToRight={noop}
+      onCloseAllSurfaces={noop}
+      onCopyFilePath={noop}
+      onAddBrowser={noop}
+      onAddBrowserInProfile={noop}
+      onAddTerminal={noop}
+      onAddDiff={noop}
+      onAddFiles={noop}
+      onAddPullRequest={noop}
+      onAddPullRequests={noop}
+      onAddDevice={noop}
+      browserAvailable={false}
+      terminalAvailable
+      diffAvailable={false}
+      filesAvailable={false}
+      pullRequestAvailable={false}
+      pullRequestsAvailable={false}
+      deviceAvailable={false}
+      {...props}
+    >
+      {props.children ?? null}
+    </RightPanelTabs>
+  );
+}
+
 describe("RightPanelTabs", () => {
   it("a flick that scrolls the tab strip to its left edge keeps the thread, a swipe from the edge goes back", async () => {
     navigateHistory.mockReset();
@@ -67,52 +119,10 @@ describe("RightPanelTabs", () => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const panel = document.createElement("div");
     panel.style.cssText = "width: 320px; height: 200px; display: flex";
-    const noop = () => {};
     await using screen = await render(
       <>
         <HistorySwipeNavigation />
-        <RightPanelTabs
-          mode="embedded"
-          keybindings={[]}
-          getShortcutContext={() => ({
-            terminalFocus: false,
-            terminalOpen: false,
-            previewFocus: false,
-            previewOpen: false,
-            isWeb: true,
-            isDesktop: false,
-          })}
-          surfaces={surfaces}
-          environmentId={null}
-          activeSurfaceId={null}
-          pendingSurfaceIds={new Set()}
-          previewSessions={{}}
-          desktopByTabId={{}}
-          terminalLabelsById={new Map(surfaces.map((surface) => [surface.id, "Terminal"]))}
-          onActivate={noop}
-          onCloseSurface={noop}
-          onCloseOtherSurfaces={noop}
-          onCloseSurfacesToRight={noop}
-          onCloseAllSurfaces={noop}
-          onCopyFilePath={noop}
-          onAddBrowser={noop}
-          onAddBrowserInProfile={noop}
-          onAddTerminal={noop}
-          onAddDiff={noop}
-          onAddFiles={noop}
-          onAddPullRequest={noop}
-          onAddPullRequests={noop}
-          onAddDevice={noop}
-          browserAvailable={false}
-          terminalAvailable
-          diffAvailable={false}
-          filesAvailable={false}
-          pullRequestAvailable={false}
-          pullRequestsAvailable={false}
-          deviceAvailable={false}
-        >
-          {null}
-        </RightPanelTabs>
+        <Tabs />
       </>,
       { container: panel },
     );
@@ -132,5 +142,42 @@ describe("RightPanelTabs", () => {
     scroll(viewport.querySelector("[data-active-tab]")!, [-40, -40, -40, -40, -40]);
 
     expect(navigateHistory).toHaveBeenCalledExactlyOnceWith("back");
+  });
+  it("a surface picked from the add menu keeps the focus it takes; dismissing the menu returns to +", async () => {
+    const focus = createWorkspaceFocusController(document);
+    using _focus = { [Symbol.dispose]: focus.dispose };
+    function Panel() {
+      const [activeSurfaceId, setActiveSurfaceId] = useState("terminal:0");
+      return (
+        <Tabs
+          activeSurfaceId={activeSurfaceId}
+          filesAvailable
+          onAddFiles={() => {
+            setActiveSurfaceId("terminal:1");
+            focus.request({ area: "panel" });
+          }}
+        >
+          <input
+            key={activeSurfaceId}
+            aria-label={`Content of ${activeSurfaceId}`}
+            data-workspace-focus-default
+          />
+        </Tabs>
+      );
+    }
+    await using _screen = await render(<Panel />);
+    const add = page.getByRole("button", { name: "Add panel surface" });
+
+    await userEvent.click(add);
+    await userEvent.keyboard("f");
+    await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("textbox", { name: "Content of terminal:1" }))
+      .toHaveFocus();
+
+    await userEvent.click(add);
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
+    await expect.element(add).toHaveFocus();
   });
 });

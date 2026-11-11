@@ -1035,6 +1035,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
+  const [surfacePicked, setSurfacePicked] = useState(false);
+  const openAddSurfaceMenu = (open: boolean) => {
+    if (open) setSurfacePicked(false);
+    setAddSurfaceMenuOpen(open);
+  };
+  const pickSurface = (open: () => void) => () => {
+    setSurfacePicked(true);
+    open();
+  };
   const [tabScrollState, setTabScrollState] = useState({
     hasOverflow: false,
     canScrollLeft: false,
@@ -1056,7 +1065,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     event.stopPropagation();
     if (!event.repeat) {
       addSurfaceTriggerRef.current?.focus();
-      setAddSurfaceMenuOpen(true);
+      openAddSurfaceMenu(true);
     }
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
@@ -1101,7 +1110,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       shortcut: "B",
       available: props.browserAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.browser,
-      onClick: props.onAddBrowser,
+      onClick: pickSurface(props.onAddBrowser),
     },
     {
       label: "Terminal",
@@ -1109,7 +1118,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       shortcut: "T",
       available: props.terminalAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.terminal,
-      onClick: props.onAddTerminal,
+      onClick: pickSurface(props.onAddTerminal),
     },
     {
       label: "Files",
@@ -1117,7 +1126,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       shortcut: "F",
       available: props.filesAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.files,
-      onClick: props.onAddFiles,
+      onClick: pickSurface(props.onAddFiles),
     },
     {
       label: "Diff",
@@ -1125,7 +1134,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       shortcut: "D",
       available: props.diffAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.diff,
-      onClick: props.onAddDiff,
+      onClick: pickSurface(props.onAddDiff),
     },
     {
       label: "Pull request",
@@ -1133,7 +1142,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       shortcut: "P",
       available: props.pullRequestAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
-      onClick: props.onAddPullRequest,
+      onClick: pickSurface(props.onAddPullRequest),
     },
     {
       label: "Linked pull requests",
@@ -1141,7 +1150,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       shortcut: "L",
       available: props.pullRequestsAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
-      onClick: props.onAddPullRequests,
+      onClick: pickSurface(props.onAddPullRequests),
     },
     {
       label: "Device",
@@ -1149,7 +1158,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       shortcut: "M",
       available: props.deviceAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.device,
-      onClick: props.onAddDevice,
+      onClick: pickSurface(props.onAddDevice),
     },
     ...(props.onAddSideChat
       ? [
@@ -1159,7 +1168,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             shortcut: "S",
             available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
             disabledReason: props.sideChatDisabledReason ?? SURFACE_DISABLED_REASONS.sideChat,
-            onClick: props.onAddSideChat,
+            onClick: pickSurface(props.onAddSideChat),
           },
         ]
       : []),
@@ -1396,7 +1405,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               })}
             </SortableTabList>
             {props.open !== false ? (
-              <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
+              <Menu open={addSurfaceMenuOpen} onOpenChange={openAddSurfaceMenu}>
                 <MenuTrigger
                   ref={addSurfaceTriggerRef}
                   render={
@@ -1414,6 +1423,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   align="start"
                   side="bottom"
                   sideOffset={6}
+                  finalFocus={!surfacePicked}
                   onKeyDownCapture={handleAddSurfaceMenuKeyDown}
                 >
                   {addSurfaceActions.map((action) => {
@@ -1444,7 +1454,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                             {browserProfiles.map((profile) => (
                               <MenuItem
                                 key={profile.id}
-                                onClick={() => props.onAddBrowserInProfile(profile.id)}
+                                onClick={pickSurface(() => props.onAddBrowserInProfile(profile.id))}
                               >
                                 <span className="min-w-0 truncate">{profile.name}</span>
                               </MenuItem>
