@@ -165,48 +165,54 @@ export function claudeResetCreditsToContract(
     const at = grant?.ends_at ? DateTime.make(grant.ends_at) : Option.none();
     return Option.isSome(at) ? DateTime.formatIso(at.value) : undefined;
   };
-  const byKind = new Map<ResetKind, Array<typeof Grant.Type>>();
+  // Grants of one kind can still clear different limits, so they group by what they clear too.
+  const groups = new Map<
+    string,
+    {
+      kind: ResetKind;
+      cleared: Array<string>;
+      modelOnly: boolean;
+      grants: Array<typeof Grant.Type>;
+    }
+  >();
   for (const grant of live) {
     if (grant.resets_left === 0) continue;
     const kind = grantKind(grant);
-    byKind.set(kind, [...(byKind.get(kind) ?? []), grant]);
+    const listed = (grant.clears ?? []).flatMap((bucket) =>
+      typeof bucket === "string" && bucket.trim() ? [bucket.trim()] : [],
+    );
+    const buckets = new Set(listed.length > 0 ? listed : KIND_BUCKETS[kind]);
+    // Claude lists the shared Session in a model-scoped reset's clears, but redeeming leaves it.
+    const modelOnly =
+      buckets.has(OVERAGE_INCLUDED_EVENT_TYPE) &&
+      [...buckets].every(
+        (bucket) => bucket === OVERAGE_INCLUDED_EVENT_TYPE || bucket === "five_hour",
+      );
+    // A model's row only counts that model's own resets, so a wider reset stays off it.
+    const cleared = [...buckets]
+      .filter((bucket) => (bucket === OVERAGE_INCLUDED_EVENT_TYPE) === modelOnly)
+      .toSorted();
+    const key = `${kind}\n${cleared.join("\n")}`;
+    const group = groups.get(key);
+    if (group) group.grants.push(grant);
+    else groups.set(key, { kind, cleared, modelOnly, grants: [grant] });
   }
-  const options = (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap(
-    (kind): Array<ServerProviderResetCreditOption> => {
-      const grants = byKind.get(kind);
-      const target = grants?.[0];
-      if (!grants || !target) return [];
-      const optionExpiresAt = expiresAt(target);
-      const buckets = new Set(
-        grants.flatMap((grant) => {
-          const listed = (grant.clears ?? []).flatMap((bucket) =>
-            typeof bucket === "string" && bucket.trim() ? [bucket.trim()] : [],
-          );
-          return listed.length > 0 ? listed : KIND_BUCKETS[kind];
-        }),
-      );
-      // Claude lists the shared Session in a model-scoped reset's clears, but redeeming leaves it.
-      const modelOnly =
-        buckets.has(OVERAGE_INCLUDED_EVENT_TYPE) &&
-        [...buckets].every(
-          (bucket) => bucket === OVERAGE_INCLUDED_EVENT_TYPE || bucket === "five_hour",
-        );
-      // A model's row only counts that model's own resets, so a wider reset stays off it.
-      const cleared = [...buckets].filter(
-        (bucket) => (bucket === OVERAGE_INCLUDED_EVENT_TYPE) === modelOnly,
-      );
-      const scope = modelOnly ? overageIncluded?.trim() : undefined;
-      return [
-        {
+  const options = (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap((kind) =>
+    [...groups.values()]
+      .filter((group) => group.kind === kind)
+      .map(({ cleared, modelOnly, grants }): ServerProviderResetCreditOption => {
+        const target = grants[0]!;
+        const optionExpiresAt = expiresAt(target);
+        const scope = modelOnly ? overageIncluded?.trim() : undefined;
+        return {
           creditId: target.id,
           ...RESET_KINDS[kind],
           availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
           ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
           clearsWindowIds: cleared.map((bucket) => claudeUsageWindowId(bucket, overageIncluded)),
           ...(scope ? { scope } : {}),
-        },
-      ];
-    },
+        };
+      }),
   );
   const nextExpiresAt = expiresAt(next);
   return {
