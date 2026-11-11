@@ -152,7 +152,7 @@ function AccessSelect<A extends string>({
   );
 }
 
-export function RowLayout({
+function RowLayout({
   title,
   status,
   details,

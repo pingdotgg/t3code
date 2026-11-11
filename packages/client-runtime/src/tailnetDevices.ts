@@ -87,7 +87,7 @@ const listsAsMember = (host: DeviceNetworkHost, environmentId: EnvironmentId) =>
  * Two hosts are one network when each lists the other as a member that is not revoked, or when
  * this client is the same app of the network on both.
  */
-export function sameNetwork(a: DeviceNetworkHost, b: DeviceNetworkHost): boolean {
+function sameNetwork(a: DeviceNetworkHost, b: DeviceNetworkHost): boolean {
   if (!inNetwork(a) || !inNetwork(b)) return false;
   if (listsAsMember(a, b.environmentId) && listsAsMember(b, a.environmentId)) return true;
   const appId = a.snapshot?.callerAppId ?? null;
@@ -140,7 +140,7 @@ export function canManageNetwork(
 }
 
 /** Any switched-on full-access host this client may write to, the preferred one first. */
-export function chooseAuthority(
+function chooseAuthority(
   hosts: ReadonlyArray<DeviceNetworkHost>,
   preferred: EnvironmentId | null,
 ): EnvironmentId | null {

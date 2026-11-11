@@ -232,7 +232,9 @@ it.effect(
         yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: false });
         const refusedThere = yield* link.pipe(Effect.flip);
         expect(refusedThere.reason).toBe("pairing_rejected");
-        expect(refusedThere.message).toContain("That machine is not taking part in your device network");
+        expect(refusedThere.message).toContain(
+          "That machine is not taking part in your device network",
+        );
         expect(yield* linkedSessions(b)).toEqual([]);
 
         yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: true });
