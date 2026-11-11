@@ -8,6 +8,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
@@ -152,39 +153,50 @@ export const make = Effect.gen(function* () {
       Effect.orDie,
     );
 
+  const runGh = (host: string, account: string | undefined, cwd: string) =>
+    process.run({
+      operation: "GitHubCredentials.get",
+      command: "gh",
+      args: [
+        "auth",
+        "token",
+        "--hostname",
+        host,
+        ...(account === undefined ? [] : ["--user", account]),
+      ],
+      cwd,
+      // Never let gh print the token into a debug log.
+      env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
+      timeoutMs: 10_000,
+      concurrency: GH_PROCESS_CONCURRENCY,
+    });
+
   const fromGh = (host: string, account: string | undefined, cwd: string) =>
-    process
-      .run({
-        operation: "GitHubCredentials.get",
-        command: "gh",
-        args: [
-          "auth",
-          "token",
-          "--hostname",
-          host,
-          ...(account === undefined ? [] : ["--user", account]),
-        ],
-        cwd,
-        // Never let gh print the token into a debug log.
-        env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
-        timeoutMs: 10_000,
-        concurrency: GH_PROCESS_CONCURRENCY,
-      })
-      .pipe(
-        Effect.mapError((error) =>
-          isMissingExecutable(error)
-            ? new GitHubCliMissingError({ host })
-            : // gh exits non-zero with "no oauth token" when it has no login for the host.
-              error._tag === "VcsProcessExitError"
-              ? new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) })
-              : new GitHubCliFailedError({ host, cause: error }),
-        ),
-        Effect.map((output) => output.stdout.trim()),
-        Effect.filterOrFail(
-          (token) => token !== "",
-          () => new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) }),
-        ),
-      );
+    runGh(host, account, cwd).pipe(
+      // A checkout folder that is gone fails the spawner's cwd check; ask gh from the server.
+      Effect.catchIf(
+        (error) =>
+          cwd !== workingDirectory &&
+          error._tag === "VcsProcessSpawnError" &&
+          PlatformError.isPlatformError(error.cause) &&
+          error.cause.reason._tag === "NotFound" &&
+          !isMissingExecutable(error),
+        () => runGh(host, account, workingDirectory),
+      ),
+      Effect.mapError((error) =>
+        isMissingExecutable(error)
+          ? new GitHubCliMissingError({ host })
+          : // gh exits non-zero with "no oauth token" when it has no login for the host.
+            error._tag === "VcsProcessExitError"
+            ? new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) })
+            : new GitHubCliFailedError({ host, cause: error }),
+      ),
+      Effect.map((output) => output.stdout.trim()),
+      Effect.filterOrFail(
+        (token) => token !== "",
+        () => new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) }),
+      ),
+    );
 
   const readSettings = (settings: ServerSettings) =>
     readSourceControlHostSettings(

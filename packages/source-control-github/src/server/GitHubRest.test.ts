@@ -615,35 +615,49 @@ describe("GitHubCredentials", () => {
       Layer.provide(Layer.succeed(HttpClient.HttpClient, unexpectedHttp)),
     );
 
-  it.effect.each([
-    { module: "ChildProcess", method: "spawn", expected: "GitHubCliMissingError" },
-    { module: "FileSystem", method: "access", expected: "GitHubCliFailedError" },
-  ] as const)(
-    "classifies a missing $module resource as $expected",
-    ({ module, method, expected }) =>
-      Effect.gen(function* () {
-        const credentials = yield* GitHubCredentials.GitHubCredentials;
-        const error = yield* Effect.flip(credentials.get("git.acme.internal", "/repo"));
-        expect(error._tag).toBe(expected);
-      }).pipe(
-        Effect.provide(
-          credentialsWith(() =>
-            Effect.fail(
-              new VcsProcessSpawnError({
-                operation: "GitHubCredentials.get",
-                command: "gh",
-                cwd: "/repo",
-                cause: PlatformError.systemError({
-                  _tag: "NotFound",
-                  module,
-                  method,
-                }),
-              }),
-            ),
-          ),
+  const missing = (cwd: string, module: "ChildProcess" | "FileSystem") =>
+    new VcsProcessSpawnError({
+      operation: "GitHubCredentials.get",
+      command: "gh",
+      cwd,
+      cause: PlatformError.systemError({
+        _tag: "NotFound",
+        module,
+        method: module === "ChildProcess" ? "spawn" : "access",
+      }),
+    });
+
+  it.effect("fails with GitHubCliMissingError when gh is not on PATH", () =>
+    Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const error = yield* Effect.flip(credentials.get("git.acme.internal", "/repo"));
+      expect(error._tag).toBe("GitHubCliMissingError");
+    }).pipe(
+      Effect.provide(credentialsWith((input) => Effect.fail(missing(input.cwd, "ChildProcess")))),
+    ),
+  );
+
+  it.effect("asks gh from the server directory when the checkout folder is gone", () => {
+    const directories: Array<string> = [];
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const held = yield* credentials.get("git.acme.internal", "/removed-worktree");
+      expect(Redacted.value(held.token)).toBe("server-token");
+      expect(directories).toEqual(["/removed-worktree", "/server"]);
+    }).pipe(
+      Effect.provide(
+        credentialsWith((input) =>
+          Effect.suspend(() => {
+            directories.push(input.cwd);
+            return input.cwd === "/removed-worktree"
+              ? Effect.fail(missing(input.cwd, "FileSystem"))
+              : Effect.succeed(TestSourceControlHost.processOutput("server-token"));
+          }),
         ),
       ),
-  );
+      Effect.provideService(HostProcess.WorkingDirectory, "/server"),
+    );
+  });
 
   it.effect("does not cache a gh failure that is not about signing in", () => {
     let calls = 0;
