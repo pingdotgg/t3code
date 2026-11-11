@@ -1,7 +1,13 @@
+import { DEFAULT_THEMES, preloadHighlighter } from "@pierre/diffs";
 import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
+import appCss from "~/index.css?inline";
+import { isMacPlatform } from "~/lib/utils";
+import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
 
 const state = vi.hoisted(() => ({
   file: null as ProjectReadFileResult | null,
@@ -49,6 +55,9 @@ vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
   useWorkspaceMutationRefresh: vi.fn(),
 }));
 vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
+vi.mock(import("../DiffWorkerPoolProvider"), () => ({
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => <>{children}</>,
+}));
 vi.mock(import("./projectFilesQueryState"), async (original) => ({
   ...(await original()),
   useProjectFileQuery: () => ({
@@ -82,6 +91,7 @@ function setup() {
   const previous = keys.map((key) => localStorage.getItem(key));
   localStorage.setItem(keys[0]!, "false");
   localStorage.setItem(keys[1]!, "true");
+  state.file = null;
   state.optimistic = null;
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   return {
@@ -102,12 +112,16 @@ function markdownPreview(truncated: boolean) {
     byteLength: truncated ? 1_200_000 : 32,
     truncated,
   };
+  return filePreview("tasks.md");
+}
+
+function filePreview(relativePath: string) {
   return (
     <FilePreviewPanel
       environmentId={environmentId}
       cwd="/workspace"
       projectName="Project"
-      relativePath="tasks.md"
+      relativePath={relativePath}
       threadRef={threadRef}
       composerDraftTarget={threadRef}
       keybindings={[]}
@@ -124,6 +138,50 @@ function markdownPreview(truncated: boolean) {
     />
   );
 }
+
+function deepActiveElement() {
+  let active = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  return active;
+}
+
+describe("source file focus", () => {
+  it("hands panel focus to the file's editor, which owns mod+f", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const panel = () => (
+      <div {...workspaceAreaProps("panel", 1, "Workspace panel")}>
+        <div data-right-panel-surface-content>{filePreview("server.ts")}</div>
+      </div>
+    );
+    const editorHasFocus = () => expect(deepActiveElement()?.matches("[data-content]")).toBe(true);
+
+    await using screen = await render(panel());
+    const focus = createWorkspaceFocusController(document);
+    using _focus = { [Symbol.dispose]: focus.dispose };
+    expect(focus.focus("panel")).toBe(true);
+    state.file = {
+      relativePath: "server.ts",
+      contents: "const server = 1;\n",
+      byteLength: 18,
+      truncated: false,
+    };
+    await screen.rerender(panel());
+    await vi.waitFor(editorHasFocus);
+
+    (deepActiveElement() as HTMLElement).blur();
+    expect(focus.focus("panel", false)).toBe(true);
+    await vi.waitFor(editorHasFocus);
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
+    );
+    await vi.waitFor(() => expect(deepActiveElement()).toBeInstanceOf(HTMLInputElement));
+  });
+});
 
 describe("rendered Markdown task saves", () => {
   it("keeps a truncated read read-only without queuing a replacement", async () => {
