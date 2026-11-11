@@ -87,18 +87,26 @@ describe("HTML in native Markdown", () => {
     expect(result).toContain('<img src="after.png">\n</details>');
   });
 
-  it("links HTML anchors in a table cell without breaking the row at <br>", () => {
-    const document = parseMarkdownDocument(
-      "| Status | Preview URL |\n| - | - |\n| Done | <a href='https://commit.example.com'>Commit</a><br><a href='https://branch.example.com'>Branch</a> |",
+  it("keeps <br> line breaks in a table cell without breaking the row", () => {
+    const markdown =
+      "| Status | Preview URL |\n| - | - |\n| Done | <a href='https://commit.example.com'>Commit</a><br><a href='https://branch.example.com'>Branch</a> |\n| • One<br/>• Two<BR />**Three** | `<br>` |";
+    // md4c decodes the reference to a newline in the cell's text, as remark does.
+    expect(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX)).toContain(
+      "| • One&#10;• Two&#10;**Three** | `<br>` |",
     );
-    const table = document.children[0];
+    const table = parseMarkdownDocument(markdown).children[0];
     expect(table?.type).toBe("table");
     if (table?.type !== "table") return;
-    expect(table.children).toHaveLength(2);
+    expect(table.children).toHaveLength(3);
+    expect(table.children.map((row) => row.children.length)).toEqual([2, 2, 2]);
     expect(table.children[1]?.children[1]?.children).toMatchObject([
       { type: "link", url: "https://commit.example.com", children: [{ value: "Commit" }] },
-      { type: "text", value: " " },
+      { type: "text", value: "\n" },
       { type: "link", url: "https://branch.example.com", children: [{ value: "Branch" }] },
+    ]);
+    expect(table.children[2]?.children).toMatchObject([
+      { children: [{ value: "• One\n• Two\n" }, { type: "strong" }] },
+      { children: [{ type: "inlineCode", value: "<br>" }] },
     ]);
   });
 
@@ -117,6 +125,35 @@ describe("HTML in native Markdown", () => {
 
   it("keeps anchor text unlinked for unsafe hrefs", () => {
     expect(markdownWithHtml('Run <a href="javascript:alert(1)">this</a> now')).toBe("Run this now");
+  });
+
+  it("keeps anchor labels and escaped bangs intact across nested formatting and table cells", () => {
+    const markdown =
+      '> **!<a href="https://x.test">[one]</a>** and <span>tail</span>\n\n| A |\n| - |\n| !<a href="https://x.test">x[y]</a><br><img src="x.png"> |';
+    expect(markdownWithHtml(markdown)).toBe(
+      "> **\\![\\[one\\]](<https://x.test>)** and tail\n\n| A |\n| - |\n| \\![x\\[y\\]](<https://x.test>)&#10;![](<x.png>) |",
+    );
+    expect(
+      markdownWithHtml(
+        String.raw`Before \!<a href="https://x.test">escaped</a> \\!<a href="mailto:a@b">even</a>`,
+      ),
+    ).toBe(String.raw`Before \![escaped](<https://x.test>) \\\![even](<mailto:a@b>)`);
+  });
+
+  it("converts separated HTML without changing code examples or an unfinished tag", () => {
+    const literal = '`<br>`\n\n```html\n<img src="literal.png">\n```\n\n<broken';
+    expect(markdownWithHtml(literal)).toBe(literal);
+    const rows = Array.from(
+      { length: 100 },
+      (_, index) => `row ${index} <span>text</span><br>!<a href="https://x.test/${index}">go</a>`,
+    );
+    const expected = Array.from(
+      { length: 100 },
+      (_, index) => `row ${index} text  \n\\![go](<https://x.test/${index}>)`,
+    );
+    expect(markdownWithHtml(rows.join("\n\n") + "\n\n" + literal)).toBe(
+      expected.join("\n\n") + "\n\n" + literal,
+    );
   });
 });
 
