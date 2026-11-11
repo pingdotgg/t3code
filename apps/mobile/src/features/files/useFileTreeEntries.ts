@@ -2,6 +2,7 @@ import { useAtomMount, useAtomSubscribe } from "@effect/atom-react";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { ProjectListEntriesError, type EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { useLayoutEffect, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
 
@@ -10,6 +11,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
 import { useDebouncedValue } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
+
+const isProjectListEntriesError = Schema.is(ProjectListEntriesError);
 
 function createDirectories() {
   return {
@@ -273,8 +276,7 @@ export function useFileTreeEntries(input: {
     });
   };
   const missingRoot =
-    root.failure instanceof ProjectListEntriesError &&
-    root.failure.failure === "workspace_root_not_found";
+    isProjectListEntriesError(root.failure) && root.failure.failure === "workspace_root_not_found";
   const rootData = missingRoot ? null : root.data;
   const rootListing = root.successResult ?? directories.rootListing;
   if (

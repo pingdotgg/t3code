@@ -8,6 +8,7 @@ import type {
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
+  ProviderInstanceId,
   PullRequestListInput,
   ServerProvider,
   ThreadId,
@@ -16,6 +17,7 @@ import type {
 import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
+  withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
@@ -27,7 +29,7 @@ import {
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
-import { useThreadShells } from "~/state/entities";
+import { useVisibleThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
 import {
@@ -42,6 +44,9 @@ import {
   rankPullRequestMatches,
 } from "../pullRequest/pullRequestList.logic";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
+import { matchComposerModelItems } from "./composerModelMentions";
+import type { ModelEsque } from "./providerIconUtils";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
@@ -62,13 +67,17 @@ export function useComposerMenuItems({
   pullRequestProjectId,
   pullRequestRepository,
   threadPullRequests,
-  planModeUiEnabled,
+  sideChatAvailable,
+  sideChatDisabledReason,
+  freshSessionAvailable,
   compactSlashCommandAvailable,
   selectedProvider,
   selectedProviderSkills,
   selectedProviderSlashCommands,
   showSkillsInSlashMenu,
+  workspaceSkillsScanning,
   questionAttachmentTarget,
+  modelMentions,
 }: {
   readonly composerTrigger: ComposerTrigger | null;
   readonly environmentId: EnvironmentId;
@@ -78,13 +87,20 @@ export function useComposerMenuItems({
   readonly pullRequestProjectId: ProjectId | null;
   readonly pullRequestRepository: string | null;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
-  readonly planModeUiEnabled: boolean;
+  readonly sideChatAvailable: boolean;
+  readonly sideChatDisabledReason: string | null;
+  readonly freshSessionAvailable: boolean;
   readonly compactSlashCommandAvailable: boolean;
   readonly selectedProvider: ProviderDriverKind;
   readonly selectedProviderSkills: ServerProvider["skills"];
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
   readonly showSkillsInSlashMenu: boolean;
+  readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
+  readonly modelMentions: {
+    readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+    readonly modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
+  };
 }) {
   // Thread mentions rank by recency as of when the composer mounted.
   const [now] = useState(() => Date.now());
@@ -102,7 +118,7 @@ export function useComposerMenuItems({
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
-  const environmentThreadShells = useThreadShells(isPathTrigger);
+  const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
   // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
@@ -197,6 +213,11 @@ export function useComposerMenuItems({
               query: composerTrigger.query,
             })
           : []),
+        ...matchComposerModelItems({
+          instanceEntries: modelMentions.instanceEntries,
+          modelOptionsByInstance: modelMentions.modelOptionsByInstance,
+          query: composerTrigger.query,
+        }),
         ...workspaceEntries.entries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
           type: "path" as const,
@@ -217,21 +238,32 @@ export function useComposerMenuItems({
           label: "/model",
           description: "Switch response model for this thread",
         },
-        ...(planModeUiEnabled
+        ...(sideChatAvailable
           ? ([
               {
-                id: "slash:plan",
+                id: "slash:side",
                 type: "slash-command",
-                command: "plan",
-                label: "/plan",
-                description: "Switch this thread into plan mode",
+                command: "side",
+                label: "/side",
+                description: sideChatDisabledReason ?? "Ask a side question in a new side chat",
               },
               {
-                id: "slash:default",
+                id: "slash:btw",
                 type: "slash-command",
-                command: "default",
-                label: "/default",
-                description: "Switch this thread back to normal build mode",
+                command: "btw",
+                label: "/btw",
+                description: sideChatDisabledReason ?? "Same as /side",
+              },
+            ] as const)
+          : []),
+        ...(freshSessionAvailable
+          ? ([
+              {
+                id: "slash:clear",
+                type: "slash-command",
+                command: "clear",
+                label: "/clear",
+                description: "Start a fresh session; earlier messages stay visible",
               },
             ] as const)
           : []),
@@ -263,8 +295,11 @@ export function useComposerMenuItems({
           skill.description ??
           (skill.scope ? `${skill.scope} skill` : ""),
       }));
+      // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
-        (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
+        (item) =>
+          (item.command.name !== "compact" || compactSlashCommandAvailable) &&
+          (item.command.name !== "clear" || !freshSessionAvailable),
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
@@ -303,24 +338,30 @@ export function useComposerMenuItems({
             query: composerTrigger.query,
             limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
           })
-        : rankPullRequestMatches(
-            (pullRequestLookup.data?.entries ?? []).filter((entry) => {
-              if (
-                entry.projectId !== pullRequestProjectId ||
-                entry.repository.trim().toLowerCase() !== pullRequestRepository.trim().toLowerCase()
-              ) {
-                return false;
-              }
-              const provider = pullRequestLookup.data?.providers.find(
-                (candidate) => candidate.host === entry.host,
-              );
-              return (
-                provider?.searchesOnHost === true ||
-                matchesPullRequestQuery(entry, composerTrigger.query)
-              );
-            }),
-            composerTrigger.query,
-          ).slice(0, COMPOSER_PULL_REQUEST_RESULT_LIMIT);
+        : withLinkedComposerPullRequestsFirst({
+            matches: rankPullRequestMatches(
+              (pullRequestLookup.data?.entries ?? []).filter((entry) => {
+                if (
+                  entry.projectId !== pullRequestProjectId ||
+                  entry.repository.trim().toLowerCase() !==
+                    pullRequestRepository.trim().toLowerCase()
+                ) {
+                  return false;
+                }
+                const provider = pullRequestLookup.data?.providers.find(
+                  (candidate) => candidate.host === entry.host,
+                );
+                return (
+                  provider?.searchesOnHost === true ||
+                  matchesPullRequestQuery(entry, composerTrigger.query)
+                );
+              }),
+              composerTrigger.query,
+            ),
+            linked: linkedPullRequests,
+            query: composerTrigger.query,
+            limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+          });
       return matches.map((pullRequest) => ({
         id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
         type: "pull-request",
@@ -344,6 +385,8 @@ export function useComposerMenuItems({
   })();
   const isLoading =
     (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
+      workspaceSkillsScanning) ||
     (composerTriggerKind === "pull-request" &&
       pullRequestProjectId !== null &&
       pullRequestRepository !== null &&

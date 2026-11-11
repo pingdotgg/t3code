@@ -1,4 +1,4 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import type { Output } from "alchemy/Output";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -10,9 +10,7 @@ export interface ExampleNetwork {
   appSecurityGroupId: Output<AWS.EC2.SecurityGroupId>;
 }
 
-export class Network extends Context.Service<Network, ExampleNetwork>()(
-  "Network",
-) {}
+export class Network extends Context.Service<Network, ExampleNetwork>()("Network") {}
 
 export const NetworkLive = Layer.effect(
   Network,
