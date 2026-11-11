@@ -20,16 +20,12 @@ const storage = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   },
 });
-const authenticate = makeAuthenticate(
-  process.env.AUTH_URL!,
-  process.env.AUTH_JWKS_URL!,
-);
+const authenticate = makeAuthenticate(process.env.AUTH_URL!, process.env.AUTH_JWKS_URL!);
 
 async function processUpload(request: Request) {
   if (request.method !== "POST") return new Response(null, { status: 405 });
   const invocation = request.headers.get("x-neon-trigger-invocation-id");
-  if (!invocation)
-    return new Response("Missing Neon trigger attestation", { status: 403 });
+  if (!invocation) return new Response("Missing Neon trigger attestation", { status: 403 });
   const event = await request.json().catch(() => undefined);
   if (
     event?.version !== 1 ||
@@ -65,17 +61,12 @@ async function processUpload(request: Request) {
 export default {
   async fetch(request: Request) {
     const path = new URL(request.url).pathname;
-    const headers = corsHeaders(
-      request.headers.get("origin"),
-      process.env.APP_ORIGIN,
-    );
+    const headers = corsHeaders(request.headers.get("origin"), process.env.APP_ORIGIN);
     try {
       if (path === "/jobs/upload") return await processUpload(request);
       if (!headers) return new Response("Untrusted origin", { status: 403 });
-      const respond = (value: unknown, status = 200) =>
-        Response.json(value, { status, headers });
-      if (request.method === "OPTIONS")
-        return new Response(null, { status: 204, headers });
+      const respond = (value: unknown, status = 200) => Response.json(value, { status, headers });
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
       if (path === "/health") return respond({ ok: true, runtime: "native" });
       const owner = await authenticate(request.headers.get("authorization"));
       if (!owner)
@@ -85,15 +76,12 @@ export default {
           },
           401,
         );
-      if (path === "/api/me" && request.method === "GET")
-        return respond({ userId: owner });
+      if (path === "/api/me" && request.method === "GET") return respond({ userId: owner });
       if (path === "/api/settings" && request.method === "GET") {
         const settings = await storage.send(
           new GetObjectCommand({ Bucket: bucket, Key: "config/settings.json" }),
         );
-        return respond(
-          JSON.parse((await settings.Body?.transformToString()) ?? "null"),
-        );
+        return respond(JSON.parse((await settings.Body?.transformToString()) ?? "null"));
       }
       if (path === "/api/uploads" && request.method === "GET") {
         return respond(
@@ -108,8 +96,7 @@ export default {
         if (!input)
           return respond(
             {
-              error:
-                "Choose a nonempty file up to 10 MiB with a valid content type.",
+              error: "Choose a nonempty file up to 10 MiB with a valid content type.",
             },
             400,
           );
@@ -137,10 +124,7 @@ export default {
           await sql`SELECT * FROM uploads WHERE id = ${match[1]!} AND owner_id = ${owner}`;
         if (!row) return respond({ error: "Not found" }, 404);
         if (row.status !== "ready")
-          return respond(
-            { error: "This upload is not ready to download." },
-            409,
-          );
+          return respond({ error: "This upload is not ready to download." }, 409);
         const url = await getSignedUrl(
           storage,
           new GetObjectCommand({ Bucket: bucket, Key: row.object_key }),

@@ -12,6 +12,8 @@ export interface ProviderMaintenanceCapabilities {
    * `latestVersion`, then npm.
    */
   readonly lookupLatestVersion?: Effect.Effect<string | null>;
+  /** Separates installer release channels that share an update command. */
+  readonly latestVersionCacheKey?: string;
   readonly compareVersions?: (current: string, latest: string) => number;
   /** Resolved executable path for advisories when no update command is proven. */
   readonly installPath?: string;
@@ -24,6 +26,6 @@ export interface ProviderMaintenanceCommandAction {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly lockKey: string;
-  /** Native updaters must use the instance's custom home (e.g. `CODEX_HOME`). */
+  /** The provider's environment, including its PATH and custom home. */
   readonly env?: NodeJS.ProcessEnv;
 }
