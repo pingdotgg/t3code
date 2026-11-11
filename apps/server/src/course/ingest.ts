@@ -59,11 +59,10 @@ const MAX_PDF_TEXT = 2 * 1024 * 1024;
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"]);
 
 const isCourseIngestError = Schema.is(CourseIngestError);
-class OcwBlockedError extends Error {
-  constructor(readonly reason: string) {
-    super(reason);
-  }
-}
+class OcwBlockedError extends Schema.TaggedError<OcwBlockedError>()("OcwBlockedError", {
+  reason: Schema.String,
+}) {}
+const isOcwBlockedError = Schema.is(OcwBlockedError);
 
 const fail = (message: string): Effect.Effect<never, CourseIngestError> =>
   Effect.fail(new CourseIngestError({ message }));
@@ -643,7 +642,7 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
       // Every URL we fetch stays on OCW: the source can come from a YouTube description.
       const onOcw = (url: URL) => {
         if (url.hostname !== "ocw.mit.edu" || !/^https?:$/.test(url.protocol))
-          throw new OcwBlockedError(`${url.origin} is not MIT OpenCourseWare.`);
+          throw new OcwBlockedError({ reason: `${url.origin} is not MIT OpenCourseWare.` });
         return url;
       };
       const fetchPage = async (initial: URL) => {
@@ -699,8 +698,7 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
           url: source,
           hops: auditHops,
           status: null,
-          blocked: cause instanceof OcwBlockedError ? cause.reason : undefined,
-          error: cause instanceof OcwBlockedError ? undefined : String(cause),
+          ...(isOcwBlockedError(cause) ? { blocked: cause.reason } : { error: String(cause) }),
         });
       return new CourseIngestError({
         message: `Could not find the OCW course download: ${String(cause)}`,
