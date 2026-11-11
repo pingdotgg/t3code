@@ -547,7 +547,7 @@ it.layer(
         assert.deepStrictEqual(
           yield* defaultPrograms({
             account: { account: { type: "apiKey" }, requiresOpenaiAuth: false },
-            apiKeyCyberAccessProgramsDisabled: true,
+            cyberAccessProgramsUnavailable: true,
           }),
           { both: null, "daybreak-only": null, plain: null, "my-model": null },
         );

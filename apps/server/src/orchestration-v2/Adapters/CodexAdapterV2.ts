@@ -777,7 +777,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
-    /** The catalog default; a custom model has none and sends none. */
+    /** Set only for a model that offers Cyber Access; custom models never do. */
     readonly defaultCyberAccessProgram?: string | undefined;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -799,10 +799,13 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
         ? undefined
         : getCodexServiceTierOptionValue(input.modelSelection);
     // A chosen program goes as is, even one the model lacks, so Codex rejects it visibly.
-    const cyberAccessProgram = [
-      getModelSelectionStringOptionValue(input.modelSelection, "cyberAccessProgram"),
-      input.defaultCyberAccessProgram,
-    ].find(isCodexCyberAccessProgram);
+    const cyberAccessProgram =
+      input.defaultCyberAccessProgram === undefined
+        ? undefined
+        : [
+            getModelSelectionStringOptionValue(input.modelSelection, "cyberAccessProgram"),
+            input.defaultCyberAccessProgram,
+          ].find(isCodexCyberAccessProgram);
     // MCP-written app context must be quoted user input, not developer instructions.
     const appContext = Object.fromEntries(
       (input.appContext ?? []).map((entry) => [

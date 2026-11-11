@@ -146,7 +146,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
   readonly serviceTier?: string | undefined;
   readonly daybreakEnabled?: boolean | undefined;
-  readonly apiKeyCyberAccessProgramsDisabled?: boolean | undefined;
+  readonly cyberAccessProgramsUnavailable?: boolean | undefined;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
@@ -420,13 +420,12 @@ function applyConfiguredCodexCyberAccess(
   models: ReadonlyArray<ServerProviderModel>,
   snapshot: Pick<
     CodexAppServerProviderSnapshot,
-    "daybreakEnabled" | "apiKeyCyberAccessProgramsDisabled"
+    "daybreakEnabled" | "cyberAccessProgramsUnavailable"
   >,
 ): ReadonlyArray<ServerProviderModel> {
-  // Access is per catalog model and per login: a custom slug borrowing descriptors
-  // and an API key without the programs offer no choice, so no turn sends one.
+  // Without a descriptor no turn sends a program, leaving Codex's own config in charge.
   const offered = mapCodexOptionDescriptors(models, (descriptors, model) =>
-    model.isCustom || snapshot.apiKeyCyberAccessProgramsDisabled === true
+    model.isCustom || snapshot.cyberAccessProgramsUnavailable === true
       ? descriptors.filter((descriptor) => descriptor.id !== "cyberAccessProgram")
       : descriptors,
   );
@@ -755,10 +754,11 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     models,
     serviceTier: config?.service_tier ?? undefined,
     daybreakEnabled: cyberAccess?.daybreak === true,
-    // An API key may have the programs turned off, and an unread config cannot rule that out.
-    apiKeyCyberAccessProgramsDisabled:
-      accountResponse.account?.type === "apiKey" &&
-      (config === undefined || cyberAccess?.features?.api_key_cyber_access_programs === false),
+    // An unread config hides `daybreak` and the API-key switch, so T3 must not pick a program.
+    cyberAccessProgramsUnavailable:
+      config === undefined ||
+      (accountResponse.account?.type === "apiKey" &&
+        cyberAccess?.features?.api_key_cyber_access_programs === false),
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });

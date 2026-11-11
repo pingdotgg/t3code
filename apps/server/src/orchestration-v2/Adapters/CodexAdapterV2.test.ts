@@ -31,6 +31,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as CodexClient from "effect-codex-app-server/client";
@@ -242,8 +243,9 @@ describe("CodexAdapterV2 runtime policy", () => {
           defaultCyberAccessProgram,
         });
 
-      // Custom models have no catalog default.
+      // Custom models offer no Cyber Access, so even an explicit choice is dropped.
       assert.notProperty(yield* build(), "cyberAccessProgram");
+      assert.notProperty(yield* build("daybreakBlue"), "cyberAccessProgram");
       assert.equal((yield* build(undefined, "daybreakBlue")).cyberAccessProgram, "daybreakBlue");
       assert.equal((yield* build("standard", "daybreakBlue")).cyberAccessProgram, "standard");
     }),
@@ -1264,6 +1266,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["onUsageLimits"],
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
+    models?: CodexAdapterV2.CodexAdapterV2Options["models"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1326,6 +1329,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         environment: {},
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
+        ...(models ? { models } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -2515,6 +2519,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           modelSelection,
           hasT3Mcp: true,
+          defaultCyberAccessProgram: "daybreakBlue",
         });
         assert.equal(params.cyberAccessProgram, "standard");
         assert.include(
@@ -2595,6 +2600,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               if (method === "item/completed" || method === "turn/completed")
                 wireOrder.push(method);
             }),
+          Effect.succeed<ReadonlyArray<ServerProviderModel>>([
+            {
+              slug: modelSelection.model,
+              name: modelSelection.model,
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "cyberAccessProgram",
+                    label: "Cyber Access",
+                    type: "select",
+                    options: [
+                      { id: "standard", label: "Standard" },
+                      { id: "daybreakBlue", label: "Daybreak Blue", isDefault: true },
+                    ],
+                    currentValue: "daybreakBlue",
+                  },
+                ],
+              },
+            },
+          ]),
         );
         yield* (yield* McpProviderSessions.McpProviderSessions).set({
           environmentId: EnvironmentId.make("test"),
