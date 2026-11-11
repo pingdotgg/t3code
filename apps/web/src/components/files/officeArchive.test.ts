@@ -116,10 +116,7 @@ describe("Word preview limits", () => {
     expect(await result.part("word/document.xml")).toContain("After");
   });
 
-  it.each([
-    ["used", true],
-    ["unused", false],
-  ])("leaves out only a header too long to lay out (%s)", async (_, used) => {
+  it("keeps a long header", async () => {
     const header = `<w:hdr ${W}>${Array.from({ length: 3_000 }, (_, line) => paragraph(`Header line ${line}`)).join("")}</w:hdr>`;
     const footer = `<w:ftr ${W}>${paragraph("Footer")}</w:ftr>`;
     const footnotes = `<w:footnotes ${W}><w:footnote w:id="1">${paragraph("Note")}</w:footnote></w:footnotes>`;
@@ -127,11 +124,11 @@ describe("Word preview limits", () => {
       await wordFile(
         `<w:p><w:r><w:t>Body</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>`,
         { header, footer, footnotes },
-        `${used ? '<w:headerReference w:type="default" r:id="header"/>' : ""}<w:footerReference w:type="default" r:id="footer"/>`,
+        `<w:headerReference w:type="default" r:id="header"/><w:footerReference w:type="default" r:id="footer"/>`,
       ),
     );
-    expect(result.truncated).toBe(used);
-    expect(await result.part("word/header.xml")).toBeUndefined();
+    expect(result.truncated).toBe(false);
+    expect(await result.part("word/header.xml")).toBe(header);
     expect(await result.part("word/footer.xml")).toBe(footer);
     expect(await result.part("word/footnotes.xml")).toBe(footnotes);
     expect(await result.part("word/document.xml")).toContain("Body");

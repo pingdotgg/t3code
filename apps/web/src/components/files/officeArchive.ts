@@ -29,8 +29,6 @@ export const WORD_LIMITS = {
   numberingBytes: 32 * 1024 * 1024,
   numberingMarkup: 400_000,
   auxiliaryPartBytes: 8 * 1024 * 1024,
-  /** A header's layout grows with its own length, not the page count: 128 KB takes about 1 s. */
-  headerBytes: 128 * 1024,
   auxiliaryMarkup: 1_000_000,
   /** Body, styles, lists and notes, with headers and footers counted once per page. */
   expandedBytes: 64 * 1024 * 1024,
@@ -814,22 +812,12 @@ async function wordExpansion(
   const nodes = new Map<string, { xml: string; path: string }>();
   const optional = new Set<string>();
   const noteParts = new Map<string, string>();
-  // Headers and footers too long to lay out, and whether the document uses one.
-  const oversized = new Set<string>();
-  let oversizedUsed = false;
   for (const [path, roles] of parts.roles) {
     if (![...roles].some((role) => WORD_EXPANDED_PARTS.has(role))) continue;
     const xml = await archive.file(path)?.async("string");
     if (!xml) continue;
     optional.add(path);
-    if (roles.has("header") || roles.has("footer")) {
-      // A header's layout grows with its own length: a long one is left out, as an unused one is.
-      if (xml.length > WORD_LIMITS.headerBytes) {
-        oversized.add(path);
-        continue;
-      }
-      nodes.set(path, { xml, path });
-    }
+    if (roles.has("header") || roles.has("footer")) nodes.set(path, { xml, path });
     for (const role of ["footnotes", "endnotes", "comments"]) {
       if (!roles.has(role)) continue;
       noteParts.set(role.slice(0, -1), path);
@@ -876,7 +864,6 @@ async function wordExpansion(
       if (tag.local === "headerReference" || tag.local === "footerReference") {
         const target = parts.relationships.get(path)?.get(attr("id"));
         if (target) headers.add(target);
-        if (target && oversized.has(target)) oversizedUsed = true;
       }
       if (tag.local === "altChunk") cost.bytes = Infinity;
       if (tag.local !== "blip" && tag.local !== "imagedata") return;
@@ -984,7 +971,7 @@ async function wordExpansion(
       xml = xml.slice(0, range.start) + xml.slice(range.end);
     archive.file(relPath, xml);
   }
-  return { costs, truncated: truncated || oversizedUsed, omitted };
+  return { costs, truncated, omitted };
 }
 
 // Stream each entry before handing it to an engine. A tiny compressed archive
