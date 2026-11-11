@@ -1,0 +1,39 @@
+import type * as config from "@distilled.cloud/aws/config-service";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `config:ListResourceEvaluations` — enumerate the
+ * proactive resource evaluations run in the account, optionally filtered
+ * by evaluation mode and time window.
+ *
+ * Provide `Config.ListResourceEvaluationsHttp` on the hosting Lambda Function to
+ * satisfy the requirement.
+ * ### Proactive Resource Evaluation
+ * **Example:** List Proactive Evaluations
+ * ```typescript
+ * // init — grants config:ListResourceEvaluations
+ * const listResourceEvaluations = yield* AWS.Config.ListResourceEvaluations();
+ *
+ * // runtime
+ * const result = yield* listResourceEvaluations({
+ *   Filters: { EvaluationMode: "PROACTIVE" },
+ * });
+ * console.log(result.ResourceEvaluations);
+ * ```
+ *
+ * @binding
+ */
+export interface ListResourceEvaluations extends Binding.Service<
+  ListResourceEvaluations,
+  "AWS.Config.ListResourceEvaluations",
+  () => Effect.Effect<
+    (
+      request?: config.ListResourceEvaluationsRequest,
+    ) => Effect.Effect<config.ListResourceEvaluationsResponse, config.ListResourceEvaluationsError>
+  >
+> {}
+
+export const ListResourceEvaluations = Binding.Service<ListResourceEvaluations>(
+  "AWS.Config.ListResourceEvaluations",
+);

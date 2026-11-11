@@ -13,9 +13,10 @@ vi.mock("react", () => ({ useMemo: <A>(factory: () => A) => factory() }));
 vi.mock("@effect/atom-react", async () => {
   const { appAtomRegistry } = await import("./atom-registry");
   return {
-    useAtomValue: <A>(atom: Atom.Atom<A>) => {
+    useAtomValue: <A, B>(atom: Atom.Atom<A>, select?: (value: A) => B) => {
       harness.lastAtom = atom;
-      return appAtomRegistry.get(atom);
+      const value = appAtomRegistry.get(atom);
+      return select === undefined ? value : select(value);
     },
   };
 });
