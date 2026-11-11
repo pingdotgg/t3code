@@ -5,6 +5,10 @@
 /* ─── Theme tokens ──────────────────────────────────────────────────── */
 @layer theme {
   :root {
+    /* Native text takes one family name, not Tailwind's font stack. */
+    @variant ios {
+      --font-mono: "ui-monospace";
+    }
     @variant android {
       --font-mono: "monospace";
     }
