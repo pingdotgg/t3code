@@ -8,7 +8,6 @@ import {
   type AuthCreatePairingCredentialInput,
   type AuthMcpClientAccess,
   type AuthPairingCredentialResult,
-  type EnvironmentId,
   mcpClientScopes,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -19,12 +18,12 @@ import type { Atom } from "effect/reactivity";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
-import { type PreparedConnection, RelayConnectionTarget } from "../connection/model.ts";
+import type { PreparedConnection } from "../connection/model.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
-import { createEnvironmentCommand, createRuntimeCommand } from "./runtime.ts";
+import { createEnvironmentCommand } from "./runtime.ts";
 
 const MINT_TIMEOUT_MS = 8_000;
 const PEER_PAIRING_CODE_LABEL = "T3 Code link";
@@ -45,30 +44,8 @@ export class PeerPairingCodeError extends Schema.TaggedError<PeerPairingCodeErro
   }
 }
 
-export class ConnectApprovalCodeError extends Schema.TaggedError<ConnectApprovalCodeError>()(
-  "ConnectApprovalCodeError",
-  {
-    reason: Schema.Literals(["other_address", "not_allowed", "unavailable"]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    switch (this.reason) {
-      case "other_address":
-        return "This sign-in did not start on that environment's T3 Connect address.";
-      case "not_allowed":
-        return "This account cannot approve app sign-ins on that environment.";
-      case "unavailable":
-        return "Could not reach that environment through T3 Connect with this account.";
-    }
-  }
-}
-
 const mintPairingCredential = Effect.fn("clientRuntime.state.mintPairingCredential")(function* (
-  prepared: Pick<
-    PreparedConnection,
-    "environmentId" | "httpBaseUrl" | "httpAuthorization" | "target"
-  >,
+  prepared: PreparedConnection,
   payload: AuthCreatePairingCredentialInput,
 ): Effect.fn.Return<AuthPairingCredentialResult, PeerPairingCodeError, HttpClient.HttpClient> {
   const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
@@ -140,57 +117,5 @@ export function createMcpApprovalCodeCommand<R, E>(
     label: "environment-data:mcp-approval-code:mint",
     execute: (access: AuthMcpClientAccess) =>
       mintOnEnvironment({ label: MCP_APPROVAL_CODE_LABEL, access }),
-  });
-}
-
-/**
- * Mints an app approval code on an environment the T3 Connect account owns, for the sign-in
- * page at `pageOrigin`. It refuses before minting unless that page is the environment's own
- * relay address, so a crafted link cannot send the code anywhere else.
- */
-export const mintConnectMcpApprovalCode = Effect.fn(
-  "clientRuntime.state.mintConnectMcpApprovalCode",
-)(function* (input: {
-  readonly environmentId: EnvironmentId;
-  readonly pageOrigin: string;
-  readonly access: AuthMcpClientAccess;
-}) {
-  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-  // The relay grants this only for an environment linked to the signed-in account.
-  const authorized = yield* remote
-    .authorizeDpopHttp({ expectedEnvironmentId: input.environmentId })
-    .pipe(
-      Effect.mapError((cause) => new ConnectApprovalCodeError({ reason: "unavailable", cause })),
-    );
-  if (new URL(authorized.httpBaseUrl).origin !== input.pageOrigin) {
-    return yield* new ConnectApprovalCodeError({
-      reason: "other_address",
-      cause: input.pageOrigin,
-    });
-  }
-  const minted = yield* mintPairingCredential(
-    {
-      environmentId: input.environmentId,
-      httpBaseUrl: authorized.httpBaseUrl,
-      httpAuthorization: authorized.httpAuthorization,
-      target: new RelayConnectionTarget({
-        environmentId: input.environmentId,
-        label: authorized.label,
-      }),
-    },
-    { label: MCP_APPROVAL_CODE_LABEL, access: input.access },
-  ).pipe(Effect.mapError((cause) => new ConnectApprovalCodeError({ reason: cause.reason, cause })));
-  return minted.credential;
-});
-
-export function createConnectMcpApprovalCodeCommand<R, E>(
-  runtime: Atom.AtomRuntime<
-    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization | HttpClient.HttpClient | R,
-    E
-  >,
-) {
-  return createRuntimeCommand(runtime, {
-    label: "environment-data:connect-mcp-approval-code:mint",
-    execute: mintConnectMcpApprovalCode,
   });
 }
