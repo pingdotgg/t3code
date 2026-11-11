@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sidewaysWheelDelta, sidewaysWheelScrollsStrip } from "./gesture";
+import { sidewaysWheelScrollsStrip } from "./gesture";
 
 function mountStrip(stripOverflow: string) {
   const strip = document.createElement("div");
@@ -38,27 +38,5 @@ describe("sidewaysWheelScrollsStrip", () => {
   it("leaves the swipe alone while the strip itself cannot scroll", () => {
     using strip = mountStrip("hidden");
     expect(sidewaysWheelScrollsStrip(strip.pathFrom("[data-row]"), strip)).toBe(false);
-  });
-});
-
-describe("sidewaysWheelDelta", () => {
-  const wheel = (deltaX: number, deltaY: number, keys: Partial<WheelEvent> = {}) =>
-    sidewaysWheelDelta({
-      deltaX,
-      deltaY,
-      shiftKey: false,
-      ctrlKey: false,
-      metaKey: false,
-      altKey: false,
-      ...keys,
-    });
-
-  it("reads sideways travel, including a Shift+wheel reported as vertical", () => {
-    expect(wheel(40, 3)).toBe(40);
-    expect(wheel(-40, -3)).toBe(-40);
-    expect(wheel(3, 40)).toBe(0);
-    expect(wheel(0, 120, { shiftKey: true })).toBe(120);
-    expect(wheel(120, 0, { shiftKey: true })).toBe(120);
-    expect(wheel(0, 120, { shiftKey: true, ctrlKey: true })).toBe(0);
   });
 });

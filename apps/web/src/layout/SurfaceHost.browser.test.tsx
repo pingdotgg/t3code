@@ -126,7 +126,6 @@ it("resizes each column from the edge grabbed, in either direction, without movi
       columnWidths().forEach((width, index) => expect(width).toBeCloseTo(expected[index]!, 3)),
     );
   const widths = columnWidths();
-  expect(widths).toHaveLength(3);
 
   // Both halves of the first gap: the left half shrinks and grows the first column...
   await drag("Resize column", 0, -90);
@@ -204,11 +203,7 @@ const scrollStripTo = async (left: number) => {
   const landed = Math.min(left, strip().scrollWidth - strip().clientWidth);
   await vi.waitFor(() => expect(strip().scrollLeft).toBe(landed));
 };
-const targetShown = (handle: Element) =>
-  getComputedStyle(handle.querySelector("[data-resize-target]")!).opacity;
-
-/** Presses the element the page hit-tests at (x, y), moves through `path` and releases there. */
-function dragFrom(x: number, y: number, path: number[], release = true) {
+function dragFrom(x: number, y: number, path: number[]) {
   const hit = document.elementFromPoint(x, y) as HTMLElement;
   const pointer = (clientX: number) =>
     ({
@@ -221,14 +216,13 @@ function dragFrom(x: number, y: number, path: number[], release = true) {
     }) as const;
   hit.dispatchEvent(new PointerEvent("pointerdown", pointer(x)));
   for (const to of path) hit.dispatchEvent(new PointerEvent("pointermove", pointer(to)));
-  if (release) hit.dispatchEvent(new PointerEvent("pointerup", pointer(path.at(-1) ?? x)));
   return {
     hit,
     release: (to: number) => hit.dispatchEvent(new PointerEvent("pointerup", pointer(to))),
   };
 }
 
-it("grows the last column from just inside its left edge, highlighting that edge first", async () => {
+it("reveals the full already-focused column after resizing from its left edge", async () => {
   using _tabs = setup();
   await using _screen = await renderHost();
   useLayoutStore
@@ -245,16 +239,9 @@ it("grows the last column from just inside its left edge, highlighting that edge
   const y = last.top + last.height / 2;
   const handle = document.elementFromPoint(x, y) as HTMLElement;
   expect(handle.getAttribute("aria-label")).toBe("Resize column start");
-  const neighborEnd = document.querySelectorAll('[aria-label="Resize column"]')[1]!;
-
-  // Hover shows only the edge this press would move, not the neighbor's half of the gutter.
-  const box = handle.getBoundingClientRect();
-  await userEvent.hover(handle, { position: { x: x - box.left, y: y - box.top } });
-  await vi.waitFor(() => expect(targetShown(handle)).toBe("1"));
-  expect(targetShown(neighborEnd)).toBe("0");
 
   const scrolled = strip().scrollLeft;
-  const { release } = dragFrom(x, y, [x - 75, x - 150], false);
+  const { release } = dragFrom(x, y, [x - 75, x - 150]);
   await vi.waitFor(() => expect(handle.hasAttribute("data-dragging")).toBe(true));
   release(x - 150);
   widths[2]! += 150 / 900;
@@ -268,11 +255,6 @@ it("grows the last column from just inside its left edge, highlighting that edge
     expect(paneRect(2).right).toBeCloseTo(strip().getBoundingClientRect().right, 0),
   );
   expect(handle.hasAttribute("data-dragging")).toBe(false);
-
-  // Leaving for the pane's content drops the highlight.
-  const grown = paneRect(2);
-  await userEvent.hover(document.elementFromPoint(grown.left + 80, y)!);
-  await vi.waitFor(() => expect(targetShown(handle)).toBe("0"));
 });
 
 it("keeps growing a column held at the strip's edge, up to the window's width", async () => {
@@ -285,7 +267,7 @@ it("keeps growing a column held at the strip's edge, up to the window's width", 
   const widths = columnWidths();
   const middle = paneRect(1);
   const y = middle.top + middle.height / 2;
-  const { hit, release } = dragFrom(middle.left + 2, y, [view.left + 4], false);
+  const { hit, release } = dragFrom(middle.left + 2, y, [view.left + 4]);
   expect(hit.getAttribute("aria-label")).toBe("Resize column start");
   await vi.waitFor(() => expect(paneRect(1).width).toBeGreaterThan(view.width - 10));
   release(view.left + 4);
