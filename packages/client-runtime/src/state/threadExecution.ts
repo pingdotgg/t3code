@@ -15,6 +15,7 @@ import {
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
   type OrchestrationV2ProviderSession,
+  type OrchestrationV2ProviderTurnCreditUsage,
   type ServerProvider,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
@@ -708,4 +709,32 @@ export function notificationChildThreadId(
       source satisfies never;
       return undefined;
   }
+}
+
+/** Credits the provider billed for a run's active attempt, when it reports them (Kiro). */
+export function deriveRunCreditUsage(
+  projection: Pick<ThreadStructure, "runs" | "providerTurns">,
+  runId: RunId,
+): OrchestrationV2ProviderTurnCreditUsage | null {
+  const run = projection.runs.find((candidate) => candidate.id === runId);
+  if (run === undefined) return null;
+  return (
+    latestProviderTurnForAttempt(projection.providerTurns, run.activeAttemptId)?.creditUsage ?? null
+  );
+}
+
+/** Truncates like Kiro's CLI, so both show the same figure. */
+function formatCredits(value: number): string {
+  return (Math.floor(value * 100 + Number.EPSILON) / 100).toFixed(2);
+}
+
+/** Kiro CLI's turn footer: `Credits: turn 0.37 • session 0.37 | Time: 4s`. */
+export function formatTurnCreditUsage(usage: OrchestrationV2ProviderTurnCreditUsage): string {
+  const credits = [
+    `turn ${formatCredits(usage.turn)}`,
+    ...(usage.session === undefined ? [] : [`session ${formatCredits(usage.session)}`]),
+  ].join(" • ");
+  return usage.elapsedMs === undefined
+    ? `Credits: ${credits}`
+    : `Credits: ${credits} | Time: ${formatDuration(usage.elapsedMs)}`;
 }

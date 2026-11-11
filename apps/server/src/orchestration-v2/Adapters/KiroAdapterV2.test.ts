@@ -512,6 +512,58 @@ describe("KiroAdapterV2", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  // `_meta.kiro` shapes recorded from Kiro CLI 3.1.0, which sends both before answering.
+  it.effect("reports the credits Kiro billed for the turn and the session", () =>
+    runKiroScript({
+      scenario: "credit-usage",
+      frames: [
+        outbound("initialize"),
+        answer("initialize", KIRO_V3_INITIALIZE_WITHOUT_EXTENSIONS),
+        outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+        answer("session/new", sessionSetup([modeOption])),
+        turnPrompt,
+        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } }),
+        update({
+          sessionUpdate: "session_info_update",
+          _meta: {
+            kiro: {
+              kind: "turn_completion",
+              promptTurnSummaries: [
+                { unit: "credit", unitPlural: "credits", usage: 0.3724, usedTools: ["read"] },
+              ],
+              elapsedTime: 4413,
+              status: "success",
+            },
+          },
+        }),
+        update({
+          sessionUpdate: "session_info_update",
+          _meta: {
+            kiro: {
+              kind: "session_usage",
+              credits: [{ usage: 1.205, unit: "credit", unitPlural: "credits" }],
+            },
+          },
+        }),
+        answer("session/prompt", { stopReason: "end_turn" }),
+      ],
+      drive: ({ events, startTurn }) =>
+        Effect.gen(function* () {
+          yield* startTurn;
+          const settled = (yield* collectTurn(events)).findLast(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          );
+          assert.deepStrictEqual(
+            settled?.type === "provider_turn.updated"
+              ? settled.providerTurn.creditUsage
+              : undefined,
+            { turn: 0.3724, elapsedMs: 4413, session: 1.205 },
+          );
+        }),
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("switches back to Kiro's default model after a named one", () =>
     runKiroScript({
       scenario: "default-after-named",

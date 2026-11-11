@@ -172,6 +172,15 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
 
     expect(next?.providerTurns[0]?.status).toBe("completed");
     expect(next?.providerTurns[0]?.tokenUsage).toEqual(running.tokenUsage);
+
+    // Kiro reports credits only on the settled turn; a later update leaves them alone.
+    const billed = { turn: 0.37, session: 1.2, elapsedMs: 4_000 };
+    const settled = applyOrchestrationV2ProjectionEvent(next!, {
+      ...event,
+      payload: { ...running, status: "completed", completedAt: now, creditUsage: billed },
+    } as OrchestrationV2DomainEvent);
+    const later = applyOrchestrationV2ProjectionEvent(settled!, event);
+    expect(later?.providerTurns[0]?.creditUsage).toEqual(billed);
   });
 
   it("applies thread lifecycle payloads instead of leaving stale metadata", () => {

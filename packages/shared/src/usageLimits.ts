@@ -43,6 +43,13 @@ export function exhaustedUsageWindow(
         !Number.isFinite(Date.parse(window.resetsAt)) ||
         Date.parse(window.resetsAt) > now),
   );
+  // With overages on, Kiro keeps answering past the plan's credits until the overage cap.
+  if (
+    provider?.driver === "kiro" &&
+    provider.usageLimits?.windows.some((window) => window.id === "overage")
+  ) {
+    return exhausted.find((window) => window.id === "overage");
+  }
   if (model === undefined) return exhausted[0];
   switch (provider?.driver) {
     case "cursor": {

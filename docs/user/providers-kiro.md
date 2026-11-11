@@ -59,5 +59,16 @@ one-time choice.
 - `/compact` uses Kiro's own compaction. Kiro also compacts on its own as the conversation fills its
   context.
 - Typing `/` lists your Kiro skills, steering files and saved prompts once a Kiro thread has
-  started in that environment. Commands that only exist in Kiro's terminal UI, such as `/usage` and
-  `/fullscreen`, are not available.
+  started in that environment. Commands that only exist in Kiro's terminal UI, such as
+  `/fullscreen`, are not available. For Kiro's `/usage`, see Credits and Limits below.
+
+## Credits and Limits
+
+Each Kiro reply ends with the credits that turn used, the session's total so far, and how long the
+turn took, as in Kiro's own CLI.
+
+**Usage → Limits** and `/usage-limits` show your plan's credits for the current billing cycle and
+when it resets. If overages are on, a second **Overage** row counts credits used past the plan. To
+see it fill against your monthly overage cap, enter that cap in **Monthly overage limit** in the Kiro
+provider's settings. Kiro does not report the cap itself. With overages on, using all plan credits
+does not mark Kiro as out of credits until the overage cap is reached.

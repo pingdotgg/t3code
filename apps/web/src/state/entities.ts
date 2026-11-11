@@ -25,6 +25,8 @@ import type {
   OrchestrationV2RemoteTaskChild,
   OrchestrationV2ThreadShell,
   NodeId,
+  OrchestrationV2ProviderTurnCreditUsage,
+  RunId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -71,6 +73,9 @@ const EMPTY_CHECKPOINT_SUMMARIES_ATOM = Atom.make<ReadonlyArray<ThreadCheckpoint
 const EMPTY_ASSISTANT_MESSAGE_TEXT_ATOM = Atom.make<string | null>(null).pipe(
   Atom.withLabel("web-assistant-message-text:empty"),
 );
+const EMPTY_RUN_CREDIT_USAGE_ATOM = Atom.make<OrchestrationV2ProviderTurnCreditUsage | null>(
+  null,
+).pipe(Atom.withLabel("web-run-credit-usage:empty"));
 const EMPTY_LAST_VISITED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("web-thread-last-visited:empty"),
 );
@@ -255,6 +260,18 @@ export function useAssistantMessageText(
     ref === null || itemId === undefined
       ? EMPTY_ASSISTANT_MESSAGE_TEXT_ATOM
       : environmentThreadDetails.assistantMessageTextAtom(ref, itemId),
+  );
+}
+
+/** Credits the provider billed for one run, or null when it reports none. */
+export function useRunCreditUsage(
+  ref: ScopedThreadRef | null,
+  runId: RunId | null | undefined,
+): OrchestrationV2ProviderTurnCreditUsage | null {
+  return useAtomValue(
+    ref === null || runId == null
+      ? EMPTY_RUN_CREDIT_USAGE_ATOM
+      : environmentThreadDetails.runCreditUsageAtom(ref, runId),
   );
 }
 

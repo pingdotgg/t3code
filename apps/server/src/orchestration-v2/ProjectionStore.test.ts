@@ -3823,6 +3823,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         outputTokens: 2_000,
         updatedAt: "2026-08-29T12:00:01.000Z",
       } as const;
+      const creditUsage = { turn: 0.37, session: 1.2, elapsedMs: 4_000 };
 
       yield* projectionStore.apply({
         id: EventId.make("event:provider-usage-reload:thread"),
@@ -3881,7 +3882,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         nodeId,
         driver,
         occurredAt: now,
-        payload: { ...providerTurn, status: "completed", completedAt: now },
+        payload: { ...providerTurn, status: "completed", completedAt: now, creditUsage },
       });
 
       const reloaded = yield* projectionStore.getThreadProjection(threadId);
@@ -3905,6 +3906,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       const replaced = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(replaced.providerTurns[0]?.tokenUsage, replacementUsage);
+      // Kiro's credits arrive once, on the settled turn; later usage updates keep them.
+      assert.deepEqual(replaced.providerTurns[0]?.creditUsage, creditUsage);
     }),
   );
 

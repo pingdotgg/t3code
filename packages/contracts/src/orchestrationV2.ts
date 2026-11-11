@@ -243,6 +243,15 @@ export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
 export type OrchestrationV2ProviderTurnTokenUsage =
   typeof OrchestrationV2ProviderTurnTokenUsage.Type;
 
+/** Credits a provider billed for one turn, and its session's running total (Kiro). */
+export const OrchestrationV2ProviderTurnCreditUsage = Schema.Struct({
+  turn: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  session: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+  elapsedMs: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2ProviderTurnCreditUsage =
+  typeof OrchestrationV2ProviderTurnCreditUsage.Type;
+
 export const OrchestrationV2ContextTransfer = Schema.Struct({
   id: ContextTransferId,
   type: OrchestrationV2ContextTransferType,
@@ -1243,6 +1252,7 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   tokenUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
   turnTokenUsage: Schema.optional(TurnTokenUsage),
+  creditUsage: Schema.optional(OrchestrationV2ProviderTurnCreditUsage),
   /** The model the provider reported running this turn's root agent, which can differ from the requested one. */
   model: Schema.optional(TrimmedNonEmptyString),
 });

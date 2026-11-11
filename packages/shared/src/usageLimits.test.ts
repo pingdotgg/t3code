@@ -208,6 +208,32 @@ describe("new thread model fallback", () => {
       ).toEqual(usesFallback ? fallback : defaultSelection);
     },
   );
+
+  it.each([
+    ["plan credits used, overages off", [100], true],
+    ["plan credits used, overages on", [100, 0], false],
+    ["overage limit used", [100, 100], true],
+  ] as const)("falls back from Kiro when %s", (_case, percents, usesFallback) => {
+    const defaultSelection = { ...selection, model: "default" };
+    const windows = percents.map((usedPercent, index) => ({
+      ...window,
+      id: index === 0 ? "credits" : "overage",
+      usedPercent,
+    }));
+    expect(
+      resolveNewThreadModelSelection({
+        ...defaults,
+        defaultSelection,
+        providers: [
+          provider({
+            driver: ProviderDriverKind.make("kiro"),
+            usageLimits: { checkedAt: limited.checkedAt, windows },
+          }),
+          available,
+        ],
+      }).selection,
+    ).toEqual(usesFallback ? fallback : defaultSelection);
+  });
 });
 
 describe("pace", () => {

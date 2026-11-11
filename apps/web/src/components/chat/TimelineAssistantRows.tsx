@@ -20,7 +20,9 @@ import {
   useAssistantMessageText,
   useProject,
   useQuietThreadShell,
+  useRunCreditUsage,
 } from "../../state/entities";
+import { formatTurnCreditUsage } from "@t3tools/client-runtime/state/thread-execution";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
@@ -95,13 +97,16 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
           </div>
         ) : null}
         {row.showAssistantMeta ? (
-          <AssistantMessageMeta
-            className="mt-1.5"
-            projectedItem={row.projectedItem}
-            message={row.message}
-            showCopyButton={row.showAssistantCopyButton}
-            copyStreaming={row.assistantCopyStreaming}
-          />
+          <>
+            <TurnCreditUsageFooter runId={row.message.runId} />
+            <AssistantMessageMeta
+              className="mt-1.5"
+              projectedItem={row.projectedItem}
+              message={row.message}
+              showCopyButton={row.showAssistantCopyButton}
+              copyStreaming={row.assistantCopyStreaming}
+            />
+          </>
         ) : null}
       </div>
     </>
@@ -197,6 +202,7 @@ export function AssistantMetaTimelineRow({
 }) {
   return (
     <div className="px-1">
+      <TurnCreditUsageFooter runId={row.message.runId} />
       <AssistantMessageMeta
         className="mt-0.5"
         projectedItem={row.projectedItem}
@@ -206,6 +212,18 @@ export function AssistantMetaTimelineRow({
         alwaysVisible
       />
     </div>
+  );
+}
+
+/** Credits the provider billed for the turn, shown under its last reply (Kiro). */
+function TurnCreditUsageFooter({ runId }: { runId: RunId | null | undefined }) {
+  const ctx = use(TimelineRowCtx);
+  const usage = useRunCreditUsage(ctx.threadRef, runId);
+  if (usage === null) return null;
+  return (
+    <p className="mt-1.5 text-muted-foreground text-xs tabular-nums">
+      {formatTurnCreditUsage(usage)}
+    </p>
   );
 }
 

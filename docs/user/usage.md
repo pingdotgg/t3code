@@ -174,6 +174,8 @@ or endpoint configurations do not report subscription limits.
 
 Muse Code reports its session and weekly windows and its tier once the Muse CLI has run in a thread.
 Until then it shows no limits. Readings are not kept across a server restart.
+Kiro reports its plan credits for the billing cycle, and overage credits when overages are on;
+see [Kiro](./providers-kiro.md#credits-and-limits) for the overage cap.
 
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.

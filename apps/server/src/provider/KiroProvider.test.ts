@@ -19,6 +19,8 @@ import {
   kiroAgentDescriptor,
   kiroDefaultModelId,
   kiroSlashCommands,
+  kiroUsageLimits,
+  parseKiroOverageLimit,
 } from "@t3tools/provider-kiro/testing";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
 
@@ -470,6 +472,85 @@ describe("KiroProvider", () => {
     // A template without agents to choose between gives no picker.
     assert.isUndefined(kiroAgentDescriptor({ configOptions: [] }));
     assert.isUndefined(kiroAgentDescriptor("not a template"));
+  });
+
+  // `_kiro/account/getUsage` as Kiro CLI 3.1.0 answers it, user fields left out.
+  it("reads plan credits and the overage past them from Kiro's usage report", () => {
+    const report = (currentOverages: number, overageCharges: number, overagesEnabled = true) => ({
+      success: true,
+      message: "Plan: KIRO PRO MAX | 1 usage breakdowns",
+      data: {
+        planName: "KIRO PRO MAX",
+        billingCycleReset: "2026-12-01",
+        overagesEnabled,
+        usageBreakdowns: [
+          {
+            resourceType: "CREDIT",
+            displayName: "Credits",
+            used: currentOverages > 0 ? 5000 : 4251.08,
+            limit: 5000,
+            percentage: 85,
+            currentOverages,
+            overageRate: 0.04,
+            overageCharges,
+            currency: "USD",
+            hasLimit: true,
+          },
+        ],
+      },
+    });
+    const checkedAt = "2026-11-11T12:00:00.000Z";
+    const resetsAt = "2026-12-01T00:00:00.000Z";
+    assert.deepStrictEqual(kiroUsageLimits(report(0, 0), checkedAt, 10_000), {
+      planName: "KIRO PRO MAX",
+      usageLimits: {
+        checkedAt,
+        windows: [
+          {
+            id: "credits",
+            kind: "monthly",
+            label: "Credits · 4,251 / 5,000",
+            usedPercent: (4251.08 / 5000) * 100,
+            resetsAt,
+          },
+          {
+            id: "overage",
+            kind: "monthly",
+            label: "Overage · 0 / 10,000 · $0.00",
+            usedPercent: 0,
+            resetsAt,
+          },
+        ],
+      },
+    });
+    const over = kiroUsageLimits(report(2500, 100), checkedAt, 10_000)?.usageLimits.windows;
+    assert.deepStrictEqual(
+      over?.map(({ label, usedPercent }) => ({ label, usedPercent })),
+      [
+        { label: "Credits · 5,000 / 5,000", usedPercent: 100 },
+        { label: "Overage · 2,500 / 10,000 · $100.00", usedPercent: 25 },
+      ],
+    );
+    // Without a limit there is no share to fill, so only the amount shows.
+    assert.deepStrictEqual(
+      kiroUsageLimits(report(2500, 100), checkedAt, undefined)?.usageLimits.windows[1],
+      {
+        id: "overage",
+        kind: "monthly",
+        label: "Overage · 2,500 credits · $100.00",
+        usedPercent: 0,
+        resetsAt,
+      },
+    );
+    assert.deepStrictEqual(
+      kiroUsageLimits(report(0, 0, false), checkedAt, 10_000)?.usageLimits.windows.map(
+        (window) => window.id,
+      ),
+      ["credits"],
+    );
+    assert.isUndefined(kiroUsageLimits({ success: false, message: "denied" }, checkedAt, 10_000));
+    assert.strictEqual(parseKiroOverageLimit(" 10,000 "), 10_000);
+    assert.isUndefined(parseKiroOverageLimit("lots"));
   });
 
   // Shapes from Kiro CLI 3.1.0's `available_commands_update`.

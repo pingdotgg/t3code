@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderTurnCreditUsage,
 } from "@t3tools/contracts";
 import { KiroSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -193,6 +194,68 @@ const kiroForkFromTurn = {
       : undefined,
   forkMeta: (messageId: string) => ({ kiro: { messageId } }),
 };
+
+const KiroCreditAmount = Schema.Struct({
+  usage: Schema.Finite,
+  unit: Schema.optional(Schema.String),
+  unitPlural: Schema.optional(Schema.String),
+});
+const decodeKiroUsageInfo = Schema.decodeUnknownOption(
+  Schema.Struct({
+    kiro: Schema.Union([
+      Schema.Struct({
+        kind: Schema.Literal("turn_completion"),
+        promptTurnSummaries: Schema.optional(Schema.Array(KiroCreditAmount)),
+        elapsedTime: Schema.optional(Schema.Finite),
+      }),
+      Schema.Struct({
+        kind: Schema.Literal("session_usage"),
+        credits: Schema.optional(Schema.Array(KiroCreditAmount)),
+      }),
+    ]),
+  }),
+);
+
+/** Sums the amounts Kiro bills in credits; undefined when it reports none. */
+function kiroCredits(
+  amounts: ReadonlyArray<typeof KiroCreditAmount.Type> | undefined,
+): number | undefined {
+  let total: number | undefined;
+  for (const amount of amounts ?? []) {
+    const unit = (amount.unitPlural ?? amount.unit ?? "").trim().toLowerCase();
+    if ((unit === "credit" || unit === "credits") && amount.usage >= 0) {
+      total = (total ?? 0) + amount.usage;
+    }
+  }
+  return total;
+}
+
+/**
+ * Kiro ends each prompt with `turn_completion` (this turn's credits and time) and
+ * `session_usage` (the session's total), both as `session_info_update` metadata.
+ */
+function kiroTurnCreditUsage(
+  notification: EffectAcpSchema.SessionNotification,
+): Partial<OrchestrationV2ProviderTurnCreditUsage> | undefined {
+  if (notification.update.sessionUpdate !== "session_info_update") return undefined;
+  const info = Option.getOrUndefined(decodeKiroUsageInfo(notification.update._meta))?.kiro;
+  if (info === undefined) return undefined;
+  if (info.kind === "session_usage") {
+    const session = kiroCredits(info.credits);
+    return session === undefined ? undefined : { session };
+  }
+  const turn = kiroCredits(info.promptTurnSummaries);
+  const elapsedMs =
+    info.elapsedTime !== undefined && info.elapsedTime >= 0
+      ? Math.round(info.elapsedTime)
+      : undefined;
+  return turn === undefined && elapsedMs === undefined
+    ? undefined
+    : {
+        ...(turn === undefined ? {} : { turn }),
+        ...(elapsedMs === undefined ? {} : { elapsedMs }),
+      };
+}
 
 export interface KiroAdapterV2Options {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
@@ -585,6 +648,7 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     compactSession: kiroCompactSession,
     steering: kiroSteering,
     forkFromTurn: kiroForkFromTurn,
+    turnCreditUsage: kiroTurnCreditUsage,
     ...(options.onAvailableCommandsUpdate === undefined
       ? {}
       : { onAvailableCommandsUpdate: options.onAvailableCommandsUpdate }),

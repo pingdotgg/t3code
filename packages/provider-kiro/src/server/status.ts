@@ -25,6 +25,7 @@ import {
   KIRO_SUPPORTED_RUNTIME_MODES,
   makeKiroAcpRuntime,
 } from "./acpSupport.ts";
+import { kiroUsageLimits, parseKiroOverageLimit } from "./usageLimits.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -377,11 +378,12 @@ export function kiroAgentDescriptor(template: unknown): ProviderOptionDescriptor
 }
 
 /**
- * Asks Kiro for its agents with `initialize` and `_kiro/config/template` and
- * nothing more: no `session/new`, so no MCP server starts and no session is
- * stored. The process runs in the server's working directory.
+ * Asks Kiro for its agents and the account's usage with `initialize`,
+ * `_kiro/config/template` and `_kiro/account/getUsage` and nothing more: no
+ * `session/new`, so no MCP server starts and no session is stored. The process
+ * runs in the server's working directory.
  */
-const probeKiroAgents = Effect.fn("KiroProvider.probeKiroAgents")(function* (
+const probeKiroAcp = Effect.fn("KiroProvider.probeKiroAcp")(function* (
   settings: KiroSettings,
   environment: NodeJS.ProcessEnv,
 ) {
@@ -392,7 +394,20 @@ const probeKiroAgents = Effect.fn("KiroProvider.probeKiroAgents")(function* (
     clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
   });
   yield* runtime.initialize();
-  return kiroAgentDescriptor(yield* runtime.request("_kiro/config/template", {}));
+  return yield* Effect.all(
+    {
+      agents: runtime.request("_kiro/config/template", {}).pipe(
+        Effect.map(kiroAgentDescriptor),
+        Effect.orElseSucceed(() => undefined),
+      ),
+      // Not in Kiro's advertised extension methods, so a Kiro without it just shows no limits.
+      usage: runtime.request("_kiro/account/getUsage", {}).pipe(
+        Effect.asSome,
+        Effect.orElseSucceed(() => Option.none<unknown>()),
+      ),
+    },
+    { concurrency: "unbounded" },
+  );
 }, Effect.scoped);
 
 export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(function* (
@@ -469,7 +484,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
   // Signed out, `--list-models` starts a browser login instead, and the agent
   // probe fails to start, so both run only once `whoami` has confirmed the
   // account. Without an agent list the composer shows no agent picker.
-  const [listed, agents] =
+  const [listed, probed] =
     auth.status === "authenticated"
       ? yield* Effect.all(
           [
@@ -484,7 +499,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
               Effect.map((output) => kiroModelsFromList(Option.getOrUndefined(output))),
               Effect.orElseSucceed(() => undefined),
             ),
-            probeKiroAgents(settings, probeEnvironment).pipe(
+            probeKiroAcp(settings, probeEnvironment).pipe(
               Effect.timeoutOption(
                 resolveProviderProbeTimeoutMs("kiro", AUTH_PROBE_TIMEOUT_MS, environment),
               ),
@@ -495,6 +510,14 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
           { concurrency: "unbounded" },
         )
       : [undefined, undefined];
+  const usage =
+    probed === undefined
+      ? undefined
+      : Option.getOrUndefined(
+          Option.map(probed.usage, (result) =>
+            kiroUsageLimits(result, checkedAt, parseKiroOverageLimit(settings.overageCreditLimit)),
+          ),
+        );
   return snapshot(
     settings,
     checkedAt,
@@ -502,12 +525,13 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
       installed: true,
       version,
       status: auth.status === "authenticated" ? "ready" : "warning",
-      auth,
+      auth: usage?.planName === undefined ? auth : { ...auth, label: usage.planName },
+      ...(usage === undefined ? {} : { usageLimits: usage.usageLimits }),
       ...(auth.status === "authenticated"
         ? {}
         : { message: "Could not confirm the Kiro sign-in. Run `kiro-cli whoami` to check." }),
     },
     listed,
-    agents,
+    probed?.agents,
   );
 });

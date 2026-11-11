@@ -14,6 +14,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2ProviderTurnCreditUsage,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
@@ -392,6 +393,13 @@ export interface AcpAdapterV2Flavor {
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
   ) => Effect.Effect<void>;
+  /**
+   * Reads the credits an agent bills for the running turn from its own session updates.
+   * Partial reports merge, so turn and session totals may arrive in separate updates.
+   */
+  readonly turnCreditUsage?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => Partial<OrchestrationV2ProviderTurnCreditUsage> | undefined;
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
@@ -1533,6 +1541,8 @@ interface ActiveAcpTurn {
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
   readonly promptStarted: Deferred.Deferred<void, never>;
   promptUsage: EffectAcpSchema.Usage | undefined;
+  /** Credits the agent reported for this turn through `turnCreditUsage`. */
+  creditUsage: Partial<OrchestrationV2ProviderTurnCreditUsage> | undefined;
   backgroundFinalizeGeneration: number;
   /** The agent's own id for this turn's prompt, from `forkFromTurn.nativeTurnId`. */
   nativePromptId: string | undefined;
@@ -6664,6 +6674,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (injectedSteerId !== undefined) {
                 yield* Deferred.succeed(steerInjection(injectedSteerId), undefined);
               }
+              const creditUsage = flavor.turnCreditUsage?.(rawNotification);
+              if (creditUsage !== undefined) {
+                const context = yield* Ref.get(activeTurn);
+                if (
+                  context !== null &&
+                  !context.finalized &&
+                  context.nativeThreadId === rawNotification.sessionId
+                ) {
+                  context.creditUsage = { ...context.creditUsage, ...creditUsage };
+                }
+              }
               yield* markPromptStarted(rawNotification);
               const embedded = embeddedTerminalIdsFromSessionUpdate(rawNotification);
               if (embedded !== undefined) {
@@ -7958,6 +7979,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   status,
                   flavor.geminiPromptUsage,
                 ),
+                ...(context.creditUsage?.turn === undefined
+                  ? {}
+                  : { creditUsage: { ...context.creditUsage, turn: context.creditUsage.turn } }),
               }),
         });
 
@@ -8703,6 +8727,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
+              creditUsage: undefined,
               backgroundFinalizeGeneration: 0,
               nativePromptId: undefined,
               lastProgressAt: 0,

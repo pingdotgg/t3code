@@ -2,7 +2,9 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2TurnItem,
+  type OrchestrationV2ProviderTurnCreditUsage,
   type OrchestrationV2ThreadProjection,
+  RunId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -16,6 +18,7 @@ import {
 } from "./threadWorkflows.ts";
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
 import {
+  deriveRunCreditUsage,
   deriveUsageLimitNoticeRows,
   presentRunStop,
   withoutUsageLimitNoticeRows,
@@ -467,6 +470,35 @@ export function createEnvironmentThreadDetailAtoms<E>(
       return stop;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-run-stop:${key}`));
   });
+  // Keyed per run, so a turn reporting credits re-renders only its own footer.
+  const runCreditUsageAtomFamily = Atom.family((key: string) => {
+    const separator = key.lastIndexOf("\u0000");
+    const thread = key.slice(0, separator);
+    const runId = RunId.make(key.slice(separator + 1));
+    let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns"> | null = null;
+    let value: OrchestrationV2ProviderTurnCreditUsage | null = null;
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(thread)).data);
+      if (projection === null) {
+        previous = null;
+        value = null;
+      } else if (
+        projection.runs !== previous?.runs ||
+        projection.providerTurns !== previous?.providerTurns
+      ) {
+        const { runs, providerTurns } = projection;
+        previous = { runs, providerTurns };
+        const next = deriveRunCreditUsage(previous, runId);
+        if (
+          next?.turn !== value?.turn ||
+          next?.session !== value?.session ||
+          next?.elapsedMs !== value?.elapsedMs
+        )
+          value = next;
+      }
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-run-credit-usage:${key}`));
+  });
   const queuedCountAtomFamily = Atom.family((key: string) => {
     let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> | null = null;
     let count = 0;
@@ -628,6 +660,8 @@ export function createEnvironmentThreadDetailAtoms<E>(
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),
     runStopAtom: (ref: ScopedThreadRef) => runStopAtomFamily(threadKey(ref)),
+    runCreditUsageAtom: (ref: ScopedThreadRef, runId: RunId) =>
+      runCreditUsageAtomFamily(`${threadKey(ref)}\u0000${runId}`),
     turnSubagentsAtom: (ref: ScopedThreadRef) => turnSubagentsAtomFamily(threadKey(ref)),
     checkpointSummariesAtom: (ref: ScopedThreadRef) =>
       checkpointSummariesAtomFamily(threadKey(ref)),
