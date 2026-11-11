@@ -134,6 +134,36 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
+  it("skips NixOS container and systemd-nspawn veths, which only this machine reaches", () => {
+    const interfaces = {
+      ...INTERFACES,
+      "ve-jellyfin": virtualInterface("192.168.53.193"),
+      "ve-qbittorrent": virtualInterface("192.168.55.225"),
+      "vb-jellyfin": virtualInterface("192.168.100.1"),
+      "vz-machine": virtualInterface("192.168.101.1"),
+    };
+    expect(
+      resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+    ]);
+  });
+
+  it("keeps a Windows alias matching a Linux container prefix eligible", () => {
+    const interfaces = {
+      ...INTERFACES,
+      "ve-office": virtualInterface("192.168.1.30"),
+    };
+    expect(
+      resolveBoundEndpoints({ platform: "win32", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.30:3773/" },
+    ]);
+  });
+
   it("omits Windows host-only adapters without excluding guest NICs or explicit binds", () => {
     const interfaces = {
       ...INTERFACES,

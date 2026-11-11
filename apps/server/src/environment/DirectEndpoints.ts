@@ -23,8 +23,8 @@ import {
   formatHostForUrl,
   isLoopbackHost,
   isPrivateNetworkAddress,
+  isVirtualInterface,
   isWildcardHost,
-  VIRTUAL_INTERFACE,
 } from "../startupAccess.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
@@ -71,7 +71,9 @@ export function resolveBoundEndpoints(input: {
   );
   const addresses = isWildcardHost(input.host)
     ? Object.entries(input.interfaces)
-        .flatMap(([name, entries]) => (VIRTUAL_INTERFACE.test(name) ? [] : (entries ?? [])))
+        .flatMap(([name, entries]) =>
+          isVirtualInterface(name, input.platform) ? [] : (entries ?? []),
+        )
         .filter(
           (entry) =>
             !entry.internal &&
