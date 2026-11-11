@@ -63,6 +63,7 @@ import {
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
+  delegatedTaskYieldsLiveRun,
   latestProviderTurnForAttempt,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
@@ -2642,36 +2643,92 @@ const make = Effect.gen(function* () {
       const stopChild = Effect.gen(function* () {
         const commandId = stableCommandId({ scope, requestKey: key, operation: "cancel-task" });
         const reason = agentStopReason(input.reason);
-        yield* threadManagement
-          .dispatch({
-            type: "thread.stop",
-            commandId,
-            threadId: childThreadId,
-            stopDelegatedTasks: false,
-            reason,
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "task_not_cancellable",
-                `Unable to stop delegated task ${input.taskId}: ${errorMessage(error)}`,
+        const readRuns = threadManagement.getThreadRecords(childThreadId, ["runs"]).pipe(
+          Effect.map(({ runs }) => runs),
+          Effect.mapError(threadManagementFailure),
+        );
+        const readRun = (runId: RunId) =>
+          Effect.map(readRuns, (runs) => runs.find((run) => run.id === runId));
+        // By its id: a thread-wide stop could reach another task's turn the queue promoted
+        // meanwhile. A turn that ended before the interrupt landed needs nothing more, but the
+        // tasks it delegated still go, and only those.
+        const stopOwnRun = Effect.fn("OrchestratorMcpService.stopOwnRun")(function* (
+          run: OrchestrationV2Run,
+        ) {
+          const runCommandId = stableCommandId({
+            scope,
+            requestKey: key,
+            operation: `cancel-task-run:${run.id}`,
+          });
+          if (ThreadManagementService.isActiveRun(run)) {
+            yield* threadManagement
+              .dispatch({
+                type: "run.interrupt",
+                commandId: runCommandId,
+                threadId: childThreadId,
+                runId: run.id,
+                reason,
+              })
+              .pipe(
+                Effect.mapError(threadManagementFailure),
+                Effect.catch((error) =>
+                  Effect.flatMap(readRun(run.id), (latest) =>
+                    latest !== undefined && ThreadManagementService.isActiveRun(latest)
+                      ? Effect.fail(error)
+                      : Effect.void,
+                  ),
+                ),
+              );
+          }
+          yield* threadManagement
+            .stopDelegatedTasks({
+              threadId: childThreadId,
+              commandId: runCommandId,
+              reason,
+              runId: run.id,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "task_not_cancellable",
+                  `Stopped delegated task ${input.taskId}, but not every task it delegated: ${errorMessage(error)}`,
+                ),
               ),
-            ),
-          );
-        yield* threadManagement
-          .stopDelegatedTasks({ threadId: childThreadId, commandId, reason })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "task_not_cancellable",
-                `Stopped delegated task ${input.taskId}, but not every task it delegated: ${errorMessage(error)}`,
+            );
+        });
+        // One snapshot for the check and the sweep: a turn promoted between two reads would
+        // be neither cancelled nor interrupted.
+        const runs = yield* readRuns;
+        // The child's live turn belongs to another task, so only this task's queued turns go.
+        if (!delegatedTaskYieldsLiveRun(runs, input.taskId)) {
+          yield* threadManagement
+            .dispatch({
+              type: "thread.stop",
+              commandId,
+              threadId: childThreadId,
+              stopDelegatedTasks: false,
+              reason,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "task_not_cancellable",
+                  `Unable to stop delegated task ${input.taskId}: ${errorMessage(error)}`,
+                ),
               ),
-            ),
-          );
-        const stopped = yield* threadManagement
-          .getThreadRecords(childThreadId, ["runs"])
-          .pipe(Effect.mapError(threadManagementFailure));
-        for (const run of stopped.runs) {
+            );
+          yield* threadManagement
+            .stopDelegatedTasks({ threadId: childThreadId, commandId, reason })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "task_not_cancellable",
+                  `Stopped delegated task ${input.taskId}, but not every task it delegated: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+        }
+        for (const run of runs) {
           if (
             run.status !== "queued" ||
             (run.delegatedTaskId !== input.taskId && run.id !== current.childRunId)
@@ -2690,7 +2747,19 @@ const make = Effect.gen(function* () {
               threadId: childThreadId,
               runId: run.id,
             })
-            .pipe(Effect.mapError(threadManagementFailure));
+            .pipe(
+              Effect.mapError(threadManagementFailure),
+              // A turn that started meanwhile is no longer queued.
+              Effect.catch((error) =>
+                Effect.flatMap(readRun(run.id), (latest) =>
+                  latest?.status === "queued"
+                    ? Effect.fail(error)
+                    : latest === undefined
+                      ? Effect.void
+                      : stopOwnRun(latest),
+                ),
+              ),
+            );
         }
       });
       // Checked above; a user raising one of these threads meanwhile is
@@ -2741,7 +2810,7 @@ const make = Effect.gen(function* () {
         return subagents.some((task) => task.id === input.taskId && task.status === "cancelled");
       }).pipe(Effect.mapError(threadManagementFailure));
       if (isTerminalTaskStatus(current.status)) {
-        // The child can still run work for another turn, so it is stopped either way.
+        // The child can still run work for another turn; another task's live turn is left alone.
         yield* stopWithinLimit;
         const cancelled = yield* cancelOrphan;
         yield* disposeCompletionDelivery;

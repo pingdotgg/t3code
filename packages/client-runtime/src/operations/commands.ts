@@ -24,9 +24,13 @@ import {
   type RuntimeMode,
   type RuntimeRequestId,
   type ThreadId,
+  type OrchestrationV2Run,
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
+  delegatedTaskYieldsLiveRun,
+  isOrchestrationV2RunActive,
+  isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -804,7 +808,80 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
           subagentId: subagent.id,
         }).pipe(Effect.ignore);
       }
-      threadId = subagent.childThreadId;
+      const childThreadId = subagent.childThreadId;
+      const child = yield* getProjection(childThreadId);
+      // The child's live turn belongs to another task, so only this task's queued turns go.
+      if (delegatedTaskYieldsLiveRun(child.runs, subagent.id)) {
+        const readRun = (runId: RunId) =>
+          Effect.map(getProjection(childThreadId), (latest) =>
+            latest.runs.find((run) => run.id === runId),
+          );
+        const settled = { sequence: 0 };
+        // By its id: a thread-wide stop could reach, or hold, another task's turn. A turn that
+        // ended before the interrupt landed needs nothing more, but the tasks it delegated
+        // still go, and only those.
+        const stopOwnRun = Effect.fn("EnvironmentCommands.stopOwnRun")(function* (
+          run: OrchestrationV2Run,
+        ) {
+          let result = settled;
+          if (isOrchestrationV2RunActive(run.status)) {
+            result = yield* dispatch({
+              type: "run.interrupt",
+              commandId: yield* allocateCommandId({}),
+              threadId: childThreadId,
+              runId: run.id,
+            }).pipe(
+              Effect.catch((error) =>
+                Effect.flatMap(readRun(run.id), (latest) =>
+                  latest !== undefined && isOrchestrationV2RunActive(latest.status)
+                    ? Effect.fail(error)
+                    : Effect.succeed(settled),
+                ),
+              ),
+            );
+          }
+          // A child thread's stop also stops the tasks it delegated, all the way down.
+          const { subagents } = yield* getProjection(childThreadId);
+          for (const task of subagents) {
+            if (
+              task.runId !== run.id ||
+              task.origin !== "app_owned" ||
+              task.childThreadId === null ||
+              !isOrchestrationV2WorkActive(task.status)
+            )
+              continue;
+            result = yield* dispatch({
+              type: "thread.stop",
+              commandId: yield* allocateCommandId({}),
+              threadId: task.childThreadId,
+            });
+          }
+          return result;
+        });
+        let result = settled;
+        for (const run of child.runs) {
+          if (run.status !== "queued" || run.delegatedTaskId !== subagent.id) continue;
+          result = yield* dispatch({
+            type: "queued-run.cancel",
+            commandId: yield* allocateCommandId({}),
+            threadId: childThreadId,
+            runId: run.id,
+          }).pipe(
+            // A turn that started meanwhile is no longer queued.
+            Effect.catch((error) =>
+              Effect.flatMap(readRun(run.id), (latest) =>
+                latest?.status === "queued"
+                  ? Effect.fail(error)
+                  : latest === undefined
+                    ? Effect.succeed(settled)
+                    : stopOwnRun(latest),
+              ),
+            ),
+          );
+        }
+        return result;
+      }
+      threadId = childThreadId;
     } else {
       if (subagent?.runId == null) return { sequence: 0 };
       return yield* dispatch({
@@ -832,13 +909,7 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
   }
   if (runId === undefined) {
     const projection = yield* getProjection(threadId);
-    runId = projection.runs.findLast(
-      (run) =>
-        run.status === "preparing" ||
-        run.status === "starting" ||
-        run.status === "running" ||
-        run.status === "waiting",
-    )?.id;
+    runId = projection.runs.findLast((run) => isOrchestrationV2RunActive(run.status))?.id;
     if (runId === undefined) {
       const latestRun = projection.runs.at(-1);
       if (
