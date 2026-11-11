@@ -9,6 +9,7 @@ import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
+import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
 
@@ -40,6 +41,7 @@ vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const noConfig = Atom.make(null);
   const modelsConfig = Atom.make({
+    environment: { platform: { os: "darwin" } },
     availableEditors: [],
     settings: { providerInstances: {} },
     providers: [
@@ -160,6 +162,38 @@ function buttonsLabelled(container: HTMLElement, label: string) {
     (button) => button.getAttribute("aria-label") === label,
   );
 }
+
+const SOURCE_NUMBER_PLUGINS = [remarkEnableOrderedListNumbers];
+
+it("keeps decimal markers in nested user lists while documents keep their counter styles", async () => {
+  setup();
+  const text = "1. Outer\n   1. Nested\n   7. Skipped\n      1. Deeper\n      4. Fourth";
+  await using screen = await render(
+    <div className="grid grid-cols-2 gap-8 p-8">
+      <section>
+        <h2>User message</h2>
+        <ChatMarkdown
+          cwd={undefined}
+          text={text}
+          className="user-message-markdown"
+          extraRemarkPlugins={SOURCE_NUMBER_PLUGINS}
+        />
+      </section>
+      <section>
+        <h2>Markdown preview</h2>
+        <ChatMarkdown cwd={undefined} text={text} />
+      </section>
+    </div>,
+  );
+  await expect.element(screen.getByText("User message", { exact: true })).toBeVisible();
+  const [message, preview] = screen.container.querySelectorAll(".chat-markdown");
+  expect(
+    [...message!.querySelectorAll("ol")].map((list) => getComputedStyle(list).listStyleType),
+  ).toEqual(["decimal", "decimal", "decimal"]);
+  expect(
+    [...preview!.querySelectorAll("ol")].map((list) => getComputedStyle(list).listStyleType),
+  ).toEqual(["decimal", "lower-alpha", "lower-roman"]);
+});
 
 it("shows unavailable audio when a workspace embed has no thread", async () => {
   setup();
@@ -447,6 +481,40 @@ describe("ChatMarkdown skill chips", () => {
 });
 
 describe("ChatMarkdown headings", () => {
+  it("keeps insight streaming, reference links, and heading anchors in one message", async () => {
+    setup();
+    const rule = "─".repeat(20);
+    const text = `## Setup\n\nBefore [source][src].\n\n★ Insight ${rule}\nA **streaming** note.`;
+    const message = (text: string, isStreaming: boolean) => (
+      <ChatMarkdown
+        cwd={undefined}
+        text={text}
+        renderInsights
+        lineBreaks
+        isStreaming={isStreaming}
+      />
+    );
+    await using screen = await render(message(text, true));
+    await expect.element(screen.getByRole("note")).toHaveTextContent("Insight A streaming note.");
+    await screen.rerender(
+      message(
+        `${text}\n${rule}\n\n## Setup\n\nAfter [source][src].\n\n[src]:\n  https://example.com`,
+        false,
+      ),
+    );
+    await expect.element(screen.getByRole("note")).toHaveTextContent("Insight A streaming note.");
+    expect([...screen.container.querySelectorAll("h2")].map((heading) => heading.id)).toEqual([
+      "user-content-setup",
+      "user-content-setup-1",
+    ]);
+    expect(
+      [...screen.container.querySelectorAll("a")].filter(
+        (link) => link.href === "https://example.com/",
+      ),
+    ).toHaveLength(2);
+    await expect.element(screen.getByRole("note")).not.toHaveTextContent("After");
+  });
+
   it("never gives two headings the same id, even when a suffix matches another heading", async () => {
     setup();
     await using screen = await renderText(
