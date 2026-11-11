@@ -4652,6 +4652,25 @@ it.effect.each([
             Effect.forkScoped,
           );
           yield* Queue.offer(turnEvents!, {
+            type: "provider_turn.updated",
+            driver: CODEX_DRIVER,
+            threadId: secondThreadId,
+            providerTurn: {
+              id: idAllocator.derive.providerTurn({
+                driver: CODEX_DRIVER,
+                nativeTurnId: `native-effort-turn-${ordinal}`,
+              }),
+              providerThreadId: secondProviderThread.id,
+              nodeId: idAllocator.derive.rootNode({ runId }),
+              runAttemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+              nativeTurnRef: null,
+              ordinal,
+              status: "running",
+              startedAt: now,
+              completedAt: null,
+            },
+          });
+          yield* Queue.offer(turnEvents!, {
             type: "turn.terminal",
             driver: CODEX_DRIVER,
             providerThreadId: secondProviderThread.id,
