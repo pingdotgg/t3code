@@ -17,13 +17,13 @@
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import { runBuildChild } from "../core/BuildChild.ts";
+import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
 import {
   NODE_BUNDLE_CONDITIONS,
   NODE_SERVE_ENTRY_FILE_NAME,
   relativeClientDirExpression,
   writeNodeServeEntry,
 } from "../core/NodeServe.ts";
-import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
 import { make, type NuxtTarget, type NuxtTargetConfig } from "./Nuxt.ts";
 
 /** The nitro deployment preset this target builds with. */
@@ -33,8 +33,7 @@ export const NITRO_PRESET = "node";
  * The importable specifier of nitro's node-listener runtime handler — the
  * module a USER entry re-exports to wrap the framework's handler.
  */
-export const NITRO_HANDLER_SPECIFIER =
-  "nitropack/presets/node/runtime/node-listener";
+export const NITRO_HANDLER_SPECIFIER = "nitropack/presets/node/runtime/node-listener";
 
 export interface NuxtNodeTargetConfig extends NuxtTargetConfig {}
 
@@ -59,31 +58,17 @@ const makeNodeAdapterTarget = (config: NuxtNodeTargetConfig = {}): NuxtTarget =>
     finish: (output) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        if (
-          output.distDirectory === undefined ||
-          output.clientDirectory === undefined
-        ) {
-          return yield* Effect.fail(
-            fail(
-              "The Nuxt build produced no .output directories for the Node serve entry",
-            ),
+        if (output.distDirectory === undefined || output.clientDirectory === undefined) {
+          return yield* fail(
+            "The Nuxt build produced no .output directories for the Node serve entry",
           );
         }
-        const servePath = path.join(
-          output.distDirectory,
-          "server",
-          NODE_SERVE_ENTRY_FILE_NAME,
-        );
+        const servePath = path.join(output.distDirectory, "server", NODE_SERVE_ENTRY_FILE_NAME);
         return yield* writeNodeServeEntry({
           output,
           servePath,
-          serveModuleName: path
-            .join("server", NODE_SERVE_ENTRY_FILE_NAME)
-            .replaceAll("\\", "/"),
-          clientDirExpression: relativeClientDirExpression(
-            servePath,
-            output.clientDirectory,
-          ),
+          serveModuleName: path.join("server", NODE_SERVE_ENTRY_FILE_NAME).replaceAll("\\", "/"),
+          clientDirExpression: relativeClientDirExpression(servePath, output.clientDirectory),
           handler: {
             kind: "node",
             imports: `import { handler } from "./index.mjs";`,
@@ -112,9 +97,7 @@ export const buildInChild = (config: NuxtNodeBuildChildConfig) =>
     return yield* framework.build({ root: config.rootDir });
   });
 
-export const makeNodeTarget = (
-  config: NuxtNodeTargetConfig = {},
-): NuxtTarget => ({
+export const makeNodeTarget = (config: NuxtNodeTargetConfig = {}): NuxtTarget => ({
   ...makeNodeAdapterTarget(config),
   build: (context) =>
     runBuildChild({
