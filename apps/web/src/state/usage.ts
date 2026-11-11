@@ -11,11 +11,7 @@ import {
   UsageReadError,
 } from "@t3tools/contracts";
 import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
-import {
-  needsCursorKeychainAccess,
-  refreshUsage,
-  usageSummaryInput,
-} from "@t3tools/client-runtime/state/usage";
+import { refreshUsage, usageSummaryInput } from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -50,7 +46,6 @@ export interface EnvironmentUsageStatus {
   readonly isConnected: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
-  readonly needsCursorKeychainAccess: boolean;
   /** Read by day because the server cannot read this span by hour. */
   readonly readByDay: boolean;
   /** Not connected now; `summary` is what it reported last, if anything. */
@@ -179,7 +174,6 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
           savedAt: null,
           window: input,
           summary: null,
-          needsCursorKeychainAccess: false,
         });
         continue;
       }
@@ -226,10 +220,6 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         savedAt: offline ? (summary?.readAt ?? null) : null,
         window,
         summary,
-        needsCursorKeychainAccess: needsCursorKeychainAccess(
-          summary,
-          get(serverEnvironment.providersValueAtom(environmentId)),
-        ),
       });
     }
     return statuses;
