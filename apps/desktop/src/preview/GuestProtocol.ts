@@ -17,3 +17,5 @@ export const PASSKEY_GET_CHANNEL = "preview:passkey-get";
 export const PASSKEY_BRIDGE_ARGUMENT = "--t3code-preview-passkey-bridge";
 export const ANNOTATION_VOICE_EVENT_CHANNEL = "preview:annotation-voice-event";
 export const ANNOTATION_VOICE_STATE_CHANNEL = "preview:annotation-voice-state";
+// HostedBrowserWebview listens for this on the webview's ipc-message event.
+export const GUEST_PAINTED_CHANNEL = "preview:guest-painted";

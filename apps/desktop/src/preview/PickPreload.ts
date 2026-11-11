@@ -31,6 +31,7 @@ import {
   ANNOTATION_VOICE_STATE_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
+  GUEST_PAINTED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
   PAGE_UNHANDLED_SHORTCUT_CHANNEL,
@@ -1830,3 +1831,10 @@ ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotatio
   activeSession?.applyTheme(theme);
 });
 ipcRenderer.on(CANCEL_PICK_CHANNEL, () => activeSession?.teardown(false));
+
+// Chromium runs no frame until the body exists and render-blocking stylesheets load, so this is the first paint.
+if (location.href !== "about:blank") {
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => ipcRenderer.sendToHost(GUEST_PAINTED_CHANNEL)),
+  );
+}

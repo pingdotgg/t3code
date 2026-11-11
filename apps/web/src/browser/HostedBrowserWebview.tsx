@@ -31,6 +31,9 @@ import {
   type WebviewCrashRecoveryState,
 } from "./webviewCrashRecovery";
 
+// Sent by the desktop guest preload (apps/desktop/src/preview/GuestProtocol.ts).
+const GUEST_PAINTED_CHANNEL = "preview:guest-painted";
+
 interface ElectronWebview extends HTMLElement {
   src: string;
   partition: string;
@@ -135,6 +138,8 @@ export function HostedBrowserWebview(props: {
 
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
+  // The guest is transparent until a page paints, so the host shows the theme until the first frame.
+  const [paintedGeneration, setPaintedGeneration] = useState<number | null>(null);
   const active = presentation.visible && presentation.rect !== null;
   const shown = active || pictureInPicture;
   const reportedShown = useEffectEvent(() => serverDriven && shown);
@@ -186,8 +191,13 @@ export function HostedBrowserWebview(props: {
         new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
       );
     };
+    const onGuestMessage = (event: Event) => {
+      if ((event as Event & { channel?: string }).channel !== GUEST_PAINTED_CHANNEL) return;
+      setPaintedGeneration(webviewGeneration);
+    };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
+    webview.addEventListener("ipc-message", onGuestMessage);
     webview.addEventListener("render-process-gone", recoverGuest);
     webview.addEventListener("focus", dismissHostPopups);
     register();
@@ -196,16 +206,11 @@ export function HostedBrowserWebview(props: {
       if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
+      webview.removeEventListener("ipc-message", onGuestMessage);
       webview.removeEventListener("render-process-gone", recoverGuest);
       webview.removeEventListener("focus", dismissHostPopups);
     };
-  }, [
-    clientSettingsHydrated,
-    config,
-    runtimeTabId,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A crash recovery remounts the webview under a new key, so the listeners attach to the new element.
-    webviewGeneration,
-  ]);
+  }, [clientSettingsHydrated, config, runtimeTabId, webviewGeneration]);
 
   const lastRect = presentation.rect;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(zoomFactor);
@@ -362,7 +367,9 @@ export function HostedBrowserWebview(props: {
           }
           aria-hidden={active ? undefined : true}
           className={cn(
-            "absolute flex overflow-hidden bg-white",
+            "absolute flex overflow-hidden",
+            // White is the browser canvas behind transparent pages once a document exists.
+            paintedGeneration === webviewGeneration ? "bg-white" : "bg-background",
             active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
           )}
           style={{
