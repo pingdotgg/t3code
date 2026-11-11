@@ -452,7 +452,8 @@ export function filterPullRequestList<
     (entry.environmentId !== undefined && connectedEnvironmentIds.has(entry.environmentId));
   const unique = new Map<string, Entry>();
   for (const entry of filtered) {
-    const key = pullRequestListKey(entry);
+    // By URL: a renamed repository's aliases list one pull request under each name.
+    const key = entry.url;
     const held = unique.get(key);
     if (!held || (!reachable(held) && reachable(entry))) unique.set(key, entry);
   }

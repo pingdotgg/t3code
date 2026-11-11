@@ -169,7 +169,11 @@ describe("all-environment PR list", () => {
   const mbp = EnvironmentId.make("mbp");
   it("combines independent pages, collapses duplicate PRs, and keeps their source for navigation", () => {
     const first = pullRequestListHead(null, page([entry(3), entry(1)], { repo: "cups-next" }));
-    const second = pullRequestListHead(null, page([entry(2), entry(1)], { repo: "mbp-next" }));
+    // The second environment reaches pull request 1 through the repository's old name.
+    const second = pullRequestListHead(
+      null,
+      page([entry(2), entry(1, { repository: "org/old-name" })], { repo: "mbp-next" }),
+    );
     const merged = mergeEnvironmentPullRequestPages([
       { environmentId: cups, pages: first },
       { environmentId: mbp, pages: second },
