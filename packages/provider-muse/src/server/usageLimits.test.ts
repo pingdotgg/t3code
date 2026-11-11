@@ -1,9 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import type { MuseSubscriptionUsage } from "./protocol.ts";
-import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
+import {
+  isMuseUsageLimitFailure,
+  museUsageLimitResetAt,
+  museUsageToLimits,
+} from "./usageLimits.ts";
 
-// What Meta reported after a reply on 2026-10-08, as Muse forwards it.
 const usage = {
   observedAtMs: 1791447762610,
   tier: "tier-1",
@@ -11,7 +14,6 @@ const usage = {
   weekly: { usedPercent: 5, resetsAtMs: 1791763200000 },
 } satisfies MuseSubscriptionUsage;
 const nowMs = usage.observedAtMs;
-// How Muse 1.4.6 ended a turn at a real quota stop (2026-10-13), relayed by a credential proxy.
 const realRefusal =
   "API error 429: All credentials for model muse-wonder-1.0-contributor are cooling down (last error: rate_limit_exceeded: Subscription quota exhausted. Your usage window resets at 2026-10-13T10:45:52Z.) (after 10 provider attempts)";
 
@@ -23,7 +25,6 @@ describe("Muse usage limit failures", () => {
       ),
     ).toBe(true);
     expect(isMuseUsageLimitFailure(realRefusal)).toBe(true);
-    // A plain rate limit retries on its own; it is not a used-up subscription window.
     expect(isMuseUsageLimitFailure("API error 429: Rate limit exceeded. (rate_limit_error)")).toBe(
       false,
     );
@@ -44,7 +45,6 @@ describe("Muse usage limit failures", () => {
     );
     const quota = { resetsAtMs: usage.window.resetsAtMs };
     expect(museUsageLimitResetAt(usage, nowMs, { quota })).toBe("2026-10-08T13:19:17.000Z");
-    // A used-up weekly window still holds the turn back after the typed reset.
     const weeklyOut = { ...usage, weekly: { ...usage.weekly, usedPercent: 100 } };
     expect(museUsageLimitResetAt(weeklyOut, nowMs, { quota })).toBe("2026-10-12T00:00:00.000Z");
   });
@@ -56,5 +56,33 @@ describe("Muse usage limit failures", () => {
     expect(museUsageLimitResetAt(sessionOut, usage.window.resetsAtMs)).toBeNull();
     const afterNamedReset = Date.parse("2026-10-14T00:00:00Z");
     expect(museUsageLimitResetAt(undefined, afterNamedReset, { message: realRefusal })).toBeNull();
+  });
+});
+
+describe("Muse account usage", () => {
+  it("reports the session and weekly windows, capped at 100, with the tier as plan", () => {
+    expect(museUsageToLimits({ ...usage, window: { ...usage.window, usedPercent: 103 } })).toEqual({
+      checkedAt: "2026-10-08T08:22:42.610Z",
+      authLabel: "tier-1",
+      windows: [
+        {
+          id: "session",
+          kind: "session",
+          label: "Session",
+          usedPercent: 100,
+          resetsAt: "2026-10-08T13:19:17.000Z",
+          windowDurationMins: 300,
+        },
+        {
+          id: "weekly",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 5,
+          resetsAt: "2026-10-12T00:00:00.000Z",
+          windowDurationMins: 10080,
+        },
+      ],
+    });
+    expect(museUsageToLimits({ ...usage, tier: " " })).not.toHaveProperty("authLabel");
   });
 });
