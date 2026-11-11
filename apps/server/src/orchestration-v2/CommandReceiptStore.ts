@@ -77,11 +77,11 @@ export interface CommandReceiptStoreV2Shape {
   readonly upsert: (
     receipt: AnyCommandReceiptV2,
   ) => Effect.Effect<void, CommandReceiptStoreV2Error>;
-  /** A thread command's receipt; none when the command id belongs to a project command. */
+  /** None for project command ids. */
   readonly getByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<Option.Option<CommandReceiptV2>, CommandReceiptStoreV2Error>;
-  /** A project command's receipt; none when the command id belongs to a thread command. */
+  /** None for thread command ids. */
   readonly getProjectByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<Option.Option<ProjectCommandReceiptV2>, CommandReceiptStoreV2Error>;
@@ -173,11 +173,11 @@ const layerBase: Layer.Layer<
         receipts.getByCommandId({ commandId }).pipe(
           Effect.flatMap(
             Option.match({
-              onNone: () => Effect.succeed(Option.none()),
+              onNone: () => Effect.succeedNone,
               onSome: (receipt) =>
                 receipt.aggregateKind !== "thread"
-                  ? Effect.succeed(Option.none())
-                  : fromApplicationReceipt(receipt).pipe(Effect.map(Option.some)),
+                  ? Effect.succeedNone
+                  : fromApplicationReceipt(receipt).pipe(Effect.asSome),
             }),
           ),
           Effect.mapError(
@@ -192,7 +192,7 @@ const layerBase: Layer.Layer<
         receipts.getByCommandId({ commandId }).pipe(
           Effect.flatMap((receipt) =>
             Option.isNone(receipt) || receipt.value.aggregateKind !== "project"
-              ? Effect.succeed(Option.none())
+              ? Effect.succeedNone
               : decodeProjectReceipt({
                   commandId: receipt.value.commandId,
                   projectId: receipt.value.aggregateId,
@@ -201,7 +201,7 @@ const layerBase: Layer.Layer<
                   resultSequence: receipt.value.resultSequence,
                   status: receipt.value.status,
                   error: receipt.value.error,
-                }).pipe(Effect.map(Option.some)),
+                }).pipe(Effect.asSome),
           ),
           Effect.mapError((cause) => new CommandReceiptStoreReadError({ commandId, cause })),
         ),
