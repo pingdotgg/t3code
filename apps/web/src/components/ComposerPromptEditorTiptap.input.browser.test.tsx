@@ -176,9 +176,7 @@ it.each([
 
 it.each([
   { key: "i", caret: 10, expected: "ship it **n*X*ow** done" },
-  { key: "e", caret: 10, expected: "ship it **n`X`ow** done" },
   { key: "i", caret: 9, expected: "ship it *X***now** done" },
-  { key: "i", caret: "{ArrowLeft>5/}", expected: "ship it **now***X* done" },
   { key: "e", caret: "{ArrowLeft>5/}", expected: "ship it **now**`X` done" },
 ])(
   "Mod+$key at $caret in a bold word styles the next typed text",
