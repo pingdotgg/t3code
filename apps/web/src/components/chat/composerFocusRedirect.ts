@@ -82,6 +82,34 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   return true;
 }
 
+/**
+ * Where a key landed: the composer's answer field, one of an open question's
+ * options, some other focused element, or the page when nothing but the
+ * question card holds focus.
+ */
+export type PendingQuestionKeyTarget = "answer" | "option" | "control" | "page";
+
+/**
+ * Where a key landed, for an open question's 1-9, Backspace and Enter. Null
+ * leaves the key to another field or an open popup.
+ */
+export function pendingQuestionKeyTarget(event: KeyboardEvent): PendingQuestionKeyTarget | null {
+  // Every keystroke typed in the composer passes here, so rule out the rest first.
+  if (event.key !== "Enter" && event.key !== "Backspace" && !/^[1-9]$/.test(event.key)) {
+    return null;
+  }
+  if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return null;
+  if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return null;
+  if (eventPathContainsSelector(event, '[data-testid="composer-editor"]')) return "answer";
+  if (eventPathContainsSelector(event, "[data-pending-user-input-option]")) return "option";
+  if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return null;
+  // Nothing holds focus, or only the question card does, as after clicking its text.
+  const onQuestionCard =
+    eventPathContainsSelector(event, '[data-chat-composer-top-drawer="true"]') &&
+    !eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR);
+  return event.target === document.body || onQuestionCard ? "page" : "control";
+}
+
 export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.isComposing) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;

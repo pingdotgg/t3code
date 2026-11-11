@@ -35,8 +35,12 @@ const renderPanel = (questions: Question[], questionIndex = 0) =>
       respondingRequestIds={[]}
       answers={{}}
       questionIndex={questionIndex}
+      keyHandlerRef={{ current: null }}
       onToggleOption={() => {}}
+      onOptionKey={() => {}}
+      onRemoveOptionKey={() => false}
       onAdvance={() => {}}
+      onConfirm={() => {}}
       onDismiss={() => {}}
     />,
   );

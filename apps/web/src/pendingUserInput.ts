@@ -12,6 +12,7 @@ import {
   buildPendingUserInputAnswers,
   normalizeSelectedOptionValues,
   resolvePendingUserInputAnswer,
+  setPendingUserInputCustomAnswer,
   type PendingUserInputAnswer,
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
@@ -139,4 +140,62 @@ export function derivePendingUserInputProgress<Q extends UserInputQuestion>(
     isComplete: buildPendingUserInputAnswers(questions, draftAnswers) !== null,
     canAdvance: resolvedAnswer !== null,
   };
+}
+
+// Numbers typed into an empty answer field stay in its text but pick options: while
+// the text is only option numbers ("132") the field shows it empty and each number
+// toggles its option (picks it on a single choice). Any other character turns all of
+// it back into typed text. Only the web client reads drafts this way.
+
+/** The answer text when it is only option numbers, or null. */
+function pendingUserInputOptionKeys(
+  question: UserInputQuestion,
+  text: string | undefined,
+): string | null {
+  if (question.initialAnswer !== undefined || !text || !/^[1-9]+$/.test(text)) return null;
+  return [...text].every((key) => Number(key) <= question.options.length) ? text : null;
+}
+
+/** The draft as the panel shows it and the answer sends it: option keys become picks. */
+export function applyPendingUserInputOptionKeys(
+  question: UserInputQuestion,
+  draft: PendingUserInputDraftAnswer | undefined,
+): PendingUserInputDraftAnswer | undefined {
+  const keys = pendingUserInputOptionKeys(question, draft?.customAnswer);
+  if (keys === null) return draft;
+  let picked = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
+  for (const key of keys) {
+    const option = question.options[Number(key) - 1];
+    if (!option) continue;
+    const value = option.value ?? option.label;
+    picked = !question.multiSelect
+      ? [value]
+      : picked.includes(value)
+        ? picked.filter((entry) => entry !== value)
+        : [...picked, value];
+  }
+  return { ...draft, customAnswer: "", selectedOptionValues: picked };
+}
+
+/** Stores the answer field's text after the option keys it hides. */
+export function setPendingUserInputAnswerText(
+  question: UserInputQuestion,
+  draft: PendingUserInputDraftAnswer | undefined,
+  text: string,
+): PendingUserInputDraftAnswer {
+  const answer = (pendingUserInputOptionKeys(question, draft?.customAnswer) ?? "") + text;
+  // Keys keep the picks made before them; typed text replaces every pick.
+  if (pendingUserInputOptionKeys(question, answer) !== null) {
+    return { ...draft, customAnswer: answer };
+  }
+  return setPendingUserInputCustomAnswer(question, draft, answer);
+}
+
+/** Drops the last option key, or returns null when the draft holds none. */
+export function removePendingUserInputOptionKey(
+  question: UserInputQuestion,
+  draft: PendingUserInputDraftAnswer | undefined,
+): PendingUserInputDraftAnswer | null {
+  const keys = pendingUserInputOptionKeys(question, draft?.customAnswer);
+  return keys === null ? null : { ...draft, customAnswer: keys.slice(0, -1) };
 }

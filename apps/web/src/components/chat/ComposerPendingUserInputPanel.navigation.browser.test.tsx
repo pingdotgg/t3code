@@ -20,6 +20,12 @@ import { act, fakeTimers, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
+import type { ChatComposerHandle } from "./ChatComposer";
+import {
+  ComposerPendingUserInputPanel,
+  type PendingQuestionKeyHandler,
+} from "./ComposerPendingUserInputPanel";
+import { useChatShortcuts } from "./useChatShortcuts";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
@@ -38,7 +44,11 @@ const prompt = {
   })),
 };
 
-function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]) {
+function questionProjection(
+  threadId: ThreadId,
+  requestIds = ["first", "second"],
+  questions: ReadonlyArray<(typeof prompt.questions)[number] | ReleaseQuestion> = prompt.questions,
+) {
   const projection = makeThreadProjectionFixture();
   return {
     ...projection,
@@ -71,7 +81,7 @@ function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]
       updatedAt: projection.updatedAt,
       type: "user_input_request" as const,
       requestId: RuntimeRequestId.make(id),
-      questions: prompt.questions,
+      questions: [...questions],
     })),
   } satisfies OrchestrationV2ThreadProjection;
 }
@@ -156,6 +166,9 @@ it("tells the user when an option click moves their typed answer into the hidden
   );
   await using screen = await render(probe(threadRef.threadId));
 
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  // An option number is a pick, not typed text, so a click does not set it aside.
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "1"));
   await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
   expect(toast).not.toHaveBeenCalled();
 
@@ -291,4 +304,171 @@ it("isolates drafts by environment, thread and request and discards only resolve
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
+});
+
+interface ReleaseQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: { label: string; description: string }[];
+  multiSelect: boolean;
+}
+const steps: ReleaseQuestion = {
+  id: "steps",
+  header: "Release go",
+  question: "Which steps may I take now?",
+  options: [
+    { label: "Push", description: "Push the merge commit" },
+    { label: "Merge", description: "Merge once green" },
+    { label: "Open PR", description: "Docs only" },
+  ],
+  multiSelect: true,
+};
+const channel: ReleaseQuestion = {
+  id: "channel",
+  header: "Channel",
+  question: "Which channel gets it first?",
+  options: [
+    { label: "Beta", description: "Testers" },
+    { label: "Stable", description: "Everyone" },
+  ],
+  multiSelect: false,
+};
+
+/** The chat's real shortcuts, requests and question panel, beside an answer field. */
+function KeyboardChat(
+  props: ProbeProps & {
+    onConfirm: () => void;
+    onAdvance: () => void;
+    insertTextAtEnd: ChatComposerHandle["insertTextAtEnd"];
+  },
+) {
+  const state = useProbeRequests(props);
+  useLayoutEffect(() => {
+    requests = state;
+  });
+  const keyHandlerRef = useRef<PendingQuestionKeyHandler | null>(null);
+  const composer: Pick<ChatComposerHandle, "handlePendingQuestionKey" | "insertTextAtEnd"> = {
+    handlePendingQuestionKey: (event, target) => keyHandlerRef.current?.(event, target) ?? false,
+    insertTextAtEnd: props.insertTextAtEnd,
+  };
+  useChatShortcuts({
+    enabled: true,
+    keybindings: [],
+    scriptKeybindings: [],
+    getShortcutContext: () => ({
+      terminalFocus: false,
+      terminalOpen: false,
+      previewFocus: false,
+      previewOpen: false,
+      isWeb: true,
+      isDesktop: false,
+      modelPickerOpen: false,
+    }),
+    threadFindActive: false,
+    composerRef: { current: composer as ChatComposerHandle },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: {},
+    fallback: () => undefined,
+  });
+  return (
+    <>
+      <div data-testid="composer-editor" contentEditable suppressContentEditableWarning>
+        {state.activePendingProgress?.customAnswer}
+      </div>
+      <div data-chat-composer-top-drawer="true">
+        <ComposerPendingUserInputPanel
+          pendingUserInputs={state.pendingUserInputs}
+          cwd={undefined}
+          threadRef={threadRef}
+          respondingRequestIds={[]}
+          answers={state.activePendingDraftAnswers}
+          questionIndex={state.activePendingQuestionIndex}
+          keyHandlerRef={keyHandlerRef}
+          onToggleOption={state.onSelectActivePendingUserInputOption}
+          // ChatComposer types the number into the answer the same way.
+          onOptionKey={(questionId, key) =>
+            state.onChangeActivePendingUserInputCustomAnswer(questionId, key)
+          }
+          onRemoveOptionKey={state.onRemoveActivePendingUserInputOptionKey}
+          onAdvance={props.onAdvance}
+          onConfirm={props.onConfirm}
+          onDismiss={() => {}}
+        />
+      </div>
+    </>
+  );
+}
+
+async function renderKeyboardChat(name: string, questions: ReleaseQuestion[]) {
+  const onConfirm = vi.fn();
+  const onAdvance = vi.fn();
+  const insertTextAtEnd = vi.fn(() => true);
+  const screen = await render(
+    <KeyboardChat
+      environmentId={EnvironmentId.make(`${name}-environment`)}
+      projection={questionProjection(threadRef.threadId, [name], questions)}
+      onConfirm={onConfirm}
+      onAdvance={onAdvance}
+      insertTextAtEnd={insertTextAtEnd}
+    />,
+  );
+  const option = (label: string) => screen.getByRole("button", { name: new RegExp(`^${label}`) });
+  return { screen, option, onConfirm, onAdvance, insertTextAtEnd };
+}
+
+it("picks options with numbers typed into the empty answer field until other text follows", async () => {
+  const { screen, option } = await renderKeyboardChat("keys", [steps]);
+  await using _ = screen;
+  const answerField = screen.getByTestId("composer-editor");
+  (answerField.element() as HTMLElement).focus();
+
+  await userEvent.keyboard("132");
+  for (const label of ["Push", "Merge", "Open PR"]) {
+    await expect.element(option(label)).toHaveAttribute("aria-pressed", "true");
+  }
+  expect(answerField.element().textContent).toBe("");
+
+  await userEvent.keyboard("{Backspace}");
+  await expect.element(option("Merge")).toHaveAttribute("aria-pressed", "false");
+
+  // The composer hands on the field's new text: a space after the hidden numbers.
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("steps", " "));
+  expect(answerField.element().textContent).toBe("13 ");
+  for (const label of ["Push", "Merge", "Open PR"]) {
+    await expect.element(option(label)).toHaveAttribute("aria-pressed", "false");
+  }
+});
+
+it("waits for Enter after a number picks a single choice with nothing focused", async () => {
+  const { screen, option, onConfirm, onAdvance, insertTextAtEnd } = await renderKeyboardChat(
+    "single",
+    [channel, steps],
+  );
+  await using _ = screen;
+  using _timers = fakeTimers();
+
+  await userEvent.keyboard("2");
+  // A click would advance after 200 ms; a key waits for Enter.
+  await act(() => vi.advanceTimersByTime(1000));
+  expect(option("Stable").element()).toHaveAttribute("aria-pressed", "true");
+  expect(onAdvance).not.toHaveBeenCalled();
+  expect(insertTextAtEnd).not.toHaveBeenCalled();
+
+  await userEvent.keyboard("{Enter}");
+  expect(onConfirm).toHaveBeenCalledTimes(1);
+});
+
+it("confirms on Enter after a click instead of unselecting the clicked option", async () => {
+  const { screen, option, onConfirm } = await renderKeyboardChat("click", [steps]);
+  await using _ = screen;
+
+  // Reading the question first leaves focus on its card, not on a control.
+  await screen.getByText("Which steps may I take now?").click();
+  await option("Merge").click();
+  await userEvent.keyboard("{Enter}");
+
+  await expect.element(option("Merge")).toHaveAttribute("aria-pressed", "true");
+  expect(onConfirm).toHaveBeenCalledTimes(1);
 });
