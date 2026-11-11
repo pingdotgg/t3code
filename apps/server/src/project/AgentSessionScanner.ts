@@ -1060,7 +1060,6 @@ export const make = Effect.gen(function* () {
             let claudeFields = emptyClaudeFields;
             let historyBytes = prefix?.historyBytes ?? 0;
             let recordBytes = 0;
-            let recordCount = 0;
             let bytesRead = 0;
             const reserve = (bytes: number) => {
               recordBytes += bytes;
@@ -1076,8 +1075,6 @@ export const make = Effect.gen(function* () {
 
             const finishRecord = () => {
               reader.write(decoder.decode());
-              recordCount += 1;
-              if (recordCount > MAX_IMPORT_RECORDS) return false;
               const value = reader.finish();
               const decoded = decodeTranscriptValue(value);
               if (Option.isNone(decoded) && source === "pi") {
@@ -1107,7 +1104,7 @@ export const make = Effect.gen(function* () {
               reader = createTranscriptJsonReader(reserve, selectTranscriptPath);
               decoder = new TextDecoder();
               recordStarted = false;
-              return true;
+              return records.length <= MAX_IMPORT_RECORDS;
             };
 
             while (bytesRead < readBytes) {
