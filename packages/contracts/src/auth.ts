@@ -456,6 +456,8 @@ export const AuthCreatePairingCredentialInput = Schema.Struct({
   scopes: Schema.optionalKey(AuthGrantScopes),
   /** Binds the code to one agent sign-in at this level. The server derives the scopes from it. */
   access: Schema.optionalKey(AuthMcpClientAccess),
+  /** The app joins the whole network, so every member lets it in without another code. */
+  network: Schema.optionalKey(Schema.Boolean),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 

@@ -46,7 +46,7 @@ describe("mergeRoster", () => {
       // One write at a time, as gossip delivers them.
       [
         ...order.reduce<ReadonlyMap<EnvironmentId, NetworkMember>>(
-          (roster, entry) => mergeRoster(roster, [entry]),
+          (roster, entry) => mergeRoster(roster, [entry], (member) => member.environmentId),
           new Map(),
         ),
       ].toSorted(([a], [b]) => a.localeCompare(b)),

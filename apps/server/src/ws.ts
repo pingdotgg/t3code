@@ -2814,7 +2814,12 @@ export const layerWsRpc = (
         [WS_METHODS.tailnetDevicesAdmit]: (input) =>
           tailnetDevices.admit(input.environmentId, input.access),
         [WS_METHODS.tailnetDevicesOpenDevice]: (input) =>
-          tailnetDevices.openDevice(input.environmentId, { scopes: currentSession.scopes }),
+          tailnetDevices.openDevice(input.environmentId, {
+            scopes: currentSession.scopes,
+            subject: currentSession.subject,
+          }),
+        [WS_METHODS.tailnetDevicesSetAppAccess]: (input) =>
+          tailnetDevices.setAppAccess(input.appId, input.access),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch, providerInstanceMutation, replicateProfiles }) {

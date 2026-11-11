@@ -368,6 +368,18 @@ export class PeerSessionsRevocationError extends Schema.TaggedError<PeerSessions
   }
 }
 
+export class SubjectSessionsRevocationError extends Schema.TaggedError<SubjectSessionsRevocationError>()(
+  "SubjectSessionsRevocationError",
+  {
+    subject: Schema.String,
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke one subject's sessions.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -378,6 +390,7 @@ export const SessionCredentialInternalError = Schema.Union([
   SessionRevocationError,
   OtherSessionsRevocationError,
   PeerSessionsRevocationError,
+  SubjectSessionsRevocationError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -443,6 +456,10 @@ export class SessionStore extends Context.Service<
     /** Revokes every session another T3 environment holds here. */
     readonly revokeByPeerEnvironment: (
       peerEnvironmentId: EnvironmentId,
+    ) => Effect.Effect<number, SessionCredentialInternalError>;
+    /** Revokes every session of one subject, such as an app of the network. */
+    readonly revokeBySubject: (
+      subject: string,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
@@ -1102,6 +1119,25 @@ const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   });
 
+  const revokeBySubject: SessionStore["Service"]["revokeBySubject"] = Effect.fn(
+    "SessionStore.revokeBySubject",
+  )(function* (subject) {
+    const revokedAt = yield* DateTime.now;
+    const revokedSessionIds = yield* authSessions
+      .revokeBySubject({ subject, revokedAt })
+      .pipe(Effect.mapError((cause) => new SubjectSessionsRevocationError({ subject, cause })));
+    yield* Ref.update(connectedSessionsRef, (current) => {
+      const next = new Map(current);
+      for (const revokedSessionId of revokedSessionIds) next.delete(revokedSessionId);
+      return next;
+    });
+    yield* Effect.forEach(revokedSessionIds, emitRemoved, {
+      concurrency: "unbounded",
+      discard: true,
+    });
+    return revokedSessionIds.length;
+  });
+
   const awaitInvalidation = Effect.fn(function* (
     sessionId: AuthSessionId,
     proofKeyThumbprint?: string,
@@ -1176,6 +1212,7 @@ const make = Effect.gen(function* () {
     revoke,
     revokeAllExcept,
     revokeByPeerEnvironment,
+    revokeBySubject,
     markConnected,
     markDisconnected,
   });

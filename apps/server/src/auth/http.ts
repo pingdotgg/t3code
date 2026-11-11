@@ -34,6 +34,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as TailnetDevices from "../peer/TailnetDevices.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { requestUrl } from "../requestUrl.ts";
@@ -263,6 +264,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const devices = yield* TailnetDevices.TailnetDevices;
 
     return handlers
       .handle(
@@ -450,6 +452,26 @@ export const layer = HttpApiBuilder.group(
               if (!session.scopes.has(delegatedScope)) {
                 return yield* failEnvironmentScopeRequired(delegatedScope);
               }
+            }
+            if (args.payload.network === true) {
+              return yield* devices
+                .inviteApp({
+                  ...(args.payload.label === undefined ? {} : { label: args.payload.label }),
+                  scopes: delegatedScopes,
+                })
+                .pipe(
+                  Effect.catchTags({
+                    TailnetDevicesError: Effect.fnUntraced(function* (error) {
+                      if (error.reason === "forbidden") {
+                        return yield* new EnvironmentHttpForbiddenError({ message: error.message });
+                      }
+                      return yield* failEnvironmentInternal(
+                        "pairing_credential_issuance_failed",
+                        error,
+                      );
+                    }),
+                  }),
+                );
             }
             return yield* serverAuth.issuePairingCredential(args.payload);
           },

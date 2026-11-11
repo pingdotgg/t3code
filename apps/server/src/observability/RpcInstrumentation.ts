@@ -72,6 +72,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.tailnetDevicesList]: "tailnetDevices",
   [WS_METHODS.tailnetDevicesSetAccess]: "tailnetDevices",
   [WS_METHODS.tailnetDevicesAdmit]: "tailnetDevices",
+  [WS_METHODS.tailnetDevicesSetAppAccess]: "tailnetDevices",
   [WS_METHODS.tailnetDevicesOpenDevice]: "tailnetDevices",
   [WS_METHODS.serverUpdateSettings]: "server",
   [WS_METHODS.serverSearchAcpRegistry]: "server",

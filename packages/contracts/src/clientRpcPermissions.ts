@@ -79,6 +79,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Device access and tailnet device settings replicate to every one of my devices.
   [WS_METHODS.tailnetDevicesSetAccess]: AuthAccessWriteScope,
   [WS_METHODS.tailnetDevicesAdmit]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesSetAppAccess]: AuthAccessWriteScope,
   // Hands the app a session on another device, as a pairing link does.
   [WS_METHODS.tailnetDevicesOpenDevice]: AuthAccessWriteScope,
 } as const;

@@ -9,6 +9,7 @@ import {
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthCreatePairingCredentialInput,
+  NETWORK_APP_SUBJECT_PREFIX,
   type AuthEnvironmentScope,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
@@ -423,6 +424,8 @@ export class EnvironmentAuth extends Context.Service<
     >;
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
+      /** The redeemed session's subject; an app of the network passes its own. */
+      options?: { readonly subject?: string },
     ) => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
@@ -1074,12 +1077,15 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokeOtherSessionsExcept"),
     );
 
-  const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) =>
+  const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (
+    input,
+    options,
+  ) =>
     createPairingLink({
       scopes: input?.access
         ? mcpClientScopes(input.access)
         : (input?.scopes ?? AuthStandardClientScopes),
-      subject: "one-time-token",
+      subject: options?.subject ?? "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
       ...(input?.access ? { mcpApproval: input.access } : {}),
     }).pipe(
@@ -1422,9 +1428,11 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
   },
 ) {
   if (ManagedLimits.allowsRemoteClients(policy)) return;
+  // An app of the network is paired from elsewhere, like a plain code.
   const sessions = (yield* stores.sessions.listActive()).filter(
     (session) =>
       session.subject === LINK_PAIRED_SUBJECT ||
+      session.subject.startsWith(NETWORK_APP_SUBJECT_PREFIX) ||
       // The startup link also pairs browsers on this machine; only a device elsewhere goes.
       (session.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT &&
         session.client.ipAddress !== undefined &&
@@ -1433,6 +1441,7 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
   const links = (yield* stores.pairingLinks.listActive()).filter(
     (link) =>
       link.subject === LINK_PAIRED_SUBJECT ||
+      link.subject.startsWith(NETWORK_APP_SUBJECT_PREFIX) ||
       // Approval codes let an agent elsewhere sign in, as plain codes do.
       link.subject.startsWith(MCP_APPROVAL_SUBJECT_PREFIX),
   );

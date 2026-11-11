@@ -9,6 +9,9 @@ import {
   AuthStandardClientScopes,
   type EnvironmentId,
   type ExecutionEnvironmentDescriptor,
+  NETWORK_APP_SUBJECT_PREFIX,
+  type NetworkApp,
+  type AuthPairingCredentialResult,
   type NetworkMember,
   type PeerLink,
   type TailnetChallengeConfirm,
@@ -78,7 +81,10 @@ const ONLINE_WINDOW = Duration.minutes(15);
  * Tailscale says the node belongs to this node's user, untagged, with a stable node id to bind.
  * That proves which machine answers, never what it may do: the roster decides that.
  */
-const isMyNode = (whois: TailnetWhois, tailnet: Tailnet): whois is TailnetWhois & {
+const isMyNode = (
+  whois: TailnetWhois,
+  tailnet: Tailnet,
+): whois is TailnetWhois & {
   readonly nodeId: string;
 } =>
   whois.nodeId !== null &&
@@ -171,11 +177,9 @@ const storageError = (cause: unknown) =>
   });
 
 /**
- * The owner's network of T3 servers on their tailnet. Membership is explicit: a machine joins
- * only when a full-access member adds it, and same account is never permission. Each side proves
- * the other before giving or using access: the side granting it whoises the address it dials
- * (never an inbound header or source address), checks the node against the roster, and the token
- * only travels to that address.
+ * The owner's network of T3 servers on their tailnet. A machine joins only when a full-access
+ * member adds it; same account is never permission. The granting side whoises the address it
+ * dials (never an inbound header), checks the node against the roster, and sends the token there.
  */
 export class TailnetDevices extends Context.Service<
   TailnetDevices,
@@ -202,6 +206,23 @@ export class TailnetDevices extends Context.Service<
       actor: "user" | "agent",
     ) => Effect.Effect<NetworkMember, TailnetDevicesError>;
     /**
+     * A pairing code for an app (a phone, a browser) that joins the whole network: every member
+     * lets it in at its access without another code. Full access for the standard grant, else
+     * read-only. Only a full-access member may invite one.
+     */
+    readonly inviteApp: (input: {
+      readonly label?: string;
+      readonly scopes: ReadonlyArray<AuthGrantScope>;
+    }) => Effect.Effect<AuthPairingCredentialResult, TailnetDevicesError>;
+    /**
+     * Sets what an app of the network may do on every member. Narrowing or revoking ends its
+     * sessions everywhere, so it pairs again at the new level.
+     */
+    readonly setAppAccess: (
+      appId: string,
+      access: TailnetDeviceAccess,
+    ) => Effect.Effect<NetworkApp, TailnetDevicesError>;
+    /**
      * Links a member directly, from its id or an address. Nothing for a machine that is not a
      * member here, so the caller can fall back to a pairing code.
      */
@@ -211,11 +232,12 @@ export class TailnetDevices extends Context.Service<
     }) => Effect.Effect<Option.Option<PeerLink>>;
     /**
      * A one-time pairing credential on another member for the app that asked, so it connects
-     * without a code. It never exceeds `caller.scopes`, the app's own grant here.
+     * without a code. It never exceeds `caller.scopes`, the app's own grant here, and an app of
+     * the network is capped at its own access there, not this machine's.
      */
     readonly openDevice: (
       environmentId: EnvironmentId,
-      caller: { readonly scopes: ReadonlyArray<AuthEnvironmentScope> },
+      caller: { readonly scopes: ReadonlyArray<AuthEnvironmentScope>; readonly subject: string },
     ) => Effect.Effect<TailnetDeviceClientCredential, TailnetDevicesError>;
     /** Runs the handshake again for a member's link, as when its token stops working. */
     readonly refresh: (environmentId: EnvironmentId) => Effect.Effect<void>;
@@ -267,6 +289,11 @@ const make = Effect.gen(function* () {
   const cutOff = Effect.fn("TailnetDevices.cutOff")(function* (environmentId: EnvironmentId) {
     yield* sessions.revokeByPeerEnvironment(environmentId);
     yield* links.unlink(environmentId);
+  }, Effect.mapError(storageError));
+
+  /** Ends an app's sessions here, so it pairs again at its new access. */
+  const cutApp = Effect.fn("TailnetDevices.cutApp")(function* (appId: string) {
+    yield* sessions.revokeBySubject(`${NETWORK_APP_SUBJECT_PREFIX}${appId}`);
   }, Effect.mapError(storageError));
 
   /**
@@ -757,6 +784,7 @@ const make = Effect.gen(function* () {
       from: yield* selfDescriptor,
       devices: yield* knownDescriptors,
       members: yield* membership.members.pipe(Effect.orElseSucceed(() => [])),
+      apps: yield* membership.apps.pipe(Effect.orElseSucceed(() => [])),
     } satisfies TailnetDevicesSyncPayload;
   });
 
@@ -776,8 +804,9 @@ const make = Effect.gen(function* () {
     );
     const access = yield* membership.accessOf(sender);
     if (Option.isNone(access) || access.value !== "full-access") return;
-    const revoked = yield* membership.merge(sender, payload.members);
-    yield* Effect.forEach(revoked, cutOff, { discard: true });
+    const cuts = yield* membership.merge(sender, { members: payload.members, apps: payload.apps });
+    yield* Effect.forEach(cuts.revoked, cutOff, { discard: true });
+    yield* Effect.forEach(cuts.appsCut, cutApp, { discard: true });
   });
 
   /** The member session a machine holds here; a pairing-code link is never one. */
@@ -814,8 +843,19 @@ const make = Effect.gen(function* () {
   )(function* (request, payload) {
     const caller = yield* authenticateMember(request, payload.from);
     const self = yield* selfDescriptor;
-    // The asking app's own grant, within what the asking machine may do here.
-    const allowed = new Set<AuthGrantScope>(clientScopesFor(caller.access));
+    // An app of the network gets its own access here, whatever the machine relaying for it holds.
+    let ceiling: AuthMcpClientAccess = caller.access;
+    if (payload.appId !== undefined) {
+      const app = yield* membership.appAccessOf(payload.appId);
+      if (Option.isNone(app) || app.value === "revoked") {
+        return yield* new TailnetDevicesUnauthorizedError({
+          message: "That app is not in this network.",
+        });
+      }
+      ceiling = app.value;
+    }
+    // The asking app's own grant, within that ceiling.
+    const allowed = new Set<AuthGrantScope>(clientScopesFor(ceiling));
     const scopes = payload.scopes.filter((scope) => allowed.has(scope));
     if (scopes.length === 0) {
       return yield* new TailnetDevicesUnauthorizedError({
@@ -823,10 +863,12 @@ const make = Effect.gen(function* () {
       });
     }
     const issued = yield* auth
-      .issuePairingCredential({
-        scopes,
-        label: `Opened from ${caller.label.replace(/^T3 Code · /u, "")}`,
-      })
+      .issuePairingCredential(
+        { scopes, label: `Opened from ${caller.label.replace(/^T3 Code · /u, "")}` },
+        payload.appId === undefined
+          ? undefined
+          : { subject: `${NETWORK_APP_SUBJECT_PREFIX}${payload.appId}` },
+      )
       .pipe(Effect.orDie);
     return {
       environmentId: self.environmentId,
@@ -853,6 +895,9 @@ const make = Effect.gen(function* () {
         message: "That device is revoked. Restore it to open it.",
       });
     }
+    const appId = caller.subject.startsWith(NETWORK_APP_SUBJECT_PREFIX)
+      ? caller.subject.slice(NETWORK_APP_SUBJECT_PREFIX.length)
+      : undefined;
     const ask = Effect.gen(function* () {
       const resolved = yield* links.resolve(environmentId);
       const authorized = HttpClient.mapRequest(
@@ -862,7 +907,11 @@ const make = Effect.gen(function* () {
       return yield* PeerLinks.peerApiClient(authorized, resolved.url).pipe(
         Effect.flatMap((client) =>
           client.tailnetDevices.clientCredential({
-            payload: { from: self, scopes: caller.scopes.filter(isGrantScope) },
+            payload: {
+              from: self,
+              scopes: caller.scopes.filter(isGrantScope),
+              ...(appId === undefined ? {} : { appId }),
+            },
           }),
         ),
         Effect.timeout(DESCRIBE_TIMEOUT),
@@ -879,7 +928,13 @@ const make = Effect.gen(function* () {
               message: "This machine has no link to that device.",
               cause,
             })
-          : unreachable("That device did not answer.", cause),
+          : cause._tag === "TailnetDevicesUnauthorizedError"
+            ? new TailnetDevicesError({
+                reason: "forbidden",
+                message: "That device does not let this app in.",
+                cause,
+              })
+            : unreachable("That device did not answer.", cause),
       ),
     );
     // Only the device it asked may answer for it.
@@ -908,9 +963,7 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  const fetchSync = Effect.fn("TailnetDevices.fetchSync")(function* (
-    environmentId: EnvironmentId,
-  ) {
+  const fetchSync = Effect.fn("TailnetDevices.fetchSync")(function* (environmentId: EnvironmentId) {
     const resolved = yield* links.resolve(environmentId);
     const authorized = HttpClient.mapRequest(
       httpClient,
@@ -956,6 +1009,61 @@ const make = Effect.gen(function* () {
         Effect.ignore,
       ),
   );
+
+  const inviteApp: TailnetDevices["Service"]["inviteApp"] = Effect.fn("TailnetDevices.inviteApp")(
+    function* (input) {
+      if (!(yield* enabled)) {
+        return yield* new TailnetDevicesError({
+          reason: "forbidden",
+          message: "Linked environments is off on this machine.",
+        });
+      }
+      yield* requireAdmin();
+      const granted = new Set<AuthGrantScope>(input.scopes);
+      const access = AuthStandardClientScopes.every((scope) => granted.has(scope))
+        ? "full-access"
+        : "read-only";
+      const appId = yield* random.randomBytes(16).pipe(Effect.map(Base64Url.encode), Effect.orDie);
+      const label = input.label ?? "App";
+      yield* membership.putApp({ appId, label, access });
+      yield* push;
+      return yield* auth
+        .issuePairingCredential(
+          { scopes: clientScopesFor(access), label },
+          { subject: `${NETWORK_APP_SUBJECT_PREFIX}${appId}` },
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new TailnetDevicesError({
+                reason: cause._tag === "ManagedPolicyRefusedError" ? "forbidden" : "storage",
+                message:
+                  cause._tag === "ManagedPolicyRefusedError"
+                    ? cause.message
+                    : "The pairing code could not be created. The server log has details.",
+                cause,
+              }),
+          ),
+        );
+    },
+  );
+
+  const setAppAccess: TailnetDevices["Service"]["setAppAccess"] = Effect.fn(
+    "TailnetDevices.setAppAccess",
+  )(function* (appId, access) {
+    yield* requireAdmin();
+    const existing = (yield* membership.apps).find((app) => app.appId === appId);
+    if (existing === undefined) {
+      return yield* new TailnetDevicesError({
+        reason: "unknown_device",
+        message: "That app is not in your network.",
+      });
+    }
+    const { app, cut } = yield* membership.putApp({ appId, label: existing.label, access });
+    if (cut) yield* cutApp(appId);
+    yield* push;
+    return app;
+  });
 
   const admit: TailnetDevices["Service"]["admit"] = Effect.fn("TailnetDevices.admit")(
     function* (environmentId, access) {
@@ -1026,7 +1134,9 @@ const make = Effect.gen(function* () {
           unreachable(`${target.descriptor.label} stopped answering while joining.`, cause),
         ),
         Effect.ensuring(dropChallenge(challenge)),
-        Effect.tapError(() => (Option.isNone(previous) ? membership.forget(environmentId) : Effect.void)),
+        Effect.tapError(() =>
+          Option.isNone(previous) ? membership.forget(environmentId) : Effect.void,
+        ),
       );
       if (joined.outcome === "refused") {
         // The machine kept its own choice; a new entry it declined is not shared.
@@ -1086,15 +1196,17 @@ const make = Effect.gen(function* () {
       const ownNode = Option.isSome(tailnet) ? tailnet.value.self.nodeId : null;
       const adopted = yield* Effect.gen(function* () {
         // Seeded first so the admitter's handshake below finds itself a member.
-        yield* membership.adopt([
-          {
-            environmentId: admitter.environmentId,
-            label: proof.device.descriptor.label,
-            nodeId: proof.device.nodeId,
-            access: "full-access",
-            updatedAt: seedStamp(admitter.environmentId),
-          },
-        ]);
+        yield* membership.adopt({
+          members: [
+            {
+              environmentId: admitter.environmentId,
+              label: proof.device.descriptor.label,
+              nodeId: proof.device.nodeId,
+              access: "full-access",
+              updatedAt: seedStamp(admitter.environmentId),
+            },
+          ],
+        });
         yield* requestLink({
           environmentId: admitter.environmentId,
           label: proof.device.descriptor.label,
@@ -1109,7 +1221,7 @@ const make = Effect.gen(function* () {
         ) {
           return false;
         }
-        yield* membership.adopt(offered.members);
+        yield* membership.adopt({ members: offered.members, apps: offered.apps });
         return true;
       }).pipe(
         Effect.tapError((cause) => Effect.logInfo("Could not join a network", { cause })),
@@ -1185,18 +1297,23 @@ const make = Effect.gen(function* () {
   const seedSelf = Effect.gen(function* () {
     const roster = yield* membership.members;
     const self = yield* selfDescriptor;
-    if (roster.length === 0 || roster.some((member) => member.environmentId === self.environmentId)) {
+    if (
+      roster.length === 0 ||
+      roster.some((member) => member.environmentId === self.environmentId)
+    ) {
       return;
     }
-    yield* membership.adopt([
-      {
-        environmentId: self.environmentId,
-        label: self.label,
-        nodeId: null,
-        access: "full-access",
-        updatedAt: seedStamp(self.environmentId),
-      },
-    ]);
+    yield* membership.adopt({
+      members: [
+        {
+          environmentId: self.environmentId,
+          label: self.label,
+          nodeId: null,
+          access: "full-access",
+          updatedAt: seedStamp(self.environmentId),
+        },
+      ],
+    });
   }).pipe(Effect.ignore);
 
   const scan: TailnetDevices["Service"]["scan"] = Effect.gen(function* () {
@@ -1373,11 +1490,14 @@ const make = Effect.gen(function* () {
       self,
       selfMember: roster.find((member) => member.environmentId === self.environmentId) ?? null,
       devices: devices.toSorted((a, b) => a.label.localeCompare(b.label)),
+      apps: yield* membership.apps,
     } satisfies TailnetDevicesSnapshot;
   }).pipe(Effect.withSpan("TailnetDevices.list"));
 
   return TailnetDevices.of({
     list,
+    inviteApp,
+    setAppAccess,
     admit,
     setAccess,
     linkIfMine,

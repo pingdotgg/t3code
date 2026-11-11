@@ -43,7 +43,9 @@ import {
   TailnetDevicesError,
   TailnetDeviceOpenInput,
   TailnetDeviceSetAccessInput,
+  TailnetAppSetAccessInput,
   TailnetDeviceAdmitInput,
+  NetworkApp,
   NetworkMember,
 } from "./tailnetDevices.ts";
 import {
@@ -581,6 +583,7 @@ export const WS_METHODS = {
   tailnetDevicesList: "tailnetDevices.list",
   tailnetDevicesSetAccess: "tailnetDevices.setAccess",
   tailnetDevicesAdmit: "tailnetDevices.admit",
+  tailnetDevicesSetAppAccess: "tailnetDevices.setAppAccess",
   tailnetDevicesOpenDevice: "tailnetDevices.openDevice",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -936,6 +939,12 @@ const WsTailnetDevicesListRpc = Rpc.make(WS_METHODS.tailnetDevicesList, {
 const WsTailnetDevicesSetAccessRpc = Rpc.make(WS_METHODS.tailnetDevicesSetAccess, {
   payload: TailnetDeviceSetAccessInput,
   success: NetworkMember,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+const WsTailnetDevicesSetAppAccessRpc = Rpc.make(WS_METHODS.tailnetDevicesSetAppAccess, {
+  payload: TailnetAppSetAccessInput,
+  success: NetworkApp,
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
 });
 
@@ -2342,6 +2351,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTailnetDevicesListRpc,
   WsTailnetDevicesSetAccessRpc,
   WsTailnetDevicesAdmitRpc,
+  WsTailnetDevicesSetAppAccessRpc,
   WsTailnetDevicesOpenDeviceRpc,
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,

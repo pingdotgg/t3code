@@ -8,7 +8,7 @@ import {
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthOrchestrationReadScope,
-  AuthRelayReadScope,
+  NETWORK_APP_SUBJECT_PREFIX,
   AuthStandardClientScopes,
   EnvironmentHttpApi,
   EnvironmentId,
@@ -34,6 +34,7 @@ import { describe, expect } from "vite-plus/test";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "../environment/DirectEndpoints.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -252,6 +253,7 @@ const serveDeviceOn = (
       devices: Context.get(context, TailnetDevices.TailnetDevices),
       links: Context.get(context, PeerLinks.PeerLinks),
       membership: Context.get(context, Membership.Membership),
+      sessions: Context.get(context, SessionStore.SessionStore),
       /** What this device lets a caller holding `token` do, as its /mcp would see it. */
       authenticate: (token: string) =>
         auth.authenticateMcpClient(
@@ -332,17 +334,19 @@ const admit = (
 
 /** Puts `member` straight into `device`'s roster, as if a sync had brought it. */
 const knowsMember = (device: Device, member: Device | string, nodeId: string | null = null) =>
-  device.membership.adopt([
-    {
-      environmentId: EnvironmentId.make(
-        typeof member === "string" ? member : member.descriptor.environmentId,
-      ),
-      label: "Member",
-      nodeId,
-      access: "full-access",
-      updatedAt: { wallMs: 1, counter: 0, node: device.descriptor.environmentId },
-    },
-  ]);
+  device.membership.adopt({
+    members: [
+      {
+        environmentId: EnvironmentId.make(
+          typeof member === "string" ? member : member.descriptor.environmentId,
+        ),
+        label: "Member",
+        nodeId,
+        access: "full-access",
+        updatedAt: { wallMs: 1, counter: 0, node: device.descriptor.environmentId },
+      },
+    ],
+  });
 
 /** Sends a sync to a device as whoever holds `token`. */
 const syncAs = (
@@ -746,6 +750,7 @@ describe("tailnet device access", () => {
       const refused = yield* syncAs(b, token, {
         from: { environmentId: box.environmentId, label: "Box", urls: [c.url] },
         devices: [],
+        apps: [],
         members: [selfRestore],
       }).pipe(Effect.flip);
       expect(
@@ -771,6 +776,7 @@ describe("tailnet device access", () => {
       yield* syncAs(b, token, {
         from: { environmentId: laptop.environmentId, label: "Laptop", urls: [a.url] },
         devices: [],
+        apps: [],
         members: [
           {
             environmentId: box.environmentId,
@@ -847,6 +853,7 @@ describe("tailnet device authority", () => {
       const forged = yield* syncAs(b, paired.token, {
         from: { environmentId: laptop.environmentId, label: "Laptop", urls: [] },
         devices: [],
+        apps: [],
         members: [
           {
             environmentId: laptop.environmentId,
@@ -869,6 +876,92 @@ describe("tailnet device authority", () => {
   );
 });
 
+describe("apps of the network", () => {
+  const twoMembers = Effect.gen(function* () {
+    const tailnet = yield* makeTailnet;
+    const a = yield* serveDevice(laptop, tailnet);
+    const b = yield* serveDevice(studio, tailnet);
+    yield* tailnet.join(a.url);
+    yield* tailnet.join(b.url);
+    yield* admit(tailnet, a, b);
+    return { a, b };
+  });
+  const readScopes = [
+    AuthOrchestrationReadScope,
+    AuthFilesystemReadScope,
+    AuthDiagnosticsReadScope,
+    AuthAccessReadScope,
+  ];
+
+  it.live("opens every member at the app's own access, not the relaying machine's", () =>
+    Effect.gen(function* () {
+      const { a, b } = yield* twoMembers;
+      yield* a.devices.inviteApp({ label: "Phone", scopes: readScopes });
+      const [app] = yield* b.membership.apps;
+      const subject = `${NETWORK_APP_SUBJECT_PREFIX}${app!.appId}`;
+      expect(app).toMatchObject({ label: "Phone", access: "read-only" });
+      expect((yield* a.pairingLinks).map((link) => link.subject)).toEqual([subject]);
+
+      // The laptop holds full access on the studio, but relays for a read-only app.
+      yield* a.devices.openDevice(studio.environmentId, {
+        scopes: AuthStandardClientScopes,
+        subject,
+      });
+
+      const [minted] = yield* b.pairingLinks;
+      expect(minted?.subject).toBe(subject);
+      expect(minted?.permissions?.toSorted()).toEqual(readScopes.toSorted());
+    }),
+  );
+
+  it.live(
+    "narrowing an app ends its sessions on every member, and a revoked app opens nothing",
+    () =>
+      Effect.gen(function* () {
+        const { a, b } = yield* twoMembers;
+        yield* a.devices.inviteApp({ scopes: AuthStandardClientScopes });
+        const [app] = yield* a.membership.apps;
+        expect(app?.access).toBe("full-access");
+        const subject = `${NETWORK_APP_SUBJECT_PREFIX}${app!.appId}`;
+        const appSessions = (device: typeof a) =>
+          device.sessions
+            .listActive()
+            .pipe(Effect.map((all) => all.filter((session) => session.subject === subject)));
+        yield* a.sessions.issue({ subject });
+        yield* b.sessions.issue({ subject });
+
+        yield* a.devices.setAppAccess(app!.appId, "read-only");
+
+        expect(yield* appSessions(a)).toEqual([]);
+        expect(yield* appSessions(b)).toEqual([]);
+        expect(yield* b.membership.appAccessOf(app!.appId)).toEqual(Option.some("read-only"));
+
+        yield* a.devices.setAppAccess(app!.appId, "revoked");
+        const refused = yield* a.devices
+          .openDevice(studio.environmentId, { scopes: AuthStandardClientScopes, subject })
+          .pipe(Effect.flip);
+        expect(refused.reason).toBe("forbidden");
+        expect(yield* b.pairingLinks).toEqual([]);
+      }),
+  );
+
+  it.live("only a full-access member invites or changes an app", () =>
+    Effect.gen(function* () {
+      const { a, b } = yield* twoMembers;
+      yield* a.devices.inviteApp({ scopes: AuthStandardClientScopes });
+      const [app] = yield* a.membership.apps;
+      yield* a.devices.setAccess(studio.environmentId, "read-only", "user");
+
+      expect(
+        yield* b.devices.inviteApp({ scopes: AuthStandardClientScopes }).pipe(Effect.flip),
+      ).toMatchObject({ reason: "forbidden" });
+      expect(
+        yield* b.devices.setAppAccess(app!.appId, "full-access").pipe(Effect.flip),
+      ).toMatchObject({ reason: "forbidden" });
+    }),
+  );
+});
+
 describe("opening a device from the app", () => {
   it.live("gets a one-time app credential from the device, within its access", () =>
     Effect.gen(function* () {
@@ -878,7 +971,7 @@ describe("opening a device from the app", () => {
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url);
       yield* admit(tailnet, a, b);
-      const app = { scopes: AuthStandardClientScopes };
+      const app = { scopes: AuthStandardClientScopes, subject: "browser-session" };
 
       const full = yield* a.devices.openDevice(studio.environmentId, app);
       expect([full.environmentId, full.urls]).toEqual([studio.environmentId, [b.url]]);
@@ -908,7 +1001,10 @@ describe("opening a device from the app", () => {
       yield* admit(tailnet, a, b);
       const narrow = [AuthOrchestrationReadScope, AuthAccessReadScope, AuthAccessWriteScope];
 
-      yield* a.devices.openDevice(studio.environmentId, { scopes: narrow });
+      yield* a.devices.openDevice(studio.environmentId, {
+        scopes: narrow,
+        subject: "browser-session",
+      });
 
       const minted = (yield* b.pairingLinks).flatMap((link) => link.permissions ?? []);
       expect(minted.length).toBeGreaterThan(0);
@@ -928,7 +1024,10 @@ describe("opening a device from the app", () => {
       yield* b.devices.setAccess(laptop.environmentId, "revoked", "user");
 
       const refused = yield* a.devices
-        .openDevice(studio.environmentId, { scopes: AuthStandardClientScopes })
+        .openDevice(studio.environmentId, {
+          scopes: AuthStandardClientScopes,
+          subject: "browser-session",
+        })
         .pipe(Effect.flip);
       // Anyone can claim to be a device, even holding a pairing-code link; nothing is minted.
       const claimed = (token?: string) =>

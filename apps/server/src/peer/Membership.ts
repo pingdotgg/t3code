@@ -1,6 +1,7 @@
 import {
   type AuthMcpClientAccess,
   type EnvironmentId,
+  NetworkApp,
   NetworkMember,
   TailnetDeviceAccess,
   TailnetDevicesError,
@@ -41,20 +42,27 @@ const ACCESS_ORDER: ReadonlyArray<AuthMcpClientAccess> = [
 export const narrowerAccess = (a: AuthMcpClientAccess, b: AuthMcpClientAccess) =>
   ACCESS_ORDER.indexOf(a) <= ACCESS_ORDER.indexOf(b) ? a : b;
 
-/** The roster after taking `incoming`: each member keeps its latest write, in any arrival order. */
-export const mergeRoster = (
-  current: ReadonlyMap<EnvironmentId, NetworkMember>,
-  incoming: ReadonlyArray<NetworkMember>,
-): ReadonlyMap<EnvironmentId, NetworkMember> => {
+/** The roster after taking `incoming`: each entry keeps its latest write, in any arrival order. */
+export const mergeRoster = <K, A extends { readonly updatedAt: TailnetHlc }>(
+  current: ReadonlyMap<K, A>,
+  incoming: ReadonlyArray<A>,
+  keyOf: (entry: A) => K,
+): ReadonlyMap<K, A> => {
   const next = new Map(current);
-  for (const member of incoming) {
-    const existing = next.get(member.environmentId);
-    if (existing === undefined || compareStamps(member.updatedAt, existing.updatedAt) > 0) {
-      next.set(member.environmentId, member);
+  for (const entry of incoming) {
+    const existing = next.get(keyOf(entry));
+    if (existing === undefined || compareStamps(entry.updatedAt, existing.updatedAt) > 0) {
+      next.set(keyOf(entry), entry);
     }
   }
   return next;
 };
+
+const ACCESS_RANK: ReadonlyArray<string> = ["revoked", ...ACCESS_ORDER];
+
+/** `to` gives less than `from`: its sessions were minted for more than it may now do. */
+export const narrows = (from: string, to: string) =>
+  ACCESS_RANK.indexOf(to) < ACCESS_RANK.indexOf(from);
 
 interface MemberRow {
   readonly environment_id: string;
@@ -68,6 +76,22 @@ const isAccess = Schema.is(TailnetDeviceAccess);
 const isClientAccess = (value: string): value is AuthMcpClientAccess =>
   (ACCESS_ORDER as ReadonlyArray<string>).includes(value);
 const decodeMember = Schema.decodeUnknownEffect(NetworkMember);
+const decodeApp = Schema.decodeUnknownEffect(NetworkApp);
+
+interface AppRow {
+  readonly app_id: string;
+  readonly label: string;
+  readonly access: string;
+  readonly stamp_json: string;
+}
+
+/** What a merge changed that needs sessions ended. */
+export interface RosterCuts {
+  /** Members newly revoked. */
+  readonly revoked: ReadonlyArray<EnvironmentId>;
+  /** Apps narrowed or revoked, whose sessions were minted for more. */
+  readonly appsCut: ReadonlyArray<string>;
+}
 const decodeStamp = Schema.decodeUnknownEffect(Schema.fromJsonString(TailnetHlc));
 const encodeStamp = Schema.encodeEffect(Schema.fromJsonString(TailnetHlc));
 
@@ -88,6 +112,15 @@ export class Membership extends Context.Service<
   Membership,
   {
     readonly members: Effect.Effect<ReadonlyArray<NetworkMember>, TailnetDevicesError>;
+    readonly apps: Effect.Effect<ReadonlyArray<NetworkApp>, TailnetDevicesError>;
+    /** What an app of the network may do; none for an app that is not in it. */
+    readonly appAccessOf: (appId: string) => Effect.Effect<Option.Option<TailnetDeviceAccess>>;
+    /** Writes an app with a fresh stamp. Returns whether its sessions must end. */
+    readonly putApp: (input: {
+      readonly appId: string;
+      readonly label: string;
+      readonly access: TailnetDeviceAccess;
+    }) => Effect.Effect<{ readonly app: NetworkApp; readonly cut: boolean }, TailnetDevicesError>;
     readonly member: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<Option.Option<NetworkMember>, TailnetDevicesError>;
@@ -126,15 +159,19 @@ export class Membership extends Context.Service<
      */
     readonly merge: (
       sender: EnvironmentId,
-      roster: ReadonlyArray<NetworkMember>,
-    ) => Effect.Effect<ReadonlyArray<EnvironmentId>, TailnetDevicesError>;
+      roster: {
+        readonly members: ReadonlyArray<NetworkMember>;
+        readonly apps: ReadonlyArray<NetworkApp>;
+      },
+    ) => Effect.Effect<RosterCuts, TailnetDevicesError>;
     /**
      * Takes entries without the sender rule: the roster a machine joining a network was offered,
      * or a seed stamped at zero that only fills a gap.
      */
-    readonly adopt: (
-      roster: ReadonlyArray<NetworkMember>,
-    ) => Effect.Effect<void, TailnetDevicesError>;
+    readonly adopt: (roster: {
+      readonly members: ReadonlyArray<NetworkMember>;
+      readonly apps?: ReadonlyArray<NetworkApp>;
+    }) => Effect.Effect<void, TailnetDevicesError>;
     /**
      * Drops an entry that never replicated, to undo an admission or join that did not complete.
      * Anything already shared is changed with `put` instead, so a tombstone is never lost.
@@ -170,6 +207,35 @@ const make = Effect.gen(function* () {
       ),
     ),
     Effect.mapError(storageError),
+  );
+
+  const apps: Membership["Service"]["apps"] = sql<AppRow>`SELECT * FROM network_apps`.pipe(
+    Effect.flatMap((rows) =>
+      Effect.forEach(rows, (row) =>
+        decodeStamp(row.stamp_json).pipe(
+          Effect.flatMap((updatedAt) =>
+            decodeApp({
+              appId: row.app_id,
+              label: row.label,
+              access: isAccess(row.access) ? row.access : "revoked",
+              updatedAt,
+            }),
+          ),
+        ),
+      ),
+    ),
+    Effect.mapError(storageError),
+  );
+
+  const appAccessOf: Membership["Service"]["appAccessOf"] = Effect.fn("Membership.appAccessOf")(
+    function* (appId) {
+      const found = yield* apps.pipe(
+        Effect.map((all) => all.find((app) => app.appId === appId)),
+        // An app roster that cannot be read admits no app.
+        Effect.orElseSucceed(() => ({ access: "revoked" as const })),
+      );
+      return found === undefined ? Option.none() : Option.some(found.access);
+    },
   );
 
   const member: Membership["Service"]["member"] = Effect.fn("Membership.member")(
@@ -237,10 +303,27 @@ const make = Effect.gen(function* () {
   });
 
   // A restart must not stamp earlier than what is already stored.
-  yield* members.pipe(
-    Effect.flatMap((stored) => observe(stored.map((entry) => entry.updatedAt))),
+  yield* Effect.all([members, apps]).pipe(
+    Effect.flatMap(([storedMembers, storedApps]) =>
+      observe([...storedMembers, ...storedApps].map((entry) => entry.updatedAt)),
+    ),
     Effect.ignore,
   );
+
+  const writeApp = (entry: NetworkApp) =>
+    encodeStamp(entry.updatedAt).pipe(
+      Effect.flatMap(
+        (stampJson) => sql`
+          INSERT INTO network_apps (app_id, label, access, stamp_json)
+          VALUES (${entry.appId}, ${entry.label}, ${entry.access}, ${stampJson})
+          ON CONFLICT (app_id) DO UPDATE SET
+            label = excluded.label,
+            access = excluded.access,
+            stamp_json = excluded.stamp_json
+        `,
+      ),
+      Effect.mapError(storageError),
+    );
 
   const write = (entry: NetworkMember) =>
     encodeStamp(entry.updatedAt).pipe(
@@ -267,6 +350,16 @@ const make = Effect.gen(function* () {
     (effect) => writes.withPermits(1)(effect),
   );
 
+  const putApp: Membership["Service"]["putApp"] = Effect.fn("Membership.putApp")(
+    function* (input) {
+      const before = (yield* apps).find((app) => app.appId === input.appId);
+      const app: NetworkApp = { ...input, updatedAt: yield* stamp };
+      yield* writeApp(app);
+      return { app, cut: before !== undefined && narrows(before.access, app.access) };
+    },
+    (effect) => writes.withPermits(1)(effect),
+  );
+
   const bindNode: Membership["Service"]["bindNode"] = Effect.fn("Membership.bindNode")(
     function* (environmentId, nodeId) {
       const found = yield* member(environmentId);
@@ -289,12 +382,28 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const applyApps = Effect.fn("Membership.applyApps")(function* (
+    incoming: ReadonlyArray<NetworkApp>,
+  ) {
+    const current = new Map((yield* apps).map((app) => [app.appId, app]));
+    const next = mergeRoster(current, incoming, (app) => app.appId);
+    const cut: Array<string> = [];
+    for (const [appId, app] of next) {
+      const before = current.get(appId);
+      if (before === app) continue;
+      yield* writeApp(app);
+      if (before !== undefined && narrows(before.access, app.access)) cut.push(appId);
+    }
+    yield* observe(incoming.map((app) => app.updatedAt));
+    return cut;
+  });
+
   const applyRoster = Effect.fn("Membership.applyRoster")(function* (
     incoming: ReadonlyArray<NetworkMember>,
   ) {
     const stored = yield* members;
     const current = new Map(stored.map((entry) => [entry.environmentId, entry]));
-    const next = mergeRoster(current, incoming);
+    const next = mergeRoster(current, incoming, (entry) => entry.environmentId);
     const newlyRevoked: Array<EnvironmentId> = [];
     for (const [environmentId, entry] of next) {
       const before = current.get(environmentId);
@@ -315,14 +424,20 @@ const make = Effect.gen(function* () {
 
   const merge: Membership["Service"]["merge"] = Effect.fn("Membership.merge")(
     function* (sender, roster) {
-      return yield* applyRoster(roster.filter((entry) => entry.environmentId !== sender));
+      return {
+        revoked: yield* applyRoster(
+          roster.members.filter((entry) => entry.environmentId !== sender),
+        ),
+        appsCut: yield* applyApps(roster.apps),
+      };
     },
     (effect) => writes.withPermits(1)(effect),
   );
 
   const adopt: Membership["Service"]["adopt"] = Effect.fn("Membership.adopt")(
     function* (roster) {
-      yield* applyRoster(roster);
+      yield* applyRoster(roster.members);
+      yield* applyApps(roster.apps ?? []);
     },
     (effect) => writes.withPermits(1)(effect),
   );
@@ -338,6 +453,9 @@ const make = Effect.gen(function* () {
 
   return Membership.of({
     members,
+    apps,
+    appAccessOf,
+    putApp,
     member,
     limits,
     accessOf,

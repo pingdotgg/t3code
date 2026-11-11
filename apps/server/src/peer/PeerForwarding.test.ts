@@ -301,6 +301,7 @@ const makeLaptop = Effect.gen(function* () {
           lastSeenAt: null,
         },
       ],
+      apps: [],
     }),
     setAccess: (environmentId, access, actor) =>
       Ref.update(accessSet, (seen) => [...seen, [environmentId, access, actor] as const]).pipe(

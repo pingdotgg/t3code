@@ -30,6 +30,7 @@ import * as McpOAuth from "./McpOAuth.ts";
 import * as McpOAuthHttp from "./mcpOAuthHttp.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AuthHttp from "./http.ts";
+import * as TailnetDevices from "../peer/TailnetDevices.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 class AuthTestApi extends HttpApi.make("environment")
@@ -51,6 +52,7 @@ const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Servic
     ),
     HttpApiBuilder.layer(AuthTestApi).pipe(
       Layer.provide(AuthHttp.layer),
+      Layer.provide(Layer.mock(TailnetDevices.TailnetDevices)({})),
       Layer.provide(
         McpOAuthHttp.layer.pipe(
           Layer.provide(McpOAuth.layer),

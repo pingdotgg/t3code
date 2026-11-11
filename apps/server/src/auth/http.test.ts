@@ -32,6 +32,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import { layerServerEnvironmentHttpApi } from "../http.ts";
 import * as AuthHttp from "./http.ts";
+import * as TailnetDevices from "../peer/TailnetDevices.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
@@ -78,6 +79,7 @@ const layerServerEnvironment = Layer.effect(
 const layerRoutes = HttpApiBuilder.layer(AuthTestApi).pipe(
   Layer.provide(layerServerEnvironmentHttpApi),
   Layer.provide(AuthHttp.layer),
+  Layer.provide(Layer.mock(TailnetDevices.TailnetDevices)({})),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provideMerge(layerEnvironmentAuth),
   Layer.provide(

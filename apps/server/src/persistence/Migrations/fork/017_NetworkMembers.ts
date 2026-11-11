@@ -18,6 +18,16 @@ export default Effect.gen(function* () {
     )
   `;
 
+  // Apps paired once with the whole network; replicated like members.
+  yield* sql`
+    CREATE TABLE network_apps (
+      app_id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      access TEXT NOT NULL,
+      stamp_json TEXT NOT NULL
+    )
+  `;
+
   // Never replicated: this machine's narrower limit for a member.
   yield* sql`
     CREATE TABLE network_member_limits (

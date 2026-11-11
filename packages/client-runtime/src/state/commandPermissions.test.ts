@@ -225,6 +225,7 @@ describe("command permissions", () => {
   it.effect.each([
     WS_METHODS.tailnetDevicesSetAccess,
     WS_METHODS.tailnetDevicesAdmit,
+    WS_METHODS.tailnetDevicesSetAppAccess,
     WS_METHODS.tailnetDevicesOpenDevice,
   ])("requires the destination access grant for %s", (method) =>
     Effect.scoped(

@@ -34,6 +34,21 @@ export const NetworkMember = Schema.Struct({
 });
 export type NetworkMember = typeof NetworkMember.Type;
 
+/** Sessions of an app in the network carry this subject prefix and its id. */
+export const NETWORK_APP_SUBJECT_PREFIX = "network-app:";
+
+/**
+ * An app (phone, browser, desktop window) paired once with the whole network. Every member mints
+ * it credentials on demand, within `access`; narrowing or revoking it ends its sessions everywhere.
+ */
+export const NetworkApp = Schema.Struct({
+  appId: TrimmedNonEmptyString,
+  label: Schema.String,
+  access: TailnetDeviceAccess,
+  updatedAt: TailnetHlc,
+});
+export type NetworkApp = typeof NetworkApp.Type;
+
 /** How this environment's outgoing link to a peer was made. */
 export const PeerLinkOrigin = Schema.Literals(["tailnet", "paired"]);
 export type PeerLinkOrigin = typeof PeerLinkOrigin.Type;
@@ -130,6 +145,7 @@ export const TailnetDevicesSyncPayload = Schema.Struct({
   from: TailnetDeviceDescriptor,
   devices: Schema.Array(TailnetDeviceDescriptor),
   members: Schema.Array(NetworkMember),
+  apps: Schema.Array(NetworkApp),
 });
 export type TailnetDevicesSyncPayload = typeof TailnetDevicesSyncPayload.Type;
 
@@ -149,6 +165,8 @@ export type TailnetDeviceClientCredential = typeof TailnetDeviceClientCredential
 export const TailnetDeviceClientCredentialRequest = Schema.Struct({
   from: EnvironmentId,
   scopes: Schema.Array(AuthGrantScope),
+  /** The asking app, when it is an app of the network; its roster access caps the credential too. */
+  appId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type TailnetDeviceClientCredentialRequest = typeof TailnetDeviceClientCredentialRequest.Type;
 
@@ -180,6 +198,7 @@ export const TailnetDevicesSnapshot = Schema.Struct({
   /** This machine's own roster entry. Null until it creates or joins a network. */
   selfMember: Schema.NullOr(NetworkMember),
   devices: Schema.Array(TailnetDevice),
+  apps: Schema.Array(NetworkApp),
 });
 export type TailnetDevicesSnapshot = typeof TailnetDevicesSnapshot.Type;
 
@@ -196,6 +215,13 @@ export const TailnetDeviceAdmitInput = Schema.Struct({
   access: AuthMcpClientAccess,
 });
 export type TailnetDeviceAdmitInput = typeof TailnetDeviceAdmitInput.Type;
+
+/** Narrow, widen, revoke or restore an app of the network everywhere. */
+export const TailnetAppSetAccessInput = Schema.Struct({
+  appId: TrimmedNonEmptyString,
+  access: TailnetDeviceAccess,
+});
+export type TailnetAppSetAccessInput = typeof TailnetAppSetAccessInput.Type;
 
 export const TailnetDeviceOpenInput = Schema.Struct({ environmentId: EnvironmentId });
 export type TailnetDeviceOpenInput = typeof TailnetDeviceOpenInput.Type;
