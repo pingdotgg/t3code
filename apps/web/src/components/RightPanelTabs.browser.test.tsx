@@ -64,6 +64,7 @@ describe("RightPanelTabs", () => {
     navigateHistory.mockReset();
     const { bridge, scroll } = trackpad();
     using _bridge = stubGlobal("desktopBridge", bridge);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const panel = document.createElement("div");
     panel.style.cssText = "width: 320px; height: 200px; display: flex";
     const noop = () => {};
