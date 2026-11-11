@@ -17,6 +17,7 @@ import {
 import { useProjectFilePickerQuery } from "../files/projectFilesQueryState";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "../ui/command";
 import { toastManager } from "../ui/toast";
+import { ProjectFaviconThumbnail } from "./ProjectFaviconThumbnail";
 
 function emptyMessage(query: string, error: string | null, isPending: boolean): string {
   if (error) return error;
@@ -61,7 +62,14 @@ export function ProjectFaviconPickerDialog(props: {
     searchTerms: [match.name, match.path],
     title: match.name,
     description: match.path,
-    icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
+    icon: (
+      <ProjectFaviconThumbnail
+        cwd={props.cwd}
+        environmentId={props.environmentId}
+        fallback={<PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />}
+        path={match.path}
+      />
+    ),
     run: async () => onSelect(match.path),
   }));
 

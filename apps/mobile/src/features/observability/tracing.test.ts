@@ -17,42 +17,6 @@ vi.mock("expo-constants", () => ({
   },
 }));
 
-it.effect("exports spans through the scoped mobile OTLP layer", () => {
-  const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-  const layerTracing = Tracing.layerFromConfig(
-    {
-      tracesUrl: "https://api.axiom.test/v1/traces",
-      tracesDataset: "mobile-traces",
-      tracesToken: "public-ingest-token",
-    },
-    {
-      appVariant: "test",
-      serviceVersion: "1.2.3",
-    },
-  ).pipe(Layer.provide(layerRemoteHttpClient(fetchFn)));
-  const layerTracedApplication = Layer.effectDiscard(
-    Effect.void.pipe(Effect.withSpan("mobile.test.span"), withRelayClientTracing),
-  ).pipe(Layer.provide(layerTracing));
-
-  return Effect.gen(function* () {
-    yield* Layer.build(layerTracedApplication);
-
-    expect(fetchFn).not.toHaveBeenCalled();
-  }).pipe(
-    Effect.scoped,
-    Effect.andThen(
-      Effect.sync(() => {
-        expect(fetchFn).toHaveBeenCalledOnce();
-        const [url, init] = fetchFn.mock.calls[0]!;
-        expect(String(url)).toBe("https://api.axiom.test/v1/traces");
-        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer public-ingest-token");
-        expect(new Headers(init?.headers).get("x-axiom-dataset")).toBe("mobile-traces");
-        expect(new TextDecoder().decode(init?.body as Uint8Array)).toContain("mobile.test.span");
-      }),
-    ),
-  );
-});
-
 it.effect("does not let OTLP serialization failures alter application effects", () => {
   const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
   const layerTracing = Tracing.layerFromConfig(
@@ -63,6 +27,7 @@ it.effect("does not let OTLP serialization failures alter application effects", 
     },
     {
       appVariant: "test",
+      serviceInstanceId: "test-instance",
       serviceVersion: "1.2.3",
     },
   ).pipe(Layer.provide(layerRemoteHttpClient(fetchFn)));

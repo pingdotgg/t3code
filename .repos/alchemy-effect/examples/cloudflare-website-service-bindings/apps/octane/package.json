@@ -6,6 +6,7 @@
     "@alchemy.run/frontend-frameworks": "workspace:*",
     "@octanejs/adapter-cloudflare": "catalog:",
     "@octanejs/vite-plugin": "catalog:",
+    "@tsrx/oxc": "catalog:",
     "octane": "catalog:",
     "vite": "catalog:"
   },
