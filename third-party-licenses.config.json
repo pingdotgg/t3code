@@ -331,6 +331,21 @@
       ]
     },
     {
+      "name": "@betteroffice/fonts-cjk",
+      "version": "0.4.0",
+      "license": "Apache-2.0 AND OFL-1.1",
+      "generatedNotices": [
+        { "licenseId": "Apache-2.0" },
+        {
+          "licenseId": "OFL-1.1",
+          "copyrights": [
+            "Copyright 2014-2021 Adobe (https://adobe.com/), with Reserved Font Name 'Source'",
+            "Copyright 2017-2024 Adobe (https://adobe.com/), with Reserved Font Name 'Source'"
+          ]
+        }
+      ]
+    },
+    {
       "name": "remark-math",
       "version": "6.0.0",
       "sourceUrl": "https://github.com/remarkjs/remark-math/blob/main/license",
