@@ -346,7 +346,11 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         ) : null}
       </div>
       {userMessageMeta ? (
-        <UserMessageMeta unread={row.projectedItem?.item.status === "pending"} intent={userMessageMeta.intent} label={userMessageMeta.label} />
+        <UserMessageMeta
+          unread={row.projectedItem?.item.status === "pending"}
+          intent={userMessageMeta.intent}
+          label={userMessageMeta.label}
+        />
       ) : null}
       <UserMessageProjectedStatus row={row} />
       {expanded ? (
@@ -887,7 +891,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       ) : null}
       {userMessageMeta && steerLabelAbove ? (
-        <UserMessageMeta unread={row.projectedItem?.item.status === "pending"} intent={userMessageMeta.intent} label={userMessageMeta.label} />
+        <UserMessageMeta
+          unread={row.projectedItem?.item.status === "pending"}
+          intent={userMessageMeta.intent}
+          label={userMessageMeta.label}
+        />
       ) : null}
       {mediaAboveText ? (
         <div className="flex max-w-[80%] justify-end">
@@ -1272,7 +1280,11 @@ function UserMessageMeta({
         {label}
         {unread ? <span className="ms-1">waiting to be read</span> : null}
       </TooltipTrigger>
-      <TooltipPopup side="top">{unread ? "Waiting for the agent to read this. It reads steers between steps, after a running command finishes." : userMessageIntentDescription(intent)}</TooltipPopup>
+      <TooltipPopup side="top">
+        {unread
+          ? "Waiting for the agent to read this. It reads steers between steps, after a running command finishes."
+          : userMessageIntentDescription(intent)}
+      </TooltipPopup>
     </Tooltip>
   );
 }
