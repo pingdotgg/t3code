@@ -1,5 +1,9 @@
 import type { TimelineRow } from "./timelineRowContext";
-import { THINKING_PREVIEW_PLUGINS, THOUGHT_PREVIEW_PLUGINS } from "./TimelineWorkEntryRow.logic";
+import {
+  THINKING_PREVIEW_PLUGINS,
+  THOUGHT_PREVIEW_PLUGINS,
+  THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
+} from "./TimelineWorkEntryRow.logic";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { MESSAGE_HEADING_LEVEL } from "./TimelineRowParts";
 import {
@@ -143,7 +147,8 @@ type WorkEntryRowProps = {
   workspaceRoot: string | undefined;
   displayLabel?: string | undefined;
   expandable?: boolean;
-  onToggleEntry?: (() => void) | undefined;
+  onToggleEntry?: ((collapsed: boolean) => void) | undefined;
+  onContentReady?: (() => void) | undefined;
   /** A failed test run reads in the error tone, keeping its own tool icon. */
   severeFailure?: boolean | undefined;
 };
@@ -225,14 +230,18 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
+  const onInitialOutputReady = () => {
+    if (groupView) groupView.onContentReady?.(workEntry.id);
+    else props.onContentReady?.();
+  };
   const toggleExpanded = () => {
     const next = !expanded;
     if (groupView) {
-      groupView.onToggleEntry();
+      groupView.onToggleEntry(!next, workEntry.id);
       if (next) groupView.state.expandedEntries.add(workEntry.id);
       else groupView.state.expandedEntries.delete(workEntry.id);
     } else {
-      props.onToggleEntry?.();
+      props.onToggleEntry?.(!next);
     }
     setExpanded(next);
   };
@@ -435,6 +444,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
 
   return (
     <WorkLogRow
+      data-work-entry-id={workEntry.id}
       data-v2-item-type={workEntry.projectedItem?.item.type}
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
       {...rowToggleProps}
@@ -465,7 +475,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               {isReasoning && !expanded ? (
                 <ChatMarkdown
                   inline
-                  text={workEntry.detail ?? previewText}
+                  text={(workEntry.detail ?? previewText).slice(
+                    0,
+                    THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
+                  )}
                   cwd={ctx.markdownCwd}
                   parseRawHtml={false}
                   extraRemarkPlugins={
@@ -579,6 +592,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <WorkLogDetails kind="panel">
           {inspectedItem ? (
             <V2ItemInspector
+              onInitialOutputReady={onInitialOutputReady}
               projectedItem={inspectedItem}
               environmentId={ctx.activeThreadEnvironmentId}
               cwd={ctx.markdownCwd}
@@ -594,6 +608,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               ) : null}
               {plainOutputFetches && workEntry.projectedItem ? (
                 <FetchedToolOutput
+                  onInitialOutputReady={onInitialOutputReady}
                   projectedItem={workEntry.projectedItem}
                   environmentId={ctx.activeThreadEnvironmentId}
                   onImageExpand={onImageExpand}
