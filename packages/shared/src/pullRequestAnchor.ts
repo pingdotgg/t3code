@@ -1,4 +1,4 @@
-import { md5 } from "@noble/hashes/legacy";
+import { md5, sha1 } from "@noble/hashes/legacy";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 
@@ -90,6 +90,19 @@ export function parsePullRequestAnchor(url: string | null | undefined): PullRequ
         : null,
     };
   }
+  // GitLab: SHA-1 of the path, then old and new line counters. A removed line still carries a
+  // new counter, so the new side wins unless the file has none (a 0 for a deleted file).
+  const gitlab = /^([a-f0-9]{40})(?:_(\d+)_(\d+))?$/i.exec(anchor);
+  if (gitlab) {
+    const digest = (gitlab[1] ?? "").toLowerCase();
+    if (!gitlab[2]) return { kind: "diff", digest, range: null };
+    const newLine = Number(gitlab[3]);
+    const oldLine = Number(gitlab[2]);
+    const side = newLine >= 1 ? "right" : "left";
+    const line = side === "right" ? newLine : oldLine;
+    if (!Number.isSafeInteger(line) || line < 1) return fallback;
+    return { kind: "diff", digest, range: { start: line, side, end: line, endSide: side } };
+  }
   if (
     /^(?:(?:issuecomment-|pullrequestreview-|discussion_r|r|commitcomment-|event-|note_|comment-)\d+|discussion-diff-\d+(?:[LR]\d+(?:-[LR]\d+)?)?)$/i.test(
       anchor,
@@ -136,7 +149,8 @@ export function resolvePullRequestReviewAnchor(
 
 export function pullRequestDiffPathMatches(digest: string, path: string): boolean {
   const bytes = utf8ToBytes(path);
-  return digest === bytesToHex(digest.length === 32 ? md5(bytes) : sha256(bytes));
+  const hash = digest.length === 32 ? md5 : digest.length === 40 ? sha1 : sha256;
+  return digest === bytesToHex(hash(bytes));
 }
 
 export function pullRequestLinkCommit(url: string | null | undefined): string | null {
