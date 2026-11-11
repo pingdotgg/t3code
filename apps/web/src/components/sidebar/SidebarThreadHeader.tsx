@@ -69,7 +69,7 @@ export function SidebarThreadHeader({
         "flex items-center gap-1",
         // Sits in the title bar above this group, centered on the 52px workspace bar.
         inTitleBar &&
-          "@container pointer-events-auto absolute top-[calc(var(--workspace-controls-top)-42px)] md:top-[calc(var(--workspace-controls-top)-30px)] left-[var(--workspace-titlebar-content-left)] right-3 md:left-[var(--workspace-controls-left)]",
+          "@container pointer-events-auto absolute top-[calc(var(--workspace-controls-top)-42px)] md:top-[calc(var(--workspace-controls-top)-30px)] left-[calc(var(--workspace-controls-left)+var(--workspace-titlebar-control-size)+var(--workspace-titlebar-control-gap))] right-3 md:left-[var(--workspace-controls-left)]",
         inTitleBar &&
           !searchExpanded &&
           "md:right-[calc(var(--workspace-titlebar-control-size)+7px)]",
