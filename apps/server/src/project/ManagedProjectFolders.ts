@@ -278,11 +278,12 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError((cause) => new ScratchFolderError({ folder, cause })));
 
   // A symlinked scratch folder has two spellings, and No project may be stored under either.
+  // Real path first: older servers left an empty duplicate under the configured spelling.
   const realPathOrResolved = (folder: string) =>
     fileSystem.realPath(folder).pipe(Effect.orElseSucceed(() => path.resolve(folder)));
 
   const scratchRootSpellings = (root: string) =>
-    realPathOrResolved(root).pipe(Effect.map((real) => (real === root ? [root] : [root, real])));
+    realPathOrResolved(root).pipe(Effect.map((real) => (real === root ? [root] : [real, root])));
 
   const existingScratchProject = Effect.fn("ManagedProjectFolders.existingScratchProject")(
     function* (root: string) {

@@ -223,6 +223,13 @@ it.effect(
           title: "No project",
           workspaceRoot: resolvedRealRoot,
         });
+        // The empty duplicate older servers created under the configured spelling.
+        yield* projects.create({
+          commandId: CommandId.make("no-project-duplicate"),
+          projectId: ProjectId.make("project:no-project-duplicate"),
+          title: "No project",
+          workspaceRoot: root,
+        });
 
         assert.isTrue(yield* scratch.isScratchProject(projectId));
         assert.equal((yield* scratch.ensureScratchProject).projectId, projectId);
@@ -236,7 +243,7 @@ it.effect(
         const snapshot = yield* projects.snapshot;
         assert.lengthOf(
           snapshot.projects.filter((project) => project.title === "No project"),
-          1,
+          2,
         );
       }),
     ),
