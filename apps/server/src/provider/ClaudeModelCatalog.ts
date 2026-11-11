@@ -322,6 +322,137 @@ export function formatClaudeVersionUpgradeMessage(
   return `Claude Code ${versionLabel} is too old for ${unavailable.model.name}. Upgrade to v${unavailable.compatibility.minVersion} or newer to access it.`;
 }
 
+/** Claude Code's effort levels, lowest first. */
+export const CLAUDE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type ClaudeEffortLevel = (typeof CLAUDE_EFFORT_LEVELS)[number];
+
+function claudeEffortRank(level: string | undefined): number {
+  return CLAUDE_EFFORT_LEVELS.indexOf(level as ClaudeEffortLevel);
+}
+
+/** One settings source's effort caps, with `modelSettings` keys as the user wrote them. */
+export interface ClaudeEffortCapSource {
+  readonly maxEffortLevel?: ClaudeEffortLevel;
+  readonly modelMaxEffortLevels?: ReadonlyMap<string, ClaudeEffortLevel>;
+}
+
+const CLAUDE_1M_SUFFIX = "[1m]";
+const CLAUDE_CODE_FAMILY_ALIASES: ReadonlySet<string> = new Set([
+  "opus",
+  "sonnet",
+  "haiku",
+  "fable",
+]);
+
+/**
+ * Names the model a `modelSettings` key caps the way Claude Code does, which is narrower than the
+ * catalog's aliases: only a family alias (optionally `[1m]`) resolves as an alias, and any other key
+ * names the most specific model id it contains, so `claude-opus-5-5-20260101` and Bedrock ids match
+ * while `claude-opus-5.5` matches nothing.
+ */
+function resolveClaudeModelSettingsKey(
+  catalog: ClaudeModelCatalog,
+  key: string,
+): string | undefined {
+  const lowered = key.trim().toLowerCase();
+  const unsuffixed = lowered.endsWith(CLAUDE_1M_SUFFIX)
+    ? lowered.slice(0, -CLAUDE_1M_SUFFIX.length)
+    : lowered;
+  if (CLAUDE_CODE_FAMILY_ALIASES.has(unsuffixed)) {
+    return catalog.models.find(
+      (entry) => !entry.model.isCustom && entry.model.aliases?.includes(unsuffixed),
+    )?.model.slug;
+  }
+  let match: string | undefined;
+  for (const { model } of catalog.models) {
+    if (!model.isCustom && lowered.includes(model.slug) && model.slug.length > (match?.length ?? 0))
+      match = model.slug;
+  }
+  return match;
+}
+
+/** Keys `modelSettings` caps by canonical slug, keeping the lowest cap when several keys name one model. */
+function resolveClaudeModelMaxEffortLevels(
+  catalog: ClaudeModelCatalog,
+  levels: ReadonlyMap<string, ClaudeEffortLevel> | undefined,
+): ReadonlyMap<string, ClaudeEffortLevel> {
+  const resolved = new Map<string, ClaudeEffortLevel>();
+  for (const [key, level] of levels ?? []) {
+    const slug = resolveClaudeModelSettingsKey(catalog, key);
+    if (!slug) continue;
+    const current = resolved.get(slug);
+    if (!current || claudeEffortRank(level) < claudeEffortRank(current)) resolved.set(slug, level);
+  }
+  return resolved;
+}
+
+/**
+ * Claude Code clamps efforts above `maxEffortLevel` to the model's highest level under it, so
+ * such options are relabelled, not removed, keeping stored selections valid. Per-model caps
+ * replace their own source's top-level cap and `max` means none; across sources the lowest wins.
+ */
+export function capClaudeCatalogEffort(
+  catalog: ClaudeModelCatalog,
+  models: ReadonlyArray<ServerProviderModel>,
+  sources: ReadonlyArray<ClaudeEffortCapSource>,
+): ReadonlyArray<ServerProviderModel> {
+  if (sources.length === 0) return models;
+  const resolvedSources = sources.map((source) => ({
+    maxEffortLevel: source.maxEffortLevel,
+    modelMaxEffortLevels: resolveClaudeModelMaxEffortLevels(catalog, source.modelMaxEffortLevels),
+  }));
+  return models.map((model) => {
+    // Custom model labels are user-authored, so they are left alone.
+    if (model.isCustom || !model.capabilities?.optionDescriptors) return model;
+    const modelMaxEffortLevel = resolvedSources.reduce<ClaudeEffortLevel | undefined>(
+      (lowest, source) => {
+        const level = source.modelMaxEffortLevels.get(model.slug) ?? source.maxEffortLevel;
+        return level &&
+          level !== "max" &&
+          (!lowest || claudeEffortRank(level) < claudeEffortRank(lowest))
+          ? level
+          : lowest;
+      },
+      undefined,
+    );
+    if (!modelMaxEffortLevel) return model;
+    const capRank = claudeEffortRank(modelMaxEffortLevel);
+    return {
+      ...model,
+      capabilities: {
+        ...model.capabilities,
+        optionDescriptors: model.capabilities.optionDescriptors.map((descriptor) => {
+          if (descriptor.id !== "effort" || descriptor.type !== "select") return descriptor;
+          const cap = descriptor.options.reduce<{ rank: number; label: string } | undefined>(
+            (best, option) => {
+              const rank = claudeEffortRank(option.id);
+              return rank >= 0 && rank <= capRank && rank > (best?.rank ?? -1)
+                ? { rank, label: option.label }
+                : best;
+            },
+            undefined,
+          );
+          if (!cap) return descriptor;
+          return {
+            ...descriptor,
+            options: descriptor.options.map((option) => {
+              const idRank = claudeEffortRank(option.id);
+              const sentRank = claudeEffortRank(
+                normalizeClaudeCatalogEffort(catalog, option.id, model.slug),
+              );
+              const displayedRank = idRank >= 0 ? idRank : sentRank;
+              const runsRank = sentRank >= 0 ? sentRank : idRank;
+              return displayedRank > cap.rank && runsRank > cap.rank
+                ? { ...option, label: `${option.label} (capped to ${cap.label})` }
+                : option;
+            }),
+          };
+        }),
+      },
+    };
+  });
+}
+
 export function resolveClaudeCatalogEffort(
   catalog: ClaudeModelCatalog,
   model: string | null | undefined,
@@ -329,7 +460,7 @@ export function resolveClaudeCatalogEffort(
 ): string | undefined {
   if (!resolveClaudeCatalogModel(catalog, model)) {
     const effort = raw?.trim();
-    return effort && ["low", "medium", "high", "xhigh", "max"].includes(effort)
+    return effort && (CLAUDE_EFFORT_LEVELS as ReadonlyArray<string>).includes(effort)
       ? effort
       : undefined;
   }
