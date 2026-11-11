@@ -1,19 +1,34 @@
+import * as NodeNet from "node:net";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Random from "effect/Random";
 import * as Schedule from "effect/Schedule";
-import * as NodeNet from "node:net";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import type { Config } from "../workerd/Config.ts";
+import { bin as workerdBin } from "../workerd/internal/workerd.ts";
 import * as Workerd from "../workerd/Workerd.ts";
 
 const services = Layer.provide(Workerd.WorkerdLive, NodeServices.layer);
 
-layer(services)((it) => {
+// Each probe owns its agent and consumes the body before releasing it. Global
+// fetch can throw outside its promise in Undici's setTypeOfService on macOS
+// when connecting during shutdown (Node 24.21.0).
+const readResponse = (port: number) =>
+  HttpClient.get(`http://127.0.0.1:${port}/`).pipe(
+    Effect.flatMap((response) => response.text),
+    Effect.provide(NodeHttpClient.layerNodeHttp),
+  );
+
+// Process and HTTP deadlines must advance without manually ticking TestClock.
+layer(services, { excludeTestServices: true })((it) => {
   it.effect("spawns a workerd process", () =>
     Effect.gen(function* () {
       const workerd = yield* Workerd.Workerd;
@@ -33,8 +48,7 @@ layer(services)((it) => {
               modules: [
                 {
                   name: "main.js",
-                  esModule:
-                    "export default { fetch: () => new Response('Hello, world!') };",
+                  esModule: "export default { fetch: () => new Response('Hello, world!') };",
                 },
               ],
             },
@@ -66,8 +80,7 @@ layer(services)((it) => {
                 modules: [
                   {
                     name: "main.js",
-                    esModule:
-                      "export default { fetch: () => new Response('Hello, world!') };",
+                    esModule: "export default { fetch: () => new Response('Hello, world!') };",
                   },
                 ],
               },
@@ -92,88 +105,81 @@ layer(services)((it) => {
   // instead of failing with "Address already in use". This behavior is
   // specific to workerd on Windows and outside our control.
   for (const mode of ["single", "multiple", "override"] as const) {
-    it.effect.skipIf(process.platform === "win32")(
-      `fails on port conflict (${mode})`,
-      () =>
-        Effect.gen(function* () {
-          const workerd = yield* Workerd.Workerd;
-          const result = yield* workerd.serve({
-            sockets: [
-              {
-                name: "test",
-                address: "localhost:0",
-                service: { name: "test" },
+    it.effect.skipIf(process.platform === "win32")(`fails on port conflict (${mode})`, () =>
+      Effect.gen(function* () {
+        const workerd = yield* Workerd.Workerd;
+        const result = yield* workerd.serve({
+          sockets: [
+            {
+              name: "test",
+              address: "localhost:0",
+              service: { name: "test" },
+            },
+          ],
+          services: [
+            {
+              name: "test",
+              worker: {
+                compatibilityDate: "2026-03-10",
+                modules: [
+                  {
+                    name: "main.js",
+                    esModule: "export default { fetch: () => new Response('Hello, world!') };",
+                  },
+                ],
               },
-            ],
-            services: [
-              {
-                name: "test",
-                worker: {
-                  compatibilityDate: "2026-03-10",
-                  modules: [
-                    {
-                      name: "main.js",
-                      esModule:
-                        "export default { fetch: () => new Response('Hello, world!') };",
-                    },
-                  ],
+            },
+          ],
+        });
+        const port = result.test;
+        const error = yield* workerd
+          .serve(
+            {
+              sockets: [
+                {
+                  name: "test",
+                  address: mode === "override" ? "localhost:0" : `localhost:${port}`,
+                  service: { name: "test" },
                 },
-              },
-            ],
-          });
-          const port = result.test;
-          const error = yield* workerd
-            .serve(
-              {
-                sockets: [
-                  {
-                    name: "test",
-                    address:
-                      mode === "override" ? "localhost:0" : `localhost:${port}`,
-                    service: { name: "test" },
+                ...(mode === "multiple"
+                  ? [
+                      {
+                        name: "other",
+                        address: "localhost:0",
+                        service: { name: "test" },
+                      },
+                    ]
+                  : []),
+              ],
+              services: [
+                {
+                  name: "test",
+                  worker: {
+                    compatibilityDate: "2026-03-10",
+                    modules: [
+                      {
+                        name: "main.js",
+                        esModule: "export default { fetch: () => new Response('Hello, world!') };",
+                      },
+                    ],
                   },
-                  ...(mode === "multiple"
-                    ? [
-                        {
-                          name: "other",
-                          address: "localhost:0",
-                          service: { name: "test" },
-                        },
-                      ]
-                    : []),
-                ],
-                services: [
-                  {
-                    name: "test",
-                    worker: {
-                      compatibilityDate: "2026-03-10",
-                      modules: [
-                        {
-                          name: "main.js",
-                          esModule:
-                            "export default { fetch: () => new Response('Hello, world!') };",
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-              mode === "override"
-                ? { "socket-addr": `test=localhost:${port}` }
-                : undefined,
-            )
-            .pipe(Effect.flip);
-          assert.equal(error._tag, "ConfigError");
-          expect(error.subtag).toBe("AddressInUse");
-          assert(Predicate.hasProperty(error.detail, "stderr"));
-          expect(error.detail.stderr).toMatch(/Address already in use/);
-          assert(Predicate.hasProperty(error.detail, "configuredAddresses"));
-          expect(error.detail.configuredAddresses).toEqual([
-            `localhost:${port}`,
-            ...(mode === "multiple" ? ["localhost:0"] : []),
-          ]);
-          expect(error.message).toContain(`${port}`);
-        }),
+                },
+              ],
+            },
+            mode === "override" ? { "socket-addr": `test=localhost:${port}` } : undefined,
+          )
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "ConfigError");
+        expect(error.subtag).toBe("AddressInUse");
+        assert(Predicate.hasProperty(error.detail, "stderr"));
+        expect(error.detail.stderr).toMatch(/Address already in use/);
+        assert(Predicate.hasProperty(error.detail, "configuredAddresses"));
+        expect(error.detail.configuredAddresses).toEqual([
+          `localhost:${port}`,
+          ...(mode === "multiple" ? ["localhost:0"] : []),
+        ]);
+        expect(error.message).toContain(`${port}`);
+      }),
     );
   }
 
@@ -203,8 +209,7 @@ layer(services)((it) => {
                 modules: [
                   {
                     name: "main.js",
-                    esModule:
-                      "export default { fetch: () => new Response('ok') };",
+                    esModule: "export default { fetch: () => new Response('ok') };",
                   },
                 ],
               },
@@ -262,12 +267,7 @@ layer(services)((it) => {
           port = ports.http;
           // Workerd has reported its listener, so connect succeeds; the
           // bound covers a slow first-request isolate compile under load.
-          const response = yield* Effect.promise(() =>
-            fetch(`http://127.0.0.1:${port}/`, {
-              signal: AbortSignal.timeout(10_000),
-            }),
-          );
-          expect(yield* Effect.promise(() => response.text())).toBe(sentinel);
+          expect(yield* readResponse(port).pipe(Effect.timeout(10_000))).toBe(sentinel);
         }).pipe(Effect.scoped);
 
         // Linux may immediately give this ephemeral port to another workerd
@@ -275,12 +275,9 @@ layer(services)((it) => {
         // cannot identify whether *this* process survived scope closure.
         // Probe the unique response instead: refusal, timeout, or a different
         // body all prove the original process is no longer serving here.
-        const stopped = yield* Effect.tryPromise(async () => {
-          const response = await fetch(`http://127.0.0.1:${port}/`, {
-            signal: AbortSignal.timeout(1_000),
-          });
-          return (await response.text()) !== sentinel;
-        }).pipe(
+        const stopped = yield* readResponse(port).pipe(
+          Effect.timeout(1_000),
+          Effect.map((body) => body !== sentinel),
           Effect.catch(() => Effect.succeed(true)),
           Effect.filterOrFail(
             (stopped) => stopped,
@@ -306,9 +303,7 @@ layer(services)((it) => {
       Effect.gen(function* () {
         wedgeAttempts += 1;
         if (wedgeAttempts === 1) {
-          return yield* Effect.fail(
-            new Error("simulated transient wedge (attempt 1)"),
-          );
+          return yield* Effect.fail(new Error("simulated transient wedge (attempt 1)"));
         }
         const workerd = yield* Workerd.Workerd;
         const ports = yield* workerd
@@ -328,8 +323,7 @@ layer(services)((it) => {
                   modules: [
                     {
                       name: "main.js",
-                      esModule:
-                        "export default { fetch: () => new Response('retried') };",
+                      esModule: "export default { fetch: () => new Response('retried') };",
                     },
                   ],
                 },
@@ -337,12 +331,7 @@ layer(services)((it) => {
             ],
           })
           .pipe(Effect.timeout(20_000));
-        const response = yield* Effect.promise(() =>
-          fetch(`http://127.0.0.1:${ports.http}/`, {
-            signal: AbortSignal.timeout(10_000),
-          }),
-        );
-        expect(yield* Effect.promise(() => response.text())).toBe("retried");
+        expect(yield* readResponse(ports.http).pipe(Effect.timeout(10_000))).toBe("retried");
       }),
     { timeout: 60_000, retry: 2 },
   );
@@ -383,19 +372,15 @@ layer(services)((it) => {
   );
 
   it.effect(
-    "a wedged first request fails fast with a typed abort, not a hang",
+    "a wedged first request fails fast with a typed timeout, not a hang",
     () =>
       Effect.gen(function* () {
         const silent = yield* silentServer;
-        const started = Date.now();
-        const exit = yield* Effect.tryPromise(() =>
-          fetch(`http://127.0.0.1:${silent.port}/`, {
-            signal: AbortSignal.timeout(1_000),
-          }),
-        ).pipe(Effect.exit);
-        const elapsed = Date.now() - started;
+        const started = yield* Effect.sync(() => Date.now());
+        const exit = yield* readResponse(silent.port).pipe(Effect.timeout(1_000), Effect.exit);
+        const elapsed = (yield* Effect.sync(() => Date.now())) - started;
         assert(Exit.isFailure(exit));
-        expect(String(exit.cause)).toMatch(/timeout/i);
+        expect(String(exit.cause)).toMatch(/TimeoutError/);
         expect(elapsed).toBeLessThan(10_000);
       }),
     { timeout: 30_000 },
@@ -436,9 +421,7 @@ layer(services)((it) => {
                 ],
               })
               .pipe(
-                Effect.map(
-                  (ports) => new URL(`http://127.0.0.1:${ports.http}`),
-                ),
+                Effect.map((ports) => new URL(`http://127.0.0.1:${ports.http}`)),
                 Effect.flatMap((url) =>
                   Effect.promise(() =>
                     fetch(new URL("/", url)).then(async (res) => ({
@@ -462,9 +445,10 @@ layer(services)((it) => {
 
 describe("parseV8Flags", () => {
   it("splits on whitespace and drops empty entries", () => {
-    expect(
-      Workerd.parseV8Flags("  --expose-gc \n --max-old-space-size=4096  "),
-    ).toEqual(["--expose-gc", "--max-old-space-size=4096"]);
+    expect(Workerd.parseV8Flags("  --expose-gc \n --max-old-space-size=4096  ")).toEqual([
+      "--expose-gc",
+      "--max-old-space-size=4096",
+    ]);
   });
 
   it("yields no flags when the variable is unset or blank", () => {
@@ -479,30 +463,34 @@ describe("parseV8Flags", () => {
  * exists when V8 started with the flag, so the response tells whether the
  * flags reached the process.
  */
-const serveGcProbe = (config: Pick<Config, "v8Flags"> = {}) =>
+const serveGcProbe = (
+  config: Pick<Config, "v8Flags"> = {},
+  options?: Pick<Workerd.ServeOptions, "bin" | "env">,
+) =>
   Effect.gen(function* () {
     const workerd = yield* Workerd.Workerd;
-    const ports = yield* workerd.serve({
-      ...config,
-      sockets: [
-        { name: "http", address: "127.0.0.1:0", service: { name: "test" } },
-      ],
-      services: [
-        {
-          name: "test",
-          worker: {
-            compatibilityDate: "2026-03-10",
-            modules: [
-              {
-                name: "main.js",
-                esModule:
-                  "export default { fetch: () => new Response(typeof globalThis.gc) };",
-              },
-            ],
+    const ports = yield* workerd.serve(
+      {
+        ...config,
+        sockets: [{ name: "http", address: "127.0.0.1:0", service: { name: "test" } }],
+        services: [
+          {
+            name: "test",
+            worker: {
+              compatibilityDate: "2026-03-10",
+              modules: [
+                {
+                  name: "main.js",
+                  esModule: "export default { fetch: () => new Response(typeof globalThis.gc) };",
+                },
+              ],
+            },
           },
-        },
-      ],
-    });
+        ],
+      },
+      undefined,
+      options,
+    );
     const response = yield* Effect.promise(() =>
       fetch(`http://127.0.0.1:${ports.http}/`, {
         signal: AbortSignal.timeout(10_000),
@@ -527,9 +515,7 @@ layer(services)("v8Flags", (it) => {
     "passes the config's v8Flags to workerd",
     () =>
       Effect.gen(function* () {
-        expect(yield* serveGcProbe({ v8Flags: ["--expose-gc"] })).toBe(
-          "function",
-        );
+        expect(yield* serveGcProbe({ v8Flags: ["--expose-gc"] })).toBe("function");
       }),
     { timeout: 30_000 },
   );
@@ -558,4 +544,93 @@ layer(services)("v8Flags", (it) => {
       { timeout: 30_000 },
     );
   }
+});
+
+layer(services)("bin and env", (it) => {
+  it.effect.skipIf(process.platform === "win32")(
+    "runs the given binary with the extra environment variables",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped();
+        const marker = path.join(dir, "marker");
+        const bin = path.join(dir, "workerd");
+        yield* fs.writeFileString(
+          bin,
+          `#!/bin/sh\nprintf '%s' "$WORKERD_TEST_MARKER" > ${JSON.stringify(marker)}\nexec ${JSON.stringify(workerdBin)} "$@"\n`,
+        );
+        yield* fs.chmod(bin, 0o755);
+        expect(yield* serveGcProbe({}, { bin, env: { WORKERD_TEST_MARKER: "wrapped" } })).toBe(
+          "undefined",
+        );
+        expect(yield* fs.readFileString(marker)).toBe("wrapped");
+      }).pipe(Effect.provide(NodeServices.layer)),
+    { timeout: 30_000 },
+  );
+
+  it.effect.skipIf(process.platform === "win32")(
+    `runs the binary in ${Workerd.PATH_ENV}`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped();
+        const marker = path.join(dir, "marker");
+        const bin = path.join(dir, "workerd");
+        yield* fs.writeFileString(
+          bin,
+          `#!/bin/sh\nprintf env > ${JSON.stringify(marker)}\nexec ${JSON.stringify(workerdBin)} "$@"\n`,
+        );
+        yield* fs.chmod(bin, 0o755);
+        vi.stubEnv(Workerd.PATH_ENV, bin);
+        yield* serveGcProbe();
+        expect(yield* fs.readFileString(marker)).toBe("env");
+      }).pipe(
+        Effect.provide(NodeServices.layer),
+        Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+      ),
+    { timeout: 30_000 },
+  );
+});
+
+describe("parseAddressInUse", () => {
+  it("finds the socket or address in use", () => {
+    // Rust server on macOS, Linux and Windows.
+    expect(
+      Workerd.parseAddressInUse('Socket "entry": bind(): Address already in use (os error 48)\n'),
+    ).toEqual({ socket: "entry" });
+    expect(
+      Workerd.parseAddressInUse(
+        'Socket "entry:local": bind(): Address already in use (os error 98)\n',
+      ),
+    ).toEqual({ socket: "entry:local" });
+    expect(
+      Workerd.parseAddressInUse(
+        'Socket "entry": bind(): Only one usage of each socket address (protocol/network address/port) is normally permitted. (os error 10048)\n',
+      ),
+    ).toEqual({ socket: "entry" });
+    // C++ server over tokio-backed sockets names neither, including Windows'
+    // `SO_EXCLUSIVEADDRUSE` case.
+    expect(
+      Workerd.parseAddressInUse(
+        "*** Fatal uncaught kj::Exception: rust/cxx/kj-rs-io/ffi.rs:209: failed: bind(): Address already in use (os error 48)\n",
+      ),
+    ).toEqual({});
+    expect(
+      Workerd.parseAddressInUse(
+        "*** Fatal uncaught kj::Exception: rust/cxx/kj-rs-io\\ffi.rs:209: failed: bind(): An attempt was made to access a socket in a way forbidden by its access permissions. (os error 10013)\n",
+      ),
+    ).toEqual({});
+    // C++ server over kj's sockets.
+    expect(
+      Workerd.parseAddressInUse(
+        "kj/async-io-unix.c++:1: failed: Address already in use; toString() = 127.0.0.1:8787; stack: 7ff6a1b2c3d4\n",
+      ),
+    ).toEqual({ address: "127.0.0.1:8787" });
+    // Other bind failures are not address-in-use.
+    expect(
+      Workerd.parseAddressInUse('Socket "entry": bind(): Permission denied (os error 13)\n'),
+    ).toBeUndefined();
+  });
 });

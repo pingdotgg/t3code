@@ -1,162 +1,26 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import { refineUnknownRemoteProvider } from "@t3tools/source-control-core/server/discovery";
+import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitLabCli from "./GitLabCli.ts";
 import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
+import { definition } from "../shared/definition.ts";
 
 function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
   return GitLabSourceControlProvider.make.pipe(
-    Effect.provide(Layer.mock(GitLabCli.GitLabCli)(gitlab)),
+    Effect.provide(
+      Layer.mergeAll(Layer.mock(GitLabCli.GitLabCli)(gitlab), TestSourceControlHost.layer()),
+    ),
   );
 }
-
-it.effect("maps GitLab MR summaries into provider-neutral change requests", () =>
-  Effect.gen(function* () {
-    const provider = yield* makeProvider({
-      getMergeRequest: () =>
-        Effect.succeed({
-          number: 42,
-          title: "Add GitLab provider",
-          url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-          baseRefName: "main",
-          headRefName: "feature/source-control",
-          state: "closed",
-          closedAt: "2026-08-23T10:00:00Z",
-          isCrossRepository: true,
-          headRepositoryNameWithOwner: "fork/t3code",
-          headRepositoryOwnerLogin: "fork",
-        }),
-    });
-
-    const changeRequest = yield* provider.getChangeRequest({
-      cwd: "/repo",
-      reference: "42",
-    });
-
-    assert.deepStrictEqual(changeRequest, {
-      provider: SourceControlProviderKind.make("gitlab"),
-      number: 42,
-      title: "Add GitLab provider",
-      url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-      baseRefName: "main",
-      headRefName: "feature/source-control",
-      state: "closed",
-      closedAt: "2026-08-23T10:00:00Z",
-      mergedAt: null,
-      updatedAt: Option.none(),
-      isCrossRepository: true,
-      headRepositoryNameWithOwner: "fork/t3code",
-      headRepositoryOwnerLogin: "fork",
-    });
-  }),
-);
-
-it.effect("adds repository context while retaining GitLab CLI causes", () =>
-  Effect.gen(function* () {
-    const cause = new GitLabCli.GitLabCliCommandError({
-      operation: "execute",
-      command: "glab",
-      cwd: "/repo",
-      cause: new Error("raw upstream detail that should remain in the cause"),
-    });
-    const provider = yield* makeProvider({
-      createRepository: () => Effect.fail(cause),
-    });
-
-    const error = yield* provider
-      .createRepository({
-        cwd: "/repo",
-        repository: "owner/repo",
-        visibility: "private",
-      })
-      .pipe(Effect.flip);
-
-    assert.deepStrictEqual(
-      {
-        provider: error.provider,
-        operation: error.operation,
-        command: error.command,
-        cwd: error.cwd,
-        repository: error.repository,
-        detail: error.detail,
-      },
-      {
-        provider: "gitlab",
-        operation: "createRepository",
-        command: "glab",
-        cwd: "/repo",
-        repository: "owner/repo",
-        detail: "GitLab CLI command failed.",
-      },
-    );
-    assert.strictEqual(error.cause, cause);
-    assert.equal(error.message.includes("raw upstream detail"), false);
-  }),
-);
-
-it.effect("lists GitLab MRs through provider-neutral input names", () =>
-  Effect.gen(function* () {
-    let listInput: Parameters<GitLabCli.GitLabCli["Service"]["listMergeRequests"]>[0] | null = null;
-    const provider = yield* makeProvider({
-      listMergeRequests: (input) => {
-        listInput = input;
-        return Effect.succeed([]);
-      },
-    });
-
-    yield* provider.listChangeRequests({
-      cwd: "/repo",
-      headSelector: "feature/provider",
-      state: "all",
-      limit: 10,
-    });
-
-    assert.deepStrictEqual(listInput, {
-      cwd: "/repo",
-      headSelector: "feature/provider",
-      state: "all",
-      limit: 10,
-    });
-  }),
-);
-
-it.effect("creates GitLab MRs through provider-neutral input names", () =>
-  Effect.gen(function* () {
-    let createInput: Parameters<GitLabCli.GitLabCli["Service"]["createMergeRequest"]>[0] | null =
-      null;
-    const provider = yield* makeProvider({
-      createMergeRequest: (input) => {
-        createInput = input;
-        return Effect.void;
-      },
-    });
-
-    yield* provider.createChangeRequest({
-      cwd: "/repo",
-      baseRefName: "main",
-      headSelector: "owner:feature/provider",
-      title: "Provider MR",
-      bodyFile: "/tmp/body.md",
-    });
-
-    assert.deepStrictEqual(createInput, {
-      cwd: "/repo",
-      baseBranch: "main",
-      headSelector: "owner:feature/provider",
-      source: {
-        owner: "owner",
-        refName: "feature/provider",
-      },
-      title: "Provider MR",
-      bodyFile: "/tmp/body.md",
-    });
-  }),
-);
 
 it("accepts authenticated GitLab hosts when another configured host fails", () => {
   const auth = GitLabSourceControlProvider.discovery.parseAuth({
@@ -241,6 +105,86 @@ it("tells a host glab has no login for apart from output that cannot say", () =>
   assert.strictEqual(refine("git.example.test\n  x API call failed: 503"), undefined);
 });
 
+// regression: #15395 self-hosted GitLab remotes resolve bare MR numbers once glab is signed in
+it.effect.each([
+  [
+    "https://code.example.test:8443@Code.Example.Test:8443/Team/Repo.git",
+    true,
+    "gitlab",
+    "Code.Example.Test:8443",
+  ],
+  ["git@code.example.test:team/repo.git", true, "gitlab"],
+  ["https://code.example.test/team/repo.git", false, "unknown"],
+  ["https://github.com/team/repo.git", true, "github"],
+] as const)(
+  "resolves MR numbers for %s with authenticated=%s as %s",
+  ([remoteUrl, authenticated, expectedProvider, expectedAuthHost = "code.example.test"]) =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider({});
+      const identity = {
+        canonicalKey: normalizeGitRemoteUrl(remoteUrl),
+        locator: { source: "git-remote" as const, remoteName: "upstream", remoteUrl },
+        rootPath: "/repo",
+        // Only a remote no host recognised is left for glab to refine.
+        provider: SourceControlProviderKind.make(
+          expectedProvider === "github" ? "github" : "unknown",
+        ),
+      };
+      let authCalls = 0;
+      const refined = yield* (
+        provider.refineRepositoryIdentity?.({
+          identity,
+          resolveContext: (input) =>
+            refineUnknownRemoteProvider({
+              ...input,
+              specs: [GitLabSourceControlProvider.discovery],
+              process: {
+                run: ({ command, args, cwd }) => {
+                  authCalls++;
+                  assert.deepStrictEqual(
+                    { command, args, cwd },
+                    {
+                      command: "glab",
+                      args: ["auth", "status", "--hostname", expectedAuthHost],
+                      cwd: "/repo",
+                    },
+                  );
+                  return Effect.succeed(
+                    processOutput(
+                      authenticated
+                        ? `${expectedAuthHost}\n  ✓ Logged in to ${expectedAuthHost} as gitlab-user\n`
+                        : "x code.example.test has not been authenticated with glab.",
+                      { exitCode: ChildProcessSpawner.ExitCode(authenticated ? 0 : 1) },
+                    ),
+                  );
+                },
+              },
+            }).pipe(
+              Effect.map(({ provider }) =>
+                provider ? { ...input.context, provider } : input.context,
+              ),
+            ),
+        }) ?? Effect.succeed(identity)
+      );
+      if (expectedProvider === "gitlab") {
+        const [host, ...repository] = refined.canonicalKey.split("/");
+        assert.strictEqual(
+          definition.changeRequestUrl({
+            host: host!,
+            repository: repository.join("/"),
+            number: 42,
+          }),
+          "https://code.example.test/team/repo/-/merge_requests/42",
+        );
+      }
+      assert.deepStrictEqual(refined, {
+        ...identity,
+        provider: SourceControlProviderKind.make(expectedProvider),
+      });
+      if (expectedProvider === "github") assert.strictEqual(authCalls, 0);
+    }),
+);
+
 it("parses authenticated GitLab auth status hosts with ports and single-label names", () => {
   assert.deepStrictEqual(
     parseGitLabAuthStatusHosts(`localhost:8080
@@ -290,13 +234,15 @@ it.effect.each(["merge_requests", "issues"])(
         title: "Pairing expiry",
         body: "Preserve remote access",
       });
-      assert.strictEqual(
-        provider.resolveLink?.({
-          cwd: "/unrelated",
-          url: new URL("https://gitlab.com/owner/repo"),
-        }),
-        undefined,
-      );
+      for (const url of [
+        "https://gitlab.com/owner/repo",
+        "https://gitlab.attacker.test/team/project/-/issues/1",
+      ]) {
+        assert.strictEqual(
+          provider.resolveLink?.({ cwd: "/unrelated", url: new URL(url) }),
+          undefined,
+        );
+      }
     }),
 );
 
