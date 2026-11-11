@@ -182,7 +182,7 @@ export function PaneNotch({
       <div
         ref={notchRef}
         data-pane-notch={side === "left" ? "" : side}
-        data-chrome-scope={isMobile ? undefined : ""}
+        data-chrome-scope=""
         data-pane-notch-unfocused={side === "left" && split && !focused ? "" : undefined}
         className={cn(
           "relative isolate flex min-w-0 shrink items-center gap-1 self-stretch [--type-label:0.8125rem]",
