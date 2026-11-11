@@ -1,3 +1,4 @@
+import { useGitActionProgress } from "../../../state/use-vcs-action-state";
 import * as Dialog from "../../../components/ui/Dialog";
 import { cn } from "../../../lib/cn";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
@@ -22,6 +23,7 @@ import { NativeScrollView } from "../../../native/NativeScrollViewMarker";
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppBar } from "../../../components/ui/AppBar";
+import { ListRowLayout } from "../../../components/ui/ListRowLayout";
 import { ListRow } from "../../../components/ui/ListRow";
 import { ListSection } from "../../../components/ui/ListSection";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
@@ -101,6 +103,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
+  const progress = useGitActionProgress({ environmentId, cwd: selectedThreadCwd });
   const isRepo = gitStatus.data?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
@@ -172,9 +175,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       return;
     }
 
-    // Close a sheet so the thread shows the action's progress.
     if (!isInspector) navigation.goBack();
-    else closeInspectorSheet?.();
     await gitActions.onRunSelectedThreadGitAction(input);
   };
 
@@ -283,6 +284,18 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
       }
     >
+      {progress.phase !== "idle" ? (
+        <ListSection>
+          <ListRowLayout
+            icon="info.circle"
+            label={progress.label ?? "Source control"}
+            description={progress.description ?? undefined}
+          />
+          {progress.onCancel ? (
+            <ListRow icon="xmark" label="Cancel split" onPress={progress.onCancel} />
+          ) : null}
+        </ListSection>
+      ) : null}
       <ListSection>
         {sheetMenuItems
           .filter(({ item }) => item.id === "branch")
@@ -306,12 +319,13 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             !gitStatus.data?.hasWorkingTreeChanges ||
             ((!gitStatus.data?.refName || isDefaultRef) && !canChangeThreadBranch)
           }
-          onPress={() =>
+          onPress={() => {
+            if (!isInspector) navigation.goBack();
             void gitActions.onRunSelectedThreadGitAction({
               action: "commit",
               featureBranch: !gitStatus.data?.refName || isDefaultRef,
-            })
-          }
+            });
+          }}
         />
         {sheetMenuItems
           .filter(({ item }) => item.id === "commit")
@@ -360,14 +374,17 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
                 : "This connection cannot change source control."
             }
             disabled={!canWriteSourceControl || busy || !isRepo}
-            onPress={() => void gitActions.onPullSelectedThreadBranch()}
+            onPress={() => {
+              if (!isInspector) navigation.goBack();
+              void gitActions.onPullSelectedThreadBranch();
+            }}
           />
         ) : null}
         <ListRow
           icon="text.bubble"
           label="Review changes"
           description="Inspect changes, uncommitted edits, and turn diffs"
-          disabled={busy || !isRepo}
+          disabled={!isRepo}
           onPress={() => {
             const params = { environmentId, threadId };
             if (presentation === "sheet") {
@@ -387,7 +404,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
               ? "Switch branch, create branch, or move to a worktree"
               : "View branches and worktrees"
           }
-          disabled={busy || !isRepo}
+          disabled={!isRepo}
           onPress={() =>
             presentRoute(() =>
               navigation.navigate("GitBranches", {

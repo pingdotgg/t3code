@@ -1,6 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useRememberThreadProject } from "./useRememberThreadProject";
-import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
@@ -45,7 +44,6 @@ import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
 import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-creation";
 import { recoverFailedThreadDraft } from "../../state/recover-failed-thread-draft";
 import { useEnvironmentQuery } from "../../state/query";
-import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
@@ -68,7 +66,6 @@ import {
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
   buildTerminalMenuSessions,
   nextOpenTerminalId,
@@ -423,7 +420,6 @@ function ThreadRouteContent(
   })();
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
-  const openPullRequest = useOpenPullRequest();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, "merge thread back");
   const mergeBackTargetThreadId = resolveMergeBackTargetThreadId(selectedThreadDetail);
   const mergeBackRun =
@@ -538,12 +534,6 @@ function ThreadRouteContent(
     }
     onReconnectEnvironment(environmentId);
   };
-
-  const gitActionProgressTarget = {
-    environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
-  };
-  const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
 
   const handleOpenGitInspector = () => {
     navigation.setParams({ inspector: undefined });
@@ -971,12 +961,6 @@ function ThreadRouteContent(
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = () => (
     <>
-      <GitActionProgressOverlay
-        progress={gitActionProgress}
-        onDismiss={dismissGitActionResult}
-        onOpenPullRequest={openPullRequest}
-      />
-
       <>
         <ThreadScreenBinding
           header={
