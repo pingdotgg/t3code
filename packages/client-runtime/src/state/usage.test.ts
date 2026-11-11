@@ -1,17 +1,19 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
   UsageDay,
   USAGE_CONTRACT_VERSION,
   type UsageModelFilter,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
-import { refreshUsage, refreshUsageLimits } from "./usage.ts";
+import { refreshUsage, refreshUsageLimits, threadUsageSummaryInput } from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -203,5 +205,53 @@ describe("limits refresh cooldown", () => {
     expect(await first).toBe("old limits");
     expect(await manual).toBe("old limits");
     expect(newCheck).not.toHaveBeenCalled();
+  });
+});
+
+describe("threadUsageSummaryInput", () => {
+  const providerThread = (nativeId: string | null) => ({
+    nativeThreadRef:
+      nativeId === null
+        ? null
+        : { driver: ProviderDriverKind.make("codex"), nativeId, strength: "strong" as const },
+  });
+  const createdAt = DateTime.makeUnsafe("2026-09-03T08:15:00.000Z");
+  const now = DateTime.makeUnsafe("2026-09-05T12:00:00Z");
+
+  it("asks for every conversation the thread has held, from its creation", () => {
+    expect(
+      threadUsageSummaryInput({
+        providerThreads: [
+          providerThread("session-b"),
+          providerThread(null),
+          providerThread("session-a"),
+          providerThread("session-b"),
+        ],
+        createdAt,
+        now,
+      }),
+    ).toMatchObject({
+      sinceDay: "2026-09-03",
+      untilDay: "2026-09-05",
+      sessionFilter: {
+        sessionIds: ["session-a", "session-b"],
+        sinceTime: "2026-09-03T08:15:00.000Z",
+      },
+    });
+  });
+
+  it("has nothing to ask before a provider starts a conversation", () => {
+    expect(
+      threadUsageSummaryInput({ providerThreads: [providerThread(null)], createdAt, now }),
+    ).toBeNull();
+  });
+
+  it("never opens a window that starts after it ends", () => {
+    const input = threadUsageSummaryInput({
+      providerThreads: [providerThread("session-a")],
+      createdAt,
+      now: DateTime.makeUnsafe("2026-09-01T12:00:00Z"),
+    });
+    expect(input).toMatchObject({ sinceDay: input?.untilDay });
   });
 });

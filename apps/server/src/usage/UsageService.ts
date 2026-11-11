@@ -858,6 +858,18 @@ export const make = Effect.gen(function* () {
       hourlyWindow = { sinceTimeMs, untilTimeMs };
     }
 
+    const sessionFilter = input.sessionFilter;
+    const sessionsSince =
+      sessionFilter?.sinceTime === undefined
+        ? Option.none()
+        : DateTime.make(sessionFilter.sinceTime);
+    if (sessionFilter?.sinceTime !== undefined && Option.isNone(sessionsSince)) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: "Session usage requires a valid sinceTime instant",
+      });
+    }
+
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureScanCacheLoaded;
 
@@ -1007,6 +1019,17 @@ export const make = Effect.gen(function* () {
       modelAliases,
       rateModel: (provider, model) => providerRateModels.get(provider)?.(model),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
+      ...(sessionFilter === undefined
+        ? {}
+        : {
+            sessions: {
+              ids: new Set(sessionFilter.sessionIds),
+              sinceTimeMs: Option.match(sessionsSince, {
+                onNone: () => 0,
+                onSome: DateTime.toEpochMillis,
+              }),
+            },
+          }),
     });
 
     const windowEndMs =
@@ -1216,6 +1239,7 @@ export const make = Effect.gen(function* () {
       input.awaitRefresh === true,
       provisional,
       input.modelFilter ?? null,
+      input.sessionFilter ?? null,
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (

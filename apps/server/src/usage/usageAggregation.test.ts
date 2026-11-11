@@ -88,6 +88,26 @@ describe("UsageAggregator", () => {
     expect(bucket).not.toHaveProperty("ultrafastCostUsd");
   });
 
+  it("keeps only the chosen sessions' records, before deduplicating", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      sessions: { ids: new Set(["session-fork"]), sinceTimeMs: Date.parse("2026-08-08T00:00:00Z") },
+    });
+    const forkTurn = { sessionId: "session-fork", timestampMs: Date.parse("2026-08-08T12:00:00Z") };
+    // Another session's copy comes first and must not claim the key the fork's record shares.
+    aggregator.add(record({ dedupeKey: "msg_2:", timestampMs: forkTurn.timestampMs }), "a.jsonl");
+    // History the fork copied from its source predates the fork.
+    aggregator.add(record({ dedupeKey: "msg_1:", sessionId: "session-fork" }), "b.jsonl");
+    aggregator.add(record({ dedupeKey: "msg_2:", ...forkTurn }), "b.jsonl");
+
+    expect(aggregator.finish().buckets).toMatchObject([
+      { day: "2026-08-08", sourcePath: "b.jsonl", records: 1, sessions: 1 },
+    ]);
+  });
+
   it("merges partial copies of a key by channel maximum in the first copy's bucket", () => {
     const zeroTotals = {
       uncachedInputTokens: 0,
