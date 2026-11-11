@@ -18,7 +18,9 @@ import {
   checkKiroProviderStatus,
   kiroAgentDescriptor,
   kiroDefaultModelId,
+  kiroSlashCommands,
 } from "@t3tools/provider-kiro/testing";
+import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
 
 const encoder = new TextEncoder();
 const settings = Schema.decodeSync(KiroSettings)({ enabled: true });
@@ -468,6 +470,48 @@ describe("KiroProvider", () => {
     // A template without agents to choose between gives no picker.
     assert.isUndefined(kiroAgentDescriptor({ configOptions: [] }));
     assert.isUndefined(kiroAgentDescriptor("not a template"));
+  });
+
+  // Shapes from Kiro CLI 3.1.0's `available_commands_update`.
+  it("offers Kiro's skills and steering as slash commands, without custom agents", () => {
+    const kiro = (type: string) => ({ kiro: { type, resource: { resourceType: type } } });
+    assert.deepStrictEqual(
+      kiroSlashCommands([
+        {
+          name: "chunked-file-writer",
+          description: "Steering: chunked-file-writer",
+          input: { type: "text", hint: "optional context" },
+          _meta: kiro("steering"),
+        },
+        {
+          name: "context-gatherer",
+          description: "Investigates the codebase",
+          input: { type: "text", hint: "task to delegate" },
+          _meta: kiro("custom-agent"),
+        },
+        {
+          name: "chunked-file-writer",
+          description: "Write large files in chunks",
+          input: { type: "text", hint: "optional context" },
+          _meta: kiro("skill"),
+        },
+        {
+          name: "frontend-slides",
+          description: "Steering: frontend-slides",
+          _meta: kiro("steering"),
+        },
+        { name: "compact", description: "Kiro's own compact", _meta: kiro("builtin") },
+      ]),
+      [
+        COMPACT_SLASH_COMMAND,
+        {
+          name: "chunked-file-writer",
+          description: "Write large files in chunks",
+          input: { hint: "optional context" },
+        },
+        { name: "frontend-slides", description: "Steering: frontend-slides" },
+      ],
+    );
   });
 
   it.effect("never lists models while signed out, where listing would start a browser login", () =>

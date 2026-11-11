@@ -9,4 +9,5 @@ export {
   checkKiroProviderStatus,
   kiroAgentDescriptor,
   kiroDefaultModelId,
+  kiroSlashCommands,
 } from "./server/status.ts";

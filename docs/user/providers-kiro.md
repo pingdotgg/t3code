@@ -58,3 +58,6 @@ one-time choice.
   message.
 - `/compact` uses Kiro's own compaction. Kiro also compacts on its own as the conversation fills its
   context.
+- Typing `/` lists your Kiro skills, steering files and saved prompts once a Kiro thread has
+  started in that environment. Commands that only exist in Kiro's terminal UI, such as `/usage` and
+  `/fullscreen`, are not available.

@@ -1,9 +1,17 @@
-import { ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ServerProvider,
+  type ServerProviderSlashCommand,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import { KiroSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -29,6 +37,7 @@ import {
   buildInitialKiroProviderSnapshot,
   checkKiroProviderStatus,
   kiroDefaultModelId,
+  kiroSlashCommands,
 } from "./status.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("kiro");
@@ -102,6 +111,19 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
       enabled,
       binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
     } satisfies KiroSettings;
+    // Kiro lists commands per session, after `session/new`; the newest list stands for the instance.
+    const liveSlashCommands = yield* SubscriptionRef.make<
+      Option.Option<ReadonlyArray<ServerProviderSlashCommand>>
+    >(Option.none());
+    const withLiveSlashCommands = (provider: ServerProvider) =>
+      SubscriptionRef.get(liveSlashCommands).pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => provider,
+            onSome: (slashCommands) => ({ ...provider, slashCommands }),
+          }),
+        ),
+      );
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KiroSettings>>({
       resolveMaintenance: () => Effect.succeed(MAINTENANCE),
@@ -112,9 +134,19 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
         buildInitialKiroProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider: checkKiroProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
+        Effect.flatMap(withLiveSlashCommands),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(SecureRandom.SecureRandom, crypto),
       ),
+      enrichSnapshot: ({ getSnapshot, publishSnapshot }) =>
+        SubscriptionRef.changes(liveSlashCommands).pipe(
+          Stream.runForEach(() =>
+            getSnapshot.pipe(
+              Effect.flatMap(withLiveSlashCommands),
+              Effect.flatMap(publishSnapshot),
+            ),
+          ),
+        ),
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -131,6 +163,8 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
     // "Kiro default" selects the default the snapshot read from Kiro's model list.
     const orchestrationAdapter = yield* makeKiroAdapterV2Driver(
       snapshot.getSnapshot.pipe(Effect.map((current) => kiroDefaultModelId(current.models))),
+      (commands) =>
+        SubscriptionRef.set(liveSlashCommands, Option.some(kiroSlashCommands(commands))),
     )
       .create({
         instanceId,

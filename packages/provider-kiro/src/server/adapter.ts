@@ -205,6 +205,8 @@ export interface KiroAdapterV2Options {
    * default). Absent, it is `auto`.
    */
   readonly defaultModel?: Effect.Effect<string>;
+  /** Receives each session's `available_commands_update`. */
+  readonly onAvailableCommandsUpdate?: AcpAdapterV2Flavor["onAvailableCommandsUpdate"];
   /** Replaces the `kiro-cli` launch (replay tests). Kiro's session setup still applies. */
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
@@ -583,6 +585,9 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     compactSession: kiroCompactSession,
     steering: kiroSteering,
     forkFromTurn: kiroForkFromTurn,
+    ...(options.onAvailableCommandsUpdate === undefined
+      ? {}
+      : { onAvailableCommandsUpdate: options.onAvailableCommandsUpdate }),
     // Kiro V3 advertises `promptCapabilities.image`; the shared adapter reads it.
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
@@ -613,6 +618,7 @@ export type KiroAdapterV2DriverEnv =
 /** `defaultModel` reads Kiro's id for "Kiro default" from the provider snapshot. */
 export const makeKiroAdapterV2Driver = (
   defaultModel: Effect.Effect<string>,
+  onAvailableCommandsUpdate?: AcpAdapterV2Flavor["onAvailableCommandsUpdate"],
 ): ProviderAdapterDriver<KiroSettings, KiroAdapterV2DriverEnv> => ({
   driverKind: KIRO_PROVIDER,
   configSchema: KiroSettings,
@@ -629,6 +635,7 @@ export const makeKiroAdapterV2Driver = (
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         selfInvocation,
         defaultModel,
+        ...(onAvailableCommandsUpdate === undefined ? {} : { onAvailableCommandsUpdate }),
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,

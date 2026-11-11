@@ -5,7 +5,9 @@ import {
   type ProviderOptionDescriptor,
   type ServerProviderAuth,
   type ServerProviderModel,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import type * as EffectAcpSchema from "effect-acp/compat";
 import type { KiroSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -94,6 +96,43 @@ const snapshot = (
     slashCommands: [COMPACT_SLASH_COMMAND],
     probe,
   });
+
+const decodeKiroCommandMeta = Schema.decodeUnknownOption(
+  Schema.Struct({ kiro: Schema.Struct({ type: Schema.String }) }),
+);
+const kiroCommandType = (command: EffectAcpSchema.AvailableCommand) =>
+  Option.getOrUndefined(decodeKiroCommandMeta(command._meta))?.kiro.type;
+
+/**
+ * The slash menu from a session's `available_commands_update`. Kiro runs a
+ * skill, steering file or prompt sent as `/name` text. Custom agents are left
+ * out, as in Kiro's own terminal UI; the Agent picker selects them.
+ */
+export function kiroSlashCommands(
+  commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const byName = new Map<string, ServerProviderSlashCommand>([
+    [COMPACT_SLASH_COMMAND.name, COMPACT_SLASH_COMMAND],
+  ]);
+  for (const command of commands) {
+    const name = command.name.trim();
+    const type = kiroCommandType(command);
+    const key = name.toLowerCase();
+    if (name.length === 0 || type === "custom-agent" || key === COMPACT_SLASH_COMMAND.name) {
+      continue;
+    }
+    // A file that is both a skill and steering is listed twice; the skill describes it.
+    if (byName.has(key) && type !== "skill") continue;
+    const description = command.description.trim();
+    const hint = command.input?.hint.trim();
+    byName.set(key, {
+      name,
+      ...(description ? { description } : {}),
+      ...(hint ? { input: { hint } } : {}),
+    });
+  }
+  return [...byName.values()];
+}
 
 export const buildInitialKiroProviderSnapshot = Effect.fn(
   "KiroProvider.buildInitialKiroProviderSnapshot",
