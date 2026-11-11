@@ -86,6 +86,18 @@ function getProviderUpdatedTitle(
   return version ? `${providerName} updated: ${formatVersion(version)}` : `${providerName} updated`;
 }
 
+// Only OpenCode reports an installed CLI apart from a running external server.
+export function getProviderRestartNotice(
+  provider: Pick<ServerProvider, "version" | "installedVersion" | "updateState">,
+): string | null {
+  return provider.updateState?.status === "succeeded" &&
+    provider.installedVersion != null &&
+    provider.version != null &&
+    provider.installedVersion !== provider.version
+    ? provider.updateState.message
+    : null;
+}
+
 function getProviderUpdatedDescription(providerCount: number): string {
   return providerCount === 1
     ? "New sessions will use the updated provider."
@@ -213,14 +225,13 @@ export function getProviderUpdateRunOutcome(
       line: `${label}: ${error instanceof Error ? error.message : "Provider update failed."}`,
     };
   }
-  const updateState = run.result.value.providers.find(
-    (provider) => provider.instanceId === run.instanceId,
-  )?.updateState;
+  const provider = run.result.value.providers.find(
+    (candidate) => candidate.instanceId === run.instanceId,
+  );
+  const updateState = provider?.updateState;
+  const restartNotice = provider ? getProviderRestartNotice(provider) : null;
   return updateState?.status === "succeeded"
-    ? {
-        status: "updated",
-        message: updateState.message ? `${label}: ${updateState.message}` : null,
-      }
+    ? { status: "updated", message: restartNotice ? `${label}: ${restartNotice}` : null }
     : {
         status: "failed",
         line: `${label}: ${updateState?.message ?? "Provider update did not finish."}`,
@@ -411,13 +422,8 @@ export function getProviderUpdateSidebarPillView(
           ? getProviderUpdatedTitle(succeededProvider)
           : `${succeededProviders.length} providers updated`,
       description:
-        [
-          ...new Set(
-            succeededProviders.flatMap((provider) =>
-              provider.updateState?.message ? [provider.updateState.message] : [],
-            ),
-          ),
-        ].join("\n") || getProviderUpdatedDescription(succeededProviders.length),
+        [...new Set(succeededProviders.map(getProviderRestartNotice).filter(Boolean))].join("\n") ||
+        getProviderUpdatedDescription(succeededProviders.length),
       dismissAfterVisibleMs: PROVIDER_UPDATE_SUCCESS_VISIBLE_MS,
     });
   }

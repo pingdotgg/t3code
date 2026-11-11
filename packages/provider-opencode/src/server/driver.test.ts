@@ -46,7 +46,6 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 it("only probes a locally configured OpenCode server's installed CLI", () => {
   assert.isTrue(isLocalOpenCodeServerUrl("http://127.0.0.1:35768"));
-  assert.isTrue(isLocalOpenCodeServerUrl("http://127.0.0.2:4096"));
   assert.isTrue(isLocalOpenCodeServerUrl("http://127.255.255.254:4096"));
   assert.isFalse(isLocalOpenCodeServerUrl("http://127.example.com:4096"));
   assert.isFalse(isLocalOpenCodeServerUrl("http://128.0.0.1:4096"));

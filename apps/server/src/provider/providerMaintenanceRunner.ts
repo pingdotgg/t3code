@@ -94,6 +94,9 @@ interface VerifiedProviderRefresh {
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
+const OPENCODE_SERVER_RESTART_MESSAGE =
+  "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version.";
+
 const needsOpenCodeServerRestart = (providers: ReadonlyArray<ServerProvider>) =>
   providers.some(
     (provider) =>
@@ -537,7 +540,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                     startedAt,
                     finishedAt: yield* nowIso,
                     message: needsOpenCodeServerRestart(precheck.verifiedProviders)
-                      ? "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version."
+                      ? OPENCODE_SERVER_RESTART_MESSAGE
                       : "Already up to date.",
                   }),
                 );
@@ -613,7 +616,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   : stillOutdated
                     ? "Update command completed, but T3 Code still detects an outdated provider version."
                     : needsOpenCodeServerRestart(verifiedProviders)
-                      ? "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version."
+                      ? OPENCODE_SERVER_RESTART_MESSAGE
                       : "Provider updated.",
                 output: commandOutput(result),
               }),
