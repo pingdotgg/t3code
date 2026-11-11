@@ -235,11 +235,12 @@ describe("threadTimingNeedsLiveClock", () => {
         turnItems: [
           item({
             id: "wait-1" as TurnItemId,
-            type: "waiting",
+            type: "command_execution",
             runId: "r1" as RunId,
             status: "waiting",
             startedAt: utc("2026-05-22T12:00:05.000Z"),
             completedAt: null,
+            input: "npm test",
           }),
         ],
       }),
