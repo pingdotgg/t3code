@@ -266,6 +266,32 @@ function configureVisibleRemoteUrlWithLocalRewrite(
   });
 }
 
+// A fork checkout: origin is the contributor's fork, upstream the repository PRs target.
+function initForkCheckout() {
+  return Effect.gen(function* () {
+    const repoDir = yield* makeTempDir("t3code-git-manager-");
+    yield* initRepo(repoDir);
+    const originDir = yield* createBareRemote();
+    const upstreamDir = yield* createBareRemote();
+    yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+    yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+    yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+    yield* configureVisibleRemoteUrlWithLocalRewrite(
+      repoDir,
+      "origin",
+      "git@github.com:contributor/codething-mvp.git",
+      originDir,
+    );
+    yield* configureVisibleRemoteUrlWithLocalRewrite(
+      repoDir,
+      "upstream",
+      "git@github.com:pingdotgg/codething-mvp.git",
+      upstreamDir,
+    );
+    return repoDir;
+  });
+}
+
 function createTextGeneration(
   overrides: Partial<FakeGitTextGeneration> = {},
 ): TextGeneration.TextGeneration["Service"] {
@@ -1160,25 +1186,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     "branch PR lookup keeps fork heads when a local branch aliases the default branch",
     () =>
       Effect.gen(function* () {
-        const repoDir = yield* makeTempDir("t3code-git-manager-");
-        yield* initRepo(repoDir);
-        const originDir = yield* createBareRemote();
-        const upstreamDir = yield* createBareRemote();
-        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
-        yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
-        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-        yield* configureVisibleRemoteUrlWithLocalRewrite(
-          repoDir,
-          "origin",
-          "git@github.com:contributor/codething-mvp.git",
-          originDir,
-        );
-        yield* configureVisibleRemoteUrlWithLocalRewrite(
-          repoDir,
-          "upstream",
-          "git@github.com:pingdotgg/codething-mvp.git",
-          upstreamDir,
-        );
+        const repoDir = yield* initForkCheckout();
         yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
         yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
         yield* runGit(repoDir, ["checkout", "-b", "review-main", "--track", "origin/main"]);
@@ -3434,26 +3442,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
   it.effect("creates a fork PR when GitHub resolves a separate base remote", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const originDir = yield* createBareRemote();
-      const upstreamDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
-      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
-      yield* configureVisibleRemoteUrlWithLocalRewrite(
-        repoDir,
-        "origin",
-        "git@github.com:contributor/codething-mvp.git",
-        originDir,
-      );
-      yield* configureVisibleRemoteUrlWithLocalRewrite(
-        repoDir,
-        "upstream",
-        "git@github.com:pingdotgg/codething-mvp.git",
-        upstreamDir,
-      );
+      const repoDir = yield* initForkCheckout();
       yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/fork-pr"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "fork-pr.txt"), "fork PR\n");
       yield* runGit(repoDir, ["add", "fork-pr.txt"]);
@@ -3480,26 +3470,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
   it.effect("uses the Provider-selected target remote over a stale GitHub mark", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const originDir = yield* createBareRemote();
-      const upstreamDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
-      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
-      yield* configureVisibleRemoteUrlWithLocalRewrite(
-        repoDir,
-        "origin",
-        "git@github.com:contributor/codething-mvp.git",
-        originDir,
-      );
-      yield* configureVisibleRemoteUrlWithLocalRewrite(
-        repoDir,
-        "upstream",
-        "git@github.com:pingdotgg/codething-mvp.git",
-        upstreamDir,
-      );
+      const repoDir = yield* initForkCheckout();
       yield* runGit(repoDir, ["config", "remote.origin.gh-resolved", "base"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/provider-target"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "provider-target.txt"), "provider target\n");
       yield* runGit(repoDir, ["add", "provider-target.txt"]);
