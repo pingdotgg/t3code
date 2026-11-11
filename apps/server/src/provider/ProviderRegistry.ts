@@ -81,6 +81,8 @@ export class ProviderRegistry extends Context.Service<
       /** Directory the driver scans; the snapshot stays keyed by `cwd`. Defaults to `cwd`. */
       readonly scanCwd?: string;
       readonly fresh?: boolean;
+      /** Return once the scan publishes partial results; the scan keeps running to completion. */
+      readonly untilPartial?: boolean;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /**
@@ -955,6 +957,7 @@ export const layer = Layer.effect(
       readonly cwd: string;
       readonly scanCwd?: string;
       readonly fresh?: boolean;
+      readonly untilPartial?: boolean;
     }) {
       if (input.fresh) {
         yield* updateProviders((providers) =>
@@ -986,6 +989,7 @@ export const layer = Layer.effect(
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
       const token = yield* Deferred.make<void>();
+      const partialPublished = yield* Deferred.make<ReadonlyArray<ServerProvider>>();
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
             Effect.andThen(refreshInstance(input.instanceId)),
@@ -1025,7 +1029,10 @@ export const layer = Layer.effect(
       const runScan = refreshMachineSnapshot.pipe(
         Effect.andThen(
           instance.snapshotForCwd(input.scanCwd ?? input.cwd, (partial) =>
-            publish({ ...partial, slashCommandsPending: true }).pipe(Effect.asVoid),
+            publish({ ...partial, slashCommandsPending: true }).pipe(
+              Effect.flatMap((providers) => Deferred.succeed(partialPublished, providers)),
+              Effect.asVoid,
+            ),
           ),
         ),
         // Scans fail on error; returned inventory remains valid even when provider health reports an error.
@@ -1066,7 +1073,10 @@ export const layer = Layer.effect(
       if ("inFlight" in claim) {
         return yield* Deferred.await(claim.inFlight).pipe(Effect.andThen(Ref.get(providersRef)));
       }
-      return yield* Fiber.join(claim.scan);
+      // Joining only stops waiting; the detached scan still publishes its final result.
+      return yield* input.untilPartial
+        ? Effect.raceFirst(Fiber.join(claim.scan), Deferred.await(partialPublished))
+        : Fiber.join(claim.scan);
     });
 
     const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (

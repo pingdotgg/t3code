@@ -2061,13 +2061,20 @@ it.layer(
           assert.strictEqual(yield* workspaceA, undefined);
 
           yield* Ref.set(slowProbeCwd, "/a");
+          // An on-demand client sees /a only in its reply, which comes back with the partial.
+          const reply = yield* registry.refreshWorkspaceSnapshot({
+            instanceId,
+            cwd: "/a",
+            untilPartial: true,
+          });
+          const replied = reply[0]?.workspaceSnapshots?.find((snapshot) => snapshot.cwd === "/a");
+          assert.deepStrictEqual(replied?.skills, projectSkills);
+          assert.strictEqual(replied?.slashCommandsPending, true);
+          yield* Deferred.await(probeStarted);
+          // The client's follow-up request joins the running scan for the rest.
           const rescan = yield* registry
             .refreshWorkspaceSnapshot({ instanceId, cwd: "/a" })
-            .pipe(Effect.forkChild);
-          yield* Deferred.await(probeStarted);
-          const whileProbing = yield* workspaceA;
-          assert.deepStrictEqual(whileProbing?.skills, projectSkills);
-          assert.strictEqual(whileProbing?.slashCommandsPending, true);
+            .pipe(Effect.forkChild({ startImmediately: true }));
 
           // The partial entry can be evicted again before the probe finishes.
           for (let index = 0; index < 16; index++) {
@@ -2076,8 +2083,10 @@ it.layer(
           assert.strictEqual(yield* workspaceA, undefined);
 
           yield* Deferred.succeed(releaseProbe, undefined);
-          yield* Fiber.join(rescan);
-          const settled = yield* workspaceA;
+          const settled = (yield* Fiber.join(rescan))[0]?.workspaceSnapshots?.find(
+            (snapshot) => snapshot.cwd === "/a",
+          );
+          assert.deepStrictEqual(settled, yield* workspaceA);
           assert.deepStrictEqual(settled?.skills, projectSkills);
           assert.deepStrictEqual(settled?.slashCommands, [COMPACT_SLASH_COMMAND, probeCommand]);
           assert.strictEqual(settled?.slashCommandsPending, undefined);

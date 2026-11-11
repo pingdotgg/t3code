@@ -200,6 +200,25 @@ describe("provider workspace snapshot refresh atom", () => {
     unmount();
   });
 
+  it("asks again at once when the reply carries partial skills, then settles", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const partial = withSnapshot("2026-01-01T00:00:00.000Z", true);
+    const complete = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { registry, atom, providersAtom, run, unmount } = setup(noSnapshot, [
+      () => partial,
+      () => complete,
+      () => partial,
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(true);
+    registry.set(providersAtom, complete);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(false);
+    unmount();
+  });
+
   it.each(["already expired", "expires during discovery"])(
     "retries an unchanged catalog that %s after the short cooldown",
     async (expiry) => {

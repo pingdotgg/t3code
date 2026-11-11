@@ -311,15 +311,18 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
         }
         if (!plan.refresh) return plan.state;
         const registry = get.registry;
-        // Outlives this build on purpose: a rebuild must not drop the retry.
-        // Once nothing subscribes, the retry state dies with the node; writing
-        // would recreate and rebuild it, which scans again with no subscriber.
-        const retryLater = () => {
+        // Outlives this build on purpose: a rebuild must not drop the retry. Once nothing
+        // subscribes, writing would recreate the node and scan with no subscriber. A pending
+        // reply's partial skills come before the command probe ends; the first per cycle asks
+        // again at once to join that scan, later ones cool down.
+        const retryLater = (pending: boolean) => {
           const node = registry.getNodes().get(refreshAtom);
           if (node === undefined || node.canBeRemoved) return;
           registry.set(refreshAtom, (state) =>
-            // @effect-diagnostics-next-line globalDate:off
-            failProviderWorkspaceSnapshotRefresh(state, now, Date.now()),
+            pending && state.requestedAt === now && state.failedAttempts === 0
+              ? { ...state, requestedAt: null, failedAttempts: 1 }
+              : // @effect-diagnostics-next-line globalDate:off
+                failProviderWorkspaceSnapshotRefresh(state, now, Date.now()),
           );
         };
         void runAtomCommand(
@@ -327,21 +330,24 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
           input.refreshProviders,
           { environmentId, input: { instanceId, cwd } },
           { reportFailure: false },
-        ).then((result) => {
-          const refreshedProvider =
-            result._tag === "Success" ? findProvider(result.value.providers) : undefined;
-          const snapshot =
-            refreshedProvider && resolveProviderWorkspaceSnapshot(refreshedProvider, cwd);
-          // A new server timestamp proves progress even when the client clock is ahead.
-          // @effect-diagnostics-next-line globalDate:off
-          const completedAt = Date.now();
-          const refreshed =
-            hasCompleteProviderWorkspaceSnapshot(refreshedProvider, cwd) &&
-            (hasCurrentProviderWorkspaceSnapshot(refreshedProvider, cwd, completedAt) ||
-              snapshot?.checkedAt !==
-                (provider && resolveProviderWorkspaceSnapshot(provider, cwd))?.checkedAt);
-          if (!refreshed) retryLater();
-        }, retryLater);
+        ).then(
+          (result) => {
+            const refreshedProvider =
+              result._tag === "Success" ? findProvider(result.value.providers) : undefined;
+            const snapshot =
+              refreshedProvider && resolveProviderWorkspaceSnapshot(refreshedProvider, cwd);
+            // A new server timestamp proves progress even when the client clock is ahead.
+            // @effect-diagnostics-next-line globalDate:off
+            const completedAt = Date.now();
+            const refreshed =
+              hasCompleteProviderWorkspaceSnapshot(refreshedProvider, cwd) &&
+              (hasCurrentProviderWorkspaceSnapshot(refreshedProvider, cwd, completedAt) ||
+                snapshot?.checkedAt !==
+                  (provider && resolveProviderWorkspaceSnapshot(provider, cwd))?.checkedAt);
+            if (!refreshed) retryLater(snapshot?.slashCommandsPending === true);
+          },
+          () => retryLater(false),
+        );
         return plan.state;
       },
       (ctx, update: Update) => {
