@@ -150,9 +150,11 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,
-      // A listing kept alive while unread is never revalidated, so reopening the browser
-      // would show folders as they were. Keep it only long enough for a prefetch to land.
+      // A listing mirrors a directory that can change outside the app, so reopening a picker
+      // lists it again. The short TTL only keeps the old listing on screen while it refreshes.
       idleTtlMs: BROWSE_IDLE_TTL_MS,
+      staleTimeMs: 0,
+      revalidateOnRemount: true,
     }),
   };
 }

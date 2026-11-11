@@ -248,6 +248,43 @@ it.each(["/compact", "Continue"])(
   },
 );
 
+it("keeps only the latest compaction divider visible when a turn that compacted twice folds", () => {
+  const compaction = (id: string, ordinal: number, beforeTokenCount: number) => ({
+    ...base(id, "2026-06-20T00:00:03.000Z", ordinal),
+    type: "compaction" as const,
+    driver: ProviderDriverKind.make("claude"),
+    status: "completed" as const,
+    beforeTokenCount,
+    afterTokenCount: 20_000,
+  });
+  const feed = buildThreadFeed([
+    projected(userMessage(), 0),
+    projected(compaction("first-compaction", 1, 100_000), 1),
+    projected(command(), 2),
+    projected(compaction("second-compaction", 3, 90_000), 3),
+  ]);
+  const latestRun = {
+    runId,
+    status: "completed" as const,
+    startedAt: "2026-06-20T00:00:01.000Z",
+    completedAt: "2026-06-20T00:00:03.000Z",
+  };
+  const compactionsIn = (rows: ReadonlyArray<ThreadFeedEntry>) =>
+    rows.flatMap((entry) =>
+      entry.type === "activity-group"
+        ? entry.activities.flatMap(({ projectedItem: { item } }) =>
+            item.type === "compaction" ? [item.beforeTokenCount] : [],
+          )
+        : [],
+    );
+  const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+  expect(collapsed.filter((entry) => entry.type === "run-fold")).toHaveLength(1);
+  expect(compactionsIn(collapsed)).toEqual([90_000]);
+  expect(compactionsIn(deriveThreadFeedPresentation(feed, latestRun, new Set([runId])))).toEqual([
+    100_000, 90_000,
+  ]);
+});
+
 it("binds a persisted resume answer only to the next compaction in its run", () => {
   const requestId = RuntimeRequestId.make("resume-compaction");
   const question = projected(
@@ -392,6 +429,48 @@ describe("buildThreadFeed", () => {
     });
     expect(buildThreadFeed([projected(reply, 0)])[0]?.type).toBe("message");
   });
+
+  it.each([false, true])(
+    "shows an async answer that started a later run where that run begins (cache: %s)",
+    (cached) => {
+      const requestId = RuntimeRequestId.make("late-question");
+      const inRun = (item: OrchestrationV2TurnItem, run: string, position: number) =>
+        projected({ ...item, runId: RunId.make(run) }, position);
+      const message = (id: string, role: "user" | "assistant"): OrchestrationV2TurnItem => ({
+        ...(role === "user" ? userMessage() : assistantMessage()),
+        id: TurnItemId.make(id),
+        messageId: MessageId.make(id),
+      });
+      const answerMessageId = `async-answer:${requestId}`;
+      const settledPrefix = [
+        inRun(
+          {
+            ...base("late-question", "2026-06-20T00:00:01.000Z", 0),
+            type: "user_input_request",
+            requestId,
+            questions: [],
+            questionAnswer: { requestId, answers: { color: "Blue" }, attachmentsByQuestionId: {} },
+          },
+          "run-8",
+          0,
+        ),
+        inRun(message("queued", "user"), "run-9", 1),
+        inRun(message("reply-9", "assistant"), "run-9", 2),
+      ];
+      const rows = [
+        ...settledPrefix,
+        inRun(message(answerMessageId, "user"), "run-10", 3),
+        inRun(message("reply-10", "assistant"), "run-10", 4),
+      ];
+      const cache = cached ? createThreadFeedCache() : undefined;
+      if (cache) buildThreadFeed(settledPrefix, { cache });
+      expect(
+        buildThreadFeed(rows, { cache }).flatMap((entry) =>
+          entry.type === "message" ? [entry.id] : [],
+        ),
+      ).toEqual(["queued", "reply-9", answerMessageId, "reply-10"]);
+    },
+  );
 
   it.each([false, true])(
     "keeps answered questions outside settled work (attachments only: %s)",

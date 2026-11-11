@@ -431,13 +431,14 @@ export function parseAgentSessionTranscript(
     input.source === "claudeAgent"
       ? records.reduce(foldClaudeFields, emptyClaudeFields)
       : emptyClaudeFields;
-  return parseAgentSessionRecords(input, records, claudeFields);
+  return parseAgentSessionRecords(input, records, claudeFields, 0);
 }
 
 function parseAgentSessionRecords(
   input: AgentSessionTranscriptMetadata,
   records: ReadonlyArray<DecodedTranscriptRecord>,
   claudeFields: ClaudeFields,
+  droppedMessageCount: number,
 ): AgentSessionThread | null {
   const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
   // Claude filenames are session IDs. Codex rollout filenames include extra
@@ -650,7 +651,7 @@ function parseAgentSessionRecords(
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
     messages: retainedMessages,
-    omittedMessageCount: conversationMessageCount - retainedMessages.length,
+    omittedMessageCount: conversationMessageCount + droppedMessageCount - retainedMessages.length,
   };
 }
 
@@ -685,6 +686,31 @@ function shouldRetainDecodedRecord(
       record.payload?.type === "message" &&
       (record.payload.role === "user" || record.payload.role === "assistant"))
   );
+}
+
+// The import shows only the first user message and the latest messages, so a
+// long Claude session holds just those and counts the rest as dropped.
+function createClaudeHistoryWindow() {
+  const recent: Array<{ readonly record: DecodedTranscriptRecord; readonly bytes: number }> = [];
+  let firstUser: DecodedTranscriptRecord | undefined;
+  let droppedMessageCount = 0;
+  return {
+    // Takes a record shouldRetainDecodedRecord kept; returns the bytes it released.
+    push: (record: DecodedTranscriptRecord, bytes: number): number => {
+      if (firstUser === undefined && record.type === "user") firstUser = record;
+      recent.push({ record, bytes });
+      if (recent.length <= MAX_IMPORTED_MESSAGES) return 0;
+      const evicted = recent.shift();
+      if (evicted === undefined || evicted.record === firstUser) return 0;
+      droppedMessageCount += 1;
+      return evicted.bytes;
+    },
+    records: () => {
+      const held = recent.map((entry) => entry.record);
+      return firstUser === undefined || held.includes(firstUser) ? held : [firstUser, ...held];
+    },
+    droppedMessageCount: () => droppedMessageCount,
+  };
 }
 
 function normalizeForWorktreeMatch(value: string, caseFold: boolean): string {
@@ -1056,6 +1082,7 @@ export const make = Effect.gen(function* () {
               return null;
             }
             const records: Array<DecodedTranscriptRecord> = [];
+            const claudeHistory = createClaudeHistoryWindow();
             let cwd = Option.none<string>();
             let claudeFields = emptyClaudeFields;
             let historyBytes = prefix?.historyBytes ?? 0;
@@ -1077,7 +1104,8 @@ export const make = Effect.gen(function* () {
             const finishRecord = () => {
               reader.write(decoder.decode());
               recordCount += 1;
-              if (recordCount > MAX_IMPORT_RECORDS) return false;
+              // Claude keeps a bounded window, so only the byte budgets limit its length.
+              if (recordCount > MAX_IMPORT_RECORDS && source !== "claudeAgent") return false;
               const value = reader.finish();
               const decoded = decodeTranscriptValue(value);
               if (Option.isNone(decoded) && source === "pi") {
@@ -1089,7 +1117,9 @@ export const make = Effect.gen(function* () {
                   claudeFields = foldClaudeFields(claudeFields, decoded.value);
                 }
                 if (shouldRetainDecodedRecord(source, decoded.value)) {
-                  if (
+                  if (source === "claudeAgent") {
+                    historyBytes += recordBytes - claudeHistory.push(decoded.value, recordBytes);
+                  } else if (
                     source === "pi" &&
                     decoded.value.type === "message" &&
                     !isPiConversationRecord(decoded.value)
@@ -1147,7 +1177,13 @@ export const make = Effect.gen(function* () {
             )
               return null;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
-              ? { records, cwd, claudeFields, historyBytes }
+              ? {
+                  records: source === "claudeAgent" ? claudeHistory.records() : records,
+                  droppedMessageCount: claudeHistory.droppedMessageCount(),
+                  cwd,
+                  claudeFields,
+                  historyBytes,
+                }
               : null;
           }),
         ),
@@ -1900,6 +1936,7 @@ export const make = Effect.gen(function* () {
               ? snapshot.records
               : [...inheritedRecords, ...snapshot.records],
             snapshot.claudeFields,
+            snapshot.droppedMessageCount,
           );
           if (parsedThread === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
