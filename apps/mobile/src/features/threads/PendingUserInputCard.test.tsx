@@ -54,7 +54,10 @@ vi.mock("../../native/SelectableMarkdownText", () => ({
   ),
 }));
 vi.mock("../../state/entities", () => ({
-  useLiveThreadLinkLabels: (markdown: string) => markdown,
+  useThreadLinkLabels: (markdown: string) => ({ markdown, unavailable: new Set<string>() }),
+}));
+vi.mock("../../native/useEnrichedLinkVariants", () => ({
+  enrichedThreadLinkCustomization: () => undefined,
 }));
 vi.mock("../../native/useOpenPullRequest", () => ({
   useOpenPullRequest: () => async (url: string) => {
