@@ -39,6 +39,7 @@ export function useThreadAgentCwd(
     reportFailure: false,
   });
   const checkedRevision = useRef(checkoutRevision);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the server-backed metadata cache when the checkout may have changed
   useEffect(() => {
     if (checkedRevision.current === checkoutRevision) return;
     checkedRevision.current = checkoutRevision;

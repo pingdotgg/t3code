@@ -3,13 +3,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 /**
- * The checkout containing `projectRoot`: the nearest ancestor holding a `.git`
- * entry, a directory in a clone and a file in a worktree. A worktree checks out
- * the whole repository, so this is what places a subdirectory project inside a
- * thread's worktree. Null outside a checkout. A path that cannot be checked
- * (such as a permission error) is logged and treated as absent.
- */
-export const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (projectRoot: string) {
+ * The nearest ancestor of `projectRoot` holding a `.git` entry (a directory in a
+ * clone, a file in a worktree), which places a subdirectory project inside a
+ * thread's worktree. Null outside a checkout; unreadable paths count as absent.
+ */ export const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
+  projectRoot: string,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const exists = (candidate: string) =>
