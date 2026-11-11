@@ -1464,7 +1464,12 @@ it.effect(
             getCheckLogs: (input) =>
               Effect.sync(() => {
                 asked.push(input.checks.map((entry) => entry.name));
-                return [];
+                return input.checks.map((entry) => ({
+                  ...entry,
+                  log: "boom",
+                  truncated: false,
+                  detail: null,
+                }));
               }),
           }),
         ],
@@ -1484,10 +1489,19 @@ it.effect(
       // The host is asked for five; the other three come back unread, by name.
       assert.lengthOf(asked[0] ?? [], 5);
       assert.deepStrictEqual(
-        many.map((log) => log.name),
-        ["Shard 3", "Shard 4", "Shard 5"],
+        many.map((log) => [log.name, log.log]),
+        [
+          ["Test", "boom"],
+          ["E2E", "boom"],
+          ["Shard 0", "boom"],
+          ["Shard 1", "boom"],
+          ["Shard 2", "boom"],
+          ["Shard 3", null],
+          ["Shard 4", null],
+          ["Shard 5", null],
+        ],
       );
-      assert.include(many[0]?.detail ?? "", "Ask for this check by name");
+      assert.include(many.at(-1)?.detail ?? "", "Ask for this check by name");
     }),
 );
 
