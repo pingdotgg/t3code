@@ -20,9 +20,10 @@ const decodeSettingsWindow = Schema.decodeUnknownSync(Schema.fromJsonString(Sett
 const SETTINGS_WINDOW_SCRIPT = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
+ObjC.import("unistd");
 function run() {
   let previous = "";
-  while (true) {
+  while ($.getppid() !== 1) {
     const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier("com.apple.systempreferences");
     let result = null;
     if (apps.count > 0) {

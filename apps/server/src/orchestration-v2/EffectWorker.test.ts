@@ -21,6 +21,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -69,7 +70,6 @@ function restartEffect(
     attemptCount: 1,
     availableAt: timestamp,
     leaseOwner: "test-worker",
-    leaseExpiresAt: timestamp,
     createdAt: timestamp,
     updatedAt: timestamp,
     completedAt: null,
@@ -106,12 +106,15 @@ function layerExecutorFor(input: {
       ProviderSessionManager.ProviderSessionManagerV2.of({
         shutdown: Effect.void,
         open: () => Effect.die("unused open"),
-        get: () => Effect.succeed(Option.none()),
+        get: () => Effect.succeedNone,
         isLive: () => Effect.succeed(false),
         close: () => Effect.void,
         closeInstance: () => Effect.void,
         release: () => record("release"),
         detach: () => record("detach"),
+        otherWorkingThreads: () => Effect.succeed([]),
+        releaseUnlessBusy: () => Effect.succeed(true),
+        subscribePromptSuggestion: () => Stream.empty,
       }),
     ),
     Layer.succeed(
@@ -168,7 +171,18 @@ function layerExecutorFor(input: {
   );
 }
 
-it.effect("settles a stopped run when its adapter has already lost the native turn", () =>
+it.effect.each([
+  {
+    name: "settles a stopped run when its adapter has already lost the native turn",
+    unresponsive: false,
+    dispatched: ["thread.background-work.settle"],
+  },
+  {
+    name: "leaves the run running and flags the Stop when the provider never confirms it",
+    unresponsive: true,
+    dispatched: ["thread.interrupt.unresponsive"],
+  },
+])("$name", ({ unresponsive, dispatched }) =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const events = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -179,7 +193,8 @@ it.effect("settles a stopped run when its adapter has already lost the native tu
           threadId,
           operation: "interrupt",
           providerTurnId,
-          cause: "Provider turn is not active.",
+          ...(unresponsive ? { unresponsive } : {}),
+          cause: unresponsive ? "Timed out." : "Provider turn is not active.",
         }),
       threads: {
         dispatch: (command) =>
@@ -200,7 +215,7 @@ it.effect("settles a stopped run when its adapter has already lost the native tu
         },
       });
     }).pipe(Effect.provide(layer));
-    assert.deepEqual(yield* Ref.get(events), ["thread.background-work.settle"]);
+    assert.deepEqual(yield* Ref.get(events), dispatched);
   }),
 );
 
@@ -323,7 +338,6 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
       attemptCount: 1,
       availableAt: now,
       leaseOwner: workerId,
-      leaseExpiresAt: now,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -339,7 +353,7 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
     >([]);
     const executionCount = yield* Ref.make(0);
     const layerOutbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      claimNext: () => Effect.succeedSome(claimedEffect),
       get: () =>
         Effect.fail(
           new EffectOutbox.EffectOutboxError({
@@ -395,7 +409,6 @@ it.effect("arms cancellation before the durable pre-execution check", () =>
       attemptCount: 1,
       availableAt: now,
       leaseOwner: workerId,
-      leaseExpiresAt: now,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -406,7 +419,7 @@ it.effect("arms cancellation before the durable pre-execution check", () =>
     const executionCount = yield* Ref.make(0);
     const settlementCount = yield* Ref.make(0);
     const layerOutbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      claimNext: () => Effect.succeedSome(claimedEffect),
       awaitCancellation: () => {
         cancellationArmed = true;
         return Deferred.await(signal);
@@ -463,7 +476,6 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
       attemptCount: 1,
       availableAt: now,
       leaseOwner: workerId,
-      leaseExpiresAt: now,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -473,8 +485,8 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
     const terminalErrors = yield* Ref.make<ReadonlyArray<string>>([]);
     const executionCount = yield* Ref.make(0);
     const layerOutbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
-      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
-      get: () => Effect.succeed(Option.some(claimedEffect)),
+      claimNext: () => Effect.succeedSome(claimedEffect),
+      get: () => Effect.succeedSome(claimedEffect),
       awaitCancellation: () => Effect.never,
       clearCancellation: () => Effect.void,
       succeed: () =>
@@ -538,7 +550,6 @@ it.effect("settles a delegated child once its restart continuation fails for goo
       attemptCount: 1,
       availableAt: timestamp,
       leaseOwner: "test-worker",
-      leaseExpiresAt: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp,
       completedAt: null,
