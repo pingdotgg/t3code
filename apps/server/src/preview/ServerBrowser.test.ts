@@ -1107,6 +1107,188 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
   ).pipe(Effect.provide(layer)),
 );
 
+const basicChallenge = {
+  requestId: "auth-1",
+  frameId: "main",
+  resourceType: "Document",
+  request: { url: "http://localhost:18914/", method: "GET", headers: {} },
+  authChallenge: {
+    source: "Server",
+    origin: "http://localhost:18914",
+    scheme: "basic",
+    realm: "test",
+  },
+};
+
+it.live("signs in to an HTTP Basic challenge without holding the action queue", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const session = contexts[0]!.sessions[0]!;
+      const signedIn = Promise.withResolvers<void>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => signedIn.resolve()));
+      // Chromium holds the navigation until the challenge is answered.
+      page.goto.mockImplementationOnce(async () => {
+        session.emit("Fetch.authRequired", basicChallenge);
+        await signedIn.promise;
+      });
+      yield* broker.invoke({
+        scope,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:18914/" },
+      });
+      const blocked = yield* broker
+        .invoke<void>({ scope, tabId, operation: "evaluate", input: { expression: "1" } })
+        .pipe(Effect.flip);
+      expect(blocked).toMatchObject({ reason: "dialogPending" });
+      // Without handleAuthRequests, Chromium renders the 401 body and never asks for credentials.
+      expect(session.send).toHaveBeenCalledWith(
+        "Fetch.enable",
+        expect.objectContaining({ handleAuthRequests: true }),
+      );
+      const pending = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(pending.dialog).toMatchObject({
+        type: "auth",
+        message: "http://localhost:18914 asks you to sign in. It says: test",
+      });
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* viewer.input({ type: "dialog", accept: true, username: "test", password: "hunter2" });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(session.send).toHaveBeenCalledWith("Fetch.continueWithAuth", {
+        requestId: "auth-1",
+        authChallengeResponse: {
+          response: "ProvideCredentials",
+          username: "test",
+          password: "hunter2",
+        },
+      });
+      expect(status.dialog).toBeNull();
+      expect(JSON.stringify(status)).not.toContain("hunter2");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a sign-in prompt Chromium already dropped clears when answering it fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      const session = contexts[0]!.sessions[0]!;
+      const send = session.send.getMockImplementation()!;
+      // Chromium forgets a paused request when its frame goes away.
+      session.send.mockImplementation(async (method, input) =>
+        method === "Fetch.continueWithAuth"
+          ? Promise.reject(new Error("Invalid InterceptionId."))
+          : send(method, input),
+      );
+      session.emit("Fetch.authRequired", basicChallenge);
+      yield* Queue.takeAll(viewer.output);
+      const failed = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "dialog",
+          input: { accept: true },
+        })
+        .pipe(Effect.flip);
+      expect(JSON.stringify(failed)).toContain("Invalid InterceptionId.");
+      expect(yield* Queue.clear(viewer.output)).toContainEqual(
+        expect.objectContaining({ _tag: "control", dialog: null }),
+      );
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.dialog).toBeNull();
+      yield* broker.invoke({ scope, tabId, operation: "evaluate", input: { expression: "1" } });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a fresh tab opened to an HTTP Basic challenge returns with the sign-in prompt", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* Effect.yieldNow;
+      // Chromium holds the first navigation until the challenge is answered.
+      initialNavigation = () => {
+        contexts[0]!.sessions[0]!.emit("Fetch.authRequired", basicChallenge);
+        return new Promise<void>(() => {});
+      };
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, url: "http://localhost:18914/" },
+      });
+      expect(opened.dialog).toMatchObject({ type: "auth" });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "dialog",
+        input: { accept: false },
+      });
+      expect(contexts[0]!.sessions[0]!.send).toHaveBeenCalledWith("Fetch.continueWithAuth", {
+        requestId: "auth-1",
+        authChallengeResponse: { response: "CancelAuth" },
+      });
+      expect(status.dialog).toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("navigating away from an HTTP Basic challenge cancels it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const session = contexts[0]!.sessions[0]!;
+      session.emit("Fetch.authRequired", basicChallenge);
+      const goto = page.goto.getMockImplementation()!;
+      page.goto.mockImplementationOnce(async (next: string) => {
+        page.emit("request", {
+          isNavigationRequest: () => true,
+          frame: () => page,
+          url: () => next,
+        });
+        await goto(next);
+      });
+      yield* broker.invoke({
+        scope,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:5173/" },
+      });
+      expect(session.send).toHaveBeenCalledWith("Fetch.continueWithAuth", {
+        requestId: "auth-1",
+        authChallengeResponse: { response: "CancelAuth" },
+      });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.dialog).toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -9,12 +9,20 @@ export const isPdfAssetUrl = (url: string) => {
   return pathname.startsWith("/api/assets/") && /\.pdf$/i.test(pathname);
 };
 
-export async function installPdfDocumentNavigation(cdp: CDPSession) {
+/**
+ * One `Fetch.enable` owns a session's interception, so auth challenges share it.
+ * Chromium raises `Fetch.authRequired` only for requests paused at the request stage.
+ */
+export async function installPdfDocumentNavigation(
+  cdp: CDPSession,
+  { handleAuthRequests }: { readonly handleAuthRequests: boolean },
+) {
   const nativeViewer = await cdp.send("Runtime.evaluate", {
     expression: "navigator.pdfViewerEnabled",
     returnByValue: true,
   });
-  if (nativeViewer.result?.value === true) return;
+  const interceptPdfs = nativeViewer.result?.value !== true;
+  if (!interceptPdfs && !handleAuthRequests) return;
   const { frameTree } = await cdp.send("Page.getFrameTree");
   // The shell cannot open PDFs. Commit a document at the original URL so the
   // client can embed its signed bytes while Back and Forward keep working.
@@ -23,6 +31,7 @@ export async function installPdfDocumentNavigation(cdp: CDPSession) {
     const proceed = () => cdp.send("Fetch.continueRequest", { requestId });
     void (async () => {
       if (
+        !interceptPdfs ||
         request.method !== "GET" ||
         frameId !== frameTree.frame.id ||
         !isPdfAssetUrl(request.url)
@@ -66,7 +75,19 @@ export async function installPdfDocumentNavigation(cdp: CDPSession) {
   // Only document navigations pause; the client's PDF fetch gets the original bytes.
   await cdp.send("Fetch.enable", {
     patterns: [
-      { urlPattern: "*/api/assets/*", resourceType: "Document", requestStage: "Response" },
+      ...(interceptPdfs
+        ? [
+            {
+              urlPattern: "*/api/assets/*",
+              resourceType: "Document",
+              requestStage: "Response",
+            } as const,
+          ]
+        : []),
+      ...(handleAuthRequests
+        ? [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" } as const]
+        : []),
     ],
+    handleAuthRequests,
   });
 }
