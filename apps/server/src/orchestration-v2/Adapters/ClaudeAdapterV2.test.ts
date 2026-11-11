@@ -4432,7 +4432,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 attachments: [],
               }),
             );
-            return JSON.stringify(harness.getOpenedOptions()?.settings ?? {}).includes(script);
+            const settings = harness.getOpenedOptions()?.settings as ClaudeSdk.Settings | undefined;
+            return (settings?.hooks?.PostToolUse ?? []).some((matcher) =>
+              matcher.hooks.some((hook) => "args" in hook && hook.args?.[0] === script),
+            );
           }),
         ).pipe(
           Effect.provide(ServerSettings.layerTest({ nadirCompaction: true })),
