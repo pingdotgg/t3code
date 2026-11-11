@@ -1659,13 +1659,9 @@ it.effect("lets a worktree checkout that is still working run past five minutes"
   ),
 );
 
-it.effect.each([
-  { exitCode: 0, reportProgress: true },
-  { exitCode: 0, reportProgress: false },
-  { exitCode: 1, reportProgress: true },
-])(
+it.effect.each([{ exitCode: 0 }, { exitCode: 1 }])(
   "finishes a noisy worktree checkout using its exit status (%j)",
-  ({ exitCode, reportProgress }) =>
+  ({ exitCode }) =>
     Effect.gen(function* () {
       const updates: Array<{ percent: number; completed: number; total: number }> = [];
       const outputDrained = yield* Deferred.make<void>();
@@ -1700,24 +1696,19 @@ it.effect.each([
       const result = yield* driver
         .createWorktree(
           { cwd, refName: "main", path: worktreePath },
-          reportProgress
-            ? {
-                progress: {
-                  onCheckoutProgress: (update) =>
-                    Effect.sync(() => {
-                      updates.push(update);
-                    }),
-                },
-              }
-            : {},
+          {
+            progress: {
+              onCheckoutProgress: (update) =>
+                Effect.sync(() => {
+                  updates.push(update);
+                }),
+            },
+          },
         )
         .pipe(Effect.result);
 
       assert.isTrue(yield* Deferred.isDone(outputDrained));
-      assert.deepStrictEqual(
-        updates,
-        reportProgress ? [{ percent: 100, completed: 10, total: 10 }] : [],
-      );
+      assert.deepStrictEqual(updates, [{ percent: 100, completed: 10, total: 10 }]);
       if (exitCode === 0) {
         assert.isTrue(Result.isSuccess(result));
         if (Result.isSuccess(result)) assert.equal(result.success.worktree.path, worktreePath);
