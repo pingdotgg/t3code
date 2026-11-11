@@ -61,7 +61,7 @@ jobs:
 
       # The publish workflow derives the same version from this run's number,
       # so the version baked into the bundle matches the packaged app.
-      - name: Set preview version and public configuration
+      - name: Set preview version
         shell: bash
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -70,8 +70,6 @@ jobs:
 
           base_version="$(node -p "require('./apps/desktop/package.json').version")"
           node scripts/update-release-package-versions.ts "${base_version}-pr.${PR_NUMBER}.${GITHUB_RUN_NUMBER}"
-          # Public T3 Connect identifiers (Clerk publishable key, relay URL).
-          cp .env.example .env
 
       # PR heads from before build:desktop:bundle use the full build, which
       # compiles the Linux browser secret helper and needs libsecret.

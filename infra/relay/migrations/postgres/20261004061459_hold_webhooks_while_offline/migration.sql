@@ -1,1 +1,0 @@
-ALTER TABLE "relay_environment_links" ADD COLUMN "hold_webhooks_while_offline" boolean DEFAULT false NOT NULL;

@@ -208,12 +208,6 @@ const override = Effect.fn("checkChanged.override")(function* (
   return value;
 });
 
-// Tests that read a doc; a changed doc has no test beside it to select them.
-export const docReaderTests = (files: ReadonlyArray<string>) =>
-  files.includes("docs/user/t3-connect-troubleshooting.md")
-    ? ["apps/server/src/cloud/ConnectReachability.test.ts"]
-    : [];
-
 const checkChanged = Effect.fn("checkChanged")(function* (input: {
   readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
@@ -333,7 +327,6 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       if (entry.startsWith(prefix) && TEST.test(entry)) tests.add(path.join(dir, entry));
     }
   }
-  for (const test of docReaderTests(files)) tests.add(test);
   // It reads files other than the ones beside it, so no changed file selects it.
   if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
   const { vitestTests, nodeTests } = splitTests(tests);
@@ -476,6 +469,8 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
 
   const steps: Array<Step<never>> = [
     ...(runPatchCheck ? [{ name: "unused patches", run: checkPatches }] : []),
+    // An upstream sync can restore T3 Connect paths or Clerk imports anywhere, so it always runs.
+    command("removed connect", ["exec", "node", "scripts/check-removed-connect.ts"]),
     ...(present.length > 0
       ? [command("format", ["fmt", "--check", "--no-error-on-unmatched-pattern", ...present])]
       : []),

@@ -34,8 +34,6 @@ NODE_ENV=test vp test run \
   apps/server/src/persistence/Migrations/054_ProjectionThreadsAutoSettleDisabledAt.test.ts
 NODE_ENV=test vp test run \
   apps/desktop/src/app/SharedSafeStorage.test.ts \
-  apps/desktop/src/app/LegacyTokenStorage.test.ts \
-  apps/desktop/src/app/DesktopClerk.test.ts \
   apps/desktop/src/app/DesktopConnectionCatalogStore.test.ts
 vp run --filter @t3tools/web --filter @t3tools/desktop --filter @t3tools/client-runtime \
   --filter @t3tools/mcp-gateway --filter @t3tools/contracts --filter @t3tools/scripts \

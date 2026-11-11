@@ -10,14 +10,7 @@ const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const SHOWCASE_PROJECT_ID = "t3code";
 const SHOWCASE_THREAD_ID = "remote-command-center";
 
-export const SHOWCASE_SCENES = [
-  "threads",
-  "thread",
-  "terminal",
-  "review",
-  "environments",
-  "agent-activity",
-] as const;
+export const SHOWCASE_SCENES = ["threads", "thread", "terminal", "review", "environments"] as const;
 export type ShowcaseScene = (typeof SHOWCASE_SCENES)[number];
 
 const MODEL_SELECTION = JSON.stringify({ instanceId: "codex", model: "gpt-5.4" });

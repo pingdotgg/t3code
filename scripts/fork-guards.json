@@ -4,31 +4,23 @@
     "protects": "an auth refusal from a route that answered beats a silent route's timeout",
     "test": "packages/client-runtime/src/connection/supervisor.test.ts",
     "title": "reports a refusal from a route that answered over a silent route's timeout",
-    "sha256": "5f648270cb2dbb9e032ac4028a471be79cec84ce1865735b2ade18dc71aceec1",
+    "sha256": "d3f2c0907af2a7707571f34c575f8696da22392fd6ac6dd2b48567fcf4a669a3",
     "sources": ["packages/client-runtime/src/connection/driver.ts"]
   },
   {
     "fix": "#105",
-    "protects": "direct routes connect without a T3 Connect sign-in",
+    "protects": "direct routes connect without a hosted sign-in",
     "test": "packages/client-runtime/src/connection/supervisor.test.ts",
-    "title": "keeps retrying a silent direct route when T3 Connect asks for sign-in",
-    "sha256": "3511decd89cff733c2349111551c27ab7d7c562611a34aecd13a3febce8f17ba",
+    "title": "keeps retrying a silent direct route when another route asks for sign-in",
+    "sha256": "a4a885d8ff93686db61290b53847fb51fa2b5d818ea1abe1c6d3a5283dbeb7bf",
     "sources": ["packages/client-runtime/src/connection/driver.ts"]
   },
   {
     "fix": "#105",
-    "protects": "direct routes connect without a T3 Connect sign-in",
-    "test": "packages/client-runtime/src/authorization/layer.test.ts",
-    "title": "keeps direct access on a valid environment token while signed out",
-    "sha256": "557cd8503b782374f419b929413ce14de183738cacc0fbbbff87e70bc4b2092b",
-    "sources": ["packages/client-runtime/src/authorization/service.ts"]
-  },
-  {
-    "fix": "#105",
-    "protects": "direct routes connect without a T3 Connect sign-in",
+    "protects": "direct routes connect without a hosted sign-in",
     "test": "packages/client-runtime/src/state/environmentHttpAuth.test.ts",
     "title": "keeps a learned direct origin and marks the token request as direct",
-    "sha256": "88514cb4e951f41e25d59fda61888828f0e0e7de8ac8f174197ee3d011a9c64a",
+    "sha256": "692ed511514c3e418dff0c54e5261ad0379c71ce37bd84ed488eacaba0c7f518",
     "sources": ["packages/client-runtime/src/state/environmentHttpAuth.ts"]
   },
   {
@@ -49,28 +41,6 @@
     "title": "lets a short mobile resume probe use the remote deadline before replacing",
     "sha256": "ffb7d8c639509406f373cacfe24698b45005dc40a7030274522ba982fe5f9cc6",
     "sources": ["packages/client-runtime/src/connection/supervisor.ts"]
-  },
-  {
-    "fix": "#108",
-    "protects": "direct routes keep and renew their token without the relay",
-    "test": "packages/client-runtime/src/authorization/layer.test.ts",
-    "title": "connects on an aging token at once and renews it through the relay behind",
-    "sha256": "0ee4bc050971e0e1a0960103a434b5688c734471c33665349cb035c6aa70f89a",
-    "sources": [
-      "packages/client-runtime/src/authorization/service.ts",
-      "packages/client-runtime/src/authorization/tokenStore.ts"
-    ]
-  },
-  {
-    "fix": "#108",
-    "protects": "direct routes keep and renew their token without the relay",
-    "test": "packages/client-runtime/src/authorization/layer.test.ts",
-    "title": "drops an aging token when the relay refuses to renew it",
-    "sha256": "5d225d7e819c7dd05e2d3250525b7a970fbed639b17daeef43d7be350f72d9bc",
-    "sources": [
-      "packages/client-runtime/src/authorization/service.ts",
-      "packages/client-runtime/src/authorization/tokenStore.ts"
-    ]
   },
   {
     "fix": "#108",
@@ -103,14 +73,6 @@
     "title": "treats a send backlog that stops draining as a stalled client",
     "sha256": "fc20b08a256877fba345b7ea767c3d9079cda65673c9692697b24c593d28e2d3",
     "sources": ["apps/server/src/wsClientLiveness.ts", "apps/server/src/ws.ts"]
-  },
-  {
-    "fix": "#101",
-    "protects": "failed relay attempts are traced with their real error",
-    "test": "packages/client-runtime/src/connection/supervisor.test.ts",
-    "title": "exports each relay setup as a standalone linked trace that ends at readiness",
-    "sha256": "d9600641052a0ed9f17f72f9b9c43c02fb4dc35f52962bbdea4c1ed62fe2441d",
-    "sources": ["packages/client-runtime/src/connection/supervisor.ts"]
   },
   {
     "fix": "#111",
@@ -217,7 +179,7 @@
     "protects": "an equal route keeps a live socket, and a host that stays down shows offline",
     "test": "packages/client-runtime/src/connection/presentation.test.ts",
     "title": "settles a host past its grace period as offline and a refused credential as re-pair",
-    "sha256": "a612fe5200fd43c8d501fdd2465562cbe43d0a7ef8c6ff1ff322515096095efd",
+    "sha256": "4fa785e503585fbab3115d890321274264bb497ff2a6699cf57111698da5c9d8",
     "sources": [
       "packages/client-runtime/src/connection/supervisor.ts",
       "packages/client-runtime/src/connection/presentation.ts"
