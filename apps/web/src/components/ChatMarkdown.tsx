@@ -1767,7 +1767,6 @@ function ChatMarkdown({
   const streamingBlocks =
     props.isStreaming === true &&
     !inline &&
-    !hasInsights &&
     extraRemarkPlugins.length === 0 &&
     !props.onTaskListChange
       ? splitMarkdownBlocks(text)
