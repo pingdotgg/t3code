@@ -50,6 +50,10 @@ import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
+import {
+  AgentsToolkit,
+  agentsToolInputSchema,
+} from "../../apps/server/src/mcp/agents/AgentsMcpTools.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
@@ -446,11 +450,19 @@ const t3InputDecoders = new Map(
     ),
   ]),
 );
-const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
-  name: `${T3_PREFIX}${tool.name}`,
-  description: Tool.getDescription(tool) ?? "",
-  input_schema: advertisedJsonSchema(tool),
-}));
+// The Agents tools keep the gateway catalog's input schema, as McpHttpServer registers them.
+const t3Tools: ReadonlyArray<ApiTool> = [
+  ...t3SourceTools.map((tool) => ({
+    name: `${T3_PREFIX}${tool.name}`,
+    description: Tool.getDescription(tool) ?? "",
+    input_schema: advertisedJsonSchema(tool),
+  })),
+  ...Object.values(AgentsToolkit.tools).map((tool) => ({
+    name: `${T3_PREFIX}${tool.name}`,
+    description: Tool.getDescription(tool) ?? "",
+    input_schema: agentsToolInputSchema(tool.name),
+  })),
+];
 const enabledWhen = (predicate: () => boolean) =>
   new Set(
     t3SourceTools
