@@ -549,13 +549,21 @@ function SubagentTimelineLink(props: {
         // The tool rows' 24px icon column; the pull-back leaves their 5px gap to the label.
         className="-me-0.75 size-6"
       />
-      <span className="min-w-0 shrink truncate text-label text-foreground">{props.title}</span>
+      <span
+        className={cn(
+          "min-w-0 shrink truncate text-label text-foreground",
+          !props.event && "max-sm:flex-1",
+        )}
+      >
+        {props.title}
+      </span>
       {remote !== undefined ? (
         <span className="shrink-0 text-caption text-dim-foreground">on {remote.label}</span>
       ) : null}
       <span
         className={cn(
           "min-w-0 flex-1 truncate text-body",
+          !props.event && "max-sm:hidden",
           failed ? "text-error-foreground" : "text-dim-foreground",
         )}
       >
@@ -583,7 +591,12 @@ function SubagentTimelineLink(props: {
           {statusLabel}
         </span>
       ) : null}
-      <span className="shrink-0 font-mono text-3xs text-dim-foreground tabular-nums">
+      <span
+        className={cn(
+          "shrink-0 font-mono text-3xs text-dim-foreground tabular-nums",
+          !props.event && "max-sm:hidden",
+        )}
+      >
         {props.event ? props.event.timestamp : <SubagentElapsed agent={timing} />}
       </span>
       {props.event ? null : <SubagentStatusGlyph status={liveStatus} />}
