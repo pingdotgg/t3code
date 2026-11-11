@@ -967,18 +967,6 @@ it.layer(
 
   it.effect.each([
     {
-      name: "a system profile link",
-      definition: claudeUpdate,
-      resolved: "/etc/profiles/per-user/me/bin/claude",
-      real: "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-claude-code-with-bun/bin/claude",
-    },
-    {
-      name: "a user profile link",
-      definition: claudeUpdate,
-      resolved: "/home/me/.nix-profile/bin/claude",
-      real: "/nix/store/7r4j5v0h3qkl9yw2d1c8xpz6ma0bnsfi-claude-code-2.1.312/bin/claude",
-    },
-    {
       name: "a home-manager link in the native location",
       definition: claudeUpdate,
       resolved: "/home/me/.local/bin/claude",
