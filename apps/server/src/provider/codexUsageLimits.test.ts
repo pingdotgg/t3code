@@ -5,7 +5,6 @@ import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
   codexRateLimitsToUpdate,
-  codexUsageLimitMessage,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 
@@ -129,6 +128,29 @@ describe("codexRateLimitsToLimits", () => {
 });
 
 describe("codexRateLimitsToUpdate", () => {
+  it("does not republish cached windows over a newer account probe", () => {
+    const cached = {
+      primary: { usedPercent: 0, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+      secondary: { usedPercent: 20, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+    };
+    expect(codexRateLimitsToUpdate(cached)?.windows).toHaveLength(2);
+    expect(codexRateLimitsToUpdate(structuredClone(cached), cached)).toBeUndefined();
+
+    const changed = { ...cached, secondary: { ...cached.secondary, usedPercent: 21 } };
+    expect(codexRateLimitsToUpdate(changed, cached)?.windows.map((window) => window.id)).toEqual([
+      "secondary",
+    ]);
+    expect(codexRateLimitsToUpdate({ primary: cached.primary }, cached)).toBeUndefined();
+    expect(
+      codexRateLimitsToUpdate({ primary: { ...cached.primary, resetsAt: 1_784_001_000 } }, cached)
+        ?.windows,
+    ).toHaveLength(1);
+    expect(
+      codexRateLimitsToUpdate({ primary: { ...cached.primary, usedPercent: 76 } }, cached)
+        ?.windows[0]?.usedPercent,
+    ).toBe(76);
+  });
+
   it("carries only the windows the notification names", () => {
     expect(
       codexRateLimitsToUpdate({
@@ -185,50 +207,6 @@ describe("codexRateLimitsFailureMessage", () => {
         }),
       ),
     ).toBe("Codex could not read usage (JSON-RPC -32603).");
-  });
-});
-
-describe("codexUsageLimitMessage", () => {
-  const at = "2026-01-01T00:00:00.000Z";
-  const atSeconds = Date.parse(at) / 1000;
-
-  it("names the exhausted window and the workspace's missing credits", () => {
-    expect(
-      codexUsageLimitMessage(
-        {
-          limitId: "codex",
-          rateLimitReachedType: "workspace_owner_credits_depleted",
-          primary: { usedPercent: 40, resetsAt: atSeconds + 3_600, windowDurationMins: 300 },
-          secondary: {
-            usedPercent: 100,
-            resetsAt: atSeconds + 5 * 86_400 + 5 * 3_600,
-            windowDurationMins: 10_080,
-          },
-        },
-        at,
-      ),
-    ).toBe(
-      "Codex usage limit reached. The weekly limit resets in 5d 5h. The workspace has no credits to continue sooner: ask your workspace owner to add credits, or send the message again once the limit resets.",
-    );
-  });
-
-  it("points a reached spend cap at the workspace owner", () => {
-    expect(
-      codexUsageLimitMessage(
-        {
-          limitId: "codex",
-          rateLimitReachedType: "workspace_member_usage_limit_reached",
-          primary: {
-            usedPercent: 100,
-            resetsAt: atSeconds + 3 * 3_600 + 20 * 60,
-            windowDurationMins: 300,
-          },
-        },
-        at,
-      ),
-    ).toBe(
-      "Codex usage limit reached. The session limit resets in 3h 20m. The workspace spend limit is reached: ask your workspace owner to raise it, or send the message again once the limit resets.",
-    );
   });
 });
 

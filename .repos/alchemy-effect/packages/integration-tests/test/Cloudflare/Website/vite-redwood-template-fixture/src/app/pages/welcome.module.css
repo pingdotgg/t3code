@@ -1,0 +1,118 @@
+/**
+* This is a minimal styling for the starter welcome page.
+
+* _Feel free to delete this file_
+**/
+
+:root {
+  --color-baige: #f4eedf;
+  --color-orange: #f47238;
+  --color-orange-light: #ffad48;
+  --font-playfair: "Playfair Display", serif;
+  --font-noto: "Noto Sans", sans-serif;
+  --text-color: #1a1a1a;
+  --code-bg: #1b1b1b;
+}
+
+body {
+  background-color: var(--color-baige);
+  margin: 0;
+  padding: 0;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 5rem 2rem;
+  font-family: var(--font-noto);
+  background-color: var(--color-baige);
+  color: var(--text-color);
+  min-height: 100vh;
+}
+
+.header {
+  margin-bottom: 4rem;
+}
+
+.title {
+  font-family: var(--font-playfair);
+  font-size: 4rem;
+  font-weight: bold;
+  line-height: 0.9;
+  margin: 0;
+}
+
+.subtitle {
+  font-family: var(--font-noto);
+  font-size: 1.625rem;
+  margin-top: 0.75rem;
+}
+
+.section {
+  margin-bottom: 4rem;
+}
+
+.sectionTitle {
+  font-family: var(--font-playfair);
+  font-size: 2.5rem;
+  font-weight: bold;
+  margin-bottom: 1rem;
+}
+
+.list {
+  list-style-position: inside;
+  list-style-type: decimal;
+  padding-left: 0;
+  font-size: 1.25rem;
+  line-height: 1.6;
+}
+
+.list li {
+  margin-bottom: 0.75rem;
+}
+
+.link {
+  color: var(--color-orange);
+  font-weight: bold;
+  text-decoration: none;
+}
+
+.link:hover {
+  color: var(--color-orange-light);
+}
+
+.codeBlock {
+  background-color: var(--code-bg);
+  color: var(--color-orange-light);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  font-family: monospace;
+  font-size: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.codePrompt {
+  color: var(--color-orange);
+}
+
+.code {
+  flex-grow: 1;
+}
+
+.copyButton {
+  background-color: transparent;
+  color: var(--color-orange-light);
+  border: none;
+  border-radius: 4px;
+  padding: 0.25rem 0.75rem;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: bold;
+}
+
+.copyButton:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}

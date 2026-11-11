@@ -1,6 +1,6 @@
-import * as Effect from "effect/Effect";
 import * as NodeFsPromises from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as Effect from "effect/Effect";
 import * as vite from "vite";
 import { describe, expect, it } from "vitest";
 import {
@@ -15,8 +15,7 @@ import {
 } from "../index.ts";
 import { makeProject, run } from "./helpers.ts";
 
-const makeCollector = (options?: CollectorOptions) =>
-  run(makeBuildOutputCollector(options));
+const makeCollector = (options?: CollectorOptions) => run(makeBuildOutputCollector(options));
 
 interface BuildEnvironment {
   readonly outDir: string;
@@ -67,8 +66,7 @@ const workerEntryPlugin = (realEntry: string): vite.Plugin => {
       if (source === "virtual:worker-entry" || source === id) return id;
     },
     load(source) {
-      if (source === id)
-        return `export { default } from ${JSON.stringify(realEntry)};`;
+      if (source === id) return `export { default } from ${JSON.stringify(realEntry)};`;
     },
   };
 };
@@ -116,11 +114,7 @@ describe("makeBuildOutputCollector", () => {
     const output = await run(collector.collect());
     expect(output.clientDirectory).toBe(NodePath.join(root, "dist/client"));
     // Client chunks must not leak into serverModules.
-    expect(
-      output.serverModules!.every((module) =>
-        module.name.startsWith("server/"),
-      ),
-    ).toBe(true);
+    expect(output.serverModules!.every((module) => module.name.startsWith("server/"))).toBe(true);
   });
 
   it("returns no server modules for a client-only build", async () => {
@@ -156,15 +150,9 @@ describe("makeBuildOutputCollector", () => {
       },
     });
     const output = await run(collector.collect());
-    expect(
-      output.serverModules!.every((module) =>
-        module.name.startsWith("server/"),
-      ),
-    ).toBe(true);
+    expect(output.serverModules!.every((module) => module.name.startsWith("server/"))).toBe(true);
     // The skipped environment still built to disk — it is only excluded from the output.
-    const prerenderOut = await NodeFsPromises.readdir(
-      NodePath.join(root, "dist/prerender"),
-    );
+    const prerenderOut = await NodeFsPromises.readdir(NodePath.join(root, "dist/prerender"));
     expect(prerenderOut.length).toBeGreaterThan(0);
   });
 
@@ -274,10 +262,7 @@ describe("makeBuildOutputCollector", () => {
     // Simulate a framework rewriting + adding server modules after buildApp
     // (waku's prune step + __waku_build_metadata.js).
     const pruned = `// Pruned by the framework - content cached at build time.`;
-    await NodeFsPromises.writeFile(
-      NodePath.join(root, "dist/server/index.js"),
-      pruned,
-    );
+    await NodeFsPromises.writeFile(NodePath.join(root, "dist/server/index.js"), pruned);
     await NodeFsPromises.writeFile(
       NodePath.join(root, "dist/server/__build_metadata.js"),
       `export default { metadata: true };`,
@@ -296,9 +281,7 @@ describe("makeBuildOutputCollector", () => {
     expect(names).toContain("server/assets/data.bin");
     const entry = output.serverModules![0]!;
     expect(entry.content).toBe(pruned);
-    const binary = output.serverModules!.find(
-      (module) => module.name === "server/assets/data.bin",
-    );
+    const binary = output.serverModules!.find((module) => module.name === "server/assets/data.bin");
     expect(Buffer.isBuffer(binary!.content)).toBe(true);
     expect(Array.from(binary!.content as Buffer)).toEqual([0, 1, 2, 255]);
   });
@@ -315,9 +298,7 @@ describe("makeBuildOutputCollector", () => {
       },
     });
     await NodeFsPromises.rm(NodePath.join(root, "dist/server/index.js"));
-    const result = await run(
-      Effect.result(collector.collect({ fromDisk: true })),
-    );
+    const result = await run(Effect.result(collector.collect({ fromDisk: true })));
     expect(result._tag).toBe("Failure");
   });
 
@@ -336,9 +317,7 @@ describe("makeBuildOutputCollector", () => {
       },
     });
     const output = await run(collector.collect());
-    expect(Array.from(output.externalWorkspaces)).toContain(
-      NodePath.join(base, "ext"),
-    );
+    expect(Array.from(output.externalWorkspaces)).toContain(NodePath.join(base, "ext"));
   });
 });
 
@@ -397,23 +376,18 @@ describe("selectEntryByFacade", () => {
 
   it("matches the wrapped worker-entry facade", () => {
     const posix = entry.replaceAll("\\", "/");
-    expect(
-      selectEntryByFacade(entry)(chunk(`${WORKER_ENTRY_PREFIX}${posix}`)),
-    ).toBe(true);
+    expect(selectEntryByFacade(entry)(chunk(`${WORKER_ENTRY_PREFIX}${posix}`))).toBe(true);
   });
 
   it("rejects other chunks", () => {
-    expect(
-      selectEntryByFacade(entry)(chunk(NodePath.resolve("/project/other.ts"))),
-    ).toBe(false);
+    expect(selectEntryByFacade(entry)(chunk(NodePath.resolve("/project/other.ts")))).toBe(false);
     expect(selectEntryByFacade(entry)(chunk(null))).toBe(false);
   });
 });
 
 describe("WORKER_ENTRY_PREFIX", () => {
   it("matches the constant in @alchemy.run/cloudflare-runtime/rolldown", async () => {
-    const plugins =
-      await import("@alchemy.run/cloudflare-runtime/rolldown/plugins");
+    const plugins = await import("@alchemy.run/cloudflare-runtime/rolldown/plugins");
     expect(WORKER_ENTRY_PREFIX).toBe(plugins.WORKER_ENTRY_PREFIX);
   });
 });
