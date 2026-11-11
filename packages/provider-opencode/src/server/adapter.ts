@@ -3304,7 +3304,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                     ),
                 ).pipe(
                   Effect.tap(() =>
-                    turn.interrupted || turn.finalized || nativeStreamFailure !== null
+                    turn.interrupted ||
+                    turn.finalized ||
+                    turn.contextOverflow !== null ||
+                    nativeStreamFailure !== null
                       ? Effect.void
                       : emitCompactionItem(state, turn),
                   ),

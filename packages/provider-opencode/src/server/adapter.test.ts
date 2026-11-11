@@ -766,61 +766,46 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
-  it.effect("fails a turn on a context overflow that OpenCode does not compact", () =>
+  it.effect("fails an explicit compaction that OpenCode reports as a context overflow", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
-      let promptId = "";
-      const harness = yield* makeOpenCodeRuntimeHarness("context-overflow-no-compact", "root", {
+      const harness = yield* makeOpenCodeRuntimeHarness("compact-overflow", "root", {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
           create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-          promptAsync: async (input: { messageID: string }) => {
-            promptId = input.messageID;
+          summarize: async () => {
+            await nativeEvents.push({
+              type: "session.error",
+              properties: {
+                sessionID: "root",
+                error: {
+                  name: "ContextOverflowError",
+                  data: { message: "This model's maximum context length is 131070 tokens." },
+                },
+              },
+            });
             return { data: true };
           },
-          abort: async () => ({ data: true }),
-          children: async () => ({ data: [] }),
         },
       });
-      yield* harness.startTurn();
       const received = yield* harness.runtime.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
         Effect.forkScoped,
       );
-      yield* Effect.promise(() =>
-        nativeEvents.push({
-          type: "message.updated",
-          properties: {
-            sessionID: "root",
-            info: { id: promptId, role: "user", time: { created: 1 } },
-          },
-        }),
-      );
-      for (const event of [
-        { type: "session.status", properties: { sessionID: "root", status: { type: "busy" } } },
-        {
-          type: "session.error",
-          properties: {
-            sessionID: "root",
-            error: {
-              name: "ContextOverflowError",
-              data: { message: "This model's maximum context length is 131070 tokens." },
-            },
-          },
-        },
-        { type: "session.status", properties: { sessionID: "root", status: { type: "idle" } } },
-      ]) {
-        yield* Effect.promise(() => nativeEvents.push(event));
-      }
+      yield* harness.startTurn("/compact");
 
-      const terminal = Array.from(yield* Fiber.join(received)).find(
-        (event) => event.type === "turn.terminal",
-      );
+      const events = Array.from(yield* Fiber.join(received));
+      const terminal = events.find((event) => event.type === "turn.terminal");
       assert.equal(terminal?.status, "failed");
       assert.equal(
         terminal?.failure?.message,
         "This model's maximum context length is 131070 tokens.",
+      );
+      assert.isFalse(
+        events.some(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
       );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
