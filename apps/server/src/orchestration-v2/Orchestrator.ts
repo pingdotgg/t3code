@@ -6386,11 +6386,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const editingQueueRun =
-      dispatchMode.type === "queue_after_active" &&
-      projection.runs.some((run) => run.status === "queued" && run.queueEditId != null)
+    const nextQueuedRun =
+      dispatchMode.type === "queue_after_active"
         ? queuedRunsInDeliveryOrder(projection)[0]
         : undefined;
+    const editingQueueRun = nextQueuedRun?.queueEditId != null ? nextQueuedRun : undefined;
     const queueBehindRun = activeRun ?? worktreeMissingRun ?? editingQueueRun;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =

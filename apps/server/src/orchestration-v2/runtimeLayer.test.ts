@@ -9368,6 +9368,37 @@ it.layer(layerTest)("queued edit holds", (it) => {
     }),
   );
 
+  it.effect("starts a new message after Stop when the edit is not first in line", () =>
+    Effect.gen(function* () {
+      const q = yield* editableQueue("send-after-stop-later-edit");
+      yield* q.orchestrator.dispatch({ ...q.begin, runId: q.later.id });
+      yield* q.orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make(`${q.threadId}:stop`),
+        threadId: q.threadId,
+        runId: q.active.id,
+        holdQueue: true,
+      });
+      yield* q.orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${q.threadId}:new-message`),
+        threadId: q.threadId,
+        messageId: MessageId.make(`${q.threadId}:new-message`),
+        text: "Start now",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const after = yield* q.orchestrator.getThreadProjection(q.threadId);
+      assert.deepEqual(
+        after.runs.slice(1).map((run) => run.status),
+        ["queued", "queued", "starting"],
+      );
+    }),
+  );
+
   it.effect("lets an explicit Resume release a missing-worktree pause", () =>
     Effect.gen(function* () {
       const q = yield* editableQueue("resume-missing-worktree", null);
