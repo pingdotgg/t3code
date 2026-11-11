@@ -1,3 +1,5 @@
+import { readHtmlRenderContentHeight } from "@t3tools/shared/htmlRender";
+
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import {
@@ -67,7 +69,10 @@ const DOWN_KEYS = new Set(["PageDown", "End", "ArrowDown", " "]);
  * Owns the timeline scroll node's input listeners for as long as the node is
  * mounted, and turns them into one navigation signal.
  */
-export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewport & {
+export function attachTimelineViewport(
+  scrollNode: HTMLElement,
+  onFrameResize?: (frame: HTMLIFrameElement) => void,
+): TimelineViewport & {
   readonly dispose: () => void;
 } {
   const listeners = new Set<(navigation: TimelineNavigation) => void>();
@@ -117,6 +122,12 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
     top: scrollNode.scrollTop,
     height: scrollNode.scrollHeight,
   });
+  // Only a frame's input reaches the timeline unseen. Any other unexplained upward move is not
+  // the reader's: the browser clamps scrollTop when content briefly shrinks.
+  const frameHasInput = () =>
+    scrollNode.querySelector("iframe:hover") !== null ||
+    (document.activeElement instanceof HTMLIFrameElement &&
+      scrollNode.contains(document.activeElement));
   const handleScroll = () => {
     if (
       scrolledUp({
@@ -124,6 +135,7 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
         height: scrollNode.scrollHeight,
         programmatic: programmaticHolds > 0,
       }) &&
+      frameHasInput() &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
         contentLength: scrollNode.scrollHeight,
@@ -134,6 +146,23 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
       emit({ source: "scroll" });
     }
   };
+  const frameHeights = new WeakMap<HTMLIFrameElement, number>();
+  const handleFrameResize = (event: MessageEvent) => {
+    const height = readHtmlRenderContentHeight(event.data);
+    if (height === undefined) return;
+    const frame = [...scrollNode.querySelectorAll("iframe")].find(
+      (frame) => frame.contentWindow === event.source,
+    );
+    if (!frame) return;
+    const previous = frameHeights.get(frame);
+    frameHeights.set(frame, height);
+    if (previous !== undefined && previous !== height && document.activeElement === frame) {
+      emit({ source: "command", releasesFollow: true });
+      onFrameResize?.(frame);
+    }
+  };
+  // Run before frame listeners resize rows, so an accordion cannot drag the reader to the end.
+  window.addEventListener("message", handleFrameResize, true);
   scrollNode.addEventListener("scroll", handleScroll, { passive: true });
   scrollNode.addEventListener("wheel", handleWheel, { passive: true });
   scrollNode.addEventListener("touchmove", handleTouchMove, { passive: true });
@@ -163,6 +192,7 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
       return () => followReleasedListeners.delete(listener);
     },
     dispose: () => {
+      window.removeEventListener("message", handleFrameResize, true);
       listeners.clear();
       followReleasedListeners.clear();
       scrollNode.removeEventListener("scroll", handleScroll);
