@@ -65,6 +65,15 @@ describe("groupModelPickerVendors", () => {
   });
 
   it("leaves a single-vendor catalog as a plain list", () => {
+    const legacy = { ...model("o/legacy", "OpenAI"), isLegacy: true };
+    const models = [model("a/current", "Anthropic"), legacy];
+    for (const isPinned of [
+      () => false,
+      (candidate: (typeof models)[number]) => candidate === legacy,
+    ]) {
+      expect(groupModelPickerVendors(models, isPinned, () => false, "Anthropic")).toBeNull();
+    }
+
     expect(
       groupModelPickerVendors(
         [model("a", "Anthropic"), model("b", "Anthropic"), model("c")],

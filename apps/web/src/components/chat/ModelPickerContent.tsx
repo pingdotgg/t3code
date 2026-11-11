@@ -603,15 +603,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!matchesLockedProvider(model)) continue;
       const isFavorite = favoritesSet.has(providerModelKey(model.instanceId, model.slug));
       if (isFavorite) addRow("favorites");
+      if (
+        model.subProvider &&
+        !model.isLegacy &&
+        !favoritesAtOpen.has(providerModelKey(model.instanceId, model.slug))
+      ) {
+        const vendors = vendorsByTab.get(model.instanceId) ?? new Set<string>();
+        vendors.add(model.subProvider);
+        vendorsByTab.set(model.instanceId, vendors);
+      }
       if (model.isLegacy && !isFavorite) {
         tabsWithLegacyRow.add(model.instanceId);
       } else {
         addRow(model.instanceId);
-        if (model.subProvider && !isFavorite) {
-          const vendors = vendorsByTab.get(model.instanceId) ?? new Set<string>();
-          vendors.add(model.subProvider);
-          vendorsByTab.set(model.instanceId, vendors);
-        }
       }
     }
     for (const instanceId of tabsWithLegacyRow) addRow(instanceId);
@@ -713,9 +717,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (isSearching || selectedInstanceId === "favorites") {
       return null;
     }
-    const models = legacySection?.currentModels ?? filteredModels;
     const grouped = groupModelPickerVendors(
-      models,
+      filteredModels,
       (model) => favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
       (model) => favoritesAtOpen.has(providerModelKey(model.instanceId, model.slug)),
       flatModels.find(
