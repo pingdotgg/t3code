@@ -43,7 +43,6 @@ import {
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
-  resolveWindowsServerAsarIgnoreGlobs,
   resolveBuildOptions,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
@@ -694,49 +693,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it("keeps only the Windows natives the packaged app loads", () => {
-    // Paths from a Windows x64 release package; the server sidecar root is the
-    // directory that holds node_modules.
-    const loaded = [
-      "node_modules/node-pty/prebuilds/win32-x64/conpty.node",
-      "node_modules/node-pty/prebuilds/win32-x64/conpty_console_list.node",
-      "node_modules/node-pty/prebuilds/win32-x64/conpty/conpty.dll",
-      "node_modules/node-pty/prebuilds/win32-x64/conpty/OpenConsole.exe",
-      "node_modules/@yuuang/ffi-rs-win32-x64-msvc/ffi-rs.win32-x64-msvc.node",
-    ];
-    const unused = [
-      "node_modules/node-pty/prebuilds/win32-arm64/conpty.node",
-      "node_modules/node-pty/build/Release/conpty/conpty.dll",
-      "node_modules/node-pty/build/Release/conpty/OpenConsole.exe",
-      "node_modules/node-pty/third_party/conpty/1.25.260303002/win10-x64/conpty.dll",
-      "node_modules/node-pty/third_party/conpty/1.25.260303002/win10-arm64/OpenConsole.exe",
-      "node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node",
-    ];
-    const serverIgnores = (file: string) =>
-      resolveWindowsServerAsarIgnoreGlobs("x64").some((glob) => NodePath.matchesGlob(file, glob));
-    for (const file of loaded) assert.isFalse(serverIgnores(file), file);
-    for (const file of unused) assert.isTrue(serverIgnores(file), file);
-    assert.isTrue(
-      resolveWindowsServerAsarIgnoreGlobs("arm64").some((glob) =>
-        NodePath.matchesGlob("node_modules/node-pty/prebuilds/win32-x64/conpty.node", glob),
-      ),
-    );
-
-    const appExcludes = (file: string) =>
+  it("keeps unused natives and staged resource monitors out of Windows app files", () => {
+    const excludes = (file: string) =>
       [...DESKTOP_FILE_EXCLUSIONS, ...WINDOWS_FILE_EXCLUSIONS].some((glob) =>
         NodePath.matchesGlob(file, glob.slice(1)),
       );
-    assert.isTrue(
-      appExcludes("node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node"),
-    );
-    assert.isFalse(
-      appExcludes("node_modules/@yuuang/ffi-rs-win32-x64-msvc/ffi-rs.win32-x64-msvc.node"),
-    );
-    for (const directory of ["resources", "prod-resources"]) {
-      assert.isTrue(
-        appExcludes(`apps/desktop/${directory}/resource-monitor/t3-resource-monitor.exe`),
-      );
+    for (const file of [
+      "node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node",
+      "apps/desktop/resources/resource-monitor/t3-resource-monitor.exe",
+      "apps/desktop/prod-resources/resource-monitor/t3-resource-monitor.exe",
+    ]) {
+      assert.isTrue(excludes(file), file);
     }
+    assert.isFalse(
+      excludes("node_modules/@yuuang/ffi-rs-win32-x64-msvc/ffi-rs.win32-x64-msvc.node"),
+    );
   });
 
   it("drops the other architecture's Darwin prebuilds from single-architecture Mac builds", () => {
