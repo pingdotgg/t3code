@@ -20,6 +20,9 @@ import {
   type DeviceEasAccount,
   DeviceEasAccountError,
   type DeviceEasAccountInput,
+  type DeviceSimlockIdentity,
+  DeviceSimlockIdentityError,
+  type DeviceSimlockIdentityInput,
   type DeviceHostConfig,
   type EasDeviceHostConfig,
   type SimlockDeviceHostConfig,
@@ -47,7 +50,7 @@ import {
   writeAgentDeviceConfig,
 } from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -65,23 +68,30 @@ import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost
 
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
+import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
 import * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
-import { makeExpoApi, resolveExpoCredential } from "./ExpoApi.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { makeExpoApi } from "./ExpoApi.ts";
 import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
 export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
+const isSshCommandError = Schema.is(SshCommandError);
+
 const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
-  const cause = error.cause;
+  const windows = SshDeviceHost.isSshWindowsHostError(error.cause) ? error.cause : null;
+  const cause = windows ? windows.cause : error.cause;
   if (
-    !(cause instanceof SshCommandError) ||
+    !isSshCommandError(cause) ||
     cause.exitCode === null ||
     cause.exitCode < 1 ||
-    cause.exitCode > 254
+    (cause.exitCode > 254 && cause.exitCode !== 9009)
   )
     return "Could not connect to this host over SSH.";
 
@@ -93,6 +103,7 @@ const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
       .some((line) => line.trim() === "Node is missing from the non-interactive SSH PATH")
   )
     return "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.";
+  if (windows) return windows.message;
 
   return `Connected over SSH, but the device host check failed (exit code ${cause.exitCode}).`;
 };
@@ -142,6 +153,10 @@ export class DeviceService extends Context.Service<
     readonly easAccount: (
       input: DeviceEasAccountInput,
     ) => Effect.Effect<DeviceEasAccount, DeviceEasAccountError>;
+    /** Who a Simlock agent token is; without a gateway or token, this machine's agent-device's. */
+    readonly simlockIdentity: (
+      input: DeviceSimlockIdentityInput,
+    ) => Effect.Effect<DeviceSimlockIdentity, DeviceSimlockIdentityError>;
     /**
      * The agent-device flags that reach the device: its config and session,
      * and the id agent-device selects it by, which can differ from its id here.
@@ -263,7 +278,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   launchers?: AgentDeviceLaunchers,
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
@@ -315,7 +330,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const live = new Set(
         yield* Effect.forEach(state.sessions, (session) =>
           agentDeviceSession(session.threadId, session.hostId, session.deviceId),
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        ).pipe(Effect.provideService(Digest.Digest, digest)),
       );
       const retired = [...boundLaunchers].filter(([session]) => !live.has(session));
       for (const [session] of retired) boundLaunchers.delete(session);
@@ -329,6 +344,26 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       yield* launchers.prune(live);
     }),
   );
+
+  const releaseLaunchers = (sessions: ReadonlyArray<DeviceSession>) =>
+    launcherLock.withPermit(
+      Effect.forEach(
+        sessions,
+        (session) =>
+          Effect.gen(function* () {
+            const name = yield* agentDeviceSession(
+              session.threadId,
+              session.hostId,
+              session.deviceId,
+            ).pipe(Effect.provideService(Digest.Digest, digest));
+            const launcher = boundLaunchers.get(name);
+            if (!launcher || hostSessionLaunchers.has(name) || !launchers?.release) return;
+            yield* launchers.release(launcher);
+            boundLaunchers.delete(name);
+          }),
+        { discard: true },
+      ),
+    );
 
   // Uninterruptible so a committed retirement always prunes, even if its caller is cancelled.
   const publish = (update: (state: DeviceServiceState) => DeviceServiceState) =>
@@ -355,6 +390,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return host;
   });
 
+  // Readiness phases replace the shown detail; this restores an incomplete listing's cause once ready.
+  const discoveryDetails = new Map<DeviceHostId, string>();
+
   const setHostStatus = (
     hostId: DeviceHostId,
     status: DeviceServiceState["hostStatuses"][string],
@@ -362,21 +400,34 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     Effect.suspend(() =>
       !hosts.has(hostId)
         ? SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state))
-        : publish((state) => ({
-            ...state,
-            ...(hostId === LOCAL_DEVICE_HOST_ID
-              ? { hostStatus: status.status, hostStatusDetail: status.detail }
-              : {}),
-            hostStatuses: {
-              ...state.hostStatuses,
-              [hostId]: {
-                ...(state.hostStatuses[hostId]?.androidDiscoveryIncomplete
-                  ? { androidDiscoveryIncomplete: true }
-                  : {}),
-                ...status,
+        : publish((state) => {
+            const previous = state.hostStatuses[hostId];
+            const detail =
+              status.detail ??
+              (status.status === "ready" &&
+              (previous?.incompletePlatforms || previous?.androidDiscoveryIncomplete)
+                ? discoveryDetails.get(hostId)
+                : undefined);
+            return {
+              ...state,
+              ...(hostId === LOCAL_DEVICE_HOST_ID
+                ? { hostStatus: status.status, hostStatusDetail: detail }
+                : {}),
+              hostStatuses: {
+                ...state.hostStatuses,
+                [hostId]: {
+                  ...(previous?.androidDiscoveryIncomplete
+                    ? { androidDiscoveryIncomplete: true }
+                    : {}),
+                  ...(previous?.incompletePlatforms
+                    ? { incompletePlatforms: previous.incompletePlatforms }
+                    : {}),
+                  ...status,
+                  ...(detail ? { detail } : {}),
+                },
               },
-            },
-          })),
+            };
+          }),
     );
 
   const readiness: DeviceService["Service"]["readiness"] = Effect.fn("DeviceService.readiness")(
@@ -501,11 +552,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
 
   const fetchDevices = Effect.fn("DeviceService.fetchDevices")(function* (ready: DeviceReadiness) {
-    const { devices, detail, androidDiscoveryIncomplete } = yield* ready.devices.list;
+    const { devices, detail, androidDiscoveryIncomplete, incompletePlatforms } =
+      yield* ready.devices.list;
     return {
       devices: devices.map((device): DeviceSummary => ({ ...device, hostId: ready.hostId })),
       detail,
       androidDiscoveryIncomplete,
+      incompletePlatforms: incompletePlatforms ?? [],
     };
   });
 
@@ -516,19 +569,26 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     const sessionKey = (session: DeviceSession) =>
       `${session.hostId}\u0000${session.deviceId}\u0000${session.threadId}\u0000${session.openedAt}`;
     const before = new Set((yield* SynchronizedRef.get(stateRef)).state.sessions.map(sessionKey));
-    const { devices, detail, androidDiscoveryIncomplete } = yield* fetchDevices(ready);
+    const { devices, detail, androidDiscoveryIncomplete, incompletePlatforms } =
+      yield* fetchDevices(ready);
     const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
     return yield* lifecycleLock.withPermit(
       Effect.gen(function* () {
         if (!(yield* readDeviceSettings).enabled || !host || hosts.get(ready.hostId) !== host)
           return (yield* SynchronizedRef.get(stateRef)).state;
+        if (detail && (incompletePlatforms.length > 0 || androidDiscoveryIncomplete))
+          discoveryDetails.set(ready.hostId, detail);
+        else discoveryDetails.delete(ready.hostId);
         return yield* publish((state) => ({
           ...state,
           hosts: hostSummaries,
           ...(ready.hostId === LOCAL_DEVICE_HOST_ID ? { hostStatusDetail: detail } : {}),
           devices: [
-            ...state.devices.filter((device) => device.hostId !== ready.hostId),
-            ...devices,
+            ...state.devices.filter(
+              (device) =>
+                device.hostId !== ready.hostId || incompletePlatforms.includes(device.platform),
+            ),
+            ...devices.filter((device) => !incompletePlatforms.includes(device.platform)),
           ],
           // A host that ends devices itself (EAS stops sessions at their limits)
           // leaves sessions on devices it no longer lists with nothing to stream.
@@ -547,6 +607,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               status: "ready",
               ...(detail ? { detail } : {}),
               ...(androidDiscoveryIncomplete ? { androidDiscoveryIncomplete } : {}),
+              ...(incompletePlatforms.length > 0 ? { incompletePlatforms } : {}),
             },
           },
         }));
@@ -760,7 +821,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           ),
         );
         state = yield* refresh(ready);
-        device = findDevice(state, host.id, bootedId) ?? findDevice(state, host.id, device.id);
+        // Retained entries predate the boot, so only a complete listing confirms the booted device.
+        device = state.hostStatuses[host.id]?.incompletePlatforms?.includes(device.platform)
+          ? undefined
+          : (findDevice(state, host.id, bootedId) ?? findDevice(state, host.id, device.id));
         if (!device) {
           return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
         }
@@ -809,12 +873,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   );
 
+  const refreshAfterShutdown = (ready: DeviceReadiness) =>
+    refresh(ready).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Device discovery unavailable after shutdown", { cause }),
+      ),
+    );
+
   const shutdownDevice = Effect.fn("DeviceService.shutdownDevice")(function* (
-    hostId: DeviceHostId,
+    ready: DeviceReadiness,
     deviceId: DeviceId,
     platform: DevicePlatform,
   ) {
-    const ready = yield* readiness(hostId);
     yield* ready.devices.shutdown({ id: deviceId, platform });
     yield* publish((state) => ({
       ...state,
@@ -823,46 +893,76 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           ? { ...device, booted: false }
           : device,
       ),
-      sessions: state.sessions.filter(
-        (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
-      ),
     }));
-    // Snapshot saves can stall discovery; refresh failure must not fail an accepted shutdown.
-    yield* refresh(ready).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Device discovery unavailable after shutdown", { cause }),
-      ),
-    );
   });
 
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(
     function* (input) {
-      const { state } = yield* SynchronizedRef.get(stateRef);
-      const closing = state.sessions.filter(
-        (session) =>
-          session.threadId === input.threadId &&
-          (input.hostId === undefined || session.hostId === input.hostId) &&
-          (input.deviceId === undefined || session.deviceId === input.deviceId),
+      // Open publishes under the same lock; an old close must not release a reopened claim.
+      const closing = yield* lifecycleLock.withPermit(
+        Effect.gen(function* () {
+          const { state } = yield* SynchronizedRef.get(stateRef);
+          const closing = state.sessions.filter(
+            (session) =>
+              session.threadId === input.threadId &&
+              (input.hostId === undefined || session.hostId === input.hostId) &&
+              (input.deviceId === undefined || session.deviceId === input.deviceId),
+          );
+          const ending = input.shutdown
+            ? state.sessions.filter((session) =>
+                closing.some(
+                  (closed) =>
+                    closed.hostId === session.hostId && closed.deviceId === session.deviceId,
+                ),
+              )
+            : closing;
+          for (const session of ending) {
+            const host = yield* resolveHost(session.hostId);
+            const ready = yield* host.current;
+            // A lost SSH tunnel does not establish that the remote daemon stopped.
+            if (!ready && (yield* host.summary).kind === "ssh")
+              return yield* new DeviceHostUnavailableError({
+                hostId: session.hostId,
+                hostLabel: host.label,
+                reason: "Device host is reconnecting. Retry close after it reconnects.",
+              });
+            if (ready?.releaseAgentSession) {
+              const name = yield* agentDeviceSession(
+                session.threadId,
+                session.hostId,
+                session.deviceId,
+              ).pipe(Effect.provideService(Digest.Digest, digest));
+              yield* ready.releaseAgentSession(name, session.deviceId);
+            }
+          }
+          if (input.shutdown) yield* releaseLaunchers(ending);
+          if (input.shutdown) {
+            for (const session of closing) {
+              const ready = yield* currentReadiness(session.hostId);
+              if (!ready)
+                return yield* new DeviceHostUnavailableError({
+                  hostId: session.hostId,
+                  reason: "Device host is not running. Reconnect before retrying close.",
+                });
+              yield* shutdownDevice(ready, session.deviceId, session.platform);
+            }
+          }
+          yield* publish((current) => ({
+            ...current,
+            sessions: current.sessions.filter((session) => !ending.includes(session)),
+          }));
+          return closing;
+        }),
       );
-      if (closing.length === 0) return;
-      // Powering off ends every session on the device, so all of them retire, and release, while it is on.
-      const ending = (session: DeviceSession) =>
-        closing.includes(session) ||
-        (input.shutdown === true &&
-          closing.some(
-            (closed) => closed.hostId === session.hostId && closed.deviceId === session.deviceId,
-          ));
-      yield* publish((current) => ({
-        ...current,
-        sessions: current.sessions.filter((session) => !ending(session)),
-      }));
-      if (input.shutdown) {
+      if (input.shutdown)
         yield* Effect.forEach(
           closing,
-          (session) => shutdownDevice(session.hostId, session.deviceId, session.platform),
+          (session) =>
+            currentReadiness(session.hostId).pipe(
+              Effect.flatMap((ready) => (ready ? refreshAfterShutdown(ready) : Effect.void)),
+            ),
           { discard: true },
         );
-      }
     },
   );
 
@@ -877,7 +977,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           (session) => !(session.hostId === host.id && session.deviceId === input.deviceId),
         ),
       }));
-      yield* shutdownDevice(host.id, input.deviceId, input.platform);
+      const ready = yield* readiness(host.id);
+      yield* shutdownDevice(ready, input.deviceId, input.platform);
+      yield* refreshAfterShutdown(ready);
     },
   );
 
@@ -1012,6 +1114,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           }),
         );
       }),
+      simlockIdentity: Effect.fn("DeviceService.simlockIdentity")(function () {
+        return Effect.fail(
+          new DeviceSimlockIdentityError({
+            reason: "Simlock hosts are unavailable in this device service.",
+          }),
+        );
+      }),
       agentTarget: Effect.fn("DeviceService.agentTarget")(function* (input) {
         const host = yield* resolveHost(input.hostId);
         const ready = yield* agentReadinessIfSupported(input.hostId);
@@ -1058,7 +1167,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           input.threadId,
           input.hostId,
           input.deviceId,
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+        ).pipe(Effect.provideService(Digest.Digest, digest));
         if (boundSession) hostSessionLaunchers.add(ownSession);
         const session = boundSession ?? ownSession;
         return {
@@ -1081,7 +1190,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           target.threadId,
           target.hostId,
           target.deviceId,
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+        ).pipe(Effect.provideService(Digest.Digest, digest));
         return yield* launcherLock.withPermit(
           Effect.gen(function* () {
             const { state } = yield* SynchronizedRef.get(stateRef);
@@ -1147,14 +1256,15 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const secrets = yield* SecretResolver.SecretResolver;
   const scope = yield* Scope.Scope;
   const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
     [localHost.id, localHost],
   ]);
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const configPath = (hostId: DeviceHostId, deviceId?: DeviceId) =>
     agentDeviceConfigPath(config.stateDir, hostId, path, deviceId).pipe(
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(Digest.Digest, digest),
     );
   const configureAgent = Effect.fn("DeviceService.configureAgent")(
     function* (
@@ -1278,13 +1388,19 @@ export const make = Effect.gen(function* () {
         }
         return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
       }).pipe(
-        Effect.mapError(
-          (error) =>
-            new DeviceOperationError({
-              operation: "probe host",
-              reason: "request_failed",
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          error._tag === "DeviceHostError" && SshDeviceHost.isSshWindowsHostError(error.cause)
+            ? new DeviceHostUnavailableError({
+                hostId: host.id,
+                hostLabel: host.label,
+                reason: sshProbeFailureMessage(error),
+                cause: error,
+              })
+            : new DeviceOperationError({
+                operation: "probe host",
+                reason: "request_failed",
+                cause: error,
+              }),
         ),
       ),
     configureAgent,
@@ -1379,6 +1495,14 @@ export const make = Effect.gen(function* () {
             );
             hosts.set(host.id, instance);
             configured.set(host.id, { config: host, scope: hostScope });
+            // Ask the gateway now, so a refused token shows in Settings before anyone opens a device.
+            if ((yield* settings.getSettings).enableDeviceSupport)
+              yield* instance
+                .platformAvailability("ios")
+                .pipe(
+                  Effect.andThen(service.withLifecycleLock(service.refreshHosts)),
+                  Effect.forkIn(hostScope),
+                );
             continue;
           }
           if (host.kind === "eas") {
@@ -1456,7 +1580,10 @@ export const make = Effect.gen(function* () {
           ? ""
           : ((yield* settings.getSettings).easDeviceHosts.find((host) => host.id === input.hostId)
               ?.accessToken ?? "");
-      const credential = yield* resolveExpoCredential(input.accessToken ?? saved);
+      const credential = yield* EasDeviceHost.resolveSavedExpoCredential(
+        secrets,
+        input.accessToken ?? saved,
+      );
       const viewer = yield* makeExpoApi(yield* HttpClient.HttpClient, credential).viewer;
       return { signedInAs: viewer.name, credentialSource: credential.source, apps: viewer.apps };
     },
@@ -1478,13 +1605,74 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const simlockIdentity: DeviceService["Service"]["simlockIdentity"] = Effect.fn(
+    "DeviceService.simlockIdentity",
+  )(
+    function* (input) {
+      const environment = yield* HostProcess.Environment;
+      const gatewayUrl = (
+        input.gatewayUrl || SimlockDeviceHost.machineSimlockToken(environment)?.gatewayUrl
+      )?.replace(/\/$/, "");
+      if (!gatewayUrl)
+        return yield* new DeviceSimlockIdentityError({
+          reason: "This machine's agent-device does not point at a Simlock gateway.",
+        });
+      const savedHost =
+        input.hostId === undefined
+          ? undefined
+          : (yield* settings.getSettings).simlockDeviceHosts.find(
+              (host) => host.id === input.hostId,
+            );
+      const token = input.agentToken
+        ? {
+            agentToken: yield* requireSettingsSecret(secrets, input.agentToken),
+            source: "entered" as const,
+          }
+        : yield* SimlockDeviceHost.resolveSimlockToken(secrets, gatewayUrl, savedHost, environment);
+      if (!token)
+        return yield* new DeviceSimlockIdentityError({
+          reason: savedHost?.agentToken
+            ? "The saved token is for another gateway. Enter one for this gateway."
+            : "No agent token for this gateway on this machine.",
+        });
+      const identity = yield* SimlockDeviceHost.simlockIdentity(gatewayUrl, token.agentToken).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeviceSimlockIdentityError({
+              reason: SimlockDeviceHost.describeGatewayFailure(
+                cause,
+                gatewayUrl,
+                token.source === "env" ? "this machine" : "this environment",
+              ),
+            }),
+        ),
+      );
+      if (identity.role !== "agent")
+        return yield* new DeviceSimlockIdentityError({
+          reason: `That is a ${identity.role} token. Create one with --role agent.`,
+        });
+      return { gatewayUrl, signedInAs: identity.name, tokenSource: token.source };
+    },
+    Effect.catchTags({
+      ServerSettingsError: () =>
+        Effect.fail(new DeviceSimlockIdentityError({ reason: "Could not read the saved token." })),
+      SettingsSecretUnresolvedError: (error) =>
+        Effect.fail(new DeviceSimlockIdentityError({ reason: error.message })),
+    }),
+    Effect.provide(simlockContext),
+  );
+
   return {
     ...service,
     easAccount,
+    simlockIdentity,
   };
 });
 
-export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));
+export const layer = Layer.effect(DeviceService, make).pipe(
+  Layer.provide(LocalDeviceHost.layer),
+  Layer.provide(SecretResolverLayer.layer),
+);
 
 export const stateStream = (service: DeviceService["Service"]): Stream.Stream<DeviceServiceState> =>
   Stream.unwrap(

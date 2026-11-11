@@ -3,7 +3,10 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
-import { unknownRemoteProvider as unknownHostProvider } from "@t3tools/source-control-core/shared/definition";
+import {
+  parseGitRemoteHost,
+  unknownRemoteProvider as unknownHostProvider,
+} from "@t3tools/source-control-core/shared/definition";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabChangeRequestTemplate from "./gitLabChangeRequestTemplate.ts";
@@ -107,7 +110,7 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
 
 /** The caller refines only an identity no host recognised, so its remote is on an unknown host. */
 function unknownRemoteProvider(remoteUrl: string) {
-  const remote = GitLabCli.parseGitLabRemoteHost(remoteUrl);
+  const remote = parseGitRemoteHost(remoteUrl);
   return remote === null ? null : unknownHostProvider(remote);
 }
 
@@ -141,7 +144,11 @@ export const discovery = {
   label: "GitLab",
   executable: "glab",
   versionArgs: ["--version"],
+  // Without --all, glab 1.79+ checks only the current host unless that is gitlab.com; older
+  // glab lists every host and rejects --all. --all waits on every host, so ask it only after
+  // the current host reports signed out.
   authArgs: ["auth", "status"],
+  authRetryArgs: ["auth", "status", "--all"],
   // glab host matching requires the remote's exact spelling.
   remoteRefinementArgs: ({ provider, remoteUrl }) => {
     const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
