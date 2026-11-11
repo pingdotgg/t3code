@@ -961,8 +961,12 @@ export function ThreadRelationshipsPanel(props: {
                       variant="ghost"
                       part="icon"
                       aria-label={`Pop out ${threadTitle} to top level`}
-                      disabled={popOutAvailability === "blocked" || poppingOutId !== null}
-                      onClick={() => void popOut(threadId)}
+                      disabled={poppingOutId !== null}
+                      // Still focusable and hoverable, so the blocked hint can show.
+                      aria-disabled={popOutAvailability === "blocked" || undefined}
+                      onClick={() => {
+                        if (popOutAvailability !== "blocked") void popOut(threadId);
+                      }}
                     />
                   }
                 >

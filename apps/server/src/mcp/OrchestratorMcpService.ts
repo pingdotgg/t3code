@@ -2593,10 +2593,13 @@ const make = Effect.gen(function* () {
       const childShell = yield* threadManagement
         .getThreadShell(childThreadId)
         .pipe(Effect.mapError(threadManagementFailure));
-      if (
-        childShell?.lineage.detachedFrom?.threadId === scope.thread.threadId &&
-        isTerminalTaskStatus(current.status)
-      ) {
+      if (childShell?.lineage.detachedFrom?.threadId === scope.thread.threadId) {
+        if (!isTerminalTaskStatus(current.status)) {
+          return yield* failure(
+            "invalid_request",
+            `Thread ${childThreadId} was popped out to top level and no longer belongs to this task.`,
+          );
+        }
         return {
           taskId: input.taskId,
           status: current.status,

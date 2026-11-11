@@ -4753,9 +4753,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: `Thread ${command.threadId} ${cause}`,
       });
-    const child = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"]).pipe(
-      mapDispatchError(command),
-    );
+    const child = yield* loadProjectionForCommand(command, [
+      "runs",
+      "runtimeRequests",
+      "providerThreads",
+    ]).pipe(mapDispatchError(command));
     const thread = child.thread;
     if (thread.deletedAt !== null) return yield* refuse("is deleted.");
     if (thread.archivedAt !== null) return yield* refuse("is archived.");
@@ -4766,7 +4768,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (!isDelegatedChildThread(thread) || parentThreadId === null) {
       return yield* refuse("is not a delegated child thread.");
     }
-    if (threadHasUnfinishedWork(child)) {
+    if (
+      threadHasUnfinishedWork(child) ||
+      child.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0)
+    ) {
       return yield* refuse("is still working. Wait for it to finish or stop it first.");
     }
     const tasks = (yield* projectionStore
