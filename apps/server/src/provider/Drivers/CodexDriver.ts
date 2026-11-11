@@ -149,6 +149,8 @@ export const CodexDriver: ProviderDriver<
         config,
       });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const providerHost = yield* ProviderHost.ProviderHost;
+    const probeTimeouts = readCodexProbeTimeouts(providerHost);
     const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
@@ -236,7 +238,11 @@ export const CodexDriver: ProviderDriver<
     const checkProvider = modelCatalog.refreshInBackground.pipe(
       Effect.andThen(
         Effect.zipWith(
-          checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
+          probeTimeouts.pipe(
+            Effect.flatMap((timeouts) =>
+              checkCodexProviderStatus(effectiveConfig, undefined, processEnv, undefined, timeouts),
+            ),
+          ),
           currentCatalog,
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
           { concurrent: true },
@@ -291,13 +297,17 @@ export const CodexDriver: ProviderDriver<
         ? snapshot.getSnapshot
         : Effect.all([
             snapshot.getSnapshot,
-            probeCodexSkillsForCwd({
-              binaryPath: effectiveConfig.binaryPath,
-              homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-              cwd,
-              environment: processEnv,
-            }).pipe(
+            probeTimeouts.pipe(
+              Effect.flatMap((timeouts) =>
+                probeCodexSkillsForCwd({
+                  binaryPath: effectiveConfig.binaryPath,
+                  homePath: effectiveConfig.homePath,
+                  launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                  cwd,
+                  environment: processEnv,
+                  timeouts,
+                }),
+              ),
               Effect.scoped,
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             ),
@@ -322,7 +332,7 @@ export const CodexDriver: ProviderDriver<
       resetCreditCoordinator
         .redeem(accountKey, (idempotencyKey) =>
           Effect.gen(function* () {
-            const timeouts = yield* readCodexProbeTimeouts();
+            const timeouts = yield* probeTimeouts;
             return yield* Effect.gen(function* () {
               const { client } = yield* withCodexAppServerClient({
                 binaryPath: effectiveConfig.binaryPath,

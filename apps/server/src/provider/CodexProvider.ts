@@ -83,13 +83,11 @@ const CODEX_DISCOVERY_MARGIN_MS = 250;
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
 const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
 
-/** Server settings are the source of truth; tests and non-server callers get the defaults. */
-export const readCodexProbeTimeouts = Effect.fn("readCodexProbeTimeouts")(function* () {
-  const host = yield* Effect.serviceOption(ProviderHost.ProviderHost);
-  if (Option.isNone(host)) return DEFAULT_CODEX_PROBE_TIMEOUTS;
-  const settings = yield* host.value.settings.get.pipe(Effect.orElseSucceed(() => undefined));
-  return settings?.codexProbeTimeouts ?? DEFAULT_CODEX_PROBE_TIMEOUTS;
-});
+export const readCodexProbeTimeouts = (host: ProviderHost.ProviderHost["Service"]) =>
+  host.settings.get.pipe(
+    Effect.map((settings) => settings.codexProbeTimeouts),
+    Effect.orElseSucceed(() => DEFAULT_CODEX_PROBE_TIMEOUTS),
+  );
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -545,7 +543,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly skipNativeUsage?: boolean;
   readonly timeouts?: CodexProbeTimeouts;
 }) {
-  const timeouts = input.timeouts ?? (yield* readCodexProbeTimeouts());
+  const timeouts = input.timeouts ?? DEFAULT_CODEX_PROBE_TIMEOUTS;
   const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
   const { client, initialize } = yield* withCodexAppServerClient(input);
 
@@ -657,24 +655,27 @@ const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
   ),
 );
 
-export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(function* (input: {
-  readonly binaryPath: string;
-  readonly homePath?: string;
-  readonly launchArgs?: string;
-  readonly cwd: string;
-  readonly environment?: NodeJS.ProcessEnv;
-  readonly timeouts?: CodexProbeTimeouts;
-}) {
-  const timeouts = input.timeouts ?? (yield* readCodexProbeTimeouts());
-  return yield* Effect.gen(function* () {
+export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(
+  function* (input: {
+    readonly binaryPath: string;
+    readonly homePath?: string;
+    readonly launchArgs?: string;
+    readonly cwd: string;
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly timeouts?: CodexProbeTimeouts;
+  }) {
     const { client } = yield* withCodexAppServerClient({
       ...input,
       environment: providerProbeEnvironment(input.environment ?? process.env),
     });
     const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
     return parseCodexSkillsListResponse(skillsResponse, input.cwd);
-  }).pipe(Effect.timeout(Duration.millis(timeouts.skills)));
-});
+  },
+  (effect, input) =>
+    effect.pipe(
+      Effect.timeout(Duration.millis((input.timeouts ?? DEFAULT_CODEX_PROBE_TIMEOUTS).skills)),
+    ),
+);
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
   appendCustomCodexModels([], codexSettings.customModels);
@@ -776,7 +777,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   ServerSettingsError,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
-  const resolvedTimeouts = timeouts ?? (yield* readCodexProbeTimeouts());
+  const resolvedTimeouts = timeouts ?? DEFAULT_CODEX_PROBE_TIMEOUTS;
   const resolvedEnvironment = providerProbeEnvironment(environment ?? process.env);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
