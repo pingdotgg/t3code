@@ -19,7 +19,6 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Clock from "effect/Clock";
-import * as TestClock from "effect/testing/TestClock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";

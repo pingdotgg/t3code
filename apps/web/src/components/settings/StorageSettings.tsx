@@ -143,7 +143,6 @@ function RetentionControl({
   const row = useRef<HTMLDivElement>(null);
   if (savedValue !== value) {
     setSavedValue(value);
-    pending.current = null;
     setSubmitted(null);
     setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
   }

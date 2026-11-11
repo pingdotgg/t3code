@@ -146,7 +146,7 @@ export function BranchPicker({
                 );
               }}
               extraData={renderItem}
-          ItemSeparatorComponent={BranchPickerSeparator}
+              ItemSeparatorComponent={BranchPickerSeparator}
               estimatedItemSize={33}
               drawDistance={336}
               onScroll={updateBranchListScrollFades}
@@ -192,7 +192,7 @@ export function BranchPicker({
           </Tooltip>
         ) : null}
         {notice ? <ComboboxStatus>{notice}</ComboboxStatus> : null}
-      {statusText ? <ComboboxStatus>{statusText}</ComboboxStatus> : null}
+        {statusText ? <ComboboxStatus>{statusText}</ComboboxStatus> : null}
       </div>
     </>
   );
