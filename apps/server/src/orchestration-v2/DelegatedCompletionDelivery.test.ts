@@ -1109,7 +1109,11 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.equal(wake.status, "queued");
       const message = rewritten.messages.find((row) => row.id === delivery.messageId);
       assert.deepEqual(message?.delegatedCompletion?.taskIds, [siblingId]);
-      assert.equal(message?.text, `Delegated task ${siblingId} [completed]:\nchild finished`);
+      assert.include(message?.text, `Delegated task ${siblingId} [completed]`);
+      assert.include(message?.text, "child finished");
+      // A user message steered into the wake turn must not read as part of the child's result.
+      assert.match(message?.text ?? "", /not .*by the user/i);
+      assert.notOk(message?.text.trimEnd().endsWith("child finished"));
 
       yield* acknowledge(siblingId);
       const cancelled = yield* orchestrator.getThreadProjection(threadId);
