@@ -31,6 +31,7 @@ import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
+import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -1997,6 +1998,47 @@ describe("PiAdapterV2", () => {
         yield* takeEvent((event) => event.type === "turn.terminal");
       }
       assert.equal(admitted(), 1);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("times a session switch only while no hook dialog waits on the user", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      yield* fake.takeRequest("switch_session");
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "resume-goal",
+        method: "confirm",
+        title: "Resume goal?",
+      });
+      const dialog = yield* takeEvent((event) => event.type === "runtime_request.updated");
+      assert.isTrue(dialog.type === "runtime_request.updated");
+      if (dialog.type !== "runtime_request.updated") return;
+      yield* TestClock.adjust("2 minutes");
+      yield* runtime.respondToRuntimeRequest({
+        requestId: dialog.runtimeRequest.id,
+        decision: "accept",
+      });
+      yield* fake.takeRequest("extension_ui_response");
+      yield* TestClock.adjust("1 minute");
+      const failure = yield* Fiber.join(resumed).pipe(Effect.flip);
+      assert.include(String(failure.cause), "switch_session failed: timed out");
+      const retry = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        })
+        .pipe(Effect.flip);
+      assert.include(String(retry.cause), "switch_session failed: timed out");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

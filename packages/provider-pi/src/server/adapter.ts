@@ -61,6 +61,8 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import {
   findReportedPiModel,
   makePiRpcConnection,
+  type PiRpcError,
+  PiRpcTimeoutError,
   resolvePiModelSlug,
   piRecordField as recordField,
   piRecordNumber as recordNumber,
@@ -558,6 +560,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let pendingWake: PiWake | null = null;
       // T3's extension holds runs a resumed session's hooks start until an owned turn admits them.
       let resumeAdmissionPending = false;
+      let lifecycleFailure: PiRpcError | PiRpcTimeoutError | null = null;
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
         readonly touched: Set<string>;
@@ -775,6 +778,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const lifecycleRequest = Effect.fn("PiAdapter.lifecycleRequest")(
         function* (record: PiRpcRecord) {
+          // Later lifecycle calls on the stopped transport report why it stopped.
+          if (lifecycleFailure !== null) return yield* lifecycleFailure;
           if (extensionStatusReset !== null)
             return yield* protocolError("A Pi session lifecycle request is already pending");
           const reset = {
@@ -790,7 +795,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             )
               return yield* protocolError("Pi transport closed during status reset");
             yield* Deferred.await(reset.ready);
-            const result = yield* request(record, PI_SESSION_TIMEOUT_MS);
+            // Session hooks can wait on the user, so only time without an open dialog counts.
+            const deadline = Effect.gen(function* () {
+              do yield* Effect.sleep(Duration.millis(PI_SESSION_TIMEOUT_MS));
+              while (pendingPrompts.size > 0);
+              return yield* new PiRpcTimeoutError({
+                operation: String(record["type"]),
+                timeoutMs: PI_SESSION_TIMEOUT_MS,
+              });
+            });
+            const result = yield* Effect.raceFirst(request(record, Infinity), deadline);
             if (recordField(result, "cancelled") === true) {
               yield* sessionEventPermit.withPermits(1)(
                 Effect.gen(function* () {
@@ -842,7 +856,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             // A failed lifecycle RPC can leave Pi's previous native session disposed.
             Effect.tapError((error) =>
               error._tag === "PiRpcError" || error._tag === "PiRpcTimeoutError"
-                ? connection.terminate
+                ? Effect.suspend(() => {
+                    lifecycleFailure ??= error;
+                    return connection.terminate;
+                  })
                 : Effect.void,
             ),
             Effect.onInterrupt(() => connection.terminate),
