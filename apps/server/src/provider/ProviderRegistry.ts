@@ -78,6 +78,8 @@ export class ProviderRegistry extends Context.Service<
     readonly refreshWorkspaceSnapshot: (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
+      /** Directory the driver scans; the snapshot stays keyed by `cwd`. Defaults to `cwd`. */
+      readonly scanCwd?: string;
       readonly fresh?: boolean;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
@@ -94,7 +96,7 @@ export class ProviderRegistry extends Context.Service<
 
     /**
      * For an opened model picker: refetch a model manifest older than a few
-     * minutes, and probe providers only when it has models they have not seen.
+     * minutes. When it changed, recheck latest CLI versions and probe providers.
      */
     readonly refreshModelCatalog: Effect.Effect<void>;
 
@@ -951,6 +953,7 @@ export const layer = Layer.effect(
     const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
+      readonly scanCwd?: string;
       readonly fresh?: boolean;
     }) {
       if (input.fresh) {
@@ -989,7 +992,7 @@ export const layer = Layer.effect(
           )
         : Effect.void;
       const runScan = refreshMachineSnapshot.pipe(
-        Effect.andThen(instance.snapshotForCwd(input.cwd)),
+        Effect.andThen(instance.snapshotForCwd(input.scanCwd ?? input.cwd)),
         // Scans fail on error; returned inventory remains valid even when provider health reports an error.
         Effect.flatMap((scopedSnapshot) =>
           instanceRegistry.getInstance(input.instanceId).pipe(
@@ -1088,6 +1091,8 @@ export const layer = Layer.effect(
       // The first pass can be one that started before the fetch, so allow one more.
       for (let pass = 0; pass < 2; pass++) {
         if ((yield* Ref.get(probedManifestUpdatedAt)) === updatedAt) return;
+        // A new model usually ships with the CLI release that supports it.
+        yield* latestVersions.invalidateAll;
         yield* refreshAll();
       }
     });
