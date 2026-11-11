@@ -78,7 +78,9 @@ export function workspaceDetailOpenStep(
   | { readonly type: "pop"; readonly count: number }
   | { readonly type: "push" } {
   const routes = state.routes.slice(0, state.index + 1);
-  const index = routes.findLastIndex((route) => workspaceDetailMatches(route, detail));
+  const index = routes.findLastIndex(
+    (route) => route.key !== nativelyPoppingRoute && workspaceDetailMatches(route, detail),
+  );
   if (index === state.index) return { type: "stay" };
   if (index >= 0) return { type: "pop", count: state.index - index };
   return { type: "push" };

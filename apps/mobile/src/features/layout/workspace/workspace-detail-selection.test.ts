@@ -202,6 +202,16 @@ describe("workspaceDetailOpenStep", () => {
     expect(workspaceDetailOpenStep(state, draft)).toEqual({ type: "pop", count: 1 });
   });
 
+  it("pushes instead of reusing the page native Back is popping", () => {
+    const state = select(home(), threadA);
+    setNativelyPoppingWorkspaceRoute(state.routes[1]!.key);
+    try {
+      expect(workspaceDetailOpenStep(state, threadA)).toEqual({ type: "push" });
+    } finally {
+      setNativelyPoppingWorkspaceRoute(null);
+    }
+  });
+
   it("stays when the pull request is already focused", () => {
     const state = select(home(), pullRequest);
     expect(workspaceDetailOpenStep(state, pullRequest)).toEqual({ type: "stay" });
