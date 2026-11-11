@@ -2502,6 +2502,9 @@ export const layerWithOptions = (
                 ) {
                   return {
                     ...runtime,
+                    get providerSession() {
+                      return runtime.providerSession;
+                    },
                     startTurn: (turnInput) =>
                       runtime.startTurn({
                         ...turnInput,
