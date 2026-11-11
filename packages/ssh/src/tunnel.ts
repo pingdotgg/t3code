@@ -16,6 +16,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -791,6 +792,13 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
+  if [ -n "\${SSH_AUTH_SOCK:-}" ]; then
+    # sshd removes this session's forwarded agent socket when the launch exits.
+    # The tunnel session keeps this stable link pointed at a live one. It stays
+    # under /tmp because socket paths are limited to about 100 bytes.
+    SSH_AUTH_SOCK="/tmp/t3-ssh-$(id -u)/$STATE_KEY"
+    export SSH_AUTH_SOCK
+  fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
@@ -854,6 +862,27 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
 fi
 rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
 printf '{"stopped":true}\\n'
+`;
+
+const TUNNEL_SESSION_READY_LINE = "t3-ssh-tunnel-session-ready";
+
+// sshd only creates a forwarded agent socket for a session, and removes it when
+// the session ends, so the tunnel holds one open for as long as it is connected.
+// Reading stdin until the connection drops keeps the session alive.
+const REMOTE_TUNNEL_SESSION_SCRIPT = `STATE_DIR="$HOME/.t3/ssh-launch/$1"
+AGENT_DIR="/tmp/t3-ssh-$(id -u)"
+AGENT_LINK="$AGENT_DIR/$1"
+if [ -n "\${SSH_AUTH_SOCK:-}" ] && [ -d "$STATE_DIR" ]; then
+  mkdir -m 700 "$AGENT_DIR" 2>/dev/null
+  # Another user could have created the shared /tmp entry first.
+  if ! { [ -d "$AGENT_DIR" ] && [ ! -L "$AGENT_DIR" ] && [ -O "$AGENT_DIR" ] && chmod 700 "$AGENT_DIR" && ln -sf "$SSH_AUTH_SOCK" "$AGENT_LINK.$$" && mv -f "$AGENT_LINK.$$" "$AGENT_LINK"; }; then
+    rm -f "$AGENT_LINK.$$"
+    printf '%s\\n' "Failed to publish the forwarded SSH agent for the T3 server." >&2
+    exit 1
+  fi
+fi
+printf '%s\\n' ${TUNNEL_SESSION_READY_LINE}
+exec cat >/dev/null
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
@@ -1276,12 +1305,16 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "ServerAliveInterval=15",
     "-o",
     "ServerAliveCountMax=3",
-    "-n",
-    "-N",
+    "-T",
     "-L",
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
     "--",
     hostSpec,
+    "sh",
+    "-l",
+    "-s",
+    "--",
+    yield* remoteStateKey(input.resolvedTarget),
   ];
   const sshCommand = yield* resolveSshCommand;
   const tunnelCommand = [sshCommand, ...args];
@@ -1301,7 +1334,10 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         env: childEnvironment,
         extendEnv: true,
         stdin: {
-          stream: Stream.empty,
+          stream: Stream.concat(
+            Stream.make(new TextEncoder().encode(REMOTE_TUNNEL_SESSION_SCRIPT)),
+            Stream.never,
+          ),
           endOnDone: true,
         },
       }),
@@ -1394,13 +1430,44 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
       }).pipe(Effect.andThen(Effect.fail(error)));
     }),
   );
+  // Until the session script reports in, the managed server may still point at
+  // an agent link from a previous connection.
+  const sessionLine = yield* child.stdout.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.filter((line) => line.trim() === TUNNEL_SESSION_READY_LINE),
+    Stream.runHead,
+    Effect.mapError(
+      (cause) =>
+        new SshReadinessError({ message: "Failed to read the SSH tunnel session output.", cause }),
+    ),
+    // Output ending without the line means ssh is exiting, which exitFailure reports.
+    Effect.flatMap(Option.match({ onNone: () => Effect.never, onSome: () => Effect.void })),
+    Effect.forkIn(scope),
+  );
+  // The session can only report in once ssh connects, so its deadline starts with the forward.
+  const sessionReady = Fiber.join(sessionLine).pipe(
+    Effect.timeoutOrElse({
+      duration: SSH_READY_TIMEOUT_MS,
+      orElse: () =>
+        Effect.fail(
+          new SshReadinessError({ message: "Timed out waiting for the SSH tunnel session." }),
+        ),
+    }),
+  );
   yield* Effect.raceFirst(
     waitForTunnelForward({ target: input.resolvedTarget, localPort: input.localPort }).pipe(
       Effect.andThen(
-        waitForHttpReady({
-          baseUrl: input.httpBaseUrl,
-          timeoutMs: SSH_READY_TIMEOUT_MS,
-        }),
+        Effect.all(
+          [
+            waitForHttpReady({
+              baseUrl: input.httpBaseUrl,
+              timeoutMs: SSH_READY_TIMEOUT_MS,
+            }),
+            sessionReady,
+          ],
+          { concurrency: "unbounded", discard: true },
+        ),
       ),
     ),
     exitFailure,

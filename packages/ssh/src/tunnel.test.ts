@@ -1,12 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - Runs the generated runner in a real shell.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -49,11 +51,12 @@ const makeSuccessfulProcess = (stdout: string) => {
   });
 };
 
+// A tunnel reports its agent-holding session as ready on stdout.
 const makeRunningProcess = (onKill: () => void) => {
   let finish: ((exitCode: ChildProcessSpawner.ExitCode) => void) | null = null;
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(123),
-    stdout: Stream.empty,
+    stdout: Stream.make(new TextEncoder().encode("t3-ssh-tunnel-session-ready\n")),
     stderr: Stream.empty,
     all: Stream.empty,
     exitCode: Effect.callback<ChildProcessSpawner.ExitCode>((resume) => {
@@ -291,7 +294,7 @@ describe("ssh tunnel scripts", () => {
       );
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.succeed(
-          commandArgs(command).includes("-N")
+          commandArgs(command).includes("-L")
             ? {
                 ...makeSuccessfulProcess(""),
                 exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
@@ -338,7 +341,7 @@ describe("ssh tunnel scripts", () => {
       const diagnostic = "Permission denied (publickey)";
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.succeed(
-          commandArgs(command).includes("-N")
+          commandArgs(command).includes("-L")
             ? {
                 ...makeSuccessfulProcess(""),
                 exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(255)),
@@ -389,6 +392,55 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
+  it.effect("waits for the tunnel session before reporting the environment ready", () =>
+    Effect.gen(function* () {
+      const httpChecked = yield* Deferred.make<void>();
+      const sessionReady = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.succeed(
+          commandArgs(command).includes("-L")
+            ? {
+                ...makeRunningProcess(() => undefined),
+                stdout: Stream.fromEffect(Deferred.await(sessionReady)).pipe(
+                  Stream.map(() => new TextEncoder().encode("t3-ssh-tunnel-session-ready\n")),
+                ),
+              }
+            : makeSuccessfulProcess('{"remotePort":3773}\n'),
+        ),
+      );
+      const httpClient = HttpClient.make((request) =>
+        Deferred.succeed(httpChecked, undefined).pipe(
+          Effect.as(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))),
+        ),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, httpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const ensure = yield* Effect.forkChild(
+          manager.ensureEnvironment({
+            alias: "devbox",
+            hostname: "devbox",
+            username: null,
+            port: null,
+          }),
+        );
+        yield* Deferred.await(httpChecked);
+        yield* TestClock.adjust(Duration.zero);
+        assert.isUndefined(ensure.pollUnsafe());
+        yield* Deferred.succeed(sessionReady, undefined);
+        yield* Fiber.join(ensure);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
   it.effect("waits for a tunnel whose ssh connection outlasts the readiness timeout", () =>
     Effect.gen(function* () {
       const LOCAL_PORT = 41_773;
@@ -401,11 +453,17 @@ describe("ssh tunnel scripts", () => {
           Effect.map((now) => port === LOCAL_PORT && now >= forwardListensAt),
         );
       const spawner = ChildProcessSpawner.make((command) =>
-        commandArgs(command).includes("-N")
+        commandArgs(command).includes("-L")
           ? Effect.gen(function* () {
               forwardListensAt = (yield* Clock.currentTimeMillis) + SSH_CONNECT_MS;
               yield* Deferred.succeed(tunnelSpawned, undefined);
-              return makeRunningProcess(() => undefined);
+              return {
+                ...makeRunningProcess(() => undefined),
+                // The remote session only starts once ssh has connected.
+                stdout: Stream.fromEffect(Effect.sleep(Duration.millis(SSH_CONNECT_MS))).pipe(
+                  Stream.map(() => new TextEncoder().encode("t3-ssh-tunnel-session-ready\n")),
+                ),
+              };
             })
           : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
       );
@@ -468,7 +526,7 @@ describe("ssh tunnel scripts", () => {
       const tunnelSpawned = yield* Deferred.make<void>();
       let tunnelKilled = false;
       const spawner = ChildProcessSpawner.make((command) =>
-        commandArgs(command).includes("-N")
+        commandArgs(command).includes("-L")
           ? Deferred.succeed(tunnelSpawned, undefined).pipe(
               Effect.as(
                 makeRunningProcess(() => {
@@ -623,7 +681,7 @@ describe("ssh tunnel scripts", () => {
               }
               return makeSuccessfulProcess("");
             }
-            if (args.includes("-N")) {
+            if (args.includes("-L")) {
               const tunnel = makeRunningProcess(() => undefined);
               if (isTarget && ++tunnels === 1 && stalledStep === "local tunnel") {
                 return {
@@ -769,6 +827,250 @@ describe("ssh tunnel scripts", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
+
+// Stands in for ssh plus the remote sshd with ForwardAgent on. Like sshd, a
+// connection gets its own agent socket that lives only as long as its
+// session; `-N` opens no session, so it gets no socket at all.
+const FAKE_SSH_SCRIPT = `const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+const config = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf8"));
+const args = process.argv.slice(2);
+if (args.includes("-G")) {
+  process.stdout.write("hostname devbox\\nuser t3\\nport 22\\nforwardagent yes\\n");
+  process.exit(0);
+}
+const hostIndex = args.indexOf("--") + 1;
+const options = args.slice(0, hostIndex);
+const remoteCommand = args.slice(hostIndex + 1).join(" ");
+if (options.includes("-N")) {
+  setInterval(() => {}, 1 << 30);
+  return;
+}
+const env = { ...process.env, HOME: config.home };
+delete env.SSH_AUTH_SOCK;
+const agentDir = fs.mkdtempSync(path.join(config.root, "ssh-"));
+const agent = net.createServer((socket) => socket.end());
+const run = () => {
+  // sshd runs each session in its own process session.
+  const child = spawn("sh", ["-c", remoteCommand], {
+    detached: true,
+    env,
+    stdio: [options.includes("-n") ? "ignore" : "pipe", "inherit", "inherit"],
+  });
+  if (child.stdin) process.stdin.pipe(child.stdin);
+  const close = (code) => {
+    agent.close();
+    fs.rmSync(agentDir, { recursive: true, force: true });
+    process.exit(code);
+  };
+  child.on("exit", (code) => close(code ?? 1));
+  // A dropped connection hangs up its session, as sshd does.
+  process.on("SIGTERM", () => {
+    try {
+      process.kill(-child.pid, "SIGHUP");
+    } catch {}
+    close(143);
+  });
+};
+env.SSH_AUTH_SOCK = path.join(agentDir, "agent." + process.pid);
+agent.listen(env.SSH_AUTH_SOCK, run);
+`;
+
+// Stands in for the remote t3 server and records the agent socket it inherited.
+const FAKE_SERVER_SCRIPT = `const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const option = (name) => process.argv[process.argv.indexOf(name) + 1];
+fs.writeFileSync(
+  path.join(option("--base-dir"), "fake-server.json"),
+  JSON.stringify({ pid: process.pid, authSock: process.env.SSH_AUTH_SOCK ?? null }),
+);
+const port = Number(option("--port"));
+http.createServer((_request, response) => response.end("ok")).listen(port, option("--host"), () => {
+  const userdata = path.join(option("--base-dir"), "userdata");
+  fs.mkdirSync(userdata, { recursive: true });
+  fs.writeFileSync(
+    path.join(userdata, "server-runtime.json"),
+    JSON.stringify({ pid: process.pid, port, origin: "http://127.0.0.1:" + port }),
+  );
+});
+`;
+
+const canConnectToSocket = (socketPath: string | null) =>
+  Effect.callback<boolean>((resume) => {
+    if (socketPath === null) {
+      resume(Effect.succeed(false));
+      return;
+    }
+    const socket = NodeNet.connect(socketPath);
+    socket.once("connect", () => {
+      socket.destroy();
+      resume(Effect.succeed(true));
+    });
+    socket.once("error", () => resume(Effect.succeed(false)));
+  });
+
+const makeForwardedAgentHarness = Effect.fn("makeForwardedAgentHarness")(function* (
+  remoteHome: "short home" | "long home with a profile agent",
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-agent-" });
+  const home = path.join(root, remoteHome === "short home" ? "home" : "home-".padEnd(64, "x"));
+  yield* fs.makeDirectory(home);
+  if (remoteHome !== "short home") {
+    // A persistent agent the login shell exports in place of the forwarded one.
+    const agentPath = path.join(root, "agent.sock");
+    yield* Effect.acquireRelease(
+      Effect.callback<NodeNet.Server>((resume) => {
+        const agent = NodeNet.createServer((socket) => socket.end());
+        agent.listen(agentPath, () => resume(Effect.succeed(agent)));
+      }),
+      (agent) => Effect.sync(() => agent.close()),
+    );
+    yield* fs.writeFileString(
+      path.join(home, ".profile"),
+      `SSH_AUTH_SOCK=${agentPath}\nexport SSH_AUTH_SOCK\n`,
+    );
+  }
+  yield* fs.writeFileString(path.join(root, "config.json"), JSON.stringify({ home, root }));
+  const fakeSsh = path.join(root, "ssh.cjs");
+  yield* fs.writeFileString(fakeSsh, FAKE_SSH_SCRIPT);
+  const nodeScriptPath = path.join(root, "server.cjs");
+  yield* fs.writeFileString(nodeScriptPath, FAKE_SERVER_SCRIPT);
+  // Launch prefers the recorded port. Left to the default 3773, it can be
+  // answered by another process before the fake server is listening.
+  const stateDir = path.join(
+    home,
+    ".t3",
+    "ssh-launch",
+    yield* remoteStateKey({ alias: "devbox", hostname: "devbox", username: "t3", port: 22 }),
+  );
+  yield* fs.makeDirectory(stateDir, { recursive: true });
+  const remotePort = yield* NetService.make().reserveLoopbackPort();
+  yield* fs.writeFileString(path.join(stateDir, "port"), `${remotePort}\n`);
+  const readServer = fs
+    .readFileString(path.join(home, ".t3", "fake-server.json"))
+    .pipe(
+      Effect.map(
+        (raw) => JSON.parse(raw) as { readonly pid: number; readonly authSock: string | null },
+      ),
+    );
+  yield* Effect.addFinalizer(() =>
+    readServer.pipe(
+      // The manager normally stops it first; this only covers a failed test.
+      Effect.map((server) => {
+        try {
+          process.kill(server.pid, "SIGKILL");
+        } catch {}
+      }),
+      Effect.ignore,
+    ),
+  );
+  return { fakeSsh, nodeScriptPath, readServer };
+});
+
+const forwardedAgentLayer = (input: {
+  readonly fakeSsh: string;
+  readonly nodeScriptPath: string;
+  readonly staleBaseUrls: Set<string>;
+}) => {
+  let nextLocalPort = 41_800;
+  const spawnerLayer = Layer.effect(
+    ChildProcessSpawner.ChildProcessSpawner,
+    Effect.gen(function* () {
+      const real = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return ChildProcessSpawner.make((command) =>
+        real.spawn(
+          command._tag === "StandardCommand" &&
+            (command.command === "ssh" || command.command === "ssh.exe")
+            ? ChildProcess.make(process.execPath, [input.fakeSsh, ...command.args], command.options)
+            : command,
+        ),
+      );
+    }),
+  ).pipe(Layer.provide(NodeServices.layer));
+  return Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    spawnerLayer,
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("", {
+              status: [...input.staleBaseUrls].some((url) => request.url.startsWith(url))
+                ? 503
+                : 200,
+            }),
+          ),
+        ),
+      ),
+    ),
+    Layer.succeed(NetService.NetService, {
+      ...testNetService,
+      reserveLoopbackPort: () => Effect.sync(() => nextLocalPort++),
+    }),
+    SshAuth.SshPasswordPrompt.disabledLayer,
+  ).pipe((layer) =>
+    Layer.provideMerge(
+      SshTunnel.SshEnvironmentManager.layer({
+        resolveCliRunner: Effect.succeed({ nodeScriptPath: input.nodeScriptPath }),
+      }),
+      layer,
+    ),
+  );
+};
+
+// The fake sshd needs sh, process-group signals, and Unix socket agent paths.
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "managed server forwarded agent",
+  () => {
+    const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+
+    // Reproduces https://git.cafe/pingdotgg/t3code/issues/11872: the managed
+    // server kept the launch connection's agent socket, which sshd deletes as
+    // soon as the launch command exits, so git over SSH failed on the remote.
+    it.live.each(["short home", "long home with a profile agent"] as const)(
+      "keeps the forwarded agent reachable from the managed server while connected and across reconnect: %s",
+      (remoteHome) =>
+        Effect.gen(function* () {
+          const harness = yield* makeForwardedAgentHarness(remoteHome).pipe(
+            Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          );
+          const staleBaseUrls = new Set<string>();
+          yield* Effect.gen(function* () {
+            const manager = yield* SshTunnel.SshEnvironmentManager;
+            const first = yield* manager.ensureEnvironment(target);
+            const launched = yield* harness.readServer;
+            const agentAfterLaunch = yield* canConnectToSocket(launched.authSock);
+
+            // A dropped local forward makes the next ensure reconnect and reuse
+            // the still-running server.
+            staleBaseUrls.add(first.httpBaseUrl);
+            const second = yield* manager.ensureEnvironment(target);
+            const reused = yield* harness.readServer;
+            const agentAfterReconnect = yield* canConnectToSocket(reused.authSock);
+
+            assert.notEqual(second.httpBaseUrl, first.httpBaseUrl);
+            assert.deepEqual(
+              {
+                sameServer: reused.pid === launched.pid,
+                agentAfterLaunch,
+                agentAfterReconnect,
+              },
+              { sameServer: true, agentAfterLaunch: true, agentAfterReconnect: true },
+              `managed server SSH_AUTH_SOCK=${String(reused.authSock)}`,
+            );
+          }).pipe(Effect.provide(forwardedAgentLayer({ ...harness, staleBaseUrls })));
+        }).pipe(Effect.scoped),
+    );
+  },
+);
 
 // On macOS, Node can bind 127.0.0.1:<port> while another process (such as the
 // desktop app with network access on) listens on *:<port>. Linux refuses that
