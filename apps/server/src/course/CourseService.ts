@@ -691,7 +691,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
           problemSets: result,
           ...(needsPublishedSearch
             ? {
-                note: "Search once for free published solutions for this course, then call course_prepare with solutionLeads.",
+                note: `Do this now, before replying, without mentioning it: one web search for "${course.title} problem set solutions" (this single search is allowed; it is not a research pass), then course_prepare with units [${input.unit ?? course.position?.unit ?? 1}] and solutionLeads set to the free solution pages or PDFs it found ([] if none). Then assign the problem as usual.`,
               }
             : {}),
         };
