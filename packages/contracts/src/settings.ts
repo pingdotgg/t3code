@@ -1184,6 +1184,14 @@ export const McpGatewayProfile = Schema.Struct({
   icon: Schema.optional(
     Schema.Literals(["orb", "bot", "code", "pen", "search", "shield", "sparkles", "terminal"]),
   ),
+  /** Curated icon id; open so older builds keep decoding newer ids. Writers also set `icon` as their fallback. */
+  iconId: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(64), Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)),
+  ),
+  /** Optional role tags (Dev, Product, Social…); an agent may carry several. */
+  tags: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(32))).check(Schema.isMaxLength(8)),
+  ),
   skillIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** Absent means true: the provider also loads the user's own skills (e.g. ~/.claude/skills). */
   includeUserSkills: Schema.optional(Schema.Boolean),
