@@ -4,7 +4,8 @@
 
 /* Exit codes are consumed by ChromiumKeys.ts. Stdout contains only the secret,
  * with no newline or other framing that could change the derived cookie key. */
-enum { KEY_MISSING = 2, KEY_LOCKED = 3, READ_FAILED = 4 };
+/* KEY_CANDIDATES: stdout holds several secrets, each followed by a NUL byte. */
+enum { KEY_MISSING = 2, KEY_LOCKED = 3, READ_FAILED = 4, KEY_CANDIDATES = 5 };
 
 /* Chromium looks its key up by attributes alone: items written by older
  * libgnome-keyring builds carry no schema name, and SECRET_SCHEMA_NONE would
@@ -15,93 +16,22 @@ static const SecretSchema chromium_schema = {
     .attributes = {{"application", SECRET_SCHEMA_ATTRIBUTE_STRING}, {NULL, 0}},
 };
 
-/* On KDE Chromium keeps its key in KWallet. A KWallet migration can leave a
- * stale duplicate visible through Secret Service, so ask KWallet itself, the
- * way Chromium's KWallet backend does, and get the item Chromium reads. */
+/* On KDE Chromium writes the key through KWallet, which ksecretd exposes as
+ * server=<folder>, user=<entry> with no application attribute. A KWallet
+ * migration can leave a stale item with identical attributes, and nothing in
+ * the wallet tells the two apart, so every match is returned for the caller to
+ * try against the cookies. Pairs follow Chromium's KWallet branding. */
+static const SecretSchema kwallet_schema = {
+    .name = "org.qt.keychain",
+    .flags = SECRET_SCHEMA_DONT_MATCH_NAME,
+    .attributes = {{"server", SECRET_SCHEMA_ATTRIBUTE_STRING},
+                   {"user", SECRET_SCHEMA_ATTRIBUTE_STRING},
+                   {NULL, 0}},
+};
 static const char *const kwallet_entries[][3] = {
     {"chrome", "Chrome Keys", "Chrome Safe Storage"},
     {"chromium", "Chromium Keys", "Chromium Safe Storage"},
 };
-static const char kwallet_app[] = "T3 Code";
-
-static GVariant *kwallet_call(GDBusConnection *bus, const char *method, GVariant *args,
-                              const char *reply_type, gint timeout, GError **error) {
-    return g_dbus_connection_call_sync(bus, "org.kde.kwalletd6", "/modules/kwalletd6",
-                                       "org.kde.KWallet", method, args,
-                                       G_VARIANT_TYPE(reply_type), G_DBUS_CALL_FLAGS_NONE, timeout,
-                                       NULL, error);
-}
-
-static int read_kwallet(const char *folder, const char *entry) {
-    GError *error = NULL;
-    GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
-    if (bus == NULL) {
-        g_error_free(error);
-        return KEY_MISSING;
-    }
-    int status = READ_FAILED;
-    gboolean enabled = FALSE;
-    gint32 handle = -1;
-    GVariant *reply = kwallet_call(bus, "isEnabled", NULL, "(b)", -1, &error);
-    if (reply != NULL) {
-        g_variant_get(reply, "(b)", &enabled);
-        g_variant_unref(reply);
-        status = KEY_MISSING;
-    }
-    if (enabled && (reply = kwallet_call(bus, "networkWallet", NULL, "(s)", -1, &error))) {
-        status = READ_FAILED;
-        const gchar *wallet = NULL;
-        g_variant_get(reply, "(&s)", &wallet);
-        /* Opening a locked wallet shows KWallet's unlock prompt; cancelling returns -1. */
-        GVariant *opened = kwallet_call(bus, "open",
-                                        g_variant_new("(sxs)", wallet, (gint64)0, kwallet_app),
-                                        "(i)", G_MAXINT, &error);
-        g_variant_unref(reply);
-        if (opened != NULL) {
-            g_variant_get(opened, "(i)", &handle);
-            g_variant_unref(opened);
-            if (handle < 0) status = KEY_LOCKED;
-        }
-    }
-    if (handle >= 0 &&
-        (reply = kwallet_call(bus, "hasFolder", g_variant_new("(iss)", handle, folder, kwallet_app),
-                              "(b)", -1, &error))) {
-        gboolean has_folder = FALSE;
-        g_variant_get(reply, "(b)", &has_folder);
-        g_variant_unref(reply);
-        status = KEY_MISSING;
-        if (has_folder &&
-            (reply = kwallet_call(bus, "readPassword",
-                                  g_variant_new("(isss)", handle, folder, entry, kwallet_app),
-                                  "(s)", -1, &error))) {
-            const gchar *value = NULL;
-            g_variant_get(reply, "(&s)", &value);
-            size_t length = strlen(value);
-            status = length == 0 ? KEY_MISSING : READ_FAILED;
-            if (length > 0 && fwrite(value, 1, length, stdout) == length && fflush(stdout) == 0) {
-                status = 0;
-            }
-            g_variant_unref(reply);
-        }
-    }
-    if (handle >= 0) {
-        reply = kwallet_call(bus, "close", g_variant_new("(ibs)", handle, FALSE, kwallet_app),
-                             "(i)", -1, NULL);
-        if (reply != NULL) g_variant_unref(reply);
-    }
-    if (error != NULL) {
-        /* Without kwalletd6 there is no KWallet key to find. */
-        if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
-            g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER)) {
-            status = KEY_MISSING;
-        } else if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_ACCESS_DENIED)) {
-            status = KEY_LOCKED;
-        }
-        g_error_free(error);
-    }
-    g_object_unref(bus);
-    return status;
-}
 
 int main(int argc, char **argv) {
     if (argc != 2 || argv[1][0] == '\0') return 64;
@@ -115,6 +45,15 @@ int main(int argc, char **argv) {
         NULL, &chromium_schema, attributes,
         SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, &error);
     g_hash_table_unref(attributes);
+    for (gsize i = 0; error == NULL && items == NULL && i < G_N_ELEMENTS(kwallet_entries); i++) {
+        if (strcmp(argv[1], kwallet_entries[i][0]) != 0) continue;
+        attributes = secret_attributes_build(&kwallet_schema, "server", kwallet_entries[i][1],
+                                             "user", kwallet_entries[i][2], NULL);
+        items = secret_service_search_sync(
+            NULL, &kwallet_schema, attributes,
+            SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, &error);
+        g_hash_table_unref(attributes);
+    }
 
     int status = READ_FAILED;
     if (error != NULL) {
@@ -127,6 +66,27 @@ int main(int argc, char **argv) {
         g_error_free(error);
     } else if (items == NULL) {
         status = KEY_MISSING;
+    } else if (items->next != NULL) {
+        status = KEY_MISSING;
+        for (GList *link = items; link != NULL; link = link->next) {
+            if (secret_item_get_locked(link->data)) {
+                status = KEY_LOCKED;
+                break;
+            }
+            SecretValue *secret = secret_item_get_secret(link->data);
+            if (secret == NULL) continue;
+            gsize length = 0;
+            const gchar *value = secret_value_get(secret, &length);
+            /* KWallet passwords are text, so a NUL byte cannot appear inside one. */
+            if (length > 0 && memchr(value, '\0', length) == NULL) {
+                status = fwrite(value, 1, length, stdout) == length && fputc('\0', stdout) != EOF
+                             ? KEY_CANDIDATES
+                             : READ_FAILED;
+            }
+            secret_value_unref(secret);
+            if (status == READ_FAILED) break;
+        }
+        if (status == KEY_CANDIDATES && fflush(stdout) != 0) status = READ_FAILED;
     } else {
         SecretItem *item = SECRET_ITEM(items->data);
         if (secret_item_get_locked(item)) {
@@ -145,10 +105,5 @@ int main(int argc, char **argv) {
         }
     }
     g_list_free_full(items, g_object_unref);
-    for (gsize i = 0; status == KEY_MISSING && i < G_N_ELEMENTS(kwallet_entries); i++) {
-        if (strcmp(argv[1], kwallet_entries[i][0]) == 0) {
-            status = read_kwallet(kwallet_entries[i][1], kwallet_entries[i][2]);
-        }
-    }
     return status;
 }

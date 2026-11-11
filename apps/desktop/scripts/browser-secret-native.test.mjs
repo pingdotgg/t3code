@@ -38,8 +38,6 @@ describe.skipIf(hostPlatform !== "linux")("bundled libsecret helper", () => {
         "-Wl,--wrap=secret_service_search_sync",
         "-Wl,--wrap=secret_item_get_locked",
         "-Wl,--wrap=secret_item_get_secret",
-        "-Wl,--wrap=g_bus_get_sync",
-        "-Wl,--wrap=g_dbus_connection_call_sync",
         "-o",
         executable,
         ...flags,
@@ -51,13 +49,9 @@ describe.skipIf(hostPlatform !== "linux")("bundled libsecret helper", () => {
     if (directory) NodeFS.rmSync(directory, { recursive: true, force: true });
   });
 
-  const run = (args, kwallet) =>
+  const run = (args) =>
     NodeChildProcess.spawnSync(executable, args, {
-      env: {
-        ...process.env,
-        DBUS_SESSION_BUS_ADDRESS: "unix:path=/unused-test-bus",
-        ...(kwallet ? { T3_TEST_KWALLET: kwallet } : {}),
-      },
+      env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: "unix:path=/unused-test-bus" },
     });
 
   it("builds an executable for the requested architecture into a staged resource directory", () => {
@@ -84,24 +78,16 @@ describe.skipIf(hostPlatform !== "linux")("bundled libsecret helper", () => {
     expect(result.stderr.length).toBe(0);
   });
 
-  it.each(["chrome", "chromium"])(
-    "reads the %s key from KWallet when no Secret Service item has its application",
-    (application) => {
-      const result = run([application]);
-      expect(result.status).toBe(0);
-      expect(result.stdout).toEqual(Buffer.from(`${application} é€`));
-    },
-  );
+  it("returns every chrome key KWallet stores without an application attribute", () => {
+    const result = run(["chrome"]);
+    expect(result.status).toBe(5);
+    expect(result.stdout).toEqual(Buffer.from("stale\0live é€\0"));
+  });
 
-  it.each([
-    ["absent", 2],
-    ["disabled", 2],
-    ["no-folder", 2],
-    ["cancelled", 3],
-  ])("reports a KWallet that is %s without emitting a secret", (kwallet, code) => {
-    const result = run(["chrome"], kwallet);
-    expect(result.status).toBe(code);
-    expect(result.stdout.length).toBe(0);
+  it("returns a sole chromium KWallet key unframed", () => {
+    const result = run(["chromium"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toEqual(Buffer.from("live é€"));
   });
 
   it.each([

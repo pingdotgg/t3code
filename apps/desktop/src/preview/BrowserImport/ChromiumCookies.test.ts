@@ -260,7 +260,13 @@ describe("readChromiumCookieDatabase", () => {
           ('v11.example', 'v11-cookie', '', ${encryptChromium("v11", boundValue("v11.example", "v11 value"), cbcV11)}, '/', 0, 1, 0, 0)`;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
-      const complete = yield* readChromiumCookieDatabase(filename, { cbcV10, cbcV11 }, "linux");
+      // A KDE wallet's stale key copy comes first and must not hide the live key.
+      const stale = Buffer.from("0000000000000000");
+      const complete = yield* readChromiumCookieDatabase(
+        filename,
+        { cbcV10, cbcV11: [stale, cbcV11] },
+        "linux",
+      );
       expect(complete.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
         { name: "v10-cookie", value: "v10 value" },
         { name: "v11-cookie", value: "v11 value" },
@@ -308,7 +314,7 @@ describe("readChromiumCookieDatabase", () => {
 
       const recovered = yield* readChromiumCookieDatabase(
         filename,
-        { cbcV10, cbcV11, cbcEmpty },
+        { cbcV10, cbcV11: [cbcV11], cbcEmpty },
         "linux",
       );
       expect(recovered.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
