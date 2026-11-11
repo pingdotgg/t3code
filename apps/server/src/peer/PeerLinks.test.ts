@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -389,6 +390,62 @@ it.effect("never sends a link's token to an address that stops answering as that
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("lists a peer asleep at every address as unreachable within one probe budget", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      // Another address of the same machine, asleep too.
+      const wake = yield* Deferred.make<void>();
+      const elsewhere = yield* serveRaw(() =>
+        Deferred.await(wake).pipe(Effect.as(HttpServerResponse.empty({ status: 503 }))),
+      );
+      yield* Effect.addFinalizer(() => Deferred.succeed(wake, undefined));
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({
+        url: b.url,
+        alternateUrls: [elsewhere],
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+
+      yield* Ref.set(b.asleep, true);
+      const listing = yield* a.links.list.pipe(Effect.forkScoped);
+      yield* Queue.take(b.unanswered);
+      yield* TestClock.adjust(Duration.seconds(3));
+      const listed = yield* Fiber.join(listing);
+      expect(listed.map((link) => link.status)).toEqual(["unreachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("lists a peer as reachable at another address while its first one sleeps", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const described = yield* HttpClient.get(`${b.url}/.well-known/t3/environment`).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.provide(FetchHttpClient.layer),
+      );
+      // Another address of the same machine that answers.
+      const elsewhere = yield* serveRaw(() =>
+        Effect.succeed(HttpServerResponse.text(described, { contentType: "application/json" })),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({
+        url: b.url,
+        alternateUrls: [elsewhere],
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+
+      yield* Ref.set(b.asleep, true);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("cancelling a descriptor probe aborts its request and leaves later resolves fresh", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -436,6 +493,38 @@ it.effect("cancelling a descriptor probe aborts its request and leaves later res
       expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
       expect(yield* Ref.get(requests)).toBe(2);
       expect(yield* Ref.get(b.bearers)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.live("one dropped descriptor request does not list a live peer as unreachable", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const dropNext = yield* Ref.make(false);
+      const dropOnce = HttpRouter.middleware(
+        (httpEffect) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (
+              request.url.startsWith("/.well-known/t3/environment") &&
+              (yield* Ref.getAndSet(dropNext, false))
+            ) {
+              return HttpServerResponse.empty({ status: 503 });
+            }
+            return yield* httpEffect;
+          }),
+        { global: true },
+      );
+      const b = yield* servePeer(
+        box,
+        Layer.merge(McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), dropOnce),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      yield* Ref.set(dropNext, true);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -603,10 +692,35 @@ it.effect(
           expectedEnvironmentId: box.environmentId,
         });
         expect(linked).toMatchObject({ environmentId: box.environmentId, urls: [b.url] });
+        // A picked machine is never linked at this machine's own loopback.
+        const own = yield* a.links
+          .link({
+            url: b.url.replace("127.0.0.1", "localhost"),
+            pairingCode: pairing.credential,
+            access: "auto",
+            expectedEnvironmentId: box.environmentId,
+          })
+          .pipe(Effect.flip);
+        expect(own.message).toContain("is this machine");
         yield* probe(a);
         expect(yield* linkedSessions(impostor)).toEqual([]);
         expect(yield* Ref.get(impostor.bearers)).toEqual([]);
         expect((yield* linkedSessions(b)).length).toBe(1);
+
+        // An address alone that answers as the linked box never takes over its link.
+        yield* Ref.set(impostor.descriptor, box);
+        const second = yield* impostor.auth.issuePairingCredential();
+        const taken = yield* a.links
+          .link({ url: impostor.url, pairingCode: second.credential, access: "auto" })
+          .pipe(Effect.flip);
+        expect(taken.message).toContain("already linked");
+        expect(yield* linkedSessions(impostor)).toEqual([]);
+        expect(Option.getOrUndefined(yield* a.links.get(box.environmentId))?.urls).toEqual([b.url]);
+        // The address the link already has still renews it.
+        const renewal = yield* b.auth.issuePairingCredential();
+        expect(
+          yield* a.links.link({ url: b.url, pairingCode: renewal.credential, access: "auto" }),
+        ).toMatchObject({ urls: [b.url] });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
