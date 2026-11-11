@@ -228,6 +228,22 @@ export const make = Effect.gen(function* () {
   const prunedRef = yield* Ref.make(false);
   const retryLoopRunningRef = yield* Ref.make(false);
   const notReadyChecksBeforeRestartRef = yield* Ref.make(CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART);
+  // The relay client shares the server's process group, so it exits on these signals before the finalizer runs.
+  let shutdownSignalReceived = false;
+  const onShutdownSignal = () => {
+    shutdownSignalReceived = true;
+  };
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      process.on("SIGINT", onShutdownSignal);
+      process.on("SIGTERM", onShutdownSignal);
+    }),
+    () =>
+      Effect.sync(() => {
+        process.off("SIGINT", onShutdownSignal);
+        process.off("SIGTERM", onShutdownSignal);
+      }),
+  );
   // An explicit cloudflared transport in the environment is the user's choice.
   const env = yield* HostProcess.Environment;
   const transportChosenByUser = Option.isSome(
@@ -363,6 +379,7 @@ export const make = Effect.gen(function* () {
 
           const desiredConfig = yield* Ref.get(desiredConfigRef);
           if (
+            shutdownSignalReceived ||
             !desiredConfig ||
             desiredConfig.providerKind !== "cloudflare_tunnel" ||
             runtimeConfigKey(desiredConfig) !== connector.configKey
