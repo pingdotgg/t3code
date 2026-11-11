@@ -23,6 +23,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -42,6 +43,7 @@ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 import * as DeviceService from "./DeviceService.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
+import { ensureDeviceHub } from "./DeviceToolchain.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
@@ -378,6 +380,45 @@ describe("device setup consent", () => {
         detail: startupError.message,
       });
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("names the missing npm in the host status when device support cannot install", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-no-npm-" });
+      const installError = yield* ensureDeviceHub(baseDir).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            Effect.fail(
+              new ProcessRunner.ProcessSpawnError({
+                command: input.command,
+                argumentCount: input.args.length,
+                cause: PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                  description: `spawn ${input.command} ENOENT`,
+                }),
+              }),
+            ),
+        }),
+        Effect.flip,
+      );
+      const { service, settings } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        new DeviceHost.DeviceHostError({
+          hostId: LOCAL_DEVICE_HOST_ID,
+          step: "installing device support",
+          cause: installError,
+        }),
+      );
+      yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
+      const detail = (yield* service.list).hostStatuses[LOCAL_DEVICE_HOST_ID]?.detail;
+      expect(detail).toMatch(/\bnpm\b/);
+      expect(detail).toMatch(/Node\.js/);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
