@@ -8113,10 +8113,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             } else {
               const configuredSelection = yield* Ref.get(activeSelection);
               const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
+              // A catalog update can move a saved later model choice, such as
+              // Cline's `model`, to another value mid-session; reapplying it
+              // fails the turn instead of prompting the replacement.
+              const liveConfigOptions = yield* runtime.getConfigOptions;
+              const modelOptionId = findModelConfigOption(liveConfigOptions)?.id;
+              const laterModelMoved = (turnInput.modelSelection.options ?? []).some((selection) => {
+                const option = liveConfigOptions.find((candidate) => candidate.id === selection.id);
+                return (
+                  option?.type === "select" &&
+                  option.category === "model" &&
+                  option.id !== modelOptionId &&
+                  option.currentValue !== selection.value
+                );
+              });
               if (
                 configuredSelection === null ||
                 !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
-                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode
+                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode ||
+                laterModelMoved
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {

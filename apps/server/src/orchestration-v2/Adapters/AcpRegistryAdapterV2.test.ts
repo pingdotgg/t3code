@@ -496,6 +496,7 @@ describe("AcpRegistryAdapterV2", () => {
       readonly storedOptions?: ReadonlyArray<ProviderOptionSelection>;
       readonly turnModels?: ReadonlyArray<string>;
       readonly rejectedModel?: string;
+      readonly assertTurnFailure?: (error: unknown) => void;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -604,7 +605,11 @@ describe("AcpRegistryAdapterV2", () => {
         const now = yield* DateTime.now;
         let current = stored;
         for (const [index, model] of input.turnModels.entries()) {
-          const target: ModelSelection = { instanceId, model };
+          const target: ModelSelection = {
+            instanceId,
+            model,
+            ...(input.storedOptions === undefined ? {} : { options: input.storedOptions }),
+          };
           const plan = yield* adapter.planSelectionTransition({
             current,
             target,
@@ -638,13 +643,17 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(
         Effect.match({
           onFailure: (error) => {
+            if (input.assertTurnFailure !== undefined) return input.assertTurnFailure(error);
             assert.isDefined(input.rejectedModel);
             assert.equal(
               makeProviderFailure({ cause: error }).message,
               `The agent did not accept the model "${input.rejectedModel}". Choose another model for this provider, then retry.`,
             );
           },
-          onSuccess: () => assert.isUndefined(input.rejectedModel),
+          onSuccess: () => {
+            assert.isUndefined(input.rejectedModel);
+            assert.isUndefined(input.assertTurnFailure);
+          },
         }),
         Effect.scoped,
       );
@@ -902,6 +911,52 @@ describe("AcpRegistryAdapterV2", () => {
         }).pipe(Effect.provide(layerTest), Effect.scoped);
       },
     );
+
+    it.effect("fails the next turn when a catalog update drops a saved later model", () => {
+      const providerPick = {
+        id: "provider",
+        name: "Provider",
+        category: "model",
+        type: "select",
+        currentValue: "pass",
+        options: [{ value: "pass", name: "Pass" }],
+      };
+      const laterModel = (currentValue: string, values: ReadonlyArray<string>) => ({
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue,
+        options: values.map((value) => ({ value, name: value })),
+      });
+      return openWithStoredPicks({
+        setup: { configOptions: [providerPick, laterModel("alpha", ["alpha", "beta"])] },
+        storedModel: "pass",
+        storedOptions: [{ id: "model", value: "beta" }],
+        turnModels: ["pass", "pass"],
+        pickFrames: [
+          outbound("session/set_config_option", {
+            sessionId: "agent-session",
+            configId: "model",
+            value: "beta",
+          }),
+          answer("session/set_config_option", {
+            configOptions: [providerPick, laterModel("beta", ["alpha", "beta"])],
+          }),
+          // The agent drops Beta and moves to Alpha; no second prompt may follow.
+          ...prompt(configOptionUpdate([providerPick, laterModel("alpha", ["alpha"])])),
+        ],
+        assertTurnFailure: (error) => {
+          const cause = (error as { readonly cause?: unknown }).cause;
+          assert.instanceOf(cause, EffectAcpErrors.AcpRequestError);
+          assert.deepEqual(cause.data, {
+            configId: "model",
+            allowedValues: ["alpha"],
+            receivedValue: "beta",
+          });
+        },
+      }).pipe(Effect.provide(layerTest), Effect.scoped);
+    });
 
     // regression: #19519 models come from session model state, not a hardcoded list
     it.effect("keeps unadvertised default and auto selections agent-controlled", () =>
