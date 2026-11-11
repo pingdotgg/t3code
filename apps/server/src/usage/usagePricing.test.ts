@@ -258,4 +258,63 @@ describe("usage pricing", () => {
     expect(lookupRate(table, "provider-b/example-model")?.inputCostPerToken).toBe(3);
     expect(lookupRate(table, "example-model")).toBeNull();
   });
+
+  it("prices a bare name at the model maker's rate when a reseller marks it up", () => {
+    const reseller = { "kyma/gemini-4-argon": rate(5.4e-6) };
+    const makers = {
+      "gemini/gemini-4-argon": rate(2e-6, 1e-7),
+      "vertex_ai/gemini-4-argon": rate(2e-6, 1e-7),
+    };
+
+    for (const document of [
+      { ...reseller, ...makers },
+      { ...makers, ...reseller },
+    ]) {
+      const table = parseRateTable(document);
+      expect(lookupRate(table, "gemini-4-argon")).toEqual(
+        lookupRate(table, "gemini/gemini-4-argon"),
+      );
+    }
+  });
+
+  it("prices a bare name listed only under Bedrock IDs at the base anthropic rate", () => {
+    const bedrock = (input: number, output: number, cacheRead: number, cacheCreation: number) => ({
+      input_cost_per_token: input,
+      output_cost_per_token: output,
+      cache_read_input_token_cost: cacheRead,
+      cache_creation_input_token_cost: cacheCreation,
+    });
+    const base = bedrock(8e-6, 4e-5, 2e-7, 1e-5);
+    const regional = bedrock(8.8e-6, 4.4e-5, 2.2e-7, 1.1e-5);
+    const govCloud = bedrock(9.6e-6, 4.8e-5, 2.4e-7, 1.2e-5);
+    const rows = [
+      ["anthropic.claude-mythos-5-2", base],
+      ["global.anthropic.claude-mythos-5-2", base],
+      ["us.anthropic.claude-mythos-5-2", regional],
+      ["eu.anthropic.claude-mythos-5-2", regional],
+      ["us-gov.anthropic.claude-mythos-5-2", govCloud],
+      ["bedrock/us-gov-east-1/anthropic.claude-mythos-5-2", govCloud],
+      ["bedrock/us-gov-west-1/anthropic.claude-mythos-5-2", govCloud],
+    ] as const;
+
+    for (const entries of [rows, rows.toReversed()]) {
+      const table = parseRateTable(Object.fromEntries(entries));
+      expect(lookupRate(table, "claude-mythos-5-2")).toMatchObject({
+        inputCostPerToken: 8e-6,
+        outputCostPerToken: 4e-5,
+        cacheReadCostPerToken: 2e-7,
+        cacheCreationCostPerToken: 1e-5,
+      });
+    }
+  });
+
+  it("leaves a bare name unpriced when model makers' own entries disagree", () => {
+    const table = parseRateTable({
+      "openai/example-model": rate(1),
+      "xai/example-model": rate(3),
+      "kyma/example-model": rate(1),
+    });
+
+    expect(lookupRate(table, "example-model")).toBeNull();
+  });
 });
