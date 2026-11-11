@@ -326,6 +326,7 @@ it.effect("still knows No project when its folder is the target of a symlinked S
 
       assert.isTrue(yield* scratch.isScratchProject(projectId));
       assert.equal((yield* scratch.ensureScratchProject).projectId, projectId);
+      assert.deepStrictEqual(yield* scratch.scratchRoot, Option.some(target));
     }),
   ),
 );
