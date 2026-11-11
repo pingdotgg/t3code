@@ -40,6 +40,16 @@ vi.mock("electron-updater", async (importOriginal) => {
 import * as ElectronUpdater from "./ElectronUpdater.ts";
 import { installAppImageUpdate, verifyAppImageInstalls } from "./AppImageInstall.ts";
 
+function crossDevice(installerPath: string) {
+  const rename = vi.mocked(NodeFS.renameSync).getMockImplementation()!;
+  vi.mocked(NodeFS.renameSync).mockImplementation((from, to) => {
+    if (from === installerPath) {
+      throw Object.assign(new Error("EXDEV: cross-device link not permitted"), { code: "EXDEV" });
+    }
+    rename(from, to);
+  });
+}
+
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("installAppImageUpdate", () => {
   const oldAppImage = "#!/bin/sh\n# old build\nexit 0\n";
   const newAppImage = `#!/bin/sh\n# new build\nexit 0\n#${"x".repeat(4096)}\n`;
@@ -72,19 +82,28 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("installAppImag
   });
 
   it.each([
-    { installed: "T3-Code.AppImage", destination: "T3-Code.AppImage", releaseSize: undefined },
+    {
+      installed: "T3-Code.AppImage",
+      destination: "T3-Code.AppImage",
+      releaseSize: undefined,
+      across: false,
+    },
     {
       installed: "T3-Code-1.2.2-x86_64.AppImage",
       destination: "T3-Code-1.2.3-x86_64.AppImage",
       releaseSize: Buffer.byteLength(newAppImage),
+      across: true,
     },
   ])("replaces $installed with a verified executable at $destination", (names) => {
     const input = fixture(names.installed);
+    if (names.across) crossDevice(input.installerPath);
+    let copies = 0;
     const destination = installAppImageUpdate({
       ...input,
       sha512: sha512(newAppImage),
       size: names.releaseSize,
       copyFile: (from, to) => {
+        copies += 1;
         assert.equal(NodeFS.readFileSync(input.appImageFile, "utf8"), oldAppImage);
         const stageDirectory = NodePath.dirname(to);
         assert.equal(NodePath.dirname(stageDirectory), input.applications);
@@ -93,6 +112,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("installAppImag
       },
     });
 
+    assert.equal(copies, names.across ? 1 : 0);
     assert.equal(destination, NodePath.join(input.applications, names.destination));
     assert.equal(NodeFS.readFileSync(destination, "utf8"), newAppImage);
     assert.equal(NodeFS.statSync(destination).mode & 0o777, 0o755);
@@ -102,6 +122,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("installAppImag
 
   it("keeps the installed app and cached download when a partial copy runs out of space", () => {
     const input = fixture();
+    crossDevice(input.installerPath);
 
     assert.throws(
       () =>
@@ -143,6 +164,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("installAppImag
     ];
     for (const { source, stage, digest, size } of cases) {
       const input = fixture();
+      crossDevice(input.installerPath);
       NodeFS.writeFileSync(input.installerPath, source);
 
       assert.throws(() =>
@@ -218,6 +240,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("installAppImag
 
   it("still succeeds when removing the cached download fails after commit", () => {
     const input = fixture();
+    crossDevice(input.installerPath);
     const remove = vi.mocked(NodeFS.rmSync).getMockImplementation()!;
     vi.mocked(NodeFS.rmSync).mockImplementation((path, options) => {
       if (path === input.installerPath) throw new Error("cache cleanup failed");
@@ -313,6 +336,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     }).pipe(Effect.provide(ElectronUpdater.layer));
 
     afterEach(() => {
+      vi.mocked(NodeFS.renameSync).mockReset();
       updaterSelection.current = undefined;
       vi.unstubAllEnvs();
       for (const directory of directories.splice(0)) {
@@ -374,6 +398,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       Effect.gen(function* () {
         const input = fixture();
         if (failure === "partial copy ENOSPC") {
+          crossDevice(input.installerPath);
           verifyAppImageInstalls(input.updater, (from, to) => {
             NodeFS.writeFileSync(to, NodeFS.readFileSync(from).subarray(0, 12));
             throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });

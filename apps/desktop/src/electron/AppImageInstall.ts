@@ -18,11 +18,11 @@ function syncPath(path: string): void {
   }
 }
 
-function verifyAndSyncStage(path: string, sourceSize: number, sha512: string): void {
+function verifyAndSync(path: string, sourceSize: number, sha512: string): void {
   const fd = NodeFS.openSync(path, "r");
   try {
     if (NodeFS.fstatSync(fd).size !== sourceSize) {
-      throw new Error("The copied AppImage update has an invalid size.");
+      throw new Error("The AppImage update has an invalid size.");
     }
     const hash = NodeCrypto.createHash("sha512");
     const buffer = Buffer.allocUnsafe(1024 * 1024);
@@ -31,12 +31,37 @@ function verifyAndSyncStage(path: string, sourceSize: number, sha512: string): v
       hash.update(buffer.subarray(0, read));
     }
     if (hash.digest("base64") !== sha512) {
-      throw new Error("The copied AppImage update has an invalid SHA-512 digest.");
+      throw new Error("The AppImage update has an invalid SHA-512 digest.");
     }
     NodeFS.fchmodSync(fd, 0o755);
     NodeFS.fsyncSync(fd);
   } finally {
     NodeFS.closeSync(fd);
+  }
+}
+
+// A partial cross-device move would truncate the app, so copy into a private stage
+// on the destination filesystem, verify it, then rename it into place.
+function installAcrossFilesystems(
+  input: { readonly installerPath: string; readonly sha512: string; readonly copyFile?: CopyFile },
+  destination: string,
+  sourceSize: number,
+  bestEffort: (operation: () => void) => void,
+): void {
+  const stageDirectory = NodeFS.mkdtempSync(
+    NodePath.join(NodePath.dirname(destination), ".t3code-update-"),
+  );
+  const staged = NodePath.join(stageDirectory, "update.AppImage");
+  try {
+    if (input.copyFile) {
+      input.copyFile(input.installerPath, staged);
+    } else {
+      NodeFS.copyFileSync(input.installerPath, staged, NodeFS.constants.COPYFILE_EXCL);
+    }
+    verifyAndSync(staged, sourceSize, input.sha512);
+    NodeFS.renameSync(staged, destination);
+  } finally {
+    bestEffort(() => NodeFS.rmSync(stageDirectory, { recursive: true, force: true }));
   }
 }
 
@@ -83,27 +108,20 @@ export function installAppImageUpdate(input: {
       NodeFS.rmSync(path, { force: true });
     });
 
-  // A private stage on the destination filesystem allows an atomic rename. Its
-  // fixed-length name also accommodates AppImage names near the filename limit.
-  const stageDirectory = NodeFS.mkdtempSync(
-    NodePath.join(NodePath.dirname(destination), ".t3code-update-"),
-  );
-  const staged = NodePath.join(stageDirectory, "update.AppImage");
+  verifyAndSync(input.installerPath, sourceSize, input.sha512);
+  let copied = false;
   try {
-    if (input.copyFile) {
-      input.copyFile(input.installerPath, staged);
-    } else {
-      NodeFS.copyFileSync(input.installerPath, staged, NodeFS.constants.COPYFILE_EXCL);
-    }
-    verifyAndSyncStage(staged, sourceSize, input.sha512);
-    NodeFS.renameSync(staged, destination);
-  } finally {
-    bestEffort(() => NodeFS.rmSync(stageDirectory, { recursive: true, force: true }));
+    // Same filesystem: an atomic rename, like electron-updater's own `mv`, needs no extra space.
+    NodeFS.renameSync(input.installerPath, destination);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+    installAcrossFilesystems(input, destination, sourceSize, bestEffort);
+    copied = true;
   }
 
   bestEffort(() => syncPath(NodePath.dirname(destination)));
   if (destination !== input.appImageFile) removeObsolete(input.appImageFile);
-  removeObsolete(input.installerPath);
+  if (copied) removeObsolete(input.installerPath);
   return destination;
 }
 
