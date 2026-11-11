@@ -15,6 +15,7 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -438,6 +439,36 @@ class ClaudeCapabilitiesProbeSdkError extends Schema.TaggedError<ClaudeCapabilit
   }
 }
 
+const decodeClaudeUsageCacheFile = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      cachedUsageUtilization: Schema.optional(
+        Schema.Struct({ fetchedAtMs: Schema.Finite, utilization: Schema.Unknown }),
+      ),
+    }),
+  ),
+);
+
+/** Claude Code answers get_usage from the reading it caches in its .claude.json. */
+const readClaudeUsageCache = Effect.fn("ClaudeProvider.readClaudeUsageCache")(
+  function* (file: string) {
+    const text = yield* (yield* FileSystem.FileSystem).readFileString(file).pipe(
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+      }),
+    );
+    const entry = (yield* decodeClaudeUsageCacheFile(text)).cachedUsageUtilization;
+    if (entry === undefined) return undefined;
+    const fetchedAt = DateTime.make(entry.fetchedAtMs);
+    return Option.isSome(fetchedAt)
+      ? { fetchedAt: DateTime.formatIso(fetchedAt.value), utilization: entry.utilization }
+      : ("unreadable" as const);
+  },
+  Effect.timeout("2 seconds"),
+  Effect.orElseSucceed(() => "unreadable" as const),
+);
+
 /** A never-yielding prompt allows local initialization IPC without sending an Anthropic request. */
 const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
@@ -456,6 +487,16 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+    const path = yield* Path.Path;
+    const configDir = claudeEnvironment.CLAUDE_CONFIG_DIR;
+    const home =
+      (yield* HostProcess.Platform) === "win32"
+        ? claudeEnvironment.USERPROFILE
+        : claudeEnvironment.HOME;
+    // Where the CLI itself keeps .claude.json: its config dir resolved against its cwd, else its home.
+    const usageCacheFile = configDir
+      ? path.join(path.resolve(cwd ?? ".", configDir), ".claude.json")
+      : path.join(home ?? (yield* HostProcess.HomeDirectory), ".claude.json");
     // Workspace probes (no usage) discard models; the machine probe refreshes the shared cache.
     const graceMs = includeStatus
       ? claudeGatewayDiscoveryGraceMs({
@@ -479,19 +520,20 @@ const probeClaudeCapabilities = (
           }),
         });
         const init = await q.initializationResult();
-        return { q, init, graceMs };
+        return { q, init, graceMs, usageCacheFile };
       },
       catch: (cause) => new ClaudeCapabilitiesProbeSdkError({ operation: "initialize", cause }),
     });
   }).pipe(
     Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),
-    Effect.flatMap(({ q, init, graceMs }) =>
+    Effect.flatMap(({ q, init, graceMs, usageCacheFile }) =>
       Effect.gen(function* () {
         // Usage has its own deadline so a slow optional request cannot discard initialization.
         // Only the rate limits are read, so skip the local transcript scan that fills
         // `behaviors`: with a few GB of transcripts it outlasts the deadline.
         // The effort caps are read in parallel under the same deadline; workspace probes skip both.
         const usageCheckedAt = DateTime.formatIso(yield* DateTime.now);
+        const cacheBefore = includeStatus ? yield* readClaudeUsageCache(usageCacheFile) : undefined;
         const { getSettings } = q as ClaudeSettingsQuery;
         const [usageResult, settingsResult] = yield* Effect.all(
           [
@@ -515,7 +557,7 @@ const probeClaudeCapabilities = (
           ],
           { concurrency: "unbounded" },
         );
-        const usage =
+        const usageResponse =
           usageResult && Result.isSuccess(usageResult)
             ? {
                 rate_limits_available: usageResult.success.rate_limits_available,
@@ -525,6 +567,19 @@ const probeClaudeCapabilities = (
         const effortCapSources = parseClaudeEffortCapSources(
           settingsResult && Result.isSuccess(settingsResult) ? settingsResult.success : undefined,
         );
+        const cacheAfter = usageResponse ? yield* readClaudeUsageCache(usageCacheFile) : undefined;
+        // An unreadable cache cannot date the reading, so this probe reports none.
+        const usage =
+          cacheBefore === "unreadable" || cacheAfter === "unreadable" ? undefined : usageResponse;
+        // Date the reading by the cache entry it equals. Without a match it is no older than the
+        // entry cached before the call. No entry at the CLI's path means the CLI fetched during this
+        // call, so the probe's start is a lower bound; a CLI caching elsewhere needs that path here.
+        const servedFrom =
+          [cacheAfter, cacheBefore]
+            .filter((entry) => typeof entry === "object")
+            .find(
+              (entry) => JSON.stringify(entry.utilization) === JSON.stringify(usage?.rate_limits),
+            ) ?? (typeof cacheBefore === "object" ? cacheBefore : undefined);
         const account = init.account as
           | {
               readonly email?: string;
@@ -542,7 +597,7 @@ const probeClaudeCapabilities = (
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
           ...(init.models?.length ? { models: init.models } : {}),
-          ...(usage ? { usage, usageCheckedAt } : {}),
+          ...(usage ? { usage, usageCheckedAt: servedFrom?.fetchedAt ?? usageCheckedAt } : {}),
           ...(effortCapSources ? { effortCapSources } : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }).pipe(
