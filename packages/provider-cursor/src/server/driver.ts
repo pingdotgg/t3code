@@ -105,7 +105,7 @@ export const CursorDriver: ProviderDriver<
     const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
-      displayName: displayName ?? "Cursor",
+      displayName,
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
