@@ -22,6 +22,9 @@ import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
+/** A fresh object each time, so quoting the same comment twice still lands. */
+export type PullRequestQuoteRequest = { readonly text: string };
+
 export function PullRequestCommentForm({
   environmentId,
   active,
@@ -29,6 +32,7 @@ export function PullRequestCommentForm({
   detail,
   actionPending,
   textareaRef,
+  quoteRequest,
   onCommentAction,
   onCommented,
   onClose,
@@ -40,6 +44,7 @@ export function PullRequestCommentForm({
   detail: PullRequestDetailView;
   actionPending: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
+  quoteRequest?: PullRequestQuoteRequest | undefined;
   onCommentAction: (
     body: string,
     action: "close" | "reopen",
@@ -49,6 +54,28 @@ export function PullRequestCommentForm({
 }) {
   const gt = useGT();
   const [body, setBody] = useState("");
+  const [answeredQuoteRequest, setAnsweredQuoteRequest] = useState(quoteRequest);
+  const [caretAfterQuote, setCaretAfterQuote] = useState(false);
+  if (quoteRequest !== answeredQuoteRequest) {
+    setAnsweredQuoteRequest(quoteRequest);
+    if (quoteRequest) {
+      setBody((draft) =>
+        draft.trim().length === 0
+          ? quoteRequest.text
+          : `${draft.trimEnd()}\n\n${quoteRequest.text}`,
+      );
+      setCaretAfterQuote(true);
+    }
+  }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the DOM caret after a quote the textarea just received
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!caretAfterQuote || !textarea) return;
+    setCaretAfterQuote(false);
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    textarea.scrollTop = textarea.scrollHeight;
+  }, [caretAfterQuote, textareaRef]);
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
   const locked = submitting !== null || actionPending;
   const speech = useTextFieldSpeech({
