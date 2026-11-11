@@ -92,7 +92,7 @@ export function ThreadDetailsPrRow({
   openAriaLabel,
   onOpen,
   onActed,
-  onStopWatching,
+  watch,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -104,7 +104,7 @@ export function ThreadDetailsPrRow({
   openAriaLabel: string;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
-  onStopWatching?: (() => void) | undefined;
+  watch?: { watching: boolean; onToggle: () => void } | undefined;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
@@ -361,10 +361,11 @@ export function ThreadDetailsPrRow({
               }
             : null;
 
-  const watching =
-    onStopWatching !== undefined && (detail?.state ?? pr?.state ?? "open") === "open";
+  const watchToggle =
+    watch !== undefined && (detail?.state ?? pr?.state ?? "open") === "open" ? watch : null;
+  const iconSize = (part: "secondary" | "icon") => (part === "icon" ? "size-3.5" : "size-4");
   const watchControl = (part: "secondary" | "icon") =>
-    watching ? (
+    watchToggle === null ? null : watchToggle.watching ? (
       <Tooltip>
         <TooltipTrigger
           render={
@@ -375,20 +376,14 @@ export function ThreadDetailsPrRow({
               part={part}
               className="group/watch"
               aria-label={`Stop watching #${number}`}
-              onClick={onStopWatching}
+              onClick={watchToggle.onToggle}
             />
           }
         >
-          <EyeIcon
-            aria-hidden
-            className={cn(part === "icon" ? "size-3.5" : "size-4", "group-hover/watch:hidden")}
-          />
+          <EyeIcon aria-hidden className={cn(iconSize(part), "group-hover/watch:hidden")} />
           <EyeOffIcon
             aria-hidden
-            className={cn(
-              part === "icon" ? "size-3.5" : "size-4",
-              "hidden group-hover/watch:block",
-            )}
+            className={cn(iconSize(part), "hidden group-hover/watch:block")}
           />
         </TooltipTrigger>
         <TooltipPopup side="top">
@@ -396,7 +391,31 @@ export function ThreadDetailsPrRow({
           Click to stop.
         </TooltipPopup>
       </Tooltip>
-    ) : null;
+    ) : (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ThreadDetailsControl
+              type="button"
+              variant="ghost"
+              size="sm"
+              part={part}
+              tone="muted"
+              className="group/watch"
+              aria-label={`Watch #${number}`}
+              onClick={watchToggle.onToggle}
+            />
+          }
+        >
+          <EyeOffIcon aria-hidden className={cn(iconSize(part), "group-hover/watch:hidden")} />
+          <EyeIcon aria-hidden className={cn(iconSize(part), "hidden group-hover/watch:block")} />
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          Not watching. Click to watch: the agent wakes when checks finish, someone comments, or the
+          branch conflicts.
+        </TooltipPopup>
+      </Tooltip>
+    );
 
   // The title row wraps to two lines; a conventional-commit prefix eats most of one line.
   const openRow = (text: string, part: "row" | "primary", wrap = false) => (
@@ -436,7 +455,7 @@ export function ThreadDetailsPrRow({
 
   return (
     <>
-      {detail !== null && (showChecks || trailingAction !== null || watching) ? (
+      {detail !== null && (showChecks || trailingAction !== null || watchToggle !== null) ? (
         <div className="pb-1.5">
           {openRow(detail.title, "row", true)}
           <div className="mt-1.5 flex h-5 min-w-0 items-center gap-0.5 ps-9 pe-2.5 text-xs text-muted-foreground">
@@ -474,7 +493,7 @@ export function ThreadDetailsPrRow({
             ) : null}
           </div>
         </div>
-      ) : watching ? (
+      ) : watchToggle !== null ? (
         <div className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
           {openRow(label, "primary")}
           <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
