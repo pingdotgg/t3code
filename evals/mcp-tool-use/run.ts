@@ -818,9 +818,17 @@ const codexMessages = (messages: ReadonlyArray<ApiMessage>): Array<Block> =>
             },
     ),
   );
-/** A case's Codex input after the base's. The prompt is always the last item. */
-const codexInput = (base: Base, messages: ReadonlyArray<ApiMessage>) =>
-  codexMessages(messages).toSpliced(-1, 0, ...(base.codexContext ?? []));
+/** A case's Codex input after the base's: the current session's context goes just before the prompt. */
+const codexInput = (
+  sample: Pick<Sample, "testCase" | "base">,
+  messages: ReadonlyArray<ApiMessage>,
+) => {
+  const input = codexMessages(messages);
+  const context = sample.base.codexContext ?? [];
+  return sample.testCase.prompt === ""
+    ? [...input, ...context]
+    : input.toSpliced(-1, 0, ...context);
+};
 /** One tool call the shell simulator has answered, or one from the case's prior turns. */
 type ShellEntry = { readonly tool: string; readonly input: unknown; readonly output: string };
 /** PRs T3 links by itself because a shell command created them, as `gh pr create` does. */
@@ -2113,7 +2121,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   yield* withDevices(sample);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<HttpClient.HttpClient>());
   const messages = buildMessages(sample);
-  const input = base.codex ? codexInput(base, messages) : undefined;
+  const input = base.codex ? codexInput(sample, messages) : undefined;
   const transcript: Array<unknown> = [];
   const start = messages.length;
   const calls: Array<Call> = [];
@@ -2534,7 +2542,7 @@ const main = Effect.gen(function* () {
       yield* Effect.scoped(withDevices(sample));
       const messages = buildMessages(sample);
       const body = sample.base.codex
-        ? codexRequest(sample.base, codexInput(sample.base, messages))
+        ? codexRequest(sample.base, codexInput(sample, messages))
         : requestBody(sample, effort, messages);
       process.stdout.write(`${yield* encodeJson(body)}\n`);
     }
