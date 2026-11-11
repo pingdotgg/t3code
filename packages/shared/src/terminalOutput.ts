@@ -717,7 +717,7 @@ export function appendTerminalOutput(
           };
         }
       }
-      budget -= keep;
+      budget -= lineLength(terminal.lines[row]!);
     }
   }
   if (terminal.dropped) truncated = true;

@@ -204,6 +204,9 @@ describe("appendTerminalOutput edge cases from review", () => {
     );
     expect(windowChars).toBeLessThanOrEqual(4_096);
     expect(state.text.length).toBeLessThanOrEqual(4_096);
+    for (const prefix of ["😀", "e\u0301"]) {
+      expect(feed([`a\n${prefix}bx\nZ\u001b[2A`], 4).text).toBe("bx\nZ");
+    }
   });
 });
 
