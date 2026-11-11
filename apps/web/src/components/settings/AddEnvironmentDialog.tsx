@@ -71,7 +71,8 @@ import {
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
 interface PendingConnection {
-  readonly message: string;
+  readonly label: string;
+  readonly target: string | null;
   /** Whole seconds, so elapsed time lines up with `useNowSecond` ticks. */
   readonly startedAt: number;
 }
@@ -83,15 +84,22 @@ function PendingConnectionStatus({ pending }: { readonly pending: PendingConnect
     <div className="flex h-9 w-full items-center gap-2 rounded-lg border border-input bg-muted/40 px-3 text-xs text-muted-foreground transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none sm:h-8 dark:border-transparent dark:bg-white/[0.035]">
       <Spinner size="sm" aria-hidden />
       <span role="status" className="min-w-0 truncate">
-        {pending.message}
+        {pending.label}
+        {pending.target ? <span className="font-mono"> {pending.target}</span> : null}
       </span>
       {elapsedMs >= 1_000 ? (
-        <span aria-hidden className="ml-auto shrink-0 tabular-nums">
-          {formatDuration(elapsedMs)}
+        <span aria-hidden className="shrink-0 tabular-nums">
+          · {formatDuration(elapsedMs)}
         </span>
       ) : null}
     </div>
   );
+}
+
+/** The alias as typed or picked, plus whatever username and port are known. */
+function formatPendingSshTarget(target: DesktopSshEnvironmentTarget): string {
+  const authority = target.username ? `${target.username}@${target.alias}` : target.alias;
+  return target.port ? `${authority}:${target.port}` : authority;
 }
 
 export function AddEnvironmentDialog({
@@ -147,9 +155,10 @@ export function AddEnvironmentDialog({
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null);
   const isAddingSavedBackend = pendingConnection !== null;
   // Keeps the original start time when an SSH alias resolves and the attempt continues.
-  const startPendingConnection = (message: string) =>
+  const startPendingConnection = (label: string, target: string | null) =>
     setPendingConnection((current) => ({
-      message,
+      label,
+      target,
       startedAt: current?.startedAt ?? Math.floor(Date.now() / 1_000) * 1_000,
     }));
   const savedBackendSessionRef = useRef(0);
@@ -195,7 +204,7 @@ export function AddEnvironmentDialog({
   };
   const connectSavedBackendSshTarget = async (target: DesktopSshEnvironmentTarget) => {
     const session = savedBackendSessionRef.current;
-    startPendingConnection(`Connecting to ${target.alias}`);
+    startPendingConnection("Connecting to", formatPendingSshTarget(target));
     onErrorChange(null);
     const result = await connectSshEnvironment({
       target,
@@ -259,7 +268,7 @@ export function AddEnvironmentDialog({
       return;
     }
 
-    startPendingConnection(`Connecting to ${remotePairingInput.host}`);
+    startPendingConnection("Connecting to", remotePairingInput.host);
     const result = await connectPairing({
       ...remotePairingInput,
       ...(routeTarget ? { expectedEnvironmentId: routeTarget.environmentId } : {}),
@@ -310,7 +319,7 @@ export function AddEnvironmentDialog({
     if (isAddingSavedBackend || !desktopBridge) return;
 
     const session = savedBackendSessionRef.current;
-    startPendingConnection(`Connecting to ${target.alias}`);
+    startPendingConnection("Connecting to", formatPendingSshTarget(target));
     onErrorChange(null);
     setSavedBackendSshHost(target.alias);
     let resolved: DesktopSshEnvironmentTarget;
@@ -461,7 +470,7 @@ export function AddEnvironmentDialog({
       : null;
   const addRelayRoute = async () => {
     if (relayRouteOffer === null || routeTarget === null) return;
-    startPendingConnection("Adding T3 Connect route");
+    startPendingConnection("Adding T3 Connect route", null);
     const result = await registerEnvironment(
       new RelayConnectionRegistration({
         target: new RelayConnectionTarget({
