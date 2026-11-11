@@ -2,8 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 
@@ -48,6 +50,51 @@ it.effect("protects unknown desktop visibility until an explicit hidden report a
       yield* send({ type: "attached", threadId: key.threadId, tabId: "sentinel-3" });
       yield* channel.awaitAttached({ threadId: key.threadId, tabId: "sentinel-3" }, "5 seconds");
       expect(channel.isShown(key)).toBe(true);
+    }).pipe(
+      Effect.provide(
+        DesktopBrowserChannel.layer.pipe(
+          Layer.provide(
+            ServerConfig.layer({ ...config, desktopBrowserFd: 41, desktopBrowserControlFd: 42 }),
+          ),
+        ),
+      ),
+    );
+  }).pipe(
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "desktop-browser-channel-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+it.live("closes a tab's relay connection when the desktop detaches the tab", () =>
+  Effect.gen(function* () {
+    const input = yield* Queue.unbounded<Uint8Array>();
+    vi.mocked(NodeStream.fromReadable).mockReturnValue(Stream.fromQueue(input));
+    const config = yield* ServerConfig.ServerConfig;
+    yield* Effect.gen(function* () {
+      const channel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
+      const key = { threadId: "thread-1", tabId: "tab-1" };
+      const send = (event: object) =>
+        Queue.offer(input, new TextEncoder().encode(`${JSON.stringify(event)}\n`));
+
+      yield* send({ type: "attached", ...key });
+      yield* channel.awaitAttached(key, "5 seconds");
+      const scope = yield* Scope.make();
+      const url = yield* channel.endpoint(key).pipe(Scope.provide(scope));
+      const socket = new WebSocket(url);
+      const closed = new Promise<void>((resolve) =>
+        socket.addEventListener("close", () => resolve()),
+      );
+      yield* Effect.promise(
+        () => new Promise<void>((resolve) => socket.addEventListener("open", () => resolve())),
+      );
+
+      // Playwright waits on this socket for CDP replies; it must learn the tab is gone.
+      yield* send({ type: "detached", ...key });
+      yield* Effect.promise(() => closed).pipe(Effect.timeout("2 seconds"));
+      yield* Scope.close(scope, Exit.void);
     }).pipe(
       Effect.provide(
         DesktopBrowserChannel.layer.pipe(
