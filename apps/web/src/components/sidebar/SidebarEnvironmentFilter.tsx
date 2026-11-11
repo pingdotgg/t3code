@@ -20,7 +20,7 @@ export function SidebarEnvironmentFilter(props: {
   const selected = props.environments.filter(
     (environment) => !props.excludedEnvironmentIds.has(environment.environmentId),
   );
-  const allSelected = props.excludedEnvironmentIds.size === 0;
+  const allSelected = selected.length === props.environments.length;
   const label = allSelected
     ? "All environments"
     : selected.length === 0

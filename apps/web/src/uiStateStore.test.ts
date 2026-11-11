@@ -20,6 +20,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKeys: [],
+    sidebarExcludedEnvironmentIds: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -102,6 +103,13 @@ describe("parsePersistedState", () => {
         invalid: "no" as unknown as boolean,
       },
       projectOrder: ["physical-b", "", "physical-a", "physical-b"],
+      sidebarExcludedEnvironmentIds: [
+        "studio",
+        "",
+        "offline-host",
+        "studio",
+        1 as unknown as string,
+      ],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
@@ -126,6 +134,7 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
+      sidebarExcludedEnvironmentIds: ["studio", "offline-host"],
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -232,6 +241,7 @@ describe("uiStateStore persistence", () => {
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
       sidebarProjectScopeKey: null,
+      sidebarExcludedEnvironmentIds: [],
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -246,16 +256,28 @@ describe("uiStateStore persistence", () => {
     });
   });
 
-  it("restores the sidebar project scope across reloads", () => {
-    const keys = ["github.com/pingdotgg/t3code", "github.com/pingdotgg/uploadthing"];
-    persistState(makeUiState({ sidebarProjectScopeKeys: keys }));
+  it.each([{ excludedIds: [] }, { excludedIds: ["studio", "offline-host"] }])(
+    "restores sidebar scopes across reloads (%j)",
+    ({ excludedIds }) => {
+      const keys = ["github.com/pingdotgg/t3code", "github.com/pingdotgg/uploadthing"];
+      persistState(
+        makeUiState({ sidebarProjectScopeKeys: keys, sidebarExcludedEnvironmentIds: excludedIds }),
+      );
 
-    const persisted = JSON.parse(
-      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
-    ) as PersistedUiState;
+      const persisted = JSON.parse(
+        localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+      ) as PersistedUiState;
 
-    expect(parsePersistedState(persisted).sidebarProjectScopeKeys).toEqual(keys);
-  });
+      const restored = parsePersistedState(persisted);
+      expect(restored.sidebarProjectScopeKeys).toEqual(keys);
+      expect(restored.sidebarExcludedEnvironmentIds).toEqual(excludedIds);
+      expect(parsePersistedState({}).sidebarExcludedEnvironmentIds).toEqual([]);
+      expect(
+        parsePersistedState({ sidebarExcludedEnvironmentIds: "invalid" as unknown as string[] })
+          .sidebarExcludedEnvironmentIds,
+      ).toEqual([]);
+    },
+  );
 
   it("keeps a single-project scope readable by older clients", () => {
     persistState(makeUiState({ sidebarProjectScopeKeys: ["github.com/pingdotgg/t3code"] }));

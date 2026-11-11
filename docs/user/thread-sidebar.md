@@ -63,8 +63,9 @@ On web and desktop, open the filter beside Search to choose a project. Expand
 **All environments** at the bottom to select one or more environments. The
 project list and threads follow both filters, including drafts and sidebar search.
 Collapsing the environment choices keeps the filter active; **All environments**
-restores every environment. Environment choices last until you reload the client,
-and newly connected environments are shown by default.
+restores every environment. Your choices are saved on this client across reloads,
+including when an environment goes offline. Newly connected environments are shown
+by default.
 If you deselect every environment for the selected project, the project filter
 resets to **All projects**.
 

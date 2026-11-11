@@ -1,5 +1,5 @@
 import { attachSidebarTree } from "../lib/sidebarTree";
-import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
+import { EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import {
   dropThreadContext,
@@ -920,8 +920,14 @@ function readRouteThreadKey(router: AnyRouter): string | null {
 }
 
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
-  const [excludedEnvironmentIds, setExcludedEnvironmentIds] = useState<ReadonlySet<EnvironmentId>>(
-    () => new Set(),
+  const persistedExcludedEnvironmentIds = useUiStateStore(
+    (state) => state.sidebarExcludedEnvironmentIds,
+  );
+  const setExcludedEnvironmentIds = useUiStateStore(
+    (state) => state.setSidebarExcludedEnvironmentIds,
+  );
+  const excludedEnvironmentIds = new Set(
+    persistedExcludedEnvironmentIds.map((id) => EnvironmentId.make(id)),
   );
   const {
     projects,
@@ -938,18 +944,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const selectedEnvironments = environments.filter(
     (environment) => !excludedEnvironmentIds.has(environment.environmentId),
   );
-  const knownEnvironmentIds = new Set(environments.map((environment) => environment.environmentId));
-  if (
-    [...excludedEnvironmentIds].some((environmentId) => !knownEnvironmentIds.has(environmentId))
-  ) {
-    setExcludedEnvironmentIds(
-      new Set(
-        [...excludedEnvironmentIds].filter((environmentId) =>
-          knownEnvironmentIds.has(environmentId),
-        ),
-      ),
-    );
-  }
+  const environmentFilterActive = selectedEnvironments.length < environments.length;
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1244,7 +1239,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const scopedProjectKeys = revealWidensScope ? null : chosenScopeProjectKeys;
   const changeEnvironmentFilter = (excludedIds: ReadonlySet<EnvironmentId>) => {
     clearSelection();
-    setExcludedEnvironmentIds(excludedIds);
+    setExcludedEnvironmentIds([...excludedIds]);
     setSearchHighlightKey(null);
     const visibleScopeKeys = filterSidebarProjectScopeKeysByEnvironment({
       groups: projectGroups,
@@ -1434,8 +1429,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     folderGroups: boringSidebarEnabled
       ? scopedProjectGroups.length === 0
         ? // An archived project keeps a folder for its active threads, below the rest.
-          [...scopeGroups, ...projectGroups.filter((project) => project.archived)].filter((project) =>
-            project.memberProjectRefs.some((ref) => !excludedEnvironmentIds.has(ref.environmentId)),
+          [...scopeGroups, ...projectGroups.filter((project) => project.archived)].filter(
+            (project) =>
+              project.memberProjectRefs.some(
+                (ref) => !excludedEnvironmentIds.has(ref.environmentId),
+              ),
           )
         : scopedProjectGroups
       : null,
@@ -3103,12 +3101,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   <ComboboxTrigger
                     render={
                       <SidebarHeaderIconButton
-                        className={excludedEnvironmentIds.size > 0 ? "w-auto" : undefined}
+                        className={environmentFilterActive ? "w-auto" : undefined}
                         label={
                           (scopedProjectGroups.length > 0
                             ? `Filter threads by project: ${scopedProjectGroups.map((project) => project.displayName).join(", ")}`
                             : "Filter threads by project") +
-                          (excludedEnvironmentIds.size > 0
+                          (environmentFilterActive
                             ? ` (environments: ${selectedEnvironments.map((environment) => environment.label).join(", ") || "none"})`
                             : "")
                         }
@@ -3116,14 +3114,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     }
                   >
                     <span className="flex shrink-0 items-center gap-1 px-1.5">
-                      {scopedProjectGroups.length > 1 && excludedEnvironmentIds.size === 0 ? (
-                        <span className="flex shrink-0 -space-x-1.5">
-                          {scopedProjectGroups.slice(0, 2).map((project) => (
-                            <ProjectFavicon
+                      {scopedProjectGroups.length > 1 && !environmentFilterActive ? (
+                        <span className="flex shrink-0">
+                          {scopedProjectGroups.slice(0, 2).map((project, index) => (
+                            <span
                               key={project.projectKey}
-                              project={project}
-                              className="size-3.5"
-                            />
+                              className={
+                                index === 0
+                                  ? "flex"
+                                  : "-ml-1 flex rounded-[25%] bg-sidebar ring-2 ring-sidebar"
+                              }
+                            >
+                              <ProjectFavicon project={project} className="size-3.5" />
+                            </span>
                           ))}
                         </span>
                       ) : scopedProjectGroups[0] ? (
@@ -3133,7 +3136,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       ) : (
                         <ListFilterIcon className="size-4" />
                       )}
-                      {excludedEnvironmentIds.size > 0 ? (
+                      {environmentFilterActive ? (
                         selectedEnvironments.length === 0 ? (
                           <BanIcon aria-hidden className="size-4" />
                         ) : (
@@ -3161,7 +3164,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
                   <ComboboxPopup
                     align="start"
-                    anchor={headerSearchRef}
+                    anchor={threadSearchInputRef}
                     maxHeight="available"
                     className="w-72 min-w-0 max-w-[min(18rem,var(--available-width))] overflow-hidden"
                     collisionAvoidance={{ side: "flip", align: "shift" }}
@@ -3216,80 +3219,80 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     />
                     <ComboboxEmpty>No matching projects.</ComboboxEmpty>
                     <div className="flex min-h-14 max-h-72 flex-1">
-                    <ComboboxList aria-multiselectable>
-                      {(item: (typeof projectScopeItems)[number]) => {
-                        const project = projectGroupByScopeKey.get(item.value) ?? null;
-                        const isSelected = project
-                          ? projectScopeKeys.includes(item.value)
-                          : projectScopeKeys.length === 0;
-                        return (
-                          <ComboboxItem
-                            key={item.value}
-                            hideIndicator
-                            value={item}
-                            aria-selected={isSelected}
-                            // The icon badge marks selection; Base UI's single value would shade one row.
-                            data-selected={undefined}
-                            onContextMenu={(event) => {
-                              if (project) handleProjectSettings(event, project);
-                            }}
-                          >
-                            <ProjectScopeRowIcon isSelected={isSelected}>
+                      <ComboboxList aria-multiselectable>
+                        {(item: (typeof projectScopeItems)[number]) => {
+                          const project = projectGroupByScopeKey.get(item.value) ?? null;
+                          const isSelected = project
+                            ? projectScopeKeys.includes(item.value)
+                            : projectScopeKeys.length === 0;
+                          return (
+                            <ComboboxItem
+                              key={item.value}
+                              hideIndicator
+                              value={item}
+                              aria-selected={isSelected}
+                              // The icon badge marks selection; Base UI's single value would shade one row.
+                              data-selected={undefined}
+                              onContextMenu={(event) => {
+                                if (project) handleProjectSettings(event, project);
+                              }}
+                            >
+                              <ProjectScopeRowIcon isSelected={isSelected}>
+                                {project ? (
+                                  <ProjectFavicon project={project} className="size-4 shrink-0" />
+                                ) : (
+                                  <FolderIcon className="size-4 shrink-0" />
+                                )}
+                              </ProjectScopeRowIcon>
+                              <span className="min-w-0 truncate text-sm">{item.label}</span>
+                              {project && showProjectEnvironments ? (
+                                <ProjectEnvironmentBadge
+                                  group={project}
+                                  primaryEnvironmentId={primaryEnvironmentId}
+                                  machineByEnvironmentId={environmentMachineById}
+                                />
+                              ) : null}
                               {project ? (
-                                <ProjectFavicon project={project} className="size-4 shrink-0" />
+                                <ProjectRowActions
+                                  pin={
+                                    canPinProject(project) ? (
+                                      <ProjectPinButton
+                                        name={project.displayName}
+                                        pinned={project.pinned}
+                                        shortcutLabel={shortcutLabelForCommand(
+                                          keybindings,
+                                          "thread.pin",
+                                        )}
+                                        onToggle={() => toggleProjectGroupPin(project)}
+                                      />
+                                    ) : null
+                                  }
+                                  settings={
+                                    <Button
+                                      size="icon-xs"
+                                      variant="ghost-muted"
+                                      tabIndex={-1}
+                                      aria-hidden="true"
+                                      title={`Project settings for ${project.displayName}`}
+                                      onPointerDown={(event) => event.stopPropagation()}
+                                      onClick={(event) => {
+                                        void handleProjectSettings(event, project);
+                                      }}
+                                    >
+                                      <SettingsIcon className="size-3.5" />
+                                    </Button>
+                                  }
+                                />
                               ) : (
-                                <FolderIcon className="size-4 shrink-0" />
+                                // Keeps "All projects" as tall as the project rows.
+                                <span className="ml-auto size-7 shrink-0 sm:size-6" />
                               )}
-                            </ProjectScopeRowIcon>
-                            <span className="min-w-0 truncate text-sm">{item.label}</span>
-                            {project && showProjectEnvironments ? (
-                              <ProjectEnvironmentBadge
-                                group={project}
-                                primaryEnvironmentId={primaryEnvironmentId}
-                                machineByEnvironmentId={environmentMachineById}
-                              />
-                            ) : null}
-                            {project ? (
-                              <ProjectRowActions
-                                pin={
-                                  canPinProject(project) ? (
-                                    <ProjectPinButton
-                                      name={project.displayName}
-                                      pinned={project.pinned}
-                                      shortcutLabel={shortcutLabelForCommand(
-                                        keybindings,
-                                        "thread.pin",
-                                      )}
-                                      onToggle={() => toggleProjectGroupPin(project)}
-                                    />
-                                  ) : null
-                                }
-                                settings={
-                                  <Button
-                                    size="icon-xs"
-                                    variant="ghost-muted"
-                                    tabIndex={-1}
-                                    aria-hidden="true"
-                                    title={`Project settings for ${project.displayName}`}
-                                    onPointerDown={(event) => event.stopPropagation()}
-                                    onClick={(event) => {
-                                      void handleProjectSettings(event, project);
-                                    }}
-                                  >
-                                    <SettingsIcon className="size-3.5" />
-                                  </Button>
-                                }
-                              />
-                            ) : (
-                              // Keeps "All projects" as tall as the project rows.
-                              <span className="ml-auto size-7 shrink-0 sm:size-6" />
-                            )}
-                          </ComboboxItem>
-                        );
-                      }}
-                    </ComboboxList>
+                            </ComboboxItem>
+                          );
+                        }}
+                      </ComboboxList>
                     </div>
-                    {environments.length > 1 || excludedEnvironmentIds.size > 0 ? (
+                    {environments.length > 1 || environmentFilterActive ? (
                       <SidebarEnvironmentFilter
                         environments={environments}
                         excludedEnvironmentIds={excludedEnvironmentIds}

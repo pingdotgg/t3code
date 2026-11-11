@@ -24,7 +24,11 @@ const environments = [
 ];
 const projects = ["All projects", "Notes"];
 
-function FilterMenu() {
+function FilterMenu({
+  availableEnvironments = environments,
+}: {
+  availableEnvironments?: typeof environments;
+}) {
   const [excludedIds, setExcludedIds] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
   const [project, setProject] = useState("All projects");
   return (
@@ -41,7 +45,7 @@ function FilterMenu() {
           {(item: string) => <ComboboxItem value={item}>{item}</ComboboxItem>}
         </ComboboxList>
         <SidebarEnvironmentFilter
-          environments={environments}
+          environments={availableEnvironments}
           excludedEnvironmentIds={excludedIds}
           machineByEnvironmentId={new Map()}
           primaryEnvironmentId={laptop}
@@ -66,6 +70,11 @@ describe("sidebar environment filter menu", () => {
       .element(page.getByRole("group", { name: "Filter environments" }))
       .not.toBeInTheDocument();
     await page.getByRole("button", { name: "Laptop" }).click();
+    await expect.element(page.getByRole("checkbox", { name: "Travel" })).not.toBeChecked();
+    await expect.element(page.getByRole("checkbox", { name: "Studio" })).not.toBeChecked();
+    await screen.rerender(<FilterMenu availableEnvironments={[environments[0]!]} />);
+    await expect.element(page.getByRole("checkbox", { name: "All environments" })).toBeChecked();
+    await screen.rerender(<FilterMenu />);
     await expect.element(page.getByRole("checkbox", { name: "Travel" })).not.toBeChecked();
     await expect.element(page.getByRole("checkbox", { name: "Studio" })).not.toBeChecked();
     await page.getByRole("checkbox", { name: "All environments" }).click();
