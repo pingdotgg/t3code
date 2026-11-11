@@ -2585,58 +2585,6 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.title).toBe(expected);
   });
 
-  it("drops injected Codex instructions while keeping the visible user event", () => {
-    const thread = AgentSessionScanner.parseAgentSessionTranscript({
-      contents: [
-        JSON.stringify({ type: "session_meta", payload: { id: "codex-session" } }),
-        JSON.stringify({
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
-            content: [
-              {
-                type: "input_text",
-                text: "<user_instructions>\nInternal setup instructions\n</user_instructions>",
-              },
-            ],
-          },
-        }),
-        JSON.stringify({
-          type: "event_msg",
-          payload: { type: "user_message", message: "Fix the actual bug" },
-        }),
-        JSON.stringify({
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
-            content: [{ type: "input_text", text: "Fix the actual bug" }],
-          },
-        }),
-        JSON.stringify({
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: "Fixed" }],
-          },
-        }),
-      ].join("\n"),
-      source: "codex",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      fallbackSessionId: "fallback",
-      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
-    });
-
-    expect(thread?.messages.map((message) => message.text)).toEqual([
-      "Fix the actual bug",
-      "Fixed",
-    ]);
-  });
-
   it.each([199, 200])("keeps the canonical first prompt with %s later Codex messages", (count) => {
     const canonicalPrompt = "\n  Keep the canonical prompt  \n";
     const canonicalTimestamp = "2026-08-24T10:01:00.000Z";

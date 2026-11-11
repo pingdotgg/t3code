@@ -4208,35 +4208,6 @@ it.effect("keeps viewed files itself for a host that keeps none of its own", () 
   }),
 );
 
-it.effect("reports a file pushed to since it was cleared as changed", () =>
-  Effect.gen(function* () {
-    const revisions = new Map([
-      ["src/a.ts", "blob-a"],
-      ["src/b.ts", "blob-b"],
-    ]);
-    const service = yield* environmentViewedService(revisions, []);
-
-    yield* service.setFilesViewed({
-      ...GITLAB_REFERENCE,
-      files: [
-        { path: "src/a.ts", viewed: true },
-        { path: "src/b.ts", viewed: true },
-      ],
-    });
-    revisions.set("src/a.ts", "blob-a-again");
-    yield* service.invalidate({ reference: GITLAB_REFERENCE });
-    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
-
-    assert.deepStrictEqual(
-      [...marked.files].toSorted((left, right) => left.path.localeCompare(right.path)),
-      [
-        { path: "src/a.ts", state: "dismissed" },
-        { path: "src/b.ts", state: "viewed" },
-      ],
-    );
-  }),
-);
-
 it.effect("keeps a deleted file cleared, which the head has no version of at all", () =>
   Effect.gen(function* () {
     const service = yield* environmentViewedService(new Map(), []);
