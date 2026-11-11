@@ -1109,25 +1109,24 @@ const provideRegistrationServices = <Services>() =>
  * Offers a capability's tools only to credentials that grant it; `EnabledWhen`
  * gates calls as well as `tools/list`. Handlers keep their own checks.
  */
-const offeredWith = <A, E, R>(
+const offeredWith = Effect.fn("McpHttpServer.offeredWith")(function* <A, E, R>(
   capability: McpInvocationContext.McpCapability | undefined,
   registration: Effect.Effect<A, E, R>,
-) =>
-  capability === undefined
-    ? registration
-    : Effect.gen(function* () {
-        const server = yield* McpServer.McpServer;
-        const granted = McpInvocationContext.grantedCapability(capability);
-        const gatedServer = McpServer.McpServer.of({
-          ...server,
-          addTool: (options) =>
-            server.addTool({
-              ...options,
-              annotations: Context.add(options.annotations, McpSchema.EnabledWhen, granted),
-            }),
-        });
-        return yield* registration.pipe(Effect.provideService(McpServer.McpServer, gatedServer));
+) {
+  if (capability === undefined) return yield* registration;
+  const server = yield* McpServer.McpServer;
+  const granted = McpInvocationContext.grantedCapability(capability);
+  const gatedServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function (options) {
+      return server.addTool({
+        ...options,
+        annotations: Context.add(options.annotations, McpSchema.EnabledWhen, granted),
       });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, gatedServer));
+});
 
 /**
  * Tools declare their handler services as request-level dependencies. Those
