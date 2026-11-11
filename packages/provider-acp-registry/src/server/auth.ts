@@ -4,7 +4,8 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import type { AcpRegistrySettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -13,7 +14,9 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Schema from "effect/Schema";
 import type * as AcpSchema from "effect-acp/compat";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
@@ -21,6 +24,26 @@ import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./p
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
+const MAX_ERROR_MESSAGE_LENGTH = 500;
+
+export const formatFailureDetail = (detail: string, cause?: unknown): string => {
+  const unwrapped = Cause.isCause(cause) ? Cause.squash(cause) : cause;
+  if (isAcpRequestError(unwrapped)) {
+    let message = unwrapped.errorMessage.trim();
+    if (message.length > MAX_ERROR_MESSAGE_LENGTH) {
+      message = `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH).trimEnd()}…`;
+    }
+    if (message.length > 0) {
+      const trimmed = detail.trimEnd();
+      const prefix = trimmed.endsWith(".") ? `${trimmed} ` : `${trimmed}. `;
+      return `${prefix}${message}`;
+    }
+  }
+  return detail;
+};
 
 type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -39,7 +62,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
 }) {
   const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
   const coordinator = yield* Effect.serviceOption(
     AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
@@ -47,7 +70,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const agentKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
   const failure = (operation: string, detail: string, cause?: unknown) =>
-    new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
+    new ProviderSetupError({
+      instanceId: options.instanceId,
+      operation,
+      detail: formatFailureDetail(detail, cause),
+      cause,
+    });
   const resolve = catalog
     .resolve(options.settings, options.cwd, options.environment)
     .pipe(
@@ -75,7 +103,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             Layer.provide(
               Layer.mergeAll(
                 Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                Layer.succeed(Crypto.Crypto, crypto),
+                Layer.succeed(SecureRandom.SecureRandom, random),
               ),
             ),
           ),
@@ -103,8 +131,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         );
       if (inspected.status !== "ready")
         return yield* failure("methods", "Prepare this ACP agent before signing in.");
-      // An unversioned command (a path override) can change in place, so only
-      // registry versions reuse earlier discovery.
+      // Path overrides can change in place; cache discovery only for registry versions.
       if (inspected.version !== null && knownMethods?.version === inspected.version)
         return knownMethods.methods;
       const resolved = yield* resolve;
@@ -143,14 +170,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         .runBackgroundProbe(agentKey, discoverMethods)
         .pipe(
           Effect.flatMap((result) =>
-            Option.isSome(result)
-              ? Effect.succeed(result.value)
-              : Effect.fail(
-                  failure(
-                    "methods",
-                    "Sign-in discovery was interrupted by an active provider session. Try again.",
-                  ),
-                ),
+            Effect.fromOption(result, () =>
+              failure(
+                "methods",
+                "Sign-in discovery was interrupted by an active provider session. Try again.",
+              ),
+            ),
           ),
         )
     : discoverMethods;
@@ -351,8 +376,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   ).pipe(Effect.andThen(options.onChanged(false)));
   return yield* ProviderAuthFlow.make({
     instanceId: options.instanceId,
-    // ACP doesn't advertise its credential scope. Conservatively treat all
-    // instances of the same agent on this environment as sharing credentials.
+    // ACP omits credential scope; assume an agent's instances share credentials in this environment.
     credentialBinding: { owner: "provider", key: `acp:${agentKey}` },
     methods,
     ...(options.settings.authMethodId ? { defaultMethodId: options.settings.authMethodId } : {}),

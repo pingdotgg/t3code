@@ -1,4 +1,4 @@
-// Dev container for T3 Code. Mirrors CI (ubuntu-24.04, Node 24, Rust stable)
+// Dev container for T3 Code. Mirrors CI (ubuntu-24.04, Node 26, Rust stable)
 // and the canonical setup in docs/operations/development.md: global `vp`, `vp i`.
 // Contributor doc: docs/internals/devcontainer.md
 {
@@ -8,7 +8,7 @@
     // nodeGypDependencies (default true) brings python3/make/g++, which Linux
     // needs for node-pty's node-gyp fallback (its prebuilds are mac/win only).
     "ghcr.io/devcontainers/features/node:2": {
-      "version": "24"
+      "version": "26"
     },
     // native/resource-monitor (edition 2024, needs stable >= 1.85). The server
     // degrades gracefully without the binary, but CI checks cargo fmt + test.
