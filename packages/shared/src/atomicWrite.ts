@@ -46,9 +46,6 @@ export const writeFileStringAtomically = (input: {
       const targetDirectory = path.dirname(targetPath);
 
       yield* fs.makeDirectory(targetDirectory, { recursive: true });
-      // Opened up front so an unreadable directory fails the save before the target changes.
-      const directory =
-        platform === "win32" ? undefined : yield* fs.open(targetDirectory, { flag: "r" });
       // Cleanup failure must not fail a write that already landed.
       const tempDirectory = yield* Effect.acquireRelease(
         fs.makeTempDirectory({
@@ -71,11 +68,17 @@ export const writeFileStringAtomically = (input: {
         Effect.flatMap((file) => file.sync),
         Effect.scoped,
       );
-      if (directory !== undefined) {
+      if (platform !== "win32") {
         yield* fs.rename(tempPath, targetPath);
-        // Persists the rename; only filesystems that cannot sync directories are let through.
-        return yield* directory.sync.pipe(
-          Effect.catchIf(isUnsupportedSync, (error) => Effect.logWarning(error)),
+        // Persists the rename. A directory without read access cannot be opened to sync, and
+        // replacing in one needs only write and search access, so that save stands.
+        return yield* fs.open(targetDirectory, { flag: "r" }).pipe(
+          Effect.flatMap((directory) => directory.sync),
+          Effect.scoped,
+          Effect.catchIf(
+            (error) => error.reason._tag === "PermissionDenied" || isUnsupportedSync(error),
+            (error) => Effect.logWarning(error),
+          ),
         );
       }
 

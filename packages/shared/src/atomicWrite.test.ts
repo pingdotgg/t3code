@@ -320,7 +320,7 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
 
   // Injected because root ignores a chmod that drops read access.
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "leaves the target intact when its directory cannot be opened for the sync",
+    "saves when its directory cannot be opened for the sync",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -345,8 +345,8 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
           Effect.exit,
         );
 
-        assert.deepStrictEqual(exit, Exit.fail(openFailure));
-        assert.strictEqual(yield* fs.readFileString(filePath), "before");
+        assert.deepStrictEqual(exit, Exit.void);
+        assert.strictEqual(yield* fs.readFileString(filePath), "after");
       }),
   );
 
