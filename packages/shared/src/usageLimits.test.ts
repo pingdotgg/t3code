@@ -1887,7 +1887,10 @@ describe("reset credits per window", () => {
       ],
     };
     expect(resetCreditsForWindow(mixed, windows, "seven_day").count).toBe(1);
-    expect(resetCreditsForWindow(mixed, windows, "seven_day_fable").count).toBe(3);
+    expect(resetCreditsForWindow(mixed, windows, "seven_day_fable")).toEqual({
+      count: 2,
+      scope: "Fable",
+    });
     expect(resetCreditsForWindow(mixed, windows, "five_hour").count).toBe(0);
   });
 

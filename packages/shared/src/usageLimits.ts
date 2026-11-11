@@ -1052,7 +1052,8 @@ export function resetCreditsForWindow(
         ? undefined
         : listed.map(scopeOf).find(Boolean);
       // Claude lists the shared Session in a model-scoped reset's clears, but redeeming leaves it.
-      const cleared = scope ? listed.filter((window) => scopeOf(window) === scope) : listed;
+      // A model's row only counts that model's own resets, though a full reset clears it too.
+      const cleared = listed.filter((window) => scopeOf(window) === scope);
       if (!cleared.some((window) => window.id === windowId)) continue;
     }
     count += option.availableCount;
