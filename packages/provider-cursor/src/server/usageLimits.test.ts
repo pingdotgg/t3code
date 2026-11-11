@@ -82,7 +82,7 @@ describe("Cursor usage limits", () => {
       { planUsage: { totalPercentUsed: 1.77, autoPercentUsed: 1.77 } },
       checkedAt,
     ).windows;
-    expect(windows).toHaveLength(1);
+    expect(windows.map((window) => window.id)).toEqual(["autoPercentUsed"]);
     expect(
       cursorUsageResponseToLimits(
         { planUsage: { totalPercentUsed: 100, apiPercentUsed: 100 } },
