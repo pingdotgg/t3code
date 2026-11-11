@@ -1617,14 +1617,14 @@ export default function FilePreviewPanel({
           ) : null}
         </div>
         {showExplorer ? (
-          <div
-            className="contents"
-            onClick={focusEditorOnTreeRowClickOrEnter}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") focusEditorOnTreeRowClickOrEnter(event);
-            }}
-          >
-            <FileExplorerPane resizable={Boolean(previewPath)}>
+          <FileExplorerPane resizable={Boolean(previewPath)}>
+            <div
+              className="contents"
+              onClick={focusEditorOnTreeRowClickOrEnter}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") focusEditorOnTreeRowClickOrEnter(event);
+              }}
+            >
               <FileBrowserPanel
                 key={`${environmentId}:${hostFolderPath ?? cwd}`}
                 environmentId={environmentId}
@@ -1648,8 +1648,8 @@ export default function FilePreviewPanel({
                     }
                   : {})}
               />
-            </FileExplorerPane>
-          </div>
+            </div>
+          </FileExplorerPane>
         ) : null}
       </div>
     </div>
