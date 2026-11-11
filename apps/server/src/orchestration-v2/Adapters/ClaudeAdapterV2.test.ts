@@ -4483,12 +4483,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal((yield* open).permissionMode, "auto");
           yield* fileSystem.remove(settingsFile);
           // Claude CLI rewrites remote-settings.json in place, truncating it first.
-          let halfWrittenReads = 1;
           const midRewrite = yield* open.pipe(
             Effect.provideService(FileSystem.FileSystem, {
               ...fileSystem,
               readFileString: (filePath, encoding) =>
-                filePath.endsWith("remote-settings.json") && halfWrittenReads-- > 0
+                filePath.endsWith("remote-settings.json")
                   ? Effect.succeed("")
                   : fileSystem.readFileString(filePath, encoding),
             }),
