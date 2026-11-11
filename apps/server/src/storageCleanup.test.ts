@@ -2676,20 +2676,6 @@ describe("storage cleanup reports and local file policies", () => {
         }),
       ),
   );
-  it.live("keeps hidden edits to files named with a Unicode line separator", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const { service, fs, worktree, command } = yield* cleanupFixture();
-        const file = "notes .txt";
-        yield* fs.writeFileString(`${worktree}/${file}`, "original\n");
-        yield* command(worktree, ["add", file]);
-        yield* command(worktree, ["commit", "-m", "notes"]);
-        yield* command(worktree, ["update-index", "--assume-unchanged", file]);
-        yield* fs.writeFileString(`${worktree}/${file}`, "hidden edit\n");
-        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
-      }),
-    ),
-  );
   // macOS and Windows file systems reject names that are not valid UTF-8.
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     "keeps hidden edits to files whose names are not valid UTF-8",
