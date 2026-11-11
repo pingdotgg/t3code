@@ -26,7 +26,6 @@ import {
   v2PullRequestThread,
 } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
-import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -147,7 +146,6 @@ const gitlabProject = makeProject({
 interface HarnessOptions {
   readonly thread?: PullRequestTestThread | null;
   readonly project?: OrchestrationProjectShell | null;
-  readonly detail?: PullRequestService.PullRequestService["Service"]["detail"];
   readonly reject?: (command: OrchestrationCommand) => string | null;
   readonly projects?: ReadonlyArray<OrchestrationProjectShell>;
   readonly generate?: (
@@ -164,7 +162,6 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
   options: HarnessOptions = {},
 ) {
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
-  const detailRequests = yield* Ref.make<ReadonlyArray<PullRequestService.PullRequestRef>>([]);
   const guideRequests = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const thread = options.thread === undefined ? makeThread([]) : options.thread;
   const project = options.project === undefined ? makeProject() : options.project;
@@ -184,12 +181,6 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
       listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),
-    }),
-    Layer.mock(PullRequestService.PullRequestService)({
-      detail: (input) =>
-        Ref.update(detailRequests, (recorded) => [...recorded, input]).pipe(
-          Effect.andThen(options.detail?.(input) ?? Effect.die("Unexpected pull request read")),
-        ),
     }),
     Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({
       get: () => Effect.succeed(NO_GUIDE),
@@ -238,7 +229,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
       Effect.provide(layerDependencies),
     );
-  return { commands, detailRequests, guideRequests, call };
+  return { commands, guideRequests, call };
 });
 
 describe("pull request toolkit handlers", () => {
@@ -442,106 +433,23 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
-  it.effect("resolves repository-only GitLab links and watches to the actual MR URL", () =>
+  it.effect("keeps a GitLab repository selector raw and carries an existing link to a watch", () =>
     Effect.gen(function* () {
-      const url = "http://code.example:8924/gitlab/gitlab/team/subgroup/project/-/merge_requests/1";
       const target = { repository: "gitlab/team/subgroup/project", number: 1 };
-      const harness = yield* makeHarness({
-        project: gitlabProject,
-        detail: () =>
-          Effect.succeed({
-            ...target,
-            provider: SourceControlProviderKind.make("gitlab"),
-            capabilities: {
-              diff: true,
-              comment: true,
-              actions: [],
-              mergeMethods: [],
-              search: false,
-              review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
-              reviewers: { request: false, listCandidates: false },
-            },
-            viewerPermissions: {
-              actions: [],
-              comment: true,
-              resolve: false,
-              verdicts: [],
-              requestReviewers: false,
-            },
-            projectId: PROJECT_ID,
-            projectTitle: "GitLab",
-            workspaceRoot: "/workspace/project",
-            title: "Project 2 MR",
-            body: "",
-            url,
-            author: null,
-            state: "open",
-            isDraft: false,
-            mergeability: "mergeable",
-            additions: 0,
-            deletions: 0,
-            changedFiles: 0,
-            headBranch: "feature",
-            baseBranch: "main",
-            createdAt: "2026-10-19T00:00:00.000Z",
-            updatedAt: "2026-10-19T00:00:00.000Z",
-            mergedAt: null,
-            closedAt: null,
-            reviewers: [],
-            labels: [],
-            checks: [],
-            mergeCapabilities: { merge: true, squash: false, rebase: false },
-          }),
-      });
-      const linked = yield* harness.call("link_pull_request", target);
-      const watched = yield* harness.call("watch_pull_request", target);
-      expect([linked.url, watched.url]).toEqual([url, url]);
-      expect(yield* Ref.get(harness.detailRequests)).toEqual([
-        { projectId: PROJECT_ID, host: "code.example", ...target },
-        { projectId: PROJECT_ID, host: "code.example", ...target },
-      ]);
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
-        { type: "thread.pull-request.link", ...target, url, repositoryWebUrl: url },
-        {
-          type: "thread.pull-request.watch",
-          ...target,
-          link: { url, repositoryWebUrl: url, source: "agent" },
-        },
-      ]);
-    }),
-  );
+      const harness = yield* makeHarness({ project: gitlabProject });
+      yield* harness.call("link_pull_request", target);
+      const [link] = yield* Ref.get(harness.commands);
+      expect(link).toMatchObject({ type: "thread.pull-request.link", ...target });
+      expect(link).not.toHaveProperty("repositoryWebUrl");
 
-  it.effect("requires GitLab URL resolution only when creating a link or watch", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        project: gitlabProject,
-        detail: () =>
-          Effect.fail(new PullRequestOperationError({ operation: "detail", detail: "host down" })),
-      });
-      const target = { repository: "gitlab/team/subgroup/project", number: 1 };
-      const linked = yield* harness.call("link_pull_request", target).pipe(Effect.result);
-      const watched = yield* harness.call("watch_pull_request", target).pipe(Effect.result);
-      expect(yield* Ref.get(harness.commands)).toEqual([]);
-      expect(linked).toMatchObject({
-        _tag: "Failure",
-        failure: { _tag: "PullRequestLinkFailedError" },
-      });
-      expect(watched).toMatchObject({
-        _tag: "Failure",
-        failure: { _tag: "PullRequestWatchFailedError" },
-      });
-
-      const url = "http://code.example:8924/gitlab/gitlab/team/subgroup/project/-/merge_requests/1";
+      const url = "http://code.example:8924/gitlab/team/subgroup/project/-/merge_requests/1";
       const existing = yield* makeHarness({
         project: gitlabProject,
         thread: makeThread([
           makeLink(1, { ...target, host: "code.example", url, repositoryWebUrl: url }),
         ]),
-        detail: () =>
-          Effect.fail(new PullRequestOperationError({ operation: "detail", detail: "host down" })),
       });
-      const result = yield* existing.call("watch_pull_request", target).pipe(Effect.result);
-      expect(yield* Ref.get(existing.detailRequests)).toEqual([]);
+      const result = yield* existing.call("watch_pull_request", target);
       expect(yield* Ref.get(existing.commands)).toMatchObject([
         {
           type: "thread.pull-request.watch",
@@ -552,11 +460,11 @@ describe("pull request toolkit handlers", () => {
           link: { url, repositoryWebUrl: url, source: "agent" },
         },
       ]);
-      expect(result).toMatchObject({ _tag: "Success", success: { url } });
+      expect(result.url).toBe(url);
     }),
   );
 
-  it.effect("builds other hosts' URLs without reading the project's GitLab", () =>
+  it.effect("builds the URL in the project host's own shape", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         project: makeProject({
@@ -570,6 +478,12 @@ describe("pull request toolkit handlers", () => {
           displayName: "group/sub/project",
         }),
       });
+      const result = yield* harness.call("link_pull_request", {
+        repository: "group/sub/project",
+        number: 42,
+      });
+      expect(result.url).toBe("https://gitlab.com/group/sub/project/-/merge_requests/42");
+      expect(result.host).toBe("gitlab.com");
       const other = yield* harness.call("link_pull_request", {
         host: "gitlab.example.test",
         repository: "team/repo",

@@ -2035,12 +2035,12 @@ it.effect("keeps raw GitLab selectors apart from an HTTP checkout's URL", () =>
   }),
 );
 
-it.effect("reads a linked GitLab merge request through its URL when asked by repository", () =>
+it.effect("reads a linked GitLab merge request through its URL once that URL has worked", () =>
   Effect.gen(function* () {
     const host = "gitlab.localhost";
     const repository = "gitlab/team/subgroup/project";
     const webUrl = `http://${host}/gitlab/team/subgroup/project/-/merge_requests/9`;
-    const reads: Array<Parameters<PullRequestProviderApi["getChangeRequest"]>[0]> = [];
+    const unreachable = `http://unreachable.${host}/gitlab/team/subgroup/project/-/merge_requests/9`;
     const gitlab = yield* makeService({
       projects: [
         project({
@@ -2056,25 +2056,37 @@ it.effect("reads a linked GitLab merge request through its URL when asked by rep
       providers: [
         fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
           getChangeRequest: (input) =>
-            Effect.sync(() => {
-              reads.push(input);
-              return hostedChangeRequest("");
-            }),
+            input.webUrl === unreachable
+              ? Effect.fail(
+                  new PullRequestProviderError({
+                    provider: SourceControlProviderKind.make("gitlab"),
+                    operation: "getChangeRequest",
+                    reason: "failed",
+                    detail: "unreachable",
+                  }),
+                )
+              : Effect.succeed({
+                  ...hostedChangeRequest(""),
+                  number: input.number,
+                  title: input.webUrl === undefined ? "raw project" : "linked project",
+                }),
         }),
       ],
     });
-    const reference = { projectId: "p1" as ProjectId, host, repository, number: 9 };
-    // The watch reactor reads with the link's URL; the detail panel asks by repository alone.
-    const linked = { ...reference, webUrl };
-    const rawSelection = { ...reference, webUrl: null };
-    yield* gitlab.detail(linked);
-    yield* gitlab.detail(reference);
-    yield* gitlab.detail(rawSelection);
-    assert.deepStrictEqual(reads, [
-      { cwd: "/gitlab", host, repository, number: 9, webUrl },
-      { cwd: "/gitlab", host, repository, number: 9, webUrl },
-      { cwd: "/gitlab", host, repository, number: 9 },
-    ]);
+    const title = (number: number, url?: string | null) =>
+      gitlab
+        .detail({ projectId: "p1" as ProjectId, host, repository, number, webUrl: url })
+        .pipe(Effect.map((detail) => detail.title));
+
+    assert.strictEqual(yield* title(9), "raw project");
+    // A URL whose read fails teaches nothing.
+    yield* Effect.flip(title(9, unreachable));
+    assert.strictEqual(yield* title(4), "raw project");
+    // The watch reactor reads with the link's URL; the detail panel asks by repository alone,
+    // and must not be served the raw project's read it held from before.
+    assert.strictEqual(yield* title(9, webUrl), "linked project");
+    assert.strictEqual(yield* title(9), "linked project");
+    assert.strictEqual(yield* title(9, null), "raw project");
   }),
 );
 

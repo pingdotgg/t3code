@@ -196,10 +196,13 @@ function projectForPullRequest(
   return projects.find(matches);
 }
 
+// A supplied URL is the link's authority; a repository alone stays a raw selector, as on main.
+const linkOf = (target: ResolvedTarget, input: PullRequestTargetInput) =>
+  input.url === undefined ? { url: target.url } : { url: target.url, repositoryWebUrl: target.url };
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
-  const pullRequests = yield* PullRequestService.PullRequestService;
 
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
@@ -262,33 +265,6 @@ const make = Effect.gen(function* () {
         ? Effect.failCause(cause as Cause.Cause<never>)
         : Effect.fail(new Failure({ cause }));
 
-  const resolveLink = Effect.fn("PullRequestsToolkit.resolveLink")(function* (
-    target: ResolvedTarget,
-    input: PullRequestTargetInput,
-    project: OrchestrationProjectShell | undefined,
-  ) {
-    if (input.url !== undefined) {
-      return { url: target.url, repositoryWebUrl: target.url };
-    }
-    // Only a URL built from the project's own GitLab remote can miss an installation prefix.
-    const projectHost = projectHostAndProvider(project);
-    if (
-      project === undefined ||
-      projectHost.kind !== "gitlab" ||
-      projectHost.host?.toLowerCase() !== target.host
-    ) {
-      return { url: target.url };
-    }
-    const detail = yield* pullRequests.detail({
-      projectId: project.id,
-      host: target.host,
-      repository: target.repository,
-      number: target.number,
-    });
-    const url = PullRequestService.withoutUrlCredentials(detail.url);
-    return { url, repositoryWebUrl: url };
-  });
-
   const setWatching = Effect.fn("PullRequestsToolkit.setWatching")(function* (
     input: PullRequestTargetInput,
     watching: boolean,
@@ -311,9 +287,7 @@ const make = Effect.gen(function* () {
     const link = !watching
       ? undefined
       : before === undefined
-        ? yield* resolveLink(target, input, project).pipe(
-            Effect.mapError((cause) => new PullRequestWatchFailedError({ cause })),
-          )
+        ? linkOf(target, input)
         : {
             url: before.url,
             ...(before.repositoryWebUrl === undefined
@@ -417,9 +391,7 @@ const make = Effect.gen(function* () {
         );
         if (existing && existing.source !== "stack-dismissed")
           return { ...target, url: existing.url, alreadyLinked: true, ...next };
-        const link = yield* resolveLink(target, input, project).pipe(
-          Effect.mapError((cause) => new PullRequestLinkFailedError({ cause })),
-        );
+        const link = linkOf(target, input);
         const alreadyLinked = yield* engine
           .dispatch({
             type: "thread.pull-request.link",

@@ -1012,17 +1012,27 @@ export const make = Effect.gen(function* () {
 
   // A linked change request's URL is the only record of where an SSH checkout's project lives
   // on a host served under a path prefix, and clients ask by repository alone.
+  // Learned only from a read that succeeded through the URL, so a bad URL never displaces routing.
   const linkedWebUrls = new Map<string, string>();
-  const linkedWebUrl = (key: string, webUrl: string | null | undefined) => {
-    if (typeof webUrl !== "string") return webUrl;
-    const url = withoutUrlCredentials(webUrl);
+  const linkedWebUrlKey = (ref: PullRequestRef) => {
+    const host = ref.host?.trim().toLowerCase();
+    return host === undefined ? undefined : `${host}/${ref.repository.trim().toLowerCase()}`;
+  };
+  const withLinkedWebUrl = <I extends PullRequestRef>(ref: I): I => {
+    if (ref.webUrl !== undefined) return ref;
+    const key = linkedWebUrlKey(ref);
+    const webUrl = key === undefined ? undefined : linkedWebUrls.get(key);
+    return webUrl === undefined ? ref : { ...ref, webUrl };
+  };
+  const rememberWebUrl = (ref: PullRequestRef) => {
+    const key = linkedWebUrlKey(ref);
+    if (key === undefined || typeof ref.webUrl !== "string") return;
     linkedWebUrls.delete(key);
-    linkedWebUrls.set(key, url);
+    linkedWebUrls.set(key, withoutUrlCredentials(ref.webUrl));
     if (linkedWebUrls.size > LINKED_WEB_URL_CAPACITY) {
       const oldest = linkedWebUrls.keys().next().value;
       if (oldest !== undefined) linkedWebUrls.delete(oldest);
     }
-    return url;
   };
 
   // Azure derives organization from the checkout; require the matching repository.
@@ -1032,12 +1042,7 @@ export const make = Effect.gen(function* () {
         const own = supported[0];
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
-        const webUrl =
-          host === undefined
-            ? ref.webUrl
-            : ref.webUrl === undefined
-              ? linkedWebUrls.get(`${host}/${repository.toLowerCase()}`)
-              : linkedWebUrl(`${host}/${repository.toLowerCase()}`, ref.webUrl);
+        const webUrl = withLinkedWebUrl(ref).webUrl;
         const refWebUrl =
           webUrl === undefined
             ? {}
@@ -1134,9 +1139,11 @@ export const make = Effect.gen(function* () {
   const canonicalRef = Effect.fn("PullRequestService.canonicalRef")(function* <
     I extends PullRequestRef,
   >(input: I) {
-    const project = yield* requireProject(input);
+    // The learned URL is part of the read's identity: cached reads must not outlive a change of route.
+    const linked = withLinkedWebUrl(input);
+    const project = yield* requireProject(linked);
     return {
-      ...input,
+      ...linked,
       projectId: project.project.id,
       host: project.host,
       repository: project.repository,
@@ -3693,7 +3700,7 @@ export const make = Effect.gen(function* () {
             ? ref
             : { ...ref, [credentialNamespace]: credential.credentialFingerprint },
           ...args,
-        );
+        ).pipe(Effect.tap(() => Effect.sync(() => rememberWebUrl(ref))));
       });
 
   // Cache small filename lists even when patches exceed limits, avoiding diff refetches on file expansion.
