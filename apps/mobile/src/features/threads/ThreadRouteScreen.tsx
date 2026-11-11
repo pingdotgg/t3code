@@ -123,7 +123,6 @@ import {
   type ThreadInspectorPresentation,
 } from "./thread-inspector-preview";
 import { useStartSideChat } from "./useStartSideChat";
-import { threadActivitySnapshot } from "./threadStatusAnnouncement";
 import { useThreadStatusAnnouncements } from "./useThreadStatusAnnouncements";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
@@ -385,13 +384,12 @@ function ThreadRouteContent(
       selectedThread === null || isProviderNativeSubagentThread(selectedThread.source)
         ? null
         : scopedThreadKey(selectedThread.environmentId, selectedThread.id),
-    ...threadActivitySnapshot({
-      approvalRequestId: requests.activePendingApproval?.requestId ?? null,
-      userInputRequestId: requests.activePendingUserInput?.requestId ?? null,
-      shell: selectedThread,
-      working: composer.activeWorkStartedAt !== null || composer.isCompacting,
-      run: composer.selectedThreadAnnouncedRun,
-    }),
+    approvalRequestId: requests.activePendingApproval?.requestId ?? null,
+    userInputRequestId: requests.activePendingUserInput?.requestId ?? null,
+    shellRequestId: selectedThread?.source.pendingRuntimeRequest?.id ?? null,
+    shellPendingUserInput: selectedThread?.hasPendingUserInput === true,
+    working: composer.activeWorkStartedAt !== null || composer.isCompacting,
+    run: composer.selectedThreadAnnouncedRun,
     detailBehind: composer.selectedThreadDetailBehindShell,
   });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");

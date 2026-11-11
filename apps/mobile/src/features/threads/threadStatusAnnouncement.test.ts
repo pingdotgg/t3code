@@ -5,100 +5,64 @@ import {
 import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { threadActivitySnapshot } from "./threadStatusAnnouncement";
+import {
+  nextThreadActivitySnapshot,
+  type ThreadActivityInput,
+  type ThreadActivityMemory,
+} from "./threadStatusAnnouncement";
 
 const run = RunId.make("run-1");
 
-function shellWith(pendingId: string | null) {
+/** A frame of a working turn: what the question card shows and what the shell holds. */
+function frame(card: string | null, shell: string | null): ThreadActivityInput {
   return {
-    hasPendingUserInput: pendingId !== null,
-    source: { pendingRuntimeRequest: pendingId === null ? null : { id: pendingId } },
+    approvalRequestId: null,
+    userInputRequestId: card,
+    shellRequestId: shell,
+    shellPendingUserInput: shell !== null,
+    working: true,
+    run: { runId: run, status: "running" },
   };
 }
 
-function announcements(
-  frames: ReadonlyArray<Parameters<typeof threadActivitySnapshot>[0]>,
-): ReadonlyArray<string | null> {
+const idle: ThreadActivityInput = { ...frame(null, null), working: false, run: null };
+const done: ThreadActivityInput = {
+  ...frame(null, null),
+  working: false,
+  run: { runId: run, status: "completed" },
+};
+
+function announcements(frames: ReadonlyArray<ThreadActivityInput>): ReadonlyArray<string | null> {
+  let activity: ThreadActivityMemory | null = null;
   let memory: ThreadAnnouncementMemory | null = null;
-  return frames.map((frame) => {
-    const next = nextThreadAnnouncement(memory, threadActivitySnapshot(frame));
+  return frames.map((input) => {
+    activity = nextThreadActivitySnapshot(activity, input);
+    const next = nextThreadAnnouncement(memory, activity.snapshot);
     memory = next.memory;
     return next.announcement;
   });
 }
 
-const working = { runId: run, status: "running" as const };
-
-describe("threadActivitySnapshot", () => {
+describe("nextThreadActivitySnapshot", () => {
   it("says each question once while the card and the shell catch up at different times", () => {
     expect(
       announcements([
-        {
-          approvalRequestId: null,
-          userInputRequestId: null,
-          shell: shellWith(null),
-          working: false,
-          run: null,
-        },
-        {
-          approvalRequestId: null,
-          userInputRequestId: null,
-          shell: shellWith(null),
-          working: true,
-          run: working,
-        },
+        idle,
+        frame(null, null),
         // The card shows question A before the shell has it.
-        {
-          approvalRequestId: null,
-          userInputRequestId: "a",
-          shell: shellWith(null),
-          working: true,
-          run: working,
-        },
-        {
-          approvalRequestId: null,
-          userInputRequestId: "a",
-          shell: shellWith("a"),
-          working: true,
-          run: working,
-        },
+        frame("a", null),
+        frame("a", "a"),
         // Answered: the card hides A at once, the shell still holds it.
-        {
-          approvalRequestId: null,
-          userInputRequestId: null,
-          shell: shellWith("a"),
-          working: true,
-          run: working,
-        },
-        // Question B reaches the card while the shell still holds A.
-        {
-          approvalRequestId: null,
-          userInputRequestId: "b",
-          shell: shellWith("a"),
-          working: true,
-          run: working,
-        },
-        {
-          approvalRequestId: null,
-          userInputRequestId: "b",
-          shell: shellWith("b"),
-          working: true,
-          run: working,
-        },
-        {
-          approvalRequestId: null,
-          userInputRequestId: null,
-          shell: shellWith(null),
-          working: true,
-          run: working,
-        },
-        {
-          approvalRequestId: null,
-          userInputRequestId: null,
-          shell: shellWith(null),
-          working: false,
-          run: { runId: run, status: "completed" },
-        },
+        frame(null, "a"),
+        // Question B reaches the card while the shell still holds A, and is answered before the shell has B.
+        frame("b", "a"),
+        frame(null, "a"),
+        frame(null, "b"),
+        frame(null, null),
+        // A secret request shows only in the shell.
+        frame(null, "secret"),
+        frame(null, null),
+        done,
       ]),
     ).toEqual([
       null,
@@ -108,6 +72,9 @@ describe("threadActivitySnapshot", () => {
       null,
       "Needs your input",
       null,
+      null,
+      null,
+      "Needs your input",
       null,
       "Done",
     ]);
