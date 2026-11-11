@@ -33,7 +33,10 @@ export function runServicePreflight(input: {
           ? [
               `On the server machine, install this exact CLI in PowerShell: \`$env:T3CODE_VERSION="${version}"; irm https://t3.codes/install.ps1 | iex\`.`,
               `Check that \`t3 --version\` prints ${version} and that \`where.exe t3\` lists no older t3 first.`,
-              `Windows has no \`t3 service install\`, so change whatever runs \`t3 __service-launcher\` to start it from \`%USERPROFILE%\\.local\\bin\\t3.cmd\` (the installer's default path) and restart it. Later remote updates repoint that t3.cmd, so a launcher started through it moves forward on its next restart.`,
+              // Without `t3 service install`, service-state.json still selects the old server, which
+              // rejects the new launcher's context; select the installed runtime by hand.
+              `Windows has no \`t3 service install\`, so do its steps by hand: stop whatever runs \`t3 __service-launcher\`, then select this runtime and clear the stale update record: \`Set-Content -LiteralPath "$HOME\\.t3\\runtime\\service-state.json" -Value '{"protocol":${SERVICE_LAUNCHER_PROTOCOL},"activeVersion":"${version}"}'\` (use your T3CODE_HOME in place of \`$HOME\\.t3\` if you set one).`,
+              `Start the launcher again from \`$HOME\\.local\\bin\\t3.cmd\` (the installer's default path). Nothing moves a Windows launcher forward after a remote update, so repeat these steps whenever a release changes the launcher protocol.`,
               "Updating the desktop app does not update this CLI.",
             ]
           : [

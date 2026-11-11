@@ -139,14 +139,6 @@ function repointServiceUnit(contents: string, version: string): string {
   return contents;
 }
 
-// A `t3.cmd` exactly as the install script or `t3 update` writes it, running a version in `versionsDir`.
-const generatedShimVersion = (contents: string, versionsDir: string) => {
-  const target = /^@echo off\r?\n"([^"]+)" %\*\s*$/.exec(contents)?.[1];
-  if (target === undefined) return undefined;
-  const relative = NodePath.relative(versionsDir, target);
-  return /^([^\\/]+)[\\/]t3\.exe$/.exec(relative)?.[1];
-};
-
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
 const RESTORE_MARKER = ".restore-pending";
 
@@ -980,7 +972,7 @@ export class Launcher {
   // Selection is durable before this best-effort unit reconciliation.
   async #repointServiceUnit(version: string): Promise<void> {
     const unit = this.#serviceUnit;
-    if (unit === undefined) return this.#repointShims(version);
+    if (unit === undefined) return;
     try {
       const release = await acquireServiceSelectionLock(unit.path);
       try {
@@ -1013,37 +1005,6 @@ export class Launcher {
       process.stderr.write(
         `[service-launcher] Could not point ${unit.path} at t3@${version}: ${error instanceof Error ? error.message : String(error)}\n`,
       );
-    }
-  }
-
-  /**
-   * Windows has no unit to repoint, so a launcher started through the installer's `t3.cmd`
-   * restarts on whatever the shim runs. Move recorded shims forward with the commit.
-   */
-  async #repointShims(version: string): Promise<void> {
-    const runtimeDir = NodePath.join(this.#baseDir, "runtime");
-    const versionsDir = NodePath.join(runtimeDir, "versions");
-    const recorded = await NodeFSP.readFile(NodePath.join(runtimeDir, "launchers"), "utf8").catch(
-      () => "",
-    );
-    for (const shim of recorded.split(/\r?\n/)) {
-      if (!shim.toLowerCase().endsWith(".cmd")) continue;
-      try {
-        const contents = await NodeFSP.readFile(shim, "utf8");
-        const current = generatedShimVersion(contents, versionsDir);
-        if (
-          current === undefined ||
-          (isExactServiceVersion(current) && compareExactServiceVersions(current, version) >= 0)
-        ) {
-          continue;
-        }
-        const target = NodePath.join(versionsDir, version, "t3.exe");
-        await replaceFileDurably(shim, `@echo off\r\n"${target}" %*`);
-      } catch (error) {
-        process.stderr.write(
-          `[service-launcher] Could not point ${shim} at t3@${version}: ${error instanceof Error ? error.message : String(error)}\n`,
-        );
-      }
     }
   }
 

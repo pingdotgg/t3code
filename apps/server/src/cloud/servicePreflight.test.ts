@@ -48,6 +48,9 @@ it("gives Windows hosts recovery steps that run on Windows", () => {
   expect(reason).not.toContain("| sh");
   expect(reason).not.toContain("which -a");
   expect(reason).not.toContain("~/.local/bin/t3");
+  expect(reason).toContain(
+    `service-state.json" -Value '{"protocol":${SERVICE_LAUNCHER_PROTOCOL},"activeVersion":"9.8.7"}'`,
+  );
 });
 
 it.layer(NodeServices.layer)("service preflight database", (it) => {
