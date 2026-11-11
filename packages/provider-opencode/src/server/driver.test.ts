@@ -545,6 +545,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         const requested: Array<string> = [];
         let failAgents = false;
         let emptyAgents = false;
+        let hiddenOnlyAgents = false;
         let stallAgents = false;
         let delayAgents = false;
         let emptyCommands = false;
@@ -584,16 +585,22 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
                 location: { directory },
                 data: emptyAgents
                   ? []
-                  : [
-                      { id: "build", mode: "primary", hidden: false },
-                      {
-                        id: directory === "/work" ? "reviewer" : "writer",
-                        mode: "all",
-                        hidden: false,
-                      },
-                      { id: "internal", mode: "primary", hidden: true },
-                      { id: "explore", mode: "subagent", hidden: false },
-                    ].map((agent) => ({
+                  : (hiddenOnlyAgents
+                      ? [
+                          { id: "internal", mode: "primary", hidden: true },
+                          { id: "explore", mode: "subagent", hidden: false },
+                        ]
+                      : [
+                          { id: "build", mode: "primary", hidden: false },
+                          {
+                            id: directory === "/work" ? "reviewer" : "writer",
+                            mode: "all",
+                            hidden: false,
+                          },
+                          { id: "internal", mode: "primary", hidden: true },
+                          { id: "explore", mode: "subagent", hidden: false },
+                        ]
+                    ).map((agent) => ({
                       ...agent,
                       name: agent.id,
                       request: { settings: {}, headers: {}, body: {} },
@@ -668,6 +675,11 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           "build",
           "reviewer",
         ]);
+        hiddenOnlyAgents = true;
+        const hiddenOnly = yield* instance.snapshotForCwd!("/work");
+        assert.isUndefined(hiddenOnly.optionDescriptors);
+        assert.isFalse(hiddenOnly.optionDescriptorsPending ?? false);
+        hiddenOnlyAgents = false;
         emptyCommands = true;
         const incompleteScan = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
         yield* TestClock.adjust("10 seconds");
@@ -681,6 +693,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         assert.deepStrictEqual(agentDirectories, [
           "/work",
           "/other",
+          "/work",
           "/work",
           "/work",
           "/work",

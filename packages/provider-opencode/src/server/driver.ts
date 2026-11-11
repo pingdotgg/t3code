@@ -712,7 +712,10 @@ export const OpenCodeDriver: ProviderDriver<
                             : openCodeAgentOptionDescriptor(agents);
                         return {
                           ...machineSnapshot,
+<<<<<<< HEAD
                           ...workspaceModelsFor(machineSnapshot.models, models),
+=======
+>>>>>>> a9009c4fa7 (fix(opencode): drop empty workspace agent descriptors)
                           ...(agentDescriptor === undefined || agentDescriptor.options.length === 0
                             ? {}
                             : { optionDescriptors: [agentDescriptor] }),
