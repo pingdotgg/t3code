@@ -2725,6 +2725,7 @@ it.effect("interrupts open tool items but preserves completed tools on a planned
     const { ingested, observed } = yield* captureRootRunTermination({
       key,
       shouldFinalizeRun: () => Effect.succeed(true),
+      readAhead: true,
       events: (ids) =>
         Stream.concat(
           Stream.fromIterable([
@@ -3327,6 +3328,8 @@ function captureRootRunTermination(input: {
   readonly afterStart?: (
     closed: Deferred.Deferred<void>,
   ) => Effect.Effect<void, never, PreviewAgentActivity.PreviewAgentActivity>;
+  // Pull the whole provider stream before processing, as the commit batcher may read ahead.
+  readonly readAhead?: boolean;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3368,6 +3371,17 @@ function captureRootRunTermination(input: {
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
           mockEventSink({
+            ...(input.readAhead
+              ? {
+                  consumeProviderEvents: (source, process, after) =>
+                    Effect.gen(function* () {
+                      for (const event of yield* Stream.runCollect(source)) {
+                        yield* process(event);
+                        if (yield* after) return;
+                      }
+                    }),
+                }
+              : {}),
             write: (payload) =>
               Effect.gen(function* () {
                 for (const event of payload.events) {

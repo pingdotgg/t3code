@@ -1627,7 +1627,7 @@ export const layer: Layer.Layer<
           yield* trackChildLifecycle(event, deliveredEvent !== null);
           yield* scheduleIdleFlush;
         });
-        // A planned detach for this thread ends the stream; settle what the provider left open.
+        // A planned detach ends the stream. It settles in ingestion order, after buffered events.
         const settleDetachedRun = Effect.fnUntraced(function* () {
           const rootFinalized = yield* Ref.get(rootRunFinalized);
           yield* Ref.set(interruptionMessage, "Run interrupted because the workspace changed");
@@ -1663,7 +1663,7 @@ export const layer: Layer.Layer<
                 }
               : state,
           );
-          return Stream.fromIterable<ProviderAdapter.ProviderAdapterV2Event>([
+          const settlement: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
             ...[...openRootTurnItems.values()].map((turnItem) => ({
               type: "turn_item.updated" as const,
               driver: input.providerThread.driver,
@@ -1691,7 +1691,8 @@ export const layer: Layer.Layer<
                 ]
               : []),
             ...(!rootFinalized ? [terminal] : []),
-          ]);
+          ];
+          for (const event of settlement) yield* ingestEvent(yield* routeEvent(event));
         });
         const providerEventFiber = yield* eventSink
           .consumeProviderEvents(
@@ -1700,16 +1701,18 @@ export const layer: Layer.Layer<
                 detached.providerSessionId !== input.providerSessionId ||
                 detached.threadId !== input.run.threadId
                   ? Stream.fail(detached)
-                  : Stream.unwrap(settleDetachedRun()),
+                  : Stream.succeed({ type: "workspace_detached" as const }),
               ),
               Stream.merge(Stream.fromQueue(idleFlushTicks), { haltStrategy: "left" }),
             ),
             (event) =>
               event.type === "idle_flush"
                 ? flushIdleAssistantText(event.at)
-                : Effect.gen(function* () {
-                    yield* ingestEvent(yield* routeEvent(event));
-                  }),
+                : event.type === "workspace_detached"
+                  ? settleDetachedRun()
+                  : Effect.gen(function* () {
+                      yield* ingestEvent(yield* routeEvent(event));
+                    }),
             Effect.gen(function* () {
               if (yield* agentTurnsSettled) yield* endPreviewActivity;
               return yield* shouldStopProviderEventIngestion;
