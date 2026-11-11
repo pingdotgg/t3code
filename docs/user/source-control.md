@@ -199,7 +199,10 @@ Normal Git commit hooks still run.
 Uncommitted changes can also be split on detached HEAD during a paused interactive rebase.
 The rebase stays paused; review the new commits, then continue the rebase yourself.
 Existing branch history requires a clean feature branch; leave the base branch blank to use the
-repository default.
+repository default. Choose the first and last commits to regroup an inclusive range, such as the
+last five commits. The default includes the whole branch. Earlier commits stay unchanged; later
+commits keep their contents and messages but receive new IDs. If a later commit is a merge or
+signed, extend the selected range through it.
 The dialog closes when the action starts. Follow its running state in the Git sidebar (or the
 progress overlay on mobile), where you can cancel it. A notification shows the result when it
 finishes. Nothing is pushed.

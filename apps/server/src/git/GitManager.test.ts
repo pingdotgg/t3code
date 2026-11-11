@@ -4246,6 +4246,148 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   );
 
   it.effect.each([
+    "all",
+    "prefix",
+    "last-five",
+    "middle",
+    "reversed",
+    "outside",
+    "stale",
+    "merge-tail",
+    "signed-tail",
+  ] as const)("regroups an inclusive commit range and preserves surrounding history: %s", (mode) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-commit-range-");
+      yield* initRepo(repoDir);
+      const base = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "-b", "feature/range"]);
+      const commits: string[] = [];
+      for (let i = 1; i <= 7; i++) {
+        NodeFS.writeFileSync(NodePath.join(repoDir, `change-${i}.txt`), `Change ${i}\n`);
+        yield* runGit(repoDir, ["add", "."]);
+        yield* runGit(repoDir, ["commit", "-m", `Change ${i}`]);
+        commits.push((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim());
+      }
+      if (mode === "merge-tail") {
+        yield* runGit(repoDir, ["checkout", "-b", "side", "HEAD~1"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "side.txt"), "side\n");
+        yield* runGit(repoDir, ["add", "."]);
+        yield* runGit(repoDir, ["commit", "-m", "Side concern"]);
+        yield* runGit(repoDir, ["checkout", "feature/range"]);
+        yield* runGit(repoDir, ["merge", "--no-ff", "side", "-m", "Merge side"]);
+      }
+      if (mode === "signed-tail") {
+        const raw = (yield* runGit(repoDir, ["cat-file", "commit", "HEAD"])).stdout;
+        const signed = NodeChildProcess.execFileSync(
+          "git",
+          ["hash-object", "-t", "commit", "-w", "--stdin"],
+          {
+            cwd: repoDir,
+            input: raw.replace("\n\n", "\ngpgsig invalid-signature\n\n"),
+            encoding: "utf8",
+          },
+        ).trim();
+        yield* runGit(repoDir, ["update-ref", "HEAD", signed]);
+      }
+      const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const originalTree = (yield* runGit(repoDir, ["rev-parse", "HEAD^{tree}"])).stdout;
+      const originalTail = (yield* runGit(repoDir, ["cat-file", "commit", head])).stdout;
+      let plans = 0;
+      let summary = "";
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitPlan: (context) => {
+            plans++;
+            summary = context.changeUnitSummary;
+            return Effect.succeed({
+              commits: [
+                {
+                  subject: "Regroup selected changes",
+                  body: "",
+                  hunkIds: context.changeUnitSummary
+                    .split("\n")
+                    .map((line) => line.split("\t")[0]!),
+                },
+              ],
+            });
+          },
+        },
+      });
+      const scope = {
+        type: mode === "all" ? ("branch" as const) : ("branch_range" as const),
+        baseRef: "main",
+        ...(mode !== "all"
+          ? {
+              ...(mode === "prefix"
+                ? {}
+                : {
+                    startCommit:
+                      mode === "outside"
+                        ? base
+                        : commits[mode === "last-five" ? 2 : mode === "reversed" ? 5 : 1],
+                  }),
+              endCommit: commits[mode === "last-five" ? 6 : mode === "reversed" ? 1 : 5],
+              expectedHeadSha: mode === "stale" ? base : head,
+            }
+          : {}),
+      };
+      if (mode === "all") {
+        const listed = yield* manager.listRewriteableCommits({ cwd: repoDir, baseRef: commits[0] });
+        expect(listed.commits.map((commit) => commit.sha)).toEqual(commits.slice(1));
+      }
+      const result = yield* manager
+        .runCommitWorkflow({
+          request: {
+            commandId: CommandId.make("range"),
+            threadId: ThreadId.make("thread"),
+            cwd: repoDir,
+            expectedBranch: "feature/range",
+            scope,
+          },
+          modelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+          style: DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
+        })
+        .pipe(Effect.result);
+      if (["reversed", "outside", "stale", "merge-tail", "signed-tail"].includes(mode)) {
+        expect(Result.isFailure(result)).toBe(true);
+        expect(plans).toBe(0);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(head);
+      } else {
+        expect(Result.isSuccess(result)).toBe(true);
+        const start = mode === "all" || mode === "prefix" ? 0 : mode === "last-five" ? 2 : 1;
+        const end = mode === "middle" || mode === "prefix" ? 5 : 6;
+        expect(
+          (yield* runGit(repoDir, ["log", "--reverse", "--format=%s", "main..HEAD"])).stdout
+            .trim()
+            .split("\n"),
+        ).toEqual([
+          ...commits.slice(0, start).map((_, i) => `Change ${i + 1}`),
+          "Regroup selected changes",
+          ...commits.slice(end + 1).map((_, i) => `Change ${end + i + 2}`),
+        ]);
+        if (start > 0)
+          expect(
+            (yield* runGit(repoDir, [
+              "rev-parse",
+              `HEAD~${mode === "middle" ? 2 : 1}`,
+            ])).stdout.trim(),
+          ).toBe(commits[start - 1]);
+        expect(summary).toContain(`change-${start + 1}.txt`);
+        if (start > 0) expect(summary).not.toContain("change-1.txt");
+        if (mode === "middle" || mode === "prefix") {
+          expect(summary).not.toContain("change-7.txt");
+          const rewrittenTail = (yield* runGit(repoDir, ["cat-file", "commit", "HEAD"])).stdout;
+          expect(rewrittenTail.replace(/^parent .+$/m, "parent REWRITTEN")).toBe(
+            originalTail.replace(/^parent .+$/m, "parent REWRITTEN"),
+          );
+        }
+      }
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD^{tree}"])).stdout).toBe(originalTree);
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout.trim()).toBe("");
+    }),
+  );
+
+  it.effect.each([
     "working_tree",
     "branch",
     "detached",

@@ -59,7 +59,7 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
     const readWorkingTree = Effect.fn("LogicalCommitWorkflow.snapshot")(function* () {
       const prepared = yield* git.prepareCommitContext(
         cwd,
-        request.scope.type === "branch" ? undefined : request.scope.filePaths,
+        "filePaths" in request.scope ? request.scope.filePaths : undefined,
         {
           binaryPatch: true,
           maxOutputBytes: PATCH_LIMIT,
@@ -84,10 +84,16 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
     const originalIndex = yield* fs.readFile(indexPath);
     const worktree = yield* readWorkingTree();
     let base = head;
+    let rangeHead = head;
+    const followingCommits: string[] = [];
     let patch: string;
-    if (request.scope.type === "branch") {
+    if (request.scope.type === "branch" || request.scope.type === "branch_range") {
       if (!branch || worktree !== "")
         return yield* fail("Rebuilding branch history requires a clean feature branch.");
+      if (request.scope.expectedHeadSha && request.scope.expectedHeadSha !== head)
+        return yield* fail(
+          "The branch changed after the commit list was loaded. Reopen the dialog and retry.",
+        );
       const baseRef = request.scope.baseRef ?? (yield* git.resolveBaseRef(cwd, branch));
       if (!baseRef)
         return yield* fail("Could not resolve the branch base. Select an explicit base branch.");
@@ -98,6 +104,55 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
         `${baseRef}^{commit}`,
       ]);
       base = yield* output(["merge-base", head, baseCommit]);
+      if (request.scope.startCommit || request.scope.endCommit) {
+        const listed = yield* execute([
+          "rev-list",
+          "--first-parent",
+          "--reverse",
+          `${base}..${head}`,
+        ]);
+        if (listed.stdoutTruncated)
+          return yield* fail("The branch history is too large to select a commit range.");
+        const commits = listed.stdout.trim().split("\n").filter(Boolean);
+        const startIndex = request.scope.startCommit
+          ? commits.indexOf(request.scope.startCommit)
+          : 0;
+        const endIndex = request.scope.endCommit
+          ? commits.indexOf(request.scope.endCommit)
+          : commits.length - 1;
+        if (startIndex < 0 || endIndex < startIndex)
+          return yield* fail("Select an ordered commit range from this branch after its base.");
+        if (request.scope.startCommit) {
+          const parent = yield* output([
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            `${request.scope.startCommit}^1`,
+          ]);
+          if (
+            (yield* execute(["merge-base", "--is-ancestor", base, parent], {
+              allowNonZeroExit: true,
+            })).exitCode !== 0
+          )
+            return yield* fail("The first selected commit must follow the branch base.");
+          base = parent;
+        }
+        rangeHead = commits[endIndex]!;
+        for (const sha of commits.slice(endIndex + 1)) {
+          const raw = yield* execute(["cat-file", "commit", sha]);
+          if (raw.stdoutTruncated)
+            return yield* fail("A following commit message exceeds the supported size.");
+          const headers = raw.stdout.split("\n\n", 1)[0] ?? "";
+          if (
+            (headers.match(/^parent /gm)?.length ?? 0) !== 1 ||
+            /^gpgsig(?:-sha256)? |^mergetag /m.test(headers)
+          )
+            return yield* fail(
+              "The commits after the selected range contain a merge or signed commit. Extend the range through those commits.",
+            );
+          followingCommits.push(raw.stdout);
+        }
+      }
       const diff = yield* execute([
         "diff",
         "--binary",
@@ -105,7 +160,7 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
         "--no-ext-diff",
         "--no-textconv",
         base,
-        head,
+        rangeHead,
       ]);
       if (diff.stdoutTruncated)
         return yield* fail(`Logical commit snapshots support patches up to ${PATCH_LIMIT} bytes.`);
@@ -234,6 +289,20 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
       }
       if ((yield* output(["rev-parse", `${tip}^{tree}`])) !== targetTree)
         return yield* fail("The committed tree does not match the selected changes.");
+      for (const raw of followingCommits) {
+        const next = yield* output(["hash-object", "-t", "commit", "-w", "--stdin"], {
+          stdin: raw.replace(/^parent [0-9a-f]+$/m, `parent ${tip}`),
+        });
+        yield* update(tip, next);
+        tip = next;
+        yield* execute(["update-ref", `${backupRoot}/candidate`, tip]);
+      }
+      if (
+        (request.scope.type === "branch" || request.scope.type === "branch_range") &&
+        (yield* output(["rev-parse", `${tip}^{tree}`])) !==
+          (yield* output(["rev-parse", `${head}^{tree}`]))
+      )
+        return yield* fail("The rebuilt branch tree does not match the original branch.");
       if (paths)
         yield* execute(
           [

@@ -9,8 +9,15 @@ export const GitCommitWorkflowScope = Schema.Union([
     ),
   }),
   Schema.Struct({
-    type: Schema.Literal("branch"),
+    type: Schema.Literals(["branch", "branch_range"]),
     baseRef: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
+    startCommit: Schema.optional(
+      TrimmedNonEmptyString.check(Schema.isPattern(/^[0-9a-f]{40,64}$/)),
+    ),
+    endCommit: Schema.optional(TrimmedNonEmptyString.check(Schema.isPattern(/^[0-9a-f]{40,64}$/))),
+    expectedHeadSha: Schema.optional(
+      TrimmedNonEmptyString.check(Schema.isPattern(/^[0-9a-f]{40,64}$/)),
+    ),
   }),
 ]);
 export type GitCommitWorkflowScope = typeof GitCommitWorkflowScope.Type;

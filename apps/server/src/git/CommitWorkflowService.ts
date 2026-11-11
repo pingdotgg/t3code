@@ -76,15 +76,25 @@ export const make = Effect.gen(function* () {
         cwd,
         Effect.gen(function* () {
           const status = yield* git.status({ cwd });
-          if (!status.isRepo || (input.scope.type === "branch" && status.refName === null))
+          if (
+            !status.isRepo ||
+            ((input.scope.type === "branch" || input.scope.type === "branch_range") &&
+              status.refName === null)
+          )
             return yield* fail("Switch to a Git branch before rebuilding commits.");
           if (status.refName !== input.expectedBranch)
             return yield* fail("The branch changed. Reopen the commit dialog and try again.");
-          if (input.scope.type === "branch" && status.hasWorkingTreeChanges)
+          if (
+            (input.scope.type === "branch" || input.scope.type === "branch_range") &&
+            status.hasWorkingTreeChanges
+          )
             return yield* fail(
               "Commit or set aside uncommitted changes before rebuilding branch history.",
             );
-          if (input.scope.type === "branch" && status.isDefaultRef)
+          if (
+            (input.scope.type === "branch" || input.scope.type === "branch_range") &&
+            status.isDefaultRef
+          )
             return yield* fail("Switch to a feature branch before rebuilding branch history.");
           const settings = resolveProjectSettings(
             yield* serverSettings.getSettings,

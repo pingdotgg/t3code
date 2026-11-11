@@ -146,6 +146,7 @@ export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 
 export const GitListRewriteableCommitsInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  baseRef: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(256))),
 });
 export type GitListRewriteableCommitsInput = typeof GitListRewriteableCommitsInput.Type;
 

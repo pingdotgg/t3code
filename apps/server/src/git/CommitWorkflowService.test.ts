@@ -340,26 +340,33 @@ describe("controlled commit workflow", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
-  it.effect.each([
-    { options: { status: { hasWorkingTreeChanges: true } }, expected: "uncommitted changes" },
-    {
-      options: { status: { hasWorkingTreeChanges: false, isDefaultRef: true } },
-      expected: "feature branch",
+  it.effect.each(
+    [
+      { options: { status: { hasWorkingTreeChanges: true } }, expected: "uncommitted changes" },
+      {
+        options: { status: { hasWorkingTreeChanges: false, isDefaultRef: true } },
+        expected: "feature branch",
+      },
+      { options: { status: { refName: null } }, expected: "Switch to a Git branch" },
+      { options: { status: { isRepo: false } }, expected: "Switch to a Git branch" },
+      { options: { status: { refName: "other-feature" } }, expected: "branch changed" },
+      { options: { worktreePath: "/other" }, expected: "checkout changed" },
+      { options: { missingProject: true }, expected: "project is unavailable" },
+    ].flatMap((target) =>
+      (["branch", "branch_range"] as const).map((type) => ({ ...target, type })),
+    ),
+  )(
+    "refuses an invalid target before planning commits: $type / $expected",
+    ({ options, expected, type }) => {
+      const h = harness(options);
+      return Effect.gen(function* () {
+        const service = yield* CommitWorkflow.CommitWorkflowService;
+        const error = yield* service.start({ ...input, scope: { type } }).pipe(Effect.flip);
+        expect(error.message).toContain(expected);
+        expect(h.run).not.toHaveBeenCalled();
+      }).pipe(Effect.provide(h.layer));
     },
-    { options: { status: { refName: null } }, expected: "Switch to a Git branch" },
-    { options: { status: { isRepo: false } }, expected: "Switch to a Git branch" },
-    { options: { status: { refName: "other-feature" } }, expected: "branch changed" },
-    { options: { worktreePath: "/other" }, expected: "checkout changed" },
-    { options: { missingProject: true }, expected: "project is unavailable" },
-  ])("refuses an invalid target before planning commits: $expected", ({ options, expected }) => {
-    const h = harness(options);
-    return Effect.gen(function* () {
-      const service = yield* CommitWorkflow.CommitWorkflowService;
-      const error = yield* service.start({ ...input, scope: { type: "branch" } }).pipe(Effect.flip);
-      expect(error.message).toContain(expected);
-      expect(h.run).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(h.layer));
-  });
+  );
 
   it.effect("supports a thread at the project root", () => {
     const h = harness({ worktreePath: null });

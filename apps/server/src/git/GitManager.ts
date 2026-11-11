@@ -3659,6 +3659,7 @@ export const make = Effect.gen(function* () {
 
   const resolveRewriteableCommitObjects = Effect.fn("resolveRewriteableCommitObjects")(function* (
     cwd: string,
+    requestedBaseRef?: string,
   ) {
     const status = yield* gitCore.statusDetails(cwd);
     if (!status.isRepo || !status.branch) {
@@ -3675,10 +3676,20 @@ export const make = Effect.gen(function* () {
       args: ["rev-parse", "HEAD"],
     });
     const headSha = headResult.stdout.trim();
-    const baseRef = yield* gitCore.resolveBaseRef(cwd, status.branch);
+    const baseRef = requestedBaseRef
+      ? (yield* gitCore.execute({
+          operation: "GitManager.resolveRewriteableCommitObjects.base",
+          cwd,
+          args: ["rev-parse", "--verify", "--end-of-options", `${requestedBaseRef}^{commit}`],
+        })).stdout.trim()
+      : yield* gitCore.resolveBaseRef(cwd, status.branch);
     const rewriteableCount = Math.min(
       MAX_REWRITEABLE_COMMITS,
-      status.aheadOfDefaultCount > 0 ? status.aheadOfDefaultCount : status.aheadCount,
+      requestedBaseRef
+        ? MAX_REWRITEABLE_COMMITS
+        : status.aheadOfDefaultCount > 0
+          ? status.aheadOfDefaultCount
+          : status.aheadCount,
     );
     const args =
       rewriteableCount > 0
@@ -3733,7 +3744,7 @@ export const make = Effect.gen(function* () {
   const listRewriteableCommits: GitManager["Service"]["listRewriteableCommits"] = Effect.fn(
     "listRewriteableCommits",
   )(function* (input) {
-    const resolved = yield* resolveRewriteableCommitObjects(input.cwd);
+    const resolved = yield* resolveRewriteableCommitObjects(input.cwd, input.baseRef);
     const commits = yield* Effect.forEach(
       resolved.commits,
       (commit) =>

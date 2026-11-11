@@ -1,3 +1,4 @@
+import { useDebouncedValue } from "../../../state/queries";
 import { CommandId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { gitEnvironment } from "../../../state/git";
@@ -6,6 +7,7 @@ import { uuidv4 } from "../../../lib/uuid";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
+import { Menu } from "../../../components/ui/Menu";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useMemo, useRef, useState } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -79,6 +81,31 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
   const workflowScope = rewriteHistory ? "branch" : "working_tree";
   const [baseRef, setBaseRef] = useState("");
+  const queriedBaseRef = useDebouncedValue(baseRef.trim(), 250);
+  const [startCommit, setStartCommit] = useState("");
+  const [endCommit, setEndCommit] = useState("");
+  const range = useEnvironmentQuery(
+    rewriteHistory && selectedThread && selectedThreadCwd
+      ? gitEnvironment.rewriteableCommits({
+          environmentId: selectedThread.environmentId,
+          input: { cwd: selectedThreadCwd, ...(queriedBaseRef ? { baseRef: queriedBaseRef } : {}) },
+        })
+      : null,
+  );
+  const commits = range.data?.commits ?? [];
+  const startIndex = startCommit ? commits.findIndex((commit) => commit.sha === startCommit) : 0;
+  const endIndex = endCommit
+    ? commits.findIndex((commit) => commit.sha === endCommit)
+    : commits.length - 1;
+  const invalidRange =
+    rewriteHistory &&
+    (baseRef.trim() !== queriedBaseRef ||
+      range.isPending ||
+      range.error !== null ||
+      commits.length === 0 ||
+      startIndex < 0 ||
+      endIndex < startIndex);
+
   const [workflowInstructions, setWorkflowInstructions] = useState("");
   const submittedWorkflow = useRef(false);
   const startWorkflow = useAtomCommand(gitEnvironment.startCommitWorkflow, {
@@ -95,6 +122,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const selectedDeletions = selectedFiles.reduce((sum, file) => sum + file.deletions, 0);
 
   const workflowUnavailable =
+    invalidRange ||
     selectedThread?.id !== _props.route.params.threadId ||
     selectedThread?.environmentId !== _props.route.params.environmentId ||
     !gitStatus.data?.isRepo ||
@@ -120,7 +148,13 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       expectedBranch: gitStatus.data.refName,
       scope:
         workflowScope === "branch"
-          ? { type: "branch" as const, ...(baseRef.trim() ? { baseRef: baseRef.trim() } : {}) }
+          ? {
+              type: startCommit || endCommit ? ("branch_range" as const) : ("branch" as const),
+              ...(baseRef.trim() ? { baseRef: baseRef.trim() } : {}),
+              ...(startCommit ? { startCommit } : {}),
+              ...(endCommit ? { endCommit } : {}),
+              ...(range.data ? { expectedHeadSha: range.data.headSha } : {}),
+            }
           : {
               type: featureBranch
                 ? ("working_tree_new_branch" as const)
@@ -223,14 +257,76 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                   <TextInput
                     accessibilityLabel="Base branch"
                     value={baseRef}
-                    onChangeText={setBaseRef}
+                    onChangeText={(value) => {
+                      setBaseRef(value);
+                      setStartCommit("");
+                      setEndCommit("");
+                    }}
                     maxLength={256}
                     placeholder="Repository default branch"
                     autoCapitalize="none"
                     autoCorrect={false}
                     className="min-h-12 rounded-xl bg-subtle px-4"
                   />
-                  {workflowUnavailable && (
+                  {["start", "end"].map((boundary) => {
+                    const isStart = boundary === "start";
+                    const value = isStart ? startCommit : endCommit;
+                    const selected = commits.find((commit) => commit.sha === value);
+                    const label = isStart ? "First commit (included)" : "Last commit (included)";
+                    const defaultLabel = isStart
+                      ? "Earliest branch commit (default)"
+                      : "Latest commit (default)";
+                    return (
+                      <View key={boundary} className="gap-2">
+                        <Text className="text-sm text-foreground">{label}</Text>
+                        <Menu
+                          actions={[
+                            { id: "default", title: defaultLabel },
+                            ...commits
+                              .filter((_, index) =>
+                                isStart ? index <= endIndex : index >= startIndex,
+                              )
+                              .map((commit) => ({
+                                id: commit.sha,
+                                title: `${commit.shortSha} ${commit.subject}`,
+                              })),
+                          ]}
+                          onPressAction={({ nativeEvent }) =>
+                            (isStart ? setStartCommit : setEndCommit)(
+                              nativeEvent.event === "default" ? "" : nativeEvent.event,
+                            )
+                          }
+                        >
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={label}
+                            disabled={range.isPending || commits.length === 0}
+                            className="min-h-12 justify-center rounded-xl bg-subtle px-4"
+                          >
+                            <Text numberOfLines={1} className="text-foreground">
+                              {selected ? `${selected.shortSha} ${selected.subject}` : defaultLabel}
+                            </Text>
+                          </Pressable>
+                        </Menu>
+                      </View>
+                    );
+                  })}
+                  {range.isPending ? (
+                    <Text className="text-sm text-foreground-secondary">Loading commits…</Text>
+                  ) : range.error ? (
+                    <Text className="text-sm text-danger-foreground">{range.error}</Text>
+                  ) : commits.length === 0 ? (
+                    <Text className="text-sm text-foreground-secondary">
+                      No branch commits are available to regroup.
+                    </Text>
+                  ) : null}
+                  <Text className="text-xs text-foreground-muted">
+                    Earlier commits keep their IDs. Later commits keep their contents and messages
+                    but receive new IDs.
+                  </Text>
+                  {(!gitStatus.data?.refName ||
+                    isDefaultRef ||
+                    gitStatus.data?.hasWorkingTreeChanges !== false) && (
                     <Text className="text-warning-foreground text-sm">
                       Use a feature branch with a clean working tree to rebuild existing commits.
                     </Text>

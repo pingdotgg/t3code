@@ -1,3 +1,4 @@
+import { useDebouncedValue } from "~/state/queries";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, CommandId, type ScopedThreadRef } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -5,6 +6,8 @@ import { useRef, useState, type ReactNode } from "react";
 import { Button } from "./ui/button";
 import { DialogPanel, DialogFooter } from "./ui/dialog";
 import { Input } from "./ui/input";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "./ui/select";
+import { useEnvironmentQuery } from "~/state/query";
 import { Textarea } from "./ui/textarea";
 import { gitEnvironment } from "~/state/git";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -34,6 +37,31 @@ export function CommitWorkflowForm(props: {
   );
   const scope = props.scope;
   const [baseRef, setBaseRef] = useState("");
+  const queriedBaseRef = useDebouncedValue(baseRef.trim(), 250);
+  const [startCommit, setStartCommit] = useState("");
+  const [endCommit, setEndCommit] = useState("");
+  const range = useEnvironmentQuery(
+    scope === "branch"
+      ? gitEnvironment.rewriteableCommits({
+          environmentId: props.threadRef.environmentId,
+          input: { cwd: props.cwd, ...(queriedBaseRef ? { baseRef: queriedBaseRef } : {}) },
+        })
+      : null,
+  );
+  const commits = range.data?.commits ?? [];
+  const startIndex = startCommit ? commits.findIndex((commit) => commit.sha === startCommit) : 0;
+  const endIndex = endCommit
+    ? commits.findIndex((commit) => commit.sha === endCommit)
+    : commits.length - 1;
+  const invalidRange =
+    scope === "branch" &&
+    (baseRef.trim() !== queriedBaseRef ||
+      range.isPending ||
+      range.error !== null ||
+      commits.length === 0 ||
+      startIndex < 0 ||
+      endIndex < startIndex);
+
   const [instructions, setInstructions] = useState("");
   const submitted = useRef(false);
   const unavailable =
@@ -45,6 +73,7 @@ export function CommitWorkflowForm(props: {
     if (
       !canStart ||
       unavailable ||
+      invalidRange ||
       submitted.current ||
       (featureBranch && (!canOperateThread || scope !== "working_tree"))
     )
@@ -55,7 +84,13 @@ export function CommitWorkflowForm(props: {
       expectedBranch: props.branch,
       scope:
         scope === "branch"
-          ? { type: "branch" as const, ...(baseRef.trim() ? { baseRef: baseRef.trim() } : {}) }
+          ? {
+              type: startCommit || endCommit ? ("branch_range" as const) : ("branch" as const),
+              ...(baseRef.trim() ? { baseRef: baseRef.trim() } : {}),
+              ...(startCommit ? { startCommit } : {}),
+              ...(endCommit ? { endCommit } : {}),
+              ...(range.data ? { expectedHeadSha: range.data.headSha } : {}),
+            }
           : {
               type: featureBranch
                 ? ("working_tree_new_branch" as const)
@@ -111,11 +146,70 @@ export function CommitWorkflowForm(props: {
               <span>Base branch (optional)</span>
               <Input
                 value={baseRef}
-                onChange={(event) => setBaseRef(event.target.value)}
+                onChange={(event) => {
+                  setBaseRef(event.target.value);
+                  setStartCommit("");
+                  setEndCommit("");
+                }}
                 placeholder="Repository default branch"
                 maxLength={256}
               />
             </label>
+          )}
+          {scope === "branch" && (
+            <div className="space-y-3">
+              {["start", "end"].map((boundary) => {
+                const isStart = boundary === "start";
+                const value = isStart ? startCommit : endCommit;
+                const selected = commits.find((commit) => commit.sha === value);
+                const defaultLabel = isStart
+                  ? "Earliest branch commit (default)"
+                  : "Latest commit (default)";
+                return (
+                  <div key={boundary} className="space-y-2 text-sm">
+                    <span>{isStart ? "First commit (included)" : "Last commit (included)"}</span>
+                    <Select
+                      value={value || "default"}
+                      onValueChange={(next) =>
+                        (isStart ? setStartCommit : setEndCommit)(
+                          next === "default" ? "" : String(next),
+                        )
+                      }
+                      disabled={range.isPending || commits.length === 0}
+                    >
+                      <SelectTrigger
+                        aria-label={isStart ? "First commit (included)" : "Last commit (included)"}
+                      >
+                        <SelectValue>
+                          {selected ? `${selected.shortSha} ${selected.subject}` : defaultLabel}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup>
+                        <SelectItem value="default">{defaultLabel}</SelectItem>
+                        {commits.map((commit, index) => (
+                          <SelectItem
+                            key={commit.sha}
+                            value={commit.sha}
+                            disabled={isStart ? index > endIndex : index < startIndex}
+                          >
+                            {commit.shortSha} {commit.subject}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  </div>
+                );
+              })}
+              {range.isPending ? (
+                <p className="text-xs text-muted-foreground">Loading commits…</p>
+              ) : range.error ? (
+                <p className="text-xs text-destructive">{range.error}</p>
+              ) : commits.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No branch commits are available to regroup.
+                </p>
+              ) : null}
+            </div>
           )}
           {scope === "branch" &&
             (props.hasChanges || props.isDefaultRef || props.branch === null) && (
@@ -142,8 +236,11 @@ export function CommitWorkflowForm(props: {
           </label>
           <p className="text-sm text-muted-foreground">
             The model groups changes and writes messages. T3 stages and commits them in this
-            checkout, keeping a backup of the original history. Existing branch commits receive new
-            IDs. Nothing is pushed.
+            checkout, keeping a backup of the original history.{" "}
+            {scope === "branch"
+              ? "Commits before the selected range keep their IDs; later commits keep their contents and messages but receive new IDs."
+              : ""}{" "}
+            Nothing is pushed.
           </p>
         </div>
       </DialogPanel>
@@ -161,7 +258,11 @@ export function CommitWorkflowForm(props: {
             Commit on new branch
           </Button>
         ) : null}
-        <Button size="sm" disabled={!canStart || unavailable} onClick={() => submit()}>
+        <Button
+          size="sm"
+          disabled={!canStart || unavailable || invalidRange}
+          onClick={() => submit()}
+        >
           {scope === "branch" ? "Rebuild history" : "Create logical commits"}
         </Button>
       </DialogFooter>
