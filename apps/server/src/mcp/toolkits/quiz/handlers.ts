@@ -14,13 +14,13 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readThread } from "../../threadAccess.ts";
 import { QuizToolkit } from "./tools.ts";
 
-const QUIZ_CARD_SHOWN = `Shown to the learner as a card. Don't repeat the question or options. If this turn's teaching still owes its picture, draw it now (html_preview then html_render, or animation_render); then end your turn. Their pick, confidence and thinking arrive as their next message. Then:
+const QUIZ_CARD_SHOWN = `Shown to the learner as a card. Don't repeat the question or options. If this turn's teaching still owes its picture, draw it now without the case this card asks about or its answer, even if you taught it (html_preview then html_render, or animation_render); then end your turn. Their pick, confidence and thinking arrive as their next message. Then:
 - Say whether it was right, and why, in one or two lines. For a wrong pick, name the wrong idea that option stands for, so the lure is not learned.
 - Read confidence with the verdict. Right and sure: step up a level. Right but unsure: one more item at this level. Wrong and sure: a real misconception; re-teach it, then retest the same wrong idea in a new setting. Wrong and unsure, or "don't know": a gap; a short fix is enough.
 - Two right in a row with high confidence means the items are too easy: go up.`;
 
 const QUESTION_CARD_SHOWN =
-  "Shown to the learner as a card. Don't repeat the question. If this turn's teaching still owes its picture, draw it now (html_preview then html_render, or animation_render); then end your turn. Their answer arrives as their next message. For blanks and numbers, the app already marked each answer right or wrong; confirm and explain. Grade open text strictly against the answer you wrote before asking: say plainly what holds and what is missing or wrong, never soften a wrong idea.";
+  "Shown to the learner as a card. Don't repeat the question. If this turn's teaching still owes its picture, draw it now without the case this card asks about or its answer, even if you taught it (html_preview then html_render, or animation_render); then end your turn. Their answer arrives as their next message. For blanks and numbers, the app already marked each answer right or wrong; confirm and explain. Grade open text strictly against the answer you wrote before asking: say plainly what holds and what is missing or wrong, never soften a wrong idea.";
 
 // Card replies are appended after other messages and queued sends sit in delivery order, so sort by time.
 export const shownTutorText = (
