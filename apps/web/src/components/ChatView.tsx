@@ -2499,6 +2499,17 @@ export default function ChatView(props: ChatViewProps) {
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0;
   const compactDisabled = compactThreadUnavailable;
+  const compactUnavailableReason = !compactThreadUnavailable
+    ? null
+    : isWorking
+      ? "Compact when the agent finishes"
+      : pendingApprovals.length > 0 || pendingUserInputs.length > 0
+        ? "Answer the pending request first"
+        : !manualCompactionProviderAvailable
+          ? "This provider cannot compact on request"
+          : !activeThreadHasCompactableConversation
+            ? "Nothing to compact yet"
+            : "Compacting is unavailable right now";
   const resumeCompactionTokens =
     activeContextWindow &&
     resolveIdleCompaction(
@@ -4051,7 +4062,7 @@ export default function ChatView(props: ChatViewProps) {
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
                   onCompactContext={onComposerCompactContextStable}
-                  compactDisabled={compactDisabled}
+                  compactUnavailableReason={compactUnavailableReason}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
