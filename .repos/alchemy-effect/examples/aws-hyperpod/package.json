@@ -15,6 +15,8 @@
     "destroy": "alchemy destroy"
   },
   "dependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/kubernetes": "workspace:*",
     "@distilled.cloud/aws": "workspace:*",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",

@@ -1,6 +1,7 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import type { AssetConfig } from "../../../shared/types.ts";
+import type { NormalizedAssetConfig } from "./types.ts";
 
 interface CompatibilityFlag {
   enable: `assets_${string}`;
@@ -14,12 +15,9 @@ export const SEC_FETCH_MODE_NAVIGATE_HEADER_PREFERS_ASSET_SERVING = {
   onByDefaultAfter: "2025-04-01",
 } satisfies CompatibilityFlag;
 
-const COMPATIBILITY_FLAGS = [
-  SEC_FETCH_MODE_NAVIGATE_HEADER_PREFERS_ASSET_SERVING,
-] as const;
+const COMPATIBILITY_FLAGS = [SEC_FETCH_MODE_NAVIGATE_HEADER_PREFERS_ASSET_SERVING] as const;
 
-export type ENABLEMENT_COMPATIBILITY_FLAGS =
-  (typeof COMPATIBILITY_FLAGS)[number]["enable"];
+export type ENABLEMENT_COMPATIBILITY_FLAGS = (typeof COMPATIBILITY_FLAGS)[number]["enable"];
 
 export const resolveCompatibilityOptions = (configuration?: AssetConfig) => {
   const compatibilityDate = configuration?.compatibility_date ?? "2021-11-02";
@@ -30,12 +28,8 @@ export const resolveCompatibilityOptions = (configuration?: AssetConfig) => {
     if (
       compatibilityFlag.onByDefaultAfter &&
       compatibilityDate >= compatibilityFlag.onByDefaultAfter &&
-      !resolvedCompatibilityFlags.find(
-        (flag) => flag === compatibilityFlag.disable,
-      ) &&
-      !resolvedCompatibilityFlags.find(
-        (flag) => flag === compatibilityFlag.enable,
-      )
+      !resolvedCompatibilityFlags.find((flag) => flag === compatibilityFlag.disable) &&
+      !resolvedCompatibilityFlags.find((flag) => flag === compatibilityFlag.enable)
     ) {
       resolvedCompatibilityFlags.push(compatibilityFlag.enable);
     }
@@ -48,10 +42,6 @@ export const resolveCompatibilityOptions = (configuration?: AssetConfig) => {
 };
 
 export const flagIsEnabled = (
-  configuration: Required<AssetConfig>,
+  configuration: NormalizedAssetConfig,
   compatibilityFlag: (typeof COMPATIBILITY_FLAGS)[number],
-) => {
-  return !!configuration.compatibility_flags.find(
-    (flag) => flag === compatibilityFlag.enable,
-  );
-};
+) => !!configuration.compatibility_flags.find((flag) => flag === compatibilityFlag.enable);
