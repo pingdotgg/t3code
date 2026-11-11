@@ -4,13 +4,13 @@ import type {
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
-import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
+import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
@@ -28,7 +28,11 @@ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import {
+  areAllDirectoriesExpanded,
+  setAllDirectoriesExpanded,
+  subscribeOncePerTask,
+} from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
@@ -304,8 +308,9 @@ export default function FileBrowserPanel({
   const search = useFileTreeSearch(model);
   // Pierre restores the unfiltered tree when a search has no matches.
   const hasNoSearchMatches = search.value.trim().length > 0 && search.matchingPaths.length === 0;
-  const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
-    areAllDirectoriesExpanded(currentModel, expandableDirectoryPaths),
+  const allDirectoriesExpanded = useSyncExternalStore(
+    (listener) => subscribeOncePerTask(model, listener),
+    () => areAllDirectoriesExpanded(model, expandableDirectoryPaths),
   );
   const toggleAllDirectories = () => {
     const expanded = !(expandAll || allDirectoriesExpanded);
@@ -321,6 +326,7 @@ export default function FileBrowserPanel({
     search.close();
   };
   const expandedPathsRef = useRef(new Set<string>());
+  const expandedByExpandAllRef = useRef(new Set<string>());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to load directories as they are expanded
   useEffect(() => {
     const currentPaths = new Set(directoryPaths);
@@ -343,7 +349,7 @@ export default function FileBrowserPanel({
       }
     };
     loadExpanded();
-    return model.subscribe(loadExpanded);
+    return subscribeOncePerTask(model, loadExpanded);
   }, [directoryPaths, load, model]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes ignored-file status into the imperative Pierre tree model
   useEffect(() => {
@@ -404,8 +410,18 @@ export default function FileBrowserPanel({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands every directory in the Pierre tree model while expand-all is on and no search is active
   useEffect(() => {
-    if (expandAll && !query.trim())
-      setAllDirectoriesExpanded(model, expandableDirectoryPaths, true);
+    if (!expandAll || query.trim()) {
+      expandedByExpandAllRef.current.clear();
+      return;
+    }
+    // Only folders listed since the last pass; asking the tree about every folder each time is quadratic.
+    const previous = expandedByExpandAllRef.current;
+    setAllDirectoriesExpanded(
+      model,
+      expandableDirectoryPaths.filter((path) => !previous.has(path)),
+      true,
+    );
+    expandedByExpandAllRef.current = new Set(expandableDirectoryPaths);
   }, [expandableDirectoryPaths, expandAll, model, query]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals an externally selected path in the Pierre tree model by expanding, selecting and scrolling
