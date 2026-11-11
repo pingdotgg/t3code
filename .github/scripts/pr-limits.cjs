@@ -20,6 +20,7 @@ const KEEP_OPEN_LABEL = "triage:keep-open";
 const UNVOUCHED_LABEL = "vouch:unvouched";
 const TRUSTED_VOUCH_STATUSES = new Set(["bot", "collaborator", "vouched"]);
 const EXEMPTIONS_PATH = ".github/TRIAGE_EXEMPTIONS.td";
+const OUT_OF_LOOKUPS = Symbol("out of lookups");
 const LOGIN_PATTERN = /^github:([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})$/;
 
 const OPEN_PRS_QUERY = `
@@ -121,12 +122,14 @@ function maintainerOn(activity, exemptions) {
 }
 
 // Reads every page, so a long thread can neither hide a maintainer nor pass for one.
-async function findMaintainer(github, repo, number, detail, exemptions) {
+// Each further page spends a lookup; with none left the answer is OUT_OF_LOOKUPS, never "nobody".
+async function findMaintainer(github, repo, number, detail, exemptions, spend) {
   for (let activity = detail; ;) {
     const login = maintainerOn(activity, exemptions);
     if (login) return login;
     const { comments, reviews } = activity;
     if (!comments.pageInfo.hasNextPage && !reviews.pageInfo.hasNextPage) return undefined;
+    if (!spend()) return OUT_OF_LOOKUPS;
     activity = (
       await github.graphql(PR_ACTIVITY_QUERY, {
         ...repo,
@@ -233,7 +236,9 @@ async function sweep({ github, context, core, dryRun }) {
       continue;
     }
 
-    const maintainer = await findMaintainer(github, repo, number, detail, exemptions);
+    const spend = () => lookups < MAX_LOOKUPS_PER_RUN && (lookups += 1) > 0;
+    const maintainer = await findMaintainer(github, repo, number, detail, exemptions, spend);
+    if (maintainer === OUT_OF_LOOKUPS) continue;
     if (maintainer) {
       const reason = `maintainer involved (${maintainer})`;
       if (step === "conflict-window") {
@@ -269,7 +274,11 @@ async function sweep({ github, context, core, dryRun }) {
     }
 
     const since = labeledAt(detail, labelOf(step));
-    if (since === undefined || now - since < windowOf(step)) continue;
+    if (since === undefined) {
+      core.warning(`#${number}: cannot tell when ${labelOf(step)} was applied, leaving it open.`);
+      continue;
+    }
+    if (now - since < windowOf(step)) continue;
     if (closes >= MAX_CLOSES_PER_RUN) continue;
     // A reply or push clears the label from another job; give that job time before closing.
     if (Date.now() - Date.parse(detail.updatedAt) < RECENT_ACTIVITY_MS) continue;
