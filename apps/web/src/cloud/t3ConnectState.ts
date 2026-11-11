@@ -28,7 +28,7 @@ export function t3ConnectMcpUrl(input: {
 }): string | null {
   const url = input.thisMachine
     ? URL.parse(`https://${input.tunnelHostname ?? ""}`)
-    : input.relayEndpoint?.providerKind === "cloudflare_tunnel"
+    : input.relayEndpoint !== undefined && input.relayEndpoint.providerKind !== "manual"
       ? URL.parse(input.relayEndpoint.httpBaseUrl)
       : null;
   return url?.protocol === "https:" && TUNNEL_HOSTNAME.test(url.hostname)
