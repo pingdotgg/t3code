@@ -48,7 +48,7 @@ export function ChatPaneStandIn({ target }: { target: ThreadRouteTarget }) {
       inert
       className="@container/header-actions relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
+      <div className="pane-mobile-chrome flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         <ChatPaneHeader reserveNativeControlsInset>
           <ChatPaneHeaderControls measureRef={measureControls}>
             <PanelLayoutControls
@@ -76,6 +76,7 @@ export function ChatPaneStandIn({ target }: { target: ThreadRouteTarget }) {
             />
           ) : null}
         </ChatPaneHeader>
+        <div aria-hidden className="min-h-0 flex-1" />
       </div>
     </div>
   );
