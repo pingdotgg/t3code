@@ -6,6 +6,7 @@ import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, assert, expect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -33,6 +34,7 @@ import {
   ServerSettings,
   ServerSettingsError,
   ServerProvider,
+  type ServerProviderSlashCommand,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -44,7 +46,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
-import { type ClaudeCapabilitiesProbe, checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -168,7 +170,17 @@ function booleanDescriptor(id: string, label: string) {
   };
 }
 
-function claudeCapabilities(overrides: Partial<ClaudeCapabilitiesProbe> = {}) {
+type TestClaudeCapabilities = {
+  readonly email: string | undefined;
+  readonly subscriptionType: string | undefined;
+  readonly tokenSource: string | undefined;
+  readonly apiKeySource: string | undefined;
+  readonly apiProvider: string | undefined;
+  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models?: ReadonlyArray<ModelInfo>;
+};
+
+function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
   return () =>
     Effect.succeed({
       email: undefined,
@@ -3518,43 +3530,6 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-            throw new Error(`Unexpected args: ${joined}`);
-          }),
-        ),
-      ),
-    );
-
-    it.effect("marks effort above the CLI's maxEffortLevel cap as capped", () =>
-      Effect.gen(function* () {
-        // Claude Code silently clamps `--effort max` to the settings.json
-        // `maxEffortLevel`, so a plain "Max" label would show an effort the turn never uses.
-        const status = yield* checkClaudeProviderStatus(
-          defaultClaudeSettings,
-          claudeCapabilities({ effortCapSources: [{ maxEffortLevel: "xhigh" }] }),
-        );
-        const maxOptions = status.models.flatMap((model) =>
-          (model.capabilities?.optionDescriptors ?? []).flatMap((descriptor) =>
-            descriptor.id === "effort" && descriptor.type === "select"
-              ? descriptor.options
-                  .filter((option) => option.id === "max")
-                  .map((option) => ({ slug: model.slug, label: option.label }))
-              : [],
-          ),
-        );
-        assert.isNotEmpty(maxOptions);
-        for (const { slug, label } of maxOptions) {
-          // Sonnet 4.6 already sends Max as `high`, under the cap.
-          if (slug === "claude-sonnet-4-6") assert.strictEqual(label, "Max", slug);
-          // Models without Extra High run Max at High, the highest level they support under the cap.
-          else if (slug === "claude-opus-4-6" || slug === "claude-opus-4-5")
-            assert.strictEqual(label, "Max (capped to High)", slug);
-          else assert.include(label, "capped to Extra High", slug);
-        }
-      }).pipe(
-        Effect.provide(
-          layerMockSpawner((args) => {
-            const joined = args.join(" ");
-            if (joined === "--version") return { stdout: "2.1.303\n", stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),

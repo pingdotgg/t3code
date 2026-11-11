@@ -387,19 +387,9 @@ function resolveClaudeModelMaxEffortLevels(
 }
 
 /**
- * Claude Code clamps every effort above settings.json `maxEffortLevel` to the highest level the
- * model supports at or below it, so a model without Extra High runs Max at High under an `xhigh`
- * cap. Each descriptor's effective cap is therefore its highest plain-level option at or below the
- * configured cap. Options above it are relabelled rather than removed: a stored selection that no longer matched any option
- * would fall back to the descriptor default and run below the cap. An option counts as above the
- * cap only when both the level it reads as and the level the CLI is sent are, so an `effortMap`
- * that already sends Max as High keeps its label, and values that map to no level (prompt-injected
- * Ultrathink) are never capped.
- *
- * The cap is resolved like Claude Code does: within each settings source, the lowest
- * `modelSettings.<model>.maxEffortLevel` naming the model replaces that source's top-level cap and
- * `max` means no cap; across sources the lowest cap wins. The merged settings cannot express this,
- * since a per-model `max` in one file would hide another file's top-level cap.
+ * Claude Code clamps efforts above `maxEffortLevel` to the model's highest level under it, so
+ * such options are relabelled, not removed, keeping stored selections valid. Per-model caps
+ * replace their own source's top-level cap and `max` means none; across sources the lowest wins.
  */
 export function capClaudeCatalogEffort(
   catalog: ClaudeModelCatalog,

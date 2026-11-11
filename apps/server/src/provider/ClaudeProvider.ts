@@ -486,9 +486,7 @@ const probeClaudeCapabilities = (
         // Usage has its own deadline so a slow optional request cannot discard initialization.
         // Only the rate limits are read, so skip the local transcript scan that fills
         // `behaviors`: with a few GB of transcripts it outlasts the deadline.
-        // The effort cap is read alongside it under the same deadline, so a CLI that never
-        // answers `get_settings` delays the probe by at most that one timeout. Workspace probes
-        // only keep slash commands, so they skip both reads.
+        // The effort caps are read in parallel under the same deadline; workspace probes skip both.
         const usageCheckedAt = DateTime.formatIso(yield* DateTime.now);
         const { getSettings } = q as ClaudeSettingsQuery;
         const [usageResult, settingsResult] = yield* Effect.all(
@@ -502,14 +500,14 @@ const probeClaudeCapabilities = (
                   catch: (cause) =>
                     new ClaudeCapabilitiesProbeSdkError({ operation: "usage", cause }),
                 }).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
-              : Effect.succeed(undefined),
+              : Effect.undefined,
             includeStatus && getSettings
               ? Effect.tryPromise({
                   try: () => getSettings.call(q),
                   catch: (cause) =>
                     new ClaudeCapabilitiesProbeSdkError({ operation: "settings", cause }),
                 }).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
-              : Effect.succeed(undefined),
+              : Effect.undefined,
           ],
           { concurrency: "unbounded" },
         );
