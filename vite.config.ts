@@ -321,8 +321,12 @@ export default defineConfig({
       },
       {
         files: ["apps/web/src/**", "apps/mobile/src/**", "apps/desktop/src/**"],
-        // Users still pick their own project icon from the full Lucide set.
-        excludeFiles: ["apps/web/src/projectIconOptions.ts"],
+        // Users still pick their own project and agent icons, and stored `sparkles` must render.
+        excludeFiles: [
+          "apps/web/src/projectIconOptions.ts",
+          "apps/web/src/components/agents/AgentIcon.tsx",
+          "apps/mobile/src/components/AgentAvatar.tsx",
+        ],
         rules: { "t3code/no-sparkles-icon": "error" },
       },
       {
