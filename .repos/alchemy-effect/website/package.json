@@ -10,12 +10,14 @@
   },
   "type": "module",
   "scripts": {
-    "build:reference": "bun ../scripts/generate-api-reference.ts",
+    "build:reference": "node ../scripts/generate-api-reference.ts",
     "build:llms": "bun scripts/generate-llms-txt.ts",
     "docs:generate": "bun run build:reference && bun run build:llms",
     "docs:build": "bun run build",
     "docs:check": "bun run docs:generate && DOCS_FAST=1 astro build",
     "generate:readme-hero": "bun scripts/generate-readme-hero.ts",
+    "generate:patterns": "bun scripts/generate-yantra-patterns.ts",
+    "generate:backfill-charts": "bun scripts/generate-backfill-charts.ts",
     "build": "bun scripts/generate-brand-assets.ts && bun run build:reference && bun run build:llms && astro build",
     "dev:site": "API_REFERENCE_COPY_MARKERS=1 bun run build:reference && astro dev",
     "deploy": "alchemy deploy",
@@ -24,6 +26,15 @@
     "preview": "astro preview"
   },
   "dependencies": {
+    "@alchemy.run/aws": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/docker": "workspace:*",
+    "@alchemy.run/domain": "workspace:*",
+    "@alchemy.run/gcp": "workspace:*",
+    "@alchemy.run/github": "workspace:*",
+    "@alchemy.run/kubernetes": "workspace:*",
+    "@alchemy.run/redis": "workspace:*",
+    "@alchemy.run/sql": "workspace:*",
     "@astrojs/check": "catalog:",
     "@astrojs/mdx": "catalog:",
     "@astrojs/react": "catalog:",
@@ -42,6 +53,7 @@
     "astro": "catalog:",
     "cuelume": "catalog:",
     "effect": "catalog:",
+    "marked": "^17.0.1",
     "react": "catalog:",
     "react-dom": "catalog:",
     "satteri": "catalog:",
@@ -51,10 +63,10 @@
     "yaml": "catalog:"
   },
   "devDependencies": {
-    "@alchemy.run/vite-plugin-copy-editor": "workspace:*",
     "@iconify-json/simple-icons": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vite": "catalog:"
   }
 }

@@ -26,7 +26,6 @@ type EarlyLinuxElectronOptionsInput = EarlyDesktopSettingsInput;
 
 export interface EarlyLinuxElectronOptions {
   readonly isDevelopment: boolean;
-  readonly linuxWmClass: string;
   readonly linuxDesktopEntryName: string;
   readonly passwordStore: LinuxPasswordStoreSwitch | null;
 }
@@ -86,8 +85,7 @@ const WAYLAND_COLOR_MANAGER_FEATURE = "WaylandWpColorManagerV1";
 const featureListNames = (value: string | null): ReadonlyArray<string> =>
   (value ?? "").split(",").flatMap((entry) => entry.trim().match(/^\*?([^<:]+)/)?.[1] ?? []);
 
-// A stale HYPRLAND_INSTANCE_SIGNATURE is often inherited into other desktops, so only
-// trust the session's desktop names.
+// HYPRLAND_INSTANCE_SIGNATURE can be stale; trust only the session's desktop names.
 const isHyprlandSession = (env: NodeJS.ProcessEnv): boolean =>
   (trimNonEmpty(env.XDG_CURRENT_DESKTOP) ?? trimNonEmpty(env.XDG_SESSION_DESKTOP) ?? "")
     .split(":")
@@ -103,12 +101,8 @@ const HyprctlVersionJson = fromLenientJson(
 );
 const decodeHyprctlVersionJson = Schema.decodeSync(HyprctlVersionJson);
 
-// Hyprland 0.48.0 added wp-color-manager-v1 (hyprwm/Hyprland#9444) advertising
-// FEATURE_SET_PRIMARIES while rejecting set_primaries outside debug mode, which Chromium
-// treats as a fatal protocol error. 0.51.0 accepts them (hyprwm/Hyprland#11499).
-// Only stock builds of these releases count. Matching the commit as well as the tag
-// keeps later development builds that still report an old VERSION and tag (Nix
-// synthesizes `v${VERSION}`) on the default.
+// Hyprland 0.48.0 rejects advertised set_primaries (hyprwm/Hyprland#9444); 0.51.0 accepts it (hyprwm/Hyprland#11499).
+// Check commits because dev and Nix builds can retain release versions and tags.
 const AFFECTED_HYPRLAND_RELEASE_COMMITS: ReadonlyMap<string, string> = new Map([
   ["0.48.0", "5ee35f914f921e5696030698e74fb5566a804768"],
   ["0.48.1", "29e2e59fdbab8ed2cc23a20e3c6043d5decb5cdc"],
@@ -151,11 +145,50 @@ export function resolveEarlyLinuxElectronOptions(
   const isDevelopment = isDevelopmentEnvironment(input.env);
   return {
     isDevelopment,
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,
       env: input.env,
     }),
   };
+}
+
+/** Remember the explicit Chromium scale across AppImage updates, which drop launch arguments. */
+export function restoreEarlyLinuxDeviceScaleFactor(
+  input: EarlyDesktopSettingsInput & {
+    readonly commandLine: {
+      readonly hasSwitch: (name: string) => boolean;
+      readonly getSwitchValue: (name: string) => string;
+      readonly appendSwitch: (name: string, value: string) => void;
+    };
+    readonly writeFileString: (path: string, value: string) => void;
+  },
+): void {
+  // Keep this separate from desktop-settings.json: the settings service rewrites
+  // that document, and Chromium needs the value before that service is available.
+  const path = input.joinPath(
+    resolveEarlyDesktopSettingsPath(input),
+    "..",
+    "linux-device-scale-factor",
+  );
+  const switchName = "force-device-scale-factor";
+  const isValid = (value: string) =>
+    value.trim().length > 0 && Number.isFinite(Number(value)) && Number(value) > 0;
+  if (input.commandLine.hasSwitch(switchName)) {
+    const value = input.commandLine.getSwitchValue(switchName);
+    if (isValid(value)) {
+      try {
+        input.writeFileString(path, value);
+      } catch {
+        // A read-only state directory must not prevent startup with the explicit switch.
+      }
+    }
+    return;
+  }
+  try {
+    const value = input.readFileString(path).trim();
+    if (isValid(value)) input.commandLine.appendSwitch(switchName, value);
+  } catch {
+    // First launch, missing state, or unreadable state: keep Chromium's default.
+  }
 }

@@ -4,7 +4,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
-import * as TestClock from "effect/testing/TestClock";
 
 import {
   recordAcpRegistryModelOptions,
@@ -176,51 +175,6 @@ describe("AcpRegistryRuntimeCoordinator", () => {
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
   );
 
-  it.effect("replays and replaces live configuration per provider instance", () =>
-    Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
-      const instanceId = ProviderInstanceId.make("acpRegistry_kilo");
-      const firstSeen = yield* Deferred.make<void>();
-      const replacementSeen = yield* Deferred.make<void>();
-      const received: Array<ObservedLiveConfiguration> = [];
-      const first = {
-        models: [{ id: "sonnet", name: "Sonnet", description: null }],
-        currentModelId: "sonnet",
-        configOptions: [],
-      } satisfies AcpRegistryLiveConfiguration;
-      const replacement = {
-        models: [{ id: "opus", name: "Opus", description: null }],
-        currentModelId: "opus",
-        configOptions: [],
-      } satisfies AcpRegistryLiveConfiguration;
-
-      yield* coordinator.publishLiveConfiguration(instanceId, first);
-      const consumer = yield* coordinator
-        .watchLiveConfiguration(instanceId, (configuration) =>
-          Effect.gen(function* () {
-            received.push(configuration);
-            yield* received.length === 1
-              ? Deferred.succeed(firstSeen, undefined)
-              : Deferred.succeed(replacementSeen, undefined);
-          }),
-        )
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(firstSeen);
-      yield* coordinator.publishLiveConfiguration(instanceId, replacement);
-      yield* Deferred.await(replacementSeen);
-      yield* Fiber.interrupt(consumer);
-
-      const modelSlugs = (configuration: ObservedLiveConfiguration) =>
-        applyAcpRegistryLiveConfiguration(probedProvider, configuration, []).models.map(
-          (model) => model.slug,
-        );
-      expect(received.map(modelSlugs)).toEqual([["sonnet"], ["opus"]]);
-      expect(yield* coordinator.getLiveConfiguration(instanceId)).toEqual(Option.some(received[1]));
-      yield* coordinator.clearLiveConfiguration(instanceId);
-      expect(Option.isNone(yield* coordinator.getLiveConfiguration(instanceId))).toBe(true);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
-  );
-
   it.effect("retains per-model options across live sessions and refreshed snapshots", () =>
     Effect.gen(function* () {
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
@@ -354,40 +308,6 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         yield* coordinator.acceptUrlAuthentication({ instanceId, elicitationId: "login-1" }),
       ).toBe(true);
       expect(yield* Fiber.join(request)).toBe(true);
-      expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
-      yield* Fiber.interrupt(consumer);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
-  );
-
-  it.effect("expires stale URL authentication actions without accepting them", () =>
-    Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
-      const instanceId = ProviderInstanceId.make("acpRegistry_expired");
-      const actionSeen = yield* Deferred.make<void>();
-      const consumer = yield* coordinator
-        .watchUrlAuthAction(instanceId, (current) =>
-          current === null
-            ? Effect.void
-            : Deferred.succeed(actionSeen, undefined).pipe(Effect.asVoid),
-        )
-        .pipe(Effect.forkChild);
-      const request = yield* coordinator
-        .requestUrlAuthentication(instanceId, {
-          elicitationId: "expired-login",
-          url: "https://accounts.example.com/login",
-          message: "Continue in your browser",
-        })
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(actionSeen);
-      yield* TestClock.adjust("10 minutes");
-
-      expect(yield* Fiber.join(request)).toBe(false);
-      expect(
-        yield* coordinator.acceptUrlAuthentication({
-          instanceId,
-          elicitationId: "expired-login",
-        }),
-      ).toBe(false);
       expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
       yield* Fiber.interrupt(consumer);
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),

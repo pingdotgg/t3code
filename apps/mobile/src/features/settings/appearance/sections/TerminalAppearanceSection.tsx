@@ -1,5 +1,3 @@
-import { useCallback } from "react";
-
 import {
   MAX_TERMINAL_FONT_SIZE,
   MIN_TERMINAL_FONT_SIZE,
@@ -18,12 +16,9 @@ export function TerminalAppearanceSection() {
   const { isReady, appearance, setTerminalFontSize } = useAppearancePreferences();
   const custom = appearance.isTerminalFontSizeCustom;
 
-  const handleToggleCustom = useCallback(
-    (enabled: boolean) => {
-      setTerminalFontSize(enabled ? appearance.terminalFontSize : null);
-    },
-    [appearance.terminalFontSize, setTerminalFontSize],
-  );
+  const handleToggleCustom = (enabled: boolean) => {
+    setTerminalFontSize(enabled ? appearance.terminalFontSize : null);
+  };
 
   return (
     <SettingsSection title="Terminal">

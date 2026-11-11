@@ -1,11 +1,10 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { OrderEvents, type OrderEvent } from "./resources.ts";
 
-const badRequest = (error: string) =>
-  HttpServerResponse.json({ error }, { status: 400 });
+const badRequest = (error: string) => HttpServerResponse.json({ error }, { status: 400 });
 
 /**
  * The public orders API — the producer.
@@ -39,10 +38,7 @@ export default class Orders extends GCP.Function<Orders>()(
         .pipe(Effect.orDie);
 
     const accepted = (event: OrderEvent) =>
-      HttpServerResponse.json(
-        { orderId: event.orderId, eventId: event.eventId },
-        { status: 202 },
-      );
+      HttpServerResponse.json({ orderId: event.orderId, eventId: event.eventId }, { status: 202 });
 
     return {
       fetch: Effect.gen(function* () {
@@ -55,15 +51,13 @@ export default class Orders extends GCP.Function<Orders>()(
         }
 
         if (request.method !== "POST" || segments[0] !== "orders") {
-          return yield* HttpServerResponse.json(
-            { error: "not found" },
-            { status: 404 },
-          );
+          return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
         }
 
-        const body = (yield* request.json.pipe(
-          Effect.orElseSucceed(() => ({})),
-        )) as { email?: unknown; total?: unknown };
+        const body = (yield* request.json.pipe(Effect.orElseSucceed(() => ({})))) as {
+          email?: unknown;
+          total?: unknown;
+        };
         if (typeof body.email !== "string" || !body.email.includes("@")) {
           return yield* badRequest("email is required");
         }
@@ -97,10 +91,7 @@ export default class Orders extends GCP.Function<Orders>()(
           return yield* accepted(event);
         }
 
-        return yield* HttpServerResponse.json(
-          { error: "not found" },
-          { status: 404 },
-        );
+        return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
       }),
     };
   }).pipe(Effect.provide(GCP.PubSub.WriteTopicHttp)),

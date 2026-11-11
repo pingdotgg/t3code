@@ -1,5 +1,6 @@
 import type {
   ProviderConsumeResetCreditOutcome,
+  ServerProviderResetCreditOption,
   ServerProviderResetCredits,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -31,6 +32,9 @@ const Grant = Schema.Struct({
   ends_at: Schema.optional(Schema.NullOr(Schema.String)),
   paused: Schema.optional(Schema.Boolean),
   usable_now: Schema.optional(Schema.Boolean),
+  clears: Schema.optional(Schema.Array(Schema.Unknown)),
+  type: Schema.optional(Schema.Unknown),
+  gives_back_weekly: Schema.optional(Schema.Boolean),
 });
 const decodeGrant = Schema.decodeUnknownOption(Grant);
 const CedarEmber = Schema.Struct({
@@ -81,9 +85,7 @@ class ClaudeResetCreditError extends Schema.TaggedError<ClaudeResetCreditError>(
 
 const isClaudeResetCreditError = Schema.is(ClaudeResetCreditError);
 
-/**
- * An unanswered or unconfirmed claim retries with the same request id.
- */
+/** Retry unanswered or unconfirmed claims with the same request ID. */
 export const isSettledClaudeResetCreditFailure = (error: unknown) =>
   isClaudeResetCreditError(error) &&
   error.reason !== "requestFailed" &&
@@ -95,6 +97,31 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
   return (
     Date.parse(value) > nowMs && Date.UTC(year!, month! - 1, day!) <= Date.UTC(year!, month!, 0)
   );
+};
+
+// Claude Code's own grouping: a grant that gives back weekly usage is a Fable reset, else its
+// declared type, else what it clears.
+const RESET_KINDS = {
+  session: { label: "5-hour reset", description: "Refills your 5-hour limit." },
+  weekly: { label: "Weekly reset", description: "Refills your weekly limit." },
+  fable: {
+    label: "Fable reset",
+    description:
+      "Refills your Fable allowance and gives back what Fable used on your weekly limit. It doesn't reset your whole week.",
+  },
+  full: { label: "Full reset", description: "Refills your 5-hour and weekly limits." },
+} as const;
+type ResetKind = keyof typeof RESET_KINDS;
+
+const grantKind = (grant: typeof Grant.Type): ResetKind => {
+  if (grant.gives_back_weekly) return "fable";
+  if (grant.type === "session" || grant.type === "weekly" || grant.type === "full") {
+    return grant.type;
+  }
+  const clears = grant.clears ?? [];
+  const session = clears.includes("five_hour");
+  const other = clears.some((limit) => limit !== "five_hour");
+  return session && !other ? "session" : other && !session ? "weekly" : "full";
 };
 
 export function claudeResetCreditsToContract(
@@ -112,35 +139,63 @@ export function claudeResetCreditsToContract(
         (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
   const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
-  const nextExpiresAt = next?.ends_at ? DateTime.make(next.ends_at) : Option.none();
+  const expiresAt = (grant: typeof Grant.Type | undefined) => {
+    const at = grant?.ends_at ? DateTime.make(grant.ends_at) : Option.none();
+    return Option.isSome(at) ? DateTime.formatIso(at.value) : undefined;
+  };
+  const byKind = new Map<ResetKind, Array<typeof Grant.Type>>();
+  for (const grant of live) {
+    if (grant.resets_left === 0) continue;
+    const kind = grantKind(grant);
+    byKind.set(kind, [...(byKind.get(kind) ?? []), grant]);
+  }
+  const options = (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap(
+    (kind): Array<ServerProviderResetCreditOption> => {
+      const grants = byKind.get(kind);
+      const target = grants?.[0];
+      if (!grants || !target) return [];
+      const optionExpiresAt = expiresAt(target);
+      return [
+        {
+          creditId: target.id,
+          ...RESET_KINDS[kind],
+          availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
+          ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
+        },
+      ];
+    },
+  );
+  const nextExpiresAt = expiresAt(next);
   return {
     availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
-    ...(Option.isSome(nextExpiresAt)
-      ? { nextExpiresAt: DateTime.formatIso(nextExpiresAt.value) }
-      : {}),
+    ...(nextExpiresAt ? { nextExpiresAt } : {}),
     ...(next ? { nextCreditId: next.id } : {}),
+    ...(next ? { options } : {}),
   };
 }
 
-const readJson = <S extends Schema.Top>(schema: S, file: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.readFileString(file).pipe(
-      Effect.catchTags({
-        PlatformError: (error) =>
-          error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
-      }),
-      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
-    );
-  });
+const readJson = Effect.fn("claudeResetCredits.readJson")(function* <S extends Schema.Top>(
+  schema: S,
+  file: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(file).pipe(
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+    }),
+    Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
+  );
+});
 
-const readAccessToken = (configDir: string) =>
-  Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) === "darwin") return undefined;
-    const path = yield* Path.Path;
-    const credentials = yield* readJson(Credentials, path.join(configDir, ".credentials.json"));
-    return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
-  });
+const readAccessToken = Effect.fn("claudeResetCredits.readAccessToken")(function* (
+  configDir: string,
+) {
+  if ((yield* HostProcess.Platform) === "darwin") return undefined;
+  const path = yield* Path.Path;
+  const credentials = yield* readJson(Credentials, path.join(configDir, ".credentials.json"));
+  return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
+});
 
 const withClaudeHeaders = (token: string, version: string) =>
   HttpClientRequest.setHeaders({
@@ -193,10 +248,7 @@ const CLAIM_OUTCOMES = {
   ineligible: "noCredit",
 } as const satisfies Record<string, ProviderConsumeResetCreditOutcome>;
 
-/**
- * `requestId` is the idempotency key: a retry with the same id is the same
- * claim.
- */
+/** requestId is the claim's idempotency key. */
 export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(function* (input: {
   readonly configDir: string;
   readonly accountConfigPath: string;
@@ -252,8 +304,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   if (body.result === "cooldown") {
     return yield* new ClaudeResetCreditError({ reason: "coolingDown" });
   }
-  // Claude could not say whether the claim landed, so, like the CLI, keep the
-  // request id and let the retry ask about the same claim.
+  // Unknown outcomes retain the request ID so retries address the same claim.
   if (body.result === "unavailable") {
     return yield* new ClaudeResetCreditError({ reason: "unconfirmed" });
   }
