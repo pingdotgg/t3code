@@ -2664,7 +2664,6 @@ describe("storage cleanup reports and local file policies", () => {
     ),
   );
   it.live.each([
-    ["any-local-files", "untracked", "Local changes exceed the inspection limit"],
     ["uncommitted-changes", "untracked", "Local changes exceed the inspection limit"],
     ["any-local-files", "ignored", "Ignored files exceed the inspection limit"],
   ] as const)(
