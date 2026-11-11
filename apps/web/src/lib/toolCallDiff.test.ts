@@ -54,7 +54,7 @@ describe("toolCallDiff", () => {
         expect(file.additionLines).toHaveLength(operation === "add" ? lines : 0);
         expect(file.deletionLines).toHaveLength(operation === "delete" ? lines : 0);
         expect((operation === "add" ? file.additionLines : file.deletionLines).join("")).toBe(
-          recordedContent.replace(/\n$/, ""),
+          recordedContent,
         );
       }
     }

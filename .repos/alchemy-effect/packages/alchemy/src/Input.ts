@@ -28,10 +28,7 @@ export type Input<T> =
                   ? { [K in keyof T]: Input<T[K]> }
                   : never));
 
-export type InputProps<
-  T extends Record<string, any>,
-  Static extends keyof T = never,
-> = {
+export type InputProps<T extends Record<string, any>, Static extends keyof T = never> = {
   [K in keyof T]: K extends Static ? T[K] : Input<T[K]>;
 };
 
@@ -59,12 +56,7 @@ export declare namespace Input {
       }
     : T extends Output<infer U>
       ? U
-      : T extends
-            | Primitive
-            | Constructor
-            | Function
-            | S.Schema<any>
-            | PolicyLike
+      : T extends Primitive | Constructor | Function | S.Schema<any> | PolicyLike
         ? T
         : T extends any[]
           ? ResolveArray<T>
@@ -82,9 +74,7 @@ export declare namespace Input {
     T extends any[],
     // TODO(sam): I added the accumulator because it resolved infinite type instantiation
     Accum extends any[] = [],
-  > = T extends [infer H, ...infer Tail]
-    ? ResolveTuple<Tail, [...Accum, Input.Resolve<H>]>
-    : Accum;
+  > = T extends [infer H, ...infer Tail] ? ResolveTuple<Tail, [...Accum, Input.Resolve<H>]> : Accum;
 
   export type ResolveProps<Props extends Record<string, any>> = {
     [k in keyof Props]: Input.Resolve<Props[k]>;
@@ -99,9 +89,6 @@ export declare namespace Input {
   export type ResolveOut<T> = T extends Output<infer U> ? U : never;
 }
 
-export type Inputs<T extends any[], Out extends any[] = []> = T extends [
-  infer H,
-  ...infer T,
-]
+export type Inputs<T extends any[], Out extends any[] = []> = T extends [infer H, ...infer T]
   ? Inputs<T, [...Out, Input<H>]>
   : Out;
