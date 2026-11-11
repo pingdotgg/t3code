@@ -57,7 +57,7 @@ export const launcherTargetPath = (path: Path.Path, launcher: string, written: s
   const target = written.replace(/%~dp0/giu, () => `${path.dirname(launcher)}${path.sep}`);
   if (/[%!]/u.test(target)) return null;
   const resolved = path.resolve(target);
-  return path.parse(target).root === path.parse(resolved).root ? resolved : null;
+  return path.parse(path.normalize(target)).root === path.parse(resolved).root ? resolved : null;
 };
 
 const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));

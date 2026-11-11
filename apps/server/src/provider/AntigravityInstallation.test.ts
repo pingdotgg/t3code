@@ -875,6 +875,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         ["C:runtime\\agy_acp_server.exe", null],
         ["%~dp0runtime\\agy_acp_server.exe", "D:\\launchers\\runtime\\agy_acp_server.exe"],
         ["\\\\server\\share\\agy_acp_server.exe", "\\\\server\\share\\agy_acp_server.exe"],
+        ["D:/runtime/agy_acp_server.exe", "D:\\runtime\\agy_acp_server.exe"],
+        ["//server/share/agy_acp_server.exe", "\\\\server\\share\\agy_acp_server.exe"],
       ] as const) {
         expect(AntigravityInstallation.launcherTargetPath(serverOnC, launcherOnD, written)).toBe(
           expected,
