@@ -1,0 +1,3 @@
+/foo /bar
+/redirect.svg /target.svg
+/rewrite.svg /target.svg 200
