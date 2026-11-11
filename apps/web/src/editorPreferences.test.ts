@@ -67,3 +67,24 @@ it("checks revocation and regrant when a retained editor callback is invoked", a
   });
   expect(state.setPreference).toHaveBeenCalledTimes(1);
 });
+
+it.each(["read", "write"] as const)(
+  "opens an available editor when its preference %s fails",
+  async (operation) => {
+    state.allowed.add(secondary);
+    const preference = operation === "read" ? state.getPreference : state.setPreference;
+    preference.mockImplementationOnce(() => {
+      throw new Error("Preference storage unavailable");
+    });
+    using _warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const open = useOpenInPreferredEditor(secondary, ["vscode"]);
+    await expect(open("/work/readme.md:5")).resolves.toMatchObject({
+      _tag: "Success",
+      value: "vscode",
+    });
+    expect(state.run).toHaveBeenCalledExactlyOnceWith({
+      environmentId: secondary,
+      input: { cwd: "/work/readme.md:5", editor: "vscode" },
+    });
+  },
+);
