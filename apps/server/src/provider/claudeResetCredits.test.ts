@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -161,6 +162,42 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         Effect.provideService(HttpClient.HttpClient, client),
       );
       expect(credits).toMatchObject({ availableCount: 1, nextCreditId: "grant_a" });
+    }),
+  );
+
+  it.effect("serves a recent read from disk until it is forgotten or expires", () =>
+    Effect.gen(function* () {
+      const { configDir } = yield* writeLogin;
+      const cacheFile = yield* ClaudeResetCredits.claudeResetCreditsCacheFile(configDir, configDir);
+      let requests = 0;
+      const client = HttpClient.make((request) => {
+        requests += 1;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
+            }),
+          ),
+        );
+      });
+      const read = (version = "2.1.0") =>
+        ClaudeResetCredits.readClaudeResetCredits(configDir, version, undefined, cacheFile).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
+      yield* read();
+      expect(yield* read()).toMatchObject({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(requests).toBe(1);
+      yield* read("2.2.0");
+      yield* read("2.2.0");
+      expect(requests).toBe(2);
+      yield* ClaudeResetCredits.forgetClaudeResetCredits(cacheFile);
+      yield* read("2.2.0");
+      expect(requests).toBe(3);
+      yield* TestClock.adjust("2 minutes");
+      yield* read("2.2.0");
+      expect(requests).toBe(4);
     }),
   );
 

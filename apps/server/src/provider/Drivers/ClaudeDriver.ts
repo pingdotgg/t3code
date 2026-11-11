@@ -137,6 +137,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         ? configDir
         : undefined,
     );
+    const resetCreditsCacheFile = yield* ClaudeResetCredits.claudeResetCreditsCacheFile(
+      stateDir,
+      configDir,
+    ).pipe(Effect.provideService(Path.Path, path));
     const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
@@ -247,7 +251,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               (version, overageIncluded) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version, overageIncluded).pipe(
+                ClaudeResetCredits.readClaudeResetCredits(
+                  configDir,
+                  version,
+                  overageIncluded,
+                  resetCreditsCacheFile,
+                ).pipe(
                   Effect.provideService(HttpClient.HttpClient, httpClient),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
@@ -267,6 +276,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.provideService(Path.Path, path),
     );
 
+    const invalidateUsageCache = Cache.invalidateAll(capabilitiesProbeCache).pipe(
+      Effect.andThen(ClaudeResetCredits.forgetClaudeResetCredits(resetCreditsCacheFile)),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
       resolveMaintenance,
@@ -279,7 +292,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.map(stampIdentity),
         ),
       checkProvider,
-      invalidateUsageCache: Cache.invalidateAll(capabilitiesProbeCache),
+      invalidateUsageCache,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
@@ -351,7 +364,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.tap((outcome) =>
         Effect.gen(function* () {
           const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-          yield* Cache.invalidateAll(capabilitiesProbeCache);
+          yield* invalidateUsageCache;
           const refreshed = yield* snapshot.refresh;
           const after = refreshed.usageLimits?.checkedAt;
           if (
