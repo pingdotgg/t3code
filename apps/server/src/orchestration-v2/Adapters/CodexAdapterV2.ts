@@ -1945,7 +1945,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           string,
           { readonly runtimeMode: RuntimeMode; readonly kinds: Set<ProviderRequestKind> }
         >();
-        const threadCloses = new Map<string, Deferred.Deferred<void>>();
+        const threadCloses = new Map<string, Set<Deferred.Deferred<void>>>();
         /** Bind answers to the request's approval set so mode changes invalidate late answers. */
         const endSessionApprovalsOnModeChange = (context: ActiveCodexTurnContext) => {
           const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
@@ -4988,10 +4988,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(
             Effect.orDie,
             turnTerminalizationPermit.withPermits(1),
-            Effect.andThen(() => {
-              const closed = threadCloses.get(payload.threadId);
-              return closed === undefined ? Effect.void : Deferred.succeed(closed, undefined);
-            }),
+            Effect.andThen(() =>
+              Effect.forEach(
+                threadCloses.get(payload.threadId) ?? [],
+                (closed) => Deferred.succeed(closed, undefined),
+                { discard: true },
+              ),
+            ),
           ),
         );
 
@@ -7517,7 +7520,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               // Codex replies before it closes the thread; the writer lock and a same-process
               // resume ("is closing") both wait for thread/closed. Codex 0.163 never sends it.
               const closed = yield* Deferred.make<void>();
-              threadCloses.set(nativeThreadId, closed);
+              const waiters = threadCloses.get(nativeThreadId) ?? new Set();
+              waiters.add(closed);
+              threadCloses.set(nativeThreadId, waiters);
               yield* client.request("thread/unsubscribe", { threadId: nativeThreadId }).pipe(
                 Effect.flatMap(({ status }) =>
                   status === "unsubscribed"
@@ -7526,7 +7531,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
                 Effect.ensuring(
                   Effect.sync(() => {
-                    if (threadCloses.get(nativeThreadId) === closed) {
+                    waiters.delete(closed);
+                    if (waiters.size === 0 && threadCloses.get(nativeThreadId) === waiters) {
                       threadCloses.delete(nativeThreadId);
                     }
                   }),
