@@ -6,6 +6,7 @@ import {
   CommandId,
   ContextTransferId,
   EnvironmentId,
+  MessageId,
   NodeId,
   type OrchestrationV2Run,
   ProjectId,
@@ -334,6 +335,33 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
       assert.deepEqual((yield* projections.getThreadShell(task))?.delegatedFrom, delegatedFrom);
       const claimed = yield* launch(claudeCode, "Claims a parent", { delegatedFrom });
       assert.equal((yield* projections.getThreadShell(claimed))?.delegatedFrom, undefined);
+      // An agent in the link's thread acts for the link, but cannot claim one either.
+      const working = yield* launch(laptop, "Working for the laptop");
+      yield* ThreadManagement.ThreadManagementService.pipe(
+        Effect.flatMap((threads) =>
+          threads.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("start:working"),
+            threadId: working,
+            messageId: MessageId.make("message:working"),
+            text: "Go.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          }),
+        ),
+      );
+      const agent: McpInvocationContext.McpInvocationScope = {
+        ...laptop,
+        requestNamespace: "thread:working",
+        thread: { threadId: working, providerSessionId: "session", providerInstanceId: instanceId },
+        client: undefined,
+      };
+      const agentClaimed = yield* launch(agent, "The agent claims a parent", { delegatedFrom });
+      const agentShell = yield* projections.getThreadShell(agentClaimed);
+      assert.equal(agentShell?.linkOrigin?.sessionId, "laptop");
+      assert.equal(agentShell?.delegatedFrom, undefined);
     }),
   );
 
