@@ -984,16 +984,18 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       ? result.parsed.files.find((file) => pullRequestDiffPathMatches(linkAnchor.digest, file.path))
           ?.path
       : undefined;
+  const viewed = usePullRequestFilesViewed(route.params, commit ? null : detail.data);
+  const reviewDraft = usePullRequestReviewDraft(route.params);
   const filter = usePullRequestFileFilter(
     result.parsed,
-    linkPath ?? (route.params.focus ? route.params.path : undefined),
+    viewed,
+    linkPath ?? (route.params.path || undefined),
+    reviewDraft.draft.comments.map((comment) => comment.path),
   );
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
   const { loadMore } = result;
   const parsed = filter.parsed;
-  const reviewDraft = usePullRequestReviewDraft(route.params);
-  const viewed = usePullRequestFilesViewed(route.params, commit ? null : detail.data);
   const [commitViewedPaths, setCommitViewedPaths] = useState<ReadonlySet<string>>(() => new Set());
   const permissions = usePullRequestPermissions(route.params, detail.data);
   const scopeKey = pullRequestReviewKey(route.params);
@@ -1089,18 +1091,24 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const [collapsedIds, setCollapsedIds] = useState<readonly string[]>(EMPTY_IDS);
   const [visibleFileId, setVisibleFileId] = useState<string | null>(null);
   const nativeView = useRef<NativeReviewDiffViewHandle>(null);
-  // The filter the current jump was made under. Hiding or showing test files replaces the rows,
-  // so a jump made under the other filter has to run again. Native applies the entry
+  // The filters the current jump was made under. Hiding or showing files replaces the rows,
+  // so a jump made under other filters has to run again. Native applies the entry
   // destination before its first viewport, so the first one counts as made.
-  const jumpedUnder = useRef<boolean | null>(targetFile ? filter.hideTestFiles : null);
+  const filterChoice = {
+    hideTestFiles: filter.hideTestFiles,
+    hideViewedFiles: filter.hideViewedFiles,
+  };
+  const jumpedUnder = useRef<typeof filterChoice | null>(targetFile ? filterChoice : null);
   const hasTestFiles =
     result.parsed.kind === "files" &&
     result.parsed.files.some((file) => isTestChangedFile(file.path));
   const jumpStarted = () =>
-    jumpedUnder.current !== null && (!hasTestFiles || jumpedUnder.current === filter.hideTestFiles);
+    jumpedUnder.current !== null &&
+    (!hasTestFiles || jumpedUnder.current.hideTestFiles === filter.hideTestFiles) &&
+    (!filter.viewedCount || jumpedUnder.current.hideViewedFiles === filter.hideViewedFiles);
   const scrollToFile = (fileId: string) => {
     if (!nativeView.current) return;
-    jumpedUnder.current = filter.hideTestFiles;
+    jumpedUnder.current = filterChoice;
     void nativeView.current.scrollToFile(fileId, false).catch(() => {
       jumpedUnder.current = null;
     });
@@ -1145,7 +1153,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       nativeView,
       jumpStarted,
       setJumpStarted: (started) => {
-        jumpedUnder.current = started ? filter.hideTestFiles : null;
+        jumpedUnder.current = started ? filterChoice : null;
       },
       onDebug: bridge.onDebug,
       loadMore,
@@ -1158,10 +1166,17 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     );
   };
   const visibleFile = data.files.find((file) => file.id === visibleFileId) ?? targetFile;
-  const toggleTestFiles = () => {
+  const keepVisibleFile = () => {
     setJumpPath(visibleFile?.path ?? route.params.path);
     setSelectedRowId(null);
+  };
+  const toggleTestFiles = () => {
+    keepVisibleFile();
     filter.toggle();
+  };
+  const toggleViewedFiles = () => {
+    keepVisibleFile();
+    filter.toggleViewedFiles();
   };
   const title = commit ? "Commit changes" : "Changes";
   const seekingFile = !targetFile && result.nextCursor !== null;
@@ -1170,7 +1185,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     <View className="flex-1 android:bg-header ios:bg-screen">
       <AppBar
         title={title}
-        subtitle={`${commit ? commit.slice(0, 7) : `#${route.params.number}`} · ${data.files.length} ${data.files.length === 1 ? "file" : "files"}${filter.hideTestFiles && filter.hiddenCount ? ` · ${filter.hiddenCount} ${filter.hiddenCount === 1 ? "test" : "tests"} hidden` : ""}`}
+        subtitle={`${commit ? commit.slice(0, 7) : `#${route.params.number}`} · ${data.files.length} ${data.files.length === 1 ? "file" : "files"}${filter.hideTestFiles && filter.hiddenCount ? ` · ${filter.hiddenCount} ${filter.hiddenCount === 1 ? "test" : "tests"} hidden` : ""}${filter.hiddenViewedCount ? ` · ${filter.hiddenViewedCount} viewed hidden` : ""}`}
         onBack={() => navigation.goBack()}
         menus={[
           {
@@ -1219,6 +1234,17 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
                 selected: filter.hideTestFiles,
                 onPress: toggleTestFiles,
               },
+              ...(filter.canHideViewedFiles
+                ? [
+                    {
+                      id: "hide-viewed",
+                      title: "Hide viewed files",
+                      icon: "eye.slash",
+                      selected: filter.hideViewedFiles,
+                      onPress: toggleViewedFiles,
+                    },
+                  ]
+                : []),
               ...(selectedRow && selectedFile && canCommentOnDiff
                 ? [
                     {
@@ -1355,6 +1381,25 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
                 contentInsetTop={staleDiff ? 0 : contentTopInset}
                 contentInsetBottom={Platform.OS === "android" ? toolbarHeight : insets.bottom}
                 contentResetKey={`pull-request:${route.params.environmentId}:${route.params.repository}:${route.params.number}:${commit ?? "all"}`}
+              />
+            </View>
+          ) : filter.hiddenViewedCount > 0 &&
+            !data.rows.length &&
+            !result.isPending &&
+            !result.error &&
+            !seekingFile ? (
+            <View style={{ paddingTop: contentTopInset }}>
+              <EmptyState
+                title="All files are hidden"
+                detail="Viewed files are hidden from this review."
+                action={
+                  <Button
+                    label="Show viewed files"
+                    tone="contrast"
+                    onPress={filter.showViewedFiles}
+                  />
+                }
+                variant="plain"
               />
             </View>
           ) : filter.hiddenCount > 0 &&

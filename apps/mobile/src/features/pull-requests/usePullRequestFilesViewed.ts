@@ -78,6 +78,7 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
     supported,
     canToggle: supported && allowed && Boolean(query.data),
     isViewed,
+    toggledHere: (path: string) => Object.hasOwn(presses, path),
     toggle,
     error: error ?? query.error,
     truncated: query.data?.truncated,
