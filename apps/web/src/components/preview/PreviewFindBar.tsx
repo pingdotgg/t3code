@@ -105,7 +105,7 @@ export function PreviewFindBar({ tabId, focusRequestId, onClose }: PreviewFindBa
           <span
             aria-live="polite"
             className={cn(
-              "min-w-10 text-center text-xs tabular-nums",
+              "min-w-10 text-center text-meta tabular-nums",
               noResults ? "text-destructive" : "text-muted-foreground",
             )}
           >
