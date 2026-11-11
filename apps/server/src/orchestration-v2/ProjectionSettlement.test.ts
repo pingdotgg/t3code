@@ -417,6 +417,60 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
   }).pipe(Effect.provide(layerSql)),
 );
 
+it.effect("sql: a run with a permission denial notice settles only on its pull request", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const noticeRun = Effect.fn(function* (name: string, nativeId: string) {
+      const threadId = yield* createThread(name);
+      const runId = yield* createRun(threadId);
+      yield* store.apply({
+        id: EventId.make(`event:notice:${runId}`),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: old,
+        payload: {
+          id: TurnItemId.make(`notice:${runId}`),
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            nativeId,
+            strength: "weak",
+          },
+          parentItemId: null,
+          ordinal: 1,
+          type: "system_notice",
+          status: "completed",
+          title: null,
+          message: name,
+          startedAt: old,
+          completedAt: old,
+          updatedAt: old,
+        },
+      });
+      return threadId;
+    });
+    const denied = yield* noticeRun("denied", "permission-denials:turn-1");
+    const unrelated = yield* noticeRun("unrelated", "other-notice:turn-1");
+
+    const candidates = yield* store.getSettlementCandidates();
+    const resolve = (threadId: ThreadId, merged: boolean) =>
+      resolveAutoSettlementAt({
+        thread: candidates.find((thread) => thread.id === threadId)!,
+        pullRequest: merged ? { state: "merged", mergedAt: DateTime.formatIso(old) } : null,
+        nowMs: DateTime.toEpochMillis(now),
+        autoSettleAfterDays: 7,
+        autoSettleOnMerge: true,
+      });
+    assert.isNull(resolve(denied, false));
+    assert.equal(DateTime.formatIso(resolve(denied, true)!), DateTime.formatIso(old));
+    assert.equal(DateTime.formatIso(resolve(unrelated, false)!), DateTime.formatIso(old));
+  }).pipe(Effect.provide(layerSql)),
+);
+
 const pullRequestLink = (number: number) => ({
   host: "github.com",
   repository: "owner/repository",

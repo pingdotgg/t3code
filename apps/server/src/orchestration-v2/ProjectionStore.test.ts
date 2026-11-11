@@ -844,6 +844,54 @@ it.effect("record reads filter notification sources without dropping matching me
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("shells flag a latest run carrying a provider permission denial notice", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("permission-denied");
+    const initial = yield* store.getThreadProjection(threadId);
+    const run = initial.runs[0]!;
+    const shells = Effect.gen(function* () {
+      return [
+        yield* store.getThreadShell(threadId),
+        (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId),
+        ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(threadId)),
+      ].map((shell) => shell?.latestRunPermissionDenied);
+    });
+    assert.deepEqual(yield* shells, [false, false, false]);
+    yield* store.apply({
+      id: EventId.make("event:permission-denied:notice"),
+      type: "turn-item.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: initial.updatedAt,
+      payload: {
+        id: TurnItemId.make("item:permission-denied:notice"),
+        threadId,
+        runId: run.id,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          nativeId: `${ProjectionStore.PERMISSION_DENIAL_NOTICE_ID_PREFIX}turn-1`,
+          strength: "weak",
+        },
+        parentItemId: null,
+        ordinal: 1,
+        type: "system_notice",
+        status: "completed",
+        title: null,
+        message: "Claude Code denied 1 tool call this turn",
+        startedAt: initial.updatedAt,
+        completedAt: initial.updatedAt,
+        updatedAt: initial.updatedAt,
+      },
+    });
+    assert.deepEqual(yield* shells, [true, true, true]);
+    yield* assertShellIndexCoversShells();
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("shells flag a latest run triggered by a provider background wake", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

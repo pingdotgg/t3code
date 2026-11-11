@@ -655,6 +655,7 @@ export interface ThreadStatusPill {
     | "Completed"
     | "Failed"
     | "Pending Approval"
+    | "Permission Denied"
     | "Awaiting Input"
     | "Guest Request"
     | "Waiting"
@@ -678,6 +679,7 @@ type ThreadStatusInput = Pick<
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
   blockedOnThreadWait?: boolean | undefined;
+  latestRunPermissionDenied?: boolean | undefined;
 };
 
 // Read at event time: subscribing Sidebar to terminal or modifier state re-renders every row.
@@ -915,6 +917,7 @@ export type SidebarThreadStatus =
   | "waiting"
   | "failed"
   | "limited"
+  | "denied"
   | "ready";
 
 export function shouldRecedeSidebarThread(input: {
@@ -949,6 +952,7 @@ type SidebarThreadStatusInput = Pick<
   | "pendingGuestMessageCount"
   | "runtime"
   | "blockedOnThreadWait"
+  | "latestRunPermissionDenied"
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
@@ -980,6 +984,8 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
+  // The run's own status stands, but a provider-side denial still needs the user.
+  if (thread.latestRunPermissionDenied === true) return "denied";
   return "ready";
 }
 
@@ -995,7 +1001,8 @@ export function resolveSidebarFolderDot(
     statuses.has("input") ||
     statuses.has("approval") ||
     statuses.has("request") ||
-    statuses.has("limited")
+    statuses.has("limited") ||
+    statuses.has("denied")
   ) {
     return "attention";
   }
@@ -1269,6 +1276,18 @@ export function resolveThreadStatusPill(input: {
       label: "Plan Ready",
       colorClass: "text-violet-600 dark:text-violet-300/90",
       dotClass: "bg-violet-500 dark:bg-violet-300/90",
+      pulse: false,
+    };
+  }
+
+  if (
+    thread.latestRunPermissionDenied === true &&
+    isLatestRunSettled(thread.latestRun, thread.runtime)
+  ) {
+    return {
+      label: "Permission Denied",
+      colorClass: "text-amber-600 dark:text-amber-300/90",
+      dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
     };
   }

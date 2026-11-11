@@ -278,6 +278,24 @@ describe("resolveAutoSettlementAt", () => {
     ).toBeNull();
   });
 
+  it("settles a thread whose latest run had a permission denial only on its pull request", () => {
+    const input = {
+      thread: {
+        ...shell({ latestUserMessageAt: at(-4 * DAY_MS) }),
+        latestRunPermissionDenied: true,
+      },
+      pullRequest: { state: "merged" as const, mergedAt: DateTime.formatIso(at(-1)) },
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 2,
+      autoSettleOnMerge: true,
+      autoSettleKeepPullRequests: false,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-4 * DAY_MS));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, pullRequest: null }),
+    ).toBeNull();
+  });
+
   it("uses the latest activity time when the inactivity window elapses", () => {
     const idle = shell({
       latestUserMessageAt: at(-4 * DAY_MS),

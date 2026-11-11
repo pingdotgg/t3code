@@ -71,6 +71,7 @@ export type ThreadListV2Status =
   | "waiting"
   | "failed"
   | "limited"
+  | "denied"
   | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
@@ -266,6 +267,7 @@ export function resolveThreadListV2Status(
     | "pendingGuestMessageCount"
     | "runtime"
     | "blockedOnThreadWait"
+    | "latestRunPermissionDenied"
   >,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
@@ -293,6 +295,8 @@ export function resolveThreadListV2Status(
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
+  // The run's own status stands, but a provider-side denial still needs the user.
+  if (thread.latestRunPermissionDenied === true) return "denied";
   return "ready";
 }
 

@@ -259,6 +259,17 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("input");
   });
 
+  it("shows a run the provider denied tool calls in as Denied until the next run", () => {
+    const completed = { ...runtime, status: "completed" as const };
+    expect(resolveSidebarThreadStatus({ ...idle, runtime: completed })).toBe("ready");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, runtime: completed, latestRunPermissionDenied: true }),
+    ).toBe("denied");
+    expect(resolveSidebarThreadStatus({ ...idle, runtime, latestRunPermissionDenied: true })).toBe(
+      "working",
+    );
+  });
+
   it("keeps usage-limit stops Limited and visible until the thread recovers", () => {
     const limited = {
       ...runtime,
