@@ -327,16 +327,17 @@ export const execDrainGitPush = (input: {
   >;
 }): DrainGitPush => ({
   push: ({ sandboxName, workspaceRoot }) =>
-    // Branches alone are not the work: checkpoints under refs/t3 hold uncommitted
-    // state, so both namespaces are pushed explicitly.
+    // Checkpoints under refs/t3 hold uncommitted state, so both namespaces travel.
+    // A per-worker namespace keeps stale branches from failing the push and keeps
+    // drained refs off the remote's shared branches.
     input.exec(sandboxName, [
       "git",
       "-C",
       workspaceRoot,
       "push",
       "origin",
-      "refs/heads/*:refs/heads/*",
-      "refs/t3/*:refs/t3/*",
+      `+refs/heads/*:refs/t3/fleet/${sandboxName}/heads/*`,
+      `+refs/t3/orchestration-v2/*:refs/t3/fleet/${sandboxName}/orchestration-v2/*`,
     ]),
 });
 
