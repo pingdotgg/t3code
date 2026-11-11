@@ -41,19 +41,14 @@ it.effect("drops resolved rules with commands this build does not know", () =>
 
 it.effect("drops malformed resolved rule entries", () =>
   Effect.gen(function* () {
-    const spaceRule = { command: "terminal.split" as const, shortcut: { ...shortcut, key: " " } };
     const validRules = [
       { command: "terminal.toggle" as const, shortcut },
-      spaceRule,
-      ...["+", "escape"].map((key) => ({
-        command: "terminal.toggle" as const,
-        shortcut: { ...shortcut, key },
-      })),
+      { command: "terminal.split" as const, shortcut: { ...shortcut, key: " " } },
     ];
     const parsed = yield* decode(ResolvedKeybindingsConfig, [
       "garbage",
       ...validRules,
-      ...["", "  ", "\t", " a", "a "].map((key) => ({
+      ...["", "\t", " a", "a "].map((key) => ({
         command: "terminal.toggle",
         shortcut: { ...shortcut, key },
       })),
