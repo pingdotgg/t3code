@@ -34,14 +34,10 @@ describe("ForwardCompatibleArray", () => {
   const Named = ForwardCompatibleArray(Schema.Struct({ name: TrimmedNonEmptyString }));
 
   it("drops an element it cannot encode instead of failing the array", () => {
+    const encodeNamed = Schema.encodeUnknownSync(Schema.toCodecJson(Named));
+
     const wire = JSON.parse(
-      JSON.stringify(
-        Schema.encodeUnknownSync(Schema.toCodecJson(Named))([
-          { name: "a" },
-          { name: " " },
-          { name: "b" },
-        ]),
-      ),
+      JSON.stringify(encodeNamed([{ name: "a" }, { name: " " }, { name: "b" }])),
     );
     expect(wire).toEqual([{ name: "a" }, { name: "b" }]);
     expect(fromWire(Named)(wire)).toEqual([{ name: "a" }, { name: "b" }]);
