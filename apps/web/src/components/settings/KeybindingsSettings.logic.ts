@@ -372,6 +372,7 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "preview.toggle": "Toggle browser",
   "preview.refresh": "Reload browser",
   "preview.focusUrl": "Focus browser address",
+  "preview.find": "Find on page in Preview",
   "preview.zoomIn": "Zoom in browser",
   "preview.zoomOut": "Zoom out browser",
   "preview.resetZoom": "Reset browser zoom",

@@ -203,6 +203,7 @@ export function ServerUpdatesAction({
         const confirmed =
           (await requestConfirmDialog(
             `Update the T3 Code desktop apps on ${desktopTargets.map((target) => target.serverLabel).join(", ")}? They will close and relaunch on those machines.`,
+            { initialFocus: "confirm" },
           )) ?? true;
         if (!confirmed) return;
       }
@@ -309,6 +310,7 @@ export function ServerUpdateAction({
       const confirmed =
         (await requestConfirmDialog(
           `Update the T3 Code desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,
+          { initialFocus: "confirm" },
         )) ?? true;
       if (!confirmed) {
         return;

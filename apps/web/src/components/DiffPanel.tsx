@@ -264,7 +264,8 @@ export default function DiffPanel({
   const inPanelTabBar = useInPanelTabBar();
   const diffLayout = settings.diffLayout;
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
-  const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
+  const diffIgnoreWhitespace =
+    useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? settings.diffIgnoreWhitespace;
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     DIFF_FILE_TREE_STORAGE_KEY,
     false,
@@ -1189,7 +1190,9 @@ export default function DiffPanel({
         wordWrap={wordWrap}
         onWordWrapChange={setWordWrap}
         ignoreWhitespace={diffIgnoreWhitespace}
-        onIgnoreWhitespaceChange={setDiffIgnoreWhitespace}
+        onIgnoreWhitespaceChange={(value) =>
+          useDiffPanelSessionStore.getState().setIgnoreWhitespace(value)
+        }
         hasFiles={diffFileKeys.length > 0}
         testFileCount={testFileCount}
         hideTestFiles={hideTestFiles}
