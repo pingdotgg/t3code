@@ -489,11 +489,31 @@ function boundedWorksheet(
  */
 function engineStyles(xml: string) {
   const name = (local: string) => `<((?:[\\w.-]+:)?)${local}\\b`;
-  const block = (local: string) =>
-    new RegExp(`${name(local)}[^>]*>[\\s\\S]*?</\\1${local}\\s*>`, "g");
+  const blocks = new Map<string, { start: number; end: number }>();
+  const parser = xmlParser();
+  let depth = 0;
+  parser.on("opentag", (tag) => {
+    if (++depth > 64) throw new Error("This workbook contains excessive XML nesting.");
+    if (depth !== 2 || !["numFmts", "cellStyleXfs", "cellXfs"].includes(tag.local)) return;
+    if (blocks.has(tag.local))
+      throw new Error("This workbook contains duplicate stylesheet blocks.");
+    blocks.set(tag.local, {
+      start: xml.lastIndexOf("<", parser.position - 1),
+      end: parser.position,
+    });
+  });
+  parser.on("closetag", (tag) => {
+    if (depth === 2) {
+      const block = blocks.get(tag.local);
+      if (block) block.end = parser.position;
+    }
+    depth--;
+  });
+  parser.write(xml).close();
   const id = /(numFmtId\s*=\s*)(["'])(\d+)\2/g;
   const moved = new Map<string, number>();
-  const formats = xml.match(block("numFmts"))?.[0] ?? "";
+  const formatBlock = blocks.get("numFmts");
+  const formats = formatBlock ? xml.slice(formatBlock.start, formatBlock.end) : "";
   const used = new Set([...formats.matchAll(id)].map((match) => Number(match[3])));
   let next = 164;
   const renumber = (part: string, assign: boolean) =>
@@ -506,10 +526,19 @@ function engineStyles(xml: string) {
       const to = moved.get(value);
       return to === undefined ? attribute : `${key}${quote}${to}${quote}`;
     });
-  return xml
-    .replace(block("numFmts"), (part) => renumber(part, true))
-    .replace(block("cellStyleXfs"), (part) => renumber(part, false))
-    .replace(block("cellXfs"), (part) => renumber(part, false))
+  const numberedFormats = renumber(formats, true);
+  const parts: string[] = [];
+  let offset = 0;
+  for (const [local, block] of blocks) {
+    parts.push(
+      xml.slice(offset, block.start),
+      local === "numFmts" ? numberedFormats : renumber(xml.slice(block.start, block.end), false),
+    );
+    offset = block.end;
+  }
+  parts.push(xml.slice(offset));
+  return parts
+    .join("")
     .replace(
       new RegExp(
         `${name("u")}\\s+val\\s*=\\s*(["'])(?:single|double|singleAccounting|doubleAccounting)\\2\\s*/>`,

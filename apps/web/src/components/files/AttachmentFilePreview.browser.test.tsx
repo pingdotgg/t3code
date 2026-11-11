@@ -1822,6 +1822,10 @@ it("shows the number formats and underlines a workbook's own styles define", asy
   } finally {
     worker.terminate();
   }
+  archive.file("xl/styles.xml", "<styleSheet><numFmts/><numFmts/></styleSheet>");
+  await expect(
+    prepareOffice(await archive.generateAsync({ type: "arraybuffer" }), "xlsx"),
+  ).rejects.toThrow("duplicate stylesheet blocks");
 });
 
 it("keeps spreadsheet dates on their calendar day west of UTC", async () => {
