@@ -6141,7 +6141,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { tool: "AskUserQuestion", expected: ["assistant_message"] },
     { tool: "Bash", expected: ["reasoning"] },
   ] as const)(
-    "shows a lone claude-opus-5-5 thinking block before $tool as $expected",
+    "shows a lone Claude 5.1+ thinking block before $tool as $expected",
     ({ tool, expected }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -6193,7 +6193,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
   );
