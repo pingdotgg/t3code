@@ -8958,6 +8958,12 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           [run.id, resumed.runs.at(-1)!.id],
         );
         assert.deepEqual(
+          resumed.turnItems.flatMap((item) =>
+            item.type === "system_notice" && item.title === "Server restarted" ? [item.runId] : [],
+          ),
+          scenario === "resume" ? [] : [continuation.id],
+        );
+        assert.deepEqual(
           resumed.runs.map((row) => row.status),
           scenario === "resume" ? ["failed", "cancelled", "starting"] : ["failed", "cancelled"],
         );

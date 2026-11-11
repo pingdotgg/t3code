@@ -634,8 +634,8 @@ export const make = Effect.gen(function* () {
             payload: cancelledItem(item, now),
           });
         }
-        // A queued run never did provider work, so there is nothing to explain.
-        if (run.status === "queued") continue;
+        // Queued runs and unsent resumes leave no visible turn behind, so there is nothing to explain.
+        if (run.status === "queued" || unsentResumeRunIds.includes(run.id)) continue;
         events.push({
           id: yield* allocateEventId(),
           type: "turn-item.updated",
