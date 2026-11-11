@@ -129,7 +129,6 @@ export function assignProjectsToEnvironments(
   const rank = new Map(environmentIds.map((id, index) => [id, index] as const));
   const owner = new Map<string, AssignableProject>();
   const unreadable = (project: AssignableProject) => {
-    if (unreachableEnvironmentIds.has(project.environmentId)) return true;
     const availability = hostAvailability?.get(project.environmentId);
     const host =
       availability?.projectHosts.get(project.id)?.host ??
@@ -139,6 +138,8 @@ export function assignProjectsToEnvironments(
       );
     return availability?.hosts.get(host)?.configured === false;
   };
+  const cost = (project: AssignableProject) =>
+    (unreachableEnvironmentIds.has(project.environmentId) ? 2 : 0) + (unreadable(project) ? 1 : 0);
   for (const project of projects) {
     const key = repositoryKey(project);
     if (!key) continue;
@@ -149,10 +150,10 @@ export function assignProjectsToEnvironments(
       owner.set(key, project);
       continue;
     }
-    const currentUnreadable = unreadable(current);
-    const candidateUnreadable = unreadable(project);
-    if (currentUnreadable !== candidateUnreadable) {
-      if (currentUnreadable) owner.set(key, project);
+    const currentCost = cost(current);
+    const candidateCost = cost(project);
+    if (currentCost !== candidateCost) {
+      if (candidateCost < currentCost) owner.set(key, project);
       continue;
     }
     if (current.environmentId === preferredEnvironmentId) continue;

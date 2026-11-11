@@ -201,6 +201,17 @@ describe("one server per repository", () => {
       new Set(envs("env-1")),
     );
     expect(plain(assignment)).toEqual({ "env-1": ["b1"], "env-2": ["a2"] });
+    const unreadableHost = assignProjectsToEnvironments(
+      [
+        project("a1", "env-1", "github.com/acme/app"),
+        project("a2", "env-2", "github.com/acme/app"),
+      ],
+      envs("env-1", "env-2"),
+      "env-1" as EnvironmentId,
+      new Map([["env-2" as EnvironmentId, hostAvailability(new Map([["github.com", false]]))]]),
+      new Set(envs("env-1")),
+    );
+    expect(plain(unreadableHost)).toEqual({ "env-2": ["a2"] });
   });
 
   it("falls back from an unreadable host without moving other repositories", () => {
