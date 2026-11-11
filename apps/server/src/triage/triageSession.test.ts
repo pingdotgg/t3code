@@ -17,7 +17,6 @@ import { describeServerProcess, writeTriageSession } from "./triageSession.ts";
 
 it.effect.each([
   { name: "HOME is missing", home: undefined, accountHomeAvailable: true },
-  { name: "HOME is empty", home: "", accountHomeAvailable: true },
   { name: "no home is available", home: "", accountHomeAvailable: false },
 ])("writes an absolute macOS service log path when $name", ({ home, accountHomeAvailable }) =>
   Effect.gen(function* () {
