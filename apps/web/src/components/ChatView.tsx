@@ -304,11 +304,7 @@ import {
   getProviderStatusBannerKey,
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
-import {
-  getThreadErrorBannerKey,
-  isThreadErrorBannerDismissedForSession,
-  shouldShowThreadErrorBanner,
-} from "./chat/ThreadErrorBanner";
+import { resolveThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
@@ -513,7 +509,8 @@ export default function ChatView(props: ChatViewProps) {
     ? deriveReportedModelSelection(serverProjection)
     : null;
   const threadStatus = useThreadStatus(routeThreadDetailRef);
-  const threadDetailError = useThreadError(routeThreadDetailRef);
+  const threadDetailFailure = useThreadError(routeThreadDetailRef);
+  const threadDetailError = threadDetailFailure?.value ?? null;
   const threadSyncPhase = resolveThreadSyncPhase({
     detailExists: serverProjection !== null,
     detailError: threadDetailError,
@@ -521,6 +518,7 @@ export default function ChatView(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
+  const threadDetailUnavailable = serverThread !== null && serverProjection === null;
   // Held back briefly, so a quick sync does not flash a status line at the end of the timeline.
   const delayedThreadSyncPhase = useDelayedStatus(routeThreadKey, threadSyncPhase);
   const activeProviderThread = serverProjection?.providerThreads.find(
@@ -927,17 +925,16 @@ export default function ChatView(props: ChatViewProps) {
   const threadError = isServerThread
     ? (threadDetailError ?? localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
-  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
-  const visibleThreadError = shouldShowThreadErrorBanner(
-    routeThreadKey,
-    threadError,
-    isThreadErrorBannerDismissedForSession(threadErrorBannerKey),
-  )
-    ? threadError
-    : null;
+  const threadErrorBanner = resolveThreadErrorBanner({
+    threadKey: routeThreadKey,
+    detailFailure: isServerThread ? threadDetailFailure : null,
+    localError: isServerThread ? localServerError : localDraftError,
+    runtimeError: isServerThread ? (serverRuntime?.lastError ?? null) : null,
+  });
+  const threadErrorBannerKey = threadErrorBanner?.key ?? null;
+  const visibleThreadError = threadErrorBanner?.message ?? null;
   const [, setThreadErrorBannerDismissTick] = useState(0);
-  const threadErrorIsServerRuntimeError =
-    localServerError === null && visibleThreadError === serverRuntime?.lastError;
+  const threadErrorIsServerRuntimeError = threadErrorBanner?.source === "runtime";
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
   const runtimeMode =
@@ -2444,7 +2441,7 @@ export default function ChatView(props: ChatViewProps) {
     !manualCompactionProviderAvailable ||
     isWorking ||
     isRevertingCheckpoint ||
-    threadDetailLoading ||
+    threadDetailUnavailable ||
     isPreparingWorktree ||
     activeEnvironmentUnavailable ||
     feedbackUploading ||
@@ -2849,7 +2846,7 @@ export default function ChatView(props: ChatViewProps) {
     hasHeldQueuedRuns,
     isSendBusy,
     isRevertingCheckpoint,
-    threadDetailLoading,
+    threadDetailUnavailable,
     activeEnvironmentUnavailable,
     runtimeMode,
     localCheckoutBranchMismatch,
@@ -2890,7 +2887,7 @@ export default function ChatView(props: ChatViewProps) {
     feedbackUploadsInFlightRef,
     queuedRunEdit,
     isRevertingCheckpoint,
-    threadDetailLoading,
+    threadDetailUnavailable,
     activeEnvironmentUnavailable,
     isSendBusy,
     sendQueuesBehindSetup,
@@ -3018,7 +3015,7 @@ export default function ChatView(props: ChatViewProps) {
     isLocalDraftThread &&
     !isSendBusy &&
     !isRevertingCheckpoint &&
-    !threadDetailLoading &&
+    !threadDetailUnavailable &&
     clientSettingsHydrated &&
     !needsLoadBalancing &&
     !activeEnvironmentUnavailable &&
@@ -3353,6 +3350,7 @@ export default function ChatView(props: ChatViewProps) {
                 threadErrorIsServerRuntimeError ? (serverRuntime?.lastErrorCode ?? null) : null
               }
               threadErrorBannerKey={threadErrorBannerKey}
+              threadErrorIsLocal={threadErrorBanner?.source === "local"}
               setThreadError={setThreadError}
               setThreadErrorBannerDismissTick={setThreadErrorBannerDismissTick}
             />
@@ -3599,8 +3597,10 @@ export default function ChatView(props: ChatViewProps) {
                                         ? "Rewinding conversation"
                                         : feedbackUploading
                                           ? "Sending feedback"
-                                          : threadDetailLoading
-                                            ? "Messages loading"
+                                          : threadDetailUnavailable
+                                            ? threadDetailError === null
+                                              ? "Messages loading"
+                                              : "Message history unavailable"
                                             : worktreeSetupBlocksSend
                                               ? "Preparing worktree"
                                               : projectCloneSendBlockReason

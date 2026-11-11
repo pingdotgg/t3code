@@ -7,7 +7,11 @@ import type {
 } from "@t3tools/contracts";
 import type { Dispatch, SetStateAction } from "react";
 import { ProviderStatusBanner } from "./ProviderStatusBanner";
-import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadErrorBanner";
+import {
+  dismissThreadErrorBannerForSession,
+  ThreadErrorBanner,
+  type ThreadErrorBannerKey,
+} from "./ThreadErrorBanner";
 
 /**
  * The banners pinned above the timeline. The dismiss handlers are built here from plain
@@ -23,7 +27,8 @@ export function ChatBannerLane(props: {
   threadError: string | null;
   threadErrorClass: OrchestrationV2ProviderFailureClass | null;
   threadErrorCode: string | null;
-  threadErrorBannerKey: string | null;
+  threadErrorBannerKey: ThreadErrorBannerKey | null;
+  threadErrorIsLocal: boolean;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   setThreadErrorBannerDismissTick: Dispatch<SetStateAction<number>>;
 }) {
@@ -37,6 +42,7 @@ export function ChatBannerLane(props: {
     threadErrorClass,
     threadErrorCode,
     threadErrorBannerKey,
+    threadErrorIsLocal,
     setThreadError,
     setThreadErrorBannerDismissTick,
   } = props;
@@ -53,7 +59,7 @@ export function ChatBannerLane(props: {
         errorClass={threadErrorClass}
         errorCode={threadErrorCode}
         onDismiss={() => {
-          setThreadError(threadId, null);
+          if (threadErrorIsLocal) setThreadError(threadId, null);
           dismissThreadErrorBannerForSession(threadErrorBannerKey);
           setThreadErrorBannerDismissTick((tick) => tick + 1);
         }}
