@@ -16,7 +16,7 @@ import {
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
-const CHECKOUT_COMMAND = /^tea\s+(?:pr|pulls)\s+checkout\s+(.+)$/i;
+const CHECKOUT_COMMAND = /^tea\s+(?:pr|pulls?)\s+(?:checkout|co)\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https?:\/\/[^/\s]+\/(?:[^/\s]+\/)+[^/\s]+\/pulls\/(\d+)(?:[/?#].*)?$/i;
 
