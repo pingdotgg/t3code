@@ -979,14 +979,15 @@ const mobileEndorsementRows = [
     gap: 10px;
   }
 
-  .demo-line {
+  /* Rows are created in JS, so they never get Astro's scope attribute. */
+  .demo-log :global(.demo-line) {
     display: grid;
     grid-template-columns: 64px 1fr;
     gap: 12px;
     align-items: start;
   }
 
-  .demo-who {
+  .demo-log :global(.demo-who) {
     color: var(--fg-dim);
     font-size: 11px;
     letter-spacing: 0.04em;
@@ -994,19 +995,19 @@ const mobileEndorsementRows = [
     padding-top: 2px;
   }
 
-  .demo-line--you .demo-who { color: var(--fg-muted); }
-  .demo-line--lead .demo-who { color: var(--accent); }
-  .demo-line--claude .demo-who { color: oklch(0.78 0.12 55); }
-  .demo-line--codex .demo-who { color: oklch(0.78 0.1 200); }
-  .demo-line--phone .demo-who { color: var(--ok); }
-  .demo-line--system .demo-who { color: var(--fg-faint); }
+  .demo-log :global(.demo-line--you .demo-who) { color: var(--fg-muted); }
+  .demo-log :global(.demo-line--lead .demo-who) { color: var(--accent); }
+  .demo-log :global(.demo-line--claude .demo-who) { color: oklch(0.78 0.12 55); }
+  .demo-log :global(.demo-line--codex .demo-who) { color: oklch(0.78 0.1 200); }
+  .demo-log :global(.demo-line--phone .demo-who) { color: var(--ok); }
+  .demo-log :global(.demo-line--system .demo-who) { color: var(--fg-faint); }
 
-  .demo-text {
+  .demo-log :global(.demo-text) {
     color: var(--fg);
     overflow-wrap: anywhere;
   }
 
-  .demo-line--system .demo-text {
+  .demo-log :global(.demo-line--system .demo-text) {
     color: var(--fg-dim);
   }
 
