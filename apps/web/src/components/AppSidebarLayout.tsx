@@ -428,33 +428,33 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
       data-sidebar-control=""
     >
       {showSidebar ? (
-      <div
-        className="flex"
-        inert={overviewShown}
-        style={{
-          ...overviewZoomTransition(),
-          transitionProperty: "opacity",
-          ...(overviewShown && { opacity: 0 }),
-        }}
-      >
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <SidebarTrigger
-                variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
-                className={cn(
-                  "pointer-events-auto",
-                  isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
-                )}
-                aria-label="Toggle main sidebar"
-              />
-            }
-          />
-          <TooltipPopup side="bottom">
-            Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
-          </TooltipPopup>
-        </Tooltip>
-      </div>
+        <div
+          className="flex"
+          inert={overviewShown}
+          style={{
+            ...overviewZoomTransition(),
+            transitionProperty: "opacity",
+            ...(overviewShown && { opacity: 0 }),
+          }}
+        >
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <SidebarTrigger
+                  variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+                  className={cn(
+                    "pointer-events-auto",
+                    isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+                  )}
+                  aria-label="Toggle main sidebar"
+                />
+              }
+            />
+            <TooltipPopup side="bottom">
+              Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+            </TooltipPopup>
+          </Tooltip>
+        </div>
       ) : null}
       {/* Phones keep the header for the page; the system back gesture covers them. */}
       <div className="pointer-events-auto hidden items-center [-webkit-app-region:no-drag] md:flex">
@@ -632,53 +632,55 @@ export function AppSidebarLayout({
           store={sidebarOpenStore}
           style={sidebarProviderStyle}
         >
-          {showSidebar ? (<>
-          <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
-          {chromeArtVariant ? <ChromeChannelArt variant={chromeArtVariant} /> : null}
-          <Sidebar
-            side="left"
-            collapsible="offcanvas"
-            variant="inset"
-            data-app-sidebar=""
-            {...sidebarArea}
-            role="navigation"
-            aria-label={isOnDesignSystem ? "Design system" : "Threads"}
-            // Light, black chrome paints the sidebar with the dark tokens (index.css).
-            data-chrome-scope=""
-            resizable={{
-              maxWidth: sidebarMaximumWidth,
-              minWidth: sidebarMinimumWidth,
-              shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-                nextWidth <= currentWidth ||
-                wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-              storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-              onResize: setSidebarWidth,
-            }}
-            className={cn(overviewStaged && "z-35")}
-            data-overview-zoom={overviewStaged ? overviewPhase : undefined}
-            inert={overviewStaged && overviewShown}
-            style={
-              overviewStaged
-                ? {
-                    ...windowControlsInsetStyle,
-                    ...overviewTransition,
-                  }
-                : windowControlsInsetStyle
-            }
-          >
-            {isOnDesignSystem && DesignSystemSidebarNav ? (
-              <>
-                <SidebarChromeHeader isElectron={isElectron} />
-                <Suspense fallback={null}>
-                  <DesignSystemSidebarNav />
-                </Suspense>
-              </>
-            ) : (
-              <ThreadSidebar routeReveal={sidebarRouteReveal} />
-            )}
-            <SidebarRail onDoubleClick={resetSidebarWidth} />
-          </Sidebar>
-          </>) : null}
+          {showSidebar ? (
+            <>
+              <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+              {chromeArtVariant ? <ChromeChannelArt variant={chromeArtVariant} /> : null}
+              <Sidebar
+                side="left"
+                collapsible="offcanvas"
+                variant="inset"
+                data-app-sidebar=""
+                {...sidebarArea}
+                role="navigation"
+                aria-label={isOnDesignSystem ? "Design system" : "Threads"}
+                // Light, black chrome paints the sidebar with the dark tokens (index.css).
+                data-chrome-scope=""
+                resizable={{
+                  maxWidth: sidebarMaximumWidth,
+                  minWidth: sidebarMinimumWidth,
+                  shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                    nextWidth <= currentWidth ||
+                    wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+                  storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+                  onResize: setSidebarWidth,
+                }}
+                className={cn(overviewStaged && "z-35")}
+                data-overview-zoom={overviewStaged ? overviewPhase : undefined}
+                inert={overviewStaged && overviewShown}
+                style={
+                  overviewStaged
+                    ? {
+                        ...windowControlsInsetStyle,
+                        ...overviewTransition,
+                      }
+                    : windowControlsInsetStyle
+                }
+              >
+                {isOnDesignSystem && DesignSystemSidebarNav ? (
+                  <>
+                    <SidebarChromeHeader isElectron={isElectron} />
+                    <Suspense fallback={null}>
+                      <DesignSystemSidebarNav />
+                    </Suspense>
+                  </>
+                ) : (
+                  <ThreadSidebar routeReveal={sidebarRouteReveal} />
+                )}
+                <SidebarRail onDoubleClick={resetSidebarWidth} />
+              </Sidebar>
+            </>
+          ) : null}
           <WorkspacePlane>{children}</WorkspacePlane>
           <BackgroundThreadAnnouncer />
           {isElectron ? (

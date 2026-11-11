@@ -173,7 +173,10 @@ it("a new draft does not load its reserved thread before the server lists it", a
 it("answers a pending question while an oversized message draft is set aside", async () => {
   const thread = threadWithHistory("oversized-question-draft", 0);
   using _environment = installFakeEnvironment([thread]);
-  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
   const target = scopeThreadRef(ENVIRONMENT_ID, thread.id);
   const oversizedDraft = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS + 1);
   const router = getRouter(
