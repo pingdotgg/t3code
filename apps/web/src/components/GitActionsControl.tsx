@@ -959,7 +959,7 @@ export default function GitActionsControl({
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [isRefreshingQuickAction, setIsRefreshingQuickAction] = useState(false);
-  const [commitMode, setCommitMode] = useState("single");
+  const [commitMode, setCommitMode] = useState("logical");
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
@@ -1437,6 +1437,7 @@ export default function GitActionsControl({
     if (refreshedQuickAction.kind === "open_commit_dialog") {
       setExcludedFiles(new Set());
       setIsEditingFiles(false);
+      setCommitMode("logical");
       setIsCommitDialogOpen(true);
       return;
     }
@@ -1545,6 +1546,7 @@ export default function GitActionsControl({
     }
     setExcludedFiles(new Set());
     setIsEditingFiles(false);
+    setCommitMode("logical");
     setIsCommitDialogOpen(true);
   };
 
