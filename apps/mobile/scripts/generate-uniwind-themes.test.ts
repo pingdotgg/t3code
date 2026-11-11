@@ -22,6 +22,24 @@ describe("generate mobile Uniwind themes", () => {
     const lightVariables = themes.get("light")!;
     for (const [name, variables] of themes) {
       expect([...variables.keys()].sort(), name).toEqual([...lightVariables.keys()].sort());
+      if (name === "dark") {
+        for (const [role, color] of Object.entries({
+          "--color-header": "#000000",
+          "--color-thread-canvas": "#151515",
+          "--color-sheet-solid": "#151515",
+          "--color-card-alt": "#1d1d1d",
+          "--color-grouped-card": "#1d1d1d",
+          "--color-border": "#242424",
+          "--color-primary": "#eeeeee",
+          "--color-primary-foreground": "#111111",
+        })) {
+          expect(variables.get(role), role).toBe(color);
+        }
+      }
+      if (name === "light") {
+        expect(variables.get("--color-primary")).toBe("#111111");
+        expect(variables.get("--color-primary-foreground")).toBe("#ffffff");
+      }
       const isDark = name === "dark" || name.endsWith("-dark");
       expect(
         Object.fromEntries(
