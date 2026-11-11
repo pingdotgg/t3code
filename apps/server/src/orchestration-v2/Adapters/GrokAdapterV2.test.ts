@@ -728,17 +728,28 @@ describe("Grok goal subagents", () => {
         runtimePolicy: policy,
       });
       const childThreadTitles: Array<string> = [];
-      const subagentStates: Array<{ title: string | null; status: string; bound: boolean }> = [];
+      const subagentStates: Array<{ title: string | null; status: string }> = [];
+      const childSessionByProviderThread = new Map<string, string>();
+      const childSessionByTask: Record<string, string> = {};
       const terminal = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.runForEach((event) => {
           if (event.type === "app_thread.created") childThreadTitles.push(event.appThread.title);
-          if (event.type === "subagent.updated")
-            subagentStates.push({
-              title: event.subagent.title,
-              status: event.subagent.status,
-              bound: event.subagent.providerThreadId !== null,
-            });
+          const nativeThreadId =
+            event.type === "provider_thread.updated"
+              ? event.providerThread.nativeThreadRef?.nativeId
+              : null;
+          if (event.type === "provider_thread.updated" && nativeThreadId)
+            childSessionByProviderThread.set(event.providerThread.id, nativeThreadId);
+          if (event.type === "subagent.updated") {
+            subagentStates.push({ title: event.subagent.title, status: event.subagent.status });
+            const taskId = event.subagent.nativeTaskRef?.nativeId;
+            const childSessionId =
+              event.subagent.providerThreadId === null
+                ? undefined
+                : childSessionByProviderThread.get(event.subagent.providerThreadId);
+            if (taskId && childSessionId !== undefined) childSessionByTask[taskId] = childSessionId;
+          }
           if (event.type === "turn.terminal") return Deferred.succeed(terminal, undefined);
           return Effect.void;
         }),
@@ -787,7 +798,7 @@ describe("Grok goal subagents", () => {
         runtimePolicy: policy,
       });
       yield* Deferred.await(terminal);
-      return { childThreadTitles, subagentStates };
+      return { childThreadTitles, subagentStates, childSessionByTask };
     });
 
   it.live("projects a subagent Grok spawns without a spawn tool call", () =>
@@ -820,13 +831,13 @@ describe("Grok goal subagents", () => {
       ]);
       assert.deepEqual(childThreadTitles, ["goal plan writer"]);
       assert.deepEqual(subagentStates, [
-        { title: "goal plan writer", status: "running", bound: true },
-        { title: "goal plan writer", status: "completed", bound: true },
+        { title: "goal plan writer", status: "running" },
+        { title: "goal plan writer", status: "completed" },
       ]);
     }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
   );
 
-  it.live("binds one running subagent when a spawn tool call precedes subagent_spawned", () =>
+  it.live("keeps one subagent when a spawn tool call precedes subagent_spawned", () =>
     Effect.gen(function* () {
       const childSessionId = "01a1a0a6-c174-7d71-9b21-e32e6e069feb";
       const toolCallId = "call-4149c7b9-9bc9-458e-96f0-70878f609cb7-0";
@@ -884,12 +895,72 @@ describe("Grok goal subagents", () => {
         }),
       ]);
       assert.deepEqual(childThreadTitles, [description]);
-      assert.isTrue(subagentStates.some((state) => state.status === "running" && state.bound));
-      assert.deepEqual(subagentStates.at(-1), {
-        title: description,
-        status: "completed",
-        bound: true,
-      });
+      assert.deepEqual(subagentStates.at(-1), { title: description, status: "completed" });
+    }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
+  );
+  it.live("keeps each parallel same-description task bound to its own child session", () =>
+    Effect.gen(function* () {
+      const childA = "01a1a0a6-c174-7d71-9b21-e32e6e069fa1";
+      const childB = "01a1a0a6-c174-7d71-9b21-e32e6e069fb2";
+      const description = "Review code";
+      const spawn = (toolCallId: string, prompt: string) => [
+        parentSessionUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "spawn_subagent",
+          rawInput: { description, prompt, background: false },
+        }),
+        parentSessionUpdate({
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          kind: "other",
+          title: description,
+          rawInput: { variant: "Task", prompt, description, run_in_background: false },
+        }),
+      ];
+      const spawned = (childSessionId: string) =>
+        parentNotification({
+          sessionUpdate: "subagent_spawned",
+          subagent_id: childSessionId,
+          child_session_id: childSessionId,
+          description,
+        });
+      const finished = (childSessionId: string) =>
+        parentNotification({
+          sessionUpdate: "subagent_finished",
+          subagent_id: childSessionId,
+          child_session_id: childSessionId,
+          status: "completed",
+          output: "ok",
+        });
+      const result = (toolCallId: string, childSessionId: string) =>
+        parentSessionUpdate({
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: `ok\n\n<subagent_result>\nsubagent_id: ${childSessionId}\n</subagent_result>`,
+              },
+            },
+          ],
+        });
+      // The notices carry only a description, so they must not decide which task owns a child.
+      const { childThreadTitles, childSessionByTask } = yield* replaySubagentTurn([
+        ...spawn("tool-a", "Review A"),
+        ...spawn("tool-b", "Review B"),
+        spawned(childB),
+        spawned(childA),
+        result("tool-a", childA),
+        result("tool-b", childB),
+        finished(childA),
+        finished(childB),
+      ]);
+      assert.deepEqual(childThreadTitles, [description, description]);
+      assert.deepEqual(childSessionByTask, { "tool-a": childA, "tool-b": childB });
     }).pipe(Effect.scoped, Effect.provide(replayLayerTest)),
   );
 });
