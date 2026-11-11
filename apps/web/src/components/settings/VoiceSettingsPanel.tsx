@@ -186,6 +186,21 @@ function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) 
   );
 }
 
+// The scope picker above only changes serverScoped rows, so rows saved on this client say so.
+function DeviceSettingTitle(props: { children: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {props.children}
+      <Tooltip>
+        <TooltipTrigger render={<Badge variant="outline" size="sm" />}>This device</TooltipTrigger>
+        <TooltipPopup side="top">
+          Saved on this device, whatever scope is selected above.
+        </TooltipPopup>
+      </Tooltip>
+    </span>
+  );
+}
+
 function ModelCard(props: ModelCardProps) {
   const { model } = props;
   const downloading = model.state === "downloading" || model.state === "verifying";
@@ -1265,8 +1280,8 @@ export function VoiceSettingsPanel() {
       <SettingsSection id="voice-input" title="Input">
         <SettingsRow
           {...searchableSetting("voice-microphone")}
-          title="Microphone"
-          description="System default follows your operating system. Record a ten-second test and play it back here. Test audio stays on this device and is never transcribed."
+          title={<DeviceSettingTitle>Microphone</DeviceSettingTitle>}
+          description="Audio is recorded on this device and transcribed wherever you choose under Transcription. System default follows your operating system. Test audio stays on this device and is never transcribed."
           control={
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
               <SettingsSearchTarget {...searchableSetting("microphone-test")}>
@@ -1310,7 +1325,7 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
-          title="Dictation shortcut"
+          title={<DeviceSettingTitle>Dictation shortcut</DeviceSettingTitle>}
           description="How the dictation shortcut starts and stops recording."
           control={
             <Select
@@ -1496,7 +1511,7 @@ export function VoiceSettingsPanel() {
         {(model || destination.cloudProvider) && (
           <SettingsRow
             {...searchableSetting("speech-language")}
-            title="Language"
+            title={<DeviceSettingTitle>Language</DeviceSettingTitle>}
             description={
               destination.cloudProvider
                 ? "The cloud provider can detect your language automatically."
@@ -1513,7 +1528,7 @@ export function VoiceSettingsPanel() {
         )}
         {model?.supportsTranslation ? (
           <SettingsRow
-            title="Translate to English"
+            title={<DeviceSettingTitle>Translate to English</DeviceSettingTitle>}
             description="Speak any language and get English text."
             control={
               <Switch
@@ -1543,7 +1558,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection id="voice-recognition" title="Transcription options">
         <SettingsRow
           {...searchableSetting("speech-silence-filtering")}
-          title="Silence filtering"
+          title={<DeviceSettingTitle>Silence filtering</DeviceSettingTitle>}
           description={
             destination.cloudProvider === "openai"
               ? "OpenAI handles silence automatically."
@@ -1562,7 +1577,7 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("remove-filler-words")}
-          title="Remove filler words"
+          title={<DeviceSettingTitle>Remove filler words</DeviceSettingTitle>}
           description="Remove filler words like “um” and “uh” from transcripts."
           control={
             <Switch
@@ -1576,8 +1591,8 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("speech-dictionary")}
-          title="Dictionary"
-          description="Names and terms transcription should spell your way, saved on this device. Add an alias when it keeps hearing a term wrong. The name of the project you dictate in is also sent as a hint."
+          title={<DeviceSettingTitle>Dictionary</DeviceSettingTitle>}
+          description="Names and terms transcription should spell your way. Add an alias when it keeps hearing a term wrong. The name of the project you dictate in is also sent as a hint."
           control={
             <span className="text-xs text-muted-foreground">
               {settings.speechCustomWords.length}{" "}
@@ -1598,7 +1613,7 @@ export function VoiceSettingsPanel() {
 
       <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
-          title="Clean up transcripts"
+          title={<DeviceSettingTitle>Clean up transcripts</DeviceSettingTitle>}
           description="Fixes punctuation, numbers, and spoken corrections with the cleanup model on the draft’s environment. Sends the transcript and nearby draft text, never audio."
           control={
             <Switch
@@ -1610,7 +1625,7 @@ export function VoiceSettingsPanel() {
         />
         {cleanupEnabled ? (
           <SettingsRow
-            title="Cleanup instructions"
+            title={<DeviceSettingTitle>Cleanup instructions</DeviceSettingTitle>}
             description="Use the built-in instructions or write your own."
             control={
               <Select
@@ -1662,7 +1677,7 @@ export function VoiceSettingsPanel() {
         {cleanupEnabled ? (
           <SettingsRow
             {...searchableSetting("speech-correction-word")}
-            title="Correction cue"
+            title={<DeviceSettingTitle>Correction cue</DeviceSettingTitle>}
             description="The word or phrase you say to flag a correction, like “sorry” or “scratch that”. Cleanup applies the correction only where one is meant, and hears the cue as a hint."
             control={
               <Input
