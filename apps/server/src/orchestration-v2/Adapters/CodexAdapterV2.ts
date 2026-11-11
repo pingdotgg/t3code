@@ -7102,6 +7102,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               "turn/start",
               omitContext ? paramsWithoutContext : turnStartParams,
             );
+            if (omitContext || contextDigest === undefined) contextStoreDigests.delete(threadId);
+            else contextStoreDigests.set(threadId, contextDigest);
             const previousTurn =
               previousTurns.get(started.turn.id) ??
               (yield* Ref.get(activeTurns)).get(started.turn.id);
@@ -7115,8 +7117,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   "Codex returned a turn belonging to an earlier run. Stop the existing turn before retrying this message.",
               });
             }
-            if (omitContext || contextDigest === undefined) contextStoreDigests.delete(threadId);
-            else contextStoreDigests.set(threadId, contextDigest);
             // A turn/started notification may have registered and completed this turn already.
             if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== turnInput) return;
             yield* recordPendingContextDigest(threadId, turnInput.providerThread);
