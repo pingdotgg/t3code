@@ -215,7 +215,12 @@ async function sweep({ github, context, core, dryRun }) {
       return (await github.graphql(PR_DETAIL_QUERY, { ...repo, number })).repository.pullRequest;
     };
     let detail = await lookup();
-    if (detail.state === "OPEN" && detail.mergeable === "UNKNOWN" && readsMergeable(detail)) {
+    if (
+      detail.state === "OPEN" &&
+      detail.mergeable === "UNKNOWN" &&
+      readsMergeable(detail) &&
+      lookups < MAX_LOOKUPS_PER_RUN
+    ) {
       await new Promise((resolve) => setTimeout(resolve, MERGEABLE_LOOKUP_RETRY_MS));
       detail = await lookup();
     }
