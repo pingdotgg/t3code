@@ -486,7 +486,7 @@ const makeReader = Effect.fnUntraced(function* (
 
 const CHECKPOINT_FRAMES = 1000;
 const CHECKPOINT_IDLE_MS = 100;
-const CHECKPOINT_BACKPRESSURE_FRAMES = 10 * CHECKPOINT_FRAMES;
+const CHECKPOINT_BACKPRESSURE_FRAMES = 32_768;
 
 const readSafeSqliteInteger = (value: unknown) => {
   const number = typeof value === "bigint" ? Number(value) : value;

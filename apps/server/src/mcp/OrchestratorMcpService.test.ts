@@ -91,15 +91,6 @@ describe("OrchestratorMcpService", () => {
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
-        contextTransfers: [
-          {
-            id: resultTransferId,
-            type: "subagent_result",
-            sourceThreadId: childThreadId,
-            targetThreadId: parentThreadId,
-            sourcePoint: { runId: childRunId },
-          },
-        ],
         subagents: [
           {
             id: taskId,
@@ -131,7 +122,15 @@ describe("OrchestratorMcpService", () => {
             completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
           },
         ],
-        contextTransfers: [],
+        contextTransfers: [
+          {
+            id: resultTransferId,
+            type: "subagent_result",
+            sourceThreadId: childThreadId,
+            targetThreadId: parentThreadId,
+            sourcePoint: { runId: childRunId },
+          },
+        ],
         messages: [
           {
             id: MessageId.make("message:mcp-ack-result"),
@@ -145,6 +144,7 @@ describe("OrchestratorMcpService", () => {
         turnItems: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
@@ -159,6 +159,7 @@ describe("OrchestratorMcpService", () => {
                 return hasNestedWork
                   ? {
                       ...childProjection,
+                      contextTransfers: [],
                       subagents: [
                         { ...parentProjection.subagents[0]!, status: "running" as const },
                       ],
@@ -168,7 +169,6 @@ describe("OrchestratorMcpService", () => {
               const snapshot = hasNestedWork
                 ? {
                     ...parentProjection,
-                    contextTransfers: [],
                     subagents: parentProjection.subagents.map((task) => ({
                       ...task,
                       result: null,
@@ -288,6 +288,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
         turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
@@ -385,6 +386,7 @@ describe("OrchestratorMcpService", () => {
           messages: [],
           subagents: [],
           providerThreads: [],
+          providerTurns: [],
           runtimeRequests: pendingRequest ? [{ status: "pending" }] : [],
           nodes: [],
           turnItems: [],
@@ -485,6 +487,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
@@ -575,6 +578,7 @@ describe("OrchestratorMcpService", () => {
           messages: [],
           subagents: [],
           providerThreads: [],
+          providerTurns: [],
           runtimeRequests: [],
           turnItems: [],
         } as unknown as OrchestrationV2ThreadProjection;
@@ -678,6 +682,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
@@ -761,6 +766,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
@@ -850,6 +856,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
@@ -973,6 +980,7 @@ describe("OrchestratorMcpService", () => {
               appOwnedTask("node:mcp-cancel-grandchild-below", childThreadId, grandchildThreadId),
             ],
             providerThreads: [],
+            providerTurns: [],
             runtimeRequests: [],
           },
         ],
@@ -997,6 +1005,7 @@ describe("OrchestratorMcpService", () => {
             messages: [],
             subagents: [],
             providerThreads: [],
+            providerTurns: [],
             runtimeRequests: [],
           },
         ],
@@ -1233,6 +1242,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     messages: [],
     subagents: [],
     providerThreads: [],
+    providerTurns: [],
     runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
@@ -3060,9 +3070,18 @@ describe("OrchestratorMcpService provider resolution", () => {
                               ordinal: 1,
                               status: "running",
                               modelSelection: runSelection,
+                              activeAttemptId: "attempt:mcp-restarted-child",
                             },
                           ]
                         : [],
+                      // Claude ran the requested Opus on Sonnet.
+                      providerTurns: [
+                        {
+                          runAttemptId: "attempt:mcp-restarted-child",
+                          ordinal: 1,
+                          model: "claude-sonnet-4-6",
+                        },
+                      ],
                     } as unknown as OrchestrationV2ThreadProjection),
               ),
           }),
@@ -3076,11 +3095,15 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         yield* Effect.gen(function* () {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          for (const selection of [runSelection, threadSelection]) {
+          for (const [selection, executedModel] of [
+            [runSelection, "claude-sonnet-4-6"],
+            [threadSelection, null],
+          ] as const) {
             const result = yield* service.taskStatus(scope, taskId);
             assert.equal(result.providerInstanceId, selection.instanceId);
             assert.equal(result.model, selection.model);
             assert.deepEqual(result.options, selection.options);
+            assert.equal(result.executedModel, executedModel);
             hasRun = false;
           }
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
@@ -3128,6 +3151,18 @@ describe("OrchestratorMcpService provider resolution", () => {
             target: { providerInstanceId: peerId, options: { reasoningEffort: "max" } },
             expected: { instanceId: peerId, model: inherited.model, options: override },
           },
+          {
+            name: "old Ultracode effort level",
+            target: { model: "ultracode-model", options: { effort: "ultracode" } },
+            expected: {
+              instanceId: codexInstanceId,
+              model: "ultracode-model",
+              options: [
+                { id: "effort", value: "xhigh" },
+                { id: "ultracode", value: true },
+              ],
+            },
+          },
         ] as const;
         for (const testCase of cases) {
           const commands: Array<unknown> = [];
@@ -3170,12 +3205,33 @@ describe("OrchestratorMcpService provider resolution", () => {
                   driver,
                   model: inherited.model,
                 }),
-                models: [inherited.model, "other-model"].map((model) => ({
-                  slug: model,
-                  name: model,
-                  isCustom: false,
-                  capabilities: null,
-                })),
+                models: [
+                  ...[inherited.model, "other-model"].map((model) => ({
+                    slug: model,
+                    name: model,
+                    isCustom: false,
+                    capabilities: null,
+                  })),
+                  {
+                    slug: "ultracode-model",
+                    name: "ultracode-model",
+                    isCustom: false,
+                    capabilities: {
+                      optionDescriptors: [
+                        {
+                          id: "effort",
+                          label: "Reasoning",
+                          type: "select",
+                          options: [
+                            { id: "high", label: "High" },
+                            { id: "xhigh", label: "Extra High" },
+                          ],
+                        },
+                        { id: "ultracode", label: "Ultracode", type: "boolean" },
+                      ],
+                    },
+                  },
+                ],
               },
               providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
             ]),
