@@ -117,6 +117,7 @@ function RestoreBranchHarness(props: {
     serverConfig: null,
     runtimeMode: "full-access" as never,
     isWorking: false,
+    runIsLive: false,
     pendingBackgroundTasks: [{ taskId: "background-command", kind: "command" }] as never,
     turnItems: [],
     activePendingApproval: null as never,

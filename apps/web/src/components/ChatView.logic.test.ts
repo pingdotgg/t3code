@@ -1323,5 +1323,4 @@ describe("deriveThreadPendingBackgroundTasks", () => {
       ),
     ).toEqual([{ taskId: "task-1", kind: "background_task" }]);
   });
-
 });
