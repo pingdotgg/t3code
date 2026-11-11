@@ -1,5 +1,9 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { getCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
+import {
+  getAddProjectInitialQuery,
+  getCloneDestinationPath,
+  getCloneDirectoryPath,
+} from "@t3tools/client-runtime/operations/projects";
 import {
   findPromptLinkProjects,
   findPromptLinkPullRequestThread,
@@ -42,6 +46,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { suggestAppAccessForRemote } from "../sourceControlAppAccessToast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { placeLinkedPrompt, warnAboutHiddenCharacters } from "./linkedPrompt";
 
@@ -174,8 +179,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   };
 
   const openScratchDraft = async () => {
-    const environmentId =
-      scratchEnvironmentId(lastActiveEnvironmentId()) ?? scratchEnvironmentId(null);
+    const environmentId = scratchEnvironmentId(lastActiveEnvironmentId());
     const project = environmentId === null ? null : await openScratchProject(environmentId);
     if (project === null) {
       setState({
@@ -198,8 +202,9 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   const cloneRepository = async (repository: PromptLinkRepository) => {
     const environmentId = lastActiveEnvironmentId();
     const environment = environments.find((entry) => entry.environmentId === environmentId);
-    const newProjectsRoot = environment?.serverConfig?.newProjectsRoot ?? null;
-    if (environmentId === null || newProjectsRoot === null) {
+    const serverConfig = environment?.serverConfig ?? null;
+    const newProjectsRoot = serverConfig?.newProjectsRoot ?? null;
+    if (environmentId === null || serverConfig === null || newProjectsRoot === null) {
       setState({
         status: "failed",
         message:
@@ -209,14 +214,21 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     }
     setState({ status: "opening" });
     const projectId = newProjectId();
+    const remoteUrl = `https://github.com/${repository.owner}/${repository.name}.git`;
+    const settings = serverConfig.settings;
     const result = await startProjectClone({
       environmentId,
       input: {
         projectId,
         title: repository.name,
         createdAt: new Date().toISOString(),
-        remoteUrl: `https://github.com/${repository.owner}/${repository.name}.git`,
-        destinationPath: getCloneDestinationPath(newProjectsRoot, repository.name),
+        remoteUrl,
+        destinationPath: getCloneDestinationPath(
+          settings.ghqCloneLayout
+            ? getAddProjectInitialQuery(settings.addProjectBaseDirectory)
+            : newProjectsRoot,
+          getCloneDirectoryPath(remoteUrl, settings.ghqCloneLayout === true),
+        ),
       },
     });
     if (result._tag === "Failure") {
@@ -233,6 +245,10 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({ status: "missing-repository", repository });
       return;
     }
+    void suggestAppAccessForRemote(
+      environmentId,
+      `https://github.com/${repository.owner}/${repository.name}.git`,
+    );
     const project = await waitForProject(scopeProjectRef(environmentId, projectId), 5_000).catch(
       () => null,
     );

@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type LinkableMachine,
@@ -23,20 +24,20 @@ import {
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { useMemo, useRef, useState } from "react";
-import { Modal, Platform, Pressable, ScrollView, View, type ColorValue } from "react-native";
+import { Pressable, ScrollView, View, type ColorValue } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
-import { useLinkableMachines } from "../../state/peerLinks";
+import { peerLinkEnvironment, useLinkableMachines } from "../../state/peerLinks";
 import { mintPairingCodeOn } from "../../state/peerPairingCode";
-import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { Button } from "../../components/ui/Button";
+import { Sheet } from "../../components/ui/Sheet";
 import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";
 
 /** The same five levels as web's access picker: read-only, then the runtime modes. */
@@ -106,13 +107,13 @@ function PendingLinkRequest(props: {
   const [open, setOpen] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const answer = useAtomCommand(serverEnvironment.answerLinkRequest, {
+  const answer = useAtomCommand(peerLinkEnvironment.answerRequest, {
     label: "decline link request",
     reportFailure: false,
     reportDefect: false,
   });
   const canAnswer = useAtomValue(
-    serverEnvironment.answerLinkRequest.permissionAtom(props.environmentId),
+    peerLinkEnvironment.answerRequest.permissionAtom(props.environmentId),
   );
   const target = linkRequestTargetName(item);
 
@@ -125,7 +126,7 @@ function PendingLinkRequest(props: {
       setDeclining(false),
     );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      setError(linkRequestFailureMessage(squashAtomCommandFailure(result)));
+      pipe(squashAtomCommandFailure(result), linkRequestFailureMessage, setError);
     }
   };
 
@@ -243,7 +244,7 @@ function LinkRequestSheet(props: {
   const [mintFailed, setMintFailed] = useState<ReadonlySet<EnvironmentId>>(new Set());
   // Submit then a tap can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
-  const answer = useAtomCommand(serverEnvironment.answerLinkRequest, {
+  const answer = useAtomCommand(peerLinkEnvironment.answerRequest, {
     label: "answer link request",
     // The failure cause holds the request, and with it the code; keep it out of the console.
     reportFailure: false,
@@ -311,29 +312,25 @@ function LinkRequestSheet(props: {
       setPairingCode("");
       props.onClose();
     } else if (!isAtomCommandInterrupted(result)) {
-      setError(linkRequestFailureMessage(squashAtomCommandFailure(result)));
+      pipe(squashAtomCommandFailure(result), linkRequestFailureMessage, setError);
     }
   };
 
   return (
-    <Modal
-      animationType="slide"
-      presentationStyle={Platform.OS === "ios" ? "pageSheet" : "fullScreen"}
+    <Sheet
+      title={pickMachine ? "Link a machine" : `Link ${targetName}`}
+      onClose={props.onClose}
       // An answer that lands after a close would still link, and would close a reopened sheet.
-      onRequestClose={() => {
-        if (!busy) props.onClose();
-      }}
+      dismissDisabled={busy}
     >
       <ScrollView
         className="flex-1 bg-sheet-solid"
+        contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-5 p-5"
         contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
         keyboardShouldPersistTaps="handled"
       >
         <View className="gap-1">
-          <Text className="font-t3-bold text-lg text-foreground">
-            {pickMachine ? "Link a machine" : `Link ${targetName}`}
-          </Text>
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
             Agents here can then launch, message and wait on threads there. It appears in that
             machine's Connections, where it can be revoked.
@@ -457,7 +454,7 @@ function LinkRequestSheet(props: {
         />
         <Button label="Cancel" tone="secondary" disabled={busy} onPress={props.onClose} fullWidth />
       </ScrollView>
-    </Modal>
+    </Sheet>
   );
 }
 
