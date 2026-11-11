@@ -31,6 +31,9 @@ vi.mock("electron", async (importOriginal) => ({
       },
     ]),
   },
+  webContents: {
+    getAllWebContents: vi.fn(() => []),
+  },
 }));
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
@@ -1093,12 +1096,35 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("maps macOS horizontal swipes to available history navigation", () =>
+  it.effect("maps macOS horizontal swipes to the focused Browser tab or the app history", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+      const guestHistory = {
+        canGoBack: vi.fn(() => true),
+        canGoForward: vi.fn(() => true),
+        goBack: vi.fn(),
+        goForward: vi.fn(),
+      };
+      const guest = {
+        hostWebContents: fakeWindow.window.webContents,
+        isDestroyed: () => false,
+        isFocused: () => true,
+        focusedFrame: {} as Electron.WebFrameMain | null,
+        navigationHistory: guestHistory,
+      };
+      const navigations = () => ({
+        app: [
+          fakeWindow.navigationHistory.goBack.mock.calls.length,
+          fakeWindow.navigationHistory.goForward.mock.calls.length,
+        ],
+        browserTab: [
+          guestHistory.goBack.mock.calls.length,
+          guestHistory.goForward.mock.calls.length,
+        ],
+      });
 
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
@@ -1109,19 +1135,37 @@ describe("DesktopWindow", () => {
         const history = fakeWindow.navigationHistory;
 
         swipe({}, "left");
-        assert.equal(history.goBack.mock.calls.length, 1);
-        assert.equal(history.goForward.mock.calls.length, 0);
         swipe({}, "right");
-        assert.equal(history.goForward.mock.calls.length, 1);
-
         swipe({}, "up");
         swipe({}, "down");
+        assert.deepEqual(navigations(), { app: [1, 1], browserTab: [0, 0] });
+
+        using _all = vi
+          .mocked(Electron.webContents.getAllWebContents)
+          .mockReturnValue([
+            fakeWindow.window.webContents,
+            guest as unknown as Electron.WebContents,
+          ]);
+        swipe({}, "left");
+        swipe({}, "right");
+        assert.deepEqual(
+          navigations(),
+          { app: [1, 1], browserTab: [1, 1] },
+          "swipe back/forward should navigate the focused Browser tab, not the app router",
+        );
+
+        // Every guest of a focused window reports isFocused(); focus back in the app clears its frame.
+        guest.focusedFrame = null;
         history.canGoBack.mockReturnValue(false);
         history.canGoForward.mockReturnValue(false);
         swipe({}, "left");
         swipe({}, "right");
-        assert.equal(history.goBack.mock.calls.length, 1);
-        assert.equal(history.goForward.mock.calls.length, 1);
+        assert.deepEqual(navigations(), { app: [1, 1], browserTab: [1, 1] });
+        history.canGoBack.mockReturnValue(true);
+        history.canGoForward.mockReturnValue(true);
+        swipe({}, "left");
+        swipe({}, "right");
+        assert.deepEqual(navigations(), { app: [2, 2], browserTab: [1, 1] });
       }).pipe(Effect.provide(layer));
     }),
   );
