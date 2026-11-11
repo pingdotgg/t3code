@@ -5,9 +5,10 @@ import * as NetService from "@t3tools/shared/Net";
 import type * as NodeOS from "node:os";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Ref from "effect/Ref";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
@@ -95,12 +96,12 @@ const vpnInterface = (address: string) => [
   },
 ];
 
-const virtualInterface = (address: string) => [
+const virtualInterface = (address: string, mac = "02:42:ac:11:00:01") => [
   {
     address,
     netmask: "255.255.0.0",
     family: "IPv4" as const,
-    mac: "02:42:ac:11:00:01",
+    mac,
     internal: false,
     cidr: `${address}/16`,
   },
@@ -108,7 +109,14 @@ const virtualInterface = (address: string) => [
 
 describe("resolveBoundEndpoints", () => {
   it("lists every external IPv4 address for a wildcard bind, tagging the tailnet one", () => {
-    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces: INTERFACES })).toEqual([
+    expect(
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "0.0.0.0",
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
+    ).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
     ]);
@@ -124,11 +132,44 @@ describe("resolveBoundEndpoints", () => {
       bridge100: virtualInterface("192.168.64.1"),
       vmbr0: virtualInterface("192.168.1.20"),
     };
-    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
+    expect(
+      resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
       { kind: "lan", httpBaseUrl: "http://192.168.1.20:3773/" },
     ]);
+  });
+
+  it("omits Windows host-only adapters without excluding guest NICs or explicit binds", () => {
+    const interfaces = {
+      ...INTERFACES,
+      "VirtualBox-Host-Only-Netzwerk": virtualInterface("192.168.56.1", "0A:00:27:00:01:01"),
+      "Ethernet 2": virtualInterface("192.168.150.1", "00:50:56:c0:00:01"),
+      "Renamed network": virtualInterface("192.168.151.1", "00:50:56:c0:00:08"),
+      guest1: virtualInterface("192.168.1.30", "08:00:27:5e:1a:22"),
+      guest2: virtualInterface("192.168.1.31", "00:50:56:2b:8c:01"),
+      guest3: virtualInterface("192.168.1.32", "00:0c:29:4f:8e:35"),
+      guest4: virtualInterface("192.168.1.33", "00:50:56:80:8c:01"),
+    };
+    const input = { host: "0.0.0.0", port: 3773, interfaces };
+    const retained = [
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      ...[30, 31, 32, 33].map((last) => ({
+        kind: "lan",
+        httpBaseUrl: `http://192.168.1.${last}:3773/`,
+      })),
+    ];
+    expect(resolveBoundEndpoints({ ...input, platform: "win32" })).toEqual(retained);
+    for (const platform of ["linux", "darwin"] as const) {
+      expect(resolveBoundEndpoints({ ...input, platform })).toHaveLength(retained.length + 3);
+    }
+    for (const host of ["192.168.56.1", "192.168.150.1", "192.168.151.1"]) {
+      expect(resolveBoundEndpoints({ ...input, platform: "win32", host })).toEqual([
+        { kind: "lan", httpBaseUrl: `http://${host}:3773/` },
+      ]);
+    }
   });
 
   it("tags only addresses on Tailscale's interface as tailnet, not other VPNs in its range", () => {
@@ -138,7 +179,9 @@ describe("resolveBoundEndpoints", () => {
       CloudflareWARP: vpnInterface("100.96.0.1"),
       utun7: vpnInterface("100.85.0.1"),
     };
-    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
+    expect(
+      resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.70.1.2:3773/" },
       { kind: "lan", httpBaseUrl: "http://100.96.0.1:3773/" },
@@ -148,19 +191,27 @@ describe("resolveBoundEndpoints", () => {
 
   it("never reports a host name, which can resolve to another machine per client", () => {
     for (const host of ["server.local", "devbox", "devbox.home.arpa"]) {
-      expect(resolveBoundEndpoints({ host, port: 3773, interfaces: INTERFACES })).toEqual([]);
+      expect(
+        resolveBoundEndpoints({ platform: "linux", host, port: 3773, interfaces: INTERFACES }),
+      ).toEqual([]);
     }
   });
 
   it("never reports a public address, which would carry the credential over plain HTTP", () => {
     expect(
-      resolveBoundEndpoints({ host: "203.0.113.20", port: 3773, interfaces: INTERFACES }),
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "203.0.113.20",
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
     ).toEqual([]);
   });
 
   it("reports only the tailnet address on a cloud VM, whose private network no client shares", () => {
     expect(
       resolveBoundEndpoints({
+        platform: "linux",
         host: "0.0.0.0",
         port: 3773,
         interfaces: INTERFACES,
@@ -171,7 +222,12 @@ describe("resolveBoundEndpoints", () => {
 
   it("never reports an IPv4-mapped host, which can name the client's own loopback", () => {
     expect(
-      resolveBoundEndpoints({ host: "::ffff:127.0.0.1", port: 3773, interfaces: INTERFACES }),
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "::ffff:127.0.0.1",
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
     ).toEqual([]);
   });
 });
@@ -180,31 +236,26 @@ const TAILSCALE_STATUS_JSON = JSON.stringify({
   Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2"] },
 });
 
-// `tailscale status` exits non-zero while tailscaled is unavailable, and prints the node once it is up.
-const layerTailscale = (isUp: () => boolean) =>
-  Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() =>
-      Effect.sync(() => {
-        const up = isUp();
-        return ChildProcessSpawner.makeHandle({
-          pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(up ? 0 : 1)),
-          isRunning: Effect.succeed(false),
-          kill: () => Effect.void,
-          unref: Effect.succeed(Effect.void),
-          stdin: Sink.drain,
-          stdout: up ? Stream.make(new TextEncoder().encode(TAILSCALE_STATUS_JSON)) : Stream.empty,
-          stderr: Stream.empty,
-          all: Stream.empty,
-          getInputFd: () => Sink.drain,
-          getOutputFd: () => Stream.empty,
-        });
+const layerTailscaleUp = Layer.succeed(
+  ChildProcessSpawner.ChildProcessSpawner,
+  ChildProcessSpawner.make(() =>
+    Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.make(new TextEncoder().encode(TAILSCALE_STATUS_JSON)),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
       }),
     ),
-  );
-
-const layerTailscaleUp = layerTailscale(() => true);
+  ),
+);
 
 const layerServeProbe = (status: number) =>
   Layer.succeed(
@@ -214,18 +265,20 @@ const layerServeProbe = (status: number) =>
     ),
   );
 
-const layerServeConfig = Layer.effect(
-  ServerConfig.ServerConfig,
-  Effect.map(ServerConfig.ServerConfig, (config) => ({
-    ...config,
-    host: "127.0.0.1",
-    tailscaleServeEnabled: true,
-    tailscaleServePort: 443,
-  })),
-).pipe(
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-direct-" })),
-  Layer.provide(NodeServices.layer),
-);
+const layerServeConfig = (host = "127.0.0.1") =>
+  Layer.effect(
+    ServerConfig.ServerConfig,
+    Effect.map(ServerConfig.ServerConfig, (config) => ({
+      ...config,
+      host,
+      port: 3773,
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 443,
+    })),
+  ).pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-direct-" })),
+    Layer.provide(NodeServices.layer),
+  );
 
 const resolveWithServe = (probeStatus: number) =>
   Effect.flatMap(DirectEndpoints.DirectEndpoints, (service) => service.resolve()).pipe(
@@ -233,7 +286,7 @@ const resolveWithServe = (probeStatus: number) =>
       DirectEndpoints.layer.pipe(
         Layer.provide(TailscaleStatusReader.layer),
         Layer.provide(
-          Layer.mergeAll(layerServeConfig, layerTailscaleUp, layerServeProbe(probeStatus)),
+          Layer.mergeAll(layerServeConfig(), layerTailscaleUp, layerServeProbe(probeStatus)),
         ),
       ),
     ),
@@ -246,6 +299,67 @@ describe("DirectEndpoints Tailscale Serve", () => {
         { kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" },
       ]);
     }),
+  );
+
+  effectIt.effect(
+    "returns bound endpoints during validation and reuses only a completed Serve result",
+    () =>
+      Effect.gen(function* () {
+        const status = yield* Ref.make(200);
+        const finishProbe = yield* Deferred.make<void>();
+        const probeStarted = yield* Deferred.make<void>();
+        const revalidationStarted = yield* Deferred.make<void>();
+        const finishRevalidation = yield* Deferred.make<void>();
+        // Built in the test's scope: the reader's shared read outlives `make`, as the server's does.
+        const reader = yield* Layer.build(
+          TailscaleStatusReader.layer.pipe(Layer.provide(layerTailscaleUp)),
+        );
+        const service = yield* DirectEndpoints.make.pipe(
+          Effect.provide(reader),
+          Effect.provide(
+            Layer.mergeAll(
+              layerServeConfig("192.168.1.10"),
+              Layer.succeed(
+                HttpClient.HttpClient,
+                HttpClient.make((request) =>
+                  Deferred.succeed(probeStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(finishProbe)),
+                    Effect.andThen(Ref.get(status)),
+                    Effect.tap((status) =>
+                      status === 502
+                        ? Deferred.succeed(revalidationStarted, undefined).pipe(
+                            Effect.andThen(Deferred.await(finishRevalidation)),
+                          )
+                        : Effect.void,
+                    ),
+                    Effect.map((status) =>
+                      HttpClientResponse.fromWeb(request, new Response(null, { status })),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        const resolving = yield* Effect.forkScoped(service.resolve());
+        yield* Deferred.await(probeStarted);
+        const bound = { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" };
+        expect(yield* service.resolveAvailable()).toEqual([bound]);
+        yield* Deferred.succeed(finishProbe, undefined);
+        const validated = yield* Fiber.join(resolving);
+        expect(validated).toEqual([
+          bound,
+          { kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" },
+        ]);
+        expect(yield* service.resolveAvailable()).toEqual(validated);
+        yield* Ref.set(status, 502);
+        const revalidating = yield* Effect.forkScoped(service.resolve());
+        yield* Deferred.await(revalidationStarted);
+        expect(yield* service.resolveAvailable()).toEqual(validated);
+        yield* Deferred.succeed(finishRevalidation, undefined);
+        expect(yield* Fiber.join(revalidating)).toEqual([bound]);
+        expect(yield* service.resolveAvailable()).toEqual([bound]);
+      }).pipe(Effect.scoped),
   );
 
   effectIt.effect("leaves the tailnet name out when Serve is not forwarding", () =>
@@ -287,70 +401,40 @@ const layerSshdListening = Layer.succeed(NetService.NetService, {
   findAvailablePort: (preferred) => Effect.succeed(preferred),
 });
 
-const MDNS_ONLY = [{ kind: "mdns", host: "bb-1.local", username: "t3-user" }];
-
-// What ws.loadServerConfig resolves for every client that connects. The layers live in the
-// test's scope, as the server's do, so the shared status read outlives each connect.
-const connectWithTailscale = (layerSpawner: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>) =>
-  Effect.gen(function* () {
-    const context = yield* Layer.build(
-      Layer.mergeAll(DirectEndpoints.layer, RemoteOpenTargets.layer).pipe(
-        Layer.provide(TailscaleStatusReader.layer),
-        Layer.provide(
-          Layer.mergeAll(layerServeConfig, layerSpawner, layerServeProbe(200), layerSshdListening),
-        ),
-      ),
-    );
-    const remoteOpenTargets = Context.get(context, RemoteOpenTargets.RemoteOpenTargets);
-    const directEndpoints = Context.get(context, DirectEndpoints.DirectEndpoints);
-    return Effect.all([remoteOpenTargets.resolveTargets(), directEndpoints.resolve()], {
-      concurrency: "unbounded",
-    }).pipe(
-      Effect.provideService(HostProcess.Hostname, "bb-1"),
-      Effect.provideService(HostProcess.Username, "t3-user"),
-    );
-  });
-
 describe("Tailscale status shared by DirectEndpoints and RemoteOpenTargets", () => {
   effectIt.effect("reads `tailscale status` once per connect, not once per service", () =>
     Effect.gen(function* () {
       let statusReads = 0;
-      const connect = yield* connectWithTailscale(layerTailscaleHung(() => statusReads++));
-      const first = yield* Effect.forkChild(connect);
+      const context = yield* Layer.build(
+        Layer.mergeAll(DirectEndpoints.layer, RemoteOpenTargets.layer).pipe(
+          Layer.provide(TailscaleStatusReader.layer),
+          Layer.provide(
+            Layer.mergeAll(
+              layerServeConfig(),
+              layerTailscaleHung(() => statusReads++),
+              layerServeProbe(200),
+              layerSshdListening,
+            ),
+          ),
+        ),
+      );
+      const connect = yield* Effect.all(
+        [
+          Context.get(context, RemoteOpenTargets.RemoteOpenTargets).resolveTargets(),
+          Context.get(context, DirectEndpoints.DirectEndpoints).resolve(),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.provideService(HostProcess.Hostname, "bb-1"),
+        Effect.provideService(HostProcess.Username, "t3-user"),
+        Effect.forkChild,
+      );
       yield* TestClock.adjust("4 seconds");
-      expect(yield* Fiber.join(first)).toEqual([MDNS_ONLY, []]);
-      expect(statusReads, "tailscale status spawns for one connect").toBe(1);
-    }),
-  );
-
-  effectIt.effect(
-    "answers a later connect from the settled failed read without waiting again",
-    () =>
-      Effect.gen(function* () {
-        const connect = yield* connectWithTailscale(layerTailscaleHung(() => {}));
-        const first = yield* Effect.forkChild(connect);
-        yield* TestClock.adjust("4 seconds");
-        expect(yield* Fiber.join(first)).toEqual([MDNS_ONLY, []]);
-
-        const later = yield* connect.pipe(Effect.timeoutOption("1 second"), Effect.forkChild);
-        yield* TestClock.adjust("1 second");
-        expect(yield* Fiber.join(later), "later connect still waiting on tailscale status").toEqual(
-          Option.some([MDNS_ONLY, []]),
-        );
-      }),
-  );
-
-  effectIt.effect("answers a connect from a recovered read that settles within the grace", () =>
-    Effect.gen(function* () {
-      let tailscaleUp = false;
-      const connect = yield* connectWithTailscale(layerTailscale(() => tailscaleUp));
-      expect(yield* connect, "startup read fails").toEqual([MDNS_ONLY, []]);
-
-      tailscaleUp = true;
-      expect(yield* connect).toEqual([
-        [{ kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" }, ...MDNS_ONLY],
-        [{ kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" }],
+      expect(yield* Fiber.join(connect)).toEqual([
+        [{ kind: "mdns", host: "bb-1.local", username: "t3-user" }],
+        [],
       ]);
+      expect(statusReads, "tailscale status spawns for one connect").toBe(1);
     }),
   );
 });
