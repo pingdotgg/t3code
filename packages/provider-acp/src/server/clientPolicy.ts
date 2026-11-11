@@ -203,7 +203,7 @@ export function acpMcpToolApprovalElicitationDisposition(
   runtimePolicy: AcpRuntimePolicy,
   request: EffectAcpSchema.CreateElicitationRequest,
   nativeRequestId?: string,
-): AcpPermissionDisposition | undefined {
+): "ask" | "allow" | undefined {
   if (
     request.mode !== "form" ||
     (unknownRecord(request._meta)?.codex_approval_kind !== "mcp_tool_call" &&

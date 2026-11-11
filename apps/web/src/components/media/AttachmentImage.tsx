@@ -48,7 +48,7 @@ function DecodedImage({ name, mimeType, src, onError, ...props }: AttachmentImag
       });
   };
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- the async decode and its blob URL live as long as this component
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the async decode and its blob URL live as long as this component
   useEffect(
     () => () => {
       const attempt = decodeRef.current;

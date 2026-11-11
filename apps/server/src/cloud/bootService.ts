@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { CliError } from "effect/cli";
 import { HttpClient } from "effect/http";
 import * as Schema from "effect/Schema";
 
@@ -17,8 +18,10 @@ import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  launcherOwnsVersionsDir,
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
+  pinnedRuntimeVersionsDir,
   PinnedRuntimeInstallError,
 } from "./pinnedRuntime.ts";
 import {
@@ -110,9 +113,15 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "OOMPolicy=continue",
     "Restart=always",
     "RestartSec=5",
-    // Weights favor the server over the sibling agents slice during CPU or disk saturation.
+    // Weights favor the server over the sibling agents slice; IOWeight needs a delegated io controller.
     "CPUWeight=1000",
     "IOWeight=1000",
+    // Reclaim takes the agents' unprotected pages first. The kernel caps this at the
+    // protection of user.slice and user@.service, which only root can grant.
+    "MemoryLow=1536M",
+    // A user manager's own score, the lowest it may set: below its other services (200) and agents (800).
+    // `t3 service protect` lowers it further through a drop-in.
+    "OOMScoreAdjust=100",
     // systemd-oomd ignores this preference when the watched cgroup is root-owned, as user-1000.slice usually is.
     "ManagedOOMPreference=avoid",
     `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,
@@ -205,15 +214,9 @@ export interface BootServiceManager {
 
 function systemdManager(input: {
   readonly path: Path.Path;
-  readonly homeDir: string;
+  readonly unitDir: string;
 }): BootServiceManager {
-  const unitPath = input.path.join(
-    input.homeDir,
-    ".config",
-    "systemd",
-    "user",
-    BOOT_SERVICE_UNIT_FILE,
-  );
+  const unitPath = input.path.join(input.unitDir, BOOT_SERVICE_UNIT_FILE);
   const prepareActivation = [
     {
       step: "reloading systemd user units",
@@ -350,6 +353,8 @@ function launchdManager(input: {
 function selectBootServiceManager(input: {
   readonly platform: NodeJS.Platform;
   readonly homeDir: string;
+  readonly xdgConfigHome: string;
+  readonly systemdUnitDir: string | undefined;
   readonly uid: number | undefined;
   readonly path: Path.Path;
   readonly environmentPath: string;
@@ -358,7 +363,18 @@ function selectBootServiceManager(input: {
     return undefined;
   }
   if (input.platform === "linux") {
-    return systemdManager({ path: input.path, homeDir: input.homeDir });
+    return systemdManager({
+      path: input.path,
+      unitDir:
+        input.systemdUnitDir ??
+        input.path.join(
+          input.path.isAbsolute(input.xdgConfigHome)
+            ? input.xdgConfigHome
+            : input.path.join(input.homeDir, ".config"),
+          "systemd",
+          "user",
+        ),
+    });
   }
   if (input.platform === "darwin" && input.uid !== undefined) {
     return launchdManager({
@@ -370,6 +386,42 @@ function selectBootServiceManager(input: {
   }
   return undefined;
 }
+
+const decodeSystemdUnitPaths = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ data: Schema.Array(Schema.String) })),
+);
+
+// The manager may not share the installer's environment; JSON preserves spaces in its paths.
+const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
+  function* () {
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const path = yield* Path.Path;
+    const result = yield* runner.run({
+      command: "busctl",
+      args: [
+        "--user",
+        "--json=short",
+        "get-property",
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "UnitPath",
+      ],
+      timeout: Duration.seconds(5),
+    });
+    if (result.code !== 0) return undefined;
+    const { data } = yield* decodeSystemdUnitPaths(result.stdout);
+    // The persistent control directory identifies the manager's config root despite UnitPath overrides.
+    const controlDirectory = data.find(
+      (directory) =>
+        path.isAbsolute(directory) &&
+        directory.endsWith("/systemd/user.control") &&
+        data.includes(directory.slice(0, -".control".length)),
+    );
+    return controlDirectory?.slice(0, -".control".length);
+  },
+  Effect.orElseSucceed(() => undefined),
+);
 
 export class BootServiceUnsupportedError extends Schema.TaggedError<BootServiceUnsupportedError>()(
   "BootServiceUnsupportedError",
@@ -463,8 +515,29 @@ export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootSer
   }
 }
 
+export const formatBootServiceBaseDirOption = (baseDir: string) =>
+  `--base-dir '${baseDir.replaceAll("'", `'"'"'`)}'`;
+
+export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootServiceOtherBaseDirError>()(
+  "BootServiceOtherBaseDirError",
+  {
+    installedBaseDir: Schema.String,
+    baseDir: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `The T3 Code service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`t3 service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
+  }
+
+  // A refusal the user fixes by rerunning, so the CLI prints the message, not a stack trace.
+  override get [CliError.userMessage]() {
+    return this.message;
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
+  | BootServiceOtherBaseDirError
   | BootServiceCommandError
   | BootServiceInstallError
   | BootServicePrerequisiteError
@@ -477,6 +550,8 @@ export interface BootServiceStatus {
   readonly current: boolean;
   readonly installedVersion?: string;
   readonly installedBaseDir?: string;
+  /** Set when the installed unit serves a different T3 home than this CLI. */
+  readonly otherBaseDir?: string;
   readonly problems?: ReadonlyArray<BootServiceProblem>;
   readonly unitPath: string;
   readonly logPath: string;
@@ -528,6 +603,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
+  const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
   const runningInsideService =
     (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
@@ -536,6 +612,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
+  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
+  const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
   const xmlSafeInstallerDirectories = installerPath.split(":").filter(
     (directory) =>
       directory.length > 0 &&
@@ -544,22 +622,31 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         return code >= 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
       }),
   );
+  // During an update, the running CLI and a PATH inherited from the service name the runtime
+  // being replaced. The service and its agent shells should find the runtime it starts.
   const environmentPath = Array.from(
-    new Set([
-      ...xmlSafeInstallerDirectories,
-      path.dirname(host.execPath),
-      "/opt/homebrew/bin",
-      "/usr/local/bin",
-      "/usr/bin",
-      "/bin",
-      "/usr/sbin",
-      "/sbin",
-    ]),
+    new Set(
+      [
+        ...xmlSafeInstallerDirectories,
+        path.dirname(host.execPath),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+      ].map((directory) =>
+        launcherOwnsVersionsDir(path, versionsDir, directory) ? runtimePaths.versionDir : directory,
+      ),
+    ),
   ).join(":");
 
+  const systemdUnitDir = platform === "linux" ? yield* readSystemdUnitDirectory() : undefined;
   const detectedManager = selectBootServiceManager({
     platform,
     homeDir,
+    xdgConfigHome,
+    systemdUnitDir,
     uid,
     path,
     environmentPath,
@@ -568,7 +655,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
-  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
+  const otherBaseDirOf = (unit: string) => {
+    const installedBaseDir = bootServiceBaseDirOf(unit);
+    return installedBaseDir !== undefined &&
+      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
+      ? installedBaseDir
+      : undefined;
+  };
   const writeDurably = (filePath: string, contents: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -711,6 +804,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     readonly start?: boolean;
   }) {
     const manager = yield* requireManager;
+    // The unit is per user. Rewriting one that serves another home moves the
+    // service onto this home's data, which looks like every thread vanished.
+    const existingUnit = yield* fs.readFileString(unitPath).pipe(Effect.option);
+    const installedBaseDir = Option.isSome(existingUnit)
+      ? otherBaseDirOf(existingUnit.value)
+      : undefined;
+    if (installedBaseDir !== undefined) {
+      return yield* new BootServiceOtherBaseDirError({ installedBaseDir, baseDir: input.baseDir });
+    }
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -831,7 +933,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
       yield* writeDurably(
         statePath,
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
+        // @effect-diagnostics-next-line globalJsonInEffect:off - fixed launcher-owned document.
         `${JSON.stringify(
           {
             protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -978,6 +1080,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ? serviceStateActiveVersion(stateText.value)
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
+    const otherBaseDir = otherBaseDirOf(unit);
     const normalizeUnit = (contents: string) =>
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
@@ -990,6 +1093,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       installed: true,
       ...(installedVersion === undefined ? {} : { installedVersion }),
       ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
+      ...(otherBaseDir === undefined ? {} : { otherBaseDir }),
       problems,
       current:
         problems.length === 0 &&
