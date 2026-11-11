@@ -65,3 +65,48 @@ it.effect("protects unknown desktop visibility until an explicit hidden report a
     ),
   ),
 );
+
+it.live("closes a tab's relay connection when the desktop detaches the tab", () =>
+  Effect.gen(function* () {
+    const input = yield* Queue.unbounded<Uint8Array>();
+    vi.mocked(NodeStream.fromReadable).mockReturnValue(Stream.fromQueue(input));
+    const config = yield* ServerConfig.ServerConfig;
+    yield* Effect.gen(function* () {
+      const channel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
+      const key = { threadId: "thread-1", tabId: "tab-1" };
+      const send = (event: object) =>
+        Queue.offer(input, new TextEncoder().encode(`${JSON.stringify(event)}\n`));
+
+      yield* send({ type: "attached", ...key });
+      yield* channel.awaitAttached(key, "5 seconds");
+      const url = yield* channel.endpoint(key);
+      const socket = new WebSocket(url);
+      yield* Effect.addFinalizer(() => Effect.sync(() => socket.close()));
+      const closed = new Promise<void>((resolve) =>
+        socket.addEventListener("close", () => resolve()),
+      );
+      yield* Effect.promise(
+        () => new Promise<void>((resolve) => socket.addEventListener("open", () => resolve())),
+      );
+
+      // Playwright waits on this socket for CDP replies; it must learn the tab is gone.
+      yield* send({ type: "detached", ...key });
+      yield* Effect.promise(() => closed).pipe(Effect.timeout("2 seconds"));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        DesktopBrowserChannel.layer.pipe(
+          Layer.provide(
+            ServerConfig.layer({ ...config, desktopBrowserFd: 41, desktopBrowserControlFd: 42 }),
+          ),
+        ),
+      ),
+    );
+  }).pipe(
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "desktop-browser-channel-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
+);
