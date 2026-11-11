@@ -11757,7 +11757,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
-            const steerUuid = yield* crypto.randomUUIDv4().pipe(
+            const steerUuid = yield* random.uuidV4().pipe(
               Effect.filterOrFail(isClaudePromptUuid),
               Effect.mapError(
                 (cause) =>
