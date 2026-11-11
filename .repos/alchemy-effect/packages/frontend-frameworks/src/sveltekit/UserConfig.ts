@@ -95,12 +95,7 @@ export const flattenPluginOption = async (
  * `api.options` afterwards — `vite-plugin-svelte` was already instantiated
  * with them — so the injector warns instead of silently dropping them.
  */
-const CONSTRUCTION_TIME_KEYS = [
-  "extensions",
-  "compilerOptions",
-  "vitePlugin",
-  "preprocess",
-];
+const CONSTRUCTION_TIME_KEYS = ["extensions", "compilerOptions", "vitePlugin", "preprocess"];
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -150,8 +145,7 @@ export const makeSvelteKitConfigPlugin = (
   options: SvelteKitConfigPluginOptions,
 ): ViteModule.Plugin => {
   const warn =
-    options.warn ??
-    ((message: string) => console.warn(`[${CONFIG_PLUGIN_NAME}] ${message}`));
+    options.warn ?? ((message: string) => console.warn(`[${CONFIG_PLUGIN_NAME}] ${message}`));
   return {
     name: CONFIG_PLUGIN_NAME,
     enforce: "pre",
@@ -159,9 +153,7 @@ export const makeSvelteKitConfigPlugin = (
       order: "pre",
       handler: async (config) => {
         const plugins = await flattenPluginOption(config.plugins);
-        const setup = plugins.find(
-          (plugin) => plugin.name === SVELTEKIT_SETUP_PLUGIN_NAME,
-        );
+        const setup = plugins.find((plugin) => plugin.name === SVELTEKIT_SETUP_PLUGIN_NAME);
         if (setup === undefined) {
           throw new Error(
             "The project's Vite config does not register the SvelteKit plugin. " +
@@ -182,9 +174,7 @@ export const makeSvelteKitConfigPlugin = (
           );
         }
         if (options.kit !== undefined) {
-          const { applicable, constructionTime } = Object.entries(
-            options.kit,
-          ).reduce<{
+          const { applicable, constructionTime } = Object.entries(options.kit).reduce<{
             applicable: Record<string, unknown>;
             constructionTime: Array<string>;
           }>(
@@ -210,8 +200,7 @@ export const makeSvelteKitConfigPlugin = (
         const userAdapter = kit["adapter"];
         if (userAdapter !== null && userAdapter !== undefined) {
           const name =
-            isPlainObject(userAdapter) &&
-            typeof userAdapter["name"] === "string"
+            isPlainObject(userAdapter) && typeof userAdapter["name"] === "string"
               ? userAdapter["name"]
               : "unknown";
           warn(

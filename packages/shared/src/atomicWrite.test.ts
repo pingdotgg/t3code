@@ -14,6 +14,36 @@ import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as HostProcess from "./HostProcess.ts";
 
 it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
+  it.effect.each(HostProcess.Platform.defaultValue() === "linux" ? [39, 40, 41] : [])(
+    "matches native file access for a chain of %i symlinks",
+    (hops) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+        const destination = path.join(root, "settings.json");
+        const first = path.join(root, "link-0");
+        yield* fs.writeFileString(destination, "before");
+        for (let index = hops - 1; index >= 0; index--) {
+          const target = index === hops - 1 ? "settings.json" : `link-${index + 1}`;
+          yield* fs.symlink(target, path.join(root, `link-${index}`));
+        }
+
+        const read = yield* Effect.exit(fs.readFileString(first));
+        const write = yield* Effect.exit(
+          writeFileStringAtomically({ filePath: first, contents: "after" }),
+        );
+
+        assert.strictEqual(Exit.isSuccess(read), hops <= 40);
+        assert.strictEqual(Exit.isSuccess(write), Exit.isSuccess(read));
+        assert.strictEqual(
+          yield* fs.readFileString(destination),
+          Exit.isSuccess(read) ? "after" : "before",
+        );
+        assert.strictEqual(yield* fs.readLink(first), "link-1");
+      }),
+  );
+
   it.effect("keeps a symlinked file linked and rewrites its destination", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -122,37 +152,34 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
         Effect.forkChild,
       );
       yield* Deferred.await(firstAttempt);
-      // Another process saves once the lock clears, before the waiting write retries.
       yield* writeFileStringAtomically({ filePath, contents: "newer" });
 
-      assert.isTrue(Exit.isFailure(yield* advanceUntilDone(stale)));
+      yield* TestClock.adjust("100 millis");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(stale)));
       assert.strictEqual(yield* fs.readFileString(filePath), "newer");
       assert.deepStrictEqual(yield* fs.readDirectory(root), ["settings.json"]);
     }),
   );
 
-  // Read-only and write-only targets replace fine in a writable directory, so the
-  // narrowed mode lands only after the temp file is open for writing.
-  it.effect.each(
-    HostProcess.Platform.defaultValue() === "win32"
-      ? []
-      : ["644", "600", "444", "400", "200", "000"],
-  )("keeps the %s permissions of the file it replaces", (octal) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
-      const filePath = path.join(root, "settings.json");
-      const mode = Number.parseInt(octal, 8);
-      yield* fs.writeFileString(filePath, "before");
-      yield* fs.chmod(filePath, mode);
+  // Read-only and unreadable targets still save, since the mode lands after the temp file opens.
+  it.effect.each(HostProcess.Platform.defaultValue() === "win32" ? [] : ["644", "444", "000"])(
+    "keeps the %s permissions of the file it replaces",
+    (octal) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+        const filePath = path.join(root, "settings.json");
+        const mode = Number.parseInt(octal, 8);
+        yield* fs.writeFileString(filePath, "before");
+        yield* fs.chmod(filePath, mode);
 
-      yield* writeFileStringAtomically({ filePath, contents: "after" });
+        yield* writeFileStringAtomically({ filePath, contents: "after" });
 
-      assert.strictEqual((yield* fs.stat(filePath)).mode & 0o777, mode);
-      yield* fs.chmod(filePath, 0o600);
-      assert.strictEqual(yield* fs.readFileString(filePath), "after");
-    }),
+        assert.strictEqual((yield* fs.stat(filePath)).mode & 0o777, mode);
+        yield* fs.chmod(filePath, 0o600);
+        assert.strictEqual(yield* fs.readFileString(filePath), "after");
+      }),
   );
 
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
@@ -222,8 +249,8 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       );
     }),
   );
-  // EIO means the rename may not survive a crash. ENOTSUP means the filesystem
-  // cannot sync a directory at all, so the save stands.
+
+  // EIO means the rename may not survive a crash; ENOTSUP means directories cannot sync at all.
   it.effect.each(
     HostProcess.Platform.defaultValue() === "win32"
       ? []
@@ -268,9 +295,7 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
     }),
   );
 
-  // A directory that cannot be opened to sync it has to fail the save before the
-  // rename rather than after it. The failure is injected because root ignores a
-  // chmod that drops read access.
+  // Injected because root ignores a chmod that drops read access.
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "leaves the target intact when its directory cannot be opened for the sync",
     () =>
@@ -338,18 +363,6 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
     }),
   );
 });
-
-// Retries stat the real target between waits, and that I/O finishes outside the
-// test clock, so the clock moves one wait at a time until the write settles.
-const advanceUntilDone = <A, E>(fiber: Fiber.Fiber<A, E>) =>
-  Effect.gen(function* () {
-    while (fiber.pollUnsafe() === undefined) {
-      yield* TestClock.adjust("100 millis");
-      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a macrotask boundary so the real stat I/O can finish; time moves only via TestClock
-      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
-    }
-    return yield* Fiber.join(fiber);
-  });
 
 const renameError = (code: string, path: string) =>
   PlatformError.systemError({

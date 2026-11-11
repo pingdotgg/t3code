@@ -24,7 +24,7 @@ export interface ExpandedImageItem {
   name: string;
   mimeType?: string;
   type?: "video";
-  /** The preview created this object URL and must revoke it; other blob URLs belong to the timeline. */
+  /** Revoke this owned object URL; other blob URLs belong to the timeline. */
   ownsSrc?: boolean;
   source?: SnapShotSource;
   autoPlay?: boolean;
