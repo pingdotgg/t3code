@@ -77,12 +77,16 @@ const catalogFromManifest = (data: ModelManifestData) =>
 
 describe("Claude model catalog", () => {
   it("advertises discovered gateway models without requiring saved custom model settings", () => {
+    const opus = BUNDLED_CLAUDE_MODEL_CATALOG.models.find(
+      (entry) => entry.model.slug === "claude-opus-4-5",
+    )!.model;
     const provider = buildServerProvider({
       presentation: { displayName: "Claude" },
       enabled: true,
       checkedAt: "2026-11-01T00:00:00Z",
       updateRequiredModels: [{ slug: "claude-haiku-5-5", name: "Haiku", minVersion: "2.1.293" }],
       models: [
+        opus,
         { slug: "haiku", name: "Custom Haiku", isCustom: true, capabilities: null },
         { slug: "claude-sonnet-4-6", name: "Saved Sonnet", isCustom: false, capabilities: null },
         { slug: "known", name: "Known", isCustom: false, capabilities: null },
@@ -100,6 +104,8 @@ describe("Claude model catalog", () => {
       provider,
       [
         { id: "known" },
+        { id: "claude-opus-4-5-20251101" },
+        { id: "claude-haiku-5-5-20261101" },
         { id: "claude-haiku-4-5-20251001", display_name: "Gateway Haiku" },
         { id: "haiku" },
       ],
@@ -108,6 +114,7 @@ describe("Claude model catalog", () => {
     );
     assert.deepStrictEqual(result.models, [
       { slug: "known", name: "Known", isCustom: false, capabilities: null },
+      { ...opus, slug: "claude-opus-4-5-20251101" },
       {
         slug: "claude-haiku-4-5-20251001",
         name: "Gateway Haiku",
@@ -118,6 +125,7 @@ describe("Claude model catalog", () => {
       { slug: "claude-sonnet-4-6", name: "Saved Sonnet", isCustom: false, capabilities: null },
       { slug: "saved", name: "Saved", isCustom: true, capabilities: null },
     ]);
+    assert.deepStrictEqual(result.updateRequiredModels, provider.updateRequiredModels);
   });
 
   it("resolves capacity from selected options and fixed catalog windows without guessing custom models", () => {

@@ -11,7 +11,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { readClaudeConnectionSettings } from "./ClaudeSkills.ts";
 import { makeClaudeEnvironment } from "./ClaudeHome.ts";
-import { resolveClaudeModelSlug, type ClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
+import { resolveClaudeReportedModelSlug, type ClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 
 const GatewayModels = Schema.Struct({
   data: Schema.Array(
@@ -144,7 +144,7 @@ export function applyClaudeGatewayModels(
   const unavailable = new Set(provider.updateRequiredModels?.map((model) => model.slug));
   const offered = new Set(models.map((model) => model.id));
   const offeredCanonical = new Set(
-    models.map((model) => resolveClaudeModelSlug(catalog, model.id)),
+    models.map((model) => resolveClaudeReportedModelSlug(catalog, model.id)),
   );
   return {
     ...provider,
@@ -153,11 +153,11 @@ export function applyClaudeGatewayModels(
         .filter(
           (model) =>
             known.get(model.id)?.isCustom ||
-            !unavailable.has(resolveClaudeModelSlug(catalog, model.id)),
+            !unavailable.has(resolveClaudeReportedModelSlug(catalog, model.id)),
         )
         .map((model) => {
           const metadata =
-            known.get(model.id) ?? known.get(resolveClaudeModelSlug(catalog, model.id));
+            known.get(model.id) ?? known.get(resolveClaudeReportedModelSlug(catalog, model.id));
           return metadata
             ? { ...metadata, slug: model.id }
             : {
