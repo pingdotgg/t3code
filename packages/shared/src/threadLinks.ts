@@ -13,7 +13,7 @@ const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${H
 // Code comes first in the alternation so a link written inside a code span or fence is skipped.
 // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(\`+)[^\n]*?\4)|\[(?<label>[^\]\n]*)\]\((?:<(?<angleHref>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<href>t3-thread:\/\/v[12]\/[^\s>)]+|${HOSTED_LINK}))\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(\`+)[^\n]*?\4)|\[(?<label>[^\]\n]*)\]\((?:<(?<angleHref>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<href>t3-thread:\/\/v[12]\/[^\s>)]+|${HOSTED_LINK}))\)|(?<!\\)(?<slashes>(?:\\\\)*)<[ \t]*(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})[ \t]*>|(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
   "g",
 );
 
@@ -183,11 +183,12 @@ export function replaceThreadLinks(
   if (!hasThreadLinks(markdown)) return markdown;
   return markdown.replace(THREAD_LINK_OUTSIDE_CODE, (source, ...args) => {
     const groups = args.at(-1) as Partial<
-      Record<"angleHref" | "href" | "autolink" | "bare" | "label", string>
+      Record<"angleHref" | "href" | "autolink" | "bare" | "label" | "slashes", string>
     >;
     const href = groups.angleHref ?? groups.href ?? groups.autolink ?? groups.bare;
     const link = href === undefined ? null : parseThreadLinkHref(href);
-    return (link && replace(link, groups.label)) ?? source;
+    const replacement = link && replace(link, groups.label);
+    return replacement == null ? source : `${groups.slashes ?? ""}${replacement}`;
   });
 }
 
