@@ -1,7 +1,5 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import type {
-  EnvironmentId,
-  ProjectId,
   PullRequestAction,
   PullRequestListEntry,
   PullRequestSummary,
@@ -458,6 +456,18 @@ describe("remembered pull request list controls", () => {
       setItem: (key: string, value: string) => void held.set(key, value),
     };
   };
+
+  it("remembers the selected project member independently of the server scope", () => {
+    const storage = makeStorage();
+    const preferences = {
+      involvement: "all",
+      state: "open",
+      projectId: ProjectId.make("main"),
+      projectEnvironmentId: EnvironmentId.make("cups"),
+    } as const;
+    writePullRequestListPreferences(preferences, storage);
+    expect(readPullRequestListPreferences(storage)).toEqual(preferences);
+  });
 
   // regression: #9188 corrupt stored list controls broke the page
   it("falls back to the default controls when storage is corrupt", () => {

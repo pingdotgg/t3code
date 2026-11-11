@@ -1,16 +1,13 @@
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { describe, expect, it } from "vite-plus/test";
-
-import { findScopedProject } from "./pullRequestList.logic";
-import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
+import {
+  pullRequestFilterProjects,
+  pullRequestProjectFilterQueries,
+} from "@t3tools/client-runtime/pull-request-project-filter";
 
 const cups = EnvironmentId.make("env-cups");
 const nucbox = EnvironmentId.make("env-nucbox");
-const labels = new Map([
-  [cups, "cups"],
-  [nucbox, "nucbox-1"],
-]);
-
 function project(
   id: string,
   environmentId = nucbox,
@@ -21,94 +18,105 @@ function project(
     environmentId,
     title: "t3code",
     workspaceRoot: `/work/${id}`,
-    repositoryIdentity: canonicalKey === null ? null : { canonicalKey },
+    repositoryIdentity:
+      canonicalKey === null
+        ? null
+        : {
+            canonicalKey,
+            locator: {
+              source: "git-remote" as const,
+              remoteName: "origin",
+              remoteUrl: `https://${canonicalKey}`,
+            },
+          },
     faviconPath: `${id}/favicon.png`,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
   };
 }
+const groupsFor = (
+  projects: ReadonlyArray<ReturnType<typeof project>>,
+  mode: "repository" | "repository_path" | "separate" = "repository",
+) =>
+  buildProjectGroups({
+    projects,
+    settings: { sidebarProjectGroupingMode: mode, sidebarProjectGroupingOverrides: {} },
+  });
 
 describe("pull request project filter choices", () => {
-  it("collapses three checkouts on one server without dropping another server's copy", () => {
+  it("uses sidebar labels and order and reads every selected member within the server scope", () => {
+    const projects = [
+      project("main"),
+      project("worktree"),
+      project("main", cups),
+      { ...project("fleet", cups, "github.com/pingdotgg/fleet"), title: "fleet" },
+    ];
+    const selected = projects[1]!;
+    const choices = pullRequestFilterProjects(projects, groupsFor(projects).toReversed(), selected);
+    expect(choices.map(({ title }) => title)).toEqual(["fleet", "t3code"]);
+    expect(choices[1]?.id).toBe(selected.id);
+    expect(choices[1]?.faviconPath).toBe(selected.faviconPath);
+    expect(pullRequestProjectFilterQueries(choices, [cups, nucbox], selected)).toEqual([
+      { environmentId: cups, projectIds: [ProjectId.make("main")] },
+      { environmentId: nucbox, projectIds: [ProjectId.make("main"), selected.id] },
+    ]);
+    expect(pullRequestProjectFilterQueries(choices, [cups], selected)).toEqual([
+      { environmentId: cups, projectIds: [ProjectId.make("main")] },
+    ]);
+    expect(pullRequestProjectFilterQueries(choices, [cups, nucbox])).toEqual([
+      { environmentId: cups },
+      { environmentId: nucbox },
+    ]);
+    expect(pullRequestProjectFilterQueries(choices, [cups], project("missing"))).toEqual([]);
+  });
+
+  it("collapses checkouts across machines and keeps a saved member selected", () => {
     const projects = [
       project("main"),
       project("worktree-1"),
       project("worktree-2"),
       project("main", cups),
     ];
-
-    const choices = pullRequestFilterProjects(projects, labels);
-
-    expect(choices.map(({ id, environmentId, title }) => ({ id, environmentId, title }))).toEqual([
-      { id: "main", environmentId: cups, title: "t3code · cups" },
-      { id: "main", environmentId: nucbox, title: "t3code · nucbox-1" },
-    ]);
-    expect(choices[1]?.workspaceRoot).toBe("/work/main");
-    expect(choices[1]?.faviconPath).toBe("main/favicon.png");
+    const groups = groupsFor(projects);
+    const choices = pullRequestFilterProjects(projects, groups);
+    expect(choices.map(({ title }) => title)).toEqual(["t3code"]);
+    expect(choices[0]?.memberProjectRefs).toHaveLength(4);
+    const selected = projects[3]!;
+    expect(pullRequestFilterProjects(projects, groups, selected)[0]).toEqual({
+      ...selected,
+      memberProjectRefs: choices[0]!.memberProjectRefs,
+    });
   });
 
-  it("keeps a saved worktree selection as the repository's only choice", () => {
-    const projects = [project("main"), project("worktree"), project("worktree", cups)];
-    const selected = findScopedProject(projects, nucbox, "worktree");
-
-    const choices = pullRequestFilterProjects(projects, labels, selected);
-
-    expect(choices.filter((choice) => choice.environmentId === nucbox)).toEqual([
-      { ...projects[1], title: "t3code · nucbox-1" },
-    ]);
-    expect(findScopedProject(choices, nucbox, "worktree")).toBeDefined();
-    expect(findScopedProject(choices, nucbox, "main")).toBeUndefined();
-    expect(findScopedProject(choices, cups, "worktree")).toBeDefined();
-  });
-
-  it("distinguishes same-named repositories on one server by checkout path", () => {
+  it("keeps different repositories, hosts and unidentified checkouts separate", () => {
     const projects = [
       project("upstream"),
       project("fork", nucbox, "github.com/juliusmarminge/t3code"),
+      project("enterprise", nucbox, "git.example.com/pingdotgg/t3code"),
+      project("unknown-1", nucbox, null),
+      project("unknown-2", cups, null),
     ];
-
-    const choices = pullRequestFilterProjects(projects, labels);
-
-    expect(choices.map((choice) => choice.title)).toEqual([
-      "t3code · nucbox-1 · /work/fork",
-      "t3code · nucbox-1 · /work/upstream",
-    ]);
+    const choices = pullRequestFilterProjects(projects, groupsFor(projects));
+    expect(choices.map(({ id }) => id)).toEqual(projects.map(({ id }) => id));
   });
 
-  // regression: #9948 project filter deduplication must not merge across hosts
-  it("keeps repositories on different hosts separate", () => {
-    const choices = pullRequestFilterProjects(
-      [project("github"), project("enterprise", nucbox, "git.example.com/pingdotgg/t3code")],
-      labels,
-    );
-
-    expect(choices.map((choice) => choice.id)).toEqual(["enterprise", "github"]);
-  });
-
-  // regression: #9948 project filter deduplication must not merge unidentified repos
-  it("does not merge projects whose repository identity is unknown", () => {
-    const choices = pullRequestFilterProjects(
-      [project("first", nucbox, null), project("second", nucbox, null)],
-      labels,
-    );
-
-    expect(choices.map((choice) => choice.title)).toEqual([
-      "t3code · nucbox-1 · /work/first",
-      "t3code · nucbox-1 · /work/second",
-    ]);
-  });
-
-  it("distinguishes servers with the same display name and checkout path", () => {
-    const first = project("main");
-    const second = project("main", cups);
-    const repeatedLabels = new Map([
-      [cups, "nucbox-1"],
-      [nucbox, "nucbox-1"],
-    ]);
-
-    const choices = pullRequestFilterProjects([first, second], repeatedLabels);
-
-    expect(choices.map((choice) => choice.title)).toEqual([
-      "t3code · nucbox-1 · /work/main · env-cups",
-      "t3code · nucbox-1 · /work/main · env-nucbox",
+  it("honors the sidebar's separate and repository-path grouping", () => {
+    const main = project("main");
+    const remote = project("main", cups);
+    const nested = {
+      ...project("nested"),
+      workspaceRoot: "/work/main/apps/web",
+      repositoryIdentity: { ...main.repositoryIdentity!, rootPath: "/work/main" },
+    };
+    const projects = [main, remote, nested];
+    expect(pullRequestFilterProjects(projects, groupsFor(projects, "separate"))).toHaveLength(3);
+    expect(
+      pullRequestFilterProjects(projects, groupsFor(projects, "repository_path")),
+    ).toHaveLength(2);
+    expect(pullRequestFilterProjects([remote], groupsFor(projects))[0]?.memberProjectRefs).toEqual([
+      { environmentId: cups, projectId: remote.id },
     ]);
   });
 });

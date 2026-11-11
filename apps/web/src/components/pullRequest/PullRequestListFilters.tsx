@@ -6,6 +6,7 @@ import type {
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
+  ScopedProjectRef,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
@@ -519,7 +520,12 @@ export function PullRequestFiltersMenu({
   server: EnvironmentId | undefined;
   serverOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onServer: (server: EnvironmentId | undefined) => void;
-  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
+  projects: ReadonlyArray<
+    ProjectFaviconProject & {
+      readonly id: ProjectId;
+      readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+    }
+  >;
   projectId: ProjectId | undefined;
   projectEnvironmentId: EnvironmentId | undefined;
   unavailable: ReadonlyMap<string, string>;
@@ -550,21 +556,29 @@ export function PullRequestFiltersMenu({
     projectId === undefined || projectEnvironmentId === undefined
       ? ALL_PROJECTS_VALUE
       : pullRequestProjectKey({ id: projectId, environmentId: projectEnvironmentId });
+  const unavailableReason = (project: (typeof projects)[number]) =>
+    project.memberProjectRefs.every((ref) =>
+      unavailable.has(
+        pullRequestProjectKey({ id: ref.projectId, environmentId: ref.environmentId }),
+      ),
+    )
+      ? unavailable.get(pullRequestProjectKey(project))
+      : undefined;
   const projectOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
     { value: ALL_PROJECTS_VALUE, label: "All projects", Icon: LayersIcon },
     ...projects
       .toSorted(
         (left, right) =>
-          Number(unavailable.has(pullRequestProjectKey(left))) -
-          Number(unavailable.has(pullRequestProjectKey(right))),
+          Number(unavailableReason(left) !== undefined) -
+          Number(unavailableReason(right) !== undefined),
       )
       .map((project) => ({
         value: pullRequestProjectKey(project),
         label: project.title,
         Icon: FolderGit2Icon,
         project,
-        ...(unavailable.has(pullRequestProjectKey(project))
-          ? { unavailable: unavailable.get(pullRequestProjectKey(project)) }
+        ...(unavailableReason(project) !== undefined
+          ? { unavailable: unavailableReason(project) }
           : {}),
       })),
   ];
