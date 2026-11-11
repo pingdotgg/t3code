@@ -92,6 +92,7 @@ function parseCgroupCounter(text: string, key: string): number | undefined {
 // systemd's default 90 s stop timeout would outlast our leftover-agent wait.
 // Delegation lets rootless containers (Podman, kind) manage their own cgroups.
 const SCOPE_OPTIONS = ["--property=TimeoutStopSec=10s", "--property=Delegate=yes"];
+const OOM_PROBE_OPTIONS = [...SCOPE_OPTIONS, "--property=OOMPolicy=stop"];
 const STOPPING_POLL_INTERVAL = "100 millis";
 const STOPPING_POLL_ATTEMPTS = 20;
 const CLEAR_FAILED_INTERVAL = "1 second";
@@ -168,7 +169,6 @@ export const make = Effect.gen(function* () {
     ]);
   const probeSucceeded = (result: Option.Option<ProcessRunner.ProcessRunOutput>) =>
     result._tag === "Some" && result.value.code === 0;
-  const OOM_PROBE_OPTIONS = [...SCOPE_OPTIONS, "--property=OOMPolicy=stop"];
 
   const systemd = yield* Effect.cached(
     Effect.gen(function* () {
