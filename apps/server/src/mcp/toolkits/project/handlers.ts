@@ -171,11 +171,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               (error) =>
                 new OrchestratorMcpFailure({
                   code: "invalid_request",
-                  message: `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
-                    strategy.startFromOrigin === true
-                      ? "; the project has no usable remote to fetch it from."
-                      : ", or set startFromOrigin:true if it exists only on a remote."
-                  }`,
+                  message:
+                    error._tag === "ThreadLaunchNotRepositoryError"
+                      ? `${error.message} No thread was created. Use workspaceStrategy: {type: "root"}, or pass the projectId of a Git repository.`
+                      : `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
+                          strategy.startFromOrigin === true
+                            ? "; the project has no usable remote to fetch it from."
+                            : ", or set startFromOrigin:true if it exists only on a remote."
+                        }`,
                 }),
             ),
           );
