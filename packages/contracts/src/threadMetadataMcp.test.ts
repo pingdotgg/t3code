@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
+import { ProjectId } from "./baseSchemas.ts";
 import { ThreadMetadataMcpUpdateInput } from "./threadMetadataMcp.ts";
 
 const decodeUpdate = Schema.decodeUnknownSync(ThreadMetadataMcpUpdateInput);
@@ -11,7 +12,7 @@ describe("ThreadMetadataMcpUpdateInput", () => {
       decodeUpdate({ action: "change_workspace", projectId: "destination", worktreePath: null }),
       {
         action: "change_workspace",
-        projectId: "destination",
+        projectId: ProjectId.make("destination"),
         worktreePath: null,
       },
     );
