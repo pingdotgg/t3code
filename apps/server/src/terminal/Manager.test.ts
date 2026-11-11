@@ -868,6 +868,24 @@ it.layer(
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("still stops the shell when the process-table lookup never answers", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, signals } = yield* createManager(5, {
+        processTable: Effect.never,
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+      const shell = ptyAdapter.processes[0]!;
+      const terminated = yield* Deferred.make<void>();
+      shell.onKill = () => Deferred.doneUnsafe(terminated, Effect.void);
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* TestClock.adjust("2 seconds");
+      yield* Deferred.await(terminated);
+
+      expect(signals).toEqual([]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("labels a running command by its whole process name, spaces included", () =>
     Effect.gen(function* () {
       const { manager } = yield* createManager(5, {

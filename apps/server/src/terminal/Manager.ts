@@ -105,6 +105,8 @@ const PROCESS_TABLE_QUERY_TIMEOUT = "15 seconds";
 // closeIdle queries while holding the thread lock, so it keeps a short budget
 // rather than stalling other operations on that thread behind a slow table.
 const CLOSE_IDLE_QUERY_TIMEOUT = { posix: "1 second", win32: "1500 millis" } as const;
+// The native table's own timeout skips its stdin write, so a stalled sidecar could block a stop.
+const DESCENDANT_LOOKUP_TIMEOUT = "2 seconds";
 // Discover children started without terminal input or output.
 const QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS = 30;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
@@ -1858,7 +1860,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     terminalPid: number,
   ) {
     if (platform === "win32") return [];
-    const { snapshot } = yield* fetchProcessTableSnapshot(CLOSE_IDLE_QUERY_TIMEOUT.posix);
+    const lookup = yield* fetchProcessTableSnapshot(CLOSE_IDLE_QUERY_TIMEOUT.posix).pipe(
+      Effect.timeoutOption(DESCENDANT_LOOKUP_TIMEOUT),
+    );
+    if (Option.isNone(lookup)) {
+      yield* Effect.logWarning("timed out snapshotting terminal descendants before stopping", {
+        terminalPid,
+      });
+      return [];
+    }
+    const { snapshot } = lookup.value;
     if (Result.isFailure(snapshot)) {
       yield* Effect.logWarning("failed to snapshot terminal descendants before stopping", {
         terminalPid,
