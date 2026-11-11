@@ -1,6 +1,5 @@
-import { ListFilterIcon } from "lucide-react";
-import { Maximize2, Minimize2 } from "lucide";
-import { MorphIcon } from "~/components/MorphIcon";
+import { ListFilterIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
+
 import { memo } from "react";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
@@ -93,7 +92,11 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
             variant="ghost"
             size="sm"
           >
-            <MorphIcon className="size-3.5" icon={maximized ? Minimize2 : Maximize2} />
+            {maximized ? (
+              <Minimize2Icon className="size-3.5" />
+            ) : (
+              <Maximize2Icon className="size-3.5" />
+            )}
           </Toggle>
         }
       />
