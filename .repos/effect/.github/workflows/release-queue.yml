@@ -1,0 +1,44 @@
+name: Release queue
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    branches: [main, v4/next-minor, v4/next-major]
+  push:
+    branches: [main, v4/next-minor, v4/next-major]
+
+permissions: {}
+
+jobs:
+  update:
+    name: Update
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.EFFECT_BOT_GH }}
+      # Non-cone mode excludes root files too. Git preserves this restriction across gh pr checkout.
+      # Keep full checkouts for same-repo PRs, pushes, and comments used by release/rebase paths.
+      - name: Limit fork checkout to changesets
+        if: github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository
+        run: git sparse-checkout set --no-cone '/.changeset/'
+      # This checks out untrusted fork code with privileged bot credentials available to subsequent steps.
+      # Sparse checkout reduces exposed files; it is not a security boundary.
+      # No step may execute code from the working tree (including installs, builds, or repo scripts).
+      # The pinned release action only reads changeset files on the fork PR path.
+      - run: gh pr checkout ${{ github.event.pull_request.number }}
+        if: github.event.pull_request
+        env:
+          GITHUB_TOKEN: ${{ secrets.EFFECT_BOT_GH }}
+      - uses: Effect-TS/next-release-action@2c03239f3fa0d648a88eb6c5e4f266275f7658a8 # Restore automatic release branch rebasing
+        with:
+          github_token: ${{ secrets.EFFECT_BOT_GH }}
+          base_branch: main
+          eligible_branches: v4/next-minor,v4/next-major
+          git_user: effect-bot
+          git_email: tech-ops@effectful.co
