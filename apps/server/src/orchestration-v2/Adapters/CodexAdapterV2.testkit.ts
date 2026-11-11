@@ -2,7 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CodexSettings, type ProviderReplayTranscript } from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
-import type * as CodexError from "effect-codex-app-server/errors";
+import * as CodexError from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -69,6 +69,17 @@ export function withCodexReplayChildMetadata(
   );
   return {
     ...client,
+    // Existing recordings predate this optional read; model an older app server.
+    request: (method, params) =>
+      method === "config/read"
+        ? Effect.fail(
+            new CodexError.CodexAppServerRequestError({
+              method,
+              code: -32601,
+              errorMessage: "Method not found",
+            }),
+          )
+        : client.request(method, params),
     raw: {
       ...client.raw,
       request: (method, params) =>
