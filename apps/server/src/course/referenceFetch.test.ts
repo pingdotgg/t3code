@@ -247,8 +247,8 @@ describe("course reference fetch", () => {
     child.pid = 42;
     child.exitCode = null;
     child.killed = false;
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
+    child.stdout = new NodeEvents.EventEmitter();
+    child.stderr = new NodeEvents.EventEmitter();
     child.stdin = { end: () => undefined };
     child.kill = () => {
       child.killed = true;
@@ -271,8 +271,8 @@ describe("course reference fetch", () => {
     child.pid = 43;
     child.exitCode = null;
     child.killed = false;
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
+    child.stdout = new NodeEvents.EventEmitter();
+    child.stderr = new NodeEvents.EventEmitter();
     child.stdin = { end: () => undefined };
     child.kill = () => {
       child.killed = true;
