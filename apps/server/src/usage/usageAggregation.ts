@@ -233,7 +233,6 @@ export class UsageAggregator {
     }
     // Keyed usage is counted in finish(), once all its copies are merged.
     if (record.dedupeKey === null) this.#accumulate(bucket, record);
-    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     return true;
   }
 
@@ -262,6 +261,7 @@ export class UsageAggregator {
   }
 
   #accumulate(bucket: MutableBucket, record: UsageRecord): void {
+    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
     const totals = bucket.totals;

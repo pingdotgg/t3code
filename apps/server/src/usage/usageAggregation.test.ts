@@ -184,11 +184,17 @@ describe("UsageAggregator", () => {
       const original = new Map(
         [
           ...new Map<string, readonly UsageRecord[]>([
-            ["/partial.jsonl", early],
+            ["/partial.jsonl", early.map((entry) => ({ ...entry, sessionId: "session-fork" }))],
             ["/complete.jsonl", dedupeWithinFile([...early, ...complete, ...complete])],
             [
               "/deleted.jsonl",
-              [{ ...early[0]!, totals: { ...early[0]!.totals, cacheCreationTokens: 30000 } }],
+              [
+                {
+                  ...early[0]!,
+                  sessionId: "session-deleted",
+                  totals: { ...early[0]!.totals, cacheCreationTokens: 30000 },
+                },
+              ],
             ],
           ]),
         ].map(
@@ -233,6 +239,7 @@ describe("UsageAggregator", () => {
             bucket.totals.cacheCreationTokens,
             bucket.totals.outputTokens,
             bucket.records,
+            bucket.sessions,
           ]),
         ).toEqual(
           expected
@@ -241,6 +248,7 @@ describe("UsageAggregator", () => {
               entry.model,
               entry.cache_creation_input_tokens,
               entry.output_tokens,
+              1,
               1,
             ]),
         );
