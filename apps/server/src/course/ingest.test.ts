@@ -126,6 +126,98 @@ describe("course ingestion parsers", () => {
     expect(course.attribution).toContain("CC BY-NC-SA 4.0");
   });
 
+  it("orders OCW videos by section and child page order without a gallery", () => {
+    const entries = new Map<string, string>([
+      ["course/pages/second/index.html", '<a href="pages/second/">Wrong index</a>'],
+      [
+        "course/index.html",
+        '<a href="./pages/first/index.html">First</a><a href="./pages/second/index.html">Second</a><a href="./pages/first/index.html">Again</a>',
+      ],
+      ["course/pages/second/child/data.json", JSON.stringify({ title: "Second child" })],
+      [
+        "course/pages/second/data.json",
+        JSON.stringify({
+          title: "Second",
+          content: '<a href="../../pages/second/child/index.html">Child</a>',
+        }),
+      ],
+      [
+        "course/pages/first/child/data.json",
+        JSON.stringify({
+          title: "First child",
+          content: '<track src="../../hash_v_5.vtt"><track src="../../hash_v4.vtt">',
+        }),
+      ],
+      [
+        "course/pages/first/data.json",
+        JSON.stringify({
+          title: "First",
+          content:
+            '<a href="../../pages/second/child/index.html">Other section</a><a href="../../pages/first/child/index.html">Child</a>',
+        }),
+      ],
+      [
+        "course/resources/a/data.json",
+        JSON.stringify({
+          resourcetype: "Video",
+          uid: "v3",
+          title: "Lecture 3",
+          parent_title: "Second child",
+        }),
+      ],
+      [
+        "course/resources/b/data.json",
+        JSON.stringify({
+          resourcetype: "Video",
+          uid: "v2",
+          title: "Lecture 2",
+          parent_title: "First child",
+          video_metadata: { youtube_id: "v2" },
+        }),
+      ],
+      [
+        "course/resources/c/data.json",
+        JSON.stringify({
+          resourcetype: "Video",
+          uid: "v1",
+          title: "Lecture 1",
+          parent_title: "First",
+          video_metadata: { youtube_id: "v1" },
+        }),
+      ],
+      [
+        "course/resources/d/data.json",
+        JSON.stringify({
+          resourcetype: "Video",
+          uid: "v4",
+          title: "Lecture 4",
+          parent_title: "First child",
+          video_metadata: { youtube_id: "v4" },
+        }),
+      ],
+      [
+        "course/resources/e/data.json",
+        JSON.stringify({
+          resourcetype: "Video",
+          uid: "v5",
+          title: "Lecture 5",
+          parent_title: "First child",
+          video_metadata: { youtube_id: "v_5" },
+        }),
+      ],
+    ]);
+    const titles = () =>
+      parseOcwZipEntries(entries, "https://ocw.mit.edu/courses/tiny/").units.map(
+        (unit) => unit.title,
+      );
+    expect(titles()).toEqual(["Lecture 1", "Lecture 5", "Lecture 4", "Lecture 2", "Lecture 3"]);
+    entries.set(
+      "course/video_galleries/lectures/data.json",
+      JSON.stringify({ videos: [{ uid: "v3" }, { uid: "v1" }, { uid: "v2" }] }),
+    );
+    expect(titles()).toEqual(["Lecture 3", "Lecture 1", "Lecture 2", "Lecture 5", "Lecture 4"]);
+  });
+
   it.effect("uses top-level PDF outline entries as units", () =>
     Effect.gen(function* () {
       const course = yield* ingestCourse(
@@ -148,7 +240,8 @@ describe("course ingestion parsers", () => {
         NodePath.join(import.meta.dirname, "fixtures/tiny-ocw.zip"),
         "https://ocw.mit.edu/courses/tiny/",
       );
-      expect(course.units[0]?.text).toBe("[00:00] Tiny caption");
+      expect(course.units.map((unit) => unit.title)).toEqual(["Lecture 0", "Lecture 1"]);
+      expect(course.units[1]?.text).toBe("[00:00] Tiny caption");
     }),
   );
 

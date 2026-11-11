@@ -1,11 +1,16 @@
-// @effect-diagnostics anyUnknownInErrorContext:off
+// @effect-diagnostics anyUnknownInErrorContext:off nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as CourseService from "./CourseService.ts";
 
 const threadId = ThreadId.make("lesson-1");
@@ -65,6 +70,154 @@ describe("CourseService", () => {
         const unit = yield* service.readUnit({ courseId: course.id, unit: 1, at: 60 });
         assert.include(unit.text, "near");
         assert.notInclude(unit.text, "far");
+      }),
+    ),
+  );
+
+  it.effect("writes a lazy transcript to the fetched unit after repair", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      const runner = {
+        run: (input: { args: ReadonlyArray<string> }) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(gate);
+            const out = input.args[input.args.indexOf("--output") + 1]!;
+            const id = input.args.at(-1)!.split("v=")[1]!;
+            NodeFS.writeFileSync(
+              NodePath.join(NodePath.dirname(out), `${id}.en.json3`),
+              JSON.stringify({
+                events: [{ tStartMs: 0, segs: [{ utf8: `transcript of ${id}` }] }],
+              }),
+            );
+            return { code: 0, stdout: "", stderr: "" };
+          }),
+      } as unknown as ProcessRunner.ProcessRunner["Service"];
+      const dir = (yield* Path.Path).join(
+        yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped(),
+        "state",
+      );
+      const service = yield* CourseService.make(dir);
+      const ingested = {
+        kind: "ocw" as const,
+        title: "Mechanics",
+        source: "https://ocw.mit.edu/courses/mechanics/",
+        units: [
+          { title: "Lecture 21", youtubeId: "video21" },
+          { title: "Lecture 1", youtubeId: "video1" },
+        ],
+      };
+      const course = yield* service.add({ lessonThreadId: threadId, ingested });
+      const fiber = yield* service
+        .readUnit({ courseId: course.id, unit: 1 })
+        .pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner), Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* service.add({
+        lessonThreadId: threadId,
+        ingested: { ...ingested, units: [ingested.units[1]!, ingested.units[0]!] },
+      });
+      yield* Deferred.succeed(gate, undefined);
+      assert.strictEqual((yield* Fiber.join(fiber)).unit.youtubeId, "video21");
+      const noFetch = {
+        run: () => Effect.die("no fetch"),
+      } as unknown as ProcessRunner.ProcessRunner["Service"];
+      const noFetchSettings = {
+        getSettings: Effect.succeed({ courseYtDlp: false }),
+      } as unknown as ServerSettings.ServerSettingsService["Service"];
+      const unit1 = yield* service
+        .readUnit({ courseId: course.id, unit: 1 })
+        .pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, noFetch),
+          Effect.provideService(ServerSettings.ServerSettingsService, noFetchSettings),
+        );
+      assert.notInclude(unit1.text, "video21");
+      const unit2 = yield* service
+        .readUnit({ courseId: course.id, unit: 2 })
+        .pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, noFetch),
+          Effect.provideService(ServerSettings.ServerSettingsService, noFetchSettings),
+        );
+      assert.include(unit2.text, "video21");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(ServerSettings.ServerSettingsService, {
+        getSettings: Effect.succeed({ courseYtDlp: true }),
+      } as unknown as ServerSettings.ServerSettingsService["Service"]),
+    ),
+  );
+
+  it.effect("repairs an existing course's order while keeping unit files and progress", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const ingested = {
+          kind: "ocw" as const,
+          title: "Mechanics",
+          source: "https://ocw.mit.edu/courses/mechanics/",
+          license: "CC BY-NC-SA 4.0",
+          attribution: "MIT OpenCourseWare",
+          units: [
+            { title: "Lecture 21", youtubeId: "video21", text: "[00:00] Work" },
+            { title: "Lecture 1", youtubeId: "video1", text: "[00:00] Vectors" },
+            { title: "Title only", text: "Extra" },
+            { title: "Unmatched A", text: "Keep A" },
+            { title: "Unmatched B", text: "Keep B" },
+          ],
+        };
+        const course = yield* service.add({ lessonThreadId: threadId, ingested });
+        yield* service.update({
+          courseId: course.id,
+          unit: 1,
+          plan: "Work plan",
+          quiz: "Work quiz",
+          position: { unit: 1, at: 90 },
+        });
+        yield* service.update({ courseId: course.id, unit: 2, plan: "Vector plan" });
+        yield* service.recordPrepThread(course.id, ThreadId.make("prep-1"));
+        const before = yield* service.get({ id: course.id });
+        const repaired = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            ...ingested,
+            units: [
+              { title: "Renamed lecture 1", youtubeId: "video1" },
+              { title: "Title only" },
+              { title: "Lecture 21", youtubeId: "video21" },
+              { title: "New lecture" },
+            ],
+          },
+        });
+        assert.deepStrictEqual(repaired, {
+          ...before,
+          units: [
+            before.units[1]!,
+            before.units[2]!,
+            before.units[0]!,
+            before.units[3]!,
+            before.units[4]!,
+          ],
+          position: { unit: 3, at: 90 },
+        });
+        const work = yield* service.readUnit({ courseId: course.id, unit: 3 });
+        assert.strictEqual(work.plan, "Work plan");
+        assert.strictEqual(work.quiz, "Work quiz");
+        assert.strictEqual(work.text, "[00:00] Work");
+        const vectors = yield* service.readUnit({ courseId: course.id, unit: 1 });
+        assert.strictEqual(vectors.plan, "Vector plan");
+        assert.strictEqual(vectors.text, "[00:00] Vectors");
+        assert.isUndefined((yield* service.readUnit({ courseId: course.id, unit: 2 })).plan);
+        assert.deepStrictEqual(yield* service.get({ id: course.id }), repaired);
+        assert.deepStrictEqual(
+          yield* service.add({
+            lessonThreadId: threadId,
+            ingested: {
+              ...ingested,
+              units: [ingested.units[1]!, ingested.units[2]!, ingested.units[0]!],
+            },
+          }),
+          repaired,
+        );
       }),
     ),
   );
