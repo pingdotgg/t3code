@@ -2,6 +2,11 @@
   "name": "fly-website-tanstack-start",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/fly-website-tanstack-start"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -10,6 +15,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/fly": "workspace:*",
     "@tanstack/react-router": "catalog:",
     "@tanstack/react-start": "catalog:",
     "alchemy": "workspace:*",
@@ -19,6 +25,7 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/fly-io": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@tailwindcss/vite": "catalog:",
@@ -31,10 +38,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/fly-website-tanstack-start"
   }
 }
