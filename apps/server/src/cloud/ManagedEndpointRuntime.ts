@@ -375,6 +375,7 @@ export const make = Effect.gen(function* () {
         localOrigin,
         onOpenChange: (open) => {
           state.open = open;
+          Queue.offerUnsafe(readinessChanges, undefined);
         },
       }).pipe(withRelayClientLog, Effect.forkIn(runtimeScope));
       yield* Ref.set(channelRef, { key, fiber, state });

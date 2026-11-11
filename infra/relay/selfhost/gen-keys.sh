@@ -11,6 +11,7 @@ else
 fi
 # Derived every run, so a missing or partial public key is repaired.
 openssl pkey -in "$private" -pubout -out "$dir/cloud-mint-public.pem"
+chmod 644 "$dir/cloud-mint-public.pem"
 # Compose mounts secret files with their host owner, and the relay runs as the image's node user.
 if [ "$(id -u)" = 0 ]; then
   chown 1000:1000 "$private"

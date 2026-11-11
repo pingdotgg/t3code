@@ -271,6 +271,8 @@ export const runRelayChannel = Effect.fn("RelayChannelClient.run")(function* (
   });
   let failures = 0;
   return yield* connectOnce(input).pipe(
+    // The WebSocket constructor throws on a malformed URL; retry instead of ending the fiber.
+    Effect.catchDefect((defect) => Effect.succeed({ opened: false, reason: String(defect) })),
     Effect.tap((ended) => {
       failures = ended.opened ? 0 : failures + 1;
       return Effect.logWarning("T3 Connect relay channel ended", { reason: ended.reason });
