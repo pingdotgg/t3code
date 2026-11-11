@@ -802,6 +802,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
       mockedExecute.mockImplementation((call) => {
         if (call.kind !== "rest") return Effect.succeed(output("{}"));
         const log = /actions\/jobs\/(\d+)\/logs$/.exec(call.path);
+        if (log?.[1] === "13") return Effect.succeed(output("one long line", true));
+        if (log?.[1] === "14") {
+          return Effect.fail(
+            new GitHubRequestPolicy.GitHubApiAuthenticationError({
+              host: "github.com",
+              operation: "readCheckLog",
+            }),
+          );
+        }
         if (log) return Effect.succeed(output("setup\nbuild\nError: boom\n"));
         const job = /actions\/jobs\/(\d+)$/.exec(call.path);
         if (job) return Effect.succeed(output(encodeJson({ run_id: runOf[job[1]!] })));
@@ -823,6 +832,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
         { name: "job 11", log: "build\nError: boom", truncated: true, detail: null },
         { name: "Vercel", log: null },
       ]);
+      const capped = { host: "github.com", repository: "octo/repo", tailLines: 5 };
+      expect(yield* api.readCheckLogs({ ...capped, checks: [job(13, 30)] })).toMatchObject([
+        { log: "one long line", truncated: true },
+      ]);
+      const refused = yield* Effect.flip(api.readCheckLogs({ ...capped, checks: [job(14, 30)] }));
+      expect(refused._tag).toBe("GitHubApiAuthenticationError");
 
       const reruns = yield* api.rerunChecks({
         host: "github.com",

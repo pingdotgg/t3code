@@ -725,12 +725,12 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly repository: string;
       readonly checks: ReadonlyArray<ProviderCheckReference>;
       readonly tailLines: number;
-    }) => Effect.Effect<ReadonlyArray<ProviderCheckLog>>;
+    }) => Effect.Effect<ReadonlyArray<ProviderCheckLog>, GitHubPullRequestApiError>;
     readonly rerunChecks: (input: {
       readonly host: string;
       readonly repository: string;
       readonly checks: ReadonlyArray<ProviderCheckReference>;
-    }) => Effect.Effect<ReadonlyArray<ProviderCheckRerun>>;
+    }) => Effect.Effect<ReadonlyArray<ProviderCheckRerun>, GitHubPullRequestApiError>;
     readonly runPullRequestAction: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -2835,14 +2835,24 @@ export const make = Effect.gen(function* () {
               timeout: "60 seconds",
             })
             .pipe(
-              Effect.map((response) => ({
-                ...check,
-                ...tailLogLines(response.body, input.tailLines),
-                detail: response.truncated ? "The log is too large; this is from its start." : null,
-              })),
-              Effect.catch((error) =>
-                Effect.succeed({ ...check, log: null, truncated: false, detail: error.message }),
-              ),
+              Effect.map((response) => {
+                const tail = tailLogLines(response.body, input.tailLines);
+                return {
+                  ...check,
+                  log: tail.log,
+                  truncated: tail.truncated || response.truncated,
+                  detail: response.truncated
+                    ? "The log is too large; this is from its start."
+                    : null,
+                };
+              }),
+              // Sign-in and rate-limit failures fail the call; the rest are this check's.
+              Effect.catchTags({
+                GitHubApiNotFoundError: (error) =>
+                  Effect.succeed({ ...check, log: null, truncated: false, detail: error.message }),
+                GitHubApiResponseError: (error) =>
+                  Effect.succeed({ ...check, log: null, truncated: false, detail: error.message }),
+              }),
             );
         },
         { concurrency: 4 },
@@ -2854,7 +2864,7 @@ export const make = Effect.gen(function* () {
       const root = `repos/${owner}/${name}/actions`;
       const located = yield* Effect.forEach(
         input.checks,
-        (check): Effect.Effect<LocatedCheckJob> => {
+        (check): Effect.Effect<LocatedCheckJob, GitHubPullRequestApiError> => {
           const jobId = gitHubActionsJobId(check.url);
           if (jobId === null)
             return Effect.succeed({ check, jobId, runId: null, detail: NOT_A_JOB });
@@ -2863,9 +2873,13 @@ export const make = Effect.gen(function* () {
             .pipe(
               Effect.flatMap((response) => decodeActionsJob(response.body)),
               Effect.map((job) => ({ check, jobId, runId: job.run_id, detail: null })),
-              Effect.catch((error) =>
-                Effect.succeed({ check, jobId, runId: null, detail: error.message }),
-              ),
+              Effect.catchTags({
+                GitHubApiNotFoundError: (error) =>
+                  Effect.succeed({ check, jobId, runId: null, detail: error.message }),
+                GitHubApiResponseError: (error) =>
+                  Effect.succeed({ check, jobId, runId: null, detail: error.message }),
+                SchemaError: () => Effect.succeed({ check, jobId, runId: null, detail: NOT_A_JOB }),
+              }),
             );
         },
         { concurrency: 4 },
@@ -2891,8 +2905,11 @@ export const make = Effect.gen(function* () {
                   : `${root}/runs/${runId}/rerun-failed-jobs`,
             })
             .pipe(
-              Effect.as(null),
-              Effect.catch((error) => Effect.succeed(error.message)),
+              Effect.as<string | null>(null),
+              Effect.catchTags({
+                GitHubApiNotFoundError: (error) => Effect.succeed(error.message),
+                GitHubApiResponseError: (error) => Effect.succeed(error.message),
+              }),
               Effect.map((detail) => outcomes.set(runId, detail)),
             ),
         { concurrency: 2, discard: true },

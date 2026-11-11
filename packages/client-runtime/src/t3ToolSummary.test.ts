@@ -76,6 +76,26 @@ describe("summarizeT3ToolCalls", () => {
     ).toBe("Merged 1 pull request, queued 1");
   });
 
+  it("counts the checks a CI rerun restarted, and the ones the host refused", () => {
+    const rerun = (...outcomes: boolean[]) =>
+      completed(
+        {},
+        { checks: outcomes.map((outcome, index) => ({ name: `c${index}`, rerun: outcome })) },
+      );
+    expect(summarizeT3ToolCalls("ci-rerun", [rerun(true, true)])).toEqual({
+      label: "Re-ran 2 checks",
+      failedCount: 0,
+    });
+    expect(summarizeT3ToolCalls("ci-rerun", [rerun(true, false)])).toEqual({
+      label: "Re-ran 1 check, 1 refused",
+      failedCount: 1,
+    });
+    expect(summarizeT3ToolCalls("ci-rerun", [rerun(false)])).toEqual({
+      label: "Could not re-run 1 check",
+      failedCount: 1,
+    });
+  });
+
   it("excludes failed and unfinished sends even if the provider reports completed", () => {
     const calls: T3ToolSummaryCall[] = [
       completed({ threadId: "success" }, { messageId: "ok", threadId: "success" }),

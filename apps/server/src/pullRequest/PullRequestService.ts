@@ -3826,13 +3826,19 @@ export const make = Effect.gen(function* () {
     }
     const checks = yield* selectChecks(project, input, "rerunChecks");
     if (checks.length === 0) return [];
+    const ref = yield* canonicalRef(input);
     const outcomes = yield* rerun({
       cwd: project.project.workspaceRoot,
       repository: project.repository,
       host: project.host,
       checks,
-    }).pipe(Effect.mapError(toPullRequestError("rerunChecks")));
-    yield* readCache.invalidate(refScope(yield* canonicalRef(input)));
+    }).pipe(
+      Effect.mapError(toPullRequestError("rerunChecks")),
+      Effect.ensuring(readCache.invalidate(refScope(ref))),
+    );
+    bumpRefEpoch(ref);
+    listingsEpoch = ++epochCounter;
+    yield* SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
     return outcomes;
   });
 
