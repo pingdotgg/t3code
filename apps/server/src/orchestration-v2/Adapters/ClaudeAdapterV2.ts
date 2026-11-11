@@ -4110,18 +4110,20 @@ function gatewayCooldownResetAt(
 }
 
 const CLAUDE_UNSUPPORTED_VERSION_ERROR =
-  /^API Error: 400 Claude Code (\d+\.\d+\.\d+) does not support this model; version \d+\.\d+\.\d+ or newer is required\./;
+  /^API Error: 400 Claude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\./;
 
-/** The version a gateway sent in place of the session's own, when a model error names an older one. */
+/** The version a gateway sent in place of the session's own, when the session itself meets the requirement. */
 function claudeRewrittenVersion(
   message: SDKResultMessage,
   sessionVersion: string | undefined,
 ): string | undefined {
   if (message.subtype !== "success" || message.terminal_reason !== "api_error") return undefined;
-  const reported = CLAUDE_UNSUPPORTED_VERSION_ERROR.exec(message.result.trim())?.[1];
-  return reported !== undefined &&
-    sessionVersion !== undefined &&
-    compareSemverVersions(reported, sessionVersion) < 0
+  const [, reported, required] = CLAUDE_UNSUPPORTED_VERSION_ERROR.exec(message.result.trim()) ?? [];
+  if (reported === undefined || required === undefined || sessionVersion === undefined) {
+    return undefined;
+  }
+  return compareSemverVersions(reported, sessionVersion) < 0 &&
+    compareSemverVersions(sessionVersion, required) >= 0
     ? reported
     : undefined;
 }

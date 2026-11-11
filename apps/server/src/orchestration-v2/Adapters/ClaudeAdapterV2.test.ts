@@ -6597,9 +6597,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       },
       { name: "a model version error without a custom endpoint", installed: "2.1.322" },
       {
-        name: "a model version error from an outdated Claude Code",
+        name: "a model version error from a Claude Code still below the required version",
         baseUrl: "https://gateway.example.test/v1",
-        installed: "2.1.280",
+        installed: "2.1.285",
       },
     ].map((row) => {
       const result =
