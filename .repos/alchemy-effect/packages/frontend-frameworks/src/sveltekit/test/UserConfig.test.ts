@@ -47,10 +47,7 @@ const runConfigHook = async (
 ): Promise<void> => {
   const hook = plugin.config as {
     order?: string;
-    handler: (
-      config: ViteModule.UserConfig,
-      env: ViteModule.ConfigEnv,
-    ) => Promise<unknown>;
+    handler: (config: ViteModule.UserConfig, env: ViteModule.ConfigEnv) => Promise<unknown>;
   };
   await hook.handler(config, configEnv);
 };

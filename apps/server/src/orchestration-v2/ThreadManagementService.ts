@@ -11,9 +11,13 @@ import type {
 import {
   type ChatAttachment,
   CommandId,
+  isListedThreadLineage,
   MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
+  OrchestrationV2ForceStopThreadError,
+  type OrchestrationV2ForceStopThreadInput,
+  type OrchestrationV2ForceStopThreadResult,
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
@@ -30,6 +34,7 @@ import {
   ProjectId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ProviderInstanceId,
+  type ProviderSessionId,
   resolveProjectProviderInstanceEnabled,
   RunId,
   type ScheduledTaskId,
@@ -38,10 +43,13 @@ import {
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
+import { AgentScope } from "@t3tools/shared/AgentScope";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -138,6 +146,8 @@ export interface ThreadManagementSendInput {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadManagementSendMode;
+  /** Start a new provider session; the orchestrator queues it instead of steering. */
+  readonly freshContext?: boolean;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -394,10 +404,16 @@ export interface ThreadManagementServiceShape {
     ProjectionRecords<K>,
     ThreadManagementProjectionLoadError | ThreadManagementThreadNotFoundError
   >;
-  readonly getShellSnapshot: (options?: {
-    readonly location?: "active" | "archive";
-  }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>;
+  readonly getAgentAwarenessSnapshot: Orchestrator.OrchestratorV2["Service"]["getAgentAwarenessSnapshot"];
+  readonly getShellSnapshot: (
+    options?: Pick<
+      ShellSnapshotOptions,
+      "location" | "projectId" | "unsettledOnly" | "worktreePath" | "threadIds"
+    >,
+  ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>;
   readonly listActiveSubagentThreadIds: Orchestrator.OrchestratorV2["Service"]["listActiveSubagentThreadIds"];
+  readonly countThreads: Orchestrator.OrchestratorV2["Service"]["countThreads"];
+  readonly listActiveShellIndex: Orchestrator.OrchestratorV2["Service"]["listActiveShellIndex"];
   readonly listOlderSettledThreads: Orchestrator.OrchestratorV2["Service"]["listOlderSettledThreads"];
   readonly readShellSnapshot: (
     options?: Pick<ShellSnapshotOptions, "location" | "familyOf" | "worktreePath" | "threadIds">,
@@ -406,7 +422,10 @@ export interface ThreadManagementServiceShape {
     Orchestrator.OrchestratorV2Error
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
-  /** Omit `projectId` to list every project's threads. */
+  readonly listAppOwnedChildThreadIds: Orchestrator.OrchestratorV2["Service"]["listAppOwnedChildThreadIds"];
+  readonly getThreadLinkMetadata: Orchestrator.OrchestratorV2["Service"]["getThreadLinkMetadata"];
+  readonly getThreadTitles: Orchestrator.OrchestratorV2["Service"]["getThreadTitles"];
+  /** Omit `projectId` to list every project's threads. Side chats are never listed. */
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
     readonly includeSubagents: boolean;
@@ -428,8 +447,8 @@ export interface ThreadManagementServiceShape {
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
-  /** Waits for the agent's run to end before settling its thread and stopping the session.
-   * Other endings or settle refusals leave the thread active. */
+  /** Waits for the agent's run and automatic follow-ups before settling.
+   * A new user turn or an unsuccessful ending leaves the thread active. */
   readonly settleAfterRun: (input: {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
@@ -449,6 +468,13 @@ export interface ThreadManagementServiceShape {
   readonly stopWorkflow: (
     input: OrchestrationV2StopWorkflowInput,
   ) => Effect.Effect<void, OrchestrationV2StopWorkflowError>;
+  /**
+   * Kills the thread's agent for a provider that no longer responds, then ends
+   * its turn as interrupted. Never kills a process other working threads share.
+   */
+  readonly forceStopThread: (
+    input: OrchestrationV2ForceStopThreadInput,
+  ) => Effect.Effect<OrchestrationV2ForceStopThreadResult, OrchestrationV2ForceStopThreadError>;
   readonly awaitBackgroundTasks: (input: {
     readonly threadId: ThreadId;
     readonly taskIds: ReadonlyArray<string>;
@@ -478,13 +504,15 @@ export class ThreadManagementService extends Context.Service<
   ThreadManagementServiceShape
 >()("t3/orchestration-v2/ThreadManagementService") {}
 
+export const ACTIVE_RUN_STATUSES = [
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+] as const satisfies ReadonlyArray<OrchestrationV2Run["status"]>;
+
 export function isActiveRun(run: OrchestrationV2Run): boolean {
-  return (
-    run.status === "preparing" ||
-    run.status === "starting" ||
-    run.status === "running" ||
-    run.status === "waiting"
-  );
+  return (ACTIVE_RUN_STATUSES as ReadonlyArray<OrchestrationV2Run["status"]>).includes(run.status);
 }
 
 export function isTerminalRunStatus(
@@ -542,12 +570,16 @@ function latestSteerableRun(
 }
 
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
+const FORCE_STOP_REASON = "Force stopped by user";
+const FORCE_STOP_RELEASE_WAIT = "10 seconds";
+const isForceStopThreadError = Schema.is(OrchestrationV2ForceStopThreadError);
 
 const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const layerScope = yield* Effect.scope;
+  const agentScope = yield* AgentScope;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
@@ -701,6 +733,22 @@ const make = Effect.gen(function* () {
             }),
           ),
         );
+      case "prepared-run.release":
+      case "prepared-run.retry":
+        return orchestrator
+          .getThreadRecords(command.threadId, ["runs"], { runIds: [command.runId] })
+          .pipe(
+            Effect.flatMap((projection) => {
+              const run = projection.runs.find((candidate) => candidate.id === command.runId);
+              return run === undefined
+                ? Effect.void
+                : assertProviderInstanceEnabled({
+                    projectId: projection.thread.projectId,
+                    commandId: command.commandId,
+                    instanceId: run.providerInstanceId,
+                  });
+            }),
+          );
       default:
         return Effect.void;
     }
@@ -754,9 +802,10 @@ const make = Effect.gen(function* () {
         ),
         Effect.map((snapshot) =>
           snapshot.threads
-            .filter(
-              (thread) =>
-                input.includeSubagents || thread.lineage.relationshipToParent !== "subagent",
+            .filter((thread) =>
+              input.includeSubagents
+                ? thread.lineage.sideChat !== true
+                : isListedThreadLineage(thread.lineage),
             )
             .toSorted(
               (left, right) =>
@@ -776,26 +825,31 @@ const make = Effect.gen(function* () {
       });
     }
     const steerableRun = latestSteerableRun(target);
+    // A fresh send never joins a running turn, so it needs none to steer or restart.
+    const mode =
+      input.freshContext && (input.mode === "steer" || input.mode === "restart")
+        ? "queue"
+        : input.mode;
     let dispatchMode: Extract<
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if (input.mode === "steer" || input.mode === "restart") {
+    if (mode === "steer" || mode === "restart") {
       if (steerableRun === undefined) {
         return yield* new ThreadManagementNoSteerableRunError({
           threadId: input.threadId,
-          mode: input.mode,
+          mode,
         });
       }
       dispatchMode = {
-        type: input.mode === "steer" ? "steer_active" : "restart_active",
+        type: mode === "steer" ? "steer_active" : "restart_active",
         targetRunId: steerableRun.id,
       };
-    } else if (input.mode === "auto" && steerableRun !== undefined) {
+    } else if (mode === "auto" && steerableRun !== undefined) {
       dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
     } else {
       dispatchMode = {
-        type: input.mode === "queue" ? "queue_after_active" : "start_immediately",
+        type: mode === "queue" ? "queue_after_active" : "start_immediately",
       };
     }
 
@@ -809,6 +863,7 @@ const make = Effect.gen(function* () {
       text: input.text,
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.freshContext ? { freshContext: true } : {}),
       dispatchMode,
       createdBy: input.createdBy,
       creationSource: input.creationSource,
@@ -844,7 +899,7 @@ const make = Effect.gen(function* () {
         ? "queued"
         : turnItem.inputIntent === "turn_start"
           ? "started"
-          : input.mode === "restart"
+          : mode === "restart"
             ? "restarted"
             : "steered";
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
@@ -899,7 +954,7 @@ const make = Effect.gen(function* () {
       const records = yield* getProjectThreadRecords(
         input,
         ["runs", "messages", "subagents", "providerThreads"],
-        { messageRoles: ["user"] },
+        { messageRoles: ["user"], monitorNotificationsOnly: true },
       );
       const progress = delegatedTaskProgress(records);
       // A thread rolled back past all its work, with nothing left running, has no answer to wait for.
@@ -992,11 +1047,74 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
     if (run?.status !== "completed") return;
-    yield* dispatch({
-      type: "thread.settle",
-      commandId: CommandId.make(`server:settle-after-run:${input.runId}`),
-      threadId: input.threadId,
+    const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
+    const trySettle = Effect.gen(function* () {
+      const sequence = yield* orchestrator.getThreadEventSequence(input.threadId);
+      const records = yield* getProjectThreadRecords(input, ["runs"]);
+      const following = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
+      if (following.length > 0) {
+        const { messages } = yield* getProjectThreadRecords(input, ["messages"], {
+          messageRunIds: following.map((candidate) => candidate.id),
+          messageRoles: ["user"],
+        });
+        const automaticMessageIds = new Set(
+          messages
+            .filter(
+              (message) =>
+                message.role === "user" &&
+                (message.notification !== undefined || message.delegatedCompletion !== undefined),
+            )
+            .map((message) => message.id),
+        );
+        if (
+          messages.some((message) => !automaticMessageIds.has(message.id)) ||
+          following.some((candidate) => !automaticMessageIds.has(candidate.userMessageId))
+        ) {
+          return true;
+        }
+        if (
+          following.some(
+            (candidate) => candidate.status !== "queued" && !isTerminalRunStatus(candidate.status),
+          )
+        )
+          return false;
+        if (
+          following.some(
+            (candidate) => candidate.status !== "queued" && candidate.status !== "completed",
+          )
+        )
+          return true;
+      }
+      const latest = latestRun(records);
+      if (latest === undefined) return true;
+      return yield* dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`server:settle-after-run:${input.runId}:${sequence}`),
+        threadId: input.threadId,
+        expectedLatestRunId: latest.id,
+      }).pipe(
+        Effect.as(true),
+        // A notification can start between the projection read and the guarded dispatch.
+        Effect.catchTags({
+          OrchestratorDispatchError: () => Effect.succeed(false),
+          OrchestratorCommandPreviouslyRejectedError: () => Effect.succeed(false),
+        }),
+      );
     });
+    yield* Stream.fromEffect(trySettle).pipe(
+      Stream.concat(
+        orchestrator
+          .streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence,
+            eventType: "run.updated",
+          })
+          .pipe(Stream.mapEffect(() => trySettle)),
+      ),
+      Stream.filter((done) => done),
+      Stream.runHead,
+      Effect.timeoutOption(Duration.millis(SETTLE_AFTER_RUN_WAIT_MS)),
+    );
   });
 
   const settleThread: ThreadManagementServiceShape["settleThread"] = Effect.fn(
@@ -1066,6 +1184,153 @@ const make = Effect.gen(function* () {
     });
     return { type: "interrupt_requested", run: interruptibleRun, dispatch } as const;
   });
+
+  const forceStopThread: ThreadManagementServiceShape["forceStopThread"] = Effect.fn(
+    "ThreadManagementService.forceStopThread",
+  )(
+    function* (input) {
+      // Under the thread lock no new run can be created between the check and the kill. The
+      // settlement below dispatches, which takes that lock itself, so it runs after release.
+      const { records, target, killed } = yield* threadDispatch.withLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const records = yield* orchestrator.getThreadRecords(input.threadId, [
+            "runs",
+            "providerThreads",
+            "providerTurns",
+          ]);
+          // The run Force stop acts on: the active one, else the latest that started. Queued
+          // follow-ups never ran, so they neither count as targets nor supersede the request.
+          const target =
+            latestActiveRun(records) ??
+            records.runs
+              .filter((run) => run.status !== "queued")
+              .reduce<OrchestrationV2Run | undefined>(
+                (current, run) =>
+                  current === undefined || run.ordinal > current.ordinal ? run : current,
+                undefined,
+              );
+          if (input.runId !== undefined && input.runId !== target?.id) {
+            return yield* new OrchestrationV2ForceStopThreadError({
+              threadId: input.threadId,
+              reason: "superseded",
+            });
+          }
+          // Shared scopes are never tracked per thread, so this only kills the thread's own agent.
+          const killed = yield* agentScope.kill(input.threadId);
+          return { records, target, killed };
+        }),
+      );
+      const sessionIds = new Set(
+        records.providerThreads.flatMap((providerThread) =>
+          providerThread.appThreadId === input.threadId && providerThread.providerSessionId !== null
+            ? [providerThread.providerSessionId]
+            : [],
+        ),
+      );
+      // A run that already ended may still hold background work; settling it is a no-op otherwise.
+      const run = target;
+      if (run !== undefined) {
+        const active = isActiveRun(run);
+        const providerTurn = records.providerTurns.findLast(
+          (turn) =>
+            turn.runAttemptId === run.activeAttemptId && (!active || turn.status === "running"),
+        );
+        const commandId = CommandId.make(
+          `server:force-stop:${run.id}:${yield* Clock.currentTimeMillis}`,
+        );
+        yield* providerTurn === undefined && !active
+          ? Effect.void
+          : providerTurn === undefined
+            ? orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId,
+                threadId: input.threadId,
+                runId: run.id,
+                reason: FORCE_STOP_REASON,
+              })
+            : orchestrator.dispatch({
+                type: "thread.background-work.settle",
+                commandId,
+                threadId: input.threadId,
+                providerThreadId: providerTurn.providerThreadId,
+                providerTurnId: providerTurn.id,
+                reason: FORCE_STOP_REASON,
+              });
+      }
+      const ownProviderThreadIds = records.providerThreads.flatMap((providerThread) =>
+        providerThread.appThreadId === input.threadId ? [providerThread.id] : [],
+      );
+      const detach = (providerSessionId: ProviderSessionId) =>
+        sessions
+          .detach({ providerSessionId, threadId: input.threadId, detail: FORCE_STOP_REASON })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.force-stop-detach-failed", {
+                threadId: input.threadId,
+                cause,
+              }),
+            ),
+            Effect.forkIn(layerScope),
+          );
+      let shared = false;
+      const sharedWith = new Set<ThreadId>();
+      const releases: Array<{
+        readonly providerSessionId: ProviderSessionId;
+        readonly fiber: Fiber.Fiber<boolean, ProviderSessionManager.ProviderSessionManagerV2Error>;
+      }> = [];
+      for (const providerSessionId of sessionIds) {
+        if (!(yield* sessions.isLive(providerSessionId))) continue;
+        // Decided just before teardown, so the reply matches what happens to the process.
+        const others = yield* sessions.otherWorkingThreads({
+          providerSessionId,
+          threadId: input.threadId,
+        });
+        for (const threadId of others) sharedWith.add(threadId);
+        if (others.length > 0) {
+          shared = true;
+          yield* detach(providerSessionId);
+          continue;
+        }
+        // The session manager re-checks atomically with turn starts and keeps a session a
+        // sibling began using in the meantime.
+        const fiber = yield* sessions
+          .releaseUnlessBusy({
+            providerSessionId,
+            ownProviderThreadIds,
+            reason: "manual_shutdown",
+            detail: FORCE_STOP_REASON,
+          })
+          .pipe(Effect.forkIn(layerScope));
+        releases.push({ providerSessionId, fiber });
+      }
+      // Teardown waits on the provider's own exit paths; past this bound it keeps going on its own.
+      let releasing = false;
+      for (const release of releases) {
+        const released = yield* Fiber.join(release.fiber).pipe(
+          Effect.timeoutOption(FORCE_STOP_RELEASE_WAIT),
+        );
+        if (Option.isNone(released)) {
+          releasing = true;
+        } else if (!released.value) {
+          shared = true;
+          yield* detach(release.providerSessionId);
+        }
+      }
+      return {
+        outcome: killed ? "killed" : shared ? "shared" : releasing ? "releasing" : "released",
+        sharedWithThreadIds: [...sharedWith],
+      } as const;
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          isForceStopThreadError(cause)
+            ? cause
+            : new OrchestrationV2ForceStopThreadError({ threadId: input.threadId, cause }),
+        ),
+      ),
+  );
 
   const stopWorkflow: ThreadManagementServiceShape["stopWorkflow"] = Effect.fn(
     "ThreadManagementService.stopWorkflow",
@@ -1331,11 +1596,23 @@ const make = Effect.gen(function* () {
     getThreadTranscript,
     getThreadSnapshotWindow,
     getProjectThreadRecords,
+    getAgentAwarenessSnapshot: orchestrator.getAgentAwarenessSnapshot,
     getShellSnapshot: orchestrator.getShellSnapshot,
     listActiveSubagentThreadIds: orchestrator.listActiveSubagentThreadIds,
+    countThreads: orchestrator.countThreads,
+    listActiveShellIndex: orchestrator.listActiveShellIndex,
     listOlderSettledThreads: orchestrator.listOlderSettledThreads,
     readShellSnapshot: orchestrator.readShellSnapshot,
     getThreadShell: orchestrator.getThreadShell,
+    listAppOwnedChildThreadIds: Effect.fn("ThreadManagementService.listAppOwnedChildThreadIds")(
+      function (threadId) {
+        return ensureProjectionTranscript(threadId).pipe(
+          Effect.andThen(orchestrator.listAppOwnedChildThreadIds(threadId)),
+        );
+      },
+    ),
+    getThreadTitles: orchestrator.getThreadTitles,
+    getThreadLinkMetadata: orchestrator.getThreadLinkMetadata,
     listProjectThreads,
     sendToThread,
     assertProviderInstanceEnabled,
@@ -1347,6 +1624,7 @@ const make = Effect.gen(function* () {
     interruptThread,
     stopDelegatedTasks,
     stopWorkflow,
+    forceStopThread,
     awaitBackgroundTasks,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,

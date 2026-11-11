@@ -20,38 +20,15 @@ const PULL_REQUEST_NUMBER = /\(#(\d+)\)$/;
 const PULL_REQUEST_BODY_LIMIT = 300;
 const SUMMARY_MODEL = "gpt-6.1-terra";
 
-const SUMMARY_INSTRUCTIONS = `You write release notes for T3 Code, a GUI for coding agents (web and desktop apps backed by a server; providers like Codex, Claude, Cursor, OpenCode).
+const SUMMARY_INSTRUCTIONS = `Write up to 7 bullet points for the T3 Code update popover. Cover web, desktop, and server. Mobile has its own release notes.
 
-These notes cover the web app, desktop app, and server only. The mobile app has its own release notes, so leave out anything only about mobile, iOS, or Android.
+Give a feature a bullet only when it lets users do something they could not do before, removes a real limitation they hit in normal use, or cuts meaningful steps or wait time from a common task. Judge the outcome, regardless of the commit prefix. A new setting, a large diff, or support for one more edge case is not enough.
 
-You get the commit subjects merged since the last release, oldest first. Most end with a PR number like (#1234). Each commit shows lines added and removed and files changed, then a trimmed PR description on the next line starting with ">". Use the descriptions to understand what changed for users and why it matters. Line counts hint at size, but a small change can still matter most.
+Lead with new capabilities. Give a bug fix its own bullet only when the source shows lost work or a core workflow that users could not complete in normal use. Leave isolated failures, cosmetic polish, and routine fixes in the count. Skip internal work, docs, tests, and dependency bumps. Group commits only when they deliver the same user outcome. Seven is a ceiling. Stop when the qualifying changes run out, even if that leaves zero bullets.
 
-Output Markdown in exactly this shape and nothing else:
+Each bullet has a short feature name and one sentence of at most 20 words. Say what the user can do or what now works. Use product names people see in the app and leave out protocol or implementation details. Describe the shipped behavior at the end of the range. Mark user-accessible Labs or beta features "(beta)". Skip dev-only features. No title, headings, introduction, example prompts, hype, PR numbers, or em dashes.
 
-## Highlights
-Up to 4 short sentences. Name only the new features a user would care about most. If no new feature matters to users, write one sentence about the most important fix. Each feature gets a few words that make the benefit clear, not a description of how it works or where the button is.
-
-## Fixes
-- Up to 10 bullets, one fix each, under 10 words, ending with the PR number like (#123). Fewer is fine. Never pad.
-- Each bullet names what was broken and says it works now. A user who hit the bug should recognize it.
-- Only list fixes from fix commits. New abilities go in Highlights or nowhere. Say "again" only if the commit says it.
-
-How to write:
-- Pick only significant, user-facing changes. Leave out visual polish (focus rings, spacing, colors), layout tweaks, refactors, tests, CI, build, docs, deps, internal tooling, and performance or efficiency work a user would not feel.
-- Include Labs and beta features, with "(beta)" after the feature. Leave out work marked internal testing or dev-only.
-- Describe each feature as it is at the end of the range. If a beta feature became standard later in the range, it is not beta.
-- Say what the user gets, as short as possible. Cut details, conditions, and mechanics.
-- No defaults or rollout state ("on by default", "now available", "behind a flag").
-- For lists of file types or formats, use common extensions: "previews for .docx, .ttf, .sqlite, .zip and more".
-- No internal names, env vars, file paths, or code terms.
-- No em dashes. No hype words. Do not invent anything that is not in the input.
-
-Examples of the tone:
-- Bad: "Cmd+K now finds the right thread first, and it searches message text too." Good: "Much better Cmd+K search."
-- Bad: "You can share a thread with a guest who watches it live and sends messages that you approve." Good: "Share threads with guests, safely."
-- Bad: "Triage issues from the command palette." Good: "Fix and debug T3 Code itself with a new 'triage' command."
-- Bad: "Settings and Usage open as large modals over your thread." Good: leave it out.
-- Bad: "Cmd/Ctrl+W closes tabs safely (#25860)" Good: "Cmd/Ctrl+W no longer closes the whole window (#25860)"`;
+Return JSON with a "highlights" array. For each highlight, give "label" (plain text, no final period), "detail" (one sentence), and "commits" (the bracketed input numbers of all commits it covers). Use the subjects and PR descriptions as source material. The release script adds the formatting, count of remaining fixes and performance improvements, and contributor credit.`;
 
 class EmptyReleaseRangeError extends Schema.TaggedError<EmptyReleaseRangeError>()(
   "EmptyReleaseRangeError",
@@ -101,6 +78,49 @@ const SummaryResponse = Schema.Struct({
   ),
 });
 
+const ReleaseHighlights = Schema.Struct({
+  highlights: Schema.Array(
+    Schema.Struct({
+      label: Schema.NonEmptyString,
+      detail: Schema.NonEmptyString,
+      commits: Schema.NonEmptyArray(Schema.Int),
+    }),
+  ),
+});
+const decodeHighlights = Schema.decodeUnknownOption(Schema.fromJsonString(ReleaseHighlights));
+
+export function formatReleaseSummary(
+  commits: ReadonlyArray<ReleaseCommit>,
+  selected: (typeof ReleaseHighlights.Type)["highlights"],
+): Option.Option<string> {
+  const highlights = selected.slice(0, 7);
+  const covered = new Set(highlights.flatMap((highlight) => highlight.commits));
+  for (const id of covered) {
+    const commit = commits[id - 1];
+    if (!commit || !isReleaseNoteCommit(commit)) return Option.none();
+  }
+  const bullets = highlights.map(
+    ({ label, detail }) => `- **${label.replace(/\.$/, "")}.** ${detail}`,
+  );
+  const remaining = commits.flatMap(({ subject }, index) => {
+    if (covered.has(index + 1)) return [];
+    return /^(fix|perf)(?:\([^)]*\))?!?:/i.exec(subject)?.[1]?.toLowerCase() ?? [];
+  });
+  if (remaining.length === 0) return Option.some(bullets.join("\n"));
+
+  const count = remaining.length;
+  let kind = "bug fixes and performance improvements";
+  if (!remaining.includes("perf")) kind = count === 1 ? "bug fix" : "bug fixes";
+  if (!remaining.includes("fix"))
+    kind = count === 1 ? "performance improvement" : "performance improvements";
+  // Older popovers skip headings. A footer paragraph would hide the bullets on those clients.
+  return Option.some(
+    bullets.length
+      ? `${bullets.join("\n")}\n\n### Plus ${count} more ${kind}.`
+      : `**${count} ${kind}.**`,
+  );
+}
+
 const pullRequestNumber = (subject: string) => {
   const match = PULL_REQUEST_NUMBER.exec(subject);
   return match ? Number(match[1]) : undefined;
@@ -129,11 +149,14 @@ function buildSummaryInput(
   pullRequests: ReadonlyMap<number, PullRequest>,
 ): string {
   return commits
-    .flatMap(({ subject }) => {
+    .flatMap((commit, index) => {
+      if (!isReleaseNoteCommit(commit)) return [];
+      const { subject } = commit;
+      const source = `[${index + 1}] ${subject}`;
       const number = pullRequestNumber(subject);
       const pullRequest = number === undefined ? undefined : pullRequests.get(number);
-      if (!pullRequest) return [subject];
-      const line = `${subject} [+${pullRequest.additions} -${pullRequest.deletions}, ${pullRequest.changedFiles} files]`;
+      if (!pullRequest) return [source];
+      const line = `${source} [+${pullRequest.additions} -${pullRequest.deletions}, ${pullRequest.changedFiles} files]`;
       const body = trimPullRequestBody(pullRequest.body);
       return body ? [line, `  > ${body}`] : [line];
     })
@@ -175,7 +198,8 @@ function buildReleaseHeader(version: string, changes: number, contributors: numb
 
 /** The summary leads; GitHub's full list folds under it. Clients cut the body at `<details>`. */
 function assembleReleaseNotes(header: string, summary: string, fullChangelog: string): string {
-  return `${header}\n\n${summary.trim()}\n\n<details>\n<summary>Full changelog</summary>\n\n${fullChangelog.trim()}\n\n</details>\n`;
+  const folded = `<details>\n<summary>Full changelog</summary>\n\n${fullChangelog.trim()}\n\n</details>\n`;
+  return [header, summary, folded].filter(Boolean).join("\n\n");
 }
 
 const run = Effect.fn("generateReleaseNotes.run")(function* (
@@ -261,7 +285,7 @@ const readFullChangelog = Effect.fn("generateReleaseNotes.readFullChangelog")(fu
   return (yield* decodeJson(GeneratedNotes)(response)).body;
 });
 
-export function summaryText(response: typeof SummaryResponse.Type): Option.Option<string> {
+export function readReleaseHighlights(response: typeof SummaryResponse.Type) {
   // An incomplete response can carry partial text; publishing it would cut the notes short.
   if (response.status !== "completed") return Option.none();
   const text = response.output
@@ -269,7 +293,7 @@ export function summaryText(response: typeof SummaryResponse.Type): Option.Optio
     .flatMap((part) => (part.type === "output_text" && part.text ? [part.text] : []))
     .join("")
     .trim();
-  return text === "" ? Option.none() : Option.some(text);
+  return Option.map(decodeHighlights(text), ({ highlights }) => highlights);
 }
 
 const summarize = Effect.fn("generateReleaseNotes.summarize")(function* (input: string) {
@@ -281,7 +305,8 @@ const summarize = Effect.fn("generateReleaseNotes.summarize")(function* (input: 
       model: SUMMARY_MODEL,
       reasoning: { effort: "low" },
       instructions: SUMMARY_INSTRUCTIONS,
-      input: `Commits:\n${input}`,
+      text: { format: { type: "json_object" } },
+      input: `Choose highlights as JSON from these commits:\n${input}`,
     }),
     Effect.flatMap(httpClient.execute),
     Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -296,7 +321,7 @@ const summarize = Effect.fn("generateReleaseNotes.summarize")(function* (input: 
       outputTokens: response.usage?.output_tokens,
     }),
   );
-  return summaryText(response);
+  return readReleaseHighlights(response);
 });
 
 const command = Command.make(
@@ -311,13 +336,11 @@ const command = Command.make(
   },
   ({ repository, tag, ref, previousTag, version, output }) =>
     Effect.gen(function* () {
-      // The header counts every commit in the range; the summary skips mobile-only work.
       const allCommits = yield* readCommits(previousTag, ref);
       // The spawner ignores exit codes, so a failed git log shows up as an empty range.
       if (allCommits.length === 0) {
         return yield* new EmptyReleaseRangeError({ range: `${previousTag}..${ref}` });
       }
-      const commits = allCommits.filter(isReleaseNoteCommit);
       const numbers = [
         ...new Set(allCommits.flatMap(({ subject }) => pullRequestNumber(subject) ?? [])),
       ];
@@ -333,11 +356,11 @@ const command = Command.make(
         allCommits.length,
         countContributors(allCommits, pullRequests),
       );
-      // With no summary, write nothing: the release falls back to GitHub's generated notes.
-      const summary =
-        commits.length === 0
-          ? Option.none<string>()
-          : yield* summarize(buildSummaryInput(commits, pullRequests));
+      const input = buildSummaryInput(allCommits, pullRequests);
+      const selected = input === "" ? Option.some([]) : yield* summarize(input);
+      const summary = Option.flatMap(selected, (highlights) =>
+        formatReleaseSummary(allCommits, highlights),
+      );
       if (Option.isNone(summary)) {
         return yield* Effect.logWarning("no release summary, leaving GitHub's notes in place");
       }
@@ -349,7 +372,7 @@ const command = Command.make(
       );
       yield* fs.rename(`${output}.tmp`, output);
       yield* Effect.logInfo("release notes written").pipe(
-        Effect.annotateLogs({ output, commits: commits.length }),
+        Effect.annotateLogs({ output, commits: allCommits.length }),
       );
     }),
 ).pipe(
