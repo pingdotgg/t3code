@@ -5,9 +5,19 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
-const { refresh, assetUrlState } = vi.hoisted(() => ({
-  refresh: vi.fn<() => Promise<string | null>>(),
-  assetUrlState: vi.fn<() => import("~/assets/assetUrls").AssetUrlState>(),
+// Prepare the real worker before tests; Vite's worker transform adds a large inline source map.
+const { refresh, assetUrlState, pdfOpens, pdfWorkerUrl } = await vi.hoisted(async () => {
+  const { default: source } = await import("pdfjs-dist/build/pdf.worker.min.mjs?raw");
+  return {
+    refresh: vi.fn<() => Promise<string | null>>(),
+    assetUrlState: vi.fn<() => import("~/assets/assetUrls").AssetUrlState>(),
+    pdfOpens: [] as Array<(task: import("pdfjs-dist").PDFDocumentLoadingTask) => void>,
+    pdfWorkerUrl: URL.createObjectURL(new Blob([source], { type: "text/javascript" })),
+  };
+});
+
+vi.mock(import("pdfjs-dist/build/pdf.worker.min.mjs?url"), () => ({
+  default: pdfWorkerUrl,
 }));
 
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
@@ -15,10 +25,24 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
   useAssetUrlRefresh: () => refresh,
   useAssetUrlState: assetUrlState,
 }));
+// Hands each document pdf.js opens to the PDF test, which awaits its load instead of a poll window.
+vi.mock(import("./pdfDocument"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    openPdf: (bytes) => {
+      const task = actual.openPdf(bytes);
+      pdfOpens.shift()?.(task);
+      return task;
+    },
+  };
+});
 // The real source view highlights through a worker pool; the text it receives is what matters here.
 // Never load the original: its highlighter graph can outlast waitFor on a cold CI browser.
 vi.mock(import("./ReadOnlySourcePreview"), () => ({
-  default: ({ text }: { text: string }) => <pre>{text}</pre>,
+  default: ({ text, wordWrap }: { text: string; wordWrap?: boolean }) => (
+    <pre data-word-wrap={String(wordWrap)}>{text}</pre>
+  ),
 }));
 
 // The Word engine compiles about 30 MB of WebAssembly in a fresh worker per document, which took
@@ -41,16 +65,19 @@ vi.mock(import("./office/WordDocument"), async () => {
   };
 });
 
+import { getClientSettings } from "~/hooks/useSettings";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import LargeTextViewer from "./LargeTextViewer";
 import VirtualTablePreview from "./VirtualTablePreview";
 import { OfficeFilePreview } from "./OfficeFilePreview";
 import { MermaidFilePreview } from "./MermaidFilePreview";
 import JSZip from "jszip";
-import { boundedZip } from "./boundedZip";
+import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import BinaryViewer from "./BinaryViewer";
 import { decodeImagePreview } from "./decodeImagePreview";
 import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
+import type { TextPreviewResult } from "./largeTextProtocol";
+import type { ReactElement } from "react";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
@@ -462,12 +489,20 @@ describe("large text preview recovery", () => {
     const original = URL.createObjectURL(new Blob(["original\n".repeat(1000)]));
     const changed = URL.createObjectURL(new Blob(["changed\n".repeat(1000)]));
     const workers: Worker[] = [];
+    const indexed: Promise<void>[] = [];
     using _worker = stubGlobal(
       "Worker",
       class extends Worker {
         constructor(...args: ConstructorParameters<typeof Worker>) {
           super(...args);
           workers.push(this);
+          indexed.push(
+            new Promise((resolve) =>
+              this.addEventListener("message", (event: MessageEvent<TextPreviewResult>) => {
+                if (event.data.type === "meta" && event.data.complete) resolve();
+              }),
+            ),
+          );
         }
       },
     );
@@ -483,6 +518,7 @@ describe("large text preview recovery", () => {
           workspaceMutationId={mutation}
           revealLine={null}
           revealRequestId={0}
+          wordWrap
         />
       </div>
     );
@@ -499,6 +535,8 @@ describe("large text preview recovery", () => {
       await using screen = await render(preview("first"));
       await vi.waitFor(() => expect(workers).toHaveLength(1));
       await vi.waitFor(() => expect(screen.container.textContent).toContain("original"));
+      // A cold worker can take longer than waitFor allows to load and index on CI.
+      await indexed[0];
       await vi.waitFor(() => expect(screen.container.textContent).toContain("1,000 lines"));
       const viewport = screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
       await act(() =>
@@ -1915,13 +1953,13 @@ it("reloads a workspace Word file after a preview remount", async () => {
 
 it("clears an Office metadata error when the same URL becomes previewable", async () => {
   const src = "data:application/octet-stream,invalid-office-file";
-  let resolveResponse!: (response: Response) => void;
-  const response = new Promise<Response>((resolve) => {
-    resolveResponse = resolve;
+  let resolveBody!: (body: string) => void;
+  const body = new Promise<string>((resolve) => {
+    resolveBody = resolve;
   });
   using _fetch = stubGlobal(
     "fetch",
-    vi.fn(() => response),
+    vi.fn(() => body.then((text) => new Response(text))),
   );
   await using screen = await render(
     <OfficeFilePreview src={src} name="report.docx" kind="docx" sizeBytes={51 * 1024 * 1024} />,
@@ -1934,7 +1972,7 @@ it("clears an Office metadata error when the same URL becomes previewable", asyn
     expect(screen.container.querySelector('[aria-label="Loading file"]')).not.toBeNull(),
   );
   expect(screen.container.textContent).not.toContain("under 50 MB");
-  resolveResponse(new Response("invalid-office-file"));
+  resolveBody("invalid-office-file");
   await vi.waitFor(() => expect(screen.container.textContent).toContain("not a readable ZIP"), {
     timeout: 10_000,
   });
@@ -2143,8 +2181,10 @@ it("refreshes authorization and retries a failed streamed attachment", async () 
         asset={{ environmentId: EnvironmentId.make("test"), attachmentId: "retry" }}
       />,
     );
-    await vi.waitFor(() =>
-      expect(screen.container.textContent).toContain("This file contains binary data."),
+    // A cold large-text worker can take longer than waitFor's default to boot on CI.
+    await vi.waitFor(
+      () => expect(screen.container.textContent).toContain("This file contains binary data."),
+      { timeout: 10_000 },
     );
     await act(() =>
       screen.container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click(),
@@ -2206,7 +2246,10 @@ it("copies every indexed line rather than the mounted preview rows", async () =>
     <LargeTextViewer name="whole.txt" text={text} delimiter={null} copyContents={copyContents} />,
   );
   await vi.waitFor(() => expect(screen.container.textContent).toContain("line-0"));
-  await vi.waitFor(async () => expect(await copyContents.current!()).toBe(text));
+  // Copy rejects until the worker finishes indexing, which a cold worker can delay past waitFor's default on CI.
+  await vi.waitFor(async () => expect(await copyContents.current!()).toBe(text), {
+    timeout: 10_000,
+  });
   const first = copyContents.current!();
   await expect(copyContents.current!()).rejects.toThrow("Another copy is in progress.");
   expect(await first).toBe(text);
@@ -2281,12 +2324,16 @@ it("loads a font attachment through the lazy preview", async () => {
       file={file}
     />,
   );
-  await vi.waitFor(() => {
-    const frame = screen.container.querySelector("iframe");
-    expect(frame?.title).toBe("Carlito.ttf");
-    expect(frame?.srcdoc).toContain("@font-face");
-    expect(frame?.srcdoc).toContain("The quick brown fox");
-  });
+  // Two cold lazy chunks plus decoding a 600 KB font can take longer than waitFor's default on CI.
+  await vi.waitFor(
+    () => {
+      const frame = screen.container.querySelector("iframe");
+      expect(frame?.title).toBe("Carlito.ttf");
+      expect(frame?.srcdoc).toContain("@font-face");
+      expect(frame?.srcdoc).toContain("The quick brown fox");
+    },
+    { timeout: 10_000 },
+  );
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
@@ -2319,6 +2366,212 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
     expect(screen.container.querySelector("[data-markdown-mermaid] svg path")).not.toBeNull(),
   );
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("keeps a workspace PDF open across URL renewals and reloads it when the file changes", async () => {
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(true);
+  const original = URL.createObjectURL(new Blob(["%PDF-1.4"], { type: "application/pdf" }));
+  const edited = URL.createObjectURL(new Blob(["%PDF-1.4 edited"], { type: "application/pdf" }));
+  const preview = (mutation: string) => (
+    <WorkspaceBrowserPreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/repo/planning.pdf"
+      title="Planning PDF"
+      workspaceMutationId={mutation}
+    />
+  );
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: `${original}#initial`,
+    expiresAt: 0,
+    fileRevision: "one",
+  });
+  try {
+    await using screen = await render(preview("first"));
+    const opened = screen.container.querySelector("iframe");
+    expect(opened?.src.startsWith(original)).toBe(true);
+
+    // An agent command renews the signed URL but leaves the file alone.
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: `${original}#renewed`,
+      expiresAt: 0,
+      fileRevision: "one",
+    });
+    await screen.rerender(preview("second"));
+    expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "second");
+    expect(screen.container.querySelector("iframe")).toBe(opened);
+
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: edited,
+      expiresAt: 0,
+      fileRevision: "two",
+    });
+    await screen.rerender(preview("third"));
+    const reloaded = screen.container.querySelector("iframe");
+    expect(reloaded).not.toBe(opened);
+    expect(reloaded?.src.startsWith(edited)).toBe(true);
+
+    // Servers without revisions hold the preview back until a fresh grant arrives.
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: `${edited}#stale`,
+      expiresAt: 0,
+      waiting: true,
+    });
+    await screen.rerender(preview("fourth"));
+    expect(screen.container.querySelector("iframe")).toBeNull();
+    assetUrlState.mockReturnValue({ _tag: "Success", url: original, expiresAt: 0 });
+    await screen.rerender(preview("fourth"));
+    expect(screen.container.querySelector("iframe")?.src.startsWith(original)).toBe(true);
+  } finally {
+    URL.revokeObjectURL(original);
+    URL.revokeObjectURL(edited);
+  }
+});
+function planningPdf(
+  titles = ["Quarterly outlook", "Delivery milestones", "Budget and risks"],
+  firstHeight = 140,
+  pageHeight = 792,
+) {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Pages /Count ${titles.length} /Kids [${titles.map((_, index) => `${3 + index * 2} 0 R`).join(" ")}] >>`,
+  ];
+  const font = 3 + titles.length * 2;
+  for (const [index, title] of titles.entries()) {
+    const text = `/GS1 gs BT /F1 24 Tf 30 ${index === 0 ? 70 : 700} Td ${index === 0 ? "(Quarter) Tj /F2 24 Tf (ly outlook) Tj" : `(${title}) Tj`} ET`;
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 ${index === 0 ? firstHeight : pageHeight}] /Rotate ${index === 2 ? 90 : 0} /Resources << /Font << /F1 ${font} 0 R /F2 ${font + 1} 0 R >> /ExtGState << /GS1 << /TR << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 2 >> >> >> >> /Contents ${4 + index * 2} 0 R >>`,
+      `<< /Length ${text.length} >>\nstream\n${text}\nendstream`,
+    );
+  }
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  let source = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(source.length);
+    source += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = source.length;
+  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new Blob([source], { type: "application/pdf" });
+}
+
+// Resolves once pdf.js has parsed the next document and every page size the viewer reads.
+function nextPdfLoad() {
+  return new Promise<import("pdfjs-dist").PDFDocumentLoadingTask>((resolve) =>
+    pdfOpens.push(resolve),
+  ).then(async (task) => {
+    const document = await task.promise;
+    await Promise.all(
+      Array.from({ length: document.numPages }, (_, index) => document.getPage(index + 1)),
+    );
+  });
+}
+
+it("keeps a workspace PDF's page, offset and zoom when a new revision reloads it", async () => {
+  assetUrlState.mockReset();
+  pdfOpens.length = 0;
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(false);
+  const original = URL.createObjectURL(planningPdf());
+  // A taller first page moves page 2, so only a page-relative restore lands on the same spot.
+  const updated = URL.createObjectURL(
+    planningPdf(["Quarterly outlook", "Delivery milestones", "Updated budget"], 500),
+  );
+  const preview = (src: string, mutation: string, path = "/repo/planning.pdf") => {
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: `${src}#preview`,
+      expiresAt: Date.now() + 3_600_000,
+    });
+    return (
+      <div className="flex h-[600px] w-[320px]">
+        <WorkspaceBrowserPreview
+          environmentId={EnvironmentId.make("test")}
+          threadRef={{
+            environmentId: EnvironmentId.make("test"),
+            threadId: ThreadId.make(original),
+          }}
+          draft={false}
+          absolutePath={path}
+          workspaceRoot="/repo"
+          title="Planning PDF"
+          workspaceMutationId={mutation}
+        />
+      </div>
+    );
+  };
+  const reload = async (screen: Screen, element: ReactElement) => {
+    const loaded = nextPdfLoad();
+    await screen.rerender(element);
+    await loaded;
+  };
+  try {
+    const loaded = nextPdfLoad();
+    await using screen = await render(preview(original, "one"));
+    await loaded;
+    await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
+    using workers = vi.spyOn(window, "Worker");
+    const region = () => screen.getByRole("region", { name: "Planning PDF" }).element();
+    const offset = () =>
+      region().getBoundingClientRect().top -
+      region().querySelector('canvas[aria-label="Page 2"]')!.getBoundingClientRect().top;
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await screen.getByRole("button", { name: "Next page", exact: true }).click();
+    await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
+    const zoom = screen.container.textContent!.match(/\d+%/)![0];
+    const top = region().scrollTop + 100;
+    await act(async () => {
+      const scrolled = new Promise((resolve) =>
+        region().addEventListener("scroll", resolve, { once: true }),
+      );
+      region().scrollTo({ top, left: 80 });
+      await scrolled;
+    });
+    const savedOffset = offset();
+
+    await reload(screen, preview(updated, "two"));
+    await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
+    expect(screen.container.textContent).toContain(zoom);
+    expect(region().scrollLeft).toBe(80);
+    expect(offset()).toBeCloseTo(savedOffset, 0);
+    expect(workers).not.toHaveBeenCalled();
+
+    await reload(screen, preview(updated, "two", "/repo/another.pdf"));
+    await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
+    expect(screen.container.textContent).toContain("Fit width");
+    expect(region().scrollTop).toBe(0);
+  } finally {
+    URL.revokeObjectURL(original);
+    URL.revokeObjectURL(updated);
+  }
+});
+
+it("unwraps one text attachment without turning off the word wrap setting", async () => {
+  const file = new Blob(["a long line"], { type: "text/plain" });
+  await using screen = await render(
+    <AttachmentFilePreview
+      name="notes.txt"
+      mimeType={file.type}
+      sizeBytes={file.size}
+      file={file}
+    />,
+  );
+  await screen.getByRole("button", { name: "Disable word wrap" }).click();
+  await expect.element(screen.getByRole("button", { name: "Enable word wrap" })).toBeVisible();
+  expect(getClientSettings().wordWrap).toBe(true);
+  expect(screen.container.querySelector("pre")?.dataset.wordWrap).toBe("false");
 });
 
 it("mounts a bounded set of saved notebook outputs as the reader scrolls", async () => {

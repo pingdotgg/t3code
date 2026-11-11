@@ -1,5 +1,5 @@
-import { Pool } from "pg";
 import { attachDatabasePool } from "@neon/functions";
+import { Pool } from "pg";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 attachDatabasePool(pool);

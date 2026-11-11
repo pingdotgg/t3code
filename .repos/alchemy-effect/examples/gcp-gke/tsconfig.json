@@ -11,6 +11,8 @@
   "references": [
     {
       "path": "../../packages/alchemy/tsconfig.json"
-    }
+    },
+    { "path": "../../packages/kubernetes/tsconfig.json" },
+    { "path": "../../packages/gcp/tsconfig.json" }
   ]
 }

@@ -48,7 +48,7 @@ function setPromptQueue(next: readonly DesktopSshPasswordPromptRequest[]) {
  */
 export function startSshPasswordPromptQueue(): () => void {
   return (
-    window.desktopBridge?.onSshPasswordPrompt?.((request) => {
+    window.desktopBridge?.onSshPasswordPrompt((request) => {
       setPromptQueue([...promptQueue, request]);
     }) ?? (() => undefined)
   );
