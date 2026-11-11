@@ -926,7 +926,7 @@ function isStalePullRequestWatchWake(
   return (
     link.watch === undefined ||
     link.watch.startedAt !== stamp.watchStartedAt ||
-    link.watch.headSha !== stamp.headSha ||
+    (stamp.headSha !== null && link.watch.headSha !== stamp.headSha) ||
     pullRequestSnapshotEndsWatch(link.snapshot, link.watch.startedAt)
   );
 }
@@ -3400,7 +3400,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     pullRequest: {
                       ...key,
                       watchStartedAt: command.startedAt,
-                      headSha: command.watch?.headSha ?? null,
+                      headSha:
+                        command.wake.includesRemarks === true
+                          ? null
+                          : (command.watch?.headSha ?? null),
                       ...(command.watch === null ? { watchEnded: true } : {}),
                     },
                   }

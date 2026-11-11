@@ -4436,6 +4436,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     "merged",
     "closed",
     "newer head",
+    "comments then newer head",
     "still watching",
     "closed notice",
     "closed notice unlinked and relinked",
@@ -4451,7 +4452,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const finalNotice =
         mode === "closed notice" || mode === "closed notice unlinked and relinked";
       const deliverable =
-        mode === "still watching" || mode === "closed notice" || mode === "reopened";
+        mode === "still watching" ||
+        mode === "closed notice" ||
+        mode === "reopened" ||
+        mode === "comments then newer head";
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         createdBy: "user",
@@ -4481,6 +4485,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             outcome: "updated",
             summary: finalNotice ? "#7: closed, stopped watching" : "#7: checks failed",
           },
+          ...(mode === "comments then newer head" ? { includesRemarks: true } : {}),
         },
       });
       const userMessageId = MessageId.make(`${threadId}-user`);
@@ -4576,7 +4581,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           },
           stack: null,
         });
-      } else if (mode === "newer head") {
+      } else if (mode === "newer head" || mode === "comments then newer head") {
         yield* orchestrator.dispatch({
           type: "thread.pull-request-watch.sync",
           commandId: CommandId.make(`${threadId}-advance`),
