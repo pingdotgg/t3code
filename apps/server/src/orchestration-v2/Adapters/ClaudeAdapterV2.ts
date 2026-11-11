@@ -11172,6 +11172,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return false;
         });
 
+        const routedCatalogFor = (live: ClaudeLiveQueryContext) =>
+          routeModelCatalog(modelCatalog, live.settingsCwd, live.launchArgSettings);
+
         const applySelectionLive = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
           selection: CompiledClaudeModelSelection,
@@ -12067,7 +12070,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const steerSelection =
               turnInput.modelSelection === undefined
                 ? undefined
-                : compileClaudeModelSelection(turnInput.modelSelection, modelCatalog);
+                : compileClaudeModelSelection(
+                    turnInput.modelSelection,
+                    yield* routedCatalogFor(existing),
+                  );
             const liveSteerSelection =
               steerSelection !== undefined &&
               existing.selection.queryIdentity !== steerSelection.queryIdentity &&
@@ -12477,12 +12483,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             modelSelection,
           }) {
             const live = yield* Ref.get(queryContext);
-            const selection = compileClaudeModelSelection(modelSelection, modelCatalog);
-            // A model change still waits for the next turn, which checks it against the turn's permission mode.
             if (
               live === null ||
               live.stopping ||
-              live.nativeThreadId !== providerThread.nativeThreadRef?.nativeId ||
+              live.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
+            ) {
+              return;
+            }
+            const selection = compileClaudeModelSelection(
+              modelSelection,
+              yield* routedCatalogFor(live),
+            );
+            // A model change still waits for the next turn, which checks it against the turn's permission mode.
+            if (
               live.selection.queryIdentity === selection.queryIdentity ||
               live.selection.apiModelId !== selection.apiModelId ||
               !canApplyClaudeSelectionLive(live.selection, selection)

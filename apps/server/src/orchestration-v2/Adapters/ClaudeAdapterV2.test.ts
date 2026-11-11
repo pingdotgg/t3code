@@ -6069,6 +6069,74 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps the reported model id when a running turn is steered or changes effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          routeModelCatalog: (catalog) =>
+            Effect.succeed(
+              withClaudeCodeModelRoutes(catalog, [
+                { value: "haiku", resolvedModel: "global.anthropic.claude-haiku-5-5" },
+              ]),
+            ),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const haiku = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "claude-haiku-5-5",
+        } satisfies ModelSelection;
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-reported-model-live-change"),
+          text: "Run the slow build.",
+          attachments: [],
+          modelSelection: haiku,
+        });
+        yield* harness.runtime.startTurn(input);
+        assert.equal(harness.getOpenedOptions()?.model, "haiku");
+
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${input.attemptId}`,
+          }),
+          modelSelection: haiku,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("steer-reported-model"),
+            text: "Also check the tests.",
+            attachments: [],
+          },
+        });
+        assert.deepEqual(harness.liveSelectionChanges, []);
+        assert.lengthOf(harness.offeredMessages, 2);
+
+        yield* harness.runtime.applyModelSelection!({
+          providerThread: harness.providerThread,
+          modelSelection: { ...haiku, options: [{ id: "effort", value: "high" }] },
+        });
+        assert.deepEqual(harness.liveSelectionChanges, [
+          { effortLevel: "high", fastMode: null, ultracode: null },
+        ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       content: { type: "advisor_tool_result_error", error_code: "overloaded" },
