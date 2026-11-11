@@ -81,16 +81,36 @@ describe("AppleSpeech", () => {
       { stdout: "not json", exitCode: 0 },
       { ok: false, code: "failed" },
     ],
-  ] as const)("maps helper output %j to %j", ([output, expected]) => {
-    const { layer, commands } = setup(output);
-    return Effect.gen(function* () {
-      const result = yield* (yield* AppleSpeech.AppleSpeech).prepare("en-US");
-      assert.deepInclude(result, expected);
-      assert.deepEqual(commands, [
-        ["/app/Resources/apple-speech/t3-apple-speech", "prepare", "en-US"],
-      ]);
-    }).pipe(Effect.provide(layer));
-  });
+  ] as const)(
+    "maps helper output %j to %j, preparing again only after a failure",
+    ([output, expected]) => {
+      const { layer, commands } = setup(output);
+      return Effect.gen(function* () {
+        const speech = yield* AppleSpeech.AppleSpeech;
+        assert.deepInclude(yield* speech.prepare("en-US"), expected);
+        assert.deepInclude(yield* speech.prepare("en-US"), expected);
+        const command = ["/app/Resources/apple-speech/t3-apple-speech", "prepare", "en-US"];
+        assert.deepEqual(commands, expected.ok ? [command] : [command, command]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect.each([
+    [0, true, 1],
+    [3, false, 1],
+    [1, false, 2],
+  ] as const)(
+    "isAvailable with helper exit %i is %s and probes %i time(s) for two calls",
+    ([exitCode, expected, probes]) => {
+      const { layer, commands } = setup({ stdout: '{"value":""}', exitCode });
+      return Effect.gen(function* () {
+        const speech = yield* AppleSpeech.AppleSpeech;
+        assert.equal(yield* speech.isAvailable, expected);
+        assert.equal(yield* speech.isAvailable, expected);
+        assert.lengthOf(commands, probes);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("transcribes Float32 PCM through a 16-bit WAV file", () => {
     const { layer, commands, written } = setup({ stdout: '{"value":"hello"}', exitCode: 0 });

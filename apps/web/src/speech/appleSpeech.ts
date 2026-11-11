@@ -10,12 +10,15 @@ function subscribe(listener: () => void) {
     .catch(() => false)
     .then((value) => {
       available = value;
+      // The main process keeps a definite answer, so asking again after "no" is cheap
+      // and recovers from a probe that timed out.
+      if (!value && window.desktopBridge?.appleSpeech) probe = undefined;
       listeners.forEach((notify) => notify());
     });
   return () => listeners.delete(listener);
 }
 
-/** Apple Speech runs only in the macOS 26 desktop app; the main process probes it once. */
+/** Apple Speech runs only in the macOS 26 desktop app; the main process caches the answer. */
 export function useAppleSpeechAvailable() {
   return useSyncExternalStore(
     subscribe,

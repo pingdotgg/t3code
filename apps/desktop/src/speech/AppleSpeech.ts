@@ -150,14 +150,43 @@ export const layer = Layer.effect(
         ),
       );
 
-    const isAvailable = yield* Effect.cached(
-      run(["available"], Duration.seconds(10)).pipe(Effect.map((result) => result.ok)),
+    // Only a definite answer is kept; a slow or failed probe is asked again next time.
+    let available: boolean | undefined;
+    const isAvailable = Effect.suspend(() =>
+      available === undefined
+        ? run(["available"], Duration.seconds(10)).pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                if (result.ok || result.code === "unavailable") available = result.ok;
+              }),
+            ),
+            Effect.map((result) => result.ok),
+          )
+        : Effect.succeed(available),
     );
+
+    // Each dictation start awaits prepare before the microphone opens, so a locale is
+    // prepared once. Callers share an in-flight prepare (one asset download), and a
+    // failure is dropped so the next start retries it.
+    const prepared = new Map<string, Effect.Effect<DesktopAppleSpeechResult>>();
 
     return AppleSpeech.of({
       isAvailable,
       prepare: Effect.fn("AppleSpeech.prepare")(function* (locale) {
-        return yield* run(["prepare", locale], PREPARE_TIMEOUT);
+        let shared = prepared.get(locale);
+        if (shared === undefined) {
+          shared = yield* Effect.cached(
+            run(["prepare", locale], PREPARE_TIMEOUT).pipe(
+              Effect.tap((result) =>
+                Effect.sync(() => {
+                  if (!result.ok) prepared.delete(locale);
+                }),
+              ),
+            ),
+          );
+          prepared.set(locale, shared);
+        }
+        return yield* shared;
       }),
       transcribe: Effect.fn("AppleSpeech.transcribe")(function* (locale, pcm) {
         if (
