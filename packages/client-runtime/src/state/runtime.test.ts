@@ -1,6 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
+  ThreadId,
+  ProjectId,
   type ReviewDiffPreviewInput,
   type PreviewEvent,
   type TerminalAttachInput,
@@ -21,6 +24,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import type { HttpClient } from "effect/http";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
@@ -35,9 +39,11 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type * as RpcSession from "../rpc/session.ts";
+import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
 import { createReviewEnvironmentAtoms } from "./review.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
+import type { EnvironmentShellState } from "./shell.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
   createAtomCommandScheduler,
@@ -385,6 +391,63 @@ describe("finite environment subscription lifecycle", () => {
           expect(observed.some((result) => AsyncResult.isFailure(result))).toBe(false);
         }),
       ),
+  );
+  it.effect.each([
+    { completedTtlMs: undefined, subscriptions: 2 },
+    { completedTtlMs: 60_000, subscriptions: 1 },
+  ])(
+    "reopening a completed subscription subscribes $subscriptions time(s) with completedTtlMs $completedTtlMs",
+    ({ completedTtlMs, subscriptions }) =>
+      Effect.gen(function* () {
+        let subscribed = 0;
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          followStream: (_environmentId: EnvironmentId, source: Stream.Stream<unknown>) => source,
+        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        );
+        const family = createEnvironmentSubscriptionAtomFamily(runtime, {
+          label: "test.completed-subscription",
+          subscribe: () =>
+            Stream.suspend(() => {
+              subscribed += 1;
+              return Stream.make({ complete: false }, { complete: true });
+            }),
+          completeWhen: (value) => value.complete,
+          idleTtlMs: 0,
+          ...(completedTtlMs === undefined ? {} : { completedTtlMs }),
+        });
+        const atom = family({ environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined });
+        // Flushed after each close: idle removals have run by the time a user reopens a row.
+        const scheduled: Array<() => void> = [];
+        const registry = AtomRegistry.make({
+          scheduleTask: (task) => {
+            scheduled.push(task);
+            return () => undefined;
+          },
+        });
+        const open = Effect.gen(function* () {
+          const settled = yield* Deferred.make<boolean>();
+          const unsubscribe = registry.subscribe(
+            atom,
+            (result) => {
+              if (AsyncResult.isSuccess(result) && !result.waiting) {
+                Deferred.doneUnsafe(settled, Exit.succeed(result.value.complete));
+              }
+            },
+            { immediate: true },
+          );
+          const complete = yield* Deferred.await(settled);
+          unsubscribe();
+          for (const task of scheduled.splice(0)) task();
+          return complete;
+        });
+
+        expect(yield* open).toBe(true);
+        expect(yield* open).toBe(true);
+        expect(subscribed).toBe(subscriptions);
+        registry.dispose();
+      }),
   );
 });
 
@@ -1017,6 +1080,97 @@ describe("environment query lifecycle", () => {
       }),
     ),
   );
+
+  it.effect.each([true, false])("loads thread link metadata with server support %s", (supported) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const projectId = ProjectId.make("project");
+        const tag = supported
+          ? ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata
+          : ORCHESTRATION_V2_WS_METHODS.getThreadTitles;
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            initialConfig: Effect.succeed({ threadLinkMetadata: supported }),
+            client: {
+              [tag]: () =>
+                Effect.succeed(
+                  supported ? { fork: { title: "Fork", projectId } } : { fork: "Fork" },
+                ),
+            },
+          } as unknown as RpcSession.RpcSession,
+        });
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const atom = createOrchestrationEnvironmentAtoms(runtime).threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [ThreadId.make("fork")] },
+        });
+        const registry = yield* mountEnvironmentQuery(atom);
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({
+          fork: { title: "Fork", projectId: supported ? projectId : null },
+        });
+      }),
+    ),
+  );
+
+  it.effect("re-checks thread titles when one of their threads leaves the shell", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requests = yield* Queue.unbounded<Deferred.Deferred<Record<string, string>>>();
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            client: {
+              [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: () =>
+                Effect.gen(function* () {
+                  const answer = yield* Deferred.make<Record<string, string>>();
+                  yield* Queue.offer(requests, answer);
+                  return yield* Deferred.await(answer);
+                }),
+            },
+          } as unknown as RpcSession.RpcSession,
+        });
+        const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+          removedAt: new Map(),
+        }).pipe(Atom.keepAlive);
+        const removed = (entries: ReadonlyArray<readonly [string, number]>) => ({
+          removedAt: new Map(entries.map(([id, sequence]) => [ThreadId.make(id), sequence])),
+        });
+        // Thread titles never use the HTTP client.
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const atom = createOrchestrationEnvironmentAtoms(runtime, {
+          shellState: () => shellState,
+        }).threadTitles({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [ThreadId.make("fork")] },
+        });
+        const registry = yield* mountEnvironmentQuery(atom);
+        const settled: Array<Record<string, string>> = [];
+        const unsubscribe = registry.subscribe(atom, (result) => {
+          if (AsyncResult.isSuccess(result) && !result.waiting) settled.push(result.value);
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+        yield* Deferred.succeed(yield* Queue.take(requests), { fork: "Fork" });
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({ fork: "Fork" });
+
+        registry.set(shellState, removed([["other", 5]]));
+        expect(registry.get(atom).waiting).toBe(false);
+
+        // Archiving and then deleting the fork both remove it from the shell.
+        registry.set(shellState, removed([["fork", 6]]));
+        const beforeDelete = yield* Queue.take(requests);
+        registry.set(shellState, removed([["fork", 7]]));
+        const afterDelete = yield* Queue.take(requests);
+        yield* Deferred.succeed(beforeDelete, { fork: "Fork" });
+        yield* Deferred.succeed(afterDelete, {});
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({});
+        expect(settled).toEqual([{ fork: "Fork" }, {}]);
+      }),
+    ),
+  );
 });
 
 describe("executeAtomQuery", () => {
@@ -1307,19 +1461,20 @@ describe("persisted environment queries", () => {
       Effect.scoped(
         Effect.gen(function* () {
           let saved = Option.none<string>();
+          const saves = yield* Queue.unbounded<string>();
           const persistence: QueryPersistence<string> = {
             load: () => Effect.sync(() => saved),
             save: (_environmentId, _key, value) =>
               Effect.sync(() => {
                 saved = Option.some(value);
-              }),
+              }).pipe(Effect.andThen(Queue.offer(saves, value))),
           };
           const first = yield* makeEnvironmentQueryHarness(Effect.succeed("first"), {
             persistence,
           });
           const firstRegistry = yield* mountEnvironmentQuery(first.atom);
           expect(yield* readEnvironmentQuery(firstRegistry, first.atom)).toBe("first");
-          expect(saved).toEqual(Option.some("first"));
+          expect(yield* Queue.take(saves)).toBe("first");
 
           const restarted = yield* makeEnvironmentQueryHarness(Effect.succeed("updated"), {
             persistence,
@@ -1330,9 +1485,34 @@ describe("persisted environment queries", () => {
           yield* SubscriptionRef.set(restarted.supervisorState, queryConnectionState());
           yield* Effect.yieldNow;
           expect(yield* readEnvironmentQuery(registry, restarted.atom)).toBe("updated");
-          expect(saved).toEqual(Option.some("updated"));
+          expect(yield* Queue.take(saves)).toBe("updated");
         }),
       ),
+  );
+
+  it.effect("answers readers while its save is pending, and ends the save with the query", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const saveEnded = Latch.makeUnsafe();
+        const harness = yield* makeEnvironmentQueryHarness(Effect.succeed("fresh"), {
+          persistence: {
+            load: () => Effect.succeedNone,
+            // The registry's scheduler stops on dispose, so signal synchronously.
+            save: () =>
+              Effect.never.pipe(
+                Effect.onInterrupt(() => Effect.sync(() => saveEnded.openUnsafe())),
+              ),
+          },
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const registry = yield* mountEnvironmentQuery(harness.atom);
+            expect(yield* readEnvironmentQuery(registry, harness.atom)).toBe("fresh");
+          }),
+        );
+        yield* saveEnded.await;
+      }),
+    ),
   );
 
   it.effect("hands each server answer to onAnswer before readers see it", () =>
