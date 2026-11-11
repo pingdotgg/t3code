@@ -1078,10 +1078,10 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   );
 }
 
-// Returning to the window should land the caret in the composer, so the reader can type right
-// away. The exceptions are places where focus is deliberate: another text field, a terminal in
-// the drawer or the right panel, an open dialog, menu, or popup, a region or sidebar row
-// reached from the keyboard, or a region with its own keys (aria-keyshortcuts). A plain focused button or a clicked row yields to the composer.
+// Window return puts the caret in the composer unless focus is deliberate: another text field,
+// a terminal, an open dialog, menu, or popup, a region or sidebar row reached from the keyboard,
+// or a region with its own keys (aria-keyshortcuts). A plain focused button or a clicked row
+// yields to the composer.
 export function shouldRefocusComposerOnWindowFocus(
   activeElement:
     | (Pick<Element, "tagName" | "closest" | "getAttribute"> & { isContentEditable?: boolean })
