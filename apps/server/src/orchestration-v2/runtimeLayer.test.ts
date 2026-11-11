@@ -7221,9 +7221,7 @@ it.layer(layerTest)("provider citation validation", (it) => {
     const sessionSpy = vi
       .spyOn(sessions, "get")
       .mockReturnValue(
-        Effect.succeed(
-          Option.some({ providerSession } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
-        ),
+        Effect.succeedSome({ providerSession } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
       );
     yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
     return { orchestrator, eventSink, threadId, active, queued };
