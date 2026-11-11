@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  PullRequestActor,
   PullRequestDiffSide,
   PullRequestRef,
   PullRequestReviewPosition,
@@ -15,7 +16,7 @@ import {
   CircleCheckIcon,
   CircleIcon,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { RelativeTime } from "~/components/RelativeTime";
@@ -23,6 +24,7 @@ import { cn } from "~/lib/utils";
 import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
@@ -30,7 +32,7 @@ import {
   mergePullRequestThreadComments,
   visibleBody,
 } from "./pullRequestDetail.logic";
-import { PullRequestActorLabel } from "./pullRequestPresentation";
+import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -114,6 +116,86 @@ export function PendingReviewCommentCard({
   );
 }
 
+const MARKER_AVATAR_LIMIT = 3;
+
+function ResolvedThreadsMarker({
+  threads,
+  onOpen,
+}: {
+  threads: ReadonlyArray<PullRequestReviewThread>;
+  onOpen: () => void;
+}) {
+  const authors = new Map<string, PullRequestActor | null>();
+  for (const thread of threads) {
+    for (const comment of thread.comments) {
+      authors.set(comment.author?.login ?? "ghost", comment.author);
+    }
+  }
+  if (authors.size === 0) authors.set("ghost", null);
+  const label =
+    threads.length === 1
+      ? "Show resolved conversation"
+      : `Show ${threads.length} resolved conversations`;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            data-resolved-threads
+            aria-label={label}
+            aria-expanded={false}
+            // Sits on the commented line, which is the row above this zero-height annotation.
+            className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            contentEditable={false}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={onOpen}
+          />
+        }
+      >
+        {[...authors].slice(0, MARKER_AVATAR_LIMIT).map(([login, author]) => (
+          <PullRequestActorAvatar key={login} actor={author} className="ring-1 ring-background" />
+        ))}
+      </TooltipTrigger>
+      <TooltipPopup side="left">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** The conversations on one diff line. Resolved ones show as avatars until opened. */
+export function InlineReviewThreads({
+  threads,
+  renderThread,
+}: {
+  threads: ReadonlyArray<PullRequestReviewThread>;
+  renderThread: (thread: PullRequestReviewThread, onCollapse: () => void) => ReactNode;
+}) {
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
+  // A conversation resolved while open stays open until the reader collapses it.
+  const seenOpen = threads.filter((thread) => !thread.isResolved && !opened.has(thread.id));
+  if (seenOpen.length > 0) {
+    setOpened(new Set([...opened, ...seenOpen.map((thread) => thread.id)]));
+  }
+  const folded = threads.filter((thread) => thread.isResolved && !opened.has(thread.id));
+  return (
+    <>
+      {folded.length > 0 ? (
+        <ResolvedThreadsMarker
+          threads={folded}
+          onOpen={() => setOpened(new Set([...opened, ...folded.map((thread) => thread.id)]))}
+        />
+      ) : null}
+      {threads.map((thread) =>
+        folded.includes(thread)
+          ? null
+          : renderThread(thread, () =>
+              setOpened((current) => new Set([...current].filter((id) => id !== thread.id))),
+            ),
+      )}
+    </>
+  );
+}
+
 export function ReviewThreadCard({
   thread,
   workspaceRoot,
@@ -134,6 +216,7 @@ export function ReviewThreadCard({
   onEditComment,
   onToggleResolved,
   onReacted,
+  onCollapse,
 }: {
   thread: PullRequestReviewThread;
   workspaceRoot: string;
@@ -158,8 +241,10 @@ export function ReviewThreadCard({
   onEditComment: (commentId: string, body: string) => Promise<boolean>;
   onToggleResolved: () => void;
   onReacted: () => void;
+  /** Given on a diff line, where a resolved conversation folds away to its avatar marker. */
+  onCollapse?: () => void;
 }) {
-  const [expanded, setExpanded] = useState(!thread.isResolved);
+  const [expanded, setExpanded] = useState(onCollapse !== undefined || !thread.isResolved);
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -248,7 +333,10 @@ export function ReviewThreadCard({
           type="button"
           className="hover:text-foreground"
           aria-expanded={expanded}
-          onClick={() => setExpanded((current) => !current)}
+          onClick={() => {
+            if (expanded && thread.isResolved && onCollapse) onCollapse();
+            else setExpanded((current) => !current);
+          }}
         >
           {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
           {commentCount === 1 ? "comment" : "comments"}

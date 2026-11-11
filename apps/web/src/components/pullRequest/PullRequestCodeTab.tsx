@@ -114,6 +114,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getReviewPositionAnchor,
+  InlineReviewThreads,
   PendingReviewCommentCard,
   ReviewThreadCard,
   toViewerSide,
@@ -995,7 +996,7 @@ function PullRequestCodeTab({
     return true;
   };
 
-  const renderThreadCard = (thread: PullRequestReviewThread) => (
+  const renderThreadCard = (thread: PullRequestReviewThread, onCollapse?: () => void) => (
     <ReviewThreadCard
       // Host thread ids can collide across pull requests.
       key={`${reference.projectId}#${reference.number}:${thread.id}`}
@@ -1060,12 +1061,14 @@ function PullRequestCodeTab({
         )
       }
       onReacted={onRefresh}
+      {...(onCollapse ? { onCollapse } : {})}
     />
   );
 
   const renderAnnotation = (...[annotation]: CodeViewAnnotationArgs<ReviewAnnotationGroup>) => (
-    <div className="py-1 font-sans text-foreground">
-      {annotation.metadata.threads.map(renderThreadCard)}
+    // Folded resolved conversations alone add no row, so the code reads straight through.
+    <div className="relative font-sans text-foreground has-[>:not([data-resolved-threads])]:py-1">
+      <InlineReviewThreads threads={annotation.metadata.threads} renderThread={renderThreadCard} />
       {annotation.metadata.pending.map((comment) => (
         <PendingReviewCommentCard
           key={comment.id}

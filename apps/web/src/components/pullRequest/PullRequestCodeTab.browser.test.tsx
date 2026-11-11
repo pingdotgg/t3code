@@ -355,3 +355,67 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
   await screen.rerender(scoped(oid, url));
   await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
 });
+
+it("folds a resolved conversation into avatars on its line until it is opened", async () => {
+  setup({ paged: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  const withThread = (isResolved: boolean) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={{
+        ...detail,
+        reviewThreads: [
+          {
+            id: "thread",
+            path: "a.ts",
+            line: 3,
+            side: "right",
+            isResolved,
+            isOutdated: false,
+            comments: [
+              {
+                id: "comment",
+                author: { login: "reviewer", name: null, avatarUrl: null },
+                body: "Rename this.",
+                createdAt: "2026-09-01T00:00:00Z",
+                url: null,
+              },
+            ],
+          },
+        ],
+      }}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+    />
+  );
+  await using screen = await render(withThread(true), { container });
+  const marker = () => screen.getByRole("button", { name: "Show resolved conversation" });
+  const card = (state: string) => screen.getByRole("button", { name: `${state} · 1 comment` });
+
+  await expect.element(marker()).toBeVisible();
+  await expect.element(card("Resolved")).not.toBeInTheDocument();
+
+  await marker().click();
+  await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
+  await expect.element(marker()).not.toBeInTheDocument();
+
+  // Reopened and resolved again under the reader, it stays open until they collapse it.
+  await screen.rerender(withThread(false));
+  await expect.element(card("Open")).toHaveAttribute("aria-expanded", "true");
+  await screen.rerender(withThread(true));
+  await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
+
+  await card("Resolved").click();
+  await expect.element(marker()).toBeVisible();
+  await expect.element(card("Resolved")).not.toBeInTheDocument();
+});
