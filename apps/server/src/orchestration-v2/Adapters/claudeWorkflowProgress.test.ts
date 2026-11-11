@@ -85,11 +85,6 @@ describe("mergeClaudeWorkflowProgress", () => {
       message: snapshotFrame([agent({ state: "start", queuedAt: 1000, startedAt: 21_000 })]),
     });
     expect(started?.agents[0]).toMatchObject({ state: "running", startedAt: 21_000 });
-    const progressed = mergeClaudeWorkflowProgress({
-      previous: started,
-      message: snapshotFrame([agent({ state: "progress", startedAt: 21_000 })]),
-    });
-    expect(progressed?.agents[0]?.state).toBe("running");
   });
 
   it.each(["something-new", "toString", "constructor", "__proto__"])(

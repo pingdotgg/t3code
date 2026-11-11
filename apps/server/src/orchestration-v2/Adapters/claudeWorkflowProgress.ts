@@ -19,7 +19,6 @@ export function hasClaudeWorkflowSnapshot(
 const AGENT_STATES: Record<string, OrchestrationV2WorkflowAgent["state"] | undefined> = {
   queued: "queued",
   start: "running",
-  progress: "running",
   done: "completed",
   error: "failed",
 };
