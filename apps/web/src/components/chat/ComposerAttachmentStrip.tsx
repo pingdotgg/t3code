@@ -77,7 +77,13 @@ const COMPOSER_TILE_REMOVE_CLASS_NAME =
   "absolute right-1 top-1 flex opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100";
 
 /** Upload progress as a centered percentage over a dimmed tile. */
-function ComposerTileUploadProgress({ id, upload }: { readonly id: string; readonly upload: AttachmentUploadState | undefined }) {
+function ComposerTileUploadProgress({
+  id,
+  upload,
+}: {
+  readonly id: string;
+  readonly upload: AttachmentUploadState | undefined;
+}) {
   const progress = useAttachmentUploadProgress(id, upload);
   return (
     <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/65 text-white text-meta tabular-nums">
@@ -475,13 +481,21 @@ export function ComposerAttachmentFileList({
               <span className="truncate">{file.name}</span>
             </InlineButton>
             <span className="min-w-0 flex-1 truncate text-dim-foreground text-meta">
-              {needsReattach
-                ? canReattachFile
-                  ? "Attach again"
-                  : "Remove to send"
-                : upload?.status === "uploading"
-                  ? <ComposerAttachmentUploadProgress id={file.id} upload={upload} fallback={formatAttachmentSize(file.sizeBytes)} />
-                  : formatAttachmentSize(file.sizeBytes)}
+              {needsReattach ? (
+                canReattachFile ? (
+                  "Attach again"
+                ) : (
+                  "Remove to send"
+                )
+              ) : upload?.status === "uploading" ? (
+                <ComposerAttachmentUploadProgress
+                  id={file.id}
+                  upload={upload}
+                  fallback={formatAttachmentSize(file.sizeBytes)}
+                />
+              ) : (
+                formatAttachmentSize(file.sizeBytes)
+              )}
             </span>
             {!needsReattach && upload?.status === "failed" ? (
               <Tooltip>
