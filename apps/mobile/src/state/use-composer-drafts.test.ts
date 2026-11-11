@@ -203,7 +203,6 @@ import {
   replaceComposerDraftAttachments,
   resetComposerDraftsLoadState,
   restoreComposerDraftSnapshotState,
-  releaseComposerDraftRuntimeMode,
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
   setComposerDraftText,
@@ -478,16 +477,6 @@ describe("mobile composer drafts", () => {
       expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
     },
   );
-
-  it("releases a delivered mode pick but keeps a newer one and the unsent text", () => {
-    const key = "environment-1:thread-1";
-    setComposerDraftText(key, "next message");
-    updateComposerDraftSettings(key, { runtimeMode: "approval-required" });
-    releaseComposerDraftRuntimeMode(key, "full-access");
-    expect(getComposerDraftSnapshot(key).runtimeMode).toBe("approval-required");
-    releaseComposerDraftRuntimeMode(key, "approval-required");
-    expect(getComposerDraftSnapshot(key)).toEqual({ text: "next message", attachments: [] });
-  });
 
   it("retains a pick matching cached state until the live shell confirms it", () => {
     const environmentId = EnvironmentId.make("environment-1");

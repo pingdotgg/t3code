@@ -810,10 +810,17 @@ export function createThreadOutboxDelivery(): {
         return false;
       }
     }
-    releaseComposerDraftRuntimeMode(
-      scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
-      settings.runtimeMode,
+    const threadKey = scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId);
+    // A newer pick can share this mode while another queued message still moves the thread off it.
+    const modeChangeQueued = (
+      appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom)[threadKey] ?? []
+    ).some(
+      (message) =>
+        message.messageId !== queuedMessage.messageId &&
+        message.runtimeMode !== undefined &&
+        message.runtimeMode !== settings.runtimeMode,
     );
+    if (!modeChangeQueued) releaseComposerDraftRuntimeMode(threadKey, settings.runtimeMode);
 
     if (settings.interactionMode !== thread.interactionMode) {
       if (!hasAccess()) return true;

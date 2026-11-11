@@ -23,7 +23,6 @@ const state = vi.hoisted(() => ({
   metadata: vi.fn(),
   runtime: vi.fn(),
   interaction: vi.fn(),
-  releaseRuntimeMode: vi.fn(),
   prepare: vi.fn(),
   checkout: vi.fn(),
   modelUnavailable: vi.fn(() => false),
@@ -140,30 +139,40 @@ vi.mock("./use-thread-outbox", async () => {
     threadOutboxShellStatusesAtom: Atom.make(new Map([["secondary", "live"]])),
   };
 });
-vi.mock("./use-composer-drafts", async () => {
-  const { Atom } = await import("effect/reactivity");
-  return {
-    composerDraftsAtom: Atom.make({}),
-    removeDeliveredCloudQueuedMessage: async () => {},
-    appendComposerDraftAttachments: vi.fn(),
-    flushComposerDrafts: vi.fn(),
-    getComposerDraftSnapshot: vi.fn(() => ({ text: state.draftText, attachments: [] })),
-    mergeComposerDraftContent: vi.fn(async (_key: string, input: { text: string }) => {
-      state.draftText += `\n${input.text}`;
-    }),
-    releaseComposerDraftRuntimeMode: state.releaseRuntimeMode,
-    replaceComposerDraftAttachments: vi.fn(),
-    setFreshSessionPending: vi.fn(),
-    undoComposerDraftMerge: vi.fn(),
-    updateComposerDraftSettings: vi.fn(),
-    waitForComposerDraftsLoaded: vi.fn(),
-  };
-});
+vi.mock("expo-file-system", () => ({
+  Directory: class {
+    create() {}
+  },
+  File: class {
+    exists = false;
+    create() {}
+    write() {}
+    moveSync() {}
+  },
+  Paths: { document: { uri: "file:///documents" } },
+}));
+// The real draft store keeps mode picks; draft text stays a fake the restore tests read.
+vi.mock("./use-composer-drafts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./use-composer-drafts")>()),
+  removeDeliveredCloudQueuedMessage: async () => {},
+  appendComposerDraftAttachments: vi.fn(),
+  flushComposerDrafts: vi.fn(),
+  getComposerDraftSnapshot: vi.fn(() => ({ text: state.draftText, attachments: [] })),
+  mergeComposerDraftContent: vi.fn(async (_key: string, input: { text: string }) => {
+    state.draftText += `\n${input.text}`;
+  }),
+  replaceComposerDraftAttachments: vi.fn(),
+  setFreshSessionPending: vi.fn(),
+  undoComposerDraftMerge: vi.fn(),
+  updateComposerDraftSettings: vi.fn(),
+  waitForComposerDraftsLoaded: vi.fn(),
+}));
 
 import { appAtomRegistry } from "./atom-registry";
 import { environmentSession } from "./session";
 import { dispatchingQueuedMessageIdAtom, editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import { createThreadOutboxDelivery } from "./threadOutboxDelivery";
+import { composerDraftsAtom } from "./use-composer-drafts";
 
 const message = (overrides: Partial<QueuedThreadMessage> = {}): QueuedThreadMessage => ({
   environmentId: EnvironmentId.make("secondary"),
@@ -214,7 +223,7 @@ beforeEach(() => {
   state.config.shellThreadFamilies = false;
   state.modelUnavailable.mockReset().mockReturnValue(false);
   state.familyMount.mockReset().mockReturnValue(() => {});
-  state.releaseRuntimeMode.mockReset();
+  appAtomRegistry.set(composerDraftsAtom, {});
   appAtomRegistry.set(state.threadShells, [state.thread]);
   appAtomRegistry.set(state.manager.queuedMessagesByThreadKeyAtom, {});
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
@@ -409,23 +418,59 @@ describe("queued task operation access", () => {
   });
 
   it.each([
-    { runtimeMode: "approval-required", refused: false, released: true },
-    { runtimeMode: "full-access", refused: false, released: true },
-    { runtimeMode: "approval-required", refused: true, released: false },
+    { queued: ["approval-required"], pick: "approval-required", refused: false, kept: false },
+    { queued: ["full-access"], pick: "full-access", refused: false, kept: false },
+    { queued: ["approval-required"], pick: "approval-required", refused: true, kept: true },
+    // Picked again after the Full access message was queued; that message still moves the thread.
+    {
+      queued: ["approval-required", "full-access"],
+      pick: "approval-required",
+      refused: false,
+      kept: true,
+    },
+    // A message without a mode, as an MCP app sends, follows the thread and moves nothing.
+    {
+      queued: ["approval-required", undefined],
+      pick: "approval-required",
+      refused: false,
+      kept: false,
+    },
   ] as const)(
-    "releases the composer's mode pick only once delivery applied it ($runtimeMode, refused: $refused)",
-    async ({ runtimeMode, refused, released }) => {
+    "keeps the composer's mode pick until a delivered send applied it last ($queued, refused: $refused)",
+    async ({ queued, pick, refused, kept }) => {
       setOperateGrant("secondary", true);
-      await state.manager.enqueue(message({ runtimeMode }));
+      const draft = { text: "unsent follow-up", attachments: [] };
+      appAtomRegistry.set(composerDraftsAtom, {
+        "secondary:thread": { ...draft, runtimeMode: pick },
+      });
+      for (const [index, runtimeMode] of queued.entries()) {
+        await state.manager.enqueue(
+          message({
+            messageId: MessageId.make(`message-${index}`),
+            commandId: CommandId.make(`command-${index}`),
+            createdAt: `2026-09-05T00:00:0${index}.000Z`,
+            ...(runtimeMode === undefined ? {} : { runtimeMode }),
+          }),
+        );
+      }
       if (refused) {
         state.runtime.mockResolvedValueOnce(
           AsyncResult.failure(Cause.fail(new Error("Mode change refused."))),
         );
+        await runDrain();
+      } else {
+        const delivered = Promise.withResolvers<void>();
+        const release = appAtomRegistry.subscribe(
+          state.manager.queuedMessagesByThreadKeyAtom,
+          () => {
+            if (remaining().length === 0) delivered.resolve();
+          },
+        );
+        startDelivery();
+        await delivered.promise.finally(release);
       }
-      await runDrain();
-      expect(state.runtime).toHaveBeenCalledTimes(runtimeMode === state.thread.runtimeMode ? 0 : 1);
-      expect(state.releaseRuntimeMode.mock.calls).toEqual(
-        released ? [["secondary:thread", runtimeMode]] : [],
+      expect(appAtomRegistry.get(composerDraftsAtom)["secondary:thread"]).toEqual(
+        kept ? { ...draft, runtimeMode: pick } : draft,
       );
     },
   );
