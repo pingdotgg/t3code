@@ -93,6 +93,42 @@ function claudeLine(
   })}\n`;
 }
 
+/** One content-block line of message `msg_1`; Claude Code writes several per message. */
+function claudeCopy(usage: Readonly<Record<string, number>>): string {
+  return `${JSON.stringify({
+    type: "assistant",
+    timestamp: "2026-08-01T10:00:00Z",
+    requestId: "req_1",
+    sessionId: "session-1",
+    message: { id: "msg_1", model: "claude-fable-5", usage },
+  })}\n`;
+}
+
+// A subagent message: its stream-start copy, then its final copy.
+const PARTIAL_USAGE = {
+  input_tokens: 2,
+  cache_creation_input_tokens: 1097,
+  cache_read_input_tokens: 67934,
+  output_tokens: 3,
+};
+const COMPLETE_USAGE = { ...PARTIAL_USAGE, output_tokens: 264 };
+const COPY_RATES = {
+  "claude-fable-5": {
+    input_cost_per_token: 1e-5,
+    output_cost_per_token: 5e-5,
+    cache_read_input_token_cost: 1e-6,
+    cache_creation_input_token_cost: 1.25e-5,
+  },
+};
+const COMPLETE_COST_USD = 2 * 1e-5 + 67934 * 1e-6 + 1097 * 1.25e-5 + 264 * 5e-5;
+const COMPLETE_TOTALS = {
+  uncachedInputTokens: 2,
+  cachedInputTokens: 67934,
+  cacheCreationTokens: 1097,
+  outputTokens: 264,
+  reasoningTokens: 0,
+};
+
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-07-31"),
@@ -790,7 +826,7 @@ describe("UsageService", () => {
   );
 
   it.live(
-    "keeps resolved Codex tiers when a grown pre-v12 cache entry re-parses without history",
+    "keeps resolved Codex tiers when a grown pre-v13 cache entry re-parses without history",
     () =>
       Effect.gen(function* () {
         const { home, settings } = yield* setup;
@@ -839,14 +875,14 @@ describe("UsageService", () => {
           verify(yield* first.readSummary(WINDOW), 1, 6);
           yield* first.awaitPersisted;
 
-          // Downgrade the saved cache to v11, whose clean Codex entries cannot resume.
+          // Downgrade the saved cache to v12, whose clean Codex entries cannot resume.
           yield* Effect.promise(async () => {
             const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
             const document = JSON.parse(await NodeFSP.readFile(cachePath, "utf8"));
             await NodeFSP.rm(cachePath);
             await NodeFSP.writeFile(
-              NodePath.join(stateDir, "usage-scan-cache-v11.json"),
-              encodeUnknownJsonString({ ...document, version: 11 }),
+              NodePath.join(stateDir, "usage-scan-cache-v12.json"),
+              encodeUnknownJsonString({ ...document, version: 12 }),
             );
             await NodeFSP.appendFile(rolloutPath, lines([context("later-turn"), usage(2)]));
           });
@@ -2621,6 +2657,65 @@ describe("UsageService", () => {
   );
 
   it.live(
+    "merges partial Claude copies through tail replacement, newline completion and restart",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const partial = claudeCopy(PARTIAL_USAGE);
+        const complete = claudeCopy(COMPLETE_USAGE);
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, partial));
+        yield* Effect.gen(function* () {
+          const first = yield* UsageService.make;
+          assert.strictEqual(totalOutputTokens(yield* first.readSummary(WINDOW)), 3);
+          yield* first.awaitPersisted;
+
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, complete.trimEnd()));
+          const resumed = yield* UsageService.make;
+          const tail = yield* resumed.readSummary(WINDOW);
+          assert.deepStrictEqual(tail.buckets[0]?.totals, COMPLETE_TOTALS);
+          assert.strictEqual(tail.buckets[0]?.records, 1);
+          assert.closeTo(tail.buckets[0]?.costUsd ?? 0, COMPLETE_COST_USD, 1e-12);
+          yield* resumed.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, tail.buckets);
+
+          // Grow the file without changing its settled prefix: the old tail must be discarded.
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(transcript, partial + claudeLine(2, 7) + claudeLine(3, 5)),
+          );
+          const replaced = yield* restarted.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(replaced), 3 + 7 + 5);
+          assert.strictEqual(replaced.buckets[0]?.records, 3);
+
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, complete.trimEnd()));
+          const grown = yield* restarted.readSummary(WINDOW);
+          assert.deepStrictEqual(grown.buckets[0]?.totals, {
+            ...COMPLETE_TOTALS,
+            uncachedInputTokens: 22,
+            outputTokens: 264 + 7 + 5,
+          });
+          assert.strictEqual(grown.buckets[0]?.records, 3);
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, "\n"));
+          assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, grown.buckets);
+          yield* restarted.awaitPersisted;
+          assert.deepStrictEqual(
+            (yield* (yield* UsageService.make).readSummary(WINDOW)).buckets,
+            grown.buckets,
+          );
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-copy-lifecycle-test",
+              home,
+              settings,
+              ratesDocument: COPY_RATES,
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
     "keeps large-record totals and costs exact through append, dedupe, restart and cleanup",
     () =>
       Effect.gen(function* () {
@@ -2675,7 +2770,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5, 6, 7, 8, 10, 11])(
+  it.live.each([4, 5, 6, 7, 8, 10, 11, 12])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts, removes the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2776,7 +2871,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v12.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v13.json");
           assert.deepStrictEqual(
             (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
               .filter((name) => name.startsWith("usage-scan-cache"))

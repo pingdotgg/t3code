@@ -5512,6 +5512,218 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each([
+    { origin: "agent" as const, delivery: "queued" as const },
+    { origin: "agent" as const, delivery: "after-completion" as const },
+    { origin: "agent" as const, delivery: "held-resume" as const },
+    { origin: "agent" as const, delivery: "resume-before-stop-ends" as const },
+    { origin: "child" as const, delivery: "after-completion" as const },
+    { origin: "user" as const, delivery: "queued" as const },
+  ])(
+    "preserves queued agent and child updates but resets fresh requests (%j)",
+    ({ origin, delivery }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`work-clock-${origin}-${delivery}`);
+        const originalMessageId = MessageId.make(`${threadId}-original`);
+        const followUpMessageId = MessageId.make(`${threadId}-follow-up`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}-project`),
+          title: "Agent message work clock",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-original`),
+          threadId,
+          messageId: originalMessageId,
+          text: "Original user work",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const dispatchFollowUp = orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: origin === "user" ? "user" : "agent",
+          creationSource: origin === "user" ? "web" : "mcp",
+          ...(origin === "user" ? {} : { senderThreadId: ThreadId.make("sending-agent") }),
+          commandId: CommandId.make(`${threadId}-follow-up`),
+          threadId,
+          messageId: followUpMessageId,
+          text: "Follow-up work",
+          attachments: [],
+          modelSelection,
+          dispatchMode: {
+            type: delivery === "after-completion" ? "start_immediately" : "queue_after_active",
+          },
+        });
+        const held = delivery === "held-resume" || delivery === "resume-before-stop-ends";
+        const drainsOnEnd = delivery === "queued" || delivery === "resume-before-stop-ends";
+        if (delivery === "queued" || held) yield* dispatchFollowUp;
+        const startedRunIds = yield* Queue.unbounded<RunId>();
+        const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.runForEach((stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "starting"
+              ? Queue.offer(startedRunIds, stored.event.payload.id)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+        const original = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === originalMessageId,
+        );
+        assert.isDefined(original);
+        if (origin === "child") {
+          assert.isNotNull(original.rootNodeId);
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-child`),
+                type: "subagent.updated",
+                threadId,
+                runId: original.id,
+                occurredAt: original.requestedAt,
+                payload: {
+                  id: NodeId.make(`${threadId}-child`),
+                  threadId,
+                  runId: original.id,
+                  parentNodeId: original.rootNodeId,
+                  origin: "app_owned",
+                  createdBy: "agent",
+                  driver,
+                  providerInstanceId: original.providerInstanceId,
+                  providerThreadId: null,
+                  childThreadId: ThreadId.make("sending-agent"),
+                  nativeTaskRef: null,
+                  prompt: "Delegated work",
+                  title: null,
+                  model: null,
+                  status: "completed",
+                  result: "Done",
+                  startedAt: original.requestedAt,
+                  completedAt: original.requestedAt,
+                  updatedAt: original.requestedAt,
+                },
+              },
+            ],
+          });
+        }
+        if (held) {
+          const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.userMessageId === followUpMessageId,
+          );
+          assert.isDefined(queued);
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-hold`),
+                type: "run.updated",
+                threadId,
+                occurredAt: original.requestedAt,
+                payload: { ...queued, queueHeld: true },
+              },
+              {
+                id: EventId.make(`${threadId}-interrupt-request`),
+                type: "turn-item.updated",
+                threadId,
+                runId: original.id,
+                occurredAt: original.requestedAt,
+                payload: {
+                  id: TurnItemId.make(`${threadId}-interrupt-request`),
+                  type: "run_interrupt_request",
+                  threadId,
+                  runId: original.id,
+                  nodeId: original.rootNodeId,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 90,
+                  status: "completed",
+                  title: "Interrupt requested",
+                  startedAt: original.requestedAt,
+                  completedAt: original.requestedAt,
+                  updatedAt: original.requestedAt,
+                  message: "Stopped by user",
+                },
+              },
+            ],
+          });
+        }
+        if (delivery === "resume-before-stop-ends") {
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`${threadId}-resume`),
+            threadId,
+          });
+        }
+        const originalStart = DateTime.makeUnsafe("2026-10-21T14:20:17.457Z");
+        const completedAt = DateTime.makeUnsafe("2026-10-21T14:23:53.509Z");
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-completed`),
+              type: "run.updated",
+              threadId,
+              runId: original.id,
+              ...(original.rootNodeId === null ? {} : { nodeId: original.rootNodeId }),
+              providerInstanceId: original.providerInstanceId,
+              occurredAt: completedAt,
+              payload: {
+                ...original,
+                status: held ? "interrupted" : "completed",
+                startedAt: originalStart,
+                completedAt,
+              },
+            },
+          ],
+        });
+        if (delivery === "held-resume") {
+          yield* TestClock.adjust("3 hours");
+          const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.userMessageId === followUpMessageId,
+          );
+          assert.isDefined(queued);
+          assert.equal(queued.status, "queued");
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`${threadId}-resume`),
+            threadId,
+          });
+        } else if (delivery === "after-completion") yield* dispatchFollowUp;
+        const startedRunId = drainsOnEnd ? yield* Queue.take(startedRunIds) : null;
+        const followUp = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === followUpMessageId,
+        );
+        assert.isDefined(followUp);
+        if (drainsOnEnd) assert.equal(startedRunId, followUp.id);
+        assert.equal(followUp.status, "starting");
+        if (origin === "child" || (origin === "agent" && delivery === "queued")) {
+          assert.isDefined(followUp.workStartedAt);
+          assert.equal(
+            DateTime.toEpochMillis(followUp.workStartedAt),
+            DateTime.toEpochMillis(originalStart),
+          );
+        } else {
+          assert.isUndefined(followUp.workStartedAt);
+        }
+      }),
+  );
+
   it.effect.each(["usage_limit", "provider_error"] as const)(
     "handles a queued message after a %s failure",
     (failureClass) =>
@@ -6072,10 +6284,143 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["the reset passes", "the user resumes"] as const)(
+    "holds a limited provider's queue through another provider's turn until %s",
+    (release) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-layer-queue-limit-switch-${release}`);
+        const switchedSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          createdBy: "user",
+          creationSource: "web",
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Limit switch",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        const send = (
+          name: string,
+          selection: typeof modelSelection | typeof switchedSelection,
+          type: "start_immediately" | "queue_after_active",
+        ) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:${name}`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:${name}`),
+            text: name,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            modelSelection: selection,
+            dispatchMode: { type },
+          });
+        yield* send("limited", modelSelection, "start_immediately");
+        yield* send("queued", modelSelection, "queue_after_active");
+        const [limited, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+        assert.isDefined(limited);
+        assert.isDefined(queued);
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:error`),
+              type: "turn-item.updated",
+              threadId,
+              runId: limited.id,
+              nodeId: limited.rootNodeId!,
+              providerInstanceId: limited.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`${threadId}:error`),
+                type: "error",
+                threadId,
+                runId: limited.id,
+                nodeId: limited.rootNodeId!,
+                providerThreadId: limited.providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Usage limit reached",
+                  code: "usage_limit",
+                  retryable: null,
+                  resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+                },
+              },
+            },
+            {
+              id: EventId.make(`${threadId}:failed`),
+              type: "run.updated",
+              threadId,
+              runId: limited.id,
+              providerInstanceId: limited.providerInstanceId,
+              occurredAt: now,
+              payload: { ...limited, status: "failed", completedAt: now },
+            },
+          ],
+        });
+
+        // A message on another provider starts ahead of the held queue and
+        // completes there.
+        yield* send("switch", switchedSelection, "start_immediately");
+        const switched = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === MessageId.make(`${threadId}:switch`),
+        );
+        assert.equal(switched?.status, "starting");
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:switch:completed`),
+              type: "run.updated",
+              threadId,
+              runId: switched!.id,
+              providerInstanceId: switched!.providerInstanceId,
+              occurredAt: now,
+              payload: { ...switched!, status: "completed", completedAt: now },
+            },
+          ],
+        });
+
+        yield* orchestrator.resumeQueuedRuns;
+        const held = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(held.runs.find((run) => run.id === queued.id)?.status, "queued");
+
+        if (release === "the reset passes") {
+          yield* TestClock.adjust("61 minutes");
+          yield* orchestrator.resumeQueuedRuns;
+        } else {
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`${threadId}:resume`),
+            threadId,
+          });
+        }
+        const reset = yield* orchestrator.getThreadProjection(threadId);
+        const resumed = reset.runs.find((run) => run.id === queued.id);
+        assert.equal(resumed?.status, "starting");
+        assert.deepEqual(resumed?.modelSelection, modelSelection);
+      }),
+  );
+
   it.effect.each([
     ["server", modelSelection],
     ["provider", modelSelection],
-    ["provider", { ...modelSelection, instanceId: alternateInstanceId }],
   ] as const)(
     "delivers a queued monitor update from %s after conversation selection %j",
     ([creationSource, currentSelection]) =>
@@ -6188,7 +6533,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
   it.effect.each([
     { ...modelSelection, model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] },
-    { instanceId: alternateInstanceId, model: "gpt-5.5" },
   ])(
     "starts a queued delegated completion on a selection set while it waited: %j",
     (newerSelection) =>

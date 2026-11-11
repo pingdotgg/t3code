@@ -217,15 +217,11 @@ describe("scan cache round trip", () => {
       };
 
       const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
-      expect(restored.get("/gone.jsonl")).toEqual(
-        version >= 10
-          ? original.get("/gone.jsonl")
-          : {
-              ...original.get("/gone.jsonl"),
-              size: -1,
-              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-            },
-      );
+      expect(restored.get("/gone.jsonl")).toEqual({
+        ...original.get("/gone.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
       expect(restored.get("/gone-codex.jsonl")).toEqual({
         ...original.get("/gone-codex.jsonl"),
         size: -1,
@@ -248,7 +244,7 @@ describe("scan cache round trip", () => {
     },
   );
 
-  it("re-parses a v11 Codex entry that skipped records and restarts a clean one when it grows", () => {
+  it("re-parses a v12 Codex entry that skipped records and restarts a clean one when it grows", () => {
     const codex = (malformedRecords: number): CachedFile => ({
       size: 10,
       mtimeMs: 100,
@@ -264,9 +260,9 @@ describe("scan cache round trip", () => {
       ["/skipped-codex.jsonl", codex(1)],
       ["/clean-codex.jsonl", codex(0)],
     ]);
-    const v11 = { ...parse(makeScanCacheWriter()(original, {})), version: 11 };
+    const v12 = { ...parse(makeScanCacheWriter()(original, {})), version: 12 };
 
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(v11)), TEST_FORMAT_MAP);
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v12)), TEST_FORMAT_MAP);
     expect(restored.get("/skipped-codex.jsonl")).toEqual({
       ...codex(1),
       size: -1,
@@ -279,11 +275,11 @@ describe("scan cache round trip", () => {
     });
   });
 
-  it("re-parses a Claude transcript cached before advisor usage was counted", () => {
+  it("re-parses a Claude transcript cached before partial copies were merged", () => {
     const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
-    const v9 = { ...parse(makeScanCacheWriter()(original, {})), version: 9 };
+    const v11 = { ...parse(makeScanCacheWriter()(original, {})), version: 11 };
 
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(v9)), TEST_FORMAT_MAP);
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v11)), TEST_FORMAT_MAP);
     expect(restored.get("/claude.jsonl")).toEqual({
       ...original.get("/claude.jsonl"),
       size: -1,
