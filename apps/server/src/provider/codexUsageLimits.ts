@@ -23,6 +23,7 @@ export interface CodexRateLimitSnapshot {
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
   readonly individualLimit?: {
+    readonly limit?: string;
     readonly remainingPercent: number;
     readonly resetsAt: number;
   } | null;
@@ -84,7 +85,12 @@ function codexRateLimitsToWindows(
     });
   }
   const individualLimit = snapshot.individualLimit;
-  if (individualLimit && Number.isFinite(individualLimit.remainingPercent)) {
+  // Seat-based workspaces report a 0 credit cap that only applies once the seat allowance runs out.
+  if (
+    individualLimit &&
+    Number.isFinite(individualLimit.remainingPercent) &&
+    Number(individualLimit.limit) !== 0
+  ) {
     const resetsAt = isoFromEpochSeconds(individualLimit.resetsAt);
     windows.push({
       id: "individual",

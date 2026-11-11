@@ -39,6 +39,22 @@ describe("codexRateLimitsToLimits", () => {
     expect(codexRateLimitsToUpdate(snapshot)).toEqual({ windows });
   });
 
+  it("leaves out a zero credit cap on seat-based workspaces", () => {
+    const snapshot = {
+      limitId: "codex",
+      planType: "team",
+      primary: { usedPercent: 0, windowDurationMins: 300 },
+      secondary: { usedPercent: 14, windowDurationMins: 10080 },
+      individualLimit: { limit: "0", remainingPercent: 0, resetsAt: 1_796_083_200 },
+    };
+
+    expect(codexRateLimitsToLimits({ checkedAt, snapshot }).windows.map((w) => w.id)).toEqual([
+      "primary",
+      "secondary",
+    ]);
+    expect(codexUsageLimitResetAt(snapshot)).toBeNull();
+  });
+
   it("maps primary and secondary onto the session and weekly windows", () => {
     expect(
       codexRateLimitsToLimits({
