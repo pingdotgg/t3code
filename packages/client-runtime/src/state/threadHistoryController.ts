@@ -13,7 +13,11 @@ export type ThreadHistoryLoadEarlierResult =
   | { readonly _tag: "error"; readonly message: string };
 
 export type ThreadHistoryHandler = {
-  readonly loadEarlier: (throughEntryId?: string) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
+  readonly loadEarlier: (
+    throughEntryId?: string,
+    workAnchorId?: string,
+  ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
+  readonly reconcilePendingWork: () => Effect.Effect<void>;
 };
 
 export type ThreadHistoryRegistration = {
@@ -35,7 +39,12 @@ export class ThreadHistoryController extends Context.Service<
       environmentId: EnvironmentId,
       threadId: ThreadId,
       throughEntryId?: string,
+      workAnchorId?: string,
     ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
+    readonly reconcilePendingWork: (
+      environmentId: EnvironmentId,
+      threadId: ThreadId,
+    ) => Effect.Effect<void>;
   }
 >()("@t3tools/client-runtime/state/threadHistoryController") {}
 
@@ -44,20 +53,23 @@ export const layer: Layer.Layer<ThreadHistoryController> = Layer.effect(
   Effect.gen(function* () {
     const handlers = yield* Ref.make(new Map<string, ThreadHistoryHandler>());
     return ThreadHistoryController.of({
-      register: (environmentId, threadId, handler) =>
-        Ref.update(handlers, (current) => {
-          const next = new Map(current);
-          next.set(threadKey({ environmentId, threadId }), handler);
-          return next;
-        }).pipe(
-          Effect.as({
-            environmentId,
-            threadId,
-            handler,
-          } satisfies ThreadHistoryRegistration),
-        ),
-      unregister: (registration) =>
-        Ref.update(handlers, (current) => {
+      register: Effect.fn("ThreadHistoryController.register")(
+        function (environmentId, threadId, handler) {
+          return Ref.update(handlers, (current) => {
+            const next = new Map(current);
+            next.set(threadKey({ environmentId, threadId }), handler);
+            return next;
+          }).pipe(
+            Effect.as({
+              environmentId,
+              threadId,
+              handler,
+            } satisfies ThreadHistoryRegistration),
+          );
+        },
+      ),
+      unregister: Effect.fn("ThreadHistoryController.unregister")(function (registration) {
+        return Ref.update(handlers, (current) => {
           const key = threadKey({
             environmentId: registration.environmentId,
             threadId: registration.threadId,
@@ -70,17 +82,32 @@ export const layer: Layer.Layer<ThreadHistoryController> = Layer.effect(
           const next = new Map(current);
           next.delete(key);
           return next;
-        }),
-      loadEarlier: (environmentId, threadId, throughEntryId) =>
-        Ref.get(handlers).pipe(
-          Effect.flatMap((current) => {
-            const handler = current.get(threadKey({ environmentId, threadId }));
-            if (handler === undefined) {
-              return Effect.succeed({ _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult);
-            }
-            return handler.loadEarlier(throughEntryId);
-          }),
-        ),
+        });
+      }),
+      loadEarlier: Effect.fn("ThreadHistoryController.loadEarlier")(
+        function (environmentId, threadId, throughEntryId, workAnchorId) {
+          return Ref.get(handlers).pipe(
+            Effect.flatMap((current) => {
+              const handler = current.get(threadKey({ environmentId, threadId }));
+              if (handler === undefined) {
+                return Effect.succeed({ _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult);
+              }
+              return handler.loadEarlier(throughEntryId, workAnchorId);
+            }),
+          );
+        },
+      ),
+      reconcilePendingWork: Effect.fn("ThreadHistoryController.reconcilePendingWork")(
+        function (environmentId, threadId) {
+          return Ref.get(handlers).pipe(
+            Effect.flatMap(
+              (current) =>
+                current.get(threadKey({ environmentId, threadId }))?.reconcilePendingWork() ??
+                Effect.void,
+            ),
+          );
+        },
+      ),
     });
   }),
 );

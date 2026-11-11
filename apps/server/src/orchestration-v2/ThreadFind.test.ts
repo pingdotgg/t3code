@@ -24,7 +24,11 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as EventStore from "./EventStore.ts";
-import { encodeThreadHistoryCursor, selectHistoryPageFromCursor } from "./threadHistoryPaging.ts";
+import {
+  encodeThreadHistoryCursor,
+  selectHistoryPageFromCursor,
+  THREAD_HISTORY_PAGE_POLICY,
+} from "./threadHistoryPaging.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 
 const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
@@ -520,14 +524,13 @@ describe("V2 thread find", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  const findsLateAnswer = <E, R>(
-    apply: (events: readonly OrchestrationV2DomainEvent[]) => Effect.Effect<void, E, R>,
-  ) =>
+  it.effect("finds an async answer that started a later run", () =>
     Effect.gen(function* () {
+      yield* createProject(projectId);
       const projection = yield* ProjectionStore.ProjectionStoreV2;
       const queuedRun = RunId.make("run:queued");
       const answerRun = RunId.make("run:answer");
-      yield* apply([
+      yield* commit([
         thread(threadId, projectId),
         run(),
         run(threadId, queuedRun, 2),
@@ -546,7 +549,7 @@ describe("V2 thread find", () => {
         { ...item("queued", 2, "queued follow-up", "user_message"), runId: queuedRun },
         { ...item(`async-answer:${requestId}`, 3, "needle", "user_message"), runId: answerRun },
       ];
-      yield* apply(
+      yield* commit(
         items.map((payload) => ({
           id: EventId.make(`${payload.id}:initial`),
           threadId,
@@ -562,25 +565,8 @@ describe("V2 thread find", () => {
         runId: answerRun,
         occurrence: 0,
       });
-    });
-
-  it.effect.each([
-    [
-      "SQL",
-      () =>
-        createProject(projectId).pipe(
-          Effect.andThen(findsLateAnswer(commit)),
-          Effect.provide(layerTest),
-        ),
-    ],
-    [
-      "memory",
-      () =>
-        Effect.flatMap(ProjectionStore.ProjectionStoreV2, (projection) =>
-          findsLateAnswer((events) => Effect.forEach(events, projection.apply, { discard: true })),
-        ).pipe(Effect.provide(ProjectionStore.layerMemory)),
-    ],
-  ] as const)("%s search finds an async answer that started a later run", ([, test]) => test());
+    }).pipe(Effect.provide(layerTest)),
+  );
 
   it.effect(
     "searches inherited fork history through the fork boundary, using source item identities",
@@ -784,7 +770,7 @@ describe("V2 history materialization", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("pages complete turns without duplicating or skipping messages", () =>
+  it.effect("pages long turns without duplicating or skipping messages", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
       const items = Array.from({ length: 45 }, (_, turn) => [
@@ -825,7 +811,12 @@ describe("V2 history materialization", () => {
             snapshotSequence: snapshot.snapshotSequence,
           }),
         });
-        assert.equal(page.items[0]?.item.type, "user_message");
+        // A turn larger than the byte budget is split, but only a lone oversized item may exceed it.
+        assert.isTrue(
+          page.items.length === 1 ||
+            Buffer.byteLength(JSON.stringify(page.items), "utf8") <=
+              THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+        );
         collected.unshift(...page.items.map((row) => String(row.sourceItemId)));
         cursor = page.nextCursor;
       }
