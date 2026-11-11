@@ -3325,12 +3325,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     // An add to a fresh Location returns while OpenCode is still connecting.
     const connectedMcpStatus = Effect.fnUntraced(function* (server: string, directory: string) {
-      for (;;) {
+      for (let waited = false; ; waited = true) {
         // Registered before the list so a change landing mid-call is not lost.
         const changed = yield* Deferred.make<void>();
         mcpStatusChanges.set(server, changed);
         const status = yield* mcpStatusOf(server, directory);
-        if (status !== "pending") return status;
+        if (status !== "pending") return { status, waited };
         yield* Deferred.await(changed);
       }
     });
@@ -3338,8 +3338,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const addMcp = Effect.fnUntraced(
       function* (state: ThreadState, wanted: NonNullable<ThreadState["mcp"]>, endpoint: string) {
         // Idle Location eviction drops the server without an event, and a reconnect's status
-        // event can trail the list reply, so only the state before the add tells them apart.
-        const joining =
+        // event can trail the list reply, so the state before the add tells them apart. A server
+        // seen pending, or a reconnect that forgets it, joins during this add instead.
+        let joining =
           state.mcp === undefined ||
           (yield* mcpStatusOf(wanted.name, wanted.directory).pipe(
             Effect.timeout(INVENTORY_TIMEOUT),
@@ -3359,14 +3360,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           .pipe(
             Effect.andThen(
               Effect.suspend(() => {
+                if (state.mcp === undefined) joining = true;
                 state.mcp = wanted;
                 return connectedMcpStatus(wanted.name, wanted.directory);
               }),
             ),
             Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.flatMap((status) =>
+            Effect.flatMap(({ status, waited }) =>
               status === "connected"
-                ? Effect.succeed(joining ? ("joining" as const) : ("connected" as const))
+                ? Effect.succeed(
+                    joining || waited || state.mcp === undefined
+                      ? ("joining" as const)
+                      : ("connected" as const),
+                  )
                 : Effect.logWarning("OpenCode did not connect T3 Code's MCP server.", {
                     status,
                   }).pipe(Effect.as("unavailable" as const)),

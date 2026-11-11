@@ -3417,6 +3417,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ...connected,
           mcpStatusChanged(server),
           ...turn,
+          // Connected before the add but pending after it: OpenCode reconnected it in between.
+          ...connected,
+          add,
+          reply("mcp.add", null),
+          out("mcp.list", { "location[directory]": WORK }),
+          reply("mcp.list", {
+            location: { directory: WORK },
+            data: [{ name: server, status: { status: "pending" } }],
+          }),
+          mcpStatusChanged(server),
+          ...connected,
+          ...turn,
           out("mcp.remove", { server, "location[directory]": WORK }),
           reply("mcp.remove", null),
         ]);
@@ -3430,6 +3442,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         const third = yield* terminalOf(runtime).pipe(Effect.forkScoped);
         yield* startedAfterSettle(runtime, thread, settles.started);
         assert.equal((yield* Fiber.join(third))?.status, "completed");
+        const fourth = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* startedAfterSettle(runtime, thread, settles.started);
+        assert.equal((yield* Fiber.join(fourth))?.status, "completed");
       }),
     ).pipe(Effect.scoped),
   );
