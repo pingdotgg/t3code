@@ -282,7 +282,7 @@ const versionArgument = Argument.String("version").pipe(
   Argument.optional,
 );
 
-export const runUpdateCommand = Effect.fn("cli.update.command")(function* (flags: {
+const runUpdateCommand = Effect.fn("cli.update.command")(function* (flags: {
   readonly baseDir: Option.Option<string>;
   readonly check: boolean;
   readonly json: boolean;

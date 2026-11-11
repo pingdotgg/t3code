@@ -28,10 +28,12 @@ export function useCheckProviderUpdates() {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const inFlight = useRef<Promise<void> | null>(null);
+  const inFlight = useRef<Promise<boolean> | null>(null);
 
+  // Resolves whether the refreshed providers offer a one-click update. The response carries them
+  // ahead of the debounced provider-status push, so callers can decide before that lands.
   const check = async (quiet: boolean) => {
-    const failures = await Promise.all(
+    const results = await Promise.all(
       environments
         .filter(
           (environment) =>
@@ -40,13 +42,24 @@ export function useCheckProviderUpdates() {
         )
         .map(async ({ environmentId, label }) => {
           const result = await refreshProviders({ environmentId, input: { refreshModels: true } });
-          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
+          if (result._tag === "Success") {
+            const { providers } = result.value;
+            const offers = collectProviderUpdateCandidates(providers).some((candidate) =>
+              canOneClickUpdateProviderCandidate(candidate, providers),
+            );
+            return { offers, failure: null };
+          }
+          if (isAtomCommandInterrupted(result)) return { offers: false, failure: null };
           const error = squashAtomCommandFailure(result);
-          return [`${label}: ${error instanceof Error ? error.message : "Refresh failed."}`];
+          return {
+            offers: false,
+            failure: `${label}: ${error instanceof Error ? error.message : "Refresh failed."}`,
+          };
         }),
     );
-    const lines = failures.flat();
-    if (quiet || lines.length === 0) return;
+    const offers = results.some((result) => result.offers);
+    const lines = results.flatMap((result) => (result.failure === null ? [] : [result.failure]));
+    if (quiet || lines.length === 0) return offers;
     toastManager.add(
       stackedThreadToast({
         type: "error",
@@ -54,6 +67,7 @@ export function useCheckProviderUpdates() {
         description: <span className="whitespace-pre-line">{lines.join("\n")}</span>,
       }),
     );
+    return offers;
   };
 
   // A repeat click must not start a second model rediscovery while one is running.

@@ -13,7 +13,7 @@ import { ToastProvider } from "../ui/toast";
 const mocks = vi.hoisted(() => ({
   run: vi.fn(async () => undefined),
   hasUpdates: true,
-  checkProviders: vi.fn(async () => undefined),
+  checkProviders: vi.fn(async () => false),
 }));
 vi.mock("../ProviderUpdatesAction", () => ({
   useCheckProviderUpdates: () => mocks.checkProviders,
@@ -53,15 +53,14 @@ const state: DesktopUpdateState = {
 function setup() {
   mocks.run.mockClear();
   mocks.hasUpdates = true;
-  mocks.checkProviders.mockImplementation(async () => undefined);
+  mocks.checkProviders.mockImplementation(async () => false);
 }
 
 it("offers provider updates found by the refresh while this app is current", async () => {
   setup();
+  // The refresh reports the offer before the debounced provider-status push reaches the rows.
   mocks.hasUpdates = false;
-  mocks.checkProviders.mockImplementation(async () => {
-    mocks.hasUpdates = true;
-  });
+  mocks.checkProviders.mockImplementation(async () => true);
   const current: DesktopUpdateState = { ...state, status: "up-to-date", availableVersion: null };
   let listener: ((request: DesktopUpdateCommandRequest) => void) | undefined;
   const complete = vi.fn(async () => true);
@@ -85,8 +84,8 @@ it("offers provider updates found by the refresh while this app is current", asy
   await expect.element(page.getByRole("alertdialog")).toBeVisible();
   expect(complete).not.toHaveBeenCalled();
 
-  mocks.hasUpdates = false;
-  mocks.checkProviders.mockImplementation(async () => undefined);
+  await userEvent.click(page.getByRole("button", { name: "Cancel", exact: true }));
+  mocks.checkProviders.mockImplementation(async () => false);
   await act(async () => listener?.({ version: 1, requestId: "about", type: "update" }));
   await vi.waitFor(() =>
     expect(complete).toHaveBeenCalledWith({

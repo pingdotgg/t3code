@@ -455,8 +455,6 @@ it.effect("routes a legacy desktop shim's update and read-only check through des
       assert.deepStrictEqual(yield* Effect.promise(() => NodeFSP.readdir(root)), []);
       yield* runCli(["update", "--base-dir", root]);
       assert.equal(desktop.received[1]?.type, "update");
-      yield* runCli(["service", "update", "--base-dir", root]);
-      assert.equal(desktop.received[2]?.type, "update");
       for (const options of [
         ["--yes"],
         ["--channel", "stable"],
@@ -466,7 +464,7 @@ it.effect("routes a legacy desktop shim's update and read-only check through des
         const refused = yield* runCli(["update", ...options, "--base-dir", root]).pipe(Effect.exit);
         assert.isTrue(Exit.isFailure(refused));
       }
-      assert.equal(desktop.received.length, 3);
+      assert.equal(desktop.received.length, 2);
       unsupported = true;
       const oldDesktop = yield* runCli(["update", "--base-dir", root]).pipe(Effect.flip);
       expect(oldDesktop).toMatchObject({

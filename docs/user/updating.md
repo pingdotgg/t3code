@@ -53,8 +53,6 @@ machines before restarting T3 Code and retrying. A reload does not cancel their 
 Desktop updates use the app's update track and confirmation. Exact versions, `--channel`,
 `--allow-downgrade`, and `--yes` are refused for this command; switch tracks in Settings → About.
 If the desktop app is closed or too old to coordinate the request, open or update it and try again.
-The deprecated `t3 service update` command follows the same routing. For a standalone CLI, it
-selects the newest release on its channel. Use `t3 service install` to install the invoking CLI version.
 
 Run `t3 update --check --json` to inspect cached update availability without changing the installation.
 Use the normal update action for a fresh check.
