@@ -33,6 +33,9 @@ Running `codex login` does not change a managed ChatGPT connection. In
 and complete the wizard. Then select that instance from the thread's model
 picker. See [Use multiple accounts](#use-multiple-accounts).
 
+If an API gateway rejects detailed reasoning summaries, set **Reasoning summary**
+to **Auto** under the Codex instance's **Runtime** settings in **Settings → Providers**.
+
 ## Use multiple accounts
 
 Add another ChatGPT account in **Settings → Providers**, then select the account

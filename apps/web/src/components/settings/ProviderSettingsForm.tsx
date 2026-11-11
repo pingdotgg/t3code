@@ -333,6 +333,7 @@ interface ProviderSettingsFormProps {
   readonly value: unknown;
   readonly idPrefix: string;
   readonly variant: "card" | "dialog" | "settings";
+  readonly hiddenFields?: ReadonlyArray<string> | undefined;
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
   /** Config keys an administrator's policy pins, shown inert with the reason. */
   readonly managed?: { readonly keys: ReadonlySet<string>; readonly reason: string } | undefined;
@@ -677,8 +678,11 @@ export function ProviderSettingsForm({
   onChange,
   managed,
   environmentId,
+  hiddenFields,
 }: ProviderSettingsFormProps) {
-  const fields = deriveProviderSettingsFields(definition, value);
+  const fields = deriveProviderSettingsFields(definition, value).filter(
+    (field) => !hiddenFields?.includes(field.key),
+  );
   const isLocalAcp =
     definition.driverKind === "acpRegistry" &&
     readProviderConfigString(value, "source") === "local";
