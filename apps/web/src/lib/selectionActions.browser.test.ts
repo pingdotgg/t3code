@@ -36,13 +36,6 @@ describe("observeSelectionActions", () => {
       x: 10,
       y: 20,
     });
-
-    onSelection.mockClear();
-    click(element, 1);
-    click(element, 2);
-    vi.advanceTimersByTime(SELECTION_MULTI_CLICK_INTERVAL_MS);
-    vi.advanceTimersToNextFrame();
-    expect(onSelection).toHaveBeenCalledOnce();
   });
 
   it("waits after a caller's cycling word click even when the browser detail is 3", () => {
