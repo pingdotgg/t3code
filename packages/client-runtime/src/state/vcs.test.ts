@@ -5,6 +5,7 @@ import {
   AuthSourceControlWriteScope,
   AuthOrchestrationOperateScope,
   CommandId,
+  ProjectId,
   ThreadId,
   WS_METHODS,
   VcsProcessExitError,
@@ -309,6 +310,92 @@ describe("cached VCS refs", () => {
         expect(yield* Ref.get(saved)).toEqual([LIVE_REFS]);
       }),
     ),
+  );
+
+  it.effect.each(["rewrite_commit_messages", "regenerate_change_request"] as const)(
+    "tracks background Git work independently of mounted dialogs: %s",
+    (operation) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const failure = new EnvironmentRpcUnavailableError({
+            environmentId: TARGET.environmentId,
+            message: "generation failed",
+          });
+          const execute = () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.andThen(Effect.fail(failure)),
+            );
+          const client = {
+            [WS_METHODS.gitRewriteCommitMessages]: execute,
+            [WS_METHODS.gitRegeneratePullRequestDescription]: execute,
+          } as unknown as WsRpcProtocolClient;
+          const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+            target: TARGET,
+            state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+            session: yield* SubscriptionRef.make(Option.some(session(client))),
+            prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+            connect: Effect.void,
+            disconnect: Effect.void,
+            retryNow: Effect.void,
+          });
+          const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (_id, effect) =>
+            Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+          const runtime = Atom.runtime(
+            Layer.merge(
+              Layer.succeed(
+                EnvironmentRegistry.EnvironmentRegistry,
+                EnvironmentRegistry.EnvironmentRegistry.of({
+                  run,
+                } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+              ),
+              Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+            ),
+          );
+          const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
+            Effect.sync(() => value.dispose()),
+          );
+          const manager = createVcsActionManager(runtime);
+          const atoms = createGitEnvironmentAtoms(runtime, manager.track);
+          const target = { environmentId: TARGET.environmentId, cwd: "/repo" };
+          const fiber = yield* Effect.forkChild(
+            Effect.promise(async () => {
+              if (operation === "rewrite_commit_messages") {
+                await atoms.rewriteCommitMessages.run(registry, {
+                  environmentId: TARGET.environmentId,
+                  input: {
+                    cwd: "/repo",
+                    expectedHeadSha: "a".repeat(40),
+                    commitShas: ["a".repeat(40)],
+                  },
+                });
+              } else {
+                await atoms.regeneratePullRequestDescription.run(registry, {
+                  environmentId: TARGET.environmentId,
+                  input: { cwd: "/repo", projectId: ProjectId.make("project") },
+                });
+              }
+            }),
+          );
+          yield* Deferred.await(started);
+          expect(registry.get(manager.stateAtom(target))).toMatchObject({
+            isRunning: true,
+            operation,
+          });
+          expect(registry.get(manager.stateAtom({ ...target, cwd: "/other" })).isRunning).toBe(
+            false,
+          );
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(fiber);
+          expect(registry.get(manager.stateAtom(target))).toMatchObject({
+            isRunning: false,
+            operation,
+            error: failure.message,
+          });
+        }),
+      ),
   );
 
   it.effect("invalidates persisted refs when ref-affecting commands settle", () =>

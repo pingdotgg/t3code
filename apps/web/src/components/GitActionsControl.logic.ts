@@ -137,14 +137,7 @@ export function resolveGitActionProgressPresentation(input: {
   readonly phaseStartedAtMs: number | null;
   readonly hookStartedAtMs: number | null;
 }): GitActionProgressPresentation | null {
-  if (
-    !input.isRunning ||
-    (input.operation !== "run_change_request" &&
-      input.operation !== "pull" &&
-      input.operation !== "split_commits")
-  ) {
-    return null;
-  }
+  if (!input.isRunning) return null;
 
   const currentLabel = input.currentLabel?.trim();
   const output = input.lastOutputLine?.trim();

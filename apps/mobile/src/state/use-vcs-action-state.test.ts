@@ -9,6 +9,8 @@ vi.mock("expo-haptics", () => ({
   notificationAsync: mocks.notificationAsync,
 }));
 
+vi.mock("./git", () => ({ gitEnvironment: {} }));
+
 vi.mock("./vcs", () => ({ vcsActionManager: {} }));
 
 import { dismissGitActionResult, showGitActionResult } from "./use-vcs-action-state";

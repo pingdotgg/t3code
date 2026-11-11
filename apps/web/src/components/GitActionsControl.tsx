@@ -87,7 +87,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import {
   useGitStackedAction,
-  useSourceControlActionRunning,
   useSourceControlPublishRepositoryAction,
   useVcsInitAction,
   useVcsPullAction,
@@ -170,12 +169,6 @@ function requestVcsStatusRefresh(
   }
   void refresh({ environmentId, input: { cwd } });
 }
-const RUNNING_SOURCE_CONTROL_ACTIONS = [
-  "runStackedAction",
-  "pull",
-  "publishRepository",
-  "splitCommits",
-] as const;
 
 const PUBLISH_PROVIDER_OPTIONS = sourceControlClients.definitions.map((definition) => ({
   value: definition.kind,
@@ -965,7 +958,6 @@ export default function GitActionsControl({
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [isRewriteCommitsDialogOpen, setIsRewriteCommitsDialogOpen] = useState(false);
-  const [isRegeneratingDescription, setIsRegeneratingDescription] = useState(false);
   const regenerateScopeKey = `${successScopeKey}\u0000${threadRefreshKey ?? ""}`;
   const [regenerateSelection, setRegenerateSelection] = useState<{
     readonly scopeKey: string;
@@ -1114,11 +1106,9 @@ export default function GitActionsControl({
   const initAction = useVcsInitAction(sourceControlScope);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
   const pullAction = useVcsPullAction(sourceControlScope);
-  const isSourceControlActionRunning = useSourceControlActionRunning(
-    sourceControlScope,
-    RUNNING_SOURCE_CONTROL_ACTIONS,
-  );
-  const isGitActionRunning = isSourceControlActionRunning || isRegeneratingDescription;
+  const isGitActionRunning = vcsActionState.isRunning;
+  const isRegeneratingDescription =
+    vcsActionState.isRunning && vcsActionState.operation === "regenerate_change_request";
   const availableRegenerateCandidates = resolveRegeneratePullRequestCandidates(
     gitStatusForActions,
     activeServerThread,
@@ -1783,10 +1773,15 @@ export default function GitActionsControl({
                 className="flex h-8 shrink-0 items-center pe-2.5 text-2xs tabular-nums text-muted-foreground"
               />
             </div>
-          ) : visibleInlineSuccess ? (
+          ) : !vcsActionState.error && visibleInlineSuccess ? (
             <ThreadDetailsControl variant="ghost" multiline disabled part="row" panel>
               <GitActionSuccessButtonContent success={visibleInlineSuccess} />
             </ThreadDetailsControl>
+          ) : null}
+          {!vcsActionState.isRunning && vcsActionState.error ? (
+            <p role="alert" className="px-2 py-1.5 text-xs text-destructive">
+              {vcsActionState.error}
+            </p>
           ) : null}
           {quickAction.kind === "run_pull" ? (
             <ThreadDetailsControl

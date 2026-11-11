@@ -617,11 +617,16 @@ describe("resolveRegeneratePullRequestCandidates", () => {
 });
 
 describe("git action progress presentation", () => {
-  it("shows commit splitting in the same progress area as change-request creation", () => {
+  it.each([
+    "split_commits",
+    "rewrite_commit_messages",
+    "regenerate_change_request",
+    "publish_repository",
+  ])("shows background source-control work in the sidebar: %s", (operation) => {
     assert.deepEqual(
       resolveGitActionProgressPresentation({
         isRunning: true,
-        operation: "split_commits",
+        operation,
         currentLabel: "Splitting into logical commits...",
         lastOutputLine: null,
         phaseStartedAtMs: 1_000,

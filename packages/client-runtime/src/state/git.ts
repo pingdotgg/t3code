@@ -21,6 +21,18 @@ export function createGitEnvironmentAtoms<R, E>(
         ? invalidateCachedVcsRefs(registry, { environmentId, cwd: input.cwd })
         : Effect.void,
   });
+  const rewriteCommitMessages = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:git:rewrite-commit-messages",
+    tag: WS_METHODS.gitRewriteCommitMessages,
+    scheduler: vcsCommandScheduler,
+    concurrency: vcsCommandConcurrency,
+  });
+  const regeneratePullRequestDescription = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:git:regenerate-pull-request-description",
+    tag: WS_METHODS.gitRegeneratePullRequestDescription,
+    scheduler: vcsCommandScheduler,
+    concurrency: vcsCommandConcurrency,
+  });
   return {
     cancelCommitWorkflow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:git:cancel-commit-workflow",
@@ -67,17 +79,34 @@ export function createGitEnvironmentAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
     }),
-    rewriteCommitMessages: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:git:rewrite-commit-messages",
-      tag: WS_METHODS.gitRewriteCommitMessages,
-      scheduler: vcsCommandScheduler,
-      concurrency: vcsCommandConcurrency,
-    }),
-    regeneratePullRequestDescription: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:git:regenerate-pull-request-description",
-      tag: WS_METHODS.gitRegeneratePullRequestDescription,
-      scheduler: vcsCommandScheduler,
-      concurrency: vcsCommandConcurrency,
-    }),
+    rewriteCommitMessages: {
+      ...rewriteCommitMessages,
+      run: (
+        registry: Parameters<typeof rewriteCommitMessages.run>[0],
+        target: Parameters<typeof rewriteCommitMessages.run>[1],
+      ) =>
+        trackAction(
+          registry,
+          { environmentId: target.environmentId, cwd: target.input.cwd },
+          { operation: "rewrite_commit_messages", label: "Rewriting commit messages..." },
+          () => rewriteCommitMessages.run(registry, target),
+        ),
+    },
+    regeneratePullRequestDescription: {
+      ...regeneratePullRequestDescription,
+      run: (
+        registry: Parameters<typeof regeneratePullRequestDescription.run>[0],
+        target: Parameters<typeof regeneratePullRequestDescription.run>[1],
+      ) =>
+        trackAction(
+          registry,
+          { environmentId: target.environmentId, cwd: target.input.cwd },
+          {
+            operation: "regenerate_change_request",
+            label: "Regenerating request title and description...",
+          },
+          () => regeneratePullRequestDescription.run(registry, target),
+        ),
+    },
   };
 }

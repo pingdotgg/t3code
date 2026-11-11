@@ -124,6 +124,9 @@ export function useGitActionProgress(target: VcsActionTarget): GitActionProgress
     };
   }
 
+  if (actionState.error)
+    return { phase: "error", label: "Source control failed", description: actionState.error };
+
   if (result) {
     return {
       phase: result.type,
