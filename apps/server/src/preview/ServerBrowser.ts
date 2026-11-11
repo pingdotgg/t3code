@@ -1628,8 +1628,6 @@ const make = Effect.gen(function* () {
       Effect.catch((cause) =>
         Effect.logWarning("failed to save reported browser profiles", { cause }),
       ),
-      // A disconnect after rename must not leave the saved-content cache stale.
-      Effect.uninterruptible,
     );
   }, saveProfilesLock.withPermits(1));
 
@@ -1651,7 +1649,12 @@ const make = Effect.gen(function* () {
             reportsByClient.set(client, input);
             rebuildReportedProfiles();
             catalogToSave = reportedProfiles;
-          }).pipe(Effect.andThen(saveReportedProfiles)),
+          }).pipe(
+            Effect.andThen(saveReportedProfiles),
+            // A disconnect, even while an earlier save holds the lock, must not drop this
+            // report's save or leave the saved-content cache stale.
+            Effect.uninterruptible,
+          ),
     ),
   );
 
