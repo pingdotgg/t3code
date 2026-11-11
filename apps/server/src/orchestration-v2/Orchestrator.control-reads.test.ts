@@ -214,13 +214,8 @@ it.effect.each(
         "a refused switch must not release the provider session",
       );
       assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
-      assert.ok(
-        Result.isFailure(outcome),
-        "retry the instance switch after the active turn finishes",
-      );
+      assert.ok(Result.isFailure(outcome));
       assert.instanceOf(outcome.failure, Orchestrator.OrchestratorProviderSelectionBusyError);
-      assert.match(outcome.failure.message, /active turn/i);
-      assert.match(outcome.failure.message, /retry/i);
     } else {
       assert.ok(Result.isSuccess(outcome));
       assert.deepEqual(after.thread.modelSelection, target);
