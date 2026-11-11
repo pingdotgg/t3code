@@ -249,6 +249,7 @@ function probeCli(input: {
             executable: input.spec.executable,
             status: "missing" as const,
             version: Option.none<string>(),
+            // A wrong-CPU hint or an absent executable keeps its advice; other failures need repair.
             installHint:
               hint !== input.spec.installHint || isMissingExecutable(cause)
                 ? hint
@@ -338,10 +339,7 @@ export function probeSourceControlProvider(input: {
       ([item, auth]) =>
         ({
           ...item,
-          auth:
-            item.status === "available"
-              ? auth
-              : unknownAuth(item.installHint),
+          auth: item.status === "available" ? auth : unknownAuth(item.installHint),
         }) satisfies SourceControlProviderDiscoveryItem,
     ),
   );
