@@ -76,7 +76,7 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  const unavailable = update.complete
+  const unavailable = update.clearsProbeFailure
     ? undefined
     : previous === undefined
       ? { reason: "probeFailed" as const }

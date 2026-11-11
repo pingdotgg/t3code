@@ -63,7 +63,7 @@ describe("applyUsageLimitsUpdate", () => {
   it("lets a complete update clear a failed probe but not an unsupported account", () => {
     const failed = { ...published, unavailable: { reason: "probeFailed" as const } };
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };
-    const update = { complete: true, windows: [session, weekly] };
+    const update = { clearsProbeFailure: true, windows: [session, weekly] };
     expect(applyUsageLimitsUpdate({ previous: failed, checkedAt, update })).toEqual(published);
     expect(applyUsageLimitsUpdate({ previous: undefined, checkedAt, update })).toEqual(published);
     expect(applyUsageLimitsUpdate({ previous: unsupported, checkedAt, update })).toBe(unsupported);

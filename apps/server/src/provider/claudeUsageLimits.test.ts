@@ -271,7 +271,7 @@ describe("claudeRateLimitEventToUpdate", () => {
       },
     } as const;
     expect(claudeRateLimitEventToUpdate(event, noNames)).toEqual({
-      complete: true,
+      clearsProbeFailure: true,
       windows: [
         {
           id: "five_hour",
@@ -326,7 +326,7 @@ describe("claudeRateLimitEventToUpdate", () => {
       },
     } as never;
     expect(claudeRateLimitEventToUpdate(event, noNames)).toMatchObject({
-      complete: true,
+      clearsProbeFailure: true,
       windows: [{ id: "five_hour", usedPercent: 30 }],
     });
   });

@@ -197,7 +197,7 @@ export function claudeRateLimitEventToUpdate(
     if (mapped) windows.set(mapped.id, mapped);
   }
   if (windows.size === 0) return undefined;
-  return { windows: [...windows.values()], ...(complete ? { complete: true } : {}) };
+  return { windows: [...windows.values()], ...(complete ? { clearsProbeFailure: true } : {}) };
 }
 
 // `claude setup-token` credentials cannot read limits through `get_usage`, but
