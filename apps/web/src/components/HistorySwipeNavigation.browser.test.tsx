@@ -1,10 +1,17 @@
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../test/render";
+import { __setClientSettingsForTests } from "../hooks/useSettings";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 const navigateHistory = vi.hoisted(() => vi.fn());
 vi.mock("../navigationHistory", () => ({ canNavigateHistory: () => true, navigateHistory }));
+
+function setup(swipeNavigationEnabled = true) {
+  navigateHistory.mockReset();
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, swipeNavigationEnabled });
+}
 
 function swipe(target: Element, deltaX: number) {
   for (const delta of [deltaX, 0]) {
@@ -28,7 +35,7 @@ describe("HistorySwipeNavigation", () => {
     ["swiping back over a panel without overflow navigates", "none", 0, -130, true],
     ["a swipe that started in a closed dialog keeps the thread", "closed-dialog", 0, -130, false],
   ] as const)("%s", async (_name, scroller, scrollLeft, deltaX, navigates) => {
-    navigateHistory.mockReset();
+    setup();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     await using screen = await render(<HistorySwipeNavigation />);
     const panel = screen.container.appendChild(document.createElement("div"));
@@ -60,9 +67,12 @@ describe("HistorySwipeNavigation", () => {
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
 
-  it("a horizontal mouse wheel tick off macOS keeps the thread", async () => {
-    navigateHistory.mockReset();
-    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  it.each([
+    ["a horizontal mouse wheel tick off macOS keeps the thread", "Win32", true],
+    ["a swipe with swipe navigation turned off keeps the thread", "MacIntel", false],
+  ] as const)("%s", async (_name, platform, swipeNavigationEnabled) => {
+    setup(swipeNavigationEnabled);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
     await using screen = await render(<HistorySwipeNavigation />);
     const content = screen.container.appendChild(document.createElement("div"));
     content.style.cssText = "height: 20px; width: 100px";

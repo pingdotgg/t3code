@@ -1,6 +1,7 @@
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useClientSettings } from "../hooks/useSettings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { canNavigateHistory, navigateHistory, type HistoryDirection } from "../navigationHistory";
 
@@ -93,11 +94,12 @@ export function isMomentumTail(deltas: readonly number[]): boolean {
  * macOS only: on Windows and Linux a mouse tilt wheel is indistinguishable from a trackpad swipe.
  */
 export function HistorySwipeNavigation() {
+  const enabled = useClientSettings((settings) => settings.swipeNavigationEnabled);
   const [swipe, setSwipe] = useState<SwipeIndicatorState | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window wheel and desktop gesture listeners track trackpad swipes
   useEffect(() => {
-    if (!isMacPlatform(navigator.platform)) return;
+    if (!enabled || !isMacPlatform(navigator.platform)) return;
     let gesture: SwipeGesture | null = null;
     const hideIndicator = () =>
       setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
@@ -152,7 +154,7 @@ export function HistorySwipeNavigation() {
       unsubscribeScrollEnd?.();
       window.removeEventListener("wheel", onWheel, { capture: true });
     };
-  }, []);
+  }, [enabled]);
 
   return swipe === null ? null : <SwipeIndicator {...swipe} />;
 }

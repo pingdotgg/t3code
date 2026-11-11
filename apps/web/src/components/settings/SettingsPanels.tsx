@@ -493,6 +493,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.swipeNavigationEnabled !== DEFAULT_UNIFIED_SETTINGS.swipeNavigationEnabled
+      ? ["Swipe to navigate"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -666,6 +669,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      swipeNavigationEnabled: DEFAULT_UNIFIED_SETTINGS.swipeNavigationEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -1049,6 +1053,34 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+        {isElectron && isMacPlatform(navigator.platform) ? (
+          <SettingsRow
+            {...searchableSetting("swipe-navigation")}
+            description="Swipe left or right with two fingers on the trackpad to go back or forward."
+            resetAction={
+              settings.swipeNavigationEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.swipeNavigationEnabled ? (
+                <SettingResetButton
+                  label="swipe navigation"
+                  onClick={() =>
+                    updateSettings({
+                      swipeNavigationEnabled: DEFAULT_UNIFIED_SETTINGS.swipeNavigationEnabled,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.swipeNavigationEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ swipeNavigationEnabled: Boolean(checked) })
+                }
+                aria-label="Swipe to navigate"
+              />
+            }
+          />
+        ) : null}
       </SettingsSection>
     </SettingsPageContainer>
   );

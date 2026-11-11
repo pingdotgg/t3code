@@ -685,6 +685,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "swipe-navigation",
+    title: "Swipe to navigate",
+    to: "/settings/general",
+    searchTerms: ["trackpad two finger gesture back forward history thread"],
+    desktopOnly: true,
+    macOnly: true,
+  },
+  {
     id: "response-streaming",
     title: "Response streaming",
     to: "/settings/threads",
