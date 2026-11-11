@@ -133,24 +133,24 @@ function DialogPopup({
     ref: popupRef,
     render: (
       <DialogPrimitive.Popup
-          className={cn(
-            variant === "media"
-              ? DIALOG_MEDIA_POPUP_CLASS
-              : variant === "app-panel"
-                ? DIALOG_APP_PANEL_POPUP_CLASS
-                : variant === "app"
-                  ? DIALOG_APP_POPUP_CLASS
-                  : DIALOG_POPUP_CLASS,
-            variant === "app" || variant === "app-panel"
-              ? "text-foreground"
-              : "row-start-2 text-popover-foreground",
-            variant === "default" && "max-h-full max-w-lg",
-            bottomStickOnMobile &&
-              variant !== "app" &&
-              variant !== "app-panel" &&
-              DIALOG_MOBILE_SHEET_CLASS,
-            className,
-          )}
+        className={cn(
+          variant === "media"
+            ? DIALOG_MEDIA_POPUP_CLASS
+            : variant === "app-panel"
+              ? DIALOG_APP_PANEL_POPUP_CLASS
+              : variant === "app"
+                ? DIALOG_APP_POPUP_CLASS
+                : DIALOG_POPUP_CLASS,
+          variant === "app" || variant === "app-panel"
+            ? "text-foreground"
+            : "row-start-2 text-popover-foreground",
+          variant === "default" && "max-h-full max-w-lg",
+          bottomStickOnMobile &&
+            variant !== "app" &&
+            variant !== "app-panel" &&
+            DIALOG_MOBILE_SHEET_CLASS,
+          className,
+        )}
         data-slot="dialog-popup"
         initialFocus={initialFocus}
         render={renderRetainedPopup}
@@ -179,9 +179,13 @@ function DialogPopup({
       <DialogViewport
         variant={variant === "app" || variant === "app-panel" ? "app" : "default"}
         {...viewportProps}
-        style={{ ...viewportProps?.style, ...(placement === "content-top" ? { "--dialog-content-inset": `${contentInset}px` } : {}) }}
+        style={{
+          ...viewportProps?.style,
+          ...(placement === "content-top" ? { "--dialog-content-inset": `${contentInset}px` } : {}),
+        }}
         className={cn(
-          placement === "content-top" && "sm:grid-rows-[0_auto_1fr] sm:pt-[min(23.611dvh,170px)] sm:ps-[calc(var(--dialog-content-inset)+1rem)]",
+          placement === "content-top" &&
+            "sm:grid-rows-[0_auto_1fr] sm:pt-[min(23.611dvh,170px)] sm:ps-[calc(var(--dialog-content-inset)+1rem)]",
           variant === "app-panel" && "max-sm:p-2",
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           variant === "media" &&
