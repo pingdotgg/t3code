@@ -154,19 +154,18 @@ const inlineSuccessExpiresAt = () => Date.now() + GIT_ACTION_SUCCESS_VISIBLE_MS;
 
 type RefreshVcsStatus = (target: {
   readonly environmentId: ScopedThreadRef["environmentId"];
-  readonly input: { readonly cwd: string; readonly localOnly?: boolean };
+  readonly input: { readonly cwd: string };
 }) => Promise<unknown>;
 
 function requestVcsStatusRefresh(
   refresh: RefreshVcsStatus,
   environmentId: ScopedThreadRef["environmentId"] | null,
   cwd: string | null,
-  options?: { readonly localOnly: boolean },
 ): void {
   if (environmentId === null || cwd === null) {
     return;
   }
-  void refresh({ environmentId, input: { cwd, ...options } });
+  void refresh({ environmentId, input: { cwd } });
 }
 const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
 
@@ -1411,8 +1410,9 @@ export default function GitActionsControl({
     hasNotice: isDetachedHead || isCleanAndBehind || Boolean(gitStatusError),
   });
 
-  const refreshLocalStatus = () =>
-    requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd, { localOnly: true });
+  // A disabled menu cannot refresh on open, and terminal edits or commits publish no status.
+  const refreshStatusForEmptyMenu = () =>
+    requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
 
   const initializeGit = () => {
     void (async () => {
@@ -1520,9 +1520,8 @@ export default function GitActionsControl({
           role="group"
           aria-label="Git actions"
           ref={panelAnchorRef}
-          // A disabled menu cannot refresh on open, and terminal edits publish no status.
-          onPointerEnter={hasGitMenuContent ? undefined : refreshLocalStatus}
-          onFocus={hasGitMenuContent ? undefined : refreshLocalStatus}
+          onPointerEnter={hasGitMenuContent ? undefined : refreshStatusForEmptyMenu}
+          onFocus={hasGitMenuContent ? undefined : refreshStatusForEmptyMenu}
           className={cn(
             "shrink-0",
             THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
