@@ -21,6 +21,7 @@ import {
   bufferShellLiveStream,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
+  loadSubscriberShellSnapshot,
   omitIdleSubagentShells,
   omitOlderSettledShells,
   shellStreamItemFromEnrichmentRefresh,
@@ -354,6 +355,77 @@ describe("omitOlderSettledShells", () => {
     ]);
     expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 6 }]);
   });
+});
+
+describe("loadSubscriberShellSnapshot", () => {
+  it.effect(
+    "keeps an idle promoted child and its older settled parent through indexed selection",
+    () =>
+      Effect.gen(function* () {
+        const DAY = 24 * 60 * 60 * 1000;
+        const settled = (daysAgo: number) => ({
+          settledOverride: "settled" as const,
+          settledAt: DateTime.makeUnsafe(100 * DAY - daysAgo * DAY),
+        });
+        const top = (id: string, daysAgo: number) =>
+          shellFixture({
+            id: ThreadId.make(id),
+            projectId: ProjectId.make("project-a"),
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: ThreadId.make(id),
+            },
+            ...settled(daysAgo),
+          });
+        const threads = [
+          ...Array.from({ length: 25 }, (_, index) => top(`new-${index}`, index / 10)),
+          top("old", 30),
+          top("old-parent", 30),
+          shellFixture({
+            id: ThreadId.make("promoted-child"),
+            projectId: ProjectId.make("project-a"),
+            lineage: {
+              parentThreadId: ThreadId.make("old-parent"),
+              relationshipToParent: "subagent",
+              rootThreadId: ThreadId.make("old-parent"),
+            },
+            promotedAt: DateTime.makeUnsafe(0),
+            settledOverride: null,
+            settledAt: null,
+          }),
+        ];
+        const index = threads.map((thread) => ({
+          id: thread.id,
+          projectId: thread.projectId,
+          lineage: thread.lineage,
+          promotedAt: thread.promotedAt ?? null,
+          settledOverride: thread.settledOverride,
+          settledAt: thread.settledAt,
+          pinnedAt: null,
+          snoozedUntil: null,
+          mayBeLive: false,
+        }));
+        const loaded = yield* loadSubscriberShellSnapshot({
+          sql: { withTransaction: (effect: Effect.Effect<unknown>) => effect } as never,
+          listShellIndex: Effect.succeed(index),
+          readThreads: (threadIds) =>
+            Effect.succeed(
+              Effect.succeed({
+                ...emptyShellSnapshot,
+                threads: threads.filter((thread) => threadIds?.includes(thread.id) ?? true),
+              }),
+            ),
+          listProjects: Effect.succeed([]),
+          latestSequence: Effect.succeed(7),
+          options: { omitIdleSubagents: true, omitOlderSettled: true },
+        });
+        const ids = loaded.snapshot.threads.map((thread) => thread.id);
+        expect(ids).toContain("promoted-child");
+        expect(ids).toContain("old-parent");
+        expect(ids).not.toContain("old");
+      }),
+  );
 });
 
 describe("shellStreamItemsFromInitialSnapshot", () => {
