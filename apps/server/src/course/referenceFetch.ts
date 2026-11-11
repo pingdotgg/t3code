@@ -38,7 +38,6 @@ export interface ReferenceFetchResult {
   readonly pageCount?: number;
   readonly pages?: ReadonlyArray<{ readonly page: number; readonly text: string }>;
   readonly images?: ReadonlyArray<ReferenceImage>;
-  readonly skippedImages?: number;
 }
 
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -171,11 +170,14 @@ const runPdfWorker = async (
       ? ["__course-pdf"]
       : [workerScript()];
   const child = spawnImpl(process.execPath, args, {
-    stdio: ["pipe", "pipe", "pipe"],
+    // Unread stderr would fill and block the child on pdf.js warnings.
+    stdio: ["pipe", "pipe", "ignore"],
     env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
   });
   const output: Buffer[] = [];
   child.stdout?.on("data", (value: Buffer) => output.push(value));
+  // A child that dies before reading its input must fail this fetch, not the server.
+  child.stdin?.on("error", () => {});
   child.stdin?.end(
     JSON.stringify({ bytes: Buffer.from(bytes).toString("base64"), pages: requested }),
   );

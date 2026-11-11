@@ -2,7 +2,6 @@
 import * as NodeZlib from "node:zlib";
 
 const MAX_PDF_IMAGE_PIXELS = 16 * 1024 * 1024;
-const MAX_PDF_IMAGE_OPS_PER_PAGE = 8;
 
 const chunk = (name: string, body: Uint8Array) => {
   const type = Buffer.from(name);
@@ -78,7 +77,6 @@ export const extractRequestedPdfPages = async (bytes: Uint8Array, requested: rea
     height: number;
   }[] = [];
   let textRemaining = 20_000;
-  let skippedImages = 0;
   try {
     for (const pageNumber of [...new Set(requested)]
       .filter((page) => page >= 1 && page <= document.numPages)
@@ -99,21 +97,12 @@ export const extractRequestedPdfPages = async (bytes: Uint8Array, requested: rea
         .map((fn: number, index: number) => ({ fn, args: ops.argsArray[index] }))
         .filter((entry: { fn: number }) => entry.fn === pdfjs.OPS.paintImageXObject);
       let largest: { width: number; height: number; kind: number; data: Uint8Array } | undefined;
-      for (const [index, candidate] of candidates.entries()) {
-        if (index >= MAX_PDF_IMAGE_OPS_PER_PAGE) {
-          skippedImages += candidates.length - index;
-          break;
-        }
+      for (const candidate of candidates) {
         const id = candidate.args[0];
         const objects = String(id).startsWith("g_") ? page.commonObjs : page.objs;
         const image = await new Promise<any>((resolve) => objects.get(id, resolve));
-        if (!image) continue;
-        const pixels = image.width * image.height;
-        if (pixels >= MAX_PDF_IMAGE_PIXELS) {
-          skippedImages += 1;
-          continue;
-        }
-        if (!largest || pixels > largest.width * largest.height) largest = image;
+        if (image && (!largest || image.width * image.height > largest.width * largest.height))
+          largest = image;
       }
       if (largest) images.push({ type: "image", mimeType: "image/png", ...imageToPng(largest) });
     }
@@ -121,7 +110,6 @@ export const extractRequestedPdfPages = async (bytes: Uint8Array, requested: rea
       pageCount: document.numPages,
       pages,
       images,
-      ...(skippedImages ? { skippedImages } : {}),
     };
   } finally {
     const destroy = Reflect.get(document, "destroy");

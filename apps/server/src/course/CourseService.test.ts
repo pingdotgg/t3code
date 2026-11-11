@@ -190,6 +190,10 @@ describe("CourseService", () => {
         });
         const failure = yield* service.problems({ courseId: course.id, pset: 2 }).pipe(Effect.flip);
         assert.include(String(failure), "Problem set 2 was not found");
+        const saveFailure = yield* service
+          .update({ courseId: course.id, pset: 2, references: [] })
+          .pipe(Effect.flip);
+        assert.include(String(saveFailure), "Problem set 2 was not found");
       }),
     ),
   );

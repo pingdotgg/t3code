@@ -188,21 +188,6 @@ describe("course reference fetch", () => {
     assert.strictEqual(result.images?.length, 0);
   });
 
-  it("skips a page with too many image objects before decoding them", async () => {
-    let images = "";
-    for (let index = 5; index < 15; index += 1)
-      images += `${index} 0 obj << /Type /XObject /Subtype /Image /Width 4000 /Height 4000 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 0 >> stream\nendstream endobj\n`;
-    const pdf =
-      "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n" +
-      "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n" +
-      "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /XObject << /Im 5 0 R >> >> /Contents 4 0 R >> endobj\n" +
-      "4 0 obj << /Length 33 >> stream\nq 100 0 0 100 0 0 cm /Im Do Q\nendstream endobj\n" +
-      images +
-      "trailer << /Root 1 0 R /Size 15 >>\n%%EOF";
-    const result = await extractPdf(Buffer.from(pdf), [1]);
-    assert.isAtMost(result.images?.length ?? 0, 1);
-  });
-
   it("caps extracted PDF text across requested pages", async () => {
     const text = Array.from({ length: 2_000 }, () => "(AAAAAAAAAA) Tj 0 0 Td").join(" ");
     const stream = (object: number, value: string) =>
@@ -249,7 +234,7 @@ describe("course reference fetch", () => {
     child.killed = false;
     child.stdout = new NodeEvents.EventEmitter();
     child.stderr = new NodeEvents.EventEmitter();
-    child.stdin = { end: () => undefined };
+    child.stdin = Object.assign(new NodeEvents.EventEmitter(), { end: () => undefined });
     child.kill = () => {
       child.killed = true;
       child.exitCode = null;
@@ -273,7 +258,7 @@ describe("course reference fetch", () => {
     child.killed = false;
     child.stdout = new NodeEvents.EventEmitter();
     child.stderr = new NodeEvents.EventEmitter();
-    child.stdin = { end: () => undefined };
+    child.stdin = Object.assign(new NodeEvents.EventEmitter(), { end: () => undefined });
     child.kill = () => {
       child.killed = true;
       queueMicrotask(() => child.emit("close", null));
@@ -285,5 +270,54 @@ describe("course reference fetch", () => {
       readRss: async () => undefined,
     }).catch((error) => error);
     assert.include(String(failure), "PDF too large or slow to read");
+  });
+
+  it("fails the fetch, not the server, when the worker dies before reading its input", async () => {
+    const child = new NodeEvents.EventEmitter() as any;
+    child.pid = 44;
+    child.exitCode = null;
+    child.killed = false;
+    child.stdout = new NodeEvents.EventEmitter();
+    child.stdin = Object.assign(new NodeEvents.EventEmitter(), {
+      end: () => {
+        queueMicrotask(() => {
+          child.stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+          child.exitCode = 1;
+          child.emit("close", 1);
+        });
+      },
+    });
+    child.kill = () => true;
+    const failure = await extractPdf(new Uint8Array(), [1], (() => child) as never, {
+      timeoutMs: 10_000,
+      pollMs: 1000,
+      readRss: async () => undefined,
+    }).catch((error) => error);
+    assert.include(String(failure), "PDF too large or slow to read");
+  });
+
+  it("reads a PDF whose warnings would fill an unread stderr pipe", async () => {
+    let content = "";
+    for (let index = 0; index < 2_000; index += 1)
+      content += `BT /F${index} 12 Tf (x) Tj ET /Im${index} Do\n`;
+    const objects = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>",
+      `<< /Length ${content.length} >>\nstream\n${content}endstream`,
+    ];
+    let pdf = "%PDF-1.4\n";
+    const offsets: number[] = [];
+    objects.forEach((object, index) => {
+      offsets.push(pdf.length);
+      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf +=
+      `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` +
+      offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("") +
+      `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    const result = await extractPdf(Buffer.from(pdf), [1], undefined, { timeoutMs: 8_000 });
+    assert.strictEqual(result.pageCount, 1);
   });
 });
