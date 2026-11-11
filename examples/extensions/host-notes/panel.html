@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Host notes</title>
+    <style>
+      :root {
+        font: 16px var(--font-sans, system-ui);
+        color: var(--foreground);
+        background: var(--background);
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        max-width: 680px;
+      }
+      h1 {
+        font-size: 24px;
+      }
+      label,
+      textarea {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      textarea {
+        margin: 8px 0;
+        min-height: 90px;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font: inherit;
+        color: var(--foreground);
+        background: var(--card);
+      }
+      button {
+        padding: 10px 16px;
+        cursor: pointer;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font: inherit;
+        color: var(--foreground);
+        background: var(--card);
+      }
+      li {
+        padding: 8px 0;
+        white-space: pre-wrap;
+      }
+      #status {
+        min-height: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 id="heading">Host notes</h1>
+    <p>Saved on your T3 server. Available from any connected device.</p>
+    <form id="form">
+      <label for="note">New note</label><textarea id="note" required></textarea
+      ><button type="submit">Save note</button> <button id="refresh" type="button">Refresh</button>
+    </form>
+    <p id="status" role="status"></p>
+    <ul id="notes"></ul>
+    <script>
+      const status = document.getElementById("status");
+      function show(result) {
+        document.getElementById("heading").textContent = result.heading;
+        document.getElementById("notes").replaceChildren(
+          ...result.notes.map((note) => {
+            const item = document.createElement("li");
+            item.textContent = note.text;
+            return item;
+          }),
+        );
+      }
+      async function refresh() {
+        try {
+          show(await window.t3Extension.call("read", {}));
+          status.textContent = "";
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      }
+      document.getElementById("form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const note = document.getElementById("note");
+        try {
+          show(await window.t3Extension.call("save", { text: note.value }));
+          note.value = "";
+          status.textContent = "Saved on the server.";
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      });
+      document.getElementById("refresh").addEventListener("click", refresh);
+      window.t3Extension.onSettingsChanged(() => refresh());
+      refresh();
+    </script>
+  </body>
+</html>

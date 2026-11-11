@@ -186,6 +186,10 @@
     "./server/usageLimits": {
       "types": "./src/server/usageLimits.ts",
       "import": "./src/server/usageLimits.ts"
+    },
+    "./server/extensionDevelopmentSkill": {
+      "types": "./src/server/extensionDevelopmentSkill.ts",
+      "import": "./src/server/extensionDevelopmentSkill.ts"
     }
   },
   "scripts": {

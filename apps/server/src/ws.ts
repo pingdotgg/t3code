@@ -1,3 +1,4 @@
+import * as ExtensionService from "./extensions/ExtensionService.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -1420,6 +1421,7 @@ export const layerWsRpc = (
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
+      const extensions = yield* ExtensionService.ExtensionService;
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
       const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
@@ -1914,6 +1916,13 @@ export const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
+        [WS_METHODS.extensionsList]: () => extensions.list,
+        [WS_METHODS.extensionsSubscribe]: () => extensions.changes,
+        [WS_METHODS.extensionsInstall]: (input) => extensions.install(input),
+        [WS_METHODS.extensionsManage]: (input) => extensions.manage(input),
+        [WS_METHODS.extensionsSettings]: (input) => extensions.setSettings(input),
+        [WS_METHODS.extensionsInvoke]: (input) => extensions.invoke(input),
+        [WS_METHODS.extensionsPanel]: (input) => extensions.panel(input),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3394,6 +3403,7 @@ export const WS_RPC_SERVER_OPTIONS = {
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
+    const extensions = yield* ExtensionService.ExtensionService;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const npmRelease = yield* NpmRelease.NpmRelease;
@@ -3472,6 +3482,7 @@ export const layer = Layer.unwrap(
               readSettingsClient(url.value),
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provide(Layer.succeed(ExtensionService.ExtensionService, extensions)),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

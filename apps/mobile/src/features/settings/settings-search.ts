@@ -49,6 +49,7 @@ const SETTINGS_SEARCH_TERMS = {
     "microphone order",
     "bluetooth",
   ],
+  SettingsExtensions: ["extensions", "plugins", "tools", "commands"],
   SettingsScheduledTasks: ["automations", "schedule", "cron", "recurring", "webhook"],
   SettingsProjectOverview: ["project", "overview", "checkouts", "delete project"],
   SettingsOrganization: [

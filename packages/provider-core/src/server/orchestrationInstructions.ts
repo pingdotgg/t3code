@@ -1,7 +1,9 @@
+import { EXTENSION_DEVELOPMENT_DISCOVERY } from "./extensionDevelopmentSkill.ts";
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
 export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
+  EXTENSION_DEVELOPMENT_DISCOVERY,
   `## T3 Code orchestration
 
 Ordinary coding tasks need no T3 tools.

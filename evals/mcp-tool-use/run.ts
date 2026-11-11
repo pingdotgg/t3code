@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { EXTENSION_DEVELOPMENT_SKILL } from "../../packages/provider-core/src/server/extensionDevelopmentSkill.ts";
+import { ExtensionsToolkit } from "../../apps/server/src/mcp/toolkits/extensions/tools.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 /**
  * Replays small fake threads on a Claude or Codex model to check T3's MCP tool use. A trimmed
@@ -435,6 +437,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   AttachmentToolkit,
   ProjectToolkit,
   EnvironmentToolkit,
+  ExtensionsToolkit,
   PreviewControlsToolkit,
   WorktreeToolkit,
   PullRequestsToolkit,
@@ -1587,6 +1590,12 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (isPageTool(name) && typeof input.path === "string" && !input.path.startsWith("/")) {
     return failed(`${input.path} is not a readable HTML document. Pass an absolute path.`);
   }
+  if (name === "extensions_development")
+    return toolResult(call.id, {
+      path: "/tmp/t3/skills/t3-extension-development/SKILL.md",
+      content: EXTENSION_DEVELOPMENT_SKILL,
+      referencePath: "/tmp/t3/skills/t3-extension-development/references/api.md",
+    });
   const mock = testCase.setup.mocks?.[name];
   // T3 answers device calls from the world. A mock that is a T3 device error fails inside T3.
   const failure = deviceFailure(mock);

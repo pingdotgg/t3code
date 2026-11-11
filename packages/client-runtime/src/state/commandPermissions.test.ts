@@ -159,6 +159,13 @@ describe("command permissions", () => {
   );
 
   it.effect.each([
+    ...[
+      WS_METHODS.extensionsInstall,
+      WS_METHODS.extensionsManage,
+      WS_METHODS.extensionsSettings,
+      WS_METHODS.extensionsInvoke,
+      WS_METHODS.extensionsPanel,
+    ].map((method) => ({ method, scope: AuthEnvironmentMaintainScope })),
     { method: WS_METHODS.serverRunStorageCleanup, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>

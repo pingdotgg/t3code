@@ -1,4 +1,13 @@
 import {
+  ExtensionInfo,
+  ExtensionInstallInput,
+  ExtensionManageInput,
+  ExtensionSettingsInput,
+  ExtensionInvokeInput,
+  ExtensionPanelInput,
+  ExtensionError,
+} from "./extensions.ts";
+import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -413,6 +422,13 @@ import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
+  extensionsList: "extensions.list",
+  extensionsSubscribe: "extensions.subscribe",
+  extensionsInstall: "extensions.install",
+  extensionsManage: "extensions.manage",
+  extensionsSettings: "extensions.settings",
+  extensionsInvoke: "extensions.invoke",
+  extensionsPanel: "extensions.panel",
   projectsListEntries: "projects.listEntries",
   projectsListIgnoredFiles: "projects.listIgnoredFiles",
   projectsReadFile: "projects.readFile",
@@ -2059,12 +2075,57 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+const extensionError = Schema.Union([ExtensionError, EnvironmentAuthorizationError]);
+const WsExtensionsListRpc = Rpc.make(WS_METHODS.extensionsList, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(ExtensionInfo),
+  error: extensionError,
+});
+const WsExtensionsSubscribeRpc = Rpc.make(WS_METHODS.extensionsSubscribe, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(ExtensionInfo),
+  error: extensionError,
+  stream: true,
+});
+const WsExtensionsInstallRpc = Rpc.make(WS_METHODS.extensionsInstall, {
+  payload: ExtensionInstallInput,
+  success: Schema.Array(ExtensionInfo),
+  error: extensionError,
+});
+const WsExtensionsManageRpc = Rpc.make(WS_METHODS.extensionsManage, {
+  payload: ExtensionManageInput,
+  success: Schema.Array(ExtensionInfo),
+  error: extensionError,
+});
+const WsExtensionsSettingsRpc = Rpc.make(WS_METHODS.extensionsSettings, {
+  payload: ExtensionSettingsInput,
+  success: Schema.Array(ExtensionInfo),
+  error: extensionError,
+});
+const WsExtensionsInvokeRpc = Rpc.make(WS_METHODS.extensionsInvoke, {
+  payload: ExtensionInvokeInput,
+  success: Schema.Unknown,
+  error: extensionError,
+});
+const WsExtensionsPanelRpc = Rpc.make(WS_METHODS.extensionsPanel, {
+  payload: ExtensionPanelInput,
+  success: Schema.String,
+  error: extensionError,
+});
+
 export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthorization>()(
   "t3/contracts/RpcScopeAuthorization",
   { error: EnvironmentAuthorizationError },
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
+  WsExtensionsListRpc,
+  WsExtensionsSubscribeRpc,
+  WsExtensionsInstallRpc,
+  WsExtensionsManageRpc,
+  WsExtensionsSettingsRpc,
+  WsExtensionsInvokeRpc,
+  WsExtensionsPanelRpc,
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,

@@ -1,4 +1,7 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
+import { useExtensionCommandPrompt } from "../extensions/useExtensionCommandPrompt";
+import { extensionEnvironment } from "../../state/extensions";
+import { useEnvironmentQuery } from "../../state/query";
 import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
@@ -268,6 +271,16 @@ export function CommandPalette(props: {
     environmentLabels === undefined ? {} : { environmentLabels },
   );
   const serverConfigs = useServerConfigs();
+  const extensionEnvironmentId = activeThreadRef?.environmentId ?? searchEnvironmentIds[0];
+  const extensionSupported =
+    extensionEnvironmentId &&
+    serverConfigs.get(extensionEnvironmentId)?.environment.capabilities.extensions === true;
+  const extensions = useEnvironmentQuery(
+    extensionEnvironmentId && extensionSupported
+      ? extensionEnvironment.state({ environmentId: extensionEnvironmentId, input: {} })
+      : null,
+  );
+  const invokeExtension = useExtensionCommandPrompt();
   const startTriage = useStartTriage();
   const newTaskFlow = useNewTaskFlow();
   const draftEnvironmentId =
@@ -290,6 +303,13 @@ export function CommandPalette(props: {
   );
   const items = useMemo(() => {
     const actions: CommandPaletteItem[] = [
+      {
+        key: "extensions",
+        kind: "action",
+        title: "Manage extensions",
+        searchTerms: ["plugins", "tools"],
+        run: () => openSettings(navigation, "SettingsExtensions"),
+      },
       {
         key: "newTask",
         kind: "action",
@@ -459,8 +479,31 @@ export function CommandPalette(props: {
         (right.threadSearch ? threadRecentUse(right.threadSearch) : 0) -
         (left.threadSearch ? threadRecentUse(left.threadSearch) : 0),
     );
+    if (extensionEnvironmentId)
+      for (const extension of extensions.data ?? []) {
+        if (extension.status !== "running") continue;
+        for (const command of extension.manifest.commands ?? [])
+          actions.push({
+            key: `extension:${extension.manifest.id}:${command.id}`,
+            kind: "action",
+            title: command.title,
+            searchTerms: [extension.manifest.name, "extension"],
+            run: () =>
+              invokeExtension(
+                extensionEnvironmentId,
+                extension,
+                command,
+                activeThread
+                  ? { threadId: activeThread.id, projectId: activeThread.projectId }
+                  : undefined,
+              ),
+          });
+      }
     return [...actions, ...projectItems, ...threadItems];
   }, [
+    extensionEnvironmentId,
+    extensions.data,
+    invokeExtension,
     selectTab,
     activeThread,
     activeThreadRef,
