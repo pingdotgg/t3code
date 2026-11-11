@@ -154,7 +154,10 @@ On macOS, check **System Settings → General → Login Items** if the service n
 longer starts at login. If agent work cannot access Desktop, Documents, or
 Downloads, it may need Full Disk Access for the `t3` executable listed in
 `ProgramArguments` in
-`~/Library/LaunchAgents/com.t3tools.t3code.service.plist`.
+`~/Library/LaunchAgents/com.t3tools.t3code.service.plist`. That path stays the
+same across updates, so the grant carries over. A service installed by an
+older version moves to this path on its next update and needs the grant once
+more.
 
 For failures after signing in to T3 Connect, see
 [connection troubleshooting](./t3-connect-troubleshooting.md).
