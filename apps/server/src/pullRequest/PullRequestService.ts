@@ -3791,6 +3791,7 @@ export const make = Effect.gen(function* () {
     return matches.map(({ name, url }) => ({ name, url }));
   });
 
+  const DEFAULT_CHECK_LOGS = 5;
   const checkLogs: PullRequestService["Service"]["checkLogs"] = Effect.fn(
     "PullRequestService.checkLogs",
   )(function* (input) {
@@ -3804,13 +3805,27 @@ export const make = Effect.gen(function* () {
     }
     const checks = yield* selectChecks(project, input, "checkLogs");
     if (checks.length === 0) return [];
-    return yield* read({
+    // Many failing checks would flood the agent's context; the rest stay a name away.
+    const [shown, rest] =
+      input.check === undefined
+        ? [checks.slice(0, DEFAULT_CHECK_LOGS), checks.slice(DEFAULT_CHECK_LOGS)]
+        : [checks, []];
+    const logs = yield* read({
       cwd: project.project.workspaceRoot,
       repository: project.repository,
       host: project.host,
-      checks,
+      checks: shown,
       tailLines: input.tailLines,
     }).pipe(Effect.mapError(toPullRequestError("checkLogs")));
+    return [
+      ...logs,
+      ...rest.map((check) => ({
+        ...check,
+        log: null,
+        truncated: false,
+        detail: "Not read, to keep the reply short. Ask for this check by name.",
+      })),
+    ];
   });
 
   const rerunChecks: PullRequestService["Service"]["rerunChecks"] = Effect.fn(

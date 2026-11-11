@@ -1122,6 +1122,8 @@ it.effect("reads the branch's PR only once the agent has opened it", () =>
         input,
       });
     assert.isTrue((yield* call("a", "pull_request_read", {})).is_error);
+    sample.tools.push({ name: "mcp__t3-code__ci_logs" });
+    assert.isTrue((yield* call("a2", "ci_logs", {})).is_error);
     yield* call("b", "pull_request_create", { title: "Feature", body: "Body" });
     assert.isNotTrue((yield* call("c", "pull_request_read", {})).is_error);
 

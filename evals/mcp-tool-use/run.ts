@@ -1668,6 +1668,8 @@ const BRANCH_PULL_REQUEST_TOOLS = new Set([
   "pull_request_respond",
   "pull_request_review",
   "pull_request_merge",
+  "ci_logs",
+  "ci_rerun",
 ]);
 const BRANCH_HAS_NO_PR_ERROR =
   "This thread's branch has no known PR. Pass number, or open one with pull_request_create.";
@@ -1939,16 +1941,16 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
       return failed(SUBAGENT_WATCH_ERROR);
     }
+    if (BRANCH_PULL_REQUEST_TOOLS.has(name) && input.number === undefined) {
+      // Until the agent opens it, the PR a create would open does not exist.
+      if (branchPullRequest(sample).created) return failed(BRANCH_HAS_NO_PR_ERROR);
+    }
     if (name === "ci_logs" || name === "ci_rerun") {
       const { all, checks, named } = selectedWorldChecks(sample, input);
       if (named !== null && checks.length === 0) {
         const names = all.map((check) => valueText(check.name)).join(", ") || "none";
         return failed(`No check is named ${valueText(input.check)}. Checks: ${names}.`);
       }
-    }
-    if (BRANCH_PULL_REQUEST_TOOLS.has(name) && input.number === undefined) {
-      // Until the agent opens it, the PR a create would open does not exist.
-      if (branchPullRequest(sample).created) return failed(BRANCH_HAS_NO_PR_ERROR);
     }
     const value = t3Default(sample, name, input);
     if (name === "request_secret") savedSecretFile(sample, value);
