@@ -102,36 +102,39 @@ vi.mock("@react-navigation/native", () => ({
     navigation.remove = enabled ? remove : null;
   },
 }));
-vi.mock("react-native-safe-area-context", () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
-}));
 vi.mock("../../native/NativeScrollViewMarker", () => ({ NativeScrollView: () => null }));
-vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
-vi.mock("../../components/ui/Toolbar", () => {
-  const Slot = (props: { readonly children?: ReactNode }) => <div>{props.children}</div>;
-  return {
-    Toolbar: Object.assign(Slot, {
-      Button: () => null,
-      Menu: Slot,
-      MenuAction: (props: {
-        readonly children?: ReactNode;
-        readonly disabled?: boolean;
-        readonly onPress?: () => void;
-      }) => (
-        <button disabled={props.disabled} onClick={props.onPress}>
-          {props.children}
+vi.mock("../../components/ui/AppBar", () => {
+  interface Item {
+    readonly id: string;
+    readonly title?: string;
+    readonly disabled?: boolean;
+    readonly onPress?: () => void;
+    readonly items?: ReadonlyArray<Item>;
+  }
+  const renderItems = (items: ReadonlyArray<Item>): ReactNode =>
+    items.map((item) =>
+      item.items ? (
+        renderItems(item.items)
+      ) : (
+        <button key={item.id} disabled={item.disabled} onClick={item.onPress}>
+          {item.title}
         </button>
       ),
-    }),
+    );
+  return {
+    AppBar: (props: {
+      readonly menus?: ReadonlyArray<{ readonly items: ReadonlyArray<Item> }>;
+    }) => <div>{props.menus?.map((menu) => renderItems(menu.items))}</div>,
   };
 });
-vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
-vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidHeaderIconButton: () => null }));
-vi.mock("../../components/ui/Menu", () => ({ Menu: () => null }));
+vi.mock("../../components/ui/useBarInset", () => ({
+  useContentTopInset: () => 0,
+  useContentBottomInset: () => 0,
+}));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../components/ui/Progress", () => ({ Progress: () => null }));
 vi.mock("../../components/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
-vi.mock("../../components/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
+vi.mock("../../components/ui/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
 vi.mock("../../lib/copyTextWithHaptic", () => ({}));
 vi.mock("./SourceFileSurface", () => ({
   SourceFileSurface: (props: { readonly contents: string }) => <pre>{props.contents}</pre>,
@@ -182,7 +185,6 @@ function setup() {
   const props: ComponentProps<typeof ZipArchiveView> = {
     name: "archive.zip",
     subtitle: "ZIP",
-    tintColor: "#000000",
     sizeBytes: 0,
     uri: "file:///first.zip",
     isLocal: true,
