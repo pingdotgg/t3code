@@ -18,6 +18,7 @@ export {
   logoutAcpRegistry,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
+  probeAcpRegistryConfiguration,
   rewriteAcpRegistrySkillMention,
   type AcpRegistryAvailableCommands,
   type AcpRegistryLiveConfiguration,

@@ -4,13 +4,6 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { PerformanceTimer } from "../../../shared/performance.ts";
 import { setupSentry } from "../../../shared/sentry.ts";
 import { mockJaegerBinding } from "../../../shared/tracing.ts";
-import { Analytics, EntrypointType, getRequestKind } from "./analytics.ts";
-import { AssetsManifest } from "./assets-manifest.ts";
-import { normalizeConfiguration } from "./configuration.ts";
-import { ExperimentAnalytics } from "./experiment-analytics.ts";
-import { canFetch, handleRequest } from "./handler.ts";
-import { handleError, submitMetrics } from "./utils/final-operations.ts";
-import { getAssetWithMetadataFromKV } from "./utils/kv.ts";
 import type {
   AssetConfig,
   ColoMetadata,
@@ -19,7 +12,14 @@ import type {
   UnsafePerformanceTimer,
 } from "../../../shared/types.ts";
 import type { AccountCohortQuerierBinding } from "../worker-configuration.d.ts";
+import { Analytics, EntrypointType, getRequestKind } from "./analytics.ts";
+import { AssetsManifest } from "./assets-manifest.ts";
+import { normalizeConfiguration } from "./configuration.ts";
+import { ExperimentAnalytics } from "./experiment-analytics.ts";
+import { canFetch, handleRequest } from "./handler.ts";
 import type { Environment, ReadyAnalytics } from "./types.ts";
+import { handleError, submitMetrics } from "./utils/final-operations.ts";
+import { getAssetWithMetadataFromKV } from "./utils/kv.ts";
 
 // ============================================================
 // SECTION 1: SHARED TYPES & INTERFACE CONTRACT
@@ -66,10 +66,7 @@ type GetByETagResult = {
 };
 
 type ExistsFn = (pathname: string, request?: Request) => Promise<string | null>;
-type GetByETagFn = (
-  eTag: string,
-  request?: Request,
-) => Promise<GetByETagResult>;
+type GetByETagFn = (eTag: string, request?: Request) => Promise<GetByETagResult>;
 
 /**
  * Interface defining the public API methods that both the outer and inner
@@ -80,10 +77,7 @@ interface AssetWorkerMethods {
   fetch(request: Request): Promise<Response>;
   unstable_canFetch(request: Request): Promise<boolean>;
   unstable_getByETag(eTag: string, request?: Request): Promise<GetByETagResult>;
-  unstable_getByPathname(
-    pathname: string,
-    request?: Request,
-  ): Promise<GetByETagResult | null>;
+  unstable_getByPathname(pathname: string, request?: Request): Promise<GetByETagResult | null>;
   unstable_exists(pathname: string, request?: Request): Promise<string | null>;
 }
 
@@ -152,10 +146,7 @@ async function unstableGetByETagImpl(
   const jaeger = env.JAEGER ?? mockJaegerBinding();
   return jaeger.enterSpan("unstable_getByETag", async (span) => {
     const startTime = performance.now();
-    const asset = await getAssetWithMetadataFromKV(
-      env.ASSETS_KV_NAMESPACE,
-      eTag,
-    );
+    const asset = await getAssetWithMetadataFromKV(env.ASSETS_KV_NAMESPACE, eTag);
     const endTime = performance.now();
     const assetFetchTime = endTime - startTime;
 
@@ -324,14 +315,7 @@ async function runFetchRequest(
         version: env.VERSION_METADATA?.id,
       });
 
-      const response = await handleRequest(
-        request,
-        env,
-        config,
-        exists,
-        getByETag,
-        analytics,
-      );
+      const response = await handleRequest(request, env, config, exists, getByETag, analytics);
 
       analytics.setData({ status: response.status });
 
@@ -420,11 +404,7 @@ export class AssetWorkerOuter<TEnv extends Env = Env>
     const performance = new PerformanceTimer(this.env.UNSAFE_PERFORMANCE);
     const startTimeMs = performance.now();
     try {
-      if (
-        this.env.COLO_METADATA &&
-        this.env.VERSION_METADATA &&
-        this.env.CONFIG
-      ) {
+      if (this.env.COLO_METADATA && this.env.VERSION_METADATA && this.env.CONFIG) {
         const url = new URL(request.url);
         analytics.setData({
           accountId: this.env.CONFIG.account_id,
@@ -477,10 +457,7 @@ export class AssetWorkerOuter<TEnv extends Env = Env>
     return this.getInnerEntrypoint(cohort).unstable_canFetch(request);
   }
 
-  async unstable_getByETag(
-    eTag: string,
-    request?: Request,
-  ): Promise<GetByETagResult> {
+  async unstable_getByETag(eTag: string, request?: Request): Promise<GetByETagResult> {
     this.env.JAEGER ??= mockJaegerBinding();
     const cohort = await this.getCohort();
     return this.getInnerEntrypoint(cohort).unstable_getByETag(eTag, request);
@@ -492,16 +469,10 @@ export class AssetWorkerOuter<TEnv extends Env = Env>
   ): Promise<GetByETagResult | null> {
     this.env.JAEGER ??= mockJaegerBinding();
     const cohort = await this.getCohort();
-    return this.getInnerEntrypoint(cohort).unstable_getByPathname(
-      pathname,
-      request,
-    );
+    return this.getInnerEntrypoint(cohort).unstable_getByPathname(pathname, request);
   }
 
-  async unstable_exists(
-    pathname: string,
-    request?: Request,
-  ): Promise<string | null> {
+  async unstable_exists(pathname: string, request?: Request): Promise<string | null> {
     this.env.JAEGER ??= mockJaegerBinding();
     const cohort = await this.getCohort();
     return this.getInnerEntrypoint(cohort).unstable_exists(pathname, request);
@@ -562,10 +533,7 @@ export class AssetWorkerInner<TEnv extends Env = Env>
     );
   }
 
-  async unstable_getByETag(
-    eTag: string,
-    request?: Request,
-  ): Promise<GetByETagResult> {
+  async unstable_getByETag(eTag: string, request?: Request): Promise<GetByETagResult> {
     return unstableGetByETagImpl(this.env, eTag, request);
   }
 
@@ -582,10 +550,7 @@ export class AssetWorkerInner<TEnv extends Env = Env>
     );
   }
 
-  async unstable_exists(
-    pathname: string,
-    request?: Request,
-  ): Promise<string | null> {
+  async unstable_exists(pathname: string, request?: Request): Promise<string | null> {
     return unstableExistsImpl(this.env, pathname, request);
   }
 }
