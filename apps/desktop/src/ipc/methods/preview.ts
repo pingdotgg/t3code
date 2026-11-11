@@ -57,8 +57,15 @@ export const installPreviewEventForwarding = Effect.fn(
   yield* manager.subscribePointerEvents((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event),
   );
+  // Only the main window opens tabs; pop-out windows would open a duplicate.
   yield* manager.subscribeOpenLinks((event) =>
-    electronWindow.sendAll(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, event),
+    Effect.flatMap(electronWindow.main, (main) =>
+      Effect.sync(() => {
+        if (Option.isSome(main) && !main.value.isDestroyed()) {
+          main.value.webContents.send(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, event);
+        }
+      }),
+    ),
   );
 });
 

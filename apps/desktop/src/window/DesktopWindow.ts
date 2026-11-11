@@ -631,6 +631,14 @@ export const make = Effect.gen(function* () {
       installContextMenu(window, contents);
       void runPromise(previewManager.prepareWebview(contents));
     });
+    // Pop-out browser windows host their own guest, which needs the same menu.
+    const onWindowCreated = (_event: Electron.Event, created: Electron.BrowserWindow) => {
+      created.webContents.on("did-attach-webview", (_attachEvent, contents) => {
+        installContextMenu(created, contents);
+      });
+    };
+    Electron.app.on("browser-window-created", onWindowCreated);
+    window.once("closed", () => Electron.app.off("browser-window-created", onWindowCreated));
 
     window.webContents.setWindowOpenHandler(({ url }) => {
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {

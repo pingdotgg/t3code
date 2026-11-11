@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PreviewIpc from "./preview.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -108,6 +109,39 @@ describe("preview IPC methods", () => {
         const failure = yield* decodeCaptureFailure(result);
         for (const phrase of guidance) expect(failure.message).toContain(phrase);
       }),
+  );
+
+  effectIt.effect("sends opened links only to the main window, never a pop-out", () =>
+    Effect.gen(function* () {
+      let openLink: ((event: unknown) => Effect.Effect<void>) | undefined;
+      const mainSend = vi.fn();
+      const sendAll = vi.fn(() => Effect.void);
+      const listen = () => Effect.void;
+      yield* PreviewIpc.installPreviewEventForwarding().pipe(
+        Effect.provideService(ElectronWindow.ElectronWindow, {
+          main: Effect.succeedSome({
+            isDestroyed: () => false,
+            webContents: { send: mainSend },
+          } as unknown as Electron.BrowserWindow),
+          sendAll,
+        } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        Effect.provideService(PreviewManager.PreviewManager, {
+          subscribeStateChanges: listen,
+          subscribeRecordingInputs: listen,
+          subscribePointerEvents: listen,
+          subscribeOpenLinks: (listener: (event: unknown) => Effect.Effect<void>) => {
+            openLink = listener;
+            return Effect.void;
+          },
+        } as unknown as PreviewManager.PreviewManager["Service"]),
+      );
+      yield* openLink!({ url: "https://example.com" });
+      expect(mainSend).toHaveBeenCalledOnce();
+      expect(sendAll).not.toHaveBeenCalledWith(
+        expect.stringContaining("open-link"),
+        expect.anything(),
+      );
+    }),
   );
 
   beforeEach(() => {

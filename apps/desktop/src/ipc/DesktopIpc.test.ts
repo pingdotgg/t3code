@@ -9,7 +9,15 @@ vi.mock("electron", () => ({}));
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
 
-it.effect("answers only the main window's top frame", () =>
+const popout = (id: number, url: string) => {
+  const mainFrame = {};
+  return {
+    sender: { id, getType: () => "window", getURL: () => url, mainFrame },
+    senderFrame: mainFrame,
+  };
+};
+
+it.effect("answers only the app's own windows' top frames", () =>
   Effect.gen(function* () {
     const mainFrame = {};
     const invoke = new Map<string, DesktopIpc.DesktopIpcHandleListener>();
@@ -25,7 +33,7 @@ it.effect("answers only the main window's top frame", () =>
           Layer.provide(
             Layer.mock(ElectronWindow.ElectronWindow, {
               main: Effect.succeedSome({
-                webContents: { id: 1, mainFrame },
+                webContents: { id: 1, mainFrame, getURL: () => "t3://app/index.html#/" },
               } as unknown as Electron.BrowserWindow),
             }),
           ),
@@ -46,6 +54,17 @@ it.effect("answers only the main window's top frame", () =>
       app: { sender: { id: 1 }, senderFrame: mainFrame },
       appSubframe: { sender: { id: 1 }, senderFrame: {} },
       previewGuest: { sender: { id: 2 }, senderFrame: {} },
+      popout: popout(3, "t3://app/index.html#/browser-window/tab-1"),
+      popoutSubframe: {
+        ...popout(3, "t3://app/index.html#/browser-window/tab-1"),
+        senderFrame: {},
+      },
+      popoutOnAppRoute: popout(3, "t3://app/index.html#/settings"),
+      foreignWindow: popout(4, "https://example.com/#/browser-window/tab-1"),
+      guestOnAppUrl: {
+        ...popout(5, "t3://app/index.html#/browser-window/tab-1"),
+        sender: { ...popout(5, "").sender, getType: () => "webview" },
+      },
     };
     const results: Record<string, unknown> = {};
     for (const [name, sender] of Object.entries(senders)) {
@@ -62,6 +81,11 @@ it.effect("answers only the main window's top frame", () =>
       app: ["secret", "secret"],
       appSubframe: ["rejected", undefined],
       previewGuest: ["rejected", undefined],
+      popout: ["secret", "secret"],
+      popoutSubframe: ["rejected", undefined],
+      popoutOnAppRoute: ["rejected", undefined],
+      foreignWindow: ["rejected", undefined],
+      guestOnAppUrl: ["rejected", undefined],
     });
   }).pipe(Effect.scoped),
 );

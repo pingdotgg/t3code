@@ -8,6 +8,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { Button } from "~/components/ui/button";
+import { toastManager } from "~/components/ui/toast";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
@@ -352,7 +353,15 @@ export function HostedBrowserWebview(props: {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => void previewBridge?.tabWindow.close(runtimeTabId)}
+              onClick={() =>
+                void previewBridge?.tabWindow.close(runtimeTabId).catch((error) => {
+                  toastManager.add({
+                    type: "error",
+                    title: "Unable to update browser window",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  });
+                })
+              }
             >
               Bring back
             </Button>
