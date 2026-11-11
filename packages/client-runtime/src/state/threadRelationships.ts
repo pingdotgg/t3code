@@ -134,6 +134,7 @@ export function deriveThreadRelationshipGraph(input: {
 
   if (input.mentions !== undefined) {
     const { threadId, links } = input.mentions;
+    // Outgoing links go first, so a mutual mention shows as the outgoing direction.
     for (const direction of ["mentions", "mentionedBy"] as const) {
       for (const link of links) {
         if (link.direction !== direction) continue;

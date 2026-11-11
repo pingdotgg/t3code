@@ -1,3 +1,4 @@
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -695,6 +696,7 @@ const makeLaptop = (
       ),
     );
     const layerThreads = ThreadManagement.layer.pipe(
+      Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
       Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );

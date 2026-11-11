@@ -38,6 +38,18 @@ import { EnvironmentRpcUnavailableError, request } from "../rpc/client.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 
+const sessionInitialConfig = Effect.gen(function* () {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const session = yield* SubscriptionRef.get(supervisor.session);
+  if (Option.isNone(session)) {
+    return yield* new EnvironmentRpcUnavailableError({
+      environmentId: supervisor.target.environmentId,
+      ...translatableMessage(msg("The environment has no session.")),
+    });
+  }
+  return yield* session.value.initialConfig;
+});
+
 export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
   options: {
@@ -118,15 +130,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       execute: Effect.fn("orchestration.threadLinkMetadata")(function* (input: {
         readonly threadIds: ReadonlyArray<ThreadId>;
       }) {
-        const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-        const session = yield* SubscriptionRef.get(supervisor.session);
-        if (Option.isNone(session)) {
-          return yield* new EnvironmentRpcUnavailableError({
-            environmentId: supervisor.target.environmentId,
-            ...translatableMessage(msg("The environment has no session.")),
-          });
-        }
-        const config = yield* session.value.initialConfig;
+        const config = yield* sessionInitialConfig;
         if (config.threadLinkMetadata === true) {
           return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata, input);
         }
@@ -146,15 +150,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       execute: Effect.fn("orchestration.threadMentionLinks")(function* (input: {
         readonly threadId: ThreadId;
       }) {
-        const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-        const session = yield* SubscriptionRef.get(supervisor.session);
-        if (Option.isNone(session)) {
-          return yield* new EnvironmentRpcUnavailableError({
-            environmentId: supervisor.target.environmentId,
-            message: "The environment has no session.",
-          });
-        }
-        const config = yield* session.value.initialConfig;
+        const config = yield* sessionInitialConfig;
         if (config.threadMentionLinks !== true) {
           return { links: [] } satisfies OrchestrationV2ThreadMentionLinks;
         }

@@ -245,7 +245,7 @@ thread** from its long-press menu on mobile.
 [keybindings](./keybindings.md) for custom configuration.
 
 When a message contains a thread chip, both threads list each other under
-**Lineage** in thread details. Hover a row to see which thread mentions which.
+**Lineage** in thread details.
 Rolling back the turn that sent the chip removes the link. Only threads on the
 same machine are listed.
 

@@ -636,11 +636,7 @@ export function ThreadRelationshipsPanel(props: {
     sideChats = [],
   } = groupBy(visibleRelationships, ({ threadId, edge }) => {
     const isParent = isParentThreadRelationship(edge, props.threadId);
-    if (
-      !isParent &&
-      edge.kind !== "mention" &&
-      graph.nodes.get(threadId)?.thread?.lineage.sideChat === true
-    )
+    if (!isParent && graph.nodes.get(threadId)?.thread?.lineage.sideChat === true)
       return "sideChats";
     if (edge.kind !== "subagent" || isParent) return "related";
     return isFinishedAgentStatus(edge.status) ? "previous" : "active";
@@ -819,6 +815,7 @@ export function ThreadRelationshipsPanel(props: {
           : node?.thread?.lineage.sideChat === true
             ? MessagesSquareIcon
             : GitForkIcon;
+
     const projectedAgent = isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
     const workflowGroup =
       projectedAgent === undefined ? undefined : workflowGroupsById.get(projectedAgent.id);
