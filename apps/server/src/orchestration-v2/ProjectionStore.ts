@@ -6302,6 +6302,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         );
         const upper = ends.find((row) => row.turn_item_id === cursor.si)?.ordinal;
         if (upper === undefined) return null;
+        /* Runs for each window this operation tries; the operation owns the span. */
         const indexFrom = Effect.fnUntraced(function* (
           items: ReadonlyArray<TimelineIndexItem>,
           from: number | null,
