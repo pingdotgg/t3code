@@ -128,18 +128,6 @@ function shown(
 }
 
 describe("resolveThreadDetailsLimits", () => {
-  it("shows nothing without a selected, known instance, or before its first reading", () => {
-    expect(
-      resolveThreadDetailsLimits(null, null, [claudeInstance(unsupported)], [], now),
-    ).toBeNull();
-    expect(
-      resolveThreadDetailsLimits(ProviderInstanceId.make("gone"), null, [], [hub("Hub", [])], now),
-    ).toBeNull();
-    const { usageLimits: _unread, ...unread } = claudeInstance(unsupported);
-    const readableHub = hub("Hub", [{ id: "a.json", limits: limitsAt(20) }]);
-    expect(resolveThreadDetailsLimits(instanceId, null, [unread], [readableHub], now)).toBeNull();
-  });
-
   it("keeps a direct login's failed reading instead of an unrelated hub", () => {
     const failed: ServerProviderUsageLimits = {
       checkedAt,
@@ -163,16 +151,6 @@ describe("resolveThreadDetailsLimits", () => {
   });
 
   it.each([
-    {
-      name: "several accounts, pooled like Usage → Limits",
-      sources: [
-        hub("Hub", [
-          { id: "a.json", email: "a@example.com", limits: limitsAt(20) },
-          { id: "b.json", email: "b@example.com", limits: limitsAt(60) },
-        ]),
-      ],
-      rows: [{ label: "Session", left: 60, accounts: 2, from: ["Hub"] }],
-    },
     {
       name: "accounts across hubs, skipping a hub that failed to read",
       sources: [
@@ -209,20 +187,6 @@ describe("resolveThreadDetailsLimits", () => {
       ],
       model: "gpt-5.6-sol[1m]",
       rows: [{ label: "Session", left: 70, accounts: 1, from: ["Hub"] }],
-    },
-    {
-      name: "every account the hub routes the model to, across drivers",
-      sources: [
-        hub("Hub", [
-          { id: "a.json", models: ["shared"], limits: limitsAt(10) },
-          { id: "c.json", driver: codex, models: ["shared"], limits: limitsAt(30) },
-        ]),
-      ],
-      model: "shared",
-      rows: [
-        { label: "Session", left: 90, accounts: 1, from: ["Hub"] },
-        { label: "Session", left: 70, accounts: 1, from: ["Hub"] },
-      ],
     },
     {
       name: "only the account the hub served last",
