@@ -129,9 +129,13 @@ function makeSession(
         return { result: { value: [] } };
       }
       if (method === "Page.addScriptToEvaluateOnNewDocument") frame?.recording.resolve();
-      if (method === "Input.dispatchKeyEvent" && (input as { commands?: unknown }).commands) {
-        if (focusedFrame) focusedFrame.copy = keyCopy || focusedFrame.copy;
-        else pageCopy = keyCopy || pageCopy;
+      // The recorder drops its last copy on every copy or cut key it sees.
+      if (
+        method === "Input.dispatchKeyEvent" &&
+        ["copy", "cut"].includes((input as { commands?: Array<string> }).commands?.[0] ?? "")
+      ) {
+        if (focusedFrame) focusedFrame.copy = keyCopy;
+        else pageCopy = keyCopy;
       }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 7) {
         const value = frame ? frame.copy : pageCopy;
@@ -1439,6 +1443,54 @@ it.live("only the controlling viewer's copy and cut keys reach its clipboard", (
       yield* viewer.input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 });
       expect(yield* clipboard(viewer.output)).toEqual([]);
       expect(yield* clipboard(watcher.output)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a busy embedded frame does not hold a copy key back from the page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const context = contexts[0]!;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const pageSession = context.sessions.at(-1)!;
+      const frame = makeFrame();
+      context.page.emit("framenavigated", frame);
+      yield* Effect.promise(() => frame.recording.promise);
+
+      // The frame answers its copy read only once the page has the key and the
+      // input after it, like a frame busy for longer than the user waits.
+      const keyReached = Promise.withResolvers<void>();
+      const pageSend = pageSession.send.getMockImplementation()!;
+      pageSession.send.mockImplementation(async (method, input) => {
+        if (method === "Input.dispatchKeyEvent" && (input as { type?: string }).type === "keyUp")
+          keyReached.resolve();
+        return pageSend(method, input);
+      });
+      const frameSession = context.sessions.at(-1)!;
+      const frameSend = frameSession.send.getMockImplementation()!;
+      frameSession.send.mockImplementation(async (method, input) => {
+        if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 7) {
+          await keyReached.promise;
+        }
+        return frameSend(method, input);
+      });
+
+      keyCopy = "copied";
+      const copying = yield* viewer
+        .input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* viewer.input({ type: "key", action: "up", key: "c", code: "KeyC", modifiers: 4 });
+      yield* Fiber.join(copying);
+      expect(pageSession.send).toHaveBeenCalledWith(
+        "Input.dispatchKeyEvent",
+        expect.objectContaining({ key: "c", commands: ["copy"] }),
+      );
+      const clipboard = yield* Queue.clear(viewer.output);
+      expect(clipboard.filter((item) => item._tag === "clipboard")).toEqual([
+        { _tag: "clipboard", text: "copied" },
+      ]);
     }),
   ).pipe(Effect.provide(layer)),
 );
