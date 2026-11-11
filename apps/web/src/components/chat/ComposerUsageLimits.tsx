@@ -10,6 +10,7 @@ import {
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   collectLimitAccounts,
+  collectLimitPools,
   collectProviderUsageLimits,
   formatResetsIn,
   formatRunsOutIn,
@@ -297,10 +298,7 @@ function UsageLimitsAccounts({
   );
 }
 
-/**
- * The session a low-limit notice watches: the selected instance's own account
- * when it reports, else the tightest account of that driver a hub reports.
- */
+/** The governing limit for the selected model, pooled across reported accounts. */
 export interface LowLimitSignal {
   /** Dismissals last for the session, per provider instance and limit window. */
   readonly key: string;
@@ -333,30 +331,79 @@ export function resolveLowLimitSignal(
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   environmentId: EnvironmentId,
+  model?: string,
+  now = Date.now(),
 ): LowLimitSignal | null {
   if (!provider) return null;
-  const tightest =
-    ownSessionLimit(provider) ??
-    tightestSessionLimit(
-      collectLimitAccounts(
-        new Map([
-          [
-            environmentId,
-            {
-              entry: { target: { label: "" } },
-              serverConfig: { providers, usageLimitSources: sources },
-            },
-          ],
-        ]),
+  const accounts = collectLimitAccounts(
+    new Map([
+      [
+        environmentId,
+        {
+          entry: { target: { label: "" } },
+          serverConfig: { providers, usageLimitSources: sources },
+        },
+      ],
+    ]),
+  ).filter((account) => account.driver === provider.driver);
+  const active = accounts.map((account) => ({
+    ...account,
+    limits: {
+      ...account.limits,
+      windows: account.limits.windows.filter(
+        (window) => !window.resetsAt || !(Date.parse(window.resetsAt) <= now),
       ),
-      provider.driver,
-    );
-  if (!tightest || !isLowLimit(tightest.window)) return null;
+    },
+  }));
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const selected = `_${normalize(model ?? "")}_`;
+  const scoped = new Set(
+    active
+      .flatMap((account) => account.limits.windows)
+      .filter(
+        (window) =>
+          provider.driver === "claudeAgent" &&
+          window.id.startsWith("seven_day_") &&
+          selected.includes(`_${window.id.slice("seven_day_".length)}_`),
+      )
+      .map((window) => window.id),
+  );
+  const applicable = active.map((account) => ({
+    ...account,
+    limits: {
+      ...account.limits,
+      windows: account.limits.windows.filter(
+        (window) =>
+          provider.driver !== "claudeAgent" ||
+          (window.id.startsWith("seven_day_")
+            ? scoped.has(window.id)
+            : window.id !== "seven_day" || scoped.size === 0),
+      ),
+    },
+  }));
+  const pool = collectLimitPools(applicable, now)[0];
+  const pooled = pool?.windows.toSorted(
+    (left, right) => left.remainingPercent - right.remainingPercent,
+  )[0];
+  const single = accounts.length <= 1 ? ownSessionLimit(provider) : null;
+  const window: ServerProviderUsageWindow | undefined =
+    single?.window ??
+    (pooled
+      ? {
+          id: pooled.id,
+          kind: pooled.kind,
+          label: pooled.label,
+          usedPercent: 100 - pooled.remainingPercent,
+          resetsAt: pooled.resets[0]?.member.window.resetsAt,
+        }
+      : undefined);
+  if (!window || !isLowLimit(window) || (window.resetsAt && Date.parse(window.resetsAt) <= now))
+    return null;
   return {
     // Which account is tightest and its reported reset time both shift between usage reads.
-    key: [environmentId, provider.instanceId, tightest.window.id].join("\u0000"),
+    key: [environmentId, provider.instanceId, window.id].join("\u0000"),
     driver: provider.driver,
-    window: tightest.window,
+    window,
   };
 }
 
