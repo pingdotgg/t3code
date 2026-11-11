@@ -54,12 +54,26 @@ const operationOf = (
   query: Record<string, unknown>,
   body: unknown,
 ) => {
+  if (method === "GET" && path === "/api/experimental/job" && query.kind === "image")
+    return { type: "imageJobs", input: query };
+  if (method === "GET" && path.startsWith("/api/fs/read/"))
+    return { type: "image.read", input: { path, ...query } };
   const rpc = /^\/api\/rpc\/([^/]+)\/([^/]+)$/.exec(path);
   if (method === "POST" && rpc !== null)
     return {
       type: "rpc.call",
       input: { rpcID: rpc[1], method: rpc[2], ...query, ...(body as object) },
     };
+  if (method === "GET" && path === "/api/experimental/job")
+    return { type: "job.list", input: query };
+  const shell = /^\/api\/shell(?:\/([^/]+)(\/output)?)?$/.exec(path);
+  if (shell !== null) {
+    const input = { ...(shell[1] === undefined ? {} : { id: shell[1] }), ...query };
+    return {
+      type: `shell.${method === "DELETE" ? "remove" : shell[2] ? "output" : shell[1] ? "get" : "list"}`,
+      input,
+    };
+  }
   const session = /^\/api\/session\/([^/]+)(\/.*)?$/.exec(path);
   if (method === "GET" && path === "/api/event") return { type: "event.subscribe" };
   if (method === "GET" && path === "/api/model") return { type: "model.list", input: query };
@@ -176,6 +190,11 @@ const replayHttpClient = (
         }
         // Recorded responses are the raw HTTP bodies; `null` is an empty 204.
         const body = await controller.response(operation.type);
+        if (typeof body === "object" && body !== null && "imageBase64" in body) {
+          return new Response(Buffer.from(String(body.imageBase64), "base64"), {
+            headers: { "content-type": "image/png" },
+          });
+        }
         if (body === "<hang>") return new Promise<Response>(() => {});
         if (typeof body === "object" && body !== null && "status" in body && "body" in body) {
           return new Response(encodeJson(body.body), {

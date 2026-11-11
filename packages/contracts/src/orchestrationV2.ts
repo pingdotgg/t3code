@@ -913,6 +913,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
+  // The run whose unfinished task was cancelled, committed with its Stop.
+  cancelledRunId: Schema.optional(RunId),
   status: Schema.Literals([
     "idle",
     "pending",
@@ -1603,8 +1605,9 @@ const OrchestrationV2LinkRequestFields = {
   url: Schema.optional(TrimmedNonEmptyString),
   reason: Schema.String,
   /**
-   * The environment the agent named, or the one answering at `url`. Without
-   * either the user picks the machine in the card.
+   * The environment the agent named. Without it or `url` the user picks the
+   * machine in the card. Beside a `url`, this and `label` are what answered
+   * there on an older server: unauthenticated, so clients ignore both.
    */
   environmentId: Schema.optional(EnvironmentId),
   label: Schema.optional(Schema.String),

@@ -3,15 +3,20 @@ import { type OrchestrationV2CheckpointFileTotals, type RunId } from "@t3tools/c
 import { type MouseEvent, type ReactNode, memo, useLayoutEffect, useRef, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
-import { ChevronRightIcon, FileDiffIcon } from "lucide-react";
-import { ChevronsDownUp, ChevronsUpDown, Folder, FolderClosed } from "lucide";
+import {
+  ChevronRightIcon,
+  FileDiffIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+  FolderClosedIcon,
+  FolderIcon,
+} from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
-import { MorphIcon } from "~/components/MorphIcon";
 import { observeResize } from "~/lib/observeResize";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
@@ -92,10 +97,11 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                   />
                 }
               >
-                <MorphIcon
-                  className="size-3"
-                  icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
-                />
+                {allDirectoriesExpanded ? (
+                  <ChevronsDownUpIcon className="size-3" />
+                ) : (
+                  <ChevronsUpDownIcon className="size-3" />
+                )}
               </TooltipTrigger>
               <TooltipPopup side="top">
                 {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
@@ -211,10 +217,11 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
               isExpanded && "rotate-90",
             )}
           />
-          <MorphIcon
-            className="size-3.5 shrink-0 text-muted-foreground/75"
-            icon={isExpanded ? Folder : FolderClosed}
-          />
+          {isExpanded ? (
+            <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+          ) : (
+            <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+          )}
           <span className="truncate font-mono text-2xs text-muted-foreground/90 group-hover:text-foreground/90">
             {node.name}
           </span>
