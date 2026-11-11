@@ -16,7 +16,11 @@ import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
-import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
+import {
+  isWindowsDrivePathHref,
+  normalizeMarkdownLinkDestination,
+  parseObsidianNavigationHref,
+} from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 export { remarkEnableOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
@@ -219,6 +223,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       "t3-citation",
       "t3-context",
       THREAD_LINK_PROTOCOL,
+      "obsidian",
       // Scheme only: the renderer's URL transform checks the rest of the link shape.
       ...LOCAL_FILE_LINK_SCHEMES,
     ],
@@ -325,10 +330,24 @@ function rehypeRawWhenPresent(this: Processor) {
     needsHtmlParser(tree, TOP_SCOPE) ? transform(tree, file) : undefined;
 }
 
+function rehypeObsidianNavigationLinks() {
+  return (tree: MarkdownImageHastNode) => {
+    const visit = (node: MarkdownImageHastNode) => {
+      const href = node.properties?.href;
+      if (node.tagName === "a" && typeof href === "string" && /^obsidian:/i.test(href)) {
+        node.properties!.href = parseObsidianNavigationHref(href) ?? undefined;
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
 export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
   rehypePreserveBareAnchorPlaceholders,
   rehypeRawWhenPresent,
   rehypePreserveImageSourceMeta,
+  rehypeObsidianNavigationLinks,
   rehypeNormalizeLocalEditorLinks,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ];
