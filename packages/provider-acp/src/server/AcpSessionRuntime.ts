@@ -2811,9 +2811,30 @@ const handleSessionUpdate =
     }
     const parsed = parseSessionUpdateEvent(params);
     if (parsed.modeId) {
-      yield* Ref.update(modeStateRef, (current) =>
+      const modeId = (yield* Ref.updateAndGet(modeStateRef, (current) =>
         current === undefined ? current : updateModeState(current, parsed.modeId!),
-      );
+      ))?.currentModeId;
+      // A mode-only update leaves the mode option stale, and setConfigOption
+      // skips a value the option already shows, so reapplying the mode would send nothing.
+      const configOptions = yield* SubscriptionRef.get(configOptionsRef);
+      if (
+        modeId !== undefined &&
+        configOptions.some(
+          (option) =>
+            option.category === "mode" &&
+            option.type === "select" &&
+            option.currentValue !== modeId,
+        )
+      ) {
+        yield* SubscriptionRef.set(
+          configOptionsRef,
+          configOptions.map((option) =>
+            option.category === "mode" && option.type === "select"
+              ? { ...option, currentValue: modeId }
+              : option,
+          ),
+        );
+      }
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
