@@ -1180,6 +1180,13 @@ it.effect("a task named only by environment inherits the parent's model, within 
         clientRequestId: "broader",
       });
       expect(broader.isError).toBe(true);
+      // Nothing was accepted there, so the task says so plainly and owes no wake.
+      const refused = (yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+        (task) => task.status === "failed",
+      );
+      expect(refused?.remoteChild?.launchError).toBeUndefined();
+      expect(refused?.result).not.toContain("could not be confirmed");
+      expect(refused?.completionDelivery?.state).toBe("disposed");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

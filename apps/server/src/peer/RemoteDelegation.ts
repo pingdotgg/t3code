@@ -362,6 +362,17 @@ const make = Effect.gen(function* () {
               code: error.code,
             }),
         ),
+        // A refusal reaches the caller as this call's error, so no wake is owed for it.
+        Effect.tapError(() =>
+          threads
+            .dispatch({
+              type: "delegated_task.completion-delivery.dispose",
+              commandId: CommandId.make(`command:remote-task-refused:${taskId}`),
+              parentThreadId: scope.thread.threadId,
+              taskId,
+            })
+            .pipe(Effect.ignoreCause({ log: true })),
+        ),
         Effect.ensuring(followOne(scope.thread.threadId, taskId).pipe(Effect.forkIn(followers))),
       );
       return { taskId };
@@ -418,7 +429,9 @@ const make = Effect.gen(function* () {
           message: "The pending remote task has no launch inputs.",
         });
       }
-      if (task.remoteChild.launchStarted !== true) {
+      // Only a send that may have reached the destination before can leave work there.
+      const sentBefore = task.remoteChild.launchStarted === true;
+      if (!sentBefore) {
         // The parent's dispatch lock orders this against Stop/cancel. Once committed,
         // acceptance is uncertain until the same key returns a destination receipt.
         if (task.result !== null) {
@@ -494,15 +507,15 @@ const make = Effect.gen(function* () {
           Effect.catchTags({
             OrchestratorMcpFailure: (error) => {
               if (isFinal(error) || isModeRefusal(error) || error.code === "invalid_request") {
-                const message = `${error.message} The remote launch could not be confirmed. If it was already accepted, work may still be running on ${remote.label}.`;
+                const uncertain = `${error.message} The remote launch could not be confirmed. If it was already accepted, work may still be running on ${remote.label}.`;
                 return complete(
                   parentThreadId,
                   taskId,
                   "failed",
-                  message,
+                  sentBefore ? uncertain : error.message,
                   "stopped",
                   remote.stopCount,
-                  message,
+                  sentBefore ? uncertain : undefined,
                 ).pipe(Effect.andThen(Effect.fail(error)));
               }
               return Effect.fail(error);
