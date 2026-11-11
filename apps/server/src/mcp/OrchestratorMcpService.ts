@@ -2520,7 +2520,7 @@ const make = Effect.gen(function* () {
               ? threadManagementFailure(error)
               : failure(
                   "orchestration_error",
-                  `Unable to create delegated task: ${errorMessage(error)}`,
+                  `Unable to create delegated task: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
                 ),
           ),
         );
@@ -3284,7 +3284,7 @@ const make = Effect.gen(function* () {
               ? threadManagementFailure(error)
               : failure(
                   "orchestration_error",
-                  `Unable to interrupt thread ${input.threadId}: ${errorMessage(error)}`,
+                  `Unable to interrupt thread ${input.threadId}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
                 ),
           ),
         );

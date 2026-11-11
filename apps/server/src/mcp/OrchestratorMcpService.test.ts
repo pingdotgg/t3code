@@ -50,6 +50,7 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import {
+  OrchestratorDispatchError,
   OrchestratorProjectionError,
   OrchestratorThreadAboveModeLimitError,
 } from "../orchestration-v2/Orchestrator.ts";
@@ -1863,6 +1864,53 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("reports the dispatch cause instead of the generic wrapper when delegating fails", () =>
+    Effect.gen(function* () {
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+          dispatch: (command) =>
+            Effect.fail(
+              new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: new Error("private-storage-path"),
+              }) as never,
+            ),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const error = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service
+          .delegateTask(scope, {
+            task: "Summarize the diff.",
+            mode: "async",
+            clientRequestId: "delegate-dispatch-cause",
+          })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+      assert.equal(error.code, "orchestration_error");
+      assert.include(error.message, "private-storage-path");
+      assert.notInclude(error.message, "Failed to dispatch orchestration command");
+    }),
+  );
+
   it.effect("driver-only delegation skips an instance the project turned off", () =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
@@ -3609,6 +3657,49 @@ describe("OrchestratorMcpService provider resolution", () => {
       assert.equal(error.code, "invalid_request");
       assert.include(error.message, "Unknown option bogus");
     }),
+  );
+
+  it.effect(
+    "reports the dispatch cause instead of the generic wrapper when interrupting fails",
+    () =>
+      Effect.gen(function* () {
+        const layerDependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(parentProjection([])),
+            interruptThread: (input) =>
+              Effect.fail(
+                new OrchestratorDispatchError({
+                  commandId: input.commandId,
+                  commandType: "thread.interrupt",
+                  cause: new Error("private-storage-path"),
+                }) as never,
+              ),
+          }),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+            list: () => Effect.succeed([]),
+          }),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        const error = yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service
+            .interruptThread(scope, {
+              threadId: parentThreadId,
+              clientRequestId: "interrupt-dispatch-cause",
+            })
+            .pipe(Effect.flip);
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+        assert.equal(error.code, "orchestration_error");
+        assert.include(error.message, "private-storage-path");
+        assert.notInclude(error.message, "Failed to dispatch orchestration command");
+      }),
   );
 
   describe("resolveRuntimeMode", () => {
