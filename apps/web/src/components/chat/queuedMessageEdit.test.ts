@@ -131,6 +131,30 @@ describe("queued message file edits", () => {
     expect(store.getComposerDraft(editTarget)).toBeNull();
   });
 
+  it("reports a removed queued attachment as an edit when the run leaves", async () => {
+    const store = useComposerDraftStore.getState();
+    await prepareQueuedMessageEditDraft({
+      editTarget,
+      edit,
+      environmentId,
+      text: "Original message",
+      attachments: [uploadedFile],
+      readImage: async () => {
+        throw new Error("Unexpected image");
+      },
+    });
+    store.removeFile(editTarget, uploadedFile.id);
+    expect(
+      recoverQueuedMessageEdit({
+        editTarget,
+        threadTarget,
+        originalText: "Original message",
+        originalAttachmentIds: [uploadedFile.id],
+      }),
+    ).toBe("kept");
+    expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
+  });
+
   it("does not overwrite a separate draft when the queued run leaves", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(threadTarget, "Separate draft");

@@ -50,7 +50,7 @@ export interface QueuedRunEdit {
 
 export { queuedEditDraftKey } from "./queued-edit-draft-key";
 
-const queuedRunEdits = makeQueuedRunEditStore<QueuedRunEditDraft & { readonly runId: RunId }>({
+const queuedRunEdits = makeQueuedRunEditStore<QueuedRunEditDraft>({
   registry: appAtomRegistry,
   label: "mobile-queued-run-edits",
 });

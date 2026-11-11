@@ -150,8 +150,6 @@ function Harness(props: {
       pendingAction={null}
       isRunning={false}
       canInterrupt={false}
-      showPlanFollowUpPrompt={false}
-      promptHasText={draft.prompt.trim().length > 0}
       isSendBusy={result.isSaving}
       sendDisabledReason={null}
       isEnvironmentUnavailable={false}
@@ -166,7 +164,6 @@ function Harness(props: {
       }
       onPreviousPendingQuestion={() => {}}
       onInterrupt={() => {}}
-      onImplementPlanInNewThread={() => {}}
     />
   ) : null;
 }

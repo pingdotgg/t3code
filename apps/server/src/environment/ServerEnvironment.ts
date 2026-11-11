@@ -227,6 +227,7 @@ export const make = Effect.gen(function* () {
       pullRequests: true,
       pullRequestChecks: true,
       sideChats: true,
+      vcsBranchStatus: true,
       inlineMessageContext: true,
       queuedRunEditHold: true,
       requiredWorktreeBootstrap: true,
@@ -239,6 +240,7 @@ export const make = Effect.gen(function* () {
       projectWorktreeCleanup: true,
       settledWorktreeCleanup: true,
       worktreesDirectory: true,
+      ...(hostPlatform === "darwin" ? { fastWorktreeCheckout: true } : {}),
       threadAutoSettlementScope: true,
       threadRestartContinuation: true,
       projectSettingsOverrides: true,
@@ -248,6 +250,7 @@ export const make = Effect.gen(function* () {
       environmentThemes: true,
       usageLimitSources: true,
       providerWorkspaceSnapshotsOnDemand: true,
+      modelCatalogRefresh: true,
       usagePriceOverrides: true,
       usageModelAliases: true,
       threadPinning: true,
@@ -275,6 +278,7 @@ export const make = Effect.gen(function* () {
       scheduledTaskThreadModes: true,
       npmReleaseLookup: true,
       voiceTranscription: isSpeechPlatformSupported(hostPlatform, hostArchitecture, hostLibc),
+      cloudVoiceTranscription: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
@@ -285,6 +289,8 @@ export const make = Effect.gen(function* () {
       peerLinks: true,
       mcpModeLimitHeader: true,
       linkFence: true,
+      mcpApprovalCodes: true,
+      mcpHostedApproval: true,
     },
   };
 
