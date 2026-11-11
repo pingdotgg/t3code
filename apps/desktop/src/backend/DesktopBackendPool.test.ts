@@ -349,7 +349,7 @@ describe("DesktopBackendPool", () => {
           const primary = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
           yield* primary.start;
           yield* Deferred.await(firstProbe);
-          yield* TestClock.adjust(Duration.minutes(1));
+          yield* TestClock.adjust(Duration.minutes(4));
 
           const startup = yield* SubscriptionRef.get(
             (yield* DesktopState.DesktopState).primaryBackendStartup,
