@@ -918,35 +918,41 @@ describe("ApnsDeliveries", () => {
     );
   });
 
-  it.effect(
-    "keeps attention an environment reached while disabled silent after re-enabling",
-    () => {
-      const queuedJobs: Array<SignedApnsDeliveryJob> = [];
-      const other = { ...aggregate.activities[0]!, environmentId: EnvironmentId.make("other-env") };
-      const waiting = { ...other, phase: "waiting_for_approval" as const, status: "Approval" };
+  it.effect.each([
+    { name: "attention reached while disabled stays silent", revealedAtMs: 4_000, alerts: false },
+    { name: "attention reached after re-enabling alerts", revealedAtMs: 1_000, alerts: true },
+  ])("re-enabled environment: $name", ({ revealedAtMs, alerts }) => {
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    const other = { ...aggregate.activities[0]!, environmentId: EnvironmentId.make("other-env") };
+    const waiting = {
+      ...other,
+      phase: "waiting_for_approval" as const,
+      status: "Approval",
+      updatedAt: "1970-01-01T00:00:03.000Z",
+    };
 
-      return Effect.gen(function* () {
-        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-        yield* deliveries.sendForTarget({
-          target: {
-            ...target,
-            last_aggregate_json: JSON.stringify(aggregate),
-            last_hidden_environment_ids: [other.environmentId],
-            last_live_activity_delivery_at: state.updatedAt,
-          },
-          aggregate: {
-            ...aggregate,
-            activeCount: 2,
-            activities: [waiting, aggregate.activities[0]!],
-          },
-          nowMs: 5_000,
-        });
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: {
+          ...target,
+          last_aggregate_json: JSON.stringify(aggregate),
+          last_hidden_environment_ids: [other.environmentId],
+          environment_revealed_at: { [other.environmentId]: revealedAtMs },
+          last_live_activity_delivery_at: state.updatedAt,
+        },
+        aggregate: {
+          ...aggregate,
+          activeCount: 2,
+          activities: [waiting, aggregate.activities[0]!],
+        },
+        nowMs: 5_000,
+      });
 
-        expect(queuedJobs).toMatchObject([{ payload: { kind: "live_activity_update" } }]);
-        expect(queuedJobs[0]?.payload.alert ?? null).toBeNull();
-      }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
-    },
-  );
+      expect(queuedJobs).toMatchObject([{ payload: { kind: "live_activity_update" } }]);
+      expect((queuedJobs[0]?.payload.alert ?? null) !== null).toBe(alerts);
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
 
   it.effect("retries signed queue jobs that are already claimed but not completed", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];

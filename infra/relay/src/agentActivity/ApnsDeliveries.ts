@@ -270,12 +270,14 @@ function chooseLiveActivityDelivery(input: {
           : (alertForAttentionTransition({
               previousAggregate,
               previousHiddenEnvironmentIds: input.target.last_hidden_environment_ids,
+              environmentRevealedAt: input.target.environment_revealed_at,
               nextAggregate,
               preferences,
             }) ??
             alertForNewlyTerminal({
               previousAggregate,
               previousHiddenEnvironmentIds: input.target.last_hidden_environment_ids,
+              environmentRevealedAt: input.target.environment_revealed_at,
               nextAggregate,
               preferences,
               nowMs: input.nowMs,
@@ -709,6 +711,7 @@ const make = Effect.gen(function* () {
       const transition = aggregate && {
         previousAggregate: parseAggregate(currentTarget.last_aggregate_json),
         previousHiddenEnvironmentIds: currentTarget.last_hidden_environment_ids,
+        environmentRevealedAt: currentTarget.environment_revealed_at,
         nextAggregate: aggregate,
         preferences: currentPreferences,
       };

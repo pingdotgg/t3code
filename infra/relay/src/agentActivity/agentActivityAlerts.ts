@@ -22,8 +22,10 @@ function isFreshTerminalNotification(updatedAt: string, nowMs: number): boolean 
 
 type TransitionInput = {
   readonly previousAggregate: RelayAgentActivityAggregateState | null;
-  // Rows from these environments were filtered out of the baseline, so they are not new.
+  // Rows from these environments were filtered out of the baseline, so they are not new
+  // unless they changed after the environment was re-enabled (epoch ms per environment).
   readonly previousHiddenEnvironmentIds?: ReadonlyArray<string> | null;
+  readonly environmentRevealedAt?: Readonly<Record<string, number>> | null;
   readonly nextAggregate: RelayAgentActivityAggregateState;
   readonly preferences: RelayAgentAwarenessPreferences | null;
 };
@@ -75,7 +77,11 @@ export function sameEnvironmentIds(
 function rowsVisibleInBaseline(input: TransitionInput) {
   const hidden = input.previousHiddenEnvironmentIds;
   if (!hidden?.length) return input.nextAggregate.activities;
-  return input.nextAggregate.activities.filter((row) => !hidden.includes(row.environmentId));
+  return input.nextAggregate.activities.filter((row) => {
+    if (!hidden.includes(row.environmentId)) return true;
+    const revealedAt = input.environmentRevealedAt?.[row.environmentId];
+    return revealedAt !== undefined && Date.parse(row.updatedAt) > revealedAt;
+  });
 }
 
 function alertAllowedForRow(
