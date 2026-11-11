@@ -16,6 +16,7 @@ import {
   type PullRequestDetailView,
   type PullRequestRef,
   type PullRequestConversationThread,
+  type PullRequestReviewThread,
   type ScopedThreadRef,
   pullRequestConversationThreads,
   type PullRequestThreadCommentsResult,
@@ -400,13 +401,20 @@ export function PullRequestSummaryTab({
   }
   const linkedAnchor =
     linked?.url === detail.url
-      ? resolvePullRequestReviewAnchor(linked.anchor, detail.comments, pullRequestConversationThreads(detail))
+      ? resolvePullRequestReviewAnchor(
+          linked.anchor,
+          detail.comments,
+          pullRequestConversationThreads(detail),
+        )
       : null;
   const matchesLink = (url: string | null) =>
     linkedAnchor !== null && pullRequestAnchorMatchesUrl(linkedAnchor, url);
   const itemMatchesLink = (item: PullRequestConversationItem) =>
     pullRequestConversationItemComments(item).some((comment) => matchesLink(comment.url));
-  const items = pullRequestConversationItems(detail.comments, pullRequestConversationThreads(detail));
+  const items = pullRequestConversationItems(
+    detail.comments,
+    pullRequestConversationThreads(detail),
+  );
   const commentCount = items.reduce(
     (count, item) => count + pullRequestConversationItemComments(item).length,
     0,
@@ -586,6 +594,7 @@ export function PullRequestSummaryTab({
     linked,
     detail.comments,
     detail.reviewThreads,
+    detail.overviewThreads,
     activityPending,
   ]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the hold observes DOM outside React and must end with the tab
@@ -819,7 +828,7 @@ export function PullRequestSummaryTab({
     );
   };
 
-  const renderThreadCard = (thread: PullRequestConversationThread) => (
+  const renderThreadCard = (thread: PullRequestReviewThread) => (
     <ReviewThreadCard
       // Named with the pull request too: a thread id is the host's own.
       key={`${detail.url}:${thread.id}:${thread.comments.some((comment) => matchesLink(comment.url)) ? linked?.count : 0}`}
@@ -926,7 +935,15 @@ export function PullRequestSummaryTab({
             ) : null
           }
         >
-          {renderThreadCard(item.thread)}
+          {item.thread.path === null ? (
+            <div className="space-y-2">
+              {renderCommentCard(comment, item.thread)}
+              {replies}
+              {moreReplies}
+            </div>
+          ) : (
+            renderThreadCard(item.thread)
+          )}
         </PullRequestResolvedThreadRow>
       );
     }
