@@ -6,6 +6,7 @@ import * as Updates from "expo-updates";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 import { View } from "react-native";
@@ -16,7 +17,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { crashReportingAvailable, setCrashReportsEnabled } from "../observability/observe";
-import { SettingsActionRow } from "../settings/components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
@@ -34,18 +35,28 @@ type CrashLogState =
   | { readonly status: "unavailable" }
   | { readonly status: "ready"; readonly records: ReadonlyArray<StartupCrashRecord> };
 
+class CrashLogReadError extends Schema.TaggedError<CrashLogReadError>()("CrashLogReadError", {
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return "Could not read the expo-updates log.";
+  }
+}
+
 // Not kept alive: each visit to the screen re-reads the log.
 const crashLogAtom = Atom.make(
-  Effect.tryPromise(() => Updates.readLogEntriesAsync(LOG_WINDOW_MS)).pipe(
+  Effect.tryPromise({
+    try: () => Updates.readLogEntriesAsync(LOG_WINDOW_MS),
+    catch: (cause) => new CrashLogReadError({ cause }),
+  }).pipe(
     Effect.map((entries): CrashLogState => ({
       status: "ready",
       records: parseStartupCrashRecords(entries),
     })),
     Effect.catch((error) =>
-      Effect.sync((): CrashLogState => {
-        console.warn("[diagnostics] could not read the expo-updates log", error);
-        return { status: "unavailable" };
-      }),
+      Effect.logWarning("[diagnostics] could not read the expo-updates log", error).pipe(
+        Effect.as<CrashLogState>({ status: "unavailable" }),
+      ),
     ),
   ),
 ).pipe(Atom.withLabel("mobile:diagnostics-crash-log"));

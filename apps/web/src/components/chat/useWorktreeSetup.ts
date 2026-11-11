@@ -17,7 +17,7 @@ import { useTerminalUiStateStore } from "../../terminalUiStateStore";
 import type { Thread } from "../../types";
 import { focusTerminal } from "../../lib/terminalFocus";
 import { resolveVisibleWorktreeSetup, resolveWorktreeSetupProgress } from "../ChatView.logic";
-import { worktreeSetupAgentStarted } from "./MessagesTimeline.logic";
+import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 
 // Share in-flight preparation retries across ChatView instances.
 const retryingWorkspacePreparationRunIds = new Set<RunId>();

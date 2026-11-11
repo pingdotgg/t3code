@@ -3,29 +3,16 @@ title: D1
 description: SQLite schemas and Effect-native Drizzle queries over a Cloudflare D1 binding.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-export const deps = `drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-d1`;
-export const devDeps = `drizzle-kit@1.0.0-rc.5-ab785fc`;
+export const deps = `@alchemy.run/drizzle drizzle-orm@1.0.0-rc.5 @effect/sql-d1`;
+export const devDeps = `drizzle-kit@1.0.0-rc.5`;
 
 `Drizzle.D1` provides typed, Effect-native queries over a Cloudflare D1 binding; unlike Postgres and MySQL, this driver is Cloudflare-specific. See [SQL databases](/sql/databases) to compare engines and [Cloudflare setup](/cloudflare/setup) for deployment choices.
 
 Install the toolchain — all optional peers of alchemy:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={deps} dev={devDeps} />
 
 ## Define the schema
 
@@ -85,7 +72,7 @@ Generate with each schema change and review the schema, SQL, and snapshots toget
 
 ```typescript
 // src/db.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Database = Cloudflare.D1.Database("app-db", {
   migrations: "./migrations",
@@ -101,8 +88,8 @@ client to `Drizzle.D1`:
 
 ```typescript
 // src/api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Drizzle from "@alchemy.run/drizzle";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Database } from "./db.ts";
