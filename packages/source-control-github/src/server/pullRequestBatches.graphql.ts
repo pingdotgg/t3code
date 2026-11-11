@@ -311,8 +311,8 @@ export interface PullRequestReviewThreadConnection extends Schema.Struct.Type<ty
 
 /** The connection type for PullRequestTimelineItems. */
 export const PullRequestTimelineItemsConnection = Schema.Struct({
-  /** Identifies the total count of items in the connection. */
-  totalCount: Shared.Int
+  /** Identifies the count of items after applying `before` and `after` filters. */
+  filteredCount: Shared.Int
 })
 export interface PullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof PullRequestTimelineItemsConnection.fields> {}
 
@@ -409,7 +409,7 @@ export const PullRequestWatchFingerprint = GraphQL.query("PullRequestWatchFinger
       { name: "mergeQueue", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}mergeQueueRemovals:timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT])@include(if:$", "mergeQueue", "){totalCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}mergeQueueRemovals:timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT])@include(if:$", "mergeQueue", "){filteredCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
     ],
     fragments: []
   },

@@ -1014,7 +1014,7 @@ export function toPullRequestWatchFingerprint(
       pr.headRefOid,
       stateCounts(contexts?.checkRunCountsByState ?? null),
       stateCounts(contexts?.statusContextCountsByState ?? null),
-      pr.mergeQueueRemovals?.totalCount ?? 0,
+      pr.mergeQueueRemovals?.filteredCount ?? 0,
     ].join(" "),
     remarks: [
       pr.comments.totalCount,

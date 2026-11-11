@@ -111,9 +111,10 @@ query PullRequestWatchFingerprint(
       reviewThreads {
         totalCount
       }
+      # totalCount ignores itemTypes and counts every timeline item; filteredCount honours it.
       mergeQueueRemovals: timelineItems(itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT])
         @include(if: $mergeQueue) {
-        totalCount
+        filteredCount
       }
       commits(last: 1) {
         nodes {
