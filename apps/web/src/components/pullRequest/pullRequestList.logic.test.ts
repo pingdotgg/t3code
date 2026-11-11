@@ -38,6 +38,7 @@ import {
   reusePullRequestEntries,
   settlePullRequestOverrides,
 } from "./pullRequestList.logic";
+import { pullRequestGroups } from "./pullRequestListGroups.logic";
 import {
   readPullRequestListPreferences,
   writePullRequestListPreferences,
@@ -176,6 +177,43 @@ describe("ranking what a search found", () => {
     expect(
       rankPullRequestMatches([mentioned, titled], "welcome wizard").map((entry) => entry.number),
     ).toEqual([1, 2]);
+  });
+
+  it("keeps loaded partial-word matches the host's whole-word search missed, after its answer", () => {
+    const bilal = { login: "bilal", name: null, avatarUrl: null };
+    const hosted = row({ number: 1, title: "Notifications match the body text", author: bilal });
+    const toast = row({ number: 2, title: "Threads show a completed toast", author: bilal });
+    const toaster = row({ number: 3, title: "Toaster fixtures cover retries", author: bilal });
+    const theirs = row({ number: 4, title: "Toasted sidebar" });
+    const unrelated = row({ number: 5, title: "Cursor no longer adds attribution", author: bilal });
+
+    const { entries } = pullRequestGroups({
+      known: [hosted, toast],
+      baseline: [theirs, unrelated, toaster, toast],
+      providers: [
+        {
+          host: "github.com",
+          kind: SourceControlProviderKind.make("github"),
+          searchesOnHost: true,
+          projectCount: 1,
+          configured: true,
+          detail: null,
+        },
+      ],
+      viewers: VIEWERS,
+      involvement: "all",
+      localFilters: { author: "bilal" },
+      hasLocalFilters: true,
+      text: "toa",
+      answeredLocally: true,
+      baselineEmpty: false,
+      held: undefined,
+      authored: undefined,
+      reviewing: undefined,
+      partitionsWanted: false,
+    });
+
+    expect(entries.map((entry) => entry.number)).toEqual([1, 2, 3]);
   });
 });
 

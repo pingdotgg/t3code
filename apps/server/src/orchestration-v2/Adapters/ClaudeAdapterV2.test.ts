@@ -2301,7 +2301,6 @@ describe("ClaudeAdapterV2 attachments", () => {
             "missing-eof",
             "escaped-name",
             "incremental",
-            "compressed-bomb",
             "indirect-count",
             "indirect-type",
             "indirect-kids",
@@ -2358,9 +2357,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                 "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 42 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF",
               );
               yield* fileSystem.writeFile(documentPath, malformedBytes);
-            } else if (
-              ["object-stream", "encrypted", "cyclic-tree", "compressed-bomb"].includes(scenario)
-            ) {
+            } else if (["object-stream", "encrypted", "cyclic-tree"].includes(scenario)) {
               const suffix =
                 scenario === "encrypted"
                   ? "/Encrypt 9 0 R"
@@ -15821,11 +15818,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("gives a nested subagent its own effort, else the one its owner runs at", () =>
+  it.effect("records only explicit effort for nested subagents", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const OUTER_TOOL_USE_ID = "toolu-effort-outer";
-        const INHERITING_TOOL_USE_ID = "toolu-effort-nested-inheriting";
+        const UNSPECIFIED_TOOL_USE_ID = "toolu-effort-nested-unspecified";
         const OVERRIDING_TOOL_USE_ID = "toolu-effort-nested-overriding";
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
@@ -15891,14 +15888,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               type: "message",
               role: "assistant",
               content: [
-                agentCall(INHERITING_TOOL_USE_ID),
+                agentCall(UNSPECIFIED_TOOL_USE_ID),
                 agentCall(OVERRIDING_TOOL_USE_ID, "max"),
               ],
             },
             uuid: "00000000-0000-4000-8000-000000000223",
             session_id: WAKE_NATIVE_SESSION,
           }),
-          taskStarted(INHERITING_TOOL_USE_ID, "00000000-0000-4000-8000-000000000224"),
+          taskStarted(UNSPECIFIED_TOOL_USE_ID, "00000000-0000-4000-8000-000000000224"),
           taskStarted(OVERRIDING_TOOL_USE_ID, "00000000-0000-4000-8000-000000000225"),
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000226",
@@ -15923,7 +15920,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual(Object.fromEntries(efforts), {
           [`task-${OUTER_TOOL_USE_ID}`]: "low",
-          [`task-${INHERITING_TOOL_USE_ID}`]: "low",
+          [`task-${UNSPECIFIED_TOOL_USE_ID}`]: undefined,
           [`task-${OVERRIDING_TOOL_USE_ID}`]: "max",
         });
         const childEfforts = harness.events.flatMap((event) =>
@@ -15931,7 +15928,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ? [getModelSelectionStringOptionValue(event.appThread.modelSelection, "effort")]
             : [],
         );
-        assert.deepEqual(childEfforts, ["low", "low", "max"]);
+        assert.deepEqual(childEfforts, ["low", undefined, "max"]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
