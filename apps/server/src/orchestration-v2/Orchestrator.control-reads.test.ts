@@ -260,6 +260,120 @@ it.effect("marks a never-visited thread's first completion unread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+const completeAndSnoozeThread = Effect.fn("test.completeAndSnoozeThread")(function* (
+  name: string,
+  snoozeMinutes: number,
+) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = ThreadId.make(`thread:${name}`);
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make(`create-${name}`),
+    threadId,
+    projectId: ProjectId.make(`project:${name}`),
+    title: "Snoozed completion",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  yield* orchestrator.dispatch({
+    type: "message.dispatch",
+    commandId: CommandId.make(`dispatch-${name}`),
+    threadId,
+    messageId: MessageId.make(`dispatch-${name}`),
+    text: "Run in the background",
+    attachments: [],
+    dispatchMode: { type: "defer_start" },
+    createdBy: "agent",
+    creationSource: "mcp",
+  });
+  yield* orchestrator.dispatch({
+    type: "run.interrupt",
+    commandId: CommandId.make(`interrupt-${name}`),
+    threadId,
+    runId: (yield* projections.getThreadProjection(threadId)).runs[0]!.id,
+  });
+  const completedAt = (yield* projections.getThreadProjection(threadId)).runs.at(-1)?.completedAt;
+  assert.ok(completedAt);
+  yield* TestClock.adjust("1 second");
+  const snoozedUntil = DateTime.add(yield* DateTime.now, { minutes: snoozeMinutes });
+  yield* orchestrator.dispatch({
+    type: "thread.snooze",
+    commandId: CommandId.make(`snooze-${name}`),
+    threadId,
+    snoozedUntil: DateTime.formatIso(snoozedUntil),
+  });
+  return { threadId, completedAt, snoozedUntil };
+});
+
+it.effect("mark unread retires an expired snooze so a dismissed wake stays dismissed", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId, completedAt, snoozedUntil } = yield* completeAndSnoozeThread(
+      "mark-unread-expired-snooze",
+      1,
+    );
+    yield* TestClock.adjust("2 minutes");
+    yield* orchestrator.dispatch({
+      type: "thread.visit",
+      commandId: CommandId.make("dismiss-woke"),
+      threadId,
+      visitedAt: DateTime.formatIso(snoozedUntil),
+    });
+    const dismissed = yield* projections.getThread(threadId);
+    assert.deepEqual(dismissed.lastVisitedAt, snoozedUntil);
+
+    yield* orchestrator.dispatch({
+      type: "thread.mark-unread",
+      commandId: CommandId.make("mark-unread-expired-snooze"),
+      threadId,
+    });
+    assert.deepEqual(yield* projections.getThread(threadId), {
+      ...dismissed,
+      lastVisitedAt: DateTime.subtract(completedAt, { milliseconds: 1 }),
+      snoozedUntil: null,
+      snoozedAt: null,
+      lastSnoozeWakeAt: snoozedUntil,
+    });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("mark unread leaves a future snooze untouched", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId, completedAt } = yield* completeAndSnoozeThread(
+      "mark-unread-future-snooze",
+      60,
+    );
+    yield* TestClock.adjust("1 minute");
+    yield* orchestrator.dispatch({
+      type: "thread.visit",
+      commandId: CommandId.make("visit-snoozed"),
+      threadId,
+      visitedAt: DateTime.formatIso(yield* DateTime.now),
+    });
+    const visited = yield* projections.getThread(threadId);
+    assert.isNotNull(visited.snoozedUntil);
+
+    yield* orchestrator.dispatch({
+      type: "thread.mark-unread",
+      commandId: CommandId.make("mark-unread-future-snooze"),
+      threadId,
+    });
+    assert.deepEqual(yield* projections.getThread(threadId), {
+      ...visited,
+      lastVisitedAt: DateTime.subtract(completedAt, { milliseconds: 1 }),
+    });
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "dispatches metadata, queue resume and request controls without hydrating unrelated history",
   () =>
@@ -445,6 +559,14 @@ it.effect(
             assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
           }
         }
+        if (mode === "live") {
+          yield* orchestrator.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("snooze-live-control"),
+            threadId,
+            snoozedUntil: "2099-07-25T09:00:00.000Z",
+          });
+        }
         yield* orchestrator.dispatch(
           mode === "live"
             ? {
@@ -469,6 +591,8 @@ it.effect(
         assert.equal(response.node?.status, mode === "live" ? "completed" : "cancelled");
         assert.equal(response.item?.status, mode === "live" ? "completed" : "cancelled");
         if (mode === "live") {
+          assert.isNull((yield* projections.getThread(threadId)).snoozedUntil);
+          assert.isNull((yield* projections.getThread(threadId)).snoozedAt);
           assert.deepEqual(response.request?.answers, normalizedAnswers);
           assert.equal(response.item?.type, "user_input_request");
           if (response.item?.type === "user_input_request") {
@@ -540,6 +664,55 @@ it.effect(
       });
       assert.isNotNull((yield* projections.getThread(threadId)).deletedAt);
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps the store's read failure as the cause when a command projection fails", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const unreadableMessage = ThreadId.make("thread:control-unreadable-message");
+    const unreadableRequest = ThreadId.make("thread:control-unreadable-request");
+    for (const threadId of [unreadableMessage, unreadableRequest]) {
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("project:control-unreadable"),
+        title: "Unreadable",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    yield* sql`INSERT INTO orchestration_v2_projection_messages
+      (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json)
+      VALUES ('obsolete-user', ${unreadableMessage}, NULL, NULL, 'user', 0, ${now}, ${now}, '{"obsolete":true}')`;
+    yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
+      (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
+      VALUES ('request:unreadable', ${unreadableRequest}, 'node:unreadable', 'user-input', 'pending', ${now}, '{}')`;
+    for (const command of [
+      {
+        type: "queue.resume",
+        commandId: CommandId.make("resume-unreadable"),
+        threadId: unreadableMessage,
+      },
+      {
+        type: "thread.user-input.dismiss",
+        commandId: CommandId.make("dismiss-unreadable"),
+        threadId: unreadableRequest,
+        requestId: RuntimeRequestId.make("request:unreadable"),
+      },
+    ] as const) {
+      const failure = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+      assert.instanceOf(failure, Orchestrator.OrchestratorProjectionError);
+      assert.instanceOf(failure.cause, ProjectionStore.ProjectionStoreReadError);
+    }
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("implements a proposed plan that the command projection leaves out", () =>
@@ -1371,6 +1544,92 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     } as const;
     assert.deepInclude(yield* projections.getThreadShell(threadId), active);
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps a snooze when a live question is cancelled or an approval is answered", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const now = yield* DateTime.now;
+    for (const kind of ["user_input", "command"] as const) {
+      const threadId = ThreadId.make(`thread:snoozed-live-${kind}`);
+      const requestId = RuntimeRequestId.make(`request:snoozed-live-${kind}`);
+      const sessionId = ProviderSessionId.make(`session:snoozed-live-${kind}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create-snoozed-live-${kind}`),
+        threadId,
+        projectId: ProjectId.make("project:snoozed-live"),
+        title: "Deferred question",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make(`snooze-live-${kind}`),
+        threadId,
+        snoozedUntil: "2099-07-25T09:00:00.000Z",
+      });
+      const before = yield* projections.getThread(threadId);
+      yield* projections.apply({
+        id: EventId.make(`attach-snoozed-live-${kind}`),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`request-snoozed-live-${kind}`),
+        type: "runtime-request.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: requestId,
+          nodeId: NodeId.make(`node:snoozed-live-${kind}`),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind,
+          status: "pending",
+          responseCapability: { type: "live", providerSessionId: sessionId },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
+      const commandId = CommandId.make(`respond-snoozed-live-${kind}`);
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId,
+        threadId,
+        requestId,
+        decision: kind === "user_input" ? "cancel" : "accept",
+      });
+      const after = yield* projections.getThread(threadId);
+      assert.deepEqual(after.snoozedUntil, before.snoozedUntil);
+      assert.deepEqual(after.snoozedAt, before.snoozedAt);
+      assert.equal((yield* projections.getRuntimeRequest(threadId, requestId))?.status, "resolved");
+      assert.equal(
+        (yield* outbox.listByCommandId(commandId))[0]?.request.type,
+        "runtime-request.respond",
+      );
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 

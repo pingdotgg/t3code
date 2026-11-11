@@ -69,11 +69,7 @@ export interface WorkerShimOptions {
    * any other value emits upstream-parity behavior (no deferral).
    * @default "none"
    */
-  readonly notFoundHandling?:
-    | "none"
-    | "404-page"
-    | "single-page-application"
-    | undefined;
+  readonly notFoundHandling?: "none" | "404-page" | "single-page-application" | undefined;
 }
 
 /**

@@ -190,9 +190,11 @@ export function WorkspaceTitlebarControls(props: {
       {props.showMaximizeControl ? (
         <span
           aria-hidden={!props.rightPanelOpen}
+          // Fading out on close would show it beside the thread details toggle that replaces it.
           className={cn(
             "flex shrink-0",
-            props.animationsActive &&
+            props.rightPanelOpen &&
+              props.animationsActive &&
               "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
             props.rightPanelOpen
               ? "pointer-events-auto opacity-100"
