@@ -2,7 +2,7 @@ import * as Arr from "effect/Array";
 
 // Sectioning and the open section come from the pins at open, so starring a model never reflows them.
 export function groupModelPickerVendors<
-  T extends { readonly subProvider?: string; readonly isLegacy?: boolean },
+  T extends { readonly subProvider?: string; readonly isLegacy?: boolean | undefined },
 >(
   models: ReadonlyArray<T>,
   isPinned: (model: T) => boolean,
