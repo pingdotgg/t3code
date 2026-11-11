@@ -18,6 +18,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   AGENT_DEVICE_VERSION,
@@ -65,7 +66,13 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     yield* fs.writeFileString(path.join(stateDir, "daemon.json"), JSON.stringify(previousDaemon));
   }
   const host = yield* LocalDeviceHost.make().pipe(
-    Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        ServerConfig.layerTest(baseDir, baseDir),
+        NetService.layer,
+        ServerSettings.layerTest(),
+      ),
+    ),
     Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
@@ -842,7 +849,13 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
         Effect.provideService(HostProcess.Platform, "darwin"),
       );
     const host = yield* LocalDeviceHost.make().pipe(
-      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          ServerConfig.layerTest(baseDir, baseDir),
+          NetService.layer,
+          ServerSettings.layerTest({ enableDeviceSupport: true }),
+        ),
+      ),
       onTestHost,
       Effect.provideService(
         HttpClient.HttpClient,
@@ -880,7 +893,13 @@ it.effect(
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-consent-" });
       const host = yield* LocalDeviceHost.make().pipe(
-        Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+        Effect.provide(
+          Layer.mergeAll(
+            ServerConfig.layerTest(baseDir, baseDir),
+            NetService.layer,
+            ServerSettings.layerTest(),
+          ),
+        ),
         Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(
@@ -908,4 +927,35 @@ it.effect(
       yield* host.stop;
       expect(yield* fs.exists(`${baseDir}/tools`)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reads a macOS summary without Xcode probes while device support is off", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-disabled-" });
+    const summary = yield* LocalDeviceHost.make().pipe(
+      Effect.flatMap((host) => host.summary),
+      Effect.provide(
+        Layer.mergeAll(
+          ServerConfig.layerTest(baseDir, baseDir),
+          NetService.layer,
+          ServerSettings.layerTest(),
+        ),
+      ),
+      Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die(new Error("Startup must not probe Xcode while devices are off")),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die(new Error("Summary must not make network requests"))),
+      ),
+    );
+    expect(summary.platforms[0]).toEqual({
+      platform: "ios",
+      available: false,
+      reason: "Xcode command line tools were not found.",
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

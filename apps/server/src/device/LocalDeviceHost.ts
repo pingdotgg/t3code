@@ -15,6 +15,7 @@ import {
   type NodeRuntimeUnavailableError,
 } from "@t3tools/shared/nodeRuntime";
 import * as NetService from "@t3tools/shared/Net";
+import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -36,6 +37,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
@@ -349,14 +351,37 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const restartDelayRef = yield* Ref.make(0);
   const hostId = LOCAL_DEVICE_HOST_ID;
 
-  const platformAvailability = Effect.fn("LocalDeviceHost.platformAvailability")(function* (
-    platform: DevicePlatform,
-  ): Effect.fn.Return<DevicePlatformAvailability> {
-    const reason = yield* platformReason(platform).pipe(
+  const settings = yield* ServerSettings.ServerSettingsService;
+  // A list pass reads the summary more than once; let it share one Xcode probe.
+  const probedIosReason = yield* Effect.cachedWithTTL(
+    platformReason("ios").pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    ),
+    Duration.seconds(2),
+  );
+  // Server startup reads the summary too; spawn no Xcode probe until device support is on.
+  const iosReason = Effect.gen(function* () {
+    const enabled = yield* settings.getSettings.pipe(
+      Effect.map((value) => value.enableDeviceSupport),
+      Effect.orElseSucceed(() => false),
     );
+    if (enabled || hostPlatform !== "darwin") return yield* probedIosReason;
+    return (yield* isCommandAvailable("xcrun")) ? null : "Xcode command line tools were not found.";
+  }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
+
+  const platformAvailability = Effect.fn("LocalDeviceHost.platformAvailability")(function* (
+    platform: DevicePlatform,
+  ): Effect.fn.Return<DevicePlatformAvailability> {
+    const reason =
+      platform === "ios"
+        ? yield* iosReason
+        : yield* platformReason(platform).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+            Effect.provideService(ProcessRunner.ProcessRunner, runner),
+          );
     return reason === null ? { platform, available: true } : { platform, available: false, reason };
   });
 
