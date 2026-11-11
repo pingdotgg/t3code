@@ -163,6 +163,7 @@ export interface SshEnvironmentManagerShape {
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
   ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
+  readonly closeLocalTunnels: () => Effect.Effect<void>;
 }
 
 const RemoteLaunchResult = Schema.Struct({
@@ -1902,7 +1903,14 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
   });
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
+  const closeLocalTunnels = Effect.fn("ssh/tunnel.closeLocalTunnels")(function* () {
+    const entries = [...tunnels.values()];
+    // Entries no longer in the map skip the remote stop in their finalizer.
+    tunnels.clear();
+    yield* Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded", discard: true });
+  });
+
+  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment, closeLocalTunnels });
 });
 
 /**
