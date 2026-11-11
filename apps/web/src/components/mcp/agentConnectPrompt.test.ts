@@ -28,6 +28,8 @@ describe("agent connect prompts", () => {
     expect(claude).toContain("claude mcp login t3");
     expect(claude).toContain("--no-browser");
     expect(claude).toContain("claude mcp list");
+    expect(claude).toContain("t3_project_list");
+    expect(claude).toContain("reload");
 
     const codex = codexConnectPrompt(MCP_URL);
     expect(codex).toContain(MCP_URL);
@@ -35,5 +37,8 @@ describe("agent connect prompts", () => {
     expect(codex).toContain("codex mcp login t3");
     expect(codex).toContain("--no-browser");
     expect(codex).toContain("codex mcp list");
+    expect(codex).toContain("configured servers");
+    expect(codex).toContain("t3_project_list");
+    expect(codex).toContain("reload");
   });
 });

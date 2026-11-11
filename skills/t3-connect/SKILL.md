@@ -56,12 +56,17 @@ on older environments; only use a code they just minted.
 ## 3. Confirm, then ask what to do
 
 - Claude Code: `claude mcp list` shows `t3` as connected.
-- Codex: `codex mcp list` shows `t3` with OAuth.
+- Codex: `codex mcp list` shows `t3` with OAuth. That lists configured servers,
+  not that this session already has them active (`/mcp` in the Codex TUI shows
+  active ones).
 
-Say you are connected. If they have not already given a task, ask what they want
-to do in T3 Code. Prefer T3's thread tools (`t3_thread_launch`, `t3_thread_wait`,
-`t3_thread_read`) for work that should show up in T3; tools that need an agent
-running inside T3 will say so when called.
+Then try a read-only T3 tool in this session, such as `t3_project_list`. If the
+tools are missing, tell them to reload or start a new session and confirm again.
+Only when a T3 tool works here, say you are connected. If they have not already
+given a task, ask what they want to do in T3 Code. Prefer T3's thread tools
+(`t3_thread_launch`, `t3_thread_wait`, `t3_thread_read`) for work that should
+show up in T3; tools that need an agent running inside T3 will say so when
+called.
 
 ## If something fails
 
