@@ -3,6 +3,7 @@ import {
   type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
+  settingsSecretLiteral,
 } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
@@ -233,9 +234,7 @@ function openCodeCapabilitiesForModel(input: {
   readonly model: ProviderListResponse["all"][number]["models"][string];
   readonly agents: ReadonlyArray<Agent>;
 }): ModelCapabilities {
-  const rawVariantValues = Object.keys(input.model.variants ?? {});
-  const variantValues =
-    rawVariantValues.length > 0 ? rawVariantValues : ["low", "medium", "high", "xhigh"];
+  const variantValues = Object.keys(input.model.variants ?? {});
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
     defaultVariant === value
@@ -801,8 +800,8 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           binaryPath: openCodeSettings.binaryPath,
           directory: cwd,
           serverUrl: openCodeSettings.serverUrl,
-          ...(openCodeSettings.serverPassword
-            ? { serverPassword: openCodeSettings.serverPassword }
+          ...(settingsSecretLiteral(openCodeSettings.serverPassword)
+            ? { serverPassword: settingsSecretLiteral(openCodeSettings.serverPassword) }
             : {}),
         })
         .pipe(Effect.flatMap(loadInventory), Effect.scoped)

@@ -5,11 +5,13 @@ import {
   type GrepOptions,
   type GrepResult,
 } from "@ff-labs/fff-node";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import { vi } from "vite-plus/test";
-
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
 
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -164,4 +166,35 @@ it.effect("turns Windows separators into forward slashes on Windows hosts", () =
       expect(result.entries).toEqual([{ kind: "file", path: "src/nested/file.ts" }]);
     }),
   ),
+);
+
+// fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "refuses to index a workspace rooted at the home directory",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-home-" }),
+        );
+        yield* fs.makeDirectory(path.join(home, "OneDrive", "Remix"), { recursive: true });
+        yield* fs.writeFileString(path.join(home, "OneDrive", "Remix", "part.stl"), "solid part\n");
+        yield* Effect.acquireRelease(
+          Effect.sync(() => vi.stubEnv("HOME", home)),
+          () => Effect.sync(() => vi.unstubAllEnvs()),
+        );
+
+        const result = yield* WorkspaceSearchIndex.make(home).pipe(
+          Effect.flatMap((searchIndex) => searchIndex.search("stl", 50, undefined, false)),
+          Effect.map(({ entries }) => entries),
+          Effect.catchTags({
+            WorkspaceSearchIndexCreateFailed: (error) => Effect.succeed(error._tag),
+          }),
+        );
+
+        expect(result).toBe("WorkspaceSearchIndexCreateFailed");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );
