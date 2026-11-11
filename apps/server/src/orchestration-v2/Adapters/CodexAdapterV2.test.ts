@@ -6833,7 +6833,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.deepEqual(result, resourceResult);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer,NodeCrypto.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
