@@ -190,8 +190,8 @@ export const make = Effect.gen(function* () {
   };
 
   return ElectronMenu.of({
-    setApplicationMenu: (template) =>
-      Effect.try({
+    setApplicationMenu: Effect.fn("ElectronMenu.setApplicationMenu")(function (template) {
+      return Effect.try({
         try: () => {
           Electron.Menu.setApplicationMenu(Electron.Menu.buildFromTemplate([...template]));
         },
@@ -203,9 +203,10 @@ export const make = Effect.gen(function* () {
             itemCount: template.length,
             cause,
           }),
-      }).pipe(Effect.orDie),
-    popupTemplate: (input) =>
-      input.template.length === 0
+      }).pipe(Effect.orDie);
+    }),
+    popupTemplate: Effect.fn("ElectronMenu.popupTemplate")(function (input) {
+      return input.template.length === 0
         ? Effect.void
         : Effect.try({
             try: () =>
@@ -221,9 +222,10 @@ export const make = Effect.gen(function* () {
                 itemCount: input.template.length,
                 cause,
               }),
-          }).pipe(Effect.orDie),
-    showContextMenu: (input) =>
-      Effect.callback<Option.Option<string>>((resume) => {
+          }).pipe(Effect.orDie);
+    }),
+    showContextMenu: Effect.fn("ElectronMenu.showContextMenu")(function (input) {
+      return Effect.callback<Option.Option<string>>((resume) => {
         const normalizedItems = normalizeContextMenuItems(input.items);
         if (normalizedItems.length === 0) {
           resume(Effect.succeedNone);
@@ -275,7 +277,8 @@ export const make = Effect.gen(function* () {
             ),
           );
         }
-      }),
+      });
+    }),
   });
 });
 

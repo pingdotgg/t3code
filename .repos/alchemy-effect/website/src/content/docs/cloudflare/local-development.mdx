@@ -100,6 +100,14 @@ All three image sources work locally: `main` (a bundled Effect
 program), `context` (your own Dockerfile), and `image` (a
 pre-built remote image).
 
+### FUSE mounts
+
+A container can mount a FUSE filesystem locally, such as an R2
+bucket through `s3fs` or `tigrisfs`, just as it can once deployed.
+Every local container gets the Docker privileges FUSE needs:
+`CAP_SYS_ADMIN`, the `/dev/fuse` device, and an unconfined AppArmor
+profile.
+
 ## What's emulated
 
 These resources ship a local provider and run as simulators in

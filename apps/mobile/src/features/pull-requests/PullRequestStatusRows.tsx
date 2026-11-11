@@ -1,3 +1,4 @@
+import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
@@ -86,12 +87,7 @@ export function PullRequestStatusMenu(props: RowProps) {
       onPressAction={({ nativeEvent }) => {
         const selected = actions.find((id) => id === nativeEvent.event);
         if (!selected) return;
-        if (selected === "close")
-          action.confirm(
-            selected,
-            pullRequestActionLabel("close", terminology),
-            `Close this ${terminology.singular} without merging its changes?`,
-          );
+        if (selected === "close") action.confirmClose();
         else if (selected === "revert")
           action.confirm(
             selected,
@@ -107,7 +103,13 @@ export function PullRequestStatusMenu(props: RowProps) {
 }
 
 export function PullRequestChecksRow(props: RowProps) {
-  const [expanded, setExpanded] = useState(false);
+  const linked = parsePullRequestAnchor(props.params.navigationUrl)?.kind === "checks";
+  const [expanded, setExpanded] = useState(linked);
+  const [seenNavigation, setSeenNavigation] = useState(props.params.navigationId);
+  if (props.params.navigationId !== seenNavigation) {
+    setSeenNavigation(props.params.navigationId);
+    if (linked) setExpanded(true);
+  }
   const checks = pullRequestChecksSummary(props.pr);
   const action = usePullRequestAction(props.params, props.pr);
   const definition = sourceControlClients.get(props.pr.provider);
