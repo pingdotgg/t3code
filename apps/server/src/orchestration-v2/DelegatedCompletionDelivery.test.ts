@@ -3202,7 +3202,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
             now,
           });
         const completed = yield* child("release-delegate-completed", "completed");
-        const cancelled = yield* child("release-delegate-cancelled", "cancelled");
+        yield* child("release-delegate-cancelled", "cancelled");
 
         yield* orchestrator.recoverDelegatedTasks;
 
@@ -3214,10 +3214,6 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         assert.deepEqual(
           queued.map((row) => row.thread_id),
           [completed.childThreadId],
-        );
-        assert.notInclude(
-          queued.map((row) => row.thread_id),
-          cancelled.childThreadId,
         );
       }),
   );

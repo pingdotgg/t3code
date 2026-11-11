@@ -4634,7 +4634,7 @@ const runFinishedDelegateScenario = (input: {
       const sessionStatus = (yield* projectionStore.getThreadProjection(threadId))
         .providerSessions[0]?.status;
       // A message to the child after the release opens a new session as usual.
-      const reopened = yield* manager.open({
+      yield* manager.open({
         threadId,
         providerSessionId,
         modelSelection,
@@ -4646,7 +4646,6 @@ const runFinishedDelegateScenario = (input: {
         sessionStatus,
         openCount: (yield* Ref.get(state)).openCount,
         reopenedLive: yield* manager.isLive(providerSessionId),
-        reopened,
       };
     });
     return yield* effect.pipe(
