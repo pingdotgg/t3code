@@ -340,7 +340,7 @@ it.effect("starts the fallback preference window after route verification", () =
         Ref.update(probes, (count) => count + 1).pipe(
           Effect.andThen(Deferred.succeed(entered, undefined)),
           Effect.andThen(Deferred.await(release)),
-          Effect.as(HttpServerResponse.empty({ status: 404 })),
+          Effect.as(HttpServerResponse.jsonUnsafe(descriptorOf("environment-other", "Other"))),
         ),
       );
       const b = yield* serveB(box);
