@@ -298,37 +298,60 @@ Link two machines, such as your laptop and a VPS, and agents on one can work on
 the other: launch, message, wait on and stop its threads, answer their
 questions, and manage its queues, projects and scheduled tasks.
 
-Each machine takes part through **Take part in your network** in **Settings →
-Environments → Device network**, on web, desktop and mobile. It is on by
-default. While it is off on either machine, agents start nothing over a link
-between them. A task already running on the other machine still finishes, and
-if that machine has it off, its result arrives once it is back on.
+Open **Settings → Environments → Device network** on web, desktop and mobile.
+It shows one list for your network, merged
+from every machine this app is connected to. Machines that are not in that
+network are shown in their own group.
+
+Each machine has its own switch under **Taking part**. It is on by default.
+While it is off on either machine, agents start nothing over a link between
+them. A task already running on the other machine still finishes, and if that
+machine has it off, its result arrives once it is back on.
 
 ### Your device network
 
 Machines running T3 Code on your Tailscale account show up in **Device
 network** on your other machines. Being on the same account is not permission:
-a machine joins only when you choose **Add to network** and pick what it may do.
-Adding the first one starts your network, with the machine you added from at
-full access. Tagged nodes and machines shared from someone else's tailnet never
-show up.
+a machine joins only when you add it and pick what it may do. Adding the first
+one starts your network, with the machine you added from at full access. Tagged
+nodes and machines shared from someone else's tailnet never show up. A machine
+reinstalled on the same computer shows as one row, and you can **Forget** its
+old install from that row.
 
-- A member's access is the most it may do on every machine in the network. A
-  full-access member can narrow it, **Revoke** it everywhere, or restore it at
-  a level you pick.
+Changes go through a full-access machine this app is connected to, and every
+machine in the network picks them up.
+
+- **Add to network** gives a found machine the access you pick on every
+  machine. **Link to … only** links it to one machine, as a pairing code would.
+  A machine linked that way, or with a pairing code, can be added to the
+  network later.
+- A machine that is in no network must agree first: on it, choose **Let a
+  machine in your network add this one**. That stays open for 10 minutes, and
+  the list shows until when.
+- A member's access is the most it may do on every machine. A full-access
+  machine can narrow it, **Revoke** it everywhere, or restore it at a level you
+  pick. **Only on …: limit** narrows it on one machine alone; choose **No
+  limit** to clear it.
+- **Forget** removes a machine from the list. A member is revoked everywhere
+  first, so it cannot rejoin by itself.
+- **Leave network** takes a machine out of the network. The others see it as
+  revoked. If it was the only full-access machine, nothing can change the
+  network afterwards, so give another machine full access first. To come back,
+  allow joining on it and add it again.
 - **Open** adds a member to this app without a code. Below full access, it
   opens read-only.
 - When you create a pairing link on a full-access member, **Works on all your
   network's machines** pairs the phone or browser with the whole network at
-  once. It is listed in Device network; narrowing or revoking it signs it out
-  everywhere, and it must pair again.
+  once. It is listed in Device network once it pairs. Apps are full access or
+  read-only. Making one read-only or revoking it signs it out everywhere.
+  Giving it more access, or restoring it, takes effect once it pairs again with
+  a new link.
 - Other people's machines, and anything off your tailnet, still link with a
   pairing code as described below.
 
 ### Link with a pairing code
 
-On the machine you will work from, open **Settings → Environments → Device network**,
-choose **Link**, and pick the other machine or enter its address. The list
+Open **Device network**, choose **Link**, and pick the other machine or enter its address. The list
 holds the machines this app knows. If this
 app is connected to that machine with a session that manages access there, it
 makes the pairing code itself; otherwise paste one from that machine's

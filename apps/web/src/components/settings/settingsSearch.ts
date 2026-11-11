@@ -1275,8 +1275,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
     targetId: "device-network",
     searchTerms: [
-      "tailscale tailnet machines members add to network access revoke restore apps",
-      "linked environments beta link peer another machine vps agents work there handoff pairing code",
+      "tailscale tailnet machines members add to network access revoke restore apps forget leave network",
+      "taking part switch allow joining limit only on this machine promote link to this machine only",
+      "linked environments link peer another machine vps agents work there handoff pairing code",
     ],
   },
   {

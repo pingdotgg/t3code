@@ -1,77 +1,136 @@
 /**
- * The rows the Network section shows: the machines in your network, machines found on your
- * tailnet that are not in it, and links made with a pairing code, one row per environmentId.
+ * The one Device network view a client shows, merged from every connected host: hosts that list
+ * each other as members are one network, machines are grouped by their Tailscale node, and writes
+ * go through one chosen authority.
  */
-import {
-  AuthMcpClientAccess,
-  type EnvironmentId,
-  type PeerLinkSummary,
-  type TailnetDevice,
-  type TailnetDeviceAccess,
-  type TailnetDevicesSnapshot,
+import type {
+  EnvironmentId,
+  NetworkApp,
+  NetworkAppAccess,
+  NetworkMember,
+  PeerLinkSummary,
+  TailnetDevice,
+  TailnetDeviceAccess,
+  TailnetDeviceStatus,
+  TailnetDevicesSnapshot,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
-export interface LinkedDeviceRow {
+/** A connected environment that offers the network, as this client sees it. */
+export interface DeviceNetworkHost {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  /** Present when the environment reports it among your devices. */
-  readonly device: TailnetDevice | null;
-  /** This environment's link to it, from the links list. */
-  readonly link: PeerLinkSummary | null;
-  /** This app already has it saved, so Open has nothing to add. */
+  /** Its Device network switch. */
+  readonly enabled: boolean;
+  /** Null while loading, or when the host cannot list devices. */
+  readonly snapshot: TailnetDevicesSnapshot | null;
+  readonly links: ReadonlyArray<PeerLinkSummary>;
+  /** This client's session there may change access (`access:write`). */
+  readonly mayWrite: boolean;
+}
+
+/** One environment of a machine, merged from what every host in the group says about it. */
+export interface MachineEntry {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly nodeId: string | null;
+  /** The newest roster entry any host holds. */
+  readonly member: NetworkMember | null;
+  readonly status: TailnetDeviceStatus;
+  readonly urls: ReadonlyArray<string>;
+  readonly tailnetName: string | null;
+  readonly lastSeenAt: DateTime.Utc | null;
+  /** This client is connected to it: it is one of the group's hosts. */
+  readonly isHost: boolean;
+  /** How each host in the group sees it. */
+  readonly views: ReadonlyArray<{ readonly host: EnvironmentId; readonly device: TailnetDevice }>;
+  /** Links hosts in the group hold to it. */
+  readonly links: ReadonlyArray<{ readonly host: EnvironmentId; readonly link: PeerLinkSummary }>;
   readonly savedInApp: boolean;
 }
 
-export interface NetworkRows {
-  /** Machines in the network, revoked ones included. */
-  readonly members: ReadonlyArray<LinkedDeviceRow & { readonly device: TailnetDevice }>;
-  /** Your machines on the tailnet that are not in the network; adding one is explicit. */
-  readonly found: ReadonlyArray<TailnetDevice>;
-  /** Machines linked with a pairing code, outside the network. */
-  readonly paired: ReadonlyArray<LinkedDeviceRow>;
+/** In the roster; linked to one host only (a pairing code or a local add); or only found. */
+export type MachineKind = "member" | "linked" | "found";
+
+export interface DeviceNetworkMachine {
+  /** Its Tailscale node id, or its environment id while that is unknown. */
+  readonly key: string;
+  readonly kind: MachineKind;
+  readonly entry: MachineEntry;
+  /** Other environments on the same node, such as the one a reinstall left behind. */
+  readonly others: ReadonlyArray<MachineEntry>;
 }
 
-/** Splits what an environment lists into members, found machines and paired links. */
-export function networkRows(input: {
-  readonly devices: ReadonlyArray<TailnetDevice>;
-  readonly links: ReadonlyArray<PeerLinkSummary>;
-  readonly savedEnvironmentIds: ReadonlySet<EnvironmentId>;
-}): NetworkRows {
-  const links = new Map(input.links.map((link) => [link.environmentId, link] as const));
-  const deviceIds = new Set(input.devices.map((device) => device.environmentId));
-  const row = (device: TailnetDevice) => ({
-    environmentId: device.environmentId,
-    label: device.label,
-    device,
-    link: links.get(device.environmentId) ?? null,
-    savedInApp: input.savedEnvironmentIds.has(device.environmentId),
-  });
-  return {
-    members: input.devices.filter((device) => device.member !== null).map(row),
-    // Only a machine with an address can be proven and added.
-    found: input.devices.filter(
-      (device) => device.member === null && device.access === null && device.urls.length > 0,
-    ),
-    paired: [
-      ...input.devices
-        .filter((device) => device.member === null && device.access !== null)
-        .map(row),
-      ...input.links
-        .filter((link) => !deviceIds.has(link.environmentId))
-        .map((link) => ({
-          environmentId: link.environmentId,
-          label: link.label,
-          device: null,
-          link,
-          savedInApp: input.savedEnvironmentIds.has(link.environmentId),
-        })),
-    ],
+export interface DeviceNetworkGroup {
+  readonly key: string;
+  /** Its hosts are in a network; otherwise it is one host in none. */
+  readonly inNetwork: boolean;
+  readonly hosts: ReadonlyArray<DeviceNetworkHost>;
+  /** The host every network write goes through, or null when none here may write. */
+  readonly authority: EnvironmentId | null;
+  /** Members first, then machines linked to one host, then machines only found. */
+  readonly machines: ReadonlyArray<DeviceNetworkMachine>;
+  readonly apps: ReadonlyArray<NetworkApp>;
+}
+
+const isLiveMember = (member: NetworkMember | null | undefined): member is NetworkMember =>
+  member != null && member.access !== "revoked";
+
+const inNetwork = (host: DeviceNetworkHost) => isLiveMember(host.snapshot?.selfMember);
+
+const listsAsMember = (host: DeviceNetworkHost, environmentId: EnvironmentId) =>
+  host.snapshot?.devices.some(
+    (device) => device.environmentId === environmentId && isLiveMember(device.member),
+  ) === true;
+
+/**
+ * Two hosts are one network when each lists the other as a member that is not revoked, or when
+ * this client is the same app of the network on both.
+ */
+export function sameNetwork(a: DeviceNetworkHost, b: DeviceNetworkHost): boolean {
+  if (!inNetwork(a) || !inNetwork(b)) return false;
+  if (listsAsMember(a, b.environmentId) && listsAsMember(b, a.environmentId)) return true;
+  const appId = a.snapshot?.callerAppId ?? null;
+  return appId !== null && appId === (b.snapshot?.callerAppId ?? null);
+}
+
+const compareHlc = (a: NetworkMember["updatedAt"], b: NetworkMember["updatedAt"]) =>
+  a.wallMs - b.wallMs || a.counter - b.counter || a.node.localeCompare(b.node);
+
+const newer = <T extends { readonly updatedAt: NetworkMember["updatedAt"] }>(a: T | null, b: T) =>
+  a === null || compareHlc(b.updatedAt, a.updatedAt) > 0 ? b : a;
+
+/** Hosts split into networks; a host with no snapshot joins a network that lists it. */
+function groupHosts(hosts: ReadonlyArray<DeviceNetworkHost>) {
+  const parent = new Map(hosts.map((host) => [host.environmentId, host.environmentId] as const));
+  const find = (id: EnvironmentId): EnvironmentId => {
+    const up = parent.get(id) ?? id;
+    return up === id ? id : find(up);
   };
+  const union = (a: EnvironmentId, b: EnvironmentId) => parent.set(find(a), find(b));
+  for (const [index, a] of hosts.entries()) {
+    for (const b of hosts.slice(index + 1)) {
+      if (sameNetwork(a, b)) union(a.environmentId, b.environmentId);
+    }
+  }
+  for (const host of hosts) {
+    if (host.snapshot !== null) continue;
+    const lister = hosts.find(
+      (other) => other !== host && inNetwork(other) && listsAsMember(other, host.environmentId),
+    );
+    if (lister !== undefined) union(host.environmentId, lister.environmentId);
+  }
+  const groups = new Map<EnvironmentId, Array<DeviceNetworkHost>>();
+  for (const host of hosts) {
+    const root = find(host.environmentId);
+    groups.set(root, [...(groups.get(root) ?? []), host]);
+  }
+  return [...groups.values()];
 }
 
 /**
- * Whether this machine may add, narrow, revoke or restore: it is a full-access member, or no
- * network exists yet, so adding a machine starts one with this machine at full access.
+ * Whether a host may add, narrow, revoke or restore: it is a full-access member, or no network
+ * exists yet, so adding a machine starts one with this host at full access.
  */
 export function canManageNetwork(
   snapshot: Pick<TailnetDevicesSnapshot, "selfMember" | "devices">,
@@ -80,14 +139,327 @@ export function canManageNetwork(
   return snapshot.devices.every((device) => device.member === null);
 }
 
-const ACCESS_RANK: ReadonlyArray<TailnetDeviceAccess> = [
-  "revoked",
-  ...AuthMcpClientAccess.literals,
-];
+/** Any switched-on full-access host this client may write to, the preferred one first. */
+export function chooseAuthority(
+  hosts: ReadonlyArray<DeviceNetworkHost>,
+  preferred: EnvironmentId | null,
+): EnvironmentId | null {
+  const candidates = hosts.filter(
+    (host) =>
+      host.mayWrite && host.enabled && host.snapshot !== null && canManageNetwork(host.snapshot),
+  );
+  return (
+    candidates.find((host) => host.environmentId === preferred)?.environmentId ??
+    candidates[0]?.environmentId ??
+    null
+  );
+}
 
-/** `to` gives less than `from`, so an app moved there is signed out everywhere and pairs again. */
-export const narrowsAccess = (from: TailnetDeviceAccess, to: TailnetDeviceAccess): boolean =>
-  ACCESS_RANK.indexOf(to) < ACCESS_RANK.indexOf(from);
+const STATUS_RANK: Record<TailnetDeviceStatus, number> = { online: 2, offline: 1, revoked: 0 };
+
+/** The environment a machine's row shows: the connected one, then online, then a live member. */
+const compareCurrent = (a: MachineEntry, b: MachineEntry) =>
+  Number(b.isHost) - Number(a.isHost) ||
+  STATUS_RANK[b.status] - STATUS_RANK[a.status] ||
+  Number(isLiveMember(b.member)) - Number(isLiveMember(a.member)) ||
+  (b.lastSeenAt === null ? 0 : DateTime.toEpochMillis(b.lastSeenAt)) -
+    (a.lastSeenAt === null ? 0 : DateTime.toEpochMillis(a.lastSeenAt)) ||
+  a.environmentId.localeCompare(b.environmentId);
+
+const kindOf = (entry: MachineEntry): MachineKind | null => {
+  if (entry.member !== null) return "member";
+  if (entry.links.length > 0 || entry.views.some((view) => view.device.access !== null)) {
+    return "linked";
+  }
+  // Only a machine with an address can be proven and added.
+  return entry.urls.length > 0 ? "found" : null;
+};
+
+const KIND_ORDER: Record<MachineKind, number> = { member: 0, linked: 1, found: 2 };
+
+function groupMachines(
+  hosts: ReadonlyArray<DeviceNetworkHost>,
+  savedEnvironmentIds: ReadonlySet<EnvironmentId>,
+): Array<DeviceNetworkMachine> {
+  type Draft = {
+    -readonly [K in keyof MachineEntry]: MachineEntry[K] extends ReadonlyArray<infer T>
+      ? Array<T>
+      : MachineEntry[K];
+  };
+  const entries = new Map<EnvironmentId, Draft>();
+  const entry = (environmentId: EnvironmentId, label: string): Draft => {
+    const existing = entries.get(environmentId);
+    if (existing !== undefined) return existing;
+    const created: Draft = {
+      environmentId,
+      label,
+      nodeId: null,
+      member: null,
+      status: "offline",
+      urls: [],
+      tailnetName: null,
+      lastSeenAt: null,
+      isHost: false,
+      views: [],
+      links: [],
+      savedInApp: savedEnvironmentIds.has(environmentId),
+    };
+    entries.set(environmentId, created);
+    return created;
+  };
+  const takeMember = (draft: Draft, member: NetworkMember | null) => {
+    if (member === null) return;
+    draft.member = newer(draft.member, member);
+    draft.label = draft.member.label;
+    draft.nodeId ??= member.nodeId;
+  };
+  for (const host of hosts) {
+    const self = host.snapshot?.selfMember ?? null;
+    if (self !== null) {
+      const draft = entry(host.environmentId, host.label);
+      draft.isHost = true;
+      draft.status = self.access === "revoked" ? "revoked" : "online";
+      draft.urls = draft.urls.length > 0 ? draft.urls : [...(host.snapshot?.self.urls ?? [])];
+      takeMember(draft, self);
+    }
+    for (const device of host.snapshot?.devices ?? []) {
+      const draft = entry(device.environmentId, device.label);
+      draft.views.push({ host: host.environmentId, device });
+      takeMember(draft, device.member);
+      draft.nodeId ??= device.nodeId;
+      draft.tailnetName ??= device.tailnetName;
+      if (draft.urls.length === 0) draft.urls = [...device.urls];
+      if (!draft.isHost && STATUS_RANK[device.status] > STATUS_RANK[draft.status]) {
+        draft.status = device.status;
+      }
+      if (
+        device.lastSeenAt !== null &&
+        (draft.lastSeenAt === null || DateTime.isGreaterThan(device.lastSeenAt, draft.lastSeenAt))
+      ) {
+        draft.lastSeenAt = device.lastSeenAt;
+      }
+    }
+    for (const link of host.links) {
+      const draft = entry(link.environmentId, link.label);
+      draft.links.push({ host: host.environmentId, link });
+      if (draft.urls.length === 0) draft.urls = [...link.urls];
+    }
+  }
+  for (const draft of entries.values()) {
+    // A revoked roster entry wins over a host still seeing it online.
+    if (draft.member?.access === "revoked") draft.status = "revoked";
+  }
+  const byNode = new Map<string, Array<MachineEntry>>();
+  for (const draft of entries.values()) {
+    const key = draft.nodeId ?? draft.environmentId;
+    byNode.set(key, [...(byNode.get(key) ?? []), draft]);
+  }
+  const machines: Array<DeviceNetworkMachine> = [];
+  for (const [key, group] of byNode) {
+    const [current, ...others] = [...group].sort(compareCurrent);
+    if (current === undefined) continue;
+    const kind = kindOf(current);
+    if (kind === null) continue;
+    machines.push({ key, kind, entry: current, others });
+  }
+  return machines.sort(
+    (a, b) =>
+      KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
+      Number(b.entry.isHost) - Number(a.entry.isHost) ||
+      a.entry.label.localeCompare(b.entry.label),
+  );
+}
+
+function mergeApps(hosts: ReadonlyArray<DeviceNetworkHost>): Array<NetworkApp> {
+  const apps = new Map<string, NetworkApp>();
+  for (const host of hosts) {
+    for (const app of host.snapshot?.apps ?? []) {
+      apps.set(app.appId, newer(apps.get(app.appId) ?? null, app));
+    }
+  }
+  return [...apps.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * The Device network as one view: a group per network the connected hosts are in, then one per
+ * host in no network. A machine already in a shown network is not offered to a lone host, which
+ * could not add it anyway.
+ */
+export function deviceNetworkView(input: {
+  readonly hosts: ReadonlyArray<DeviceNetworkHost>;
+  readonly savedEnvironmentIds: ReadonlySet<EnvironmentId>;
+  /** The host this client already works through, preferred as the authority. */
+  readonly preferredHost: EnvironmentId | null;
+}): ReadonlyArray<DeviceNetworkGroup> {
+  const groups = groupHosts(input.hosts).map((hosts): DeviceNetworkGroup => {
+    const ordered = [...hosts].sort(
+      (a, b) =>
+        Number(b.environmentId === input.preferredHost) -
+          Number(a.environmentId === input.preferredHost) || a.label.localeCompare(b.label),
+    );
+    return {
+      key: ordered
+        .map((host) => host.environmentId)
+        .sort()
+        .join(","),
+      inNetwork: ordered.some(inNetwork),
+      hosts: ordered,
+      authority: chooseAuthority(ordered, input.preferredHost),
+      machines: groupMachines(ordered, input.savedEnvironmentIds),
+      apps: mergeApps(ordered),
+    };
+  });
+  const claimed = new Set(
+    groups.flatMap((group) =>
+      group.inNetwork
+        ? group.machines.flatMap((machine) =>
+            machine.kind === "member" && isLiveMember(machine.entry.member)
+              ? [machine.key, machine.entry.environmentId]
+              : [],
+          )
+        : [],
+    ),
+  );
+  return groups
+    .map((group) =>
+      group.inNetwork
+        ? group
+        : {
+            ...group,
+            machines: group.machines.filter(
+              (machine) =>
+                machine.kind !== "found" ||
+                !(claimed.has(machine.key) || claimed.has(machine.entry.environmentId)),
+            ),
+          },
+    )
+    .sort(
+      (a, b) =>
+        Number(b.inNetwork) - Number(a.inNetwork) ||
+        Number(b.hosts.some((host) => host.environmentId === input.preferredHost)) -
+          Number(a.hosts.some((host) => host.environmentId === input.preferredHost)),
+    );
+}
+
+export interface MachineControls {
+  readonly open: boolean;
+  /** Narrow or widen it on every machine, through the authority. */
+  readonly changeAccess: boolean;
+  readonly revoke: boolean;
+  readonly restore: boolean;
+  /** Found: add it to the network, or link it to the authority only. */
+  readonly add: boolean;
+  readonly linkHere: boolean;
+  /** Linked to one host only: add it to the network. */
+  readonly promote: boolean;
+  /** Hosts that forget it, the authority first. A member is revoked everywhere first. */
+  readonly forgetHosts: ReadonlyArray<EnvironmentId>;
+  /** Hosts that may keep a limit of their own for it. */
+  readonly limitHosts: ReadonlyArray<EnvironmentId>;
+}
+
+/** Hosts in the group this client may write to that list `entry`, `first` leading. */
+export function hostsListing(
+  group: DeviceNetworkGroup,
+  entry: MachineEntry,
+  first: EnvironmentId | null,
+): ReadonlyArray<EnvironmentId> {
+  const listing = new Set([
+    ...entry.views.map((view) => view.host),
+    ...entry.links.map((link) => link.host),
+  ]);
+  const writable = group.hosts
+    .filter((host) => host.mayWrite && listing.has(host.environmentId))
+    .map((host) => host.environmentId);
+  return first !== null && writable.includes(first)
+    ? [first, ...writable.filter((id) => id !== first)]
+    : writable;
+}
+
+/** Which controls a machine's row offers, given the group's authority. */
+export function machineControls(
+  machine: DeviceNetworkMachine,
+  group: DeviceNetworkGroup,
+  options: { readonly canOpen: boolean },
+): MachineControls {
+  const { entry } = machine;
+  const { authority } = group;
+  const member = machine.kind === "member";
+  const live = member && isLiveMember(entry.member);
+  const manages = authority !== null && authority !== entry.environmentId;
+  const forgetHosts = member
+    ? manages
+      ? [authority, ...hostsListing(group, entry, null).filter((id) => id !== authority)]
+      : []
+    : hostsListing(group, entry, authority);
+  return {
+    open: live && !entry.isHost && !entry.savedInApp && options.canOpen,
+    changeAccess: live && manages,
+    revoke: live && manages,
+    restore: member && !live && manages,
+    add: machine.kind === "found" && authority !== null,
+    linkHere: machine.kind === "found" && authority !== null,
+    promote: machine.kind === "linked" && authority !== null,
+    forgetHosts,
+    limitHosts: live
+      ? group.hosts
+          .filter(
+            (host) =>
+              host.mayWrite && inNetwork(host) && host.environmentId !== entry.environmentId,
+          )
+          .map((host) => host.environmentId)
+      : [],
+  };
+}
+
+/** Another environment on the same node can be forgotten unless it is a connected host. */
+export const canForgetOther = (group: DeviceNetworkGroup, other: MachineEntry) =>
+  !other.isHost &&
+  (other.member === null
+    ? hostsListing(group, other, group.authority).length > 0
+    : group.authority !== null);
+
+export interface HostControls {
+  readonly leave: boolean;
+  /** It is the network's only full-access machine: leaving leaves nobody to change the network. */
+  readonly lastFullAccess: boolean;
+  readonly allowJoin: boolean;
+  /** While in the future, a member of a network may add it. */
+  readonly joinOpenUntil: DateTime.Utc | null;
+}
+
+/** What a host's line in "Taking part" offers. */
+export function hostControls(host: DeviceNetworkHost, now: DateTime.Utc): HostControls {
+  const self = host.snapshot?.selfMember ?? null;
+  const live = isLiveMember(self);
+  const otherFullAccess =
+    host.snapshot?.devices.some((device) => device.member?.access === "full-access") === true;
+  const openUntil = host.snapshot?.joinOpenUntil ?? null;
+  return {
+    leave: host.mayWrite && live,
+    lastFullAccess: live && self.access === "full-access" && !otherFullAccess,
+    allowJoin: host.mayWrite && host.snapshot !== null && !live,
+    joinOpenUntil: openUntil !== null && DateTime.isGreaterThan(openUntil, now) ? openUntil : null,
+  };
+}
+
+/** Apps are full access or read-only: below full access, an app's sessions are read-only. */
+export const appAccessLevel = (access: TailnetDeviceAccess): NetworkAppAccess =>
+  access === "revoked" || access === "full-access" ? access : "read-only";
+
+const APP_RANK: Record<NetworkAppAccess, number> = { revoked: 0, "read-only": 1, "full-access": 2 };
+
+/**
+ * What moving an app does: less access signs it out everywhere; more takes effect only once it
+ * pairs again, since its sessions keep the scopes they were minted with.
+ */
+export function appAccessChange(
+  from: TailnetDeviceAccess,
+  to: NetworkAppAccess,
+): "none" | "signsOut" | "pairsAgain" {
+  const delta = APP_RANK[to] - APP_RANK[appAccessLevel(from)];
+  return delta === 0 ? "none" : delta < 0 ? "signsOut" : "pairsAgain";
+}
 
 /**
  * Whether listing failed because this session may not see devices, which hides

@@ -255,6 +255,10 @@
       "types": "./src/state/tailnetDevices.ts",
       "default": "./src/state/tailnetDevices.ts"
     },
+    "./state/deviceNetwork": {
+      "types": "./src/state/deviceNetwork.ts",
+      "default": "./src/state/deviceNetwork.ts"
+    },
     "./state/environmentHttpAuth": {
       "types": "./src/state/environmentHttpAuth.ts",
       "default": "./src/state/environmentHttpAuth.ts"

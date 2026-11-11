@@ -1,41 +1,39 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
-  AuthAccessWriteScope,
-  AuthSettingsWriteScope,
-  type AuthMcpClientAccess,
-  type EnvironmentId,
-  isManagedSettingPath,
-  type PeerLinkSummary,
-  type TailnetDevicesSnapshot,
-} from "@t3tools/contracts";
-import {
-  canManageNetwork,
-  isTailnetDevicesForbidden,
-  networkRows,
-} from "@t3tools/client-runtime/tailnet-devices";
+  type DeviceNetworkHostState,
+  deviceNetworkHostsKey,
+  refreshDeviceNetwork,
+} from "@t3tools/client-runtime/state/deviceNetwork";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
-import * as DateTime from "effect/DateTime";
+import {
+  type DeviceNetworkGroup,
+  deviceNetworkView,
+} from "@t3tools/client-runtime/tailnet-devices";
+import {
+  AuthAccessWriteScope,
+  type AuthMcpClientAccess,
+  type EnvironmentId,
+  isManagedSettingPath,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
-import { useId, useRef, useState } from "react";
+import { useContext, useId, useRef, useState } from "react";
 
-import { requestConfirmDialog } from "~/confirmDialog";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
-import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
-import { type EnvironmentPresentation, useEnvironments } from "~/state/environments";
-import { useEnvironmentQuery } from "~/state/query";
-import { serverEnvironment } from "~/state/server";
-import { tailnetDevices } from "~/state/tailnetDevices";
+import { peerLinkEnvironment, useLinkableMachines, useNetworkHosts } from "~/state/peerLinks";
+import {
+  type EnvironmentPresentation,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
+import { deviceNetworkHosts } from "~/state/tailnetDevices";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { accessConfig } from "../auth/ConnectAgentSurface";
-import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -49,266 +47,161 @@ import {
   DialogTrigger,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import { LinkAccessPicker } from "./LinkAccessPicker";
 import { ANOTHER_ADDRESS, LinkMachineSelect } from "./LinkMachineSelect";
-import { FoundMachineRow, NetworkAppRow, NetworkMemberRow } from "./NetworkRows";
+import { DeviceMachineRow, NetworkAppRow, TakingPartRow } from "./NetworkRows";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { useNowMinute } from "../../hooks/useNowMinute";
 import { searchableSetting } from "./settingsSearch";
 
 const failureToast = (title: string, description: string) =>
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
 
 /**
- * One machine's place in your network of machines, and its links made with a pairing code.
- * The switch here is the one gate for this machine taking part; off, nothing else shows.
+ * The one Device network view: every connected host's roster merged, grouped by network, with
+ * each machine's own switch in "Taking part". Hidden while no connected host offers it.
  */
-export function NetworkSettings({
-  environment,
-  showLabel,
-  isSearchTarget,
+export function DeviceNetworkSettings() {
+  const hosts = useNetworkHosts();
+  if (hosts.length === 0) return null;
+  return <DeviceNetworkSection hosts={hosts} />;
+}
+
+const managedBy = (environment: EnvironmentPresentation) => {
+  const policy = environment.serverConfig?.managedPolicy;
+  return policy !== undefined && isManagedSettingPath(policy, "linkedEnvironmentsEnabled")
+    ? policy.organization
+    : null;
+};
+
+function DeviceNetworkSection({
+  hosts,
 }: {
-  readonly environment: EnvironmentPresentation;
-  readonly showLabel: boolean;
-  readonly isSearchTarget: boolean;
+  readonly hosts: ReadonlyArray<EnvironmentPresentation>;
 }) {
-  const { environmentId } = environment;
-  const enabled = environment.serverConfig?.settings.linkedEnvironmentsEnabled === true;
-  const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
+  const key = deviceNetworkHostsKey(
+    hosts.map((environment) => ({
+      environmentId: environment.environmentId,
+      label: environment.label,
+      enabled: environment.serverConfig?.settings.linkedEnvironmentsEnabled === true,
+    })),
+  );
+  const states = useAtomValue(deviceNetworkHosts(key));
+  const registry = useContext(RegistryContext);
+  const preferredHost = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
+  const groups = deviceNetworkView({
+    hosts: states,
+    savedEnvironmentIds: new Set(environments.map((environment) => environment.environmentId)),
+    preferredHost,
+  });
+  const stateById = new Map(states.map((state) => [state.environmentId, state] as const));
+  const presentationById = new Map(hosts.map((host) => [host.environmentId, host] as const));
+  const onChanged = () => refreshDeviceNetwork(registry, peerLinkEnvironment.list, states);
+  // Pairing-code links start from the host this app works through when it takes part.
+  const linkHost =
+    groups.flatMap((group) => group.hosts).find((host) => host.enabled)?.environmentId ?? null;
   const search = searchableSetting("device-network");
   return (
     <SettingsSection
-      {...(isSearchTarget ? { id: search.id } : {})}
-      title={showLabel ? `${search.title} · ${environment.label}` : search.title}
-      headerAction={
-        enabled && canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null
-      }
+      id={search.id}
+      title={search.title}
+      headerAction={linkHost === null ? null : <LinkHeaderAction environmentId={linkHost} />}
     >
-      <NetworkSwitchRow environment={environment} enabled={enabled} />
-      {enabled ? <NetworkContent environmentId={environmentId} /> : null}
+      {groups.map((group) => (
+        <NetworkGroupRows
+          key={group.key}
+          group={group}
+          showHeading={groups.length > 1}
+          hostStates={group.hosts.flatMap((host) => stateById.get(host.environmentId) ?? [])}
+          managedBy={(environmentId) => {
+            const presentation = presentationById.get(environmentId);
+            return presentation === undefined ? null : managedBy(presentation);
+          }}
+          onChanged={onChanged}
+        />
+      ))}
     </SettingsSection>
   );
 }
 
-function NetworkSwitchRow({
-  environment,
-  enabled,
-}: {
-  readonly environment: EnvironmentPresentation;
-  readonly enabled: boolean;
-}) {
-  const { environmentId } = environment;
-  const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
-  const update = useAtomCommand(serverEnvironment.updateSettings, "network setting update");
-  const policy = environment.serverConfig?.managedPolicy;
-  return (
-    <SettingsRow
-      title="Take part in your network"
-      description="Agents here can work on your other machines, and theirs here. While off, nothing new starts over a link; running tasks finish."
-      managed={
-        policy !== undefined && isManagedSettingPath(policy, "linkedEnvironmentsEnabled")
-          ? `Managed by ${policy.organization}.`
-          : undefined
-      }
-      control={
-        <Switch
-          checked={enabled}
-          disabled={!canWrite}
-          onCheckedChange={(checked) =>
-            void update({
-              environmentId,
-              input: { patch: { linkedEnvironmentsEnabled: Boolean(checked) } },
-            })
-          }
-          aria-label="Take part in your network"
-        />
-      }
-    />
-  );
-}
-
-function selfDescription(snapshot: TailnetDevicesSnapshot, foundCount: number): string {
-  const access = snapshot.selfMember?.access;
-  if (access === undefined) {
-    return foundCount > 0
+function groupDescription(group: DeviceNetworkGroup): string {
+  if (!group.inNetwork) {
+    return group.machines.some((machine) => machine.kind === "found")
       ? "Not in a network yet. Machines join only when you add them; adding one starts your network with this machine at full access."
       : "Not in a network yet. Your other machines on Tailscale show up here once they run T3 Code. Being on the same Tailscale account is not permission: you add each one.";
   }
-  if (access === "revoked") {
-    return "Revoked. This machine is out of your network until a full-access machine restores it.";
-  }
-  return access === "full-access"
-    ? "In your network with full access. You can add machines and change what each may do."
-    : `In your network as ${accessConfig[access].label}. Only a full-access machine can change the network.`;
+  return group.authority === null
+    ? "Only a full-access machine can change the network, and none this app may change it through is connected."
+    : "Changes go to every machine in the network.";
 }
 
-function NetworkContent({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
-  const devices = useEnvironmentQuery(tailnetDevices.list({ environmentId, input: {} }));
-  const mayChange = useAtomValue(tailnetDevices.setAccess.permissionAtom(environmentId));
-  const { environments } = useEnvironments();
-  // Older servers, and this one until it can list devices, fail the list; that is not an error.
-  const devicesUnavailable = devices.error !== null && !isTailnetDevicesForbidden(devices.failure);
-  const snapshot = devices.data;
-  const rows = networkRows({
-    devices: snapshot?.devices ?? [],
-    links: links.data?.links ?? [],
-    savedEnvironmentIds: new Set(environments.map((environment) => environment.environmentId)),
-  });
-  const canManage = mayChange && snapshot !== null && canManageNetwork(snapshot);
+function NetworkGroupRows({
+  group,
+  showHeading,
+  hostStates,
+  managedBy: managedByHost,
+  onChanged,
+}: {
+  readonly group: DeviceNetworkGroup;
+  readonly showHeading: boolean;
+  readonly hostStates: ReadonlyArray<DeviceNetworkHostState>;
+  readonly managedBy: (environmentId: EnvironmentId) => string | null;
+  readonly onChanged: () => void;
+}) {
+  const takingPart = hostStates.some((host) => host.enabled);
+  const canOpen = hostStates.some((host) => host.mayOpen);
+  const unavailable = hostStates.every((host) => host.list === "unavailable");
   return (
     <>
-      {snapshot ? (
-        <SettingsRow
-          title="This machine"
-          description={selfDescription(snapshot, rows.found.length)}
-        />
-      ) : null}
-      {rows.members.map((row) => (
-        <NetworkMemberRow
-          key={row.environmentId}
-          hostEnvironmentId={environmentId}
-          row={row}
-          canManage={canManage}
-          forget={
-            row.link === null ? null : (
-              <ForgetLinkButton environmentId={environmentId} link={row.link} />
-            )
-          }
-        />
-      ))}
-      {rows.found.map((device) => (
-        <FoundMachineRow
-          key={device.environmentId}
-          hostEnvironmentId={environmentId}
-          device={device}
-          canManage={canManage}
+      <SettingsRow
+        title={
+          showHeading
+            ? group.inNetwork
+              ? "Your network"
+              : `${group.hosts[0]?.label ?? "This machine"}: not in a network`
+            : "Taking part"
+        }
+        description={`${showHeading ? "" : "Each machine has its own switch. While it is off, its agents start nothing over a link; running tasks finish. "}${groupDescription(group)}`}
+      />
+      {hostStates.map((host) => (
+        <TakingPartRow
+          key={host.environmentId}
+          host={host}
+          managedBy={managedByHost(host.environmentId)}
+          onChanged={onChanged}
         />
       ))}
-      {(snapshot?.apps ?? []).map((app) => (
-        <NetworkAppRow
-          key={app.appId}
-          hostEnvironmentId={environmentId}
-          app={app}
-          canManage={canManage}
-        />
-      ))}
-      {links.error ? (
-        <SettingsRow title="Could not load linked machines" description={links.error} />
-      ) : !links.data ? (
-        <SettingsRow title="Loading your network…" role="status" />
-      ) : (
-        rows.paired.map((row) =>
-          row.link === null ? null : (
-            <LinkedEnvironmentRow
-              key={row.environmentId}
-              environmentId={environmentId}
-              link={row.link}
+      {!takingPart || unavailable ? null : (
+        <>
+          {group.machines.map((machine) => (
+            <DeviceMachineRow
+              key={machine.key}
+              group={group}
+              machine={machine}
+              canOpen={canOpen}
+              onChanged={onChanged}
             />
-          ),
-        )
+          ))}
+          {group.apps.map((app) => (
+            <NetworkAppRow key={app.appId} group={group} app={app} onChanged={onChanged} />
+          ))}
+          {group.machines.length + group.apps.length === 0 &&
+          hostStates.some((host) => host.list === "ready") ? (
+            <SettingsRow
+              title="No other machines yet"
+              description="Machines on your Tailscale account that run T3 Code appear here to add. Link any other machine, such as a VPS, with a pairing code."
+            />
+          ) : null}
+        </>
       )}
-      {links.data && rows.members.length + rows.found.length + rows.paired.length === 0 ? (
-        <SettingsRow
-          title="No other machines yet"
-          description="Machines on your Tailscale account that run T3 Code appear here to add. Link any other machine, such as a VPS, with a pairing code."
-        />
-      ) : null}
-      {devicesUnavailable ? (
-        <SettingsRow
-          title="Your network"
-          description="Not available on this server yet. Update it to see and manage your other machines here."
-        />
-      ) : null}
     </>
   );
 }
 
-function LinkedEnvironmentRow({
-  environmentId,
-  link,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly link: PeerLinkSummary;
-}) {
-  const nowMinute = useNowMinute();
-  const health = peerLinkHealth(link, DateTime.makeUnsafe(nowMinute));
-  const status =
-    health.kind === "expired"
-      ? "Expired. Link it again with a new pairing code."
-      : health.kind === "unreachable"
-        ? (health.detail ?? "Not answering right now.")
-        : health.kind === "failing"
-          ? health.detail
-          : health.expiresInDays !== null
-            ? `Expires in ${health.expiresInDays} ${health.expiresInDays === 1 ? "day" : "days"}. Link it again to renew.`
-            : "Reachable";
-  return (
-    <div className={ITEM_ROW_CLASSNAME}>
-      <div className={ITEM_ROW_INNER_CLASSNAME}>
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-h-5 items-center gap-1.5">
-            <ConnectionStatusDot
-              tooltipText={status}
-              dotClassName={
-                health.kind === "reachable"
-                  ? health.expiresInDays === null
-                    ? "bg-success"
-                    : "bg-warning"
-                  : health.kind === "expired" || health.kind === "failing"
-                    ? "bg-destructive"
-                    : "bg-muted-foreground/30"
-              }
-              pingClassName={null}
-            />
-            <h3 className="text-sm font-medium text-foreground">{link.label}</h3>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {accessConfig[link.access].label} · {status}
-          </p>
-          <p className="truncate text-xs text-muted-foreground/80">{link.urls.join(", ")}</p>
-        </div>
-        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-          <ForgetLinkButton environmentId={environmentId} link={link} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Drops `environmentId`'s link to `link`, after asking. Hidden without permission. */
-function ForgetLinkButton({
-  environmentId,
-  link,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly link: PeerLinkSummary;
-}) {
-  const unlink = useAtomCommand(peerLinkEnvironment.unlink, { label: "unlink environment" });
-  const canUnlink = useAtomValue(peerLinkEnvironment.unlink.permissionAtom(environmentId));
-  const [busy, setBusy] = useState(false);
-  const forget = async () => {
-    const confirmed = await (requestConfirmDialog(
-      `Forget ${link.label}? Agents here stop working there. Revoke "T3 Code · …" in ${link.label}'s Environments settings to end the session there too.`,
-      { variant: "destructive" },
-    ) ?? Promise.resolve(false));
-    if (!confirmed) return;
-    setBusy(true);
-    const result = await unlink({ environmentId, input: { environmentId: link.environmentId } });
-    setBusy(false);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      failureToast("Could not forget the link", String(squashAtomCommandFailure(result)));
-    }
-  };
-  if (!canUnlink) return null;
-  return (
-    <Button size="xs" variant="destructive-outline" disabled={busy} onClick={() => void forget()}>
-      {busy ? "Forgetting…" : "Forget"}
-    </Button>
-  );
+function LinkHeaderAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
+  return canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null;
 }
 
 function LinkEnvironmentAction({ environmentId }: { readonly environmentId: EnvironmentId }) {

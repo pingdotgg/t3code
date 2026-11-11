@@ -15,6 +15,10 @@ const SETTINGS_SEARCH_TERMS = {
     "add to network",
     "linked environments",
     "link machine",
+    "taking part",
+    "leave network",
+    "allow joining",
+    "forget machine",
   ],
   SettingsNotifications: ["push", "alerts", "live activity", "agent activity"],
   SettingsAppearance: [
