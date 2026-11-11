@@ -4270,6 +4270,7 @@ function buildAssistantArtifacts(input: {
   readonly nativeItemId: string;
   readonly text: string;
   readonly ordinal: number;
+  readonly status?: "completed" | "interrupted";
   readonly startedAt: DateTime.Utc;
   readonly completedAt: DateTime.Utc;
 }): {
@@ -4303,7 +4304,7 @@ function buildAssistantArtifacts(input: {
       parentNodeId: input.turnInput.rootNodeId,
       rootNodeId: input.turnInput.rootNodeId,
       kind: "assistant_message",
-      status: "completed",
+      status: input.status ?? "completed",
       countsForRun: false,
       providerThreadId: input.turnInput.providerThread.id,
       providerTurnId: input.providerTurnId,
@@ -4337,7 +4338,7 @@ function buildAssistantArtifacts(input: {
       nativeItemRef,
       parentItemId: null,
       ordinal: input.ordinal,
-      status: "completed",
+      status: input.status ?? "completed",
       title: null,
       startedAt: input.startedAt,
       completedAt: input.completedAt,
@@ -4407,6 +4408,12 @@ interface ActiveClaudeTurnContext {
     fallbackText: string;
     fallbackNativeItemId: string;
     emittedNativeItemIds: Set<string>;
+    // The root reply the latest assistant frame carried; a steer's aborted_streaming cuts it off.
+    lastReply: {
+      readonly nativeItemId: string;
+      readonly text: string;
+      readonly startedAt: DateTime.Utc;
+    } | null;
     // The CLI repeats a notice that ends a prompt as the turn's result text.
     noticeTexts: Set<string>;
   };
@@ -8517,16 +8524,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
+        const publishAssistantArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
           readonly text: string;
+          readonly status: "completed" | "interrupted";
+          readonly startedAt: DateTime.Utc;
+          readonly completedAt: DateTime.Utc;
         }) {
-          if (input.context.assistant.emittedNativeItemIds.has(input.nativeItemId)) {
-            return;
-          }
-          input.context.assistant.emittedNativeItemIds.add(input.nativeItemId);
-          const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
           const artifacts = buildAssistantArtifacts({
             idAllocator,
@@ -8535,8 +8540,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeItemId: input.nativeItemId,
             text: input.text,
             ordinal,
-            startedAt: now,
-            completedAt: now,
+            status: input.status,
+            startedAt: input.startedAt,
+            completedAt: input.completedAt,
           });
           yield* Effect.all(
             [
@@ -8558,6 +8564,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ],
             { concurrency: 1 },
           );
+        });
+
+        const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeItemId: string;
+          readonly text: string;
+        }) {
+          if (input.context.assistant.emittedNativeItemIds.has(input.nativeItemId)) {
+            return undefined;
+          }
+          input.context.assistant.emittedNativeItemIds.add(input.nativeItemId);
+          const now = yield* DateTime.now;
+          yield* publishAssistantArtifacts({
+            ...input,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          });
+          return now;
         });
 
         const endSubagentsOfClosedQuery = Effect.fnUntraced(function* (input: {
@@ -10188,6 +10213,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
           const assistantText = assistantTextFromSdkMessage(message);
+          if (message.type === "assistant" && assistantParentToolUseId === null) {
+            context.assistant.lastReply = null;
+          }
           if (
             assistantText !== null &&
             assistantText.text.length > 0 &&
@@ -10236,11 +10264,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (assistantText !== null && assistantText.text.length > 0) {
-            yield* emitAssistantTextArtifacts({
+            const startedAt = yield* emitAssistantTextArtifacts({
               context,
               nativeItemId: assistantText.nativeItemId,
               text: assistantText.text,
             });
+            if (startedAt !== undefined) {
+              context.assistant.lastReply = { ...assistantText, startedAt };
+            }
             return;
           }
 
@@ -10313,6 +10344,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
+              const cutOffReply = context.assistant.lastReply;
+              context.assistant.lastReply = null;
+              if (message.terminal_reason === "aborted_streaming" && cutOffReply !== null) {
+                yield* publishAssistantArtifacts({
+                  context,
+                  ...cutOffReply,
+                  status: "interrupted",
+                  completedAt,
+                });
+              }
               context.steeredSegmentUsage.push(message.usage);
               context.steeredLedgerUsage = addClaudeLedgerUsage(
                 context.steeredLedgerUsage,
@@ -11577,6 +11618,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
+                lastReply: null,
                 noticeTexts: new Set(),
               },
               reasoning: {
