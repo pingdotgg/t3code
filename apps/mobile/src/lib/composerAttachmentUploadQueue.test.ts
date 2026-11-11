@@ -253,7 +253,7 @@ describe("draft upload scope and offline submission", () => {
       const threadId = ThreadId.make("thread:1");
       const prefix = questionAttachmentDraftPrefix(environment, threadId);
       const key = questionAttachmentDraftKey(environment, threadId, requestId, "question:1");
-      expect(composerDraftEnvironmentId(key, [])).toBe(environment);
+      expect(composerDraftEnvironmentId(key, [environment], [])).toBe(environment);
       expect(key.startsWith(prefix)).toBe(true);
       for (const suffix of ["-extra", ":extra", "/extra", "%extra"]) {
         const otherKey = questionAttachmentDraftKey(
@@ -263,20 +263,34 @@ describe("draft upload scope and offline submission", () => {
           "question:1",
         );
         expect(otherKey.startsWith(prefix)).toBe(false);
-        expect(composerDraftEnvironmentId(otherKey, [])).toBe(environment);
+        expect(composerDraftEnvironmentId(otherKey, [environment], [])).toBe(environment);
       }
     }
   });
   it("resolves thread, new-task, and queued-task drafts without crossing environments", () => {
-    expect(composerDraftEnvironmentId("environment-1:thread", [])).toBe(environmentId);
-    expect(composerDraftEnvironmentId("new-task:environment-1:project", [])).toBe(environmentId);
+    expect(composerDraftEnvironmentId("environment-1:thread", [environmentId], [])).toBe(
+      environmentId,
+    );
+    expect(composerDraftEnvironmentId("new-task:environment-1:project", [], [])).toBe(
+      environmentId,
+    );
     expect(
-      composerDraftEnvironmentId("pending-task:message", [{ messageId: "message", environmentId }]),
+      composerDraftEnvironmentId(
+        "pending-task:message",
+        [],
+        [{ messageId: "message", environmentId }],
+      ),
     ).toBe(environmentId);
-    expect(composerDraftEnvironmentId("pending-task:missing", [])).toBeNull();
+    expect(composerDraftEnvironmentId("pending-task:missing", [], [])).toBeNull();
     const colonEnvironment = EnvironmentId.make("a:vcs-status:b");
-    expect(composerDraftEnvironmentId(`${colonEnvironment}:thread`, [])).toBe(colonEnvironment);
-    expect(composerDraftEnvironmentId(`new-task:${colonEnvironment}:project`, [])).toBe(
+    expect(
+      composerDraftEnvironmentId(
+        `${colonEnvironment}:thread`,
+        [EnvironmentId.make("a"), colonEnvironment],
+        [],
+      ),
+    ).toBe(colonEnvironment);
+    expect(composerDraftEnvironmentId(`new-task:${colonEnvironment}:project`, [], [])).toBe(
       colonEnvironment,
     );
   });
@@ -289,9 +303,11 @@ describe("draft upload scope and offline submission", () => {
         createdAt: "2026-09-05T00:00:00.000Z",
       },
     };
-    expect(composerDraftEnvironmentId("new-task:abc123-def456", [], stamped)).toBe(environmentId);
-    expect(composerDraftEnvironmentId("new-task:abc123-def456", [])).toBeNull();
-    expect(composerDraftEnvironmentId("new-task:environment-2:project", [], stamped)).toBe(
+    expect(composerDraftEnvironmentId("new-task:abc123-def456", [], [], stamped)).toBe(
+      environmentId,
+    );
+    expect(composerDraftEnvironmentId("new-task:abc123-def456", [], [])).toBeNull();
+    expect(composerDraftEnvironmentId("new-task:environment-2:project", [], [], stamped)).toBe(
       environmentId,
     );
   });
