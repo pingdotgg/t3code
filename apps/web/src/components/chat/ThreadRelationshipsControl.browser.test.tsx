@@ -126,6 +126,8 @@ it.each([
   ["disconnect", "Could not disconnect agent session"],
 ])("clears the previous %s error after a successful retry", async (action, title) => {
   setup();
+  const container = document.createElement("div");
+  container.style.paddingTop = "240px";
   await using screen = await render(
     <ToastProvider timeout={0}>
       <ThreadRelationshipsPanel
@@ -135,7 +137,7 @@ it.each([
         showSideChats
       />
     </ToastProvider>,
-    { router: "/environment/fork" },
+    { router: "/environment/fork", container },
   );
 
   const runAction = async () => {
