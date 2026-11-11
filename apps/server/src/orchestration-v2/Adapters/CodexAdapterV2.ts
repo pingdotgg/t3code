@@ -1471,6 +1471,9 @@ const decodeCodexChildThread = Schema.decodeUnknownEffect(
   }),
 );
 
+// Matches the Codex probe's deadline in CodexProvider.
+const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds";
+
 export const makeCodexAppServerSpawnCommand = Effect.fn(
   "CodexAdapterV2.makeCodexAppServerSpawnCommand",
 )(function* (input: {
@@ -1498,6 +1501,8 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
     shell: spawnCommand.shell,
+    // Without a deadline the spawner waits for the process indefinitely after SIGTERM.
+    forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
   });
 });
 

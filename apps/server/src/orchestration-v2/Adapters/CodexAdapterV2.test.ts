@@ -60,6 +60,9 @@ import * as Cause from "effect/Cause";
 import * as PlatformError from "effect/PlatformError";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as Context from "effect/Context";
+import * as Scope from "effect/Scope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -10023,4 +10026,47 @@ describe("codexDynamicToolOutput", () => {
       { type: "inputAudio", audioUrl: "data:audio/wav;base64,AAAA" },
     ]);
   });
+});
+
+describe("CodexAdapterV2 app-server process", () => {
+  // An app-server that ignores SIGTERM must not hold the server's shutdown forever: the
+  // spawner waits for the process without a deadline unless the command sets one.
+  it.live.skipIf(Context.get(Context.empty(), HostProcess.Platform) === "win32")(
+    "stops an app-server that ignores SIGTERM within its kill deadline",
+    () =>
+      Effect.gen(function* () {
+        const command = yield* CodexAdapterV2.makeCodexAppServerSpawnCommand({
+          command: "/bin/sh",
+          args: ["-c", "trap '' TERM; echo ready; while :; do sleep 1; done"],
+        });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const scope = yield* Scope.make();
+        const child = yield* spawner.spawn(command).pipe(Scope.provide(scope));
+        const pid = Number(child.pid);
+        const killGroup = () => {
+          try {
+            process.kill(-pid, "SIGKILL");
+          } catch {}
+        };
+        yield* Effect.addFinalizer(() => Effect.sync(killGroup));
+        yield* child.stdout.pipe(Stream.take(1), Stream.runDrain);
+        // Scope.close cannot be interrupted, so a regression is ended by this rescue instead of
+        // hanging the test; the deadline under test must make it unnecessary.
+        let rescued = false;
+        // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a watchdog for a hung child, not a wait for a milestone; it must never fire.
+        const rescue = yield* Effect.sleep("10 seconds").pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              rescued = true;
+              killGroup();
+            }),
+          ),
+          Effect.forkChild,
+        );
+        yield* Scope.close(scope, Exit.void);
+        yield* Fiber.interrupt(rescue);
+        assert.isFalse(rescued, "the app-server was stopped by its own kill deadline");
+        assert.isFalse(yield* child.isRunning.pipe(Effect.orElseSucceed(() => true)));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
