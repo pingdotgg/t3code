@@ -1,12 +1,14 @@
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { cn } from "~/lib/utils";
 
 interface PanelTabCloseButtonProps {
   children: ReactNode;
   label: string;
   onClick: () => void;
   tooltip?: string;
+  showOnPhone?: boolean;
 }
 
 export function PanelTabCloseButton({
@@ -14,6 +16,7 @@ export function PanelTabCloseButton({
   label,
   onClick,
   tooltip,
+  showOnPhone = false,
 }: PanelTabCloseButtonProps) {
   const button = (
     <button
@@ -22,10 +25,20 @@ export function PanelTabCloseButton({
       aria-label={label}
       onClick={onClick}
     >
-      <span className="relative flex size-3.5 items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden">
+      <span
+        className={cn(
+          "relative flex size-3.5 items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden",
+          showOnPhone && "max-md:hidden",
+        )}
+      >
         {children}
       </span>
-      <X className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
+      <X
+        className={cn(
+          "hidden size-3 group-hover/tab:block group-focus-visible/close:block",
+          showOnPhone && "max-md:block",
+        )}
+      />
     </button>
   );
 
