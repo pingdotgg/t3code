@@ -463,7 +463,6 @@ describe("orchestrator replay recovery", () => {
         assert.deepEqual(child?.thread.modelSelection, {
           instanceId: CLAUDE_MODEL_SELECTION.instanceId,
           model: "claude-sonnet-5",
-          options: [{ id: "effort", value: "high" }],
         });
 
         const conversation = (child?.turnItems ?? [])

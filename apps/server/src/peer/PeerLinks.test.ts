@@ -440,6 +440,38 @@ it.effect("cancelling a descriptor probe aborts its request and leaves later res
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.live("one dropped descriptor request does not list a live peer as unreachable", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const dropNext = yield* Ref.make(false);
+      const dropOnce = HttpRouter.middleware(
+        (httpEffect) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (
+              request.url.startsWith("/.well-known/t3/environment") &&
+              (yield* Ref.getAndSet(dropNext, false))
+            ) {
+              return HttpServerResponse.empty({ status: 503 });
+            }
+            return yield* httpEffect;
+          }),
+        { global: true },
+      );
+      const b = yield* servePeer(
+        box,
+        Layer.merge(McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), dropOnce),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      yield* Ref.set(dropNext, true);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("reads one stored link without asking the peer", () =>
   Effect.scoped(
     Effect.gen(function* () {
