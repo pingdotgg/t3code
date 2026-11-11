@@ -87,6 +87,7 @@ import {
 import {
   dispatchingQueuedMessageIdAtom,
   editingQueuedMessageIdsAtom,
+  retryingQueuedMessageIdsAtom,
   threadOutboxShellStatusesAtom,
 } from "./use-thread-outbox";
 import { clearThreadComposerError, setThreadComposerError } from "./thread-composer-error";
@@ -155,7 +156,20 @@ function logThreadOutboxUploadFailure(queuedMessage: QueuedThreadMessage, error:
   }
 }
 
+function setQueuedMessageRetrying(queuedMessageId: MessageId, retrying: boolean): void {
+  const { [queuedMessageId]: current, ...others } = appAtomRegistry.get(
+    retryingQueuedMessageIdsAtom,
+  );
+  if ((current === true) === retrying) return;
+  appAtomRegistry.set(
+    retryingQueuedMessageIdsAtom,
+    retrying ? { ...others, [queuedMessageId]: true } : others,
+  );
+}
+
 function beginDispatchingQueuedMessage(queuedMessageId: MessageId): void {
+  // An attempt in flight is sending, even while its retry count is kept.
+  setQueuedMessageRetrying(queuedMessageId, false);
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, queuedMessageId);
 }
 
@@ -701,6 +715,7 @@ export function createThreadOutboxDelivery(): {
       notBefore: Date.now() + delayMs,
       timer: setTimeout(drain, delayMs),
     });
+    setQueuedMessageRetrying(messageId, true);
   };
 
   const clearRetry = (messageId: MessageId): void => {
@@ -708,6 +723,7 @@ export function createThreadOutboxDelivery(): {
     if (retry === undefined) return;
     clearTimeout(retry.timer);
     retries.delete(messageId);
+    setQueuedMessageRetrying(messageId, false);
   };
 
   // A delivery that throws backs off like any failure. Releasing the slot
@@ -1412,6 +1428,7 @@ export function createThreadOutboxDelivery(): {
       stopCollectingOutcomes();
       for (const retry of retries.values()) clearTimeout(retry.timer);
       retries.clear();
+      appAtomRegistry.set(retryingQueuedMessageIdsAtom, {});
       for (const blocked of blockedRecoveries.values()) blocked.unsubscribe();
       blockedRecoveries.clear();
       for (const release of familyMounts.values()) release();
