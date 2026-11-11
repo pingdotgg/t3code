@@ -1315,6 +1315,8 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
+  /** The selection the delivery named when it arrived; a scheduled delivery that named one keeps it. */
+  modelSelection: Schema.optional(ModelSelection),
   senderThreadId: Schema.optional(ThreadId),
   idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
   /**

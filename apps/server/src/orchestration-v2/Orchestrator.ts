@@ -834,14 +834,21 @@ function nextQueuedRun(
 
 // Delegated completions, monitor notifications and scheduled deliveries never choose a model,
 // so a queued one runs on the thread's current pick rather than the one frozen at queue time.
+// A scheduled delivery that named its own model is the exception: its pin wins over the thread.
 function followsCurrentConversation(
   message:
     | Pick<
         OrchestrationV2ConversationMessage,
-        "createdBy" | "creationSource" | "notification" | "delegatedCompletion" | "scheduledTaskId"
+        | "createdBy"
+        | "creationSource"
+        | "notification"
+        | "delegatedCompletion"
+        | "scheduledTaskId"
+        | "modelSelection"
       >
     | undefined,
 ): boolean {
+  if (message?.scheduledTaskId !== undefined && message.modelSelection !== undefined) return false;
   return (
     message?.delegatedCompletion !== undefined ||
     message?.scheduledTaskId !== undefined ||
@@ -6598,6 +6605,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { scheduledTaskId: command.scheduledTaskId }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
+        ...(command.modelSelection === undefined ? {} : { modelSelection: command.modelSelection }),
         id: command.messageId,
         threadId: command.threadId,
         runId,
@@ -6985,6 +6993,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { scheduledTaskId: command.scheduledTaskId }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
+        ...(command.modelSelection === undefined ? {} : { modelSelection: command.modelSelection }),
         id: command.messageId,
         threadId: command.threadId,
         runId,
