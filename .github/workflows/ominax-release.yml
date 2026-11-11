@@ -360,6 +360,8 @@ jobs:
       # electron-updater reads one manifest per platform and picks the file
       # entry for the running arch, so the per-arch manifests are merged.
       - name: Merge updater manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           cd release-assets
@@ -369,6 +371,12 @@ jobs:
           else
             # One Mac arch alone would make a half macOS release.
             rm -f latest-mac*.yml *.dmg *.dmg.blockmap OminaX-*.zip OminaX-*.zip.blockmap t3-*-darwin-*.tar.gz
+            # Keep Macs on the latest release's Mac build: its feed and checksum lines carry over, and
+            # the installer downloads from the version named in the asset.
+            prev="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+            gh release download "$prev" -R "$GITHUB_REPOSITORY" -p latest-mac.yml -p SHA256SUMS -D ../prev-release
+            sed '/^releaseNotes:/d' ../prev-release/latest-mac.yml > latest-mac.yml
+            grep -E ' \*?((OminaX|T3-Learn)-.*\.(dmg|zip)|t3-.*-darwin-.*\.tar\.gz)$' ../prev-release/SHA256SUMS > ../prev-mac-sums
           fi
           node ../scripts/merge-update-manifests.ts --platform win latest-win-x64.yml latest-win-arm64.yml latest.yml
           rm latest-win-x64.yml latest-win-arm64.yml
@@ -385,6 +393,7 @@ jobs:
           cd release-assets
           shopt -s nullglob
           sha256sum *.dmg *.zip *.AppImage *.deb *.exe t3-*.tar.gz install.sh install.ps1 > SHA256SUMS
+          [ ! -f ../prev-mac-sums ] || cat ../prev-mac-sums >> SHA256SUMS
           cat SHA256SUMS
 
       - name: Download release notes
@@ -396,7 +405,7 @@ jobs:
         if: needs.desktop_mac_arm64.result != 'success' || needs.desktop_mac_x64.result != 'success'
         run: |
           set -euo pipefail
-          line='- No macOS build in this release: macOS stays on the previous version until the next release with a Mac build'
+          line='- No macOS build in this release: Macs stay on the previous version until the next release with a Mac build'
           awk -v line="$line" '/^<details>/ && !done { print line "\n"; done=1 } { print } END { if (!done) print "\n" line }' \
             release-notes.md > notes.tmp
           mv notes.tmp release-notes.md
