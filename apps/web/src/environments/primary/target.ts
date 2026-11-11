@@ -236,11 +236,23 @@ function resolveWindowOriginPrimaryTarget(): PrimaryEnvironmentTarget {
   };
 }
 
+let firstDesktopPrimaryHttpBaseUrl: string | undefined;
+
+/** The desktop primary URL this page first resolved; clients built from it may outlive a port move. */
+export function readFirstDesktopPrimaryHttpBaseUrl(): string | undefined {
+  return firstDesktopPrimaryHttpBaseUrl;
+}
+
+export function __resetFirstDesktopPrimaryHttpBaseUrlForTests(): void {
+  firstDesktopPrimaryHttpBaseUrl = undefined;
+}
+
 function resolveDesktopPrimaryTarget(): PrimaryEnvironmentTarget | null {
   const desktopBootstrap = getDesktopLocalEnvironmentBootstrap();
   if (!desktopBootstrap) {
     return null;
   }
+  firstDesktopPrimaryHttpBaseUrl ??= desktopBootstrap.httpBaseUrl ?? undefined;
   if (!desktopBootstrap.httpBaseUrl && !desktopBootstrap.wsBaseUrl) {
     return null;
   }

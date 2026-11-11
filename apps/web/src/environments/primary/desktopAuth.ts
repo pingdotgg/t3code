@@ -1,7 +1,11 @@
 import { PRIMARY_LOCAL_ENVIRONMENT_ID, type DesktopBridge } from "@t3tools/contracts";
 
+import {
+  __resetFirstDesktopPrimaryHttpBaseUrlForTests,
+  readFirstDesktopPrimaryHttpBaseUrl,
+} from "./target";
+
 let desktopBearerTokenPromise: Promise<string> | null = null;
-let loadedPrimaryHttpBaseUrl: string | null | undefined;
 
 function readPrimaryHttpBaseUrl(bridge: DesktopBridge): string | null {
   return (
@@ -20,14 +24,11 @@ export function readDesktopPrimaryBearerToken(): Promise<string | null> {
     return Promise.resolve(null);
   }
 
-  // Desktop opens this page before readiness; a port collision can move the backend afterwards.
-  if (loadedPrimaryHttpBaseUrl === undefined) {
-    loadedPrimaryHttpBaseUrl = readPrimaryHttpBaseUrl(bridge);
-  }
-  const loadedUrl = loadedPrimaryHttpBaseUrl;
   desktopBearerTokenPromise ??= bridge.getLocalEnvironmentBearerToken().then(
     (token) => {
-      if (readPrimaryHttpBaseUrl(bridge) === loadedUrl) {
+      // Desktop opens this page before readiness; a port collision can move the backend afterwards.
+      const loadedUrl = readFirstDesktopPrimaryHttpBaseUrl();
+      if (loadedUrl === undefined || readPrimaryHttpBaseUrl(bridge) === loadedUrl) {
         return token;
       }
       // Clients here were built for the old port; reload rather than send the token there.
@@ -44,5 +45,5 @@ export function readDesktopPrimaryBearerToken(): Promise<string | null> {
 
 export function __resetDesktopPrimaryAuthForTests(): void {
   desktopBearerTokenPromise = null;
-  loadedPrimaryHttpBaseUrl = undefined;
+  __resetFirstDesktopPrimaryHttpBaseUrlForTests();
 }

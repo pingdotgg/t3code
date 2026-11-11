@@ -2,9 +2,11 @@ import { PRIMARY_LOCAL_ENVIRONMENT_ID, type DesktopBridge } from "@t3tools/contr
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/http";
 
 import { __resetDesktopPrimaryAuthForTests } from "./desktopAuth";
+import * as PrimaryHttpClient from "./httpClient";
 import * as PrimaryEnvironmentHttpLayer from "./httpLayer";
 
 function primaryBootstrap(port: number) {
@@ -101,6 +103,7 @@ describe("primary environment HTTP layer", { concurrent: false }, () => {
       value: {
         location: { origin: "t3code://app", reload: () => reloaded.resolve(undefined) },
         desktopBridge: {
+          getLocalEnvironmentEnabled: () => true,
           getLocalEnvironmentBootstraps: () => [primaryBootstrap(port)],
           getLocalEnvironmentBearerToken: () => {
             requested.resolve(undefined);
@@ -111,12 +114,20 @@ describe("primary environment HTTP layer", { concurrent: false }, () => {
     });
 
     return Effect.gen(function* () {
-      yield* HttpClient.get("http://127.0.0.1:3774/api/auth/session").pipe(Effect.forkChild);
-      yield* Effect.promise(() => requested.promise);
+      // The client captures 3774; the backend moves before the first bearer read.
+      const client = yield* PrimaryHttpClient.PrimaryEnvironmentHttpClient;
       port = 3775;
+      yield* client.auth.session({ headers: {} }).pipe(Effect.forkChild);
+      yield* Effect.promise(() => requested.promise);
       bearerToken.resolve("desktop-bearer-token");
       yield* Effect.promise(() => reloaded.promise);
       expect(fetchMock).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layerForCurrentOrigin()));
+    }).pipe(
+      Effect.provide(
+        PrimaryHttpClient.layer.pipe(
+          Layer.provide(PrimaryEnvironmentHttpLayer.layerForCurrentOrigin()),
+        ),
+      ),
+    );
   });
 });
