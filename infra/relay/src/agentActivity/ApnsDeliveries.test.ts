@@ -919,6 +919,81 @@ describe("ApnsDeliveries", () => {
   });
 
   it.effect.each([
+    { label: "disables", queuedHidden: [], currentHidden: ["other-env"] },
+    { label: "re-enables", queuedHidden: ["other-env"], currentHidden: [] },
+  ])(
+    "delivers a queued alert for an enabled environment when the device $label another",
+    ({ queuedHidden, currentHidden }) => {
+      const requests: HttpClientRequest.HttpClientRequest[] = [];
+      const waitingAt = "1970-01-01T00:00:01.000Z";
+      const waitingAggregate: RelayAgentActivityAggregateState = {
+        ...aggregate,
+        updatedAt: waitingAt,
+        activities: [
+          {
+            ...aggregate.activities[0]!,
+            phase: "waiting_for_approval",
+            status: "Approval",
+            updatedAt: waitingAt,
+          },
+        ],
+      };
+      const signed = signApnsDeliveryJob({
+        secret: config.apnsDeliveryJobSigningSecret,
+        payload: makeApnsDeliveryJobPayload({
+          kind: "live_activity_update",
+          userId: target.user_id,
+          deviceId: target.device_id,
+          token: target.activity_push_token ?? "activity-token",
+          aggregate: waitingAggregate,
+          alert: { title: "Thread", body: "Approval: Project" },
+          hiddenEnvironmentIds: queuedHidden.map((id) => EnvironmentId.make(id)),
+          createdAt: waitingAt,
+          expiresAt: "1970-01-01T00:10:00.000Z",
+          jobId: "job-approval-before-filter-change",
+        }),
+      });
+
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* deliveries.processSignedJob(yield* signed);
+
+        expect(requests).toHaveLength(1);
+        const body = requests[0]!.body;
+        expect(body._tag).toBe("Uint8Array");
+        if (body._tag === "Uint8Array") {
+          const { aps } = JSON.parse(new TextDecoder().decode(body.body));
+          expect(aps.alert).toMatchObject({ title: "Thread" });
+        }
+      }).pipe(
+        Effect.provide(
+          layerFor({
+            attempts: [],
+            config: signingConfig,
+            currentTargets: [
+              {
+                ...target,
+                preferences_json: JSON.stringify({
+                  ...JSON.parse(enabledPreferences),
+                  disabledEnvironmentIds: currentHidden,
+                }),
+                last_aggregate_json: JSON.stringify(aggregate),
+                last_hidden_environment_ids: queuedHidden,
+              },
+            ],
+            activityStates: [{ ...state, phase: "waiting_for_approval", updatedAt: waitingAt }],
+            execute: (request) =>
+              Effect.sync(() => {
+                requests.push(request);
+                return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+              }),
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect.each([
     { name: "attention reached while disabled stays silent", revealedAtMs: 4_000, alerts: false },
     { name: "attention reached after re-enabling alerts", revealedAtMs: 1_000, alerts: true },
   ])("re-enabled environment: $name", ({ revealedAtMs, alerts }) => {

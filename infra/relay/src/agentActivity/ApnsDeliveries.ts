@@ -48,7 +48,7 @@ import {
   alertForTerminalAggregate,
   hiddenEnvironmentIds,
   rowPhasesChanged,
-  sameEnvironmentIds,
+  environmentEnabledOnDevice,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
 const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
@@ -725,10 +725,17 @@ const make = Effect.gen(function* () {
               includeUnobserved: true,
             }));
     }
-    // The registration replay that changed the filter supersedes cards built under the old one.
+    // A card must not show an environment the device now hides. One that lacks a re-enabled
+    // environment's rows yields to the registration replay unless it still carries an alert.
     if (
       aggregate !== null &&
-      (!sameEnvironmentIds(input.hiddenEnvironmentIds, hiddenEnvironmentIds(currentPreferences)) ||
+      (aggregate.activities.some(
+        (row) => !environmentEnabledOnDevice(currentPreferences, row.environmentId),
+      ) ||
+        (alert === null &&
+          (input.hiddenEnvironmentIds ?? []).some((id) =>
+            environmentEnabledOnDevice(currentPreferences, id),
+          )) ||
         !(yield* aggregateRowsAreCurrent({
           userId: input.target.user_id,
           aggregate,
