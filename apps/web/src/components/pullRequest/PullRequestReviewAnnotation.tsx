@@ -229,7 +229,7 @@ export function ReviewThreadCard({
 
   return (
     <div
-      className={CARD_CLASS}
+      className={cn(CARD_CLASS, !expanded && "py-1")}
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -250,7 +250,7 @@ export function ReviewThreadCard({
         {thread.isOutdated ? <span>outdated</span> : null}
         {onFix ? (
           <Button
-            size="xs"
+            size="compact"
             variant="ghost"
             className="ml-auto"
             disabled={pending || fixPending}
@@ -262,7 +262,7 @@ export function ReviewThreadCard({
         ) : null}
         {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
           <Button
-            size="xs"
+            size="compact"
             variant="ghost"
             className={onFix ? undefined : "ml-auto"}
             onClick={() => onAddToChat({ ...thread, comments })}
@@ -273,7 +273,7 @@ export function ReviewThreadCard({
         ) : null}
         {canResolve ? (
           <Button
-            size="xs"
+            size="compact"
             variant="ghost"
             className={onFix || onAddToChat ? undefined : "ml-auto"}
             disabled={pending}
