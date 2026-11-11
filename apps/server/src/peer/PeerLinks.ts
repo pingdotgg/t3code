@@ -17,7 +17,6 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -27,6 +26,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -46,13 +46,14 @@ const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
 
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
 const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
-const STATUS_FALLBACK_DELAY = Duration.millis(100);
 /**
  * How long a peer's descriptor may take before a route counts as unreachable.
  * A tailnet or relayed route to a machine that is waking up takes longer.
  */
 const probeTimeout = (origin: string) =>
   isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
+/** How long a listing waits on a link's addresses; a real call still gives a waking peer `probeTimeout`. */
+const LIST_PROBE_TIMEOUT = Duration.seconds(3);
 
 /** Node's TLS verification code in a failed request's cause chain, if any. */
 export const certificateErrorCode = (error: unknown) => {
@@ -232,6 +233,12 @@ const make = Effect.gen(function* () {
   const describe = (origin: string) =>
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
+      // A brief network drop must not list a live peer as down; the timeout still bounds both tries.
+      Effect.retry({
+        times: 1,
+        schedule: Schedule.spaced("1 second"),
+        while: (error) => certificateErrorCode(error) === undefined,
+      }),
       Effect.timeout(probeTimeout(origin)),
       Effect.asSome,
       Effect.catch((error) => {
@@ -573,75 +580,26 @@ const make = Effect.gen(function* () {
           WHERE environment_id = ${link.environmentId}
         `.pipe(Effect.ignoreCause({ log: true }), Effect.as({ ...link, label }));
 
-  // Called within statusOf, which already owns the status-probe span.
-  const findStatusRoute = Effect.fnUntraced(function* (
-    urls: ReadonlyArray<string>,
-    environmentId: EnvironmentId,
-  ) {
-    for (const url of urls) {
-      const found = yield* answersAs(url, environmentId);
-      if (Option.isSome(found)) return Option.some({ url, label: found.value.label });
-    }
-    return Option.none();
-  });
-
   const statusOf = Effect.fn("PeerLinks.statusOf")(function* (
     link: PeerLink,
-    secretName: string,
     now: DateTime.Utc,
   ): Effect.fn.Return<PeerLinkSummary> {
     if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
-    const preferred = link.urls.length > 1 ? preferredRoutes?.get(link.environmentId) : undefined;
-    const active =
-      preferred !== undefined &&
-      preferred.secretName === secretName &&
-      preferred.until > DateTime.toEpochMillis(now) &&
-      link.urls.includes(preferred.url)
-        ? preferred
-        : undefined;
-    const answering =
-      active === undefined
-        ? findStatusRoute(link.urls, link.environmentId)
-        : Effect.gen(function* () {
-            const failed = yield* Deferred.make<void>();
-            const check = (urls: ReadonlyArray<string>) =>
-              findStatusRoute(urls, link.environmentId).pipe(
-                Effect.filterOrFail(Option.isSome),
-                Effect.map((found) => found.value),
-              );
-            const preferredProbe = check([active.url]).pipe(
-              Effect.tapError(() => Deferred.succeed(failed, undefined)),
-            );
-            // Fast preferred routes still need one request. Slow ones must not
-            // add their entire timeout before the configured routes can start.
-            const otherProbes = Deferred.await(failed).pipe(
-              Effect.timeoutOrElse({
-                duration: STATUS_FALLBACK_DELAY,
-                orElse: () => Effect.void,
-              }),
-              Effect.andThen(check(link.urls.filter((url) => url !== active.url))),
-            );
-            return yield* Effect.race(preferredProbe, otherProbes).pipe(Effect.option);
-          });
-    const answered = yield* answering;
-    if (
-      preferred !== undefined &&
-      Option.isSome(answered) &&
-      answered.value.url !== preferred.url &&
-      preferredRoutes?.get(link.environmentId) === preferred
-    ) {
-      preferredRoutes.delete(link.environmentId);
-    }
+    // A race over no addresses never settles.
+    if (link.urls.length === 0) return { ...link, status: "unreachable" };
+    const answered = yield* Effect.raceAll(
+      link.urls.map((url) =>
+        answersAs(url, link.environmentId).pipe(Effect.flatMap(Effect.fromOption)),
+      ),
+    ).pipe(Effect.timeoutOption(LIST_PROBE_TIMEOUT), Effect.orElseSucceed(Option.none));
     if (Option.isNone(answered)) return { ...link, status: "unreachable" };
     return { ...(yield* withLabel(link, answered.value.label)), status: "reachable" };
   });
 
   const list: PeerLinks["Service"]["list"] = Effect.gen(function* () {
-    const links = yield* Effect.forEach(yield* readRows, (row) =>
-      toLink(row).pipe(Effect.map((link) => ({ link, secretName: row.secret_name }))),
-    );
+    const links = yield* Effect.forEach(yield* readRows, toLink);
     const now = yield* DateTime.now;
-    return yield* Effect.forEach(links, ({ link, secretName }) => statusOf(link, secretName, now), {
+    return yield* Effect.forEach(links, (link) => statusOf(link, now), {
       concurrency: "unbounded",
     });
   });
