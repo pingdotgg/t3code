@@ -39,10 +39,10 @@ describe("course reference fetch", () => {
   it.effect("pins the dispatcher to the address checked by DNS", () =>
     Effect.promise(async () => {
       let calls = 0;
-      const checked = await checkedDispatcher("example.com", async () => {
+      const checked = await checkedDispatcher("example.com", (async () => {
         calls += 1;
         return [{ address: calls === 1 ? "93.184.216.34" : "127.0.0.1", family: 4 as const }];
-      });
+      }) as never);
       let connected = "";
       checked.connectLookup!("example.com", {}, (error, address) => {
         if (error) throw error;

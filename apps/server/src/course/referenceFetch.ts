@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off schemaClassMissingBrand:off
 import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeZlib from "node:zlib";
 import * as Effect from "effect/Effect";
