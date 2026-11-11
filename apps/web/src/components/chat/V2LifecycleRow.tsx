@@ -91,6 +91,7 @@ export function V2LifecycleRow(props: {
         environmentId={props.environmentId}
         endpoints={resolveHandoffEndpoints(item, props.runs)}
         failed={item.status === "failed"}
+        title={item.title}
       />
     );
   }
@@ -592,6 +593,7 @@ function EnvironmentHandoffRow({
   readonly environmentId: EnvironmentId;
   readonly endpoints: HandoffEndpoints;
   readonly failed: boolean;
+  readonly title?: string | null;
 }) {
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
@@ -633,14 +635,23 @@ export function HandoffRow(props: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly pending?: boolean;
   readonly failed?: boolean;
+  /** Server-set titles such as Session handoff or Started a fresh provider session. */
+  readonly title?: string | null;
 }) {
   const { from: fromEndpoints, to } = props.endpoints;
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const derived = deriveProviderInstanceEntries(props.providers);
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
+  const title = props.title?.trim();
   return (
     <TimelineSystemDivider
-      label={props.pending ? "Context handoff pending" : "Context handoff"}
+      label={
+        title && title.length > 0
+          ? title
+          : props.pending
+            ? "Context handoff pending"
+            : "Context handoff"
+      }
       icon={ArrowRightLeftIcon}
       showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}

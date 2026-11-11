@@ -27,6 +27,7 @@ import { restartContinuationRun } from "./RestartContinuation.ts";
 import {
   formatRestartRestoreCheckSummary,
   restartRestoreCheckEntry,
+  restartRestoreForecastMessage,
   summarizeRestartRestoreCheck,
   type RestartRestoreCheckEntry,
   type RestartRestoreCheckSummary,
@@ -287,6 +288,18 @@ export const make = Effect.gen(function* () {
         ),
       ]);
       const detail = `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
+      const recoveryProjection = {
+        ...projection,
+        providerSessions: sessionsLiveAtStart(projection, stoppedThisPass),
+      };
+      const restoreForecast =
+        trigger === "startup"
+          ? restartRestoreCheckEntry({
+              projection: recoveryProjection,
+              now,
+              continueAfterRestart,
+            })
+          : undefined;
       const commandId = CommandId.make(
         `command:runtime-reconcile:${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
       );
@@ -645,6 +658,10 @@ export const make = Effect.gen(function* () {
         }
         // Queued runs and unsent resumes leave no visible turn behind, so there is nothing to explain.
         if (run.status === "queued" || unsentResumeRunIds.includes(run.id)) continue;
+        const noticeMessage =
+          trigger === "startup" && restoreForecast !== undefined
+            ? restartRestoreForecastMessage(detail, restoreForecast)
+            : detail;
         events.push({
           id: yield* allocateEventId(),
           type: "turn-item.updated",
@@ -670,7 +687,7 @@ export const make = Effect.gen(function* () {
             completedAt: now,
             updatedAt: now,
             type: "system_notice",
-            message: detail,
+            message: noticeMessage,
           },
         });
       }
@@ -841,18 +858,7 @@ export const make = Effect.gen(function* () {
           },
         });
       }
-      const recoveryProjection = {
-        ...projection,
-        providerSessions: sessionsLiveAtStart(projection, stoppedThisPass),
-      };
-      const restoreCheck =
-        trigger === "startup"
-          ? restartRestoreCheckEntry({
-              projection: recoveryProjection,
-              now,
-              continueAfterRestart,
-            })
-          : undefined;
+      const restoreCheck = restoreForecast;
       const continuationRun =
         continueAfterRestart && trigger === "startup"
           ? restartContinuationRun(recoveryProjection, now)

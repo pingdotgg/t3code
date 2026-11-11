@@ -16,6 +16,8 @@ import {
   formatRestartRestoreCheckSummary,
   inspectRestartContinuation,
   restartRestoreCheckEntry,
+  restartRestoreForecastMessage,
+  restartRestoreOutcomeNotice,
   summarizeRestartRestoreCheck,
 } from "./RestartRestoreCheck.ts";
 
@@ -176,5 +178,27 @@ describe("RestartRestoreCheck", () => {
         "  not_ready Opted out: continuation_disabled",
       ].join("\n"),
     );
+  });
+
+  it("keeps thread-visible forecast and outcome copy honest", () => {
+    const base = "Cancelled because the server restarted before the provider work completed.";
+    assert.include(
+      restartRestoreForecastMessage(base, {
+        threadId,
+        status: "ready",
+        sourceRunId: runId,
+      }),
+      "will attempt to resume",
+    );
+    assert.include(
+      restartRestoreForecastMessage(base, {
+        threadId,
+        status: "not_ready",
+        reason: "continuation_disabled",
+      }),
+      "Continue after restart is off",
+    );
+    assert.equal(restartRestoreOutcomeNotice("resumed").title, "Resumed after restart");
+    assert.equal(restartRestoreOutcomeNotice("fresh").title, "Started a fresh provider session");
   });
 });

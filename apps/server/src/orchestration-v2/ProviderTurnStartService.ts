@@ -63,7 +63,7 @@ import {
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
-import { logRestartRestoreOutcome } from "./RestartRestoreCheck.ts";
+import { logRestartRestoreOutcome, restartRestoreOutcomeNotice } from "./RestartRestoreCheck.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
@@ -555,7 +555,10 @@ export const layer: Layer.Layer<
             itemProviderThreadId: providerThread.id,
             item: {
               type: "error",
-              title: failed.title,
+              title:
+                run.restartContinuationOfRunId !== undefined
+                  ? "Could not resume after restart"
+                  : failed.title,
               failure: makeProviderFailure({
                 cause: failed.error,
                 message: failed.message ?? startFailureMessage(failed.error),
@@ -1480,7 +1483,7 @@ export const layer: Layer.Layer<
           status: "completed",
           title:
             run.restartContinuationOfRunId !== undefined
-              ? "Started a fresh provider session"
+              ? restartRestoreOutcomeNotice("fresh").title
               : "Recovered context",
           startedAt: createdAt,
           completedAt: createdAt,
@@ -1542,13 +1545,15 @@ export const layer: Layer.Layer<
       if (!(yield* isCurrentAttemptInStatus("starting"))) {
         return;
       }
+      let restartRestoreOutcome: "resumed" | "fresh" | undefined;
       if (run.restartContinuationOfRunId !== undefined) {
         const hadNativeRef = providerThread.nativeThreadRef?.nativeId != null;
+        restartRestoreOutcome = resumeFellBack || !hadNativeRef ? "fresh" : "resumed";
         yield* logRestartRestoreOutcome({
           threadId: projection.thread.id,
           runId: run.id,
           sourceRunId: run.restartContinuationOfRunId,
-          outcome: resumeFellBack || !hadNativeRef ? "fresh" : "resumed",
+          outcome: restartRestoreOutcome,
           ...(resumeFellBack
             ? { reason: "resume_fallback" }
             : hadNativeRef
@@ -1557,6 +1562,43 @@ export const layer: Layer.Layer<
         });
       }
       const now = yield* DateTime.now;
+      // Fresh already commits a handoff row; resumed needs an explicit notice so the timeline
+      // does not look like a silent green recovery.
+      if (
+        restartRestoreOutcome === "resumed" &&
+        recoveryTurnItem === undefined &&
+        run.restartContinuationOfRunId !== undefined
+      ) {
+        const notice = restartRestoreOutcomeNotice("resumed");
+        const noticeId = idAllocator.derive.runSignalTurnItem({
+          runId,
+          signal: "restart-restore-resumed",
+        });
+        recoveryTurnItem = {
+          id: noticeId,
+          threadId: projection.thread.id,
+          runId,
+          nodeId: rootNode.id,
+          providerThreadId: providerThread.id,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* turnItemPositions.allocate({
+            threadId: projection.thread.id,
+            turnItemId: noticeId,
+            runId,
+            runOrdinal: run.ordinal,
+            placement: "run_start",
+          }),
+          status: "completed",
+          title: notice.title,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "system_notice",
+          message: notice.message,
+        };
+      }
       const handoffContext = resumedHandoffContext ?? handoffContextForThread(loadedProviderThread);
       const {
         sameNativeThread,

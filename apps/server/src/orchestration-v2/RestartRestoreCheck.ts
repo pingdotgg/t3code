@@ -284,6 +284,43 @@ export function formatRestartRestoreCheckSummary(summary: RestartRestoreCheckSum
   return lines.join("\n");
 }
 
+/** Thread-visible copy for the cut-run recovery notice after a restart. */
+export function restartRestoreForecastMessage(
+  baseDetail: string,
+  check: RestartRestoreCheckEntry | undefined,
+): string {
+  if (check === undefined) return baseDetail;
+  if (check.status === "ready") {
+    return `${baseDetail} T3 Code will attempt to resume this turn.`;
+  }
+  switch (check.reason) {
+    case "continuation_disabled":
+      return `${baseDetail} Continue after restart is off, so this turn will not resume.`;
+    case "missing_native_state":
+    case "session_not_live":
+      return `${baseDetail} The provider session could not be resumed.`;
+    default:
+      return `${baseDetail} This turn will not automatically resume.`;
+  }
+}
+
+export function restartRestoreOutcomeNotice(outcome: Exclude<RestartRestoreOutcome, "failed">): {
+  readonly title: string;
+  readonly message: string;
+} {
+  if (outcome === "resumed") {
+    return {
+      title: "Resumed after restart",
+      message: "The provider session came back and this turn continued from where it left off.",
+    };
+  }
+  return {
+    title: "Started a fresh provider session",
+    message:
+      "The earlier provider session could not be resumed, so this turn continued in a new session with recovered context.",
+  };
+}
+
 export const logRestartRestoreOutcome = Effect.fn("RestartRestoreCheck.logOutcome")(
   function* (input: {
     readonly threadId: ThreadId;
