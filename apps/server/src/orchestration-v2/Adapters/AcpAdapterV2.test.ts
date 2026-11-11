@@ -3915,7 +3915,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live("applies the thread's model on the next turn after a late session/load", () =>
+  it.live("applies the thread's model after a late session/load that lands during open", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -3924,7 +3924,10 @@ describe("AcpAdapterV2", () => {
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
       const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const adoptionHandled = yield* Deferred.make<void>();
       const adopted = yield* Deferred.make<void>();
+      const publishedConfigurations: Array<ReadonlyArray<EffectAcpSchema.SessionConfigOption>> = [];
+      let publications = 0;
       let acpRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
       const instanceId = ProviderInstanceId.make("acp-test-late-session-load-selection");
       const threadId = ThreadId.make("thread-acp-late-session-load-selection");
@@ -3933,6 +3936,21 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          onSessionEvent: (event) =>
+            event._tag === "SessionSetupAdopted"
+              ? Deferred.succeed(adoptionHandled, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          // Holds openSession's own publication until the adapter has seen the
+          // late response, so adoption overlaps session configuration.
+          onSessionConfigurationUpdate: (configOptions) =>
+            (publications++ === 0 ? Deferred.await(adoptionHandled) : Effect.void).pipe(
+              Effect.andThen(Effect.sync(() => publishedConfigurations.push(configOptions))),
+              Effect.andThen(
+                configOptions.some((option) => option.category === "model")
+                  ? Deferred.succeed(adopted, undefined)
+                  : Effect.void,
+              ),
+            ),
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
@@ -3944,19 +3962,7 @@ describe("AcpAdapterV2", () => {
             sessionLoadReplayIdleGap: "100 millis",
             wrapRuntime: (runtime) => {
               acpRuntime = runtime;
-              return {
-                ...runtime,
-                getEvents: () =>
-                  runtime
-                    .getEvents()
-                    .pipe(
-                      Stream.tap((event) =>
-                        event._tag === "SessionSetupAdopted"
-                          ? Deferred.succeed(adopted, undefined)
-                          : Effect.void,
-                      ),
-                    ),
-              };
+              return runtime;
             },
           }),
         },
@@ -4006,6 +4012,10 @@ describe("AcpAdapterV2", () => {
         methods,
         "session/set_config_option",
         "the selected model was only applied to the provisional setup, which offered no model",
+      );
+      assert.isTrue(
+        publishedConfigurations.at(-1)?.some((option) => option.category === "model"),
+        "the provisional catalog was published over the late session/load one",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );

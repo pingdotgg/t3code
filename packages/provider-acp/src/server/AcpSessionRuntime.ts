@@ -1998,6 +1998,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   // than this response, so the response is dropped instead of applied.
   const followLateSessionLoad = Effect.fn("AcpSessionRuntime.followLateSessionLoad")(function* (
     started: AcpStartedState,
+    // Notifications counted after this baseline are newer than the response.
+    provisionalChangeCount?: number,
   ) {
     const late = yield* Ref.get(lateSessionLoadRef);
     if (Option.isNone(late) || late.value.provisional !== started.sessionSetupResult) {
@@ -2006,7 +2008,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     const { payload, response: lateFiber } = late.value;
     const provisionalConfigOptions = yield* SubscriptionRef.get(configOptionsRef);
     const provisionalModeState = yield* Ref.get(modeStateRef);
-    const provisionalChangeCount = yield* Ref.get(sessionChangeCountRef);
+    const baselineChangeCount = provisionalChangeCount ?? (yield* Ref.get(sessionChangeCountRef));
     const adoptLateResponse = Effect.fn("AcpSessionRuntime.adoptLateSessionLoad")(function* (
       response: EffectAcpSchema.LoadSessionResponse,
     ) {
@@ -2020,7 +2022,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         (yield* Ref.get(stoppingRef)) ||
         (yield* SubscriptionRef.get(configOptionsRef)) !== provisionalConfigOptions ||
         (yield* Ref.get(modeStateRef)) !== provisionalModeState ||
-        (yield* Ref.get(sessionChangeCountRef)) !== provisionalChangeCount
+        (yield* Ref.get(sessionChangeCountRef)) !== baselineChangeCount
       ) {
         return;
       }
@@ -2477,13 +2479,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                       return yield* error.value;
                     }
                     yield* Ref.set(startStateRef, { _tag: "Started", result });
+                    const changeCountBeforeMetadata = yield* Ref.get(sessionChangeCountRef);
                     const metadata = yield* Ref.getAndSet(startupMetadataRef, []);
                     for (const notification of metadata) {
                       if (notification.sessionId === result.sessionId) {
                         yield* processSessionUpdate(notification);
                       }
                     }
-                    yield* followLateSessionLoad(result);
+                    yield* followLateSessionLoad(result, changeCountBeforeMetadata);
                     yield* Deferred.succeed(deferred, result);
                   }),
                 ),
@@ -2618,7 +2621,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           return runLoadSessionWithReplayIdle(requestPayload, started.initializeResult);
         }),
         Effect.flatMap((response) => adoptSession(sessionId, response)),
-        Effect.tap(followLateSessionLoad),
+        Effect.tap((started) => followLateSessionLoad(started)),
       ),
     resumeSession: (sessionId, activationOptions) =>
       start.pipe(

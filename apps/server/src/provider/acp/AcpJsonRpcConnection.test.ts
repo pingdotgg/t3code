@@ -1195,6 +1195,48 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live("drops a late session/load response that startup metadata superseded", () =>
+    Effect.gen(function* () {
+      const provisionalLogged = yield* Deferred.make<void>();
+      const allowStartup = yield* Deferred.make<void>();
+      const lateLoadLogged = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+          },
+        },
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "100 millis",
+        requestLogger: (event) => {
+          if (event.method !== "session/load" || event.status !== "succeeded") {
+            return Effect.void;
+          }
+          return (event.result as { readonly configOptions?: unknown } | undefined)
+            ?.configOptions === undefined
+            ? Deferred.succeed(provisionalLogged, undefined).pipe(
+                Effect.andThen(Deferred.await(allowStartup)),
+              )
+            : Deferred.succeed(lateLoadLogged, undefined).pipe(Effect.asVoid);
+        },
+      });
+      const startup = yield* runtime.start().pipe(Effect.forkChild);
+      yield* Deferred.await(provisionalLogged);
+      yield* runtime.request("_test/startup-metadata", {});
+      yield* Deferred.succeed(allowStartup, undefined);
+      yield* Fiber.join(startup);
+      yield* Deferred.await(lateLoadLogged).pipe(Effect.timeout("5 seconds"));
+
+      expect(yield* runtime.getModeState).toMatchObject({ currentModeId: "code" });
+      expect(
+        (yield* runtime.getConfigOptions).find((option) => option.category === "model"),
+      ).toMatchObject({ currentValue: "gpt-5.4" });
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("keeps active configuration after a candidate session load fails", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

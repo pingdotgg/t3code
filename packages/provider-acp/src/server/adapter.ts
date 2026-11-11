@@ -2282,6 +2282,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
         let refreshModelSwitchCapability: Effect.Effect<void> = Effect.void;
+        // openSession configures the session itself; a late setup that lands
+        // first waits here and is adopted once that configuration is in place.
+        const lateSessionSetup: {
+          openSessionConfigured: boolean;
+          pending: Effect.Effect<void> | null;
+        } = { openSessionConfigured: false, pending: null };
 
         const nativeLogging = options.nativeLogging?.(input.threadId);
         const promptInactivityTimeoutMillis =
@@ -6487,7 +6493,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   event._tag === "ConfigOptionsUpdated"
                     ? refreshModelSwitchCapability
                     : event._tag === "SessionSetupAdopted"
-                      ? adoptLateSessionSetup(targetRuntime, event.result)
+                      ? Effect.suspend(() => {
+                          const adopt = adoptLateSessionSetup(targetRuntime, event.result);
+                          if (lateSessionSetup.openSessionConfigured) return adopt;
+                          lateSessionSetup.pending = adopt;
+                          return Effect.void;
+                        })
                       : Effect.void,
                   flavor.onSessionEvent?.(event) ?? Effect.void,
                 ),
@@ -7569,6 +7580,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           };
           yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
         });
+        lateSessionSetup.openSessionConfigured = true;
+        const pendingLateSessionSetup = lateSessionSetup.pending;
+        lateSessionSetup.pending = null;
+        if (pendingLateSessionSetup !== null) {
+          yield* pendingLateSessionSetup;
+        }
 
         const providerTurnPayload = (
           context: ActiveAcpTurn,
