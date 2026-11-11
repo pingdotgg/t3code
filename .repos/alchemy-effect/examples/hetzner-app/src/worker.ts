@@ -1,5 +1,5 @@
-import * as Hetzner from "alchemy/Hetzner";
-import { ServerHost } from "alchemy/Server";
+import * as Hetzner from "@alchemy.run/hetzner";
+import { ServerHost } from "alchemy/Runtime/Process";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import { Box, Data, MARKER, MARKER_FILE, VOLUME_PATH } from "./shared.ts";

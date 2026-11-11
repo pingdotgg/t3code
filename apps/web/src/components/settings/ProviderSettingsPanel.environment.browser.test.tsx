@@ -8,6 +8,7 @@ import {
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -35,6 +36,7 @@ const state = vi.hoisted(() => ({
   updateModelPreferences: vi.fn(),
   toggleFavorite: vi.fn(),
   mutateProviderInstance: vi.fn(),
+  confirm: vi.fn<() => Promise<boolean>>(),
 }));
 
 vi.mock(import("../../state/server"), async (original) => {
@@ -79,6 +81,14 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
       "accept-url-auth": state.acceptUrlAuth,
     })[command.label ?? ""] ?? vi.fn()) as never,
 }));
+vi.mock(import("~/localApi"), async (original) => {
+  const api = { dialogs: { confirm: state.confirm } };
+  return {
+    ...(await original()),
+    readLocalApi: (() => api) as never,
+    ensureLocalApi: (() => api) as never,
+  };
+});
 vi.mock(import("../../state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((query: unknown) => ({
@@ -230,6 +240,7 @@ async function setup() {
   state.updateModelPreferences.mockReset();
   state.toggleFavorite.mockReset();
   state.mutateProviderInstance.mockReset().mockResolvedValue(AsyncResult.success({}));
+  state.confirm.mockReset().mockResolvedValue(false);
   state.refresh.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.updateProvider.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.uninstall.mockReset().mockResolvedValue(AsyncResult.success({}));
@@ -371,17 +382,20 @@ describe("EnvironmentProviderSettings routing", () => {
         },
       },
     };
+    state.confirm.mockResolvedValue(true);
     await setProviders([provider()]);
     await using _screen = await render(panel({ targetInstanceId: codexId }));
     await userEvent.click(
       page.getByRole("button", { name: "Reset Codex provider settings to default" }),
     );
 
-    expect(state.mutateProviderInstance.mock.lastCall?.[0]).toEqual({
-      operation: "upsert",
-      instanceId: codexId,
-      instance: { driver: codex, enabled: true, config: { setupMode: "managed" } },
-    });
+    await vi.waitFor(() =>
+      expect(state.mutateProviderInstance).toHaveBeenCalledWith({
+        operation: "upsert",
+        instanceId: codexId,
+        instance: { driver: codex, enabled: true, config: { setupMode: "managed" } },
+      }),
+    );
   });
 
   it("does not offer reset for a managed Codex instance still at its onboarding config", async () => {
@@ -403,27 +417,143 @@ describe("EnvironmentProviderSettings routing", () => {
       page.getByRole("button", { name: "Reset Codex provider settings to default" }).query(),
     ).toBeNull();
   });
+});
 
-  it("resets an existing-CLI Codex instance by removing it", async () => {
+describe("EnvironmentProviderSettings instance removal", () => {
+  it("resets a configured default instance only once the user confirms", async () => {
     await setup();
     state.settings = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
         [codexId]: {
           driver: ProviderDriverKind.make("codex"),
+          enabled: true,
           config: { binaryPath: "/opt/codex/bin/codex" },
         },
       },
     };
     await setProviders([provider()]);
     await using _screen = await render(panel({ targetInstanceId: codexId }));
-    await userEvent.click(
-      page.getByRole("button", { name: "Reset Codex provider settings to default" }),
-    );
+    const reset = page.getByRole("button", { name: "Reset Codex provider settings to default" });
+    await userEvent.click(reset);
 
-    expect(state.mutateProviderInstance.mock.lastCall?.[0]).toEqual({
-      operation: "remove",
-      instanceId: codexId,
-    });
+    expect(state.mutateProviderInstance).not.toHaveBeenCalled();
+    expect(state.confirm).toHaveBeenCalledOnce();
+
+    state.confirm.mockResolvedValue(true);
+    await userEvent.click(reset);
+    await vi.waitFor(() =>
+      expect(state.mutateProviderInstance).toHaveBeenCalledWith({
+        operation: "remove",
+        instanceId: codexId,
+      }),
+    );
+  });
+
+  it("warns that resetting an enabled default-off provider turns it off", async () => {
+    await setup();
+    const antigravityId = ProviderInstanceId.make("antigravity");
+    const antigravity = ProviderDriverKind.make("antigravity");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [antigravityId]: {
+          driver: antigravity,
+          enabled: true,
+          config: { binaryPath: "/opt/antigravity/bin/agy" },
+        },
+      },
+    };
+    await setProviders([{ ...provider(), instanceId: antigravityId, driver: antigravity }]);
+    await using _screen = await render(panel({ targetInstanceId: antigravityId }));
+    await userEvent.click(page.getByRole("button", { name: /^Reset .* provider settings/ }));
+
+    expect(state.confirm).toHaveBeenCalledWith(
+      expect.stringContaining("It will also be turned off."),
+      {
+        variant: "destructive",
+      },
+    );
+    expect(state.mutateProviderInstance).not.toHaveBeenCalled();
+  });
+
+  it("deletes a custom instance only once the user confirms", async () => {
+    await setup();
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+    };
+    await using _screen = await render(panel({ targetInstanceId: customId }));
+    const remove = page.getByRole("button", { name: `Delete instance ${customId}` });
+    await userEvent.click(remove);
+
+    expect(state.mutateProviderInstance).not.toHaveBeenCalled();
+    expect(state.confirm).toHaveBeenCalledOnce();
+
+    state.confirm.mockResolvedValue(true);
+    await userEvent.click(remove);
+    await vi.waitFor(() =>
+      expect(state.mutateProviderInstance).toHaveBeenCalledWith({
+        operation: "remove",
+        instanceId: customId,
+      }),
+    );
+  });
+});
+
+describe("EnvironmentProviderSettings health check interval", () => {
+  it("commits interval drafts and allows retrying rejected edits", async () => {
+    await setup();
+    await using _screen = await render(panel());
+    const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
+
+    await userEvent.type(input, "{ArrowUp}{ArrowDown}");
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([330, 300]);
+    state.updateSettings.mockClear();
+
+    // Replacing 300 with 120 passes through 30, 3, an empty field, 1 and 12.
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
+    await expect.element(input).toHaveValue("120");
+    expect(state.updateSettings).not.toHaveBeenCalled();
+
+    await userEvent.tab();
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([120]);
+
+    await act(() => state.updateSettings.mock.calls.at(-1)?.[1]?.onFailed?.());
+    await expect.element(input).toHaveValue("300");
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
+    await userEvent.tab();
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([120, 120]);
+
+    const rejectPrevious = state.updateSettings.mock.calls.at(-1)?.[1]?.onFailed;
+    await userEvent.type(input, "{ArrowUp}");
+    await act(() => rejectPrevious?.());
+    await expect.element(input).toHaveValue("150");
+  });
+
+  it("restores the saved interval when a cleared field loses focus", async () => {
+    await setup();
+    await using _screen = await render(panel());
+    const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
+
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}");
+    await userEvent.tab();
+
+    await expect.element(input).toHaveValue("300");
+    expect(state.updateSettings).not.toHaveBeenCalled();
   });
 });
