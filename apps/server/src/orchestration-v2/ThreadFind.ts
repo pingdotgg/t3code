@@ -39,6 +39,14 @@ interface FindDocument extends FindRow {
   readonly runId: OrchestrationV2TurnItem["runId"];
   readonly count: number;
 }
+type CompletedScans = Map<
+  string,
+  {
+    sequence: number;
+    documents: readonly FindDocument[];
+    sourceThreadIds: readonly ThreadId[];
+  }
+>;
 class TextKey extends Data.Class<{
   text: string;
   role: "user" | "assistant" | "plan";
@@ -235,25 +243,19 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
   });
   const makeTextCache = (capacity: number) =>
     Cache.make({ capacity, lookup: (key: TextKey) => Effect.sync(() => parseText(key)) });
-  // Keys are message content, so entries never go stale. Cache TTL only expires on access and
-  // would keep the text of the last searched threads forever, so drop it all once Find is idle.
-  const textCaches = yield* RcRef.make({
+  // Text keys are message content, so entries never go stale. Cache TTL only expires on access
+  // and would keep the last searched threads forever. Each search borrows this for its whole
+  // stream, and all of it is dropped once Find is idle.
+  const findCaches = yield* RcRef.make({
     acquire: Effect.all({
       // Scans visit every message; a cache smaller than the thread churns without hits.
       text: makeTextCache(8192),
       // Bounded separately because each entry can hold a large body; typing reuses the parse.
       largeText: makeTextCache(32),
+      scans: Effect.sync((): CompletedScans => new Map()),
     }),
     idleTimeToLive: "1 minute",
   });
-  const scans = new Map<
-    string,
-    {
-      sequence: number;
-      documents: readonly FindDocument[];
-      sourceThreadIds: readonly ThreadId[];
-    }
-  >();
   const readRevision = Effect.fn("ThreadFind.readRevision")(function* (
     threadIds: readonly ThreadId[],
   ) {
@@ -277,7 +279,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
     return revision[0]?.sequence ?? 0;
   });
   const snapshot = Effect.fn("ThreadFind.snapshot")(
-    function* (input: OrchestrationV2SearchThreadInput) {
+    function* (input: OrchestrationV2SearchThreadInput, scans: CompletedScans) {
       const { threadId } = input;
       const active = yield* sql<{ cwd: string | null }>`
       SELECT COALESCE(json_extract(t.payload_json, '$.worktreePath'), p.workspace_root) AS cwd
@@ -328,11 +330,11 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
   const searchThreadStream = (input: OrchestrationV2SearchThreadInput) =>
     Stream.unwrap(
       Effect.gen(function* () {
+        const { scans, ...textCache } = yield* RcRef.get(findCaches);
         // Release SQLite before decoding and parsing. Both frames describe one snapshot.
-        const data = yield* snapshot(input);
+        const data = yield* snapshot(input, scans);
         if (data.result) return Stream.succeed(data.result);
         const { payloads, cwd, sequence, cacheKey, sourceThreadIds } = data;
-        const textCache = yield* RcRef.get(textCaches);
         const decode = (row: FindPayload) =>
           decodeItem(row.payload).pipe(
             Effect.map((item) => ({ ...row, item })),

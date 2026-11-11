@@ -465,22 +465,34 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("keeps parsed text while Find is in use and drops it after one idle minute", () =>
+  it.effect("keeps its caches while Find is in use and drops them after one idle minute", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
-      yield* putItems([item("kept", 1, "idle needle")]);
-      const parses = vi.mocked(searchableMessageSegments).mock.calls;
+      yield* putItems([item("one", 1, "idle needle one"), item("two", 2, "idle needle two")]);
+      const parses = () =>
+        vi
+          .mocked(searchableMessageSegments)
+          .mock.calls.filter(([message]) => message.text.startsWith("idle needle")).length;
       const search = (query: string) => projection.searchThread({ threadId, query });
-      yield* search("a");
-      const first = parses.length;
+      // A search still in progress holds the caches past the idle time.
+      yield* projection.searchThreadStream({ threadId, query: "needle" }).pipe(
+        Stream.tap((frame) =>
+          frame.complete === false ? TestClock.adjust("1 minute") : Effect.void,
+        ),
+        Stream.runDrain,
+      );
+      assert.equal(parses(), 2);
       yield* TestClock.adjust("40 seconds");
-      yield* search("b");
+      yield* search("idle");
       yield* TestClock.adjust("40 seconds");
-      yield* search("c");
-      assert.equal(parses.length, first);
+      // A repeated query is answered from the completed scan and still counts as use.
+      yield* search("needle");
+      yield* TestClock.adjust("40 seconds");
+      yield* search("one");
+      assert.equal(parses(), 2);
       yield* TestClock.adjust("1 minute");
-      yield* search("d");
-      assert.equal(parses.length, first + 1);
+      yield* search("needle");
+      assert.equal(parses(), 4);
     }).pipe(Effect.provide(layerTest)),
   );
 
