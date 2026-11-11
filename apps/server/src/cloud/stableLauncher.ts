@@ -41,16 +41,21 @@ export async function publishStableLauncher(
   const stagedEntry = NodePath.join(paths.directory, ".t3.staged");
   const stagedSentinel = NodePath.join(paths.directory, ".install-complete.staged");
   await NodeFSP.mkdir(paths.directory, { recursive: true });
-  await NodeFSP.rm(stagedEntry, { force: true });
-  if (!(await cloneFile(sourceEntryPath, stagedEntry))) {
-    await NodeFSP.copyFile(sourceEntryPath, stagedEntry);
+  try {
+    await NodeFSP.rm(stagedEntry, { force: true });
+    if (!(await cloneFile(sourceEntryPath, stagedEntry))) {
+      await NodeFSP.copyFile(sourceEntryPath, stagedEntry);
+    }
+    await NodeFSP.writeFile(stagedSentinel, `${version}\n`);
+    await syncPath(stagedEntry);
+    await syncPath(stagedSentinel);
+    await NodeFSP.rename(stagedEntry, paths.entryPath);
+    await NodeFSP.rename(stagedSentinel, paths.sentinelPath);
+    await syncPath(paths.directory);
+  } finally {
+    await NodeFSP.rm(stagedEntry, { force: true });
+    await NodeFSP.rm(stagedSentinel, { force: true });
   }
-  await NodeFSP.writeFile(stagedSentinel, `${version}\n`);
-  await syncPath(stagedEntry);
-  await syncPath(stagedSentinel);
-  await NodeFSP.rename(stagedEntry, paths.entryPath);
-  await NodeFSP.rename(stagedSentinel, paths.sentinelPath);
-  await syncPath(paths.directory);
 }
 
 // The unit is written durably right after this, so the program it names must be too.

@@ -962,7 +962,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
               try: () =>
                 publishStableLauncher(input.baseDir, runtimePaths.entryPath, input.cliVersion),
               catch: (cause) => new BootServiceInstallError({ cause }),
-            });
+            }).pipe(Effect.uninterruptible);
           }
           yield* writeDurably(unitPath, manager.render(plan));
         }),
@@ -1083,16 +1083,19 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     )
       return false;
     yield* runSteps(manager.deactivate);
-    yield* fs.remove(unitPath).pipe(
-      Effect.andThen(
-        manager.kind === "launchd"
-          ? fs.remove(stableLauncherPaths(input.baseDir).directory, {
-              recursive: true,
-              force: true,
-            })
-          : Effect.void,
+    yield* withSelectionLock(
+      unitPath,
+      fs.remove(unitPath).pipe(
+        Effect.andThen(
+          manager.kind === "launchd"
+            ? fs.remove(stableLauncherPaths(input.baseDir).directory, {
+                recursive: true,
+                force: true,
+              })
+            : Effect.void,
+        ),
+        Effect.mapError((cause) => new BootServiceInstallError({ cause })),
       ),
-      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
     );
     yield* runSteps(manager.finalize);
     return true;
