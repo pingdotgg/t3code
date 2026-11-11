@@ -3553,16 +3553,16 @@ export const make = Effect.gen(function* () {
     filePaths?: readonly string[],
     branchOnly = false,
   ) {
-    const detachedContext =
-      branchOnly && branch === null
+    const hasChanges = (yield* gitCore.statusDetailsLocal(cwd)).hasWorkingTreeChanges;
+    const committedContext =
+      (branchOnly && branch === null) || !hasChanges
         ? yield* gitCore.resolveBaseRef(cwd, "HEAD").pipe(
             Effect.flatMap((baseRef) =>
               baseRef === null
                 ? Effect.succeed(null)
                 : gitCore.readRangeContext(cwd, baseRef).pipe(
                     Effect.map((context) => {
-                      const stagedSummary =
-                        context.diffSummary.trim() || context.commitSummary.trim();
+                      const stagedSummary = context.diffSummary.trim();
                       const stagedPatch = context.diffPatch.trim();
                       return stagedSummary.length > 0 || stagedPatch.length > 0
                         ? { stagedSummary, stagedPatch }
@@ -3573,29 +3573,28 @@ export const make = Effect.gen(function* () {
           )
         : undefined;
     const suggestion =
-      branchOnly && branch === null && detachedContext === null
+      committedContext === null
         ? null
         : yield* resolveCommitAndBranchSuggestion({
             cwd,
             branch,
             ...(commitMessage ? { commitMessage } : {}),
             ...(filePaths ? { filePaths } : {}),
-            ...(detachedContext ? { context: detachedContext } : {}),
+            ...(committedContext ? { context: committedContext } : {}),
             includeBranch: true,
             settings,
           });
-    if (!suggestion && !branchOnly) {
+    if (!suggestion) {
       return yield* new GitManagerError({
         operation: "runFeatureBranchStep",
         cwd,
-        detail: "Cannot create a feature branch because there are no changes to commit.",
+        detail:
+          "Cannot create a feature branch: there are no working-tree changes or committed diff against the main ref.",
       });
     }
 
     const naming = yield* vcsProjectConfig.resolveBranchNaming({ cwd });
-    const suggestedBranch =
-      suggestion?.branch ??
-      (suggestion ? sanitizeFeatureBranchName(suggestion.subject) : "feature/update");
+    const suggestedBranch = suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
     const preferredBranch = removeBuiltInFeaturePrefix(suggestedBranch, naming);
     const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
     const resolvedBranch = resolveAutoBranchName(existingBranchNames, preferredBranch, naming);

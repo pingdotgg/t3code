@@ -820,64 +820,105 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
-  it.effect("creates a branch-only feature ref from a detached diff against the default ref", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["branch", "-m", "development"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "development"]);
-      yield* runGit(remoteDir, ["--git-dir=.", "symbolic-ref", "HEAD", "refs/heads/development"]);
-      yield* runGit(repoDir, ["remote", "set-head", "origin", "development"]);
-      yield* runGit(repoDir, ["checkout", "-b", "source-change"]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\ndetached change\n");
-      yield* runGit(repoDir, ["add", "README.md"]);
-      yield* runGit(repoDir, ["commit", "-m", "Detached change"]);
-      const detachedSha = yield* runGit(repoDir, ["rev-parse", "HEAD"]).pipe(
-        Effect.map((result) => result.stdout.trim()),
-      );
-      yield* runGit(repoDir, ["checkout", "--detach", detachedSha]);
-      yield* runGit(repoDir, ["branch", "-D", "source-change"]);
-
-      let generatedPatch = "";
-      const { manager } = yield* makeManager({
-        textGeneration: {
-          generateCommitMessage: (input) =>
-            Effect.sync(() => {
-              generatedPatch = input.stagedPatch;
-              return {
-                subject: "Describe detached change",
-                body: "",
-                ...(input.includeBranch ? { branch: "feature/detached-change" } : {}),
-              };
-            }),
-        },
-      });
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "create_branch",
-        featureBranch: true,
-      });
-
-      expect(result.branch).toEqual({
-        status: "created",
-        name: "feature/detached-change",
-      });
-      expect(result.commit.status).toBe("skipped_not_requested");
-      expect(result.toast.title).toBe("Created feature/detached-change");
-      expect(generatedPatch).toContain("detached change");
-      expect(
-        yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
+  it.effect.each([true, false])(
+    "names a clean feature ref from the committed diff and repository policy (detached: %s)",
+    (detached) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["branch", "-m", "development"]);
+        const configDir = NodePath.join(repoDir, ".t3code");
+        NodeFS.mkdirSync(configDir);
+        const instructions = "Create feature branches as jm/feature/...";
+        NodeFS.writeFileSync(NodePath.join(configDir, "commit-message.md"), instructions);
+        NodeFS.writeFileSync(
+          NodePath.join(configDir, "vcs.json"),
+          JSON.stringify({ branchNaming: { defaultPrefix: null, preserveNamespaces: true } }),
+        );
+        yield* runGit(repoDir, ["add", ".t3code"]);
+        yield* runGit(repoDir, ["commit", "-m", "Configure branch naming"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "development"]);
+        yield* runGit(remoteDir, ["--git-dir=.", "symbolic-ref", "HEAD", "refs/heads/development"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "development"]);
+        yield* runGit(repoDir, ["checkout", "-b", "source-change"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\ndetached change\n");
+        yield* runGit(repoDir, ["add", "README.md"]);
+        yield* runGit(repoDir, ["commit", "-m", "Detached change"]);
+        const detachedSha = yield* runGit(repoDir, ["rev-parse", "HEAD"]).pipe(
           Effect.map((result) => result.stdout.trim()),
-        ),
-      ).toBe("feature/detached-change");
-      expect(
-        yield* runGit(repoDir, ["rev-parse", "HEAD"]).pipe(
-          Effect.map((result) => result.stdout.trim()),
-        ),
-      ).toBe(detachedSha);
-    }),
+        );
+        if (detached) {
+          yield* runGit(repoDir, ["checkout", "--detach", detachedSha]);
+          yield* runGit(repoDir, ["branch", "-D", "source-change"]);
+        }
+
+        let generatedPatch = "";
+        let generatedPolicy: TextGeneration.CommitMessageGenerationInput["policy"];
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitMessage: (input) =>
+              Effect.sync(() => {
+                generatedPatch = input.stagedPatch;
+                generatedPolicy = input.policy;
+                return {
+                  subject: "Describe detached change",
+                  body: "",
+                  ...(input.includeBranch ? { branch: "jm/feature/detached-change" } : {}),
+                };
+              }),
+          },
+        });
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_branch",
+          featureBranch: true,
+        });
+
+        expect(result.branch).toEqual({
+          status: "created",
+          name: "jm/feature/detached-change",
+        });
+        expect(result.commit.status).toBe("skipped_not_requested");
+        expect(result.toast.title).toBe("Created jm/feature/detached-change");
+        expect(generatedPatch).toContain("detached change");
+        expect(generatedPolicy?.commitInstructions).toContain(instructions);
+        expect(
+          yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
+            Effect.map((result) => result.stdout.trim()),
+          ),
+        ).toBe("jm/feature/detached-change");
+        expect(
+          yield* runGit(repoDir, ["rev-parse", "HEAD"]).pipe(
+            Effect.map((result) => result.stdout.trim()),
+          ),
+        ).toBe(detachedSha);
+      }),
+  );
+
+  it.effect.each(["create_branch", "commit_push", "commit_push_pr"] as const)(
+    "rejects feature branch creation without any diff: %s",
+    (action) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const { manager } = yield* makeManager();
+        const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action,
+          featureBranch: true,
+        }).pipe(Effect.result);
+        expect(Result.isFailure(result)).toBe(true);
+        if (Result.isFailure(result))
+          expect(result.failure.message).toContain("no working-tree changes or committed diff");
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headBefore);
+        expect(
+          (yield* runGit(repoDir, ["branch", "--format=%(refname:short)"])).stdout.trim(),
+        ).toBe("main");
+      }),
   );
 
   it.effect("force pushes rewritten history with a lease", () =>
