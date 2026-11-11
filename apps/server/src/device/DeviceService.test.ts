@@ -484,6 +484,20 @@ describe("device setup consent", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("closes and shuts down a booted AVD named by the AVD name it was opened with", () =>
+    Effect.gen(function* () {
+      const { service, requests } = yield* fixture();
+      yield* service.configure({ enabled: true });
+      const threadId = ThreadId.make("close-by-avd-name");
+      yield* service.open({ threadId, deviceId: "Pixel_API_35", platform: "android" });
+      yield* service.close({ threadId, deviceId: "Pixel_API_35", shutdown: true });
+      expect(requests.filter((url) => url.endsWith("/shutdown"))).toHaveLength(1);
+      const state = yield* service.state;
+      expect(state.sessions).toEqual([]);
+      expect(state.devices.find((device) => device.id === "emulator-5554")?.booted).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("blocks only emulator video until ffmpeg is usable, then allows retry", () =>
     Effect.gen(function* () {
       const { service, requests, devices, encoderResult } = yield* fixture();
