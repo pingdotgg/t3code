@@ -39,6 +39,7 @@ const state = vi.hoisted(() => ({
   enqueue: vi.fn(async () => undefined),
   freshPending: false,
   compactModel: null as string | null,
+  compactDueAt: "",
   setFreshPending: vi.fn(),
   clearDraft: vi.fn(),
   approve: vi.fn(),
@@ -79,8 +80,10 @@ vi.mock("react", () => ({
 vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
 vi.mock("@t3tools/client-runtime/state/context-window", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/context-window")>()),
-  compactBeforeSendTokens: (input: { readonly selection: ModelSelection }) =>
-    input.selection.model === state.compactModel ? 248_000 : null,
+  compactBeforeSendTokens: (input: { readonly selection: ModelSelection; readonly now: string }) =>
+    input.selection.model === state.compactModel && input.now >= state.compactDueAt
+      ? 248_000
+      : null,
 }));
 vi.mock("../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
@@ -206,6 +209,7 @@ beforeEach(() => {
   };
   state.freshPending = false;
   state.compactModel = null;
+  state.compactDueAt = "";
   state.thread.latestRun = null;
   state.projection = null;
   state.serverConfig = {
@@ -316,16 +320,16 @@ describe("mobile task permissions", () => {
       visibleTurnItems: [],
       updatedAt: DateTime.makeUnsafe(0),
     } as unknown as OrchestrationV2ThreadProjection;
-    const due: ModelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
-    state.compactModel = due.model;
+    state.compactModel = "gpt-5.4";
+    // The notice's minute clock (the epoch here) trails a deadline the send's exact time has passed.
+    state.compactDueAt = "2026-01-01T00:00:00.000Z";
     const unannounced = useThreadComposerState(NO_SIDE_CHATS);
     expect(unannounced.compactBeforeSend).toBeNull();
-    // Due at send time but not at the last render, as when the minute clock trails the deadline.
-    state.draft = { ...state.draft, modelSelection: due };
     await unannounced.onSendMessage();
     expect(state.enqueue).toHaveBeenLastCalledWith(
       expect.not.objectContaining({ compactBeforeSend: true }),
     );
+    state.compactDueAt = "";
     const composer = useThreadComposerState(NO_SIDE_CHATS);
     expect(composer.compactBeforeSend?.tokens).toBe(248_000);
     await composer.onSendMessage();
@@ -333,12 +337,15 @@ describe("mobile task permissions", () => {
       expect.objectContaining({ compactBeforeSend: true }),
     );
     // A model picked after the last render still decides the send.
-    state.draft = { ...state.draft, modelSelection: undefined };
+    state.draft = {
+      ...state.draft,
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
+    };
     await composer.onSendMessage();
     expect(state.enqueue).toHaveBeenLastCalledWith(
       expect.not.objectContaining({ compactBeforeSend: true }),
     );
-    state.draft = { ...state.draft, modelSelection: due };
+    state.draft = { ...state.draft, modelSelection: undefined };
     composer.compactBeforeSend?.keepFullHistory();
     const kept = useThreadComposerState(NO_SIDE_CHATS);
     expect(kept.compactBeforeSend).toBeNull();
