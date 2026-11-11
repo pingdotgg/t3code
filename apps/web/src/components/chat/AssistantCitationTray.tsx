@@ -48,8 +48,24 @@ function CitationTrayContents({
     setEditing(null);
     return true;
   };
-  const remove = (index: number) => {
-    onChange(citations.filter((_, i) => i !== index));
+  const remove = (index: number, beforeRemove?: () => boolean) => {
+    const dismissal = resolveAssistantCitationCommentDismissal({
+      reason: editing === index ? "escape-key" : "none",
+      draft: draftCommentRef.current,
+      savedComment: editing === null ? undefined : citations[editing]?.comment,
+    });
+    if (dismissal.kind === "keep-open" || (beforeRemove && !beforeRemove())) return;
+    onChange(
+      citations.flatMap((item, i) =>
+        i === index
+          ? []
+          : [
+              i === editing && dismissal.kind === "commit"
+                ? withAssistantCitationComment(item, dismissal.comment)
+                : item,
+            ],
+      ),
+    );
     draftCommentRef.current = null;
     setEditing(null);
   };
@@ -106,8 +122,9 @@ function CitationTrayContents({
                       onMove={
                         onInsertInline
                           ? (comment) => {
-                              if (onInsertInline(withAssistantCitationComment(citation, comment)))
-                                remove(index);
+                              remove(index, () =>
+                                onInsertInline(withAssistantCitationComment(citation, comment)),
+                              );
                             }
                           : undefined
                       }
@@ -140,7 +157,7 @@ function CitationTrayContents({
                                 size="icon-xs"
                                 aria-label={`Insert annotation ${index + 1} inline`}
                                 onClick={() => {
-                                  if (onInsertInline(citation)) remove(index);
+                                  remove(index, () => onInsertInline(citation));
                                 }}
                               />
                             }

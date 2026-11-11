@@ -188,6 +188,13 @@ it("opens a source comment for tray citations and preserves saved and cancelled 
   await page.getByLabelText("Comment on selected text").fill("Discard the cancelled edit");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect.element(page.getByText("User comment: Keep the dismissed edit")).toBeVisible();
+  await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "2 annotations", exact: true }).click();
+  await page.getByRole("button", { name: "Edit annotation 1", exact: true }).click();
+  await page.getByLabelText("Comment on selected text").fill("Keep the edit after deletion");
+  await page.getByRole("button", { name: "Delete annotation 2", exact: true }).click();
+  await expect.element(page.getByText("User comment: Keep the edit after deletion")).toBeVisible();
   await screen.rerender(<TrayComposer question />);
   await expect
     .element(page.getByRole("button", { name: "Insert annotation 1 inline", exact: true }))
@@ -197,7 +204,9 @@ it("opens a source comment for tray citations and preserves saved and cancelled 
   await page.getByRole("button", { name: "Insert annotation 1 inline", exact: true }).click();
   expect(state()?.trayCount).toBe("0");
   expect(state()?.prompt).toContain(
-    serializeAssistantCitation(withAssistantCitationComment(citation, "Keep the dismissed edit")),
+    serializeAssistantCitation(
+      withAssistantCitationComment(citation, "Keep the edit after deletion"),
+    ),
   );
   await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
   await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
