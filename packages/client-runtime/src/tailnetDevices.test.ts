@@ -47,7 +47,7 @@ const device = (
   nodeId: `n-${environmentId}`,
   status: "online",
   access: "full-access",
-  member: member(environmentId),
+  member: member(environmentId, "full-access", `n-${environmentId}`),
   localLimit: null,
   outgoing: "tailnet",
   incoming: true,
@@ -320,8 +320,9 @@ describe("machineControls", () => {
   });
 
   it("offers only re-adding for a member the server left unbound after the update", () => {
+    // The scan still knows the node; only the roster entry says it is unbound.
     const unbound = [
-      host(studio, { devices: [device(box, { nodeId: null })] }),
+      host(studio, { devices: [device(box, { member: member(box) })] }),
       host(laptop, { self: null, devices: [] }),
     ];
     const [group] = view(unbound, studio);
@@ -375,7 +376,10 @@ describe("hostControls", () => {
   it("offers leaving to a member, warning when it is the last full-access one", () => {
     // The server refuses the last full-access machine while other members remain.
     expect(
-      hostControls(host(studio, { devices: [device(box, { member: member(box, "auto") })] }), now),
+      hostControls(
+        host(studio, { devices: [device(box, { member: member(box, "auto", "n-env-box") })] }),
+        now,
+      ),
     ).toEqual({
       leave: false,
       leaveBlocked: true,
@@ -408,7 +412,7 @@ describe("hostControls", () => {
     expect(hostControls(host(vps, { self: null, mayWrite: false }), now).allowJoin).toBe(false);
     // A member whose roster still holds unbound members from before the update must consent too.
     expect(
-      hostControls(host(studio, { devices: [device(box, { nodeId: null })] }), now),
+      hostControls(host(studio, { devices: [device(box, { member: member(box) })] }), now),
     ).toMatchObject({ leave: true, allowJoin: true });
   });
 });

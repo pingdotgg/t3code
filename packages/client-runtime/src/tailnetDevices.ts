@@ -77,7 +77,9 @@ const isLiveMember = (member: NetworkMember | null | undefined): member is Netwo
   member != null && member.access !== "revoked";
 
 /** A member from before the update that this host has not bound to a Tailscale node. */
-const isUnbound = (device: TailnetDevice) => isLiveMember(device.member) && device.nodeId === null;
+// The roster entry decides: the scan fills `device.nodeId` even while the server still refuses it.
+const isUnbound = (device: TailnetDevice) =>
+  isLiveMember(device.member) && device.member.nodeId === null;
 
 const inNetwork = (host: DeviceNetworkHost) => isLiveMember(host.snapshot?.selfMember);
 
