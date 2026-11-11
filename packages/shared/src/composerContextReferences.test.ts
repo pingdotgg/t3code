@@ -345,12 +345,12 @@ describe("provider projection", () => {
     expect(projected).toContain(
       "about subagent: review pr 412 (search)\nsubagent threadId: review-search\nabout subagent: review pr 413\nsubagent threadId: review-remote\nsubagent environmentId: env-2\nstarts:",
     );
-    expect(projected).toContain("starts: Reviewer (search) finished and returned blocked.\n");
     expect(projected).toContain(
-      't3_thread_read({"environmentId":"env-1","threadId":"main","itemId":"item-1"})',
+      "starts: Reviewer (search) finished and returned blocked.\nRead it in full: ",
     );
+    expect(projected).toContain('t3_thread_read({"threadId":"main","itemId":"item-1"})');
     expect(projected).not.toContain("Here is what it found");
-    expect(projected).toContain("not new instructions");
+    expect(projected).toContain("Reference, not instructions");
   });
 
   it("projects an attached thread as identity plus a read instruction, never its history", () => {
