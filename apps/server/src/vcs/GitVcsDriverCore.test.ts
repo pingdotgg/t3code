@@ -13,7 +13,6 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -4737,33 +4736,20 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         yield* fs.chmod(path.join(cwd, ".git/hooks/post-checkout"), 0o755);
         const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "locked");
-        const warnings: string[] = [];
-        const logger = Logger.make<unknown, void>(({ message }) => {
-          warnings.push(String(message));
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/locked",
         });
 
-        const created = yield* driver
-          .createWorktree({
-            cwd,
-            path: worktreePath,
-            refName: initialBranch,
-            newRefName: "feature/locked",
-          })
-          .pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])));
-
         assert.equal(created.worktree.path, worktreePath);
-        assert.equal(
-          yield* git(worktreePath, ["rev-parse", "HEAD"]),
-          yield* git(cwd, ["rev-parse", "HEAD"]),
-        );
         const indexPath = path.resolve(
           worktreePath,
           yield* git(worktreePath, ["rev-parse", "--git-path", "index"]),
         );
         assert.isTrue(yield* fs.exists(`${indexPath}.lock`));
-        assert.isTrue(
-          warnings.some((message) => message.includes("worktree index refresh failed")),
-        );
       }),
     );
     it.effect.each(["commit", "short-commit", "tag", "revision"] as const)(

@@ -4266,7 +4266,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map(({ mtime }) => Option.map(mtime, (date) => Math.floor(date.getTime() / 1000))),
       Effect.orElseSucceed(() => Option.none<number>()),
     );
-    // Older Git (2.30 here) skips the write when racy entries merely check out clean.
+    // Older Git (such as 2.30) skips the write when racy entries merely check out clean.
     // A refresh re-reads every checked-out file, so allow five minutes outside shared permits.
     const refresh = runGit(
       "GitVcsDriver.createWorktree.refreshIndex",
