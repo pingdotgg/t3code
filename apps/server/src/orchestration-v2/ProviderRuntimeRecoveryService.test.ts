@@ -684,6 +684,7 @@ it.effect(
           driver: ProviderDriverKind.make("codex"),
           providerInstanceId: ProviderInstanceId.make("codex"),
           status: "ready",
+          extensionStatuses: [{ key: "watch", text: "Watching" }],
         },
       ],
       providerThreads: [
@@ -792,12 +793,20 @@ it.effect(
           ["turn-item.updated", "cancelled"],
           ["turn-item.updated", "cancelled"],
           ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "completed"],
           ["provider-thread.updated", "idle"],
           ["provider-session.updated", "stopped"],
         ],
       );
       const messageEvent = events.find((event) => event.type === "message.updated");
       assert.isFalse(messageEvent?.type === "message.updated" && messageEvent.payload.streaming);
+      const stoppedSession = events.find((event) => event.type === "provider-session.updated");
+      assert.deepEqual(
+        stoppedSession?.type === "provider-session.updated"
+          ? stoppedSession.payload.extensionStatuses
+          : undefined,
+        [],
+      );
       assert.deepEqual(
         events.flatMap((event) =>
           event.type === "turn-item.updated" && "streaming" in event.payload

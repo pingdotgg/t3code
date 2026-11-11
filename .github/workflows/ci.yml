@@ -27,6 +27,7 @@ jobs:
     outputs:
       typecheck: ${{ steps.detect.outputs.typecheck }}
       build: ${{ steps.detect.outputs.build }}
+      desktop_launch: ${{ steps.detect.outputs.desktop_launch }}
       test: ${{ steps.detect.outputs.test }}
       test_packages: ${{ steps.detect.outputs.test_packages }}
       test_web: ${{ steps.detect.outputs.test_web }}
@@ -135,13 +136,20 @@ jobs:
         if: needs.changes.outputs.build != 'false'
 
       # Runs in the background while Vite+ installs; the step before the build waits for it.
+      # Xvfb is for the desktop launch check below.
       - name: Start installing browser secret helper build libraries
         if: needs.changes.outputs.build != 'false'
         run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          # Fetch only the indexes these main and universe packages need. The full set is ~42 MB,
+          # which a slow mirror can stretch past the wait below.
+          sudo sed -i -e 's|http://|https://|g' -e 's/^Components: .*/Components: main universe/' \
+            /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           (
             set +e
-            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+            sudo apt-get update -o Acquire::Languages=none \
+              -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false \
+              -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false &&
+              sudo apt-get install -y libsecret-1-dev pkg-config xvfb
             echo "$?" > "$RUNNER_TEMP/apt-status"
           ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
 
@@ -192,6 +200,60 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
+      # The release launch check, run unpackaged against the same old-state fixture, for
+      # startup and sidebar changes. Packaging and signing stay release-only.
+      - name: Open the seeded thread in the built desktop app
+        id: desktop_launch
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.desktop_launch != 'false' }}
+        timeout-minutes: 4
+        run: |
+          electron=$(node -p "require('./apps/desktop/node_modules/electron')")
+          xvfb-run -a node scripts/smoke-desktop-app.ts --executable "$electron" --app apps/desktop \
+            --artifacts-dir "$RUNNER_TEMP/desktop-launch-check"
+
+      - name: Upload desktop launch check
+        if: ${{ failure() && steps.desktop_launch.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-launch-check
+          path: ${{ runner.temp }}/desktop-launch-check
+          if-no-files-found: ignore
+
+      # Browser tests run source modules; this boots the production chunk graph. The
+      # desktop build above already produced apps/web/dist, and the client waits about
+      # 15s for a session that never comes, so this runs here instead of in Test Web,
+      # which gates the whole run. Chromium comes from the cache Test Web shares.
+      - name: Resolve Playwright version
+        id: playwright_version
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for the built web client boot check
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' && steps.chromium_cache.outputs.cache-hit != 'true' }}
+        run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/web/node_modules/playwright/cli.js install-deps chromium
+          fi
+
+      - name: Boot the built web client
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.changes.outputs.test_web != 'false' }}
+        timeout-minutes: 3
+        run: node apps/web/scripts/verify-built-boot.ts
+
       - name: Typecheck
         if: ${{ !cancelled() && steps.typecheck.outcome == 'success' }}
         timeout-minutes: 5
@@ -231,10 +293,16 @@ jobs:
       # the background while Vite+ installs; the step before the tests waits for it.
       - name: Start installing browser secret helper build libraries
         run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          # Fetch only the indexes these main and universe packages need. The full set is ~42 MB,
+          # which a slow mirror can stretch past the wait below.
+          sudo sed -i -e 's|http://|https://|g' -e 's/^Components: .*/Components: main universe/' \
+            /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           (
             set +e
-            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+            sudo apt-get update -o Acquire::Languages=none \
+              -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false \
+              -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false &&
+              sudo apt-get install -y libsecret-1-dev pkg-config
             echo "$?" > "$RUNNER_TEMP/apt-status"
           ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
 
@@ -258,7 +326,7 @@ jobs:
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
       - name: Test release checks
-        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs
+        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs
 
       - name: Finish installing browser secret helper build libraries
         timeout-minutes: 5
@@ -339,12 +407,6 @@ jobs:
 
       - name: Test
         run: vp run --filter @t3tools/web test
-
-      # Browser tests run source modules; this boots the production chunk graph.
-      - name: Boot the built web client
-        run: |
-          vp run --filter @t3tools/web build
-          node apps/web/scripts/verify-built-boot.ts
 
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
@@ -542,7 +604,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.release_smoke != 'false' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -593,7 +655,7 @@ jobs:
           # not needed. Gates are keyed by job name, except merged Build and the
           # macOS lint.
           echo "$RESULTS" | jq -e '.changes.outputs as $gates
-            | {build: ["build", "typecheck"], mobile_native_static_analysis: ["mobile_native"]} as $renamed
+            | {build: ["build", "typecheck", "desktop_launch"], mobile_native_static_analysis: ["mobile_native"]} as $renamed
             | all(to_entries[];
                 .value.result == "success"
                 or (.value.result == "skipped"

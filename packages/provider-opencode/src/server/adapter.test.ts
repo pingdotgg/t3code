@@ -660,6 +660,159 @@ describe("OpenCodeAdapterV2", () => {
       ),
   );
 
+  // OpenCode 1.18.18 reports a context overflow as session.error, then auto-compacts and continues.
+  it.effect("keeps a turn running through a context overflow that OpenCode auto-compacts", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      let promptId = "";
+      const harness = yield* makeOpenCodeRuntimeHarness("context-overflow", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async (input: { messageID: string }) => {
+            promptId = input.messageID;
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const status = (type: "busy" | "idle") => ({
+        type: "session.status",
+        properties: { sessionID: "root", status: { type } },
+      });
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: { id: promptId, role: "user", time: { created: 1 } },
+          },
+        }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("busy")));
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.error",
+          properties: {
+            sessionID: "root",
+            error: {
+              name: "ContextOverflowError",
+              data: {
+                message:
+                  "This model's maximum context length is 131070 tokens. However, your messages resulted in 140049 tokens.",
+              },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({ type: "session.compacted", properties: { sessionID: "root" } }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("busy")));
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: "root",
+            part: {
+              id: "post-compaction-text",
+              sessionID: "root",
+              messageID: "post-compaction-assistant",
+              type: "text",
+              text: "Post-compaction step",
+              time: { start: 2 },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: {
+              id: "post-compaction-assistant",
+              sessionID: "root",
+              role: "assistant",
+              time: { created: 2, completed: 3 },
+              parentID: promptId,
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("idle")));
+
+      const events = Array.from(yield* Fiber.join(received));
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "completed");
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "Post-compaction step",
+        ),
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("fails an explicit compaction that OpenCode reports as a context overflow", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness("compact-overflow", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          summarize: async () => {
+            await nativeEvents.push({
+              type: "session.error",
+              properties: {
+                sessionID: "root",
+                error: {
+                  name: "ContextOverflowError",
+                  data: { message: "This model's maximum context length is 131070 tokens." },
+                },
+              },
+            });
+            return { data: true };
+          },
+        },
+      });
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* harness.startTurn("/compact");
+
+      const events = Array.from(yield* Fiber.join(received));
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "failed");
+      assert.equal(
+        terminal?.failure?.message,
+        "This model's maximum context length is 131070 tokens.",
+      );
+      assert.isFalse(
+        events.some(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("preserves native multi-select and custom-answer flags through a live reply", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -712,6 +865,10 @@ describe("OpenCodeAdapterV2", () => {
         }),
       );
       const events = yield* Fiber.join(received);
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["turn_item.updated", "runtime_request.updated"],
+      );
       const item = events.find((event) => event.type === "turn_item.updated");
       const request = events.find((event) => event.type === "runtime_request.updated");
       assert.equal(item?.type, "turn_item.updated");
@@ -784,21 +941,65 @@ describe("OpenCodeAdapterV2", () => {
             error: "Command failed",
             time: { start: 3, end: 4 },
           },
+          {
+            status: "error",
+            input: { command: "sleep 60" },
+            error: "Interrupted",
+            metadata: { interrupted: true },
+            time: { start: 5, end: 6 },
+          },
+          // OpenCode 1.3 reports a stopped tool only through this message.
+          {
+            status: "error",
+            input: { command: "sleep 90" },
+            error: "Tool execution aborted",
+            time: { start: 6, end: 7 },
+          },
         ] satisfies ReadonlyArray<ToolPart["state"]>;
         for (const state of states) {
+          const callID =
+            state.status === "error" ? `call-ended-${state.time.start}` : "call-working";
           yield* Effect.promise(() =>
             nativeEvents.push({
               type: "message.part.updated",
               properties: {
                 sessionID: nativeSessionId,
                 part: {
-                  id: state.status === "error" ? "part-failed" : "part-working",
+                  id: `part-${callID}`,
                   sessionID: nativeSessionId,
                   messageID: "late-assistant",
                   type: "tool",
-                  callID: state.status === "error" ? "call-failed" : "call-working",
+                  callID,
                   tool: "bash",
                   state,
+                },
+              },
+            }),
+          );
+        }
+        for (const error of ["Task cancelled", "Task failed"]) {
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.part.updated",
+              properties: {
+                sessionID: nativeSessionId,
+                part: {
+                  id: `part-${error}`,
+                  sessionID: nativeSessionId,
+                  messageID: "late-assistant",
+                  type: "tool",
+                  callID: `call-${error}`,
+                  tool: "task",
+                  state: {
+                    status: "error",
+                    input: {
+                      description: "Sleep task",
+                      prompt: "sleep 120",
+                      subagent_type: "general",
+                    },
+                    error,
+                    time: { start: 7, end: 8 },
+                  },
                 },
               },
             }),
@@ -902,20 +1103,30 @@ describe("OpenCodeAdapterV2", () => {
         const commands = items.filter((item) => item.type === "command_execution");
         assert.deepEqual(
           commands.map((item) => item.status),
-          ["pending", "running", "completed", "failed", "failed"],
+          ["pending", "running", "completed", "failed", "interrupted", "interrupted", "failed"],
         );
         assert.deepEqual(
           commands.map((item) => item.input),
-          ["pwd", "pwd", "pwd", "pwd", "vp test"],
+          ["pwd", "pwd", "pwd", "pwd", "sleep 60", "sleep 90", "vp test"],
         );
         assert.equal(commands[2]?.output, "/repo\n");
         assert.equal(commands[3]?.output, "Command failed");
-        assert.equal(commands[4]?.exitCode, 1);
+        assert.equal(commands[6]?.exitCode, 1);
         assert.equal(
           events
             .flatMap((event) => (event.type === "node.updated" ? [event.node] : []))
-            .findLast((node) => node.id === commands[4]?.nodeId)?.status,
+            .findLast((node) => node.id === commands[6]?.nodeId)?.status,
           "failed",
+        );
+        assert.deepEqual(
+          items.filter((item) => item.type === "subagent").map((item) => item.status),
+          ["interrupted", "failed"],
+        );
+        assert.deepEqual(
+          events.flatMap((event) =>
+            event.type === "subagent.updated" ? [event.subagent.status] : [],
+          ),
+          ["interrupted", "failed"],
         );
         assert.isTrue(
           events.some(
@@ -1445,6 +1656,86 @@ describe("OpenCodeAdapterV2", () => {
       yield* Fiber.join(start);
       assert.equal(promptCalls, 0);
       release.resolve();
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("keeps an admitted native command running when its HTTP request times out", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const commandCalled = promiseGate<string>();
+      let rejectCommand!: (cause: unknown) => void;
+      const commandResponse = new Promise<never>((_, reject) => {
+        rejectCommand = reject;
+      });
+      const sessionId = "native-command-timeout";
+      const harness = yield* makeOpenCodeRuntimeHarness("native-command-timeout", sessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        command: { list: async () => ({ data: [{ name: "review" }] }) },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          command: (input: { messageID: string }) => {
+            commandCalled.resolve(input.messageID);
+            return commandResponse;
+          },
+        },
+      });
+      const start = yield* harness.startTurn("/review staged changes").pipe(Effect.forkScoped);
+      const messageID = yield* Effect.promise(() => commandCalled.promise);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: sessionId,
+            info: {
+              id: messageID,
+              sessionID: sessionId,
+              role: "user",
+              time: { created: DateTime.toEpochMillis(harness.now) },
+            },
+          },
+        }),
+      );
+      yield* Fiber.join(start);
+      const terminal = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      // Node's fetch gives up on a command still running in OpenCode after 300 s.
+      rejectCommand(
+        new TypeError("fetch failed", {
+          cause: Object.assign(new Error("Headers Timeout Error"), {
+            name: "HeadersTimeoutError",
+            code: "UND_ERR_HEADERS_TIMEOUT",
+          }),
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: sessionId, status: { type: "busy" } },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({ type: "session.idle", properties: { sessionID: sessionId } }),
+      );
+
+      const [event] = yield* Fiber.join(terminal);
+      assert.equal(
+        event?.type === "turn.terminal" ? event.status : undefined,
+        "completed",
+        "a command admitted by its user receipt must not fail when its HTTP request times out",
+      );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,

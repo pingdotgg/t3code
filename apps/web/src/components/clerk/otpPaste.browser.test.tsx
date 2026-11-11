@@ -71,10 +71,18 @@ describe("useOtpPasteNormalizer", () => {
     });
     input.setSelectionRange(1, 2);
     await act(async () => {
-      paste(input, "9 ");
+      paste(input, "98 ");
     });
 
-    await expect.element(input).toHaveValue("19345");
+    await expect.element(input).toHaveValue("198345");
+    expect(input.selectionStart).toBe(3);
+    expect(input.selectionEnd).toBe(3);
+    input.setSelectionRange(1, 2);
+    await act(async () => {
+      paste(input, "76 ");
+    });
+    await screen.rerender(<CodeField />);
+    await expect.element(input).toHaveValue("178345");
     expect(input.selectionStart).toBe(2);
     expect(input.selectionEnd).toBe(2);
   });

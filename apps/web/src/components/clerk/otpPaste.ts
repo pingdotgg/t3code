@@ -29,14 +29,13 @@ function handleOtpPaste(event: ClipboardEvent) {
   // A full-length code replaces whatever is there; a shorter fragment goes in at the selection.
   const start = code.length === maxLength ? 0 : (input.selectionStart ?? input.value.length);
   const end = code.length === maxLength ? input.value.length : (input.selectionEnd ?? start);
-  const nextValue = (input.value.slice(0, start) + code + input.value.slice(end)).slice(
-    0,
-    maxLength,
-  );
+  const available = maxLength - (input.value.length - (end - start));
+  const inserted = code.slice(0, Math.max(0, available));
+  const nextValue = input.value.slice(0, start) + inserted + input.value.slice(end);
   // React tracks the last value it saw; the prototype setter plus a bubbling input event reaches its onChange.
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, nextValue);
   // Setting the value moves the caret to the end; put it back after the pasted digits.
-  const caret = Math.min(start + code.length, maxLength);
+  const caret = start + inserted.length;
   input.setSelectionRange(caret, caret);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
