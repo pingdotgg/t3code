@@ -11,8 +11,6 @@ import {
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
   resolveSidebarRowThreadId,
-  belongsInSidebarWorkingShelf,
-  isSidebarEnvironmentDisconnected,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
@@ -642,7 +640,28 @@ describe("getFallbackThreadIdAfterDelete", () => {
       { snoozedUntil: "2099-01-01T00:00:00.000Z", snoozedAt: "2026-03-09T10:06:00.000Z" },
     ],
     ["settled", { settledOverride: "settled", settledAt: "2026-03-09T10:06:00.000Z" }],
-  ] as const)("skips a %s thread parked on its shelf", (_state, parked) => {
+    [
+      "side chat",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("thread-visible"),
+          parentThreadId: ThreadId.make("thread-visible"),
+          relationshipToParent: "fork",
+          sideChat: true,
+        },
+      },
+    ],
+    [
+      "subagent",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("thread-visible"),
+          parentThreadId: ThreadId.make("thread-visible"),
+          relationshipToParent: "subagent",
+        },
+      },
+    ],
+  ] as const)("skips a %s thread the sidebar does not list", (_state, parked) => {
     const fallbackThreadId = getFallbackThreadIdAfterDelete({
       threads: [
         makeThread({
@@ -1008,38 +1027,6 @@ describe("Working shelf (beta)", () => {
         hasActionableProposedPlan: true,
       }),
     ).toBe(false);
-  });
-
-  it.each([
-    ["connected", true, false],
-    ["connected", false, true],
-    ["connecting", false, false],
-    ["reconnecting", false, true],
-    ["offline", false, true],
-    ["error", false, true],
-    ["unsupported", false, true],
-    ["available", false, true],
-  ] as const)(
-    "lists threads outside the shelf on a %s environment: %s",
-    (phase, shellIsLive, disconnected) => {
-      expect(isSidebarEnvironmentDisconnected(phase, shellIsLive)).toBe(disconnected);
-    },
-  );
-
-  it("lists a running thread outside the shelf while its environment is disconnected", () => {
-    const thread = { ...idle, runtime, environmentId: localEnvironmentId };
-    const shelve = (disconnected: ReadonlyArray<EnvironmentId>, enabled = true) =>
-      belongsInSidebarWorkingShelf(thread, {
-        enabled,
-        disconnectedEnvironmentIds: new Set(disconnected),
-        isWorking: isSidebarThreadWorking,
-      });
-
-    expect(shelve([])).toBe(true);
-    expect(shelve([localEnvironmentId])).toBe(false);
-    expect(shelve([])).toBe(true);
-    expect(shelve([EnvironmentId.make("environment-other")])).toBe(true);
-    expect(shelve([], false)).toBe(false);
   });
 
   describe("sortInboxThreadsByReturn", () => {

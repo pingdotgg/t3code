@@ -1366,6 +1366,29 @@ describe("extractMcpToolCallIdentity", () => {
     }
   });
 
+  it("recovers T3 identity from Hermes editor-renamed MCP tool titles", () => {
+    const identityFor = (title: string) =>
+      extractMcpToolCallIdentity(
+        toolCallFromUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: "hermes-1",
+          kind: "other",
+          title,
+          status: "pending",
+          rawInput: { title: "Chart", html: "<p>hi</p>", height: 320 },
+        }),
+      );
+
+    expect(identityFor("mcp__editor_t3_code_f6129534__html_render")).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+    expect(identityFor("mcp__editor_github_1234abcd__html_render")).toEqual({
+      server: "editor_github_1234abcd",
+      tool: "html_render",
+    });
+  });
+
   it("recovers T3 identity from Kiro's @-scoped titles", () => {
     for (const tool of ["html_render", "t3_thread_read", "delegate_task"]) {
       const toolCall = toolCallFromUpdate({
@@ -1378,6 +1401,68 @@ describe("extractMcpToolCallIdentity", () => {
       });
       expect(extractMcpToolCallIdentity(toolCall), tool).toEqual({ server: "t3-code", tool });
     }
+  });
+
+  // regression: #33667 OMP mounts MCP tools as xd:// devices and calls them through `write`.
+  it("recovers T3 identity from OMP xd:// device writes but not its doc reads", () => {
+    const args = {
+      html: '<svg width="320" height="120"><rect width="300" height="100" fill="#4f46e5"/></svg>',
+      title: "Static SVG",
+    };
+    const result = {
+      htmlRender: { attachmentId: "synthetic-attachment-html", title: "Static SVG", height: 136 },
+      message: "Shown to the reader above your reply.",
+    };
+    const text = JSON.stringify(result);
+    const created = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "toolu_015ATZG99gw99Rrp4htieLux",
+      title: "Rendering static SVG",
+      kind: "execute",
+      status: "pending",
+      rawInput: { path: "xd://mcp__t3_code_html_render", content: JSON.stringify(args) },
+    });
+    const completed = mergeToolCallState(
+      created,
+      toolCallFromUpdate({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "toolu_015ATZG99gw99Rrp4htieLux",
+        status: "completed",
+        rawOutput: {
+          content: [{ type: "text", text }],
+          details: {
+            xdev: {
+              tool: "mcp__t3_code_html_render",
+              mode: "execute",
+              args,
+              tier: "write",
+              inner: {
+                serverName: "t3-code",
+                mcpToolName: "html_render",
+                rawContent: [{ type: "text", text }],
+                provider: "acp",
+                providerName: "ACP Client",
+                structuredContent: result,
+              },
+            },
+          },
+        },
+        content: [{ type: "content", content: { type: "text", text } }],
+      }),
+    );
+    const docRead = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "toolu_read",
+      title: "Reading html_render schema",
+      kind: "read",
+      status: "pending",
+      rawInput: { path: "xd://mcp__t3_code_html_render" },
+    });
+
+    const expected = { server: "t3-code", tool: "html_render", input: args };
+    expect(extractMcpToolCallIdentity(created), "pending write").toEqual(expected);
+    expect(extractMcpToolCallIdentity(completed), "completed write").toEqual(expected);
+    expect(extractMcpToolCallIdentity(docRead), "doc read").toBeUndefined();
   });
 
   it("does not claim an agent's own tool that shares a T3 tool name", () => {

@@ -9,6 +9,7 @@ import { parseDiffFileRevisions } from "@t3tools/source-control-core/server/diff
 import {
   PullRequestProviderError,
   type ProviderChangeRequestDetail,
+  type ProviderChangeRequestSummary,
   type ProviderRepositoryRef,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -47,6 +48,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: false,
   reactions: true,
+  mentions: true,
+  referenceSigils: [],
   labels: true,
   // Forgejo's public API has no thread replies/resolution or draft conversion endpoint.
   review: {
@@ -55,7 +58,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     resolve: false,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: false },
   edit: { changeRequest: true, comment: true },
 };
 const USER_SEARCH_LIMIT = 50;
@@ -79,6 +82,24 @@ const issuePath = (input: ProviderRepositoryRef & { readonly number: number }) =
 // Review IDs differ from the issue-comment IDs used by Forgejo's reactions API.
 const reviewCommentId = (review: typeof ForgejoReview.Type) =>
   /#issuecomment-([1-9]\d*)$/.exec(review.html_url ?? "")?.[1];
+
+const decodePullRequest = decodeJsonResult(ForgejoPullRequest);
+
+/** Only the PATCH reply carries the pull request; merge and update reply with an empty body. */
+function forgejoActionSummary(stdout: string): ProviderChangeRequestSummary | undefined {
+  const decoded = decodePullRequest(stdout);
+  if (Result.isFailure(decoded)) return undefined;
+  const pr = decoded.success;
+  // A state PATCH does not recompute conflicts, so "unknown" there would hide a known conflict.
+  const { mergeability, ...summary } = forgejoChangeRequest(pr);
+  return {
+    ...summary,
+    ...(mergeability === "unknown" ? {} : { mergeability }),
+    additions: pr.additions ?? undefined,
+    deletions: pr.deletions ?? undefined,
+    ...(pr.head.sha.trim() === "" ? {} : { headSha: pr.head.sha }),
+  };
+}
 
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
@@ -537,12 +558,12 @@ export const make = Effect.gen(function* () {
           });
         case "close":
         case "reopen":
-          return write({
+          return request({
             ...input,
             path: pullPath(input),
             method: "PATCH",
             body: { state: input.action === "close" ? "closed" : "open" },
-          });
+          }).pipe(Effect.map((result) => forgejoActionSummary(result.stdout)));
         case "update-branch":
           return write({
             ...input,
@@ -683,12 +704,11 @@ export const make = Effect.gen(function* () {
         // Before anything is typed the repository's own people stand in; a search reaches
         // contributors from forks, who are never assignable.
         if (query.length === 0) {
-          const users = yield* page(
+          const users = yield* readArray(
             { ...input, path: `${repoPath(input)}/assignees` },
             ForgejoUser,
-            100,
           );
-          return { items: actors(users.items), truncated: users.truncated };
+          return { items: actors(users), truncated: false };
         }
         const found = yield* readLinked(
           {

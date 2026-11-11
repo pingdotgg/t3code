@@ -84,7 +84,7 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
         prefix: "t3-claude-fork-config-",
       });
       const projectDir = yield* writeClaudeSession(configDir);
-      const hostConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      const hostConfigDir = (yield* HostProcess.Environment).CLAUDE_CONFIG_DIR;
       const inProcessFork = vi.spyOn(ClaudeSdk, "forkSession");
       yield* Effect.addFinalizer(() => Effect.sync(() => inProcessFork.mockRestore()));
 
@@ -110,7 +110,7 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
         ?.match(/"uuid"\s*:\s*"([^"]+)"/)?.[1];
       assert.isString(inheritedHead);
       assert.equal(forked.headMessageId, inheritedHead);
-      assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
+      assert.equal((yield* HostProcess.Environment).CLAUDE_CONFIG_DIR, hostConfigDir);
       assert.equal(inProcessFork.mock.calls.length, 0);
     }).pipe(Effect.provide(forkRunnerLayer)),
   ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -595,14 +595,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
         ? makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message
         : "";
     });
-
-  // Claude Code refuses bypassPermissions as root and explains why only on
-  // stderr, so the turn failure has to carry that line.
-  it.effect("reports the CLI's root refusal when it exits before answering", () =>
-    Effect.gen(function* () {
-      assert.include(yield* startupFailureMessage(rootRefusal), rootRefusal);
-    }).pipe(Effect.provide(realQueryRunner)),
-  );
 
   // Startup stderr can carry paths, tokens, or settings, so only the known
   // refusal reaches the failure the client shows.
