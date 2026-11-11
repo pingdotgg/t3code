@@ -3226,75 +3226,87 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("settles native image tasks when reconnect attempts fail", () =>
-    Effect.gen(function* () {
-      const attempts = yield* Effect.forEach([0, 1, 2, 3, 4], () => Deferred.make<void>());
-      let count = 0;
-      let failures = 0;
-      const borrowers = {
-        get current() {
-          return count;
-        },
-        set current(next: number) {
-          if (next < count && count === 2) {
-            const attempt = attempts[failures++];
-            if (attempt !== undefined) Deferred.doneUnsafe(attempt, Effect.void);
-          }
-          count = next;
-        },
-      };
-      const tool = {
-        sessionID: SESSION,
-        assistantMessageID: "msg_assistant",
-        id: "call-image-lost",
-      };
-      const { runtime, thread } = yield* resumed(
-        [
-          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-          promptAccepted,
-          event("session.tool.input.started", { ...tool, name: "experimental_image_generate" }),
-          event(
-            "session.tool.success",
-            {
-              ...tool,
-              content: [{ type: "text", text: "Launched" }],
-              metadata: { jobID: "image_lost", path: "/tmp/image", model: "test/image" },
-              executed: false,
-            },
-            undefined,
-            2,
+  it.effect.each(["root", "child"] as const)(
+    "settles %s native image tasks when reconnect attempts fail",
+    (owner) =>
+      Effect.gen(function* () {
+        const attempts = yield* Effect.forEach([0, 1, 2, 3, 4], () => Deferred.make<void>());
+        let count = 0;
+        let failures = 0;
+        const borrowers = {
+          get current() {
+            return count;
+          },
+          set current(next: number) {
+            if (next < count && count === 2) {
+              const attempt = attempts[failures++];
+              if (attempt !== undefined) Deferred.doneUnsafe(attempt, Effect.void);
+            }
+            count = next;
+          },
+        };
+        const tool = {
+          sessionID: owner === "root" ? SESSION : CHILD,
+          assistantMessageID: "msg_assistant",
+          id: "call-image-lost",
+        };
+        const { runtime, thread } = yield* resumed(
+          [
+            ...(owner === "root"
+              ? [out("session.prompt", { sessionID: SESSION, text: "<any>" }), promptAccepted]
+              : [
+                  ...backgroundLaunch(CHILD),
+                  event("session.execution.started", { sessionID: CHILD }),
+                ]),
+            event("session.tool.input.started", { ...tool, name: "experimental_image_generate" }),
+            event(
+              "session.tool.success",
+              {
+                ...tool,
+                content: [{ type: "text", text: "Launched" }],
+                metadata: { jobID: "image_lost", path: "/tmp/image", model: "test/image" },
+                executed: false,
+              },
+              undefined,
+              2,
+            ),
+            ...(owner === "child"
+              ? [event("session.execution.succeeded", { sessionID: CHILD })]
+              : []),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            { type: "runtime_exit", status: "success" },
+          ],
+          { borrowers },
+        );
+        const events = yield* runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(attempts[0]!);
+        for (const attempt of attempts.slice(1)) {
+          yield* TestClock.adjust("2 seconds");
+          yield* Deferred.await(attempt);
+        }
+        const collected = yield* Fiber.join(events);
+        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        assert.isTrue(
+          collected.some(
+            (e) =>
+              e.type === "turn_item.updated" &&
+              e.turnItem.nativeItemRef?.nativeId ===
+                (owner === "root" ? tool.id : `${CHILD}:${tool.id}`) &&
+              e.turnItem.status === "failed",
           ),
-          event("session.execution.succeeded", { sessionID: SESSION }),
-          { type: "runtime_exit", status: "success" },
-        ],
-        { borrowers },
-      );
-      const events = yield* runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
-      yield* runtime.startTurn(turnInput(thread));
-      yield* Deferred.await(attempts[0]!);
-      for (const attempt of attempts.slice(1)) {
-        yield* TestClock.adjust("2 seconds");
-        yield* Deferred.await(attempt);
-      }
-      const collected = yield* Fiber.join(events);
-      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-      assert.isTrue(
-        collected.some(
-          (e) =>
-            e.type === "turn_item.updated" &&
-            e.turnItem.nativeItemRef?.nativeId === tool.id &&
-            e.turnItem.status === "failed",
-        ),
-      );
-      assert.deepEqual(
-        collected
-          .flatMap((e) =>
-            e.type === "provider_thread.updated" ? [e.providerThread.pendingBackgroundTasks] : [],
-          )
-          .at(-1),
-        [],
-      );
-    }).pipe(Effect.scoped),
+        );
+        const rootSnapshots = collected.flatMap((e) =>
+          e.type === "provider_thread.updated" && e.providerThread.id === thread.id ? [e] : [],
+        );
+        assert.isFalse(rootSnapshots.at(-1)?.pendingBackgroundWork);
+        assert.deepEqual(rootSnapshots.at(-1)?.providerThread.pendingBackgroundTasks, []);
+        assert.isTrue(
+          rootSnapshots.some((e) =>
+            e.providerThread.pendingBackgroundTasks?.some((task) => task.taskId === "image_lost"),
+          ),
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.effect("projects successful native todo updates into one checklist", () =>

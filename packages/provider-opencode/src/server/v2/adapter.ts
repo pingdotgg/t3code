@@ -1204,7 +1204,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               status: "running",
             });
           status = "running";
-          yield* syncRoster(state);
+          yield* syncRosterAncestors(state);
         }
       }
       const updatedAt = yield* DateTime.now;
@@ -1471,16 +1471,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ? {}
             : { childThreadId: call.child.subagent.appThread.id }),
         }));
-      const imageTasks = [...state.imageJobs.entries()].flatMap(([taskId, job]) =>
-        job.status === "running"
-          ? [
-              {
-                taskId,
-                kind: "background_task" as const,
-                description: `Image generation (${job.model})`,
-              },
-            ]
-          : [],
+      const imageTasks = sessionsOf(state).flatMap((session) =>
+        [...session.imageJobs.entries()].flatMap(([taskId, job]) =>
+          job.status === "running"
+            ? [
+                {
+                  taskId,
+                  kind: "background_task" as const,
+                  description: `Image generation (${job.model})`,
+                },
+              ]
+            : [],
+        ),
       );
       const allTasks = [...roster, ...imageTasks];
       const current = state.providerThread.pendingBackgroundTasks ?? [];
@@ -2527,7 +2529,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               { output: payload.text, metadata: undefined, files },
             );
             job.turn.tools.delete(job.toolId);
-            yield* syncRoster(state);
+            yield* syncRosterAncestors(state);
           }),
         ),
       );
@@ -2836,7 +2838,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         for (const wake of state.wakes.splice(0)) wake.dropped = true;
         state.reports.clear();
-        yield* syncRoster(state);
+        yield* syncRosterAncestors(state);
       }
       yield* setSessionStatus("error", message);
       yield* Queue.end(events);
