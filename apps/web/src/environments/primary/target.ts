@@ -189,10 +189,7 @@ function resolveConfiguredPrimaryTarget(): PrimaryEnvironmentTarget | null {
     return null;
   }
 
-  // Scheme checks run on the raw configured string, while the URL parser
-  // folds schemes to lowercase ("WSS://host" parses fine). Without the
-  // case folding an uppercase scheme would be classified as plaintext and
-  // swapped to http/ws, silently downgrading TLS.
+  // Match URL scheme case-folding so uppercase WSS cannot downgrade to plaintext.
   const resolvedHttpBaseUrl =
     configuredHttpBaseUrl ??
     (configuredWsBaseUrl?.toLowerCase().startsWith("wss:")
@@ -292,8 +289,7 @@ export function resolvePrimaryEnvironmentHttpUrl(
   return url.toString();
 }
 
-// Null only when the desktop app runs with its local environment disabled;
-// every other host has a primary (falling back to the page origin).
+/** Null only for desktop with its local environment disabled; other hosts fall back to page origin. */
 export function readPrimaryEnvironmentTarget(): PrimaryEnvironmentTarget | null {
   if (isLocalEnvironmentDisabled()) {
     return null;

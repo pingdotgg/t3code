@@ -4,11 +4,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, SecretProviderId, SecretProviderKind } from "@t3tools/contracts";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
@@ -33,11 +33,9 @@ function harness(
   tokens: Record<string, string> = {},
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
-  const envs: Array<NodeJS.ProcessEnv | undefined> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
     Effect.sync(() => {
       calls.push(input.args);
-      envs.push(input.env);
       const user = input.args[input.args.indexOf("--user") + 1];
       if (input.args.includes("--user") && user !== undefined && signedOut.includes(user)) {
         return {
@@ -66,11 +64,15 @@ function harness(
       }),
     ),
     Layer.provide(NodeCrypto.layer),
-    Layer.provide(FileSystem.layerNoop({ exists: () => Effect.succeed(false) })),
-    Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
-    Layer.provide(Layer.succeed(HostProcess.UserId, 1000)),
+    Layer.provide(FileSystem.layerNoop({})),
+    Layer.provide(
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => Effect.die(`Unexpected request to ${request.url}`)),
+      ),
+    ),
   );
-  return { layer, calls, envs };
+  return { layer, calls };
 }
 
 describe("GitHubCredentials", () => {
@@ -132,24 +134,36 @@ describe("GitHubCredentials", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("keeps gh from autolaunching a session bus when none can be found", () => {
-    vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "");
-    const { layer, envs } = harness();
-    return Effect.gen(function* () {
-      const credentials = yield* GitHubCredentials.GitHubCredentials;
-      yield* credentials.get("github.com");
-      expect(envs[0]?.DBUS_SESSION_BUS_ADDRESS).toBe("disabled:");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("uses a token saved in Settings before GH_TOKEN and gh", () => {
     vi.stubEnv("GH_TOKEN", "env-token");
     const { layer, calls } = harness({}, [], { "github.com": "saved-token" });
     return Effect.gen(function* () {
       const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
       const credential = yield* credentials.get("github.com");
       expect(Redacted.value(credential.token)).toBe("saved-token");
       expect(credential.source).toBe("settings");
+
+      // A reference left in place by getWithSecrets is one its secret provider could not read.
+      yield* settings.update({
+        secretProviders: {
+          [SecretProviderId.make("vault")]: {
+            kind: SecretProviderKind.make("one_password"),
+            label: "Work vault",
+            config: {},
+          },
+        },
+        sourceControlHosts: {
+          github: {
+            tokens: {
+              "github.com": { provider: SecretProviderId.make("vault"), reference: "gh#token" },
+            },
+          },
+        },
+      });
+      const error = yield* Effect.flip(credentials.get("github.com"));
+      expect(error._tag).toBe("SettingsSecretUnresolvedError");
+      expect(error.message).toContain('"Work vault"');
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
@@ -163,6 +177,19 @@ describe("GitHubCredentials", () => {
       expect((yield* Effect.flip(credentials.get("github.com")))._tag).toBe(
         "GitHubHostDisabledError",
       );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("never hands a token to a host that is not a plain hostname", () => {
+    vi.stubEnv("GH_TOKEN", "env-token");
+    const { layer, calls } = harness();
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      for (const host of ["evil.com#.ghe.com", "evil.com/.ghe.com", "user@x.ghe.com"]) {
+        expect(GitHubCredentials.environmentToken(host, { GH_TOKEN: "env-token" })).toBeNull();
+        expect((yield* Effect.flip(credentials.get(host)))._tag).toBe("GitHubNotSignedInError");
+      }
+      expect(calls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 });
