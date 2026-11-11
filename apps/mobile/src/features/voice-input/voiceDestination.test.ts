@@ -2,7 +2,12 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { chooseVoiceDestination, voiceGrantAtom, voiceRouteAtom } from "./voiceDestination";
+import {
+  chooseVoiceDestination,
+  pendingCloudVoiceChoice,
+  voiceGrantAtom,
+  voiceRouteAtom,
+} from "./voiceDestination";
 import { readVoiceGrant } from "./voiceGrantStorage";
 
 const mocks = vi.hoisted(() => ({
@@ -46,7 +51,11 @@ vi.mock("../../state/presentation", () => ({
       mocks.probe(id);
       return Atom.make({
         connection: { phase: id === "offline" ? "offline" : "connected" },
-        serverConfig: { environment: { capabilities: { voiceTranscription: true } } },
+        serverConfig: {
+          environment: {
+            capabilities: { voiceTranscription: true, cloudVoiceTranscription: true },
+          },
+        },
       });
     }),
   },
@@ -149,6 +158,7 @@ it("keeps local as the default and never reuses consent for an offline or resele
           acceleration: "cpu",
           modelUnloadTimeout: "never",
           gpuDevices: [],
+          benchmarkTier: "cpu",
         }),
       )
       .mockResolvedValueOnce(Response.json({ text: "hello" }));
@@ -159,6 +169,58 @@ it("keeps local as the default and never reuses consent for an offline or resele
       ["https://my-server.test/api/voice/status", "error"],
       ["https://my-server.test/api/voice/transcribe", "error"],
     ]);
+    chooseVoiceDestination(host, "openai");
+    const cloud = appAtomRegistry.get(voiceRouteAtom)!.transcriber!;
+    mocks.fetch.mockResolvedValueOnce(Response.json({ openai: false, xai: true }));
+    await expect(cloud.prepare(options)).rejects.toMatchObject({
+      code: "unavailable",
+      message: expect.stringContaining("Add your OpenAI API key"),
+    });
+    mocks.fetch.mockResolvedValueOnce(Response.json({ openai: true, xai: true }));
+    const recorded = await cloud.prepare(options);
+    chooseVoiceDestination(host, "xai");
+    await expect(recorded.transcribe("file:///voice.m4a", options)).rejects.toThrow(
+      "Your transcription choice changed.",
+    );
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json({ openai: true, xai: true }))
+      .mockResolvedValueOnce(Response.json({ text: "cloud" }));
+    const next = await appAtomRegistry.get(voiceRouteAtom)!.transcriber!.prepare(options);
+    await expect(next.transcribe("file:///voice.m4a", options)).resolves.toBe("cloud");
+    mocks.fetch.mockResolvedValueOnce(
+      Response.json(
+        {
+          _tag: "CloudSpeechError",
+          provider: "xai",
+          reason: "rejected-key",
+        },
+        { status: 422 },
+      ),
+    );
+    await expect(next.transcribe("file:///voice.m4a", options)).rejects.toMatchObject({
+      _tag: "VoiceTranscriptionError",
+      code: "transcription-failed",
+      message: expect.stringContaining("rejected this API key"),
+    });
+    expect(mocks.fetch.mock.calls.slice(2).map(([url]) => new URL(String(url)).pathname)).toEqual([
+      "/api/voice/cloud/keys",
+      "/api/voice/cloud/keys",
+      "/api/voice/cloud/keys",
+      "/api/voice/cloud/xai/transcribe",
+      "/api/voice/cloud/xai/transcribe",
+    ]);
+    // OpenRouter without a model is no destination; with one, the exact id travels with the audio.
+    chooseVoiceDestination(host, "openrouter");
+    expect(appAtomRegistry.get(voiceRouteAtom)).toBeNull();
+    chooseVoiceDestination(host, "openrouter", "acme/transcribe-1");
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json({ openai: true, xai: true, openrouter: true }))
+      .mockResolvedValueOnce(Response.json({ text: "routed" }));
+    const routed = await appAtomRegistry.get(voiceRouteAtom)!.transcriber!.prepare(options);
+    await expect(routed.transcribe("file:///voice.m4a", options)).resolves.toBe("routed");
+    const upload = new URL(String(mocks.fetch.mock.lastCall![0]));
+    expect(upload.pathname).toBe("/api/voice/cloud/openrouter/transcribe");
+    expect(upload.searchParams.get("model")).toBe("acme/transcribe-1");
     const failWrite = () => {
       throw new Error("Device storage is unavailable");
     };
@@ -169,6 +231,30 @@ it("keeps local as the default and never reuses consent for an offline or resele
     await expect(current!.prepare(options)).rejects.toThrow("Your transcription choice changed.");
   } finally {
     unmount();
+    appAtomRegistry.reset();
+  }
+});
+
+it("a late cloud key save cannot override a newer destination choice", () => {
+  const host = EnvironmentId.make("my-server");
+  try {
+    chooseVoiceDestination(null);
+    const first = pendingCloudVoiceChoice(host, "openai");
+    chooseVoiceDestination(null);
+    first();
+    expect(appAtomRegistry.get(voiceRouteAtom)).toBeNull();
+    expect(JSON.parse(mocks.write.mock.lastCall![1])).toBeNull();
+
+    const older = pendingCloudVoiceChoice(host, "openai");
+    const newer = pendingCloudVoiceChoice(host, "xai");
+    older();
+    expect(appAtomRegistry.get(voiceRouteAtom)).toBeNull();
+    newer();
+    const grant = appAtomRegistry.get(voiceGrantAtom);
+    older();
+    expect(appAtomRegistry.get(voiceGrantAtom)).toBe(grant);
+    expect(grant?.destination).toEqual({ kind: "cloud", environmentId: host, provider: "xai" });
+  } finally {
     appAtomRegistry.reset();
   }
 });
