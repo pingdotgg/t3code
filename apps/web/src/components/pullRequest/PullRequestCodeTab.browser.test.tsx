@@ -59,6 +59,7 @@ const { diffAtom, pagedDiffAtom, filesViewedAtom } = await vi.hoisted(async () =
         files: [
           { path: "early-0.ts", state: "viewed" },
           { path: "early-2.ts", state: "dismissed" },
+          { path: "a.ts", state: "viewed" },
         ],
         truncated: false,
       }),
@@ -308,7 +309,6 @@ it("keeps conversations reachable when every file is hidden", async () => {
   await using screen = await render(tab(0, null, undefined, undefined, threadDetail), {
     container,
   });
-  await screen.getByRole("checkbox", { name: "Viewed" }).click();
   await screen.getByRole("button", { name: "Hide viewed files" }).click();
   await expect.element(screen.getByText("All files are hidden.")).toBeVisible();
 
