@@ -148,7 +148,7 @@ export function createWorkspaceFocusController(doc: Document) {
     // A nested timeline stands in only for its own area, never ahead of that input.
     const preferred = Array.from(
       area.querySelectorAll<HTMLElement>(
-        '[data-workspace-focus-default], [data-sidebar-row][aria-current="page"], [data-settings-section][tabindex="0"], .xterm-helper-textarea, [contenteditable="true"]',
+        '[data-workspace-focus-default], [data-sidebar-row][aria-current="page"], [data-settings-section][aria-current="page"], .xterm-helper-textarea, [contenteditable="true"]',
       ),
     ).find((element) =>
       nested && !standsInFor(element, area) ? usable(element) : belongs(element),
