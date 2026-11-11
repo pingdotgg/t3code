@@ -198,8 +198,10 @@ const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
 // Inline worker source also runs in bundles and single-executable builds without module files.
 const connectionWorkerSource = `
 const { parentPort, workerData } = require("node:worker_threads");
-const { DatabaseSync } = require("node:sqlite");
+const { DatabaseSync, constants } = require("node:sqlite");
+const { statSync } = require("node:fs");
 let db;
+let admission;
 try {
   // A read-only open cannot be undone by SQL, unlike PRAGMA query_only.
   const next = new DatabaseSync(workerData.filename, {
@@ -213,16 +215,87 @@ try {
     if (mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
   }
   db = next;
+  if (workerData.admission !== undefined && typeof db.setAuthorizer === "function") {
+    admission = {
+      control: new Int32Array(workerData.admission.control),
+      writes: new WeakMap(),
+      preparing: undefined,
+      sizeLimit: db.prepare("PRAGMA journal_size_limit"),
+      pageSize: db.prepare("PRAGMA page_size"),
+      busyTimeout: db.prepare("PRAGMA busy_timeout"),
+      checkpoint: db.prepare("PRAGMA wal_checkpoint(PASSIVE)"),
+      truncate: db.prepare("PRAGMA wal_checkpoint(TRUNCATE)"),
+    };
+    db.setAuthorizer((code, action) => {
+      const writes =
+        code === constants.SQLITE_TRANSACTION || code === constants.SQLITE_SAVEPOINT
+          ? action === "BEGIN"
+          : code !== constants.SQLITE_READ &&
+            code !== constants.SQLITE_SELECT &&
+            code !== constants.SQLITE_FUNCTION &&
+            code !== constants.SQLITE_RECURSIVE &&
+            code !== constants.SQLITE_PRAGMA;
+      if (writes && admission.preparing !== undefined) admission.preparing.writes = true;
+      return constants.SQLITE_OK;
+    });
+  }
   parentPort.postMessage({ type: "ready" });
 } catch (error) {
   parentPort.postMessage({ type: "unavailable", message: String(error && error.message ? error.message : error) });
 }
 const statements = new Map();
+const prepareClassified = (sql) => {
+  if (admission === undefined) return db.prepare(sql);
+  const classification = { writes: false };
+  admission.preparing = classification;
+  try {
+    const statement = db.prepare(sql);
+    admission.writes.set(statement, classification.writes);
+    return statement;
+  } finally {
+    admission.preparing = undefined;
+  }
+};
+const walBytes = () => {
+  try {
+    return statSync(workerData.filename + "-wal").size;
+  } catch {
+    return 0;
+  }
+};
+// Mirrors the checkpoint worker's admission: a write waits while the WAL is over its bound and
+// a pinned reader keeps checkpoints from shrinking it. Blocking here leaves the event loop free.
+const admit = () => {
+  const { control } = admission;
+  const { backpressureFrames, idleMs } = workerData.admission;
+  while (Atomics.load(control, 0) === 0) {
+    const limit = Number(admission.sizeLimit.get().journal_size_limit);
+    const frameBytes = Number(admission.pageSize.get().page_size) + 24;
+    const size = walBytes();
+    const oversized = limit >= 0 && size > limit;
+    if (!oversized && size < backpressureFrames * frameBytes) return;
+    const state = admission.checkpoint.get();
+    if (!oversized && state.log < backpressureFrames) return;
+    if (state.checkpointed === state.log) {
+      const timeout = Number(admission.busyTimeout.get().timeout);
+      // A pinned reader must not make truncation wait; retry after the idle delay instead.
+      db.exec("PRAGMA busy_timeout = 0;");
+      let busy;
+      try {
+        busy = admission.truncate.get().busy !== 0;
+      } finally {
+        db.exec("PRAGMA busy_timeout = " + timeout + ";");
+      }
+      if (!busy) continue;
+    }
+    Atomics.wait(control, 0, 0, idleMs);
+  }
+};
 const prepare = (sql, cached) => {
-  if (!cached) return db.prepare(sql);
+  if (!cached) return prepareClassified(sql);
   let statement = statements.get(sql);
   if (statement === undefined) {
-    statement = db.prepare(sql);
+    statement = prepareClassified(sql);
     if (statements.size >= workerData.prepareCacheSize) statements.delete(statements.keys().next().value);
   } else {
     statements.delete(sql);
@@ -242,6 +315,7 @@ parentPort.on("message", ({ type, id, sql, params, cached, values, raw, safeInte
     operation = "prepare";
     const statement = prepare(sql, cached);
     operation = "execute";
+    if (admission !== undefined && admission.writes.get(statement) && !db.isTransaction) admit();
     statement.setReadBigInts(safeIntegers);
     if (statement.columns().length > 0) {
       statement.setReturnArrays(values);
@@ -494,6 +568,8 @@ const makeReader = Effect.fnUntraced(function* (
 
 // The writer cannot be replaced after an exit: a new connection would lack setup PRAGMAs and any open transaction.
 const startWriterWorker = Effect.fnUntraced(function* (options: SqliteClientConfig) {
+  // Set when the writer closes so a write held for WAL admission stops waiting.
+  const closing = new Int32Array(new SharedArrayBuffer(4));
   const warn = (reason: string) =>
     Effect.logWarning("SQLite writer worker unavailable; writes run on the main thread", {
       reason,
@@ -508,6 +584,13 @@ const startWriterWorker = Effect.fnUntraced(function* (options: SqliteClientConf
           requireWal: false,
           allowExtension: false,
           prepareCacheSize: 200,
+          admission: options.checkpointWorker
+            ? {
+                control: closing.buffer,
+                backpressureFrames: CHECKPOINT_BACKPRESSURE_FRAMES,
+                idleMs: CHECKPOINT_IDLE_MS,
+              }
+            : undefined,
         },
       }),
   );
@@ -570,6 +653,8 @@ const startWriterWorker = Effect.fnUntraced(function* (options: SqliteClientConf
     Effect.promise(() => {
       if (stoppedMessage !== undefined) return exited;
       stoppedMessage = "Database writer closed";
+      Atomics.store(closing, 0, 1);
+      Atomics.notify(closing, 0);
       // Queued after in-flight statements; the ref keeps the process alive until the database closes.
       worker.ref();
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.

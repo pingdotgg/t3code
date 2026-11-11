@@ -262,6 +262,34 @@ it.effect("keeps the event loop free while a write waits on another connection's
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("holds writer-worker writes past the WAL size limit until a pinned reader releases", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const limit = 2 * 1024 * 1024;
+      yield* sql`CREATE TABLE IF NOT EXISTS blobs(payload BLOB)`;
+      yield* sql.unsafe(`PRAGMA journal_size_limit = ${limit}`);
+      yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+      const blob = sql`INSERT INTO blobs VALUES (zeroblob(${1536 * 1024}))`;
+      yield* Effect.sync(() => {
+        other.exec("BEGIN");
+        other.prepare("SELECT COUNT(*) FROM counters").get();
+      });
+      yield* sql.withTransaction(blob);
+      yield* sql.withTransaction(blob);
+      const held = yield* Effect.forkChild(sql.withTransaction(blob), { startImmediately: true });
+      yield* Effect.sync(() => other.exec("COMMIT"));
+      yield* Fiber.join(held);
+      // Without admission the third write appends to a WAL the pinned reader kept from resetting.
+      assert.isBelow(Number((yield* fs.stat(`${filename}-wal`)).size), limit);
+    }).pipe(
+      Effect.provide(SqliteClient.layer({ filename, writerWorker: true, checkpointWorker: true })),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("lets the writer commit while a read-only transaction is open", () =>
   withReaderClient((sql) =>
     Effect.gen(function* () {
