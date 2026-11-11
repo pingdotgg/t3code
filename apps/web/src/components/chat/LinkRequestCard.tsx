@@ -28,8 +28,7 @@ import { useId, useRef, useState } from "react";
 
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { mintPairingCodeOn } from "../../state/peerPairingCode";
-import { useLinkableMachines } from "../../state/peerLinks";
-import { serverEnvironment } from "../../state/server";
+import { peerLinkEnvironment, useLinkableMachines } from "../../state/peerLinks";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -88,13 +87,13 @@ function PendingLinkRequest(props: {
   const [open, setOpen] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const answer = useAtomCommand(serverEnvironment.answerLinkRequest, {
+  const answer = useAtomCommand(peerLinkEnvironment.answerRequest, {
     label: "decline link request",
     reportFailure: false,
     reportDefect: false,
   });
   const canAnswer = useAtomValue(
-    serverEnvironment.answerLinkRequest.permissionAtom(props.environmentId),
+    peerLinkEnvironment.answerRequest.permissionAtom(props.environmentId),
   );
   const target = linkRequestTargetName(item);
 
@@ -223,7 +222,7 @@ function LinkRequestDialog(props: {
   const [mintFailed, setMintFailed] = useState<ReadonlySet<EnvironmentId>>(new Set());
   // Enter then a click can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
-  const answer = useAtomCommand(serverEnvironment.answerLinkRequest, {
+  const answer = useAtomCommand(peerLinkEnvironment.answerRequest, {
     label: "answer link request",
     // The failure cause holds the request, and with it the code; keep it out of the console.
     reportFailure: false,

@@ -1,10 +1,12 @@
 import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -226,7 +228,7 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly number: number;
       readonly action: PullRequestAction;
       readonly mergeMethod?: PullRequestMergeMethod;
-    }) => Effect.Effect<void, BitbucketPullRequestApiError>;
+    }) => Effect.Effect<BitbucketPullRequest | void, BitbucketPullRequestApiError>;
 
     readonly updateChangeRequest: (input: {
       readonly repository: string;
@@ -324,6 +326,15 @@ function authorFilter(login: string): string {
  */
 function filterLiteral(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+// Bitbucket keeps microseconds; include the cursor's whole millisecond before excluding seen IDs.
+function updatedBeforeFilter(updatedBefore: string): string {
+  return Option.match(DateTime.make(updatedBefore), {
+    onNone: () => `updated_on <= ${updatedBefore}`,
+    onSome: (instant) =>
+      `updated_on < ${DateTime.formatIso(DateTime.add(instant, { milliseconds: 1 }))}`,
+  });
 }
 
 function mergeStrategy(method: PullRequestMergeMethod | undefined): string {
@@ -545,12 +556,12 @@ export const make = Effect.gen(function* () {
     listPullRequests: Effect.fn("BitbucketPullRequestApi.listPullRequests")(function (input) {
       return withRepository(input.repository, (path) => {
         const search = input.query?.trim() ?? "";
-        // Exclude already-sent IDs at the inclusive timestamp before applying the page limit.
+        // Exclude already-sent IDs in the boundary millisecond before applying the page limit.
         const predicates = [
           ...(search.length === 0 ? [] : [searchFilter(search)]),
           ...(input.author === undefined ? [] : [authorFilter(input.author)]),
           ...(input.draft === undefined ? [] : [`draft = ${input.draft}`]),
-          ...(input.cursor === undefined ? [] : [`updated_on <= ${input.cursor.updatedBefore}`]),
+          ...(input.cursor === undefined ? [] : [updatedBeforeFilter(input.cursor.updatedBefore)]),
           ...(input.cursor?.seenAt ?? []).map((number) => `id != ${number}`),
         ];
         return listPage({
@@ -734,6 +745,11 @@ export const make = Effect.gen(function* () {
     runAction: Effect.fn("BitbucketPullRequestApi.runAction")(function (input) {
       return withRepository(input.repository, (path) => {
         const pullRequest = `${path}/pullrequests/${input.number}`;
+        // Both reply with the pull request; a merge that runs long replies with a task instead.
+        const reply = Effect.map((response: { readonly body: string }) => {
+          const decoded = decodePullRequestJson(response.body);
+          return Result.isSuccess(decoded) ? decoded.success : undefined;
+        });
         if (input.action === "merge") {
           return bitbucket
             .request({
@@ -741,11 +757,9 @@ export const make = Effect.gen(function* () {
               url: `${pullRequest}/merge`,
               body: JSON.stringify({ merge_strategy: mergeStrategy(input.mergeMethod) }),
             })
-            .pipe(Effect.asVoid);
+            .pipe(reply);
         }
-        return bitbucket
-          .request({ method: "POST", url: `${pullRequest}/decline` })
-          .pipe(Effect.asVoid);
+        return bitbucket.request({ method: "POST", url: `${pullRequest}/decline` }).pipe(reply);
       });
     }),
 
@@ -816,7 +830,7 @@ export const make = Effect.gen(function* () {
             yield* bitbucket.request({
               method: "POST",
               url: `${pullRequest}/comments`,
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              // @effect-diagnostics-next-line globalJsonInEffect:off
               body: JSON.stringify({ content: { raw: input.body } }),
             });
           }
