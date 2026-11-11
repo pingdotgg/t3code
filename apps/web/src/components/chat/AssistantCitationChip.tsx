@@ -65,15 +65,17 @@ export function AssistantCitationEmbed({
   const wholeResponse = citation.prefix === "" && citation.suffix === "";
   const flat = (text: string) => text.replace(/\s+/g, " ");
   const { comment, ...quoted } = citation;
-  const { "data-markdown-copy": markdownCopy, ...linkProps } = useCitationSourceLinkProps(citation);
+  const linkProps = useCitationSourceLinkProps(citation);
   return (
     // One copy boundary for the card and its comment, so a copied quote carries the comment once.
     <span
-      data-markdown-copy={markdownCopy}
+      data-markdown-copy={linkProps["data-markdown-copy"]}
       className={cn("block", !leading && "mt-[0.65rem]", !trailing && "mb-[0.65rem]")}
     >
       <Link
         {...linkProps}
+        // A selection inside the card's boundary copies the quote here and the comment as text.
+        data-markdown-copy={serializeAssistantCitation(quoted)}
         // The quote is findable in its source message; here it is clamped and mostly hidden.
         data-thread-find-ignore
         aria-label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
