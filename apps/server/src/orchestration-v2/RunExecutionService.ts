@@ -732,9 +732,10 @@ export const layer: Layer.Layer<
         const cancelledToolEvents: OrchestrationV2DomainEvent[] = [];
         if (input.loadRunOwnedTools !== undefined && !childTurnsContinue(input.terminal)) {
           const { turnItems, nodes, runtimeRequests } = yield* input.loadRunOwnedTools();
-          const pendingApprovalNodes = new Set(
+          // A session release may already have expired the approval before the run ends.
+          const unresolvedApprovalNodes = new Set(
             runtimeRequests
-              .filter((request) => request.status === "pending")
+              .filter((request) => request.status !== "resolved")
               .map((request) => request.nodeId),
           );
           const blockedToolNodes = new Set(
@@ -742,8 +743,7 @@ export const layer: Layer.Layer<
               node.runId === input.run.id &&
               node.threadId === input.run.threadId &&
               node.kind === "approval_request" &&
-              node.status === "waiting" &&
-              pendingApprovalNodes.has(node.id) &&
+              unresolvedApprovalNodes.has(node.id) &&
               node.parentNodeId !== null
                 ? [node.parentNodeId]
                 : [],
@@ -751,8 +751,8 @@ export const layer: Layer.Layer<
           );
           const cancelledToolNodeIds = new Set<NodeId>();
           for (const item of turnItems) {
-            // Claude marks tool_use as running before asking permission. Only its
-            // pending approval child proves that a running tool never started.
+            // Claude marks tool_use as running before asking permission. Only an
+            // unresolved approval child proves that a running tool never started.
             if (
               item.runId !== input.run.id ||
               item.threadId !== input.run.threadId ||
