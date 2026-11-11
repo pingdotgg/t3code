@@ -469,7 +469,9 @@ describe("adding a machine to the network", () => {
     }),
   );
 
-  it.live("lists a machine found on the tailnet without linking it", () =>
+  // On the test clock: the scan's probe timeout never fires, so a slow loopback answer under load
+  // cannot drop the machine from the scan.
+  it.effect("lists a machine found on the tailnet without linking it", () =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;
       const a = yield* serveDevice(laptop, tailnet);
