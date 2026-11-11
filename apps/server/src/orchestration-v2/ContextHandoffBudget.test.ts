@@ -141,6 +141,19 @@ describe("handoff budget", () => {
     assert.equal(command?.kind, "command_execution");
     assert.include(command!.text, "Exit code: 1");
     assert.include(command!.text, "界".repeat(300));
+    assert.equal(
+      historicalMessage({
+        ...base,
+        type: "file_change",
+        fileName: "src/a.ts",
+        changes: [
+          { operation: "update", path: "src/a.ts" },
+          { operation: "add", path: "src/b.ts" },
+          { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+        ],
+      })?.text,
+      "File change: src/a.ts, src/b.ts, src/new.ts",
+    );
     assert.isNull(
       historicalMessage({
         ...base,
@@ -625,6 +638,26 @@ describe("handoff delivery", () => {
     }),
   );
 
+  it.effect("fails before delivery when even the coverage marker cannot fit", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const result = yield* deliverContextHandoffs({
+        handoffs: [handoff],
+        providerThread,
+        budget: 0,
+        alreadyDeliveredItemIds: new Set(),
+        inject: () =>
+          Effect.sync(() => {
+            calls++;
+            return true;
+          }),
+        persist: () => Effect.void,
+      }).pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      assert.equal(calls, 0);
+    }),
+  );
+
   it.effect.each([true, false])(
     "retains deferred history until an interrupted send is confirmed (native=%s)",
     (native) =>
@@ -633,6 +666,7 @@ describe("handoff delivery", () => {
         const input = {
           providerThread: native ? providerThread : { ...providerThread, nativeThreadRef: null },
           alreadyDeliveredItemIds: new Set<string>(),
+          deferOversized: true,
           persist: (value: OrchestrationV2ContextHandoff) =>
             Effect.sync(() => {
               durable = decodePersistedHandoff(encodeHandoff(value));

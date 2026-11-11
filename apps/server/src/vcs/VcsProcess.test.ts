@@ -8,10 +8,12 @@ import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
@@ -147,6 +149,55 @@ describe("VcsProcess.run", () => {
       }),
   );
 
+  // Without LANG, macOS Git follows the system language, as in an app launched from Finder.
+  it.effect("reads Git failures in English when Git would follow the system language", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Effect.sync(() => {
+                attempts += 1;
+                return {
+                  stdout: "",
+                  stderr:
+                    attempts % 2 === 0
+                      ? ""
+                      : input.env?.LANGUAGE === "C"
+                        ? "fatal: Unable to create '/private/repo/.git/index.lock': File exists.\n"
+                        : "致命錯誤: 無法建立「/private/repo/.git/index.lock」：File exists。\n",
+                  code: ChildProcessSpawner.ExitCode(attempts % 2 === 0 ? 0 : 128),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+        ),
+      );
+
+      const capture = yield* service
+        .run({
+          ...baseInput,
+          operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+          args: ["add", "--all"],
+        })
+        .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isSuccess(yield* Fiber.join(capture))).toBe(true);
+      expect(attempts).toBe(2);
+
+      attempts = 0;
+      const error = yield* Effect.flip(service.run(baseInput));
+      assert.instanceOf(error, VcsProcessExitError);
+      expect(error.detail).toBe(VcsProcess.GIT_INDEX_LOCKED_DETAIL);
+    }),
+  );
+
   it.effect.each([
     {
       stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
@@ -258,7 +309,7 @@ describe("VcsProcess.run", () => {
       }),
   );
 
-  it.effect("bounds a synthetic burst of GitHub API processes", () =>
+  it.effect("bounds a burst of processes that share a concurrency key", () =>
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
       const starts = yield* Queue.unbounded<number>();
@@ -294,10 +345,11 @@ describe("VcsProcess.run", () => {
       const burst = yield* Effect.all(
         Array.from({ length: 32 }, (_, index) =>
           service.run({
-            operation: `synthetic.github.${index}`,
-            command: "gh",
+            operation: `synthetic.cli.${index}`,
+            command: "host-cli",
             args: ["api", "user"],
             cwd: "/workspace",
+            concurrency: { key: "host-cli", limit: 4 },
           }),
         ),
         { concurrency: "unbounded" },
@@ -312,6 +364,60 @@ describe("VcsProcess.run", () => {
       yield* Fiber.join(burst);
       expect(yield* Ref.get(total)).toBe(32);
       expect(yield* Ref.get(peak)).toBe(4);
+    }),
+  );
+
+  it.effect("leaves git a slot while slow forge CLI processes are running", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Effect.gen(function* () {
+                if (input.command !== "git") yield* Deferred.await(gate);
+                return {
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+        ),
+      );
+
+      const forgeRuns = yield* Effect.forEach(Array.from({ length: 12 }), () =>
+        service
+          .run({
+            operation: "synthetic.forge.listChangeRequests",
+            command: "tea",
+            args: ["pulls", "list"],
+            cwd: "/workspace",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true })),
+      );
+      const checkpoint = yield* service
+        .run({
+          ...baseInput,
+          operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+          args: ["rev-parse", "HEAD"],
+        })
+        .pipe(Effect.timeoutOption("1 second"), Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("1 second");
+
+      const gitResult = yield* Fiber.join(checkpoint);
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.joinAll(forgeRuns);
+      expect(
+        Option.isSome(gitResult),
+        "git waited behind forge CLI runs that held every VCS process slot",
+      ).toBe(true);
     }),
   );
 
@@ -388,6 +494,30 @@ describe("VcsProcess.run", () => {
       });
       expect(error.message).not.toContain(providerStderr);
       expect(error.message).not.toContain("secret-value");
+    }).pipe(provideLive),
+  );
+
+  it.effect("reads a failure with the command's own classifier and names it in its terms", () =>
+    Effect.gen(function* () {
+      const fail = (input: Partial<VcsProcess.VcsProcessInput>) =>
+        run({
+          operation: "test.classify",
+          command: "node",
+          args: ["-e", "process.stderr.write('HTTP 404: 404 Not Found'); process.exit(1)"],
+          cwd: process.cwd(),
+          ...input,
+        }).pipe(Effect.flip);
+
+      expect(yield* fail({})).toMatchObject({
+        failureKind: "command-failed",
+        detail: "Process exited with a non-zero status.",
+      });
+      expect(
+        yield* fail({
+          classifyFailure: (stderr) => (stderr.includes("404") ? "not-found" : null),
+          notFoundDetail: "Merge request not found.",
+        }),
+      ).toMatchObject({ failureKind: "not-found", detail: "Merge request not found." });
     }).pipe(provideLive),
   );
 
