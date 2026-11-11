@@ -446,6 +446,119 @@ it.live("retries a failed selection restart session open before completing", () 
   ),
 );
 
+it.live("a workspace handoff during a run does not leave the run interrupted", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("workspace-handoff-lifecycle");
+      const handoffCwd = yield* checkpointWorkspace("workspace-handoff-lifecycle-target");
+      const threadId = ThreadId.make("thread:workspace-handoff-lifecycle");
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: false,
+      });
+      const layerRegistry = ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state));
+
+      const projection = yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:workspace-handoff:create"),
+          threadId,
+          projectId: ProjectId.make("project:workspace-handoff"),
+          title: "Workspace handoff",
+          modelSelection: initialSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        const running = yield* eventSink
+          .stream({
+            threadId,
+            afterSequence: yield* eventSink.latestSequence({ threadId }),
+          })
+          .pipe(
+            Stream.map((stored) => stored.event),
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:workspace-handoff:first"),
+          threadId,
+          messageId: MessageId.make("message:workspace-handoff:first"),
+          text: "move to a worktree",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* Fiber.join(running);
+        yield* worker.drain();
+
+        const settled = yield* eventSink
+          .stream({
+            threadId,
+            afterSequence: yield* eventSink.latestSequence({ threadId }),
+          })
+          .pipe(
+            Stream.map((stored) => stored.event),
+            Stream.filter(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.status !== "running" &&
+                event.payload.status !== "queued" &&
+                event.payload.status !== "starting",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        // What t3_worktree_handoff dispatches while the calling turn is still running.
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("command:workspace-handoff:rebind"),
+          threadId,
+          branch: "repro-handoff",
+          worktreePath: handoffCwd,
+        });
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+        return yield* orchestrator.getThreadProjection(threadId);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "workspace-handoff-lifecycle" },
+            layerRegistry,
+          ),
+        ),
+      );
+
+      assert.equal(projection.thread.worktreePath, handoffCwd);
+      assert.equal(projection.runs[0]?.status, "completed");
+      assert.isNotNull(projection.runs[0]?.checkpointId ?? null);
+      assert.isFalse(
+        projection.turnItems.some((item) => item.type === "run_interrupt_result"),
+        "an intentional workspace handoff must not project an interrupt result",
+      );
+    }),
+  ),
+);
+
 it.live("Stop during a restart interrupts the turn the restart could not stop", () =>
   Effect.scoped(
     Effect.gen(function* () {
