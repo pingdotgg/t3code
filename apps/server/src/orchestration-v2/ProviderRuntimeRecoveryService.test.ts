@@ -809,6 +809,7 @@ it.effect(
           ["turn-item.updated", "cancelled"],
           ["turn-item.updated", "cancelled"],
           ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "completed"],
           ["provider-thread.updated", "idle"],
           ["provider-session.updated", "stopped"],
         ],
