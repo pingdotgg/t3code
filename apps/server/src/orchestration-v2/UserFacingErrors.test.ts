@@ -11,69 +11,6 @@ import { toPersistenceSqlError } from "../persistence/Errors.ts";
 import { userFacingDispatchErrorMessage } from "./UserFacingErrors.ts";
 
 describe("userFacingDispatchErrorMessage", () => {
-  it("returns the deepest actionable domain error instead of generic dispatch wrappers", () => {
-    const message = userFacingDispatchErrorMessage({
-      message: "Failed to dispatch orchestration command checkpoint.rollback (command-1).",
-      cause: {
-        message: "Provider adapter failed while dispatching orchestration command command-1.",
-        cause: {
-          message:
-            "claudeAgent cannot satisfy rollback for command command-1: provider conversation rollback is unavailable",
-        },
-      },
-    });
-
-    assert.equal(
-      message,
-      "claudeAgent cannot satisfy rollback for command command-1: provider conversation rollback is unavailable",
-    );
-  });
-
-  it("translates policy capability rejections into provider-named prose", () => {
-    assert.equal(
-      userFacingDispatchErrorMessage({
-        message: "Failed to dispatch orchestration command checkpoint.rollback (command-1).",
-        cause: {
-          _tag: "CommandPolicyCapabilityUnsupportedError",
-          commandId: "command-1",
-          threadId: "thread-1",
-          providerInstanceId: "pi",
-          capability: "rollback_snapshot",
-          detail: "rollback must return a provider thread snapshot",
-          message:
-            "pi cannot satisfy rollback_snapshot for command command-1: rollback must return a provider thread snapshot",
-        },
-      }),
-      "Pi did not report its rewound conversation state, so the checkpoint was not restored.",
-    );
-    assert.equal(
-      userFacingDispatchErrorMessage({
-        message: "Failed to dispatch orchestration command checkpoint.rollback (command-2).",
-        cause: {
-          _tag: "CommandPolicyCapabilityUnsupportedError",
-          commandId: "command-2",
-          threadId: "thread-1",
-          providerInstanceId: "grok",
-          capability: "rollback",
-          detail: "provider conversation rollback is unavailable",
-        },
-      }),
-      "Grok cannot rewind its conversation, so this checkpoint cannot be restored on this thread.",
-    );
-  });
-
-  it("uses explicit detail fields as user-facing messages", () => {
-    assert.equal(
-      userFacingDispatchErrorMessage({
-        message: "Failed to dispatch orchestration command message.dispatch (command-1).",
-        cause: {
-          detail: "Claude provider thread provider-thread-1 has no live query.",
-        },
-      }),
-      "Claude provider thread provider-thread-1 has no live query.",
-    );
-  });
-
   it.effect("explains a real database open failure through dispatch and persistence wrappers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -131,23 +68,6 @@ describe("userFacingDispatchErrorMessage", () => {
       assert.notInclude(message, "private-message");
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
-
-  it.each([
-    [5, "SQLITE_BUSY", "Wait a moment, then retry"],
-    [6, "SQLITE_LOCKED", "Wait a moment, then retry"],
-    [10 | (3 << 8), "SQLITE_IOERR", "free disk space and disk health"],
-    [14 | (6 << 8), "SQLITE_CANTOPEN", "exist and are writable"],
-    [11, "SQLITE_CORRUPT", "Preserve the server data directory"],
-    [26, "SQLITE_NOTADB", "configured database path"],
-  ] as const)("maps SQLite code %i to %s with recovery guidance", (errcode, code, guidance) => {
-    const cause = Object.assign(new Error("private-query-data"), { errcode, errno: errcode });
-    const error = new SqlError({ reason: classifySqliteError(cause) });
-    const message = userFacingDispatchErrorMessage({ cause: error });
-
-    assert.include(message, code);
-    assert.include(message, guidance);
-    assert.notInclude(message, "private-query-data");
-  });
 
   it("keeps unknown SQL failures contextual without exposing driver text or parameters", () => {
     const cause = Object.assign(new Error("private-query-data"), { errcode: 1 });

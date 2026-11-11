@@ -28,9 +28,10 @@ describe("ignore v7.0.5 options and public methods", () => {
       .add(compatible as any)
       .add("!.abc/e/");
 
-    expect(matcher.filter([".abc/a.js", ".abc/d/e.js", ".abc/e/e.js"])).toEqual(
-      [".abc/d/e.js", ".abc/e/e.js"],
-    );
+    expect(matcher.filter([".abc/a.js", ".abc/d/e.js", ".abc/e/e.js"])).toEqual([
+      ".abc/d/e.js",
+      ".abc/e/e.js",
+    ]);
   });
 
   it("respects ignorecase", () => {
@@ -42,9 +43,7 @@ describe("ignore v7.0.5 options and public methods", () => {
 
   it("respects ignorecase without leaking the compiled-rule cache", () => {
     const rule = "*.[jJ][pP]g";
-    expect(ignore({ ignorecase: false }).add(rule).ignores("a.JPG")).toBe(
-      false,
-    );
+    expect(ignore({ ignorecase: false }).add(rule).ignores("a.JPG")).toBe(false);
     expect(ignore({ ignorecase: true }).add(rule).ignores("a.JPG")).toBe(true);
   });
 
@@ -57,15 +56,11 @@ describe("ignore v7.0.5 options and public methods", () => {
   });
 
   it("validates paths", () => {
-    expect([".", "./foo", "../foo", "/foo", "foo"].filter(isPathValid)).toEqual(
-      ["foo"],
-    );
+    expect([".", "./foo", "../foo", "/foo", "foo"].filter(isPathValid)).toEqual(["foo"]);
   });
 
   it("returns ignored and unignored state from test", () => {
-    const cases: Array<
-      [string | string[] | undefined, string, boolean, boolean]
-    > = [
+    const cases: Array<[string | string[] | undefined, string, boolean, boolean]> = [
       [undefined, "foo", false, false],
       ["bar", "foo", false, false],
       ["!foo", "foo", false, true],
@@ -74,9 +69,7 @@ describe("ignore v7.0.5 options and public methods", () => {
       [["*.js", "!a/a.js"], "a/a.js", false, true],
       ...(process.platform === "win32"
         ? []
-        : ([[undefined, "...", false, false]] as Array<
-            [undefined, string, boolean, boolean]
-          >)),
+        : ([[undefined, "...", false, false]] as Array<[undefined, string, boolean, boolean]>)),
     ];
 
     for (const [patterns, path, ignored, unignored] of cases) {
@@ -87,12 +80,8 @@ describe("ignore v7.0.5 options and public methods", () => {
   });
 
   it("optionally permits relative paths", () => {
-    expect(
-      ignore({ allowRelativePaths: true }).add("foo").ignores("../foo/bar.js"),
-    ).toBe(true);
+    expect(ignore({ allowRelativePaths: true }).add("foo").ignores("../foo/bar.js")).toBe(true);
     expect(() => ignore().ignores("../foo/bar.js")).toThrow("path.relative");
-    expect(() => ignore().add("foo").ignores("/foo/bar.js")).toThrow(
-      "path.relative",
-    );
+    expect(() => ignore().add("foo").ignores("/foo/bar.js")).toThrow("path.relative");
   });
 });
