@@ -146,8 +146,7 @@ describe("pin", () => {
     vi.mocked(announce).mockClear();
     await useThreadActions().pinThread(target);
     expect(commands.pin).toHaveBeenCalledOnce();
-    const spoken = vi.mocked(announce).mock.calls.map(([message]) => message);
-    expect(spoken).toContainEqual(expect.stringMatching(/\bpinned\b/i));
+    expect(announce).toHaveBeenCalledExactlyOnceWith("Pinned 1 thread");
   });
 });
 
