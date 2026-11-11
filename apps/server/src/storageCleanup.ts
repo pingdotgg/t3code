@@ -703,9 +703,9 @@ const make = Effect.gen(function* () {
       },
       { concurrency: 16 },
     );
-    const files = [];
+    const files: Array<{ readonly id: string; readonly file: string }> = [];
     // Without core.symlinks a tracked link is a regular file holding its target, compared unfiltered.
-    const linkFiles = [];
+    const linkFiles: typeof files = [];
     for (const entry of onDisk) {
       if (entry === null) continue;
       if (entry.type === "File") (entry.mode === "120000" ? linkFiles : files).push(entry);
