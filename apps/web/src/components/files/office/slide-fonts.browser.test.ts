@@ -38,12 +38,13 @@ async function deck(runs: readonly { text: string; family: string }[]) {
     .generateAsync({ type: "uint8array" });
 }
 
-it("lays slide text out with heavy stand-ins and draws text no bundled face covers whole", async () => {
+it("lays slide text out with heavy stand-ins and script fallbacks, and draws text no bundled face covers whole", async () => {
   await initWasm();
   const bytes = await deck([
     { text: "Plain", family: "Arial" },
     { text: "Heavy", family: "Arial Black" },
-    { text: "日本語のテキスト", family: "Arial" },
+    { text: "日本語のテキスト", family: "Times New Roman" },
+    { text: "ภาษาไทย", family: "Arial" },
   ]);
   const handle = openPresentation(bytes);
   const fonts = slideFonts(handle, document.fonts);
@@ -51,13 +52,16 @@ it("lays slide text out with heavy stand-ins and draws text no bundled face cove
   await fonts.load(deckText(bytes, handle.snapshot()));
 
   const frame = await fonts.layout(0);
-  const [plain, heavy, japanese] = frame.primitives.flatMap((primitive) =>
+  const [plain, heavy, japanese, thai] = frame.primitives.flatMap((primitive) =>
     primitive.kind === "textBox" ? primitive.lines.flatMap((line) => line.runs) : [],
   );
 
   // Arial Black's only stand-in is a bold face, which its regular text draws with rather than Arial's.
   expect(heavy?.fontFamily).not.toBe(plain?.fontFamily);
   expect(plain?.glyphs).toHaveLength(5);
-  expect(japanese?.text).toBe("日本語のテキスト");
-  expect(japanese?.glyphs).toEqual([]);
+  expect(japanese?.fontFamily).not.toBe(plain?.fontFamily);
+  expect(japanese?.glyphs.length).toBeGreaterThan(0);
+  expect(japanese?.glyphs.some((glyph) => glyph.glyphId === 0)).toBe(false);
+  expect(thai?.text).toBe("ภาษาไทย");
+  expect(thai?.glyphs).toEqual([]);
 });

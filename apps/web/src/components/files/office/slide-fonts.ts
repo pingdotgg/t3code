@@ -124,8 +124,8 @@ export function slideFonts(deck: PresentationHandle, fonts: FontFaceSet) {
           runs: line.runs.map((run) => ({
             ...run,
             fontFamily: faces.get(run.fontId)?.css ?? run.fontFamily,
-            // The engine places glyphs no bundled face has, such as Chinese, Japanese or Korean ones, a missing glyph's
-            // width apart, but the browser draws them from its own fonts. Without positions a run is drawn whole.
+            // The engine places glyphs no bundled face has, such as Thai ones or emoji, a missing glyph's width apart,
+            // but the browser draws them from its own fonts. Without positions a run is drawn whole.
             glyphs: run.glyphs.some((glyph) => glyph.glyphId === 0) ? [] : run.glyphs,
           })),
         })),
