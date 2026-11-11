@@ -2266,6 +2266,74 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("records the model Codex reports on the root provider turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "reported-model-thread";
+        const nativeTurnId = "reported-model-turn";
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-reported-model",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "say hi" }),
+            {
+              type: "emit_inbound",
+              label: "rerouted",
+              frame: {
+                method: "model/rerouted",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  fromModel: "gpt-6-astra",
+                  toModel: "gpt-5.6-sol",
+                  reason: "highRiskCyberActivity",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("reported-model-attempt"),
+            text: "say hi",
+          }),
+        );
+        yield* harness.firstTerminal;
+        const completed = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.equal(completed?.type, "provider_turn.updated");
+        if (completed?.type !== "provider_turn.updated") return;
+        assert.deepEqual(completed.providerTurn.turnTokenUsage?.models, ["gpt-5.6-sol"]);
+        assert.equal(completed.providerTurn.model, "gpt-5.6-sol");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("stops asking for commands the user allowed for the session", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -4771,6 +4839,52 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       },
     ],
   });
+
+  it.effect("marks a root command it wakes the agent for once the command finishes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeCodexReplayHarness({
+        ...backgroundExecTranscript,
+        entries: backgroundExecTranscript.entries.map((entry) =>
+          entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
+            ? { ...entry, afterMs: 0 }
+            : entry,
+        ),
+      });
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-command-completion-wake"),
+          text: BG_PROMPT,
+        }),
+      );
+      const commands = () =>
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [[event.turnItem.status, event.turnItem.completionWake]]
+            : [],
+        );
+      yield* harness.until(
+        () => harness.continuationRequests.length === 1 && commands().length === 2,
+      );
+      // Restart recovery reads this to keep the wake the restart cut.
+      assert.deepEqual(commands(), [
+        ["running", "always"],
+        ["completed", "always"],
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect("wakes with well-formed text when the cuts split an emoji", () =>
     Effect.scoped(
