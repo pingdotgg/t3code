@@ -1,5 +1,3 @@
-"use client";
-
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 
 import { cn } from "~/lib/utils";
@@ -8,8 +6,15 @@ import {
   DIALOG_MOBILE_SHEET_CLASS,
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
+import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
 
-const AlertDialog = AlertDialogPrimitive.Root;
+function AlertDialog<Payload>(props: AlertDialogPrimitive.Root.Props<Payload>) {
+  return (
+    <ControlledOpenContext value={props.open}>
+      <AlertDialogPrimitive.Root {...props} />
+    </ControlledOpenContext>
+  );
+}
 
 const AlertDialogPortal = AlertDialogPrimitive.Portal;
 
@@ -60,6 +65,7 @@ function AlertDialogPopup({
             className,
           )}
           data-slot="alert-dialog-popup"
+          render={renderRetainedPopup}
           {...props}
         />
       </AlertDialogViewport>
@@ -104,7 +110,7 @@ function AlertDialogFooter({
 function AlertDialogTitle({ className, ...props }: AlertDialogPrimitive.Title.Props) {
   return (
     <AlertDialogPrimitive.Title
-      className={cn("wrap-anywhere shrink-0 font-semibold text-xl leading-none", className)}
+      className={cn("wrap-anywhere shrink-0 font-semibold text-xl leading-snug", className)}
       data-slot="alert-dialog-title"
       {...props}
     />

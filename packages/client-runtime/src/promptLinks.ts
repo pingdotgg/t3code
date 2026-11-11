@@ -1,33 +1,40 @@
 import {
   repositoryGroupingKeyOf,
+  type EnvironmentId,
   type ModelSelection,
+  type PullRequestLinkedThreadsResult,
   type RepositoryIdentity,
   type ServerProvider,
   type ThreadLinkedPullRequest,
+  type ThreadId,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { resolveSelectableModel, type SelectableModelOption } from "@t3tools/shared/model";
+import type { AsyncResult } from "effect/reactivity";
 import type { PromptLinkPullRequest, PromptLinkRepository } from "@t3tools/shared/promptLinks";
 import {
   threadPullRequestKeyOf,
   threadPullRequestsOf,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "./threadPullRequests.ts";
 
-const repositoryKey = (repository: PromptLinkRepository) =>
-  `github.com/${repository.owner}/${repository.name}`.toLowerCase();
+// A link's `owner/name` is GitHub's. GitCafe syncs a repository two-way with GitHub under the
+// same path, so a checkout cloned from git.cafe counts as the linked repository.
+const PROMPT_LINK_REPOSITORY_HOSTS = ["github.com", "git.cafe", "staging.git.cafe"];
 
 /**
- * Callers pass projects most recently active first, so the user lands where they last worked.
+ * The repository's projects in the order given. Callers pass projects most recently active
+ * first and open the first, so the user lands where they last worked.
  */
-export function findPromptLinkProject<
+export function findPromptLinkProjects<
   P extends { readonly repositoryIdentity?: RepositoryIdentity | null | undefined },
->(projects: ReadonlyArray<P>, repository: PromptLinkRepository): P | undefined {
-  const key = repositoryKey(repository);
-  return projects.find(
+>(projects: ReadonlyArray<P>, repository: PromptLinkRepository): P[] {
+  const path = `${repository.owner}/${repository.name}`.toLowerCase();
+  const keys = new Set(PROMPT_LINK_REPOSITORY_HOSTS.map((host) => `${host}/${path}`));
+  return projects.filter(
     (project) =>
       project.repositoryIdentity != null &&
-      repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase() === key,
+      keys.has(repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase()),
   );
 }
 
@@ -36,6 +43,7 @@ export function findPromptLinkPullRequestThread<
     readonly updatedAt: string;
     readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
     readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+    readonly lineage?: { readonly sideChat?: boolean | undefined } | undefined;
   },
 >(threads: ReadonlyArray<T>, pullRequest: PromptLinkPullRequest): T | undefined {
   const key = threadPullRequestKeyOf({
@@ -46,12 +54,35 @@ export function findPromptLinkPullRequestThread<
   let latest: T | undefined;
   for (const thread of threads) {
     if (latest !== undefined && thread.updatedAt <= latest.updatedAt) continue;
+    // Side chats inherit their parent's links but stay hidden.
+    if (thread.lineage?.sideChat === true) continue;
     const linked = visibleThreadPullRequests(threadPullRequestsOf(thread)).some(
       (link) => threadPullRequestKeyOf(link) === key,
     );
     if (linked) latest = thread;
   }
   return latest;
+}
+
+/**
+ * The first open thread from per-environment pull request lookups, in the order given, once
+ * every lookup before it has answered. `null` when none has one; `undefined` until then.
+ */
+export function pickPromptLinkPullRequestThread(
+  lookups: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly result: AsyncResult.AsyncResult<PullRequestLinkedThreadsResult, unknown>;
+  }>,
+): { readonly environmentId: EnvironmentId; readonly id: ThreadId } | null | undefined {
+  for (const { environmentId, result } of lookups) {
+    if (result._tag === "Initial" || result.waiting) return undefined;
+    const thread =
+      result._tag === "Success"
+        ? result.value.threads.find((candidate) => candidate.archivedAt === null)
+        : undefined;
+    if (thread !== undefined) return { environmentId, id: thread.id };
+  }
+  return null;
 }
 
 const PROVIDER_ALIASES: Record<string, string> = { claude: "claudeagent" };

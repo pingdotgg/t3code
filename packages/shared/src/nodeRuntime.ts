@@ -28,19 +28,11 @@ export class NodeRuntimeUnavailableError extends Schema.TaggedError<NodeRuntimeU
 
 export interface SelfInvocation {
   readonly command: string;
-  /**
-   * The absolute entrypoint script to place before the subcommand, or
-   * undefined for the packaged binary, which dispatches subcommands from
-   * argv[2] and treats a leading path as the subcommand itself.
-   */
+  /** Absolute script entrypoint; undefined for packaged binaries, which dispatch subcommands from argv[2]. */
   readonly entrypoint: string | undefined;
 }
 
-/**
- * `process.execPath` plus `argv[1]` only works for a script run by Node; the
- * single-executable has no entrypoint script (Node repeats the binary at
- * argv[1]), so callers must not assemble the pair themselves.
- */
+/** Packaged binaries repeat the binary at argv[1]; callers must not assemble execPath/argv[1] themselves. */
 export const resolveSelfInvocation = Effect.fn("nodeRuntime.resolveSelfInvocation")(function* () {
   const command = yield* HostProcess.ExecutablePath;
   if (yield* HostProcess.IsExecutable)

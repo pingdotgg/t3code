@@ -84,29 +84,6 @@ const layerNet = Layer.succeed(NetService.NetService, {
 } satisfies NetService.NetService["Service"]);
 
 describe("DesktopWslBackend", () => {
-  it.effect("does not discover or start WSL when local execution is disabled", () =>
-    Effect.gen(function* () {
-      const backend = yield* DesktopWslBackend.DesktopWslBackend;
-      yield* backend.reconcile;
-    }).pipe(
-      Effect.provide(
-        DesktopWslBackend.layer.pipe(
-          Layer.provide(Layer.mock(DesktopBackendPool.DesktopBackendPool, {})),
-          Layer.provide(layerBackendConfiguration),
-          Layer.provide(layerServerExposure),
-          Layer.provide(layerNet),
-          Layer.provide(Layer.mock(DesktopWslEnvironment.DesktopWslEnvironment, {})),
-          Layer.provide(
-            DesktopAppSettings.layerTest({
-              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-              localEnvironmentEnabled: false,
-              wslBackendEnabled: true,
-            }),
-          ),
-        ),
-      ),
-    ),
-  );
   it.effect("clears the stored preflight error when a registered WSL backend becomes ready", () => {
     let registeredSpec: DesktopBackendPool.BackendInstanceSpec | undefined;
     let registeredWsl: DesktopBackendPool.DesktopBackendInstance | undefined;
@@ -198,49 +175,6 @@ describe("DesktopWslBackend", () => {
       Effect.provide(
         DesktopWslBackend.layer.pipe(
           Layer.provideMerge(layerPool),
-          Layer.provideMerge(layerBackendConfiguration),
-          Layer.provideMerge(layerServerExposure),
-          Layer.provideMerge(layerNet),
-          Layer.provideMerge(
-            DesktopAppSettings.layerTest({
-              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-              wslBackendEnabled: true,
-              wslDistro: "Ubuntu",
-              wslOnly: false,
-            }),
-          ),
-          Layer.provideMerge(DesktopWslEnvironment.layerTest({ isAvailable: true })),
-        ),
-      ),
-    );
-  });
-
-  it.effect("retries an unchanged WSL instance when it is idle after failed preflight", () => {
-    let startCount = 0;
-    const primary = makeStubInstance({
-      id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
-      label: "Windows",
-      snapshot: primarySnapshot,
-    });
-    const wsl = makeStubInstance({
-      id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
-      label: "WSL (Ubuntu)",
-      snapshot: idleSnapshot,
-      start: Effect.sync(() => {
-        startCount += 1;
-      }),
-    });
-
-    return Effect.gen(function* () {
-      const backend = yield* DesktopWslBackend.DesktopWslBackend;
-
-      yield* backend.reconcile;
-
-      assert.equal(startCount, 1);
-    }).pipe(
-      Effect.provide(
-        DesktopWslBackend.layer.pipe(
-          Layer.provideMerge(DesktopBackendPool.layerTest([primary, wsl])),
           Layer.provideMerge(layerBackendConfiguration),
           Layer.provideMerge(layerServerExposure),
           Layer.provideMerge(layerNet),

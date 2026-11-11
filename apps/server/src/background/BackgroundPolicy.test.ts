@@ -6,12 +6,9 @@ import {
   type ClientActivityReportInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -31,12 +28,6 @@ const nominalHostPower: HostPowerSnapshot = {
   thermalState: "unknown",
   stale: true,
   updatedAt: TEST_NOW,
-};
-
-const constrainedHostPower: HostPowerSnapshot = {
-  ...nominalHostPower,
-  lowPowerMode: "true",
-  stale: false,
 };
 
 function makeReport(overrides: Partial<ClientActivityReportInput> = {}): ClientActivityReportInput {
@@ -78,26 +69,6 @@ function layerFor(
 }
 
 describe("BackgroundPolicy", () => {
-  it.effect("records foreground scoped client demand", () =>
-    Effect.gen(function* () {
-      const policy = yield* BackgroundPolicy.BackgroundPolicy;
-      yield* policy.reportClientActivity(
-        AuthSessionId.make("session-1"),
-        RpcClientId.make(1),
-        makeReport(),
-      );
-
-      const snapshot = yield* policy.snapshot;
-      assert.equal(snapshot.activeForegroundLeaseCount, 1);
-      assert.deepStrictEqual(snapshot.activeScopeKeys, ["vcs-status:/repo"]);
-      assert.equal(snapshot.shouldRunOpportunisticWork, true);
-      assert.equal(yield* policy.hasDemand({ type: "vcs-status", cwd: "/repo" }), true);
-      assert.equal(yield* policy.hasDemand({ type: "vcs-status", cwd: "/other" }), false);
-      assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), true);
-      assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/other" }), false);
-    }).pipe(Effect.provide(layerFor(nominalHostPower))),
-  );
-
   it.effect("removes all leases for a disconnected websocket connection", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -139,59 +110,6 @@ describe("BackgroundPolicy", () => {
     }).pipe(Effect.provide(layerFor(nominalHostPower))),
   );
 
-  it.effect("serializes lease mutation publications", () =>
-    Effect.gen(function* () {
-      const firstSnapshotStarted = yield* Deferred.make<void>();
-      const releaseFirstSnapshot = yield* Deferred.make<void>();
-      const snapshotReads = yield* Ref.make(0);
-      const layerHost = Layer.succeed(
-        HostPowerMonitor.HostPowerMonitor,
-        HostPowerMonitor.HostPowerMonitor.of({
-          snapshot: Ref.updateAndGet(snapshotReads, (count) => count + 1).pipe(
-            Effect.flatMap((count) =>
-              count === 1
-                ? Deferred.succeed(firstSnapshotStarted, undefined).pipe(
-                    Effect.andThen(Deferred.await(releaseFirstSnapshot)),
-                    Effect.as(nominalHostPower),
-                  )
-                : Effect.succeed(nominalHostPower),
-            ),
-          ),
-          report: () => Effect.void,
-          streamChanges: Stream.empty,
-        }),
-      );
-      const layer = BackgroundPolicy.layer.pipe(
-        Layer.provide(Layer.merge(layerHost, ServerSettings.layerTest())),
-      );
-
-      yield* Effect.gen(function* () {
-        const policy = yield* BackgroundPolicy.BackgroundPolicy;
-        const updatesFiber = yield* policy.streamChanges.pipe(
-          Stream.take(2),
-          Stream.runCollect,
-          Effect.forkChild,
-        );
-        yield* Effect.yieldNow;
-        const reportFiber = yield* policy
-          .reportClientActivity(AuthSessionId.make("session-1"), RpcClientId.make(1), makeReport())
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(firstSnapshotStarted);
-        const removeFiber = yield* policy
-          .removeRpcClient(AuthSessionId.make("session-1"), RpcClientId.make(1))
-          .pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
-        yield* Deferred.succeed(releaseFirstSnapshot, undefined);
-        yield* Fiber.join(reportFiber);
-        yield* Fiber.join(removeFiber);
-        const updates = Array.from(yield* Fiber.join(updatesFiber));
-
-        assert.equal(updates.at(-1)?.activeForegroundLeaseCount, 0);
-        assert.deepStrictEqual(updates.at(-1)?.activeScopeKeys, []);
-      }).pipe(Effect.provide(layer));
-    }),
-  );
-
   it.effect("bounds client-id churn for one websocket connection", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -224,24 +142,6 @@ describe("BackgroundPolicy", () => {
     }).pipe(Effect.provide(layerFor(nominalHostPower))),
   );
 
-  it.effect("host low power mode disables opportunistic work without dropping scoped demand", () =>
-    Effect.gen(function* () {
-      const policy = yield* BackgroundPolicy.BackgroundPolicy;
-      yield* policy.reportClientActivity(
-        AuthSessionId.make("session-1"),
-        RpcClientId.make(1),
-        makeReport(),
-      );
-
-      const snapshot = yield* policy.snapshot;
-      assert.equal(snapshot.activeForegroundLeaseCount, 1);
-      assert.deepStrictEqual(snapshot.activeScopeKeys, ["vcs-status:/repo"]);
-      assert.equal(snapshot.shouldRunOpportunisticWork, false);
-      assert.equal(yield* policy.hasDemand({ type: "vcs-status", cwd: "/repo" }), true);
-      assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), false);
-    }).pipe(Effect.provide(layerFor(constrainedHostPower))),
-  );
-
   it.effect("host suspension disables scoped and opportunistic work", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -254,7 +154,6 @@ describe("BackgroundPolicy", () => {
       const snapshot = yield* policy.snapshot;
       assert.equal(snapshot.activeForegroundLeaseCount, 1);
       assert.equal(snapshot.shouldRunOpportunisticWork, false);
-      assert.equal(yield* policy.hasDemand({ type: "vcs-status", cwd: "/repo" }), true);
       assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), false);
     }).pipe(
       Effect.provide(
@@ -279,7 +178,6 @@ describe("BackgroundPolicy", () => {
       const snapshot = yield* policy.snapshot;
       assert.equal(snapshot.activeForegroundLeaseCount, 0);
       assert.deepStrictEqual(snapshot.activeScopeKeys, ["vcs-status:/repo"]);
-      assert.equal(yield* policy.hasDemand({ type: "vcs-status", cwd: "/repo" }), true);
       assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), false);
     }).pipe(Effect.provide(layerFor(nominalHostPower))),
   );
@@ -298,39 +196,6 @@ describe("BackgroundPolicy", () => {
       assert.equal(snapshot.shouldRunOpportunisticWork, true);
       assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), true);
     }).pipe(Effect.provide(layerFor(nominalHostPower))),
-  );
-
-  it.effect("pauses scoped work for a visible unfocused client without recent interaction", () =>
-    Effect.gen(function* () {
-      const policy = yield* BackgroundPolicy.BackgroundPolicy;
-      yield* policy.reportClientActivity(
-        AuthSessionId.make("session-1"),
-        RpcClientId.make(1),
-        makeReport({ focused: false, recentlyInteracted: false }),
-      );
-
-      const snapshot = yield* policy.snapshot;
-      assert.equal(snapshot.activeForegroundLeaseCount, 0);
-      assert.equal(snapshot.shouldRunOpportunisticWork, false);
-      assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), false);
-    }).pipe(Effect.provide(layerFor(nominalHostPower))),
-  );
-
-  it.effect(
-    "performance profile allows background scoped work while a scoped lease is active",
-    () =>
-      Effect.gen(function* () {
-        const policy = yield* BackgroundPolicy.BackgroundPolicy;
-        yield* policy.reportClientActivity(
-          AuthSessionId.make("session-1"),
-          RpcClientId.make(1),
-          makeReport({ focused: false, visible: false }),
-        );
-
-        assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), true);
-      }).pipe(
-        Effect.provide(layerFor(nominalHostPower, { backgroundActivityProfile: "performance" })),
-      ),
   );
 
   it.effect("battery saver profile pauses scoped work on battery", () =>

@@ -5,29 +5,33 @@ import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import {
   extractAntigravityUserInputQuestion,
-  isAntigravityOpenCommand,
   antigravityApprovalOptions,
   antigravitySubagentOutput,
-  isAntigravitySubagentReplayStart,
   classifyAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravitySessionUpdate,
   normalizeAntigravityToolCall,
   sanitizeAntigravityToolPayload,
-  selectAntigravityPermissionOptionId,
+  makeAntigravityReadRepair,
 } from "./AntigravityProtocol.ts";
 import {
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
+import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
 describe("native Antigravity subagent tools", () => {
   it("recognizes only native invocation titles and excludes MCP tools", () => {
     const toolCall = { toolCallId: "trajectory:4", kind: "other", data: {} };
-    for (const title of ["Running start_subagent", "Run start_subagent?"]) {
+    for (const title of [
+      "Running start_subagent",
+      "Run start_subagent?",
+      "Running invoke_subagent",
+      "Run invoke_subagent?",
+    ]) {
       expect(classifyAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBe("subagent");
       expect(
         classifyAntigravitySubagentToolCall(
@@ -53,21 +57,6 @@ describe("native Antigravity subagent tools", () => {
   });
 
   it("recognizes history starts and bounds the launch output", () => {
-    expect(
-      isAntigravitySubagentReplayStart({
-        update: { sessionUpdate: "tool_call", status: "completed", rawOutput: "Done." },
-      }),
-    ).toBe(false);
-    expect(
-      isAntigravitySubagentReplayStart({
-        update: { sessionUpdate: "tool_call", status: "completed" },
-      }),
-    ).toBe(true);
-    expect(
-      isAntigravitySubagentReplayStart({
-        update: { sessionUpdate: "tool_call_update", status: "completed" },
-      }),
-    ).toBe(false);
     expect(
       antigravitySubagentOutput({
         toolCallId: "trajectory:4",
@@ -149,20 +138,6 @@ describe("Antigravity permissions and questions", () => {
     ],
   } satisfies EffectAcpSchema.RequestPermissionRequest;
 
-  it("uses only the option IDs offered for each approval decision", () => {
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "accept")).toBe("run-this-time");
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "acceptForSession")).toBe(
-      "remember-this-command",
-    );
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "acceptAlways")).toBe(
-      "remember-this-command",
-    );
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "decline")).toBe(
-      "stop-this-command",
-    );
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "cancel")).toBeUndefined();
-  });
-
   it("surfaces the agent's prompt injection warning on the remembered approval", () => {
     const risky = {
       ...permissionRequest,
@@ -197,22 +172,8 @@ describe("Antigravity permissions and questions", () => {
     expect(antigravityApprovalOptions(permissionRequest)[1]).not.toHaveProperty("warning");
   });
 
-  it("does not replace unsupported remembered approval with a single approval", () => {
-    const request = {
-      ...permissionRequest,
-      options: permissionRequest.options.filter((option) => option.kind !== "allow_always"),
-    };
-    expect(selectAntigravityPermissionOptionId(request, "acceptAlways")).toBeUndefined();
-    expect(selectAntigravityPermissionOptionId(request, "acceptForSession")).toBeUndefined();
-    expect(selectAntigravityPermissionOptionId(request, "accept")).toBe("run-this-time");
-    expect(
-      selectAntigravityPermissionOptionId({ ...request, options: [] }, "decline"),
-    ).toBeUndefined();
-  });
-
   it("routes the captured native question to single-choice input, not approval", () => {
     expect(isAntigravityUserInputRequest(questionRequest)).toBe(true);
-    expect(selectAntigravityPermissionOptionId(questionRequest, "accept")).toBeUndefined();
     expect(extractAntigravityUserInputQuestion(questionRequest)).toEqual({
       id: "interaction_9960062f",
       header: "Question",
@@ -329,6 +290,135 @@ describe("Antigravity tool results", () => {
     });
     expect(toolCall.data.rawOutput).not.toHaveProperty("formatted_output");
     expect(commandCompleted.update.rawOutput.formatted_output).toBe("after\n");
+  });
+
+  it("keeps the captured edit location through approval and completion", () => {
+    const path = "/workspace/app.ts";
+    const replace = {
+      TargetContent: "const target = 10;",
+      ReplacementContent: "const target = 100;",
+      TargetFile: path,
+    };
+    const frame = (rawInput: Record<string, unknown>, line?: number) =>
+      ({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "edit-1",
+          title: "Run edit_file?",
+          kind: "edit",
+          status: "pending",
+          content: [
+            {
+              type: "diff",
+              path,
+              oldText: replace.TargetContent,
+              newText: replace.ReplacementContent,
+            },
+          ],
+          locations: [line === undefined ? { path } : { path, line }],
+          rawInput,
+        },
+      }) satisfies EffectAcpSchema.SessionNotification;
+    const running = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-1",
+        kind: "edit",
+        status: "in_progress",
+        title: "Running edit_file",
+        locations: [{ path }],
+        rawInput: { file_path: path },
+      },
+    }).toolCall;
+    const completed = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-1",
+        status: "completed",
+        rawOutput: "Tool execution",
+      },
+    }).toolCall;
+    const preEdit = Array.from({ length: 12 }, (_, i) =>
+      i === 9 ? replace.TargetContent : `line ${i + 1}`,
+    ).join("\n");
+    const postEdit = preEdit.replace(replace.TargetContent, replace.ReplacementContent);
+    for (const [pending, readFile] of [
+      [frame({ ...replace, StartLine: 5, EndLine: 12 }, 5), () => preEdit],
+      [frame(replace), () => preEdit],
+    ] as const) {
+      let toolCall = normalizeAntigravityToolCall(parseToolUpdate(pending).toolCall, readFile);
+      for (const next of [running, completed]) {
+        toolCall = normalizeAntigravityToolCall(mergeToolCallState(toolCall, next), () => postEdit);
+      }
+      expect(toolCall.status).toBe("completed");
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBe(
+        `--- ${path}\n+++ ${path}\n@@ -10,1 +10,1 @@\n-const target = 10;\n+const target = 100;\n`,
+      );
+    }
+    // Full-access edits arrive path-only; no hunk is offered instead of the tool's status text.
+    let pathOnly = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "edit-2",
+          kind: "edit",
+          status: "in_progress",
+          title: "Running edit_file",
+          locations: [{ path }],
+          rawInput: { file_path: path },
+        },
+      }).toolCall,
+    );
+    pathOnly = normalizeAntigravityToolCall(mergeToolCallState(pathOnly, completed));
+    expect(pathOnly.data.content).toEqual([{ type: "diff", patch: { format: "omitted" } }]);
+    expect(acpToolCallDiffPatch(pathOnly.data.content)).toBeUndefined();
+    // A captured patch that a later update's shared text budget cut or dropped is omitted.
+    for (const patch of [{ text: "[Earlier output truncated]\n\n@@ -80,1 +80,1 @@" }, {}]) {
+      const kept = normalizeAntigravityToolCall({
+        toolCallId: "edit-cut",
+        kind: "edit",
+        status: "completed",
+        data: { content: [{ type: "diff", path, patch }] },
+      });
+      expect(kept.data.content).toEqual([{ type: "diff", path, patch: { format: "omitted" } }]);
+    }
+    // A whole-file write whose old text was cut to its tail must not show the cut as deletions.
+    const overwrite = normalizeAntigravityToolCall({
+      toolCallId: "edit-overwrite",
+      kind: "edit",
+      status: "completed",
+      data: {
+        rawInput: { TargetFile: path, CodeContent: "one line\n" },
+        content: [
+          {
+            type: "diff",
+            path,
+            oldText: "[Earlier output truncated]\n\nrow 999\n",
+            newText: "one line\n",
+          },
+        ],
+      },
+    });
+    expect(acpToolCallDiffPatch(overwrite.data.content)).toBeUndefined();
+    // A patch too long to keep, or input cut to its tail, must not fall back to line-1 snippets.
+    for (const width of [60, 120]) {
+      const block = (value: string) =>
+        Array.from({ length: 120 }, (_, i) => `${value} ${i} `.padEnd(width, "x")).join("\n");
+      const long = {
+        TargetContent: block("old"),
+        ReplacementContent: block("new"),
+        TargetFile: path,
+      };
+      const toolCall = normalizeAntigravityToolCall(
+        parseToolUpdate(frame({ ...long, StartLine: 80, EndLine: 199 }, 80)).toolCall,
+      );
+      expect(toolCall.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBeUndefined();
+    }
   });
 
   it.each([
@@ -453,37 +543,83 @@ describe("Antigravity tool results", () => {
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");
   });
+});
 
-  it("keeps large assistant replies and startup command metadata unchanged", () => {
-    const notifications = [
-      {
-        sessionId: "session-1",
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "a".repeat(20_000) },
-        },
+describe("Antigravity served reads", () => {
+  const flush = (reads: ReturnType<typeof makeAntigravityReadRepair>, toolCallId: string) =>
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "failed",
+        rawOutput: "Tool execution failed",
       },
-      {
-        sessionId: "session-1",
-        update: {
-          sessionUpdate: "available_commands_update",
-          availableCommands: [{ name: "plan", description: "Make a plan" }],
-        },
+    }).update;
+
+  it("credits a read T3 served before the agent announced it", () => {
+    const reads = makeAntigravityReadRepair();
+    reads.attempted("/repo/a.ts", true);
+    const announced = reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_late",
+        title: "Running client_view_file",
+        kind: "read",
+        status: "in_progress",
+        locations: [{ path: "/repo/a.ts" }],
       },
-    ] satisfies ReadonlyArray<EffectAcpSchema.SessionNotification>;
-    for (const notification of notifications) {
-      expect(normalizeAntigravitySessionUpdate(notification)).toBe(notification);
-    }
+    });
+    expect(announced.update).toMatchObject({ status: "completed" });
+    expect(flush(reads, "call_late")).toEqual({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_late",
+      status: "completed",
+    });
   });
 
-  it("tracks only commands that have passed approval and are still running", () => {
-    const running = normalizeAntigravityToolCall(parseToolUpdate(commandStarted).toolCall);
-    expect(isAntigravityOpenCommand(running)).toBe(true);
-    expect(isAntigravityOpenCommand({ ...running, status: "pending" })).toBe(false);
-    expect(isAntigravityOpenCommand({ ...running, kind: "read" })).toBe(false);
-    const completed = normalizeAntigravityToolCall(
-      mergeToolCallState(running, parseToolUpdate(commandCompleted).toolCall),
-    );
-    expect(isAntigravityOpenCommand(completed)).toBe(false);
+  it("forgets an earlier turn's unannounced served read", () => {
+    const reads = makeAntigravityReadRepair();
+    reads.attempted("/repo/a.ts", true);
+    reads.reset();
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_refused",
+        title: "Running client_view_file",
+        kind: "read",
+        status: "in_progress",
+        locations: [{ path: "/repo/a.ts" }],
+      },
+    });
+    reads.attempted("/repo/a.ts", false);
+    expect(flush(reads, "call_refused")).toMatchObject({ status: "failed" });
+  });
+
+  it("drops an earlier turn's unanswered read so a new turn's served read gets the credit", () => {
+    const reads = makeAntigravityReadRepair();
+    const announce = (toolCallId: string) =>
+      reads.repair({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Running client_view_file",
+          kind: "read",
+          status: "in_progress",
+          locations: [{ path: "/repo/a.ts" }],
+        },
+      });
+    announce("call_abandoned");
+    reads.reset();
+    announce("call_current");
+    reads.attempted("/repo/a.ts", true);
+    expect(flush(reads, "call_current")).toEqual({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_current",
+      status: "completed",
+    });
   });
 });
