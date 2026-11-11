@@ -33,7 +33,6 @@ import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
-import { isMacPlatform } from "~/lib/utils";
 import { type PreviewAction, subscribePreviewAction } from "../preview/previewActionBus";
 
 interface FileBrowserPanelProps {
@@ -505,16 +504,6 @@ export default function FileBrowserPanel({
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
-      // Claimed before the global dispatcher, which resolves mod+f in the right panel to
-      // preview.find and only the browser preview answers that.
-      onKeyDown={(event) => {
-        const isModPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
-        if (!isModPressed || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") {
-          return;
-        }
-        event.preventDefault();
-        focusSearch();
-      }}
     >
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"

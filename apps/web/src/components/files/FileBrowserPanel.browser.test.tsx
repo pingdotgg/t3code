@@ -1,10 +1,15 @@
-import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ProjectEntry,
+  type ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { dismissContextMenu } from "~/contextMenuFallback";
 import { isMacPlatform } from "~/lib/utils";
+import { registerCommands } from "~/shortcuts/dispatcher";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
 import { render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
@@ -12,6 +17,26 @@ import FileBrowserPanel from "./FileBrowserPanel";
 const entries: readonly ProjectEntry[] = [
   { path: "src", kind: "directory" },
   { path: "README.md", kind: "file" },
+];
+// The chat route maps mod+f in the right panel to preview.find, which publishes "find".
+const findCommand = {
+  "preview.find": (event: KeyboardEvent) => {
+    event.preventDefault();
+    dispatchPreviewAction("find");
+  },
+};
+const findBinding = (): ResolvedKeybindingsConfig => [
+  {
+    command: "preview.find",
+    shortcut: {
+      key: "f",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: true,
+    },
+  },
 ];
 const loadingDirectories: ReadonlySet<string> = new Set();
 const directory = {
@@ -119,6 +144,7 @@ describe("FileBrowserPanel", () => {
   });
 
   it("mod+f from a tree row focuses the file search", async () => {
+    using _find = { [Symbol.dispose]: registerCommands(findCommand, { keybindings: findBinding }) };
     await using _screen = await render(
       <FileBrowserPanel
         environmentId={EnvironmentId.make("env-files")}
@@ -127,6 +153,7 @@ describe("FileBrowserPanel", () => {
         selectedPath={null}
         selectedPathRevealId={0}
         onOpenFile={() => {}}
+        answersPanelFind
         workspaceMutationId={null}
       />,
     );
