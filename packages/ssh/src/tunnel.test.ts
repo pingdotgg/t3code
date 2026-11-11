@@ -965,6 +965,14 @@ describe.runIf(HostProcess.Platform.defaultValue() === "linux")("stale managed p
 const http = require("node:http");
 const path = require("node:path");
 const args = process.argv.slice(2);
+if (args.join(" ") === "__ssh-helper home-dir") {
+  process.stdout.write(path.join(require("node:os").homedir(), ".t3"));
+  process.exit(0);
+}
+if (args[0] === "--version") {
+  process.stdout.write("1.0.0");
+  process.exit(0);
+}
 const flag = (name) => args[args.indexOf(name) + 1];
 const server = http.createServer((_request, response) => response.end("ok"));
 server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
