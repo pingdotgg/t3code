@@ -7337,11 +7337,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(resume),
                 Effect.flatMap(decodeCodexResumeMetadata),
+                // Stay registered: a lost or undecodable response may still have resumed the thread.
                 Effect.onError(() =>
-                  Effect.sync(() => {
-                    if (previousRoot === undefined) rootProviderThreads.delete(nativeThreadId);
-                    else rootProviderThreads.set(nativeThreadId, previousRoot);
-                    goalUpdatesHeld.delete(nativeThreadId);
+                  Effect.suspend(() => {
+                    if (previousRoot !== undefined) {
+                      rootProviderThreads.set(nativeThreadId, previousRoot);
+                    }
+                    return releaseGoalUpdates(nativeThreadId);
                   }),
                 ),
               );
