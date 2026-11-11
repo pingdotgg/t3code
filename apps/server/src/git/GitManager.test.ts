@@ -4161,6 +4161,22 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(error.message).toContain("1 unpushed commit");
       expect(created(providerCalls)).toEqual([]);
+
+      // An open PR is returned as it is; returning it publishes nothing.
+      const open = {
+        number: 7,
+        title: "Feature",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/7",
+        baseRefName: "main",
+        headRefName: "feature/unpushed",
+      };
+      const existing = yield* makeManager({ providerScenario: { prListSequence: [[open]] } });
+      const found = yield* existing.manager.createPullRequest({
+        cwd: repoDir,
+        title: "Feature",
+        body: "Body",
+      });
+      expect(found).toMatchObject({ status: "opened_existing", number: 7 });
     }),
   );
 

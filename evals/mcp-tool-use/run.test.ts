@@ -1021,8 +1021,8 @@ it.effect("reads the branch's PR only once the agent has opened it", () =>
     assert.isNotTrue((yield* call("c", "pull_request_read", {})).is_error);
 
     // A case that mocks the create still opens the PR it names.
-    const url = "https://github.com/acme/app/pull/124";
-    const mocks = { pull_request_create: { number: 124, url, created: true } };
+    const url = "https://github.com/acme/app/pull/125";
+    const mocks = { pull_request_create: { number: 125, url, created: true } };
     const mockedSample = makeSample(
       { ...childCase, setup: { ...childCase.setup, world, mocks } },
       base,
@@ -1036,7 +1036,21 @@ it.effect("reads the branch's PR only once the agent has opened it", () =>
         input: name === "pull_request_create" ? { title: "Feature", body: "Body" } : {},
       });
     yield* mockedCall("d", "pull_request_create");
-    assert.isNotTrue((yield* mockedCall("e", "pull_request_read")).is_error);
+    const mockedRead = yield* mockedCall("e", "pull_request_read");
+    assert.isNotTrue(mockedRead.is_error);
+    assert.include(String(mockedRead.content), "/pull/125");
+
+    // Linking the URL a create would open is not opening it.
+    const linkedOnly = makeSample({ ...childCase, setup: { ...childCase.setup, world } }, base);
+    linkedOnly.tools.push(...sample.tools);
+    linkedOnly.linked.add("https://github.com/acme/app/pull/124");
+    const linkedRead = yield* answerToolCall(linkedOnly, config, {
+      type: "tool_use",
+      id: "f",
+      name: "mcp__t3-code__pull_request_read",
+      input: {},
+    });
+    assert.isTrue(linkedRead.is_error);
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 

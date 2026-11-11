@@ -2407,6 +2407,14 @@ export const make = Effect.gen(function* () {
       };
     }
 
+    // A PR opened from the remote branch would leave out commits not pushed yet.
+    if (details.aheadCount > 0) {
+      return yield* new GitManagerError({
+        operation: "runPrStep",
+        cwd,
+        detail: `The branch has ${details.aheadCount} unpushed commit${details.aheadCount === 1 ? "" : "s"}. Push before opening the PR.`,
+      });
+    }
     const resolved = yield* resolvePrBase(cwd, branch, details.upstreamRef, headContext);
     const baseBranch = requestedBase ?? resolved.baseBranch;
     const generated = yield* content({
@@ -2523,22 +2531,16 @@ export const make = Effect.gen(function* () {
   const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
     "GitManager.createPullRequest",
   )(function* (input) {
-    // A PR opened from the remote branch would leave out commits not pushed yet.
-    const { aheadCount } = yield* gitCore.statusDetails(input.cwd);
-    if (aheadCount > 0) {
-      return yield* new GitManagerError({
-        operation: "createPullRequest",
-        cwd: input.cwd,
-        detail: `The branch has ${aheadCount} unpushed commit${aheadCount === 1 ? "" : "s"}. Push before opening the PR.`,
-      });
-    }
-    return yield* openPrFromBranch(
+    const result = yield* openPrFromBranch(
       input.cwd,
       null,
       () => Effect.void,
       input.baseBranch,
       () => Effect.succeed({ title: input.title, body: input.body }),
     );
+    // The thread's branch PR comes from status, which may hold the lookup from before.
+    if (result.status === "created") yield* invalidateStatus(input.cwd);
+    return result;
   });
 
   const localStatus: GitManager["Service"]["localStatus"] = Effect.fn("localStatus")(
