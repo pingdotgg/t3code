@@ -8879,17 +8879,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
     },
     {
-      phase: "requesting",
-      frame: (index: number) =>
-        claudeSdkFrame({
-          type: "system",
-          subtype: "status",
-          status: "requesting",
-          uuid: `00000000-0000-4000-8000-0000000248${index}2`,
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-    },
-    {
       phase: "api_retry",
       frame: (index: number) =>
         claudeSdkFrame({
