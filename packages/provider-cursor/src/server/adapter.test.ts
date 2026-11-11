@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import type { InteractionUpdate } from "@cursor/sdk";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   EnvironmentId,
   MessageId,
@@ -13,6 +14,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -33,7 +35,9 @@ import {
   nestedToolCallFromEnvelope,
 } from "./adapter.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
-import { ConfigurationError } from "./sdk.ts";
+import { loadCursorSdk } from "./sdk.ts";
+
+const { ConfigurationError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
@@ -43,7 +47,7 @@ describe("CursorAdapterV2", () => {
     { status: "finished", model: undefined, lateModel: "gpt-6-sol" },
     { status: "finished", model: "gpt-6-sol", lateModel: null },
   ] as const)(
-    "projects Cursor tasks: $status, late model $lateModel",
+    "projects Cursor tasks and unfinished tools: $status, late model $lateModel",
     ({ status, model, lateModel }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -113,7 +117,35 @@ describe("CursorAdapterV2", () => {
                               : {}),
                           },
                         },
-                      }).pipe(Effect.orDie);
+                      });
+                    }
+                    const readUpdates: ReadonlyArray<InteractionUpdate> = [
+                      {
+                        type: "tool-call-started",
+                        modelCallId: "native-model-call",
+                        callId: "read-secret",
+                        toolCall: { type: "read", args: { path: "secret.txt" } },
+                      },
+                      ...(["tool-call-started", "tool-call-completed"] as const).map((type) => ({
+                        type,
+                        modelCallId: "native-model-call",
+                        callId: "read-open",
+                        toolCall: {
+                          type: "read" as const,
+                          args: { path: "open.txt" },
+                          ...(type === "tool-call-completed"
+                            ? {
+                                result: {
+                                  status: "success" as const,
+                                  value: { fileSize: 3, content: "ok\n", totalLines: 1 },
+                                },
+                              }
+                            : {}),
+                        },
+                      })),
+                    ];
+                    for (const update of readUpdates) {
+                      yield* input.onDelta!(update);
                     }
                     return {
                       agentId: "native-cursor-lifecycle",
@@ -127,7 +159,7 @@ describe("CursorAdapterV2", () => {
                       }),
                       cancel: Effect.void,
                     };
-                  }),
+                  }).pipe(Effect.orDie),
               }),
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
@@ -189,7 +221,7 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        assert.isFalse(sentWithMcpOverride);
+        assert.isTrue(sentWithMcpOverride);
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
@@ -205,6 +237,40 @@ describe("CursorAdapterV2", () => {
                 : "failed",
         );
         assert.isNotNull(rows.at(-1)?.subagent.completedAt);
+        const unfinished =
+          status === "finished" ? "interrupted" : status === "error" ? "failed" : "cancelled";
+        const finalReads = new Map<string, { status: string; output: unknown; done: boolean }>();
+        for (const event of events) {
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.toolName === "Read"
+          ) {
+            finalReads.set(String(event.turnItem.title), {
+              status: event.turnItem.status,
+              output: event.turnItem.output,
+              done: event.turnItem.completedAt !== null,
+            });
+          }
+        }
+        const finalNodes = new Map<string, string>();
+        for (const event of events) {
+          if (event.type === "node.updated" && event.node.kind === "tool_call") {
+            finalNodes.set(String(event.node.nativeItemRef?.nativeId), event.node.status);
+          }
+        }
+        assert.deepEqual(Object.fromEntries(finalReads), {
+          "Read secret.txt": { status: unfinished, output: undefined, done: true },
+          "Read open.txt": {
+            status: "completed",
+            output: { fileSize: 3, content: "ok\n", totalLines: 1 },
+            done: true,
+          },
+        });
+        assert.deepEqual(Object.fromEntries(finalNodes), {
+          "read-secret": unfinished,
+          "read-open": "completed",
+        });
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -446,11 +512,11 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
+  it.effect("fails standalone SDK transport diagnostics and compacts with SDK summarize", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-errors-" });
-      const sentMessages: Array<string> = [];
+      const summarizeRequests: Array<boolean> = [];
       let sendCalls = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-transport-error-thread");
@@ -474,9 +540,7 @@ describe("CursorAdapterV2", () => {
               send: (input) =>
                 Effect.sync(() => {
                   sendCalls += 1;
-                  sentMessages.push(
-                    typeof input.message === "string" ? input.message : input.message.text,
-                  );
+                  summarizeRequests.push(input.summarize === true);
                   const runId = `native-cursor-run-${sendCalls}`;
                   return {
                     agentId: "native-cursor-error",
@@ -487,9 +551,10 @@ describe("CursorAdapterV2", () => {
                       status: "finished" as const,
                       model: { id: "composer-2.5" },
                       durationMs: 1,
-                      ...(sendCalls === 1
-                        ? { result: "Error: RetriableError: WritableIterable is closed" }
-                        : {}),
+                      result:
+                        sendCalls === 1
+                          ? "Error: RetriableError: WritableIterable is closed"
+                          : "Summary of the conversation so far",
                     }),
                     cancel: Effect.void,
                   };
@@ -582,11 +647,12 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const compactionEvents = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
       );
-      assert.equal(sentMessages[1], "/compress");
+      assert.deepEqual(summarizeRequests, [false, true]);
+      assert.notInclude(JSON.stringify(compactionEvents), "Summary of the conversation so far");
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -747,6 +813,151 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("carries an interrupted prompt into the steer that restarts the turn", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-steer-" });
+      const sentMessages: Array<string> = [];
+      const runEnds: Array<Deferred.Deferred<"finished" | "cancelled">> = [];
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-steer-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-steer",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.gen(function* () {
+                  sentMessages.push(
+                    typeof input.message === "string" ? input.message : input.message.text,
+                  );
+                  const runId = `native-cursor-run-${sentMessages.length}`;
+                  const ended = yield* Deferred.make<"finished" | "cancelled">();
+                  runEnds.push(ended);
+                  return {
+                    agentId: "native-cursor-steer",
+                    runId,
+                    // Cursor drops a cancelled run's prompt from the agent's conversation.
+                    wait: Deferred.await(ended).pipe(
+                      Effect.map((status) => ({
+                        id: runId,
+                        requestId: `native-request-${sentMessages.length}`,
+                        status,
+                        model: { id: "composer-2.5" },
+                        durationMs: 1,
+                      })),
+                    ),
+                    cancel: Deferred.succeed(ended, "cancelled"),
+                  };
+                }),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-steer-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const appThread = {
+        id: threadId,
+        projectId: ProjectId.make("cursor-steer-project"),
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        title: "Cursor steer",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+      const turnInput = (runOrdinal: number, text: string) => ({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make(`cursor-steer-run-${runOrdinal}`),
+        runOrdinal,
+        providerTurnOrdinal: runOrdinal,
+        attemptId: RunAttemptId.make(`cursor-steer-attempt-${runOrdinal}`),
+        rootNodeId: NodeId.make(`cursor-steer-root-${runOrdinal}`),
+        appThread,
+        message: {
+          messageId: MessageId.make(`cursor-steer-message-${runOrdinal}`),
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          text,
+          attachments: [],
+        },
+      });
+      const firstPrompt = "Write me a 1000 word story about a dog.";
+      const steerText = "No wait, a pig please.";
+
+      yield* runtime.startTurn(turnInput(1, firstPrompt));
+      const started = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_turn.updated"),
+          Stream.runHead,
+        ),
+      );
+      assert(started.type === "provider_turn.updated");
+      yield* runtime.interruptTurn({ providerThread, providerTurnId: started.providerTurn.id });
+      yield* runtime.startTurn(turnInput(2, steerText));
+
+      assert.lengthOf(sentMessages, 2);
+      const steered = sentMessages[1]!;
+      assert.include(steered, steerText);
+      assert.include(
+        steered,
+        firstPrompt,
+        "the interrupted prompt is missing from the run that replaces it",
+      );
+
+      yield* Deferred.succeed(runEnds[1]!, "finished");
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.status === "completed"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn(turnInput(3, "Now a cow."));
+      assert.notInclude(sentMessages[2]!, firstPrompt, "a finished turn carries nothing forward");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect("projects Cursor directory trees and lint diagnostics as file search results", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -780,7 +991,18 @@ describe("CursorAdapterV2", () => {
               args: { city: "Berlin" },
             },
             ...(type === "tool-call-completed"
-              ? { result: { status: "success" as const, value: { content: [], isError: false } } }
+              ? {
+                  result: {
+                    status: "success" as const,
+                    value: {
+                      content: [
+                        { text: { text: "Preview complete" } },
+                        { image: { data: "iVBORw0KGgo=", mimeType: "image/png" } },
+                      ],
+                      isError: false,
+                    },
+                  },
+                }
               : {}),
           },
         })),
@@ -863,6 +1085,32 @@ describe("CursorAdapterV2", () => {
             type: "grep",
             args: { pattern: "TODO", path: "src" },
             result: { status: "error", error: "search failed" },
+          },
+        },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
+          callId: "grep-counts",
+          toolCall: {
+            type: "grep",
+            args: { pattern: "TODO", outputMode: "count" },
+            result: {
+              status: "success",
+              value: {
+                workspaceResults: {
+                  [workspace]: {
+                    type: "count",
+                    output: {
+                      counts: [
+                        { file: "src/a.ts", count: 1 },
+                        { file: "src/b.ts", count: 3 },
+                      ],
+                      total: 4,
+                    },
+                  },
+                },
+              },
+            },
           },
         },
         {
@@ -1065,6 +1313,9 @@ describe("CursorAdapterV2", () => {
         });
         assert.deepEqual(item.input, { city: "Berlin" });
       }
+      assert.deepEqual(toolOutputImages(mcpItems.at(-1)?.output), [
+        { mimeType: "image/png", data: "iVBORw0KGgo=" },
+      ]);
       const fileSearchItems = events.flatMap((event) =>
         event.type === "turn_item.updated" &&
         event.turnItem.type === "file_search" &&
@@ -1114,6 +1365,14 @@ describe("CursorAdapterV2", () => {
             pattern: "TODO",
             status: "failed",
             results: [{ fileName: "src", preview: "search failed" }],
+          },
+          {
+            pattern: "TODO",
+            status: "completed",
+            results: [
+              { fileName: "src/a.ts", preview: "1 match" },
+              { fileName: "src/b.ts", preview: "3 matches" },
+            ],
           },
           {
             pattern: "*.ts",

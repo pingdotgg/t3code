@@ -12,6 +12,7 @@ const commands = vi.hoisted(() => ({
   unpin: vi.fn(),
   archive: vi.fn(),
   unarchive: vi.fn(),
+  delete: vi.fn(),
   settle: vi.fn(),
   unsettle: vi.fn(),
   snooze: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("./useHandleNewThread", () => ({
   },
 }));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
+vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: vi.fn() }));
 vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
 vi.mock("../uiStateStore", () => ({ useUiStateStore: () => vi.fn() }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
@@ -52,10 +54,12 @@ const threadShell = vi.hoisted(() => ({
   environmentId: "undo-env",
   session: null,
 }));
+// Archived rows have no loaded shell, so deleting one takes the unresolved path.
+const shellLoaded = vi.hoisted(() => ({ current: true }));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   readEnvironmentServerConfigLoaded: () => true,
-  readThreadShell: () => threadShell,
+  readThreadShell: () => (shellLoaded.current ? threadShell : null),
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => {
@@ -68,6 +72,8 @@ vi.mock("../state/use-atom-command", () => ({
         return commands.archive;
       case threadEnvironment.unarchive:
         return commands.unarchive;
+      case threadEnvironment.delete:
+        return commands.delete;
       case threadEnvironment.settle:
         return commands.settle;
       case threadEnvironment.unsettle:
@@ -102,6 +108,7 @@ beforeEach(() => {
   router.state.matches[0]!.params = {};
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
+  shellLoaded.current = true;
 });
 afterEach(() => {
   vi.runAllTimers();
@@ -297,4 +304,66 @@ describe("settle and snooze Undo", () => {
       input: { threadId: target.threadId, reason: "user" },
     });
   });
+});
+
+describe("archive and delete Undo expiry", () => {
+  const otherThread = { environmentId: target.environmentId, threadId: ThreadId.make("other") };
+  const otherEnvironment = {
+    environmentId: EnvironmentId.make("other-env"),
+    threadId: target.threadId,
+  };
+  const failure = { _tag: "Failure", cause: Cause.fail(new Error("Request failed")) };
+
+  describe.each(["archiveThread", "deleteThread"] as const)("%s", (lifecycle) => {
+    it.each([
+      ["settleThread", "unsettle"],
+      ["snoozeThread", "unsnooze"],
+      ["unpinThread", "pin"],
+    ] as const)(
+      "expires an earlier %s Undo for that thread only, across hook instances",
+      async (handler, inverse) => {
+        const sidebar = useThreadActions();
+        const header = useThreadActions();
+        for (const ref of [otherThread, otherEnvironment, target]) {
+          await (handler === "snoozeThread"
+            ? sidebar.snoozeThread(ref, "2099-01-01T09:00:00.000Z")
+            : sidebar[handler](ref));
+        }
+        const staleUndo = currentUndo();
+        await header[lifecycle](target);
+        await staleUndo();
+        expect(commands[inverse]).toHaveBeenCalledTimes(2);
+        expect(commands[inverse]).not.toHaveBeenCalledWith(
+          expect.objectContaining({
+            environmentId: target.environmentId,
+            input: expect.objectContaining({ threadId: target.threadId }),
+          }),
+        );
+      },
+    );
+
+    it("keeps the earlier Undo when the request fails", async () => {
+      const actions = useThreadActions();
+      await actions.settleThread(target);
+      commands[lifecycle === "archiveThread" ? "archive" : "delete"].mockResolvedValue(failure);
+      await actions[lifecycle](target);
+      expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Settled" });
+      await currentUndo()();
+      expect(commands.unsettle).toHaveBeenCalledOnce();
+    });
+  });
+
+  it.each([true, false])(
+    "expires the Archived Undo when deleting with shell loaded: %s",
+    async (loaded) => {
+      const actions = useThreadActions();
+      await actions.archiveThread(target);
+      const staleUndo = currentUndo();
+      shellLoaded.current = loaded;
+      await actions.deleteThread(target);
+      expect(useThreadUndoNotice.getState().notice).toBeNull();
+      await staleUndo();
+      expect(commands.unarchive).not.toHaveBeenCalled();
+    },
+  );
 });
