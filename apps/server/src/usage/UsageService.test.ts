@@ -104,7 +104,7 @@ function claudeCopy(usage: Readonly<Record<string, number>>): string {
   })}\n`;
 }
 
-// A subagent message from #20246: its stream-start copy, then its final copy.
+// A subagent message: its stream-start copy, then its final copy.
 const PARTIAL_USAGE = {
   input_tokens: 2,
   cache_creation_input_tokens: 1097,
