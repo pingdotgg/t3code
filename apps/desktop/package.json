@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/desktop",
-  "version": "0.1.7",
+  "version": "0.1.9",
   "private": true,
   "type": "module",
   "main": "dist-electron/boot.cjs",
@@ -12,7 +12,7 @@
   "dependencies": {
     "@clerk/electron": "catalog:",
     "@clerk/electron-passkeys": "catalog:",
-    "@crowecawcaw/xa11y": "0.13.0",
+    "@crowecawcaw/xa11y": "0.15.4",
     "@effect/platform-node": "catalog:",
     "@napi-rs/keyring": "^1.3.0",
     "@t3tools/client-runtime": "workspace:*",
@@ -27,7 +27,7 @@
     "electron-updater": "^6.8.9",
     "electron-webauthn": "catalog:",
     "ffi-rs": "1.3.2",
-    "playwright-core": "1.60.0",
+    "playwright-core": "1.64.1",
     "react-grab": "^0.1.32",
     "tldts": "catalog:"
   },
@@ -37,6 +37,7 @@
     "acorn": "8.16.0",
     "cross-env": "^10.1.0",
     "electron-builder": "26.16.1",
+    "jsdom": "^30.0.1",
     "tailwindcss": "^4.0.0",
     "vite-plus": "catalog:"
   },
