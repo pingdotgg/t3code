@@ -5611,9 +5611,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (steeringPolicy === "active_steering") {
       const instanceChanged =
         input.projection.thread.providerInstanceId !== input.modelSelection.instanceId;
+      // Only a user's steer carries the picker's selection; the adapter applies it to the live turn.
+      const steerCarriesSelection =
+        input.delegatedCompletion === undefined && input.notification === undefined;
       if (
-        input.delegatedCompletion === undefined &&
-        input.notification === undefined &&
+        steerCarriesSelection &&
         (instanceChanged ||
           !modelSelectionsEqual(input.projection.thread.modelSelection, input.modelSelection))
       ) {
@@ -5649,6 +5651,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerThreadId: providerThread.id,
             providerTurnId: providerTurn.id,
             messageId: input.messageId,
+            ...(steerCarriesSelection ? { modelSelection: input.modelSelection } : {}),
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);
