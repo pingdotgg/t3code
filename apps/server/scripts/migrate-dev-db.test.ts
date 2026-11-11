@@ -14,6 +14,11 @@ const withDatabase = <A, E>(
   effect: Effect.Effect<A, E, SqlClient.SqlClient>,
 ) => effect.pipe(Effect.provide(NodeSqliteClient.layer({ filename: databasePath })));
 
+const insertPeerLink = (sql: SqlClient.SqlClient) => sql`INSERT INTO peer_environment_links
+  (environment_id, secret_name, label, urls_json, access, linked_at, expires_at)
+  VALUES ('environment-box', 'peer-link-box', 'Box', '["https://box.example"]', 'auto',
+    '2026-08-01', '2027-08-01')`;
+
 const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(function* (
   baseDir: string,
   toMigrationInclusive?: number,
@@ -121,10 +126,7 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         VALUES ('delivery-1', 'task-1', 'key-1', 1900000000000, '{}', '{}', '[]')`;
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
-      yield* sql`INSERT INTO peer_environment_links
-        (environment_id, secret_name, label, urls_json, access, linked_at, expires_at)
-        VALUES ('environment-box', 'peer-link-box', 'Box', '["https://box.example"]', 'auto',
-          '2026-08-01', '2027-08-01')`;
+      if (toMigrationInclusive === undefined) yield* insertPeerLink(sql);
     }),
   );
   return databasePath;
@@ -381,6 +383,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
           yield* sql`CREATE INDEX orchestration_v2_projection_turn_items_waiting_link_idx
             ON orchestration_v2_projection_turn_items(thread_id, updated_at DESC, turn_item_id DESC)
             WHERE type = 'link_request' AND status = 'waiting'`;
+          yield* insertPeerLink(sql);
           yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES
             (68, 'PeerLinks'), (69, 'PeerLinkFence'), (70, 'WaitingLinkRequestIndex')`;
         }),
