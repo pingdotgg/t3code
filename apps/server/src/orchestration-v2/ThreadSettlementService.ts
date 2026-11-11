@@ -678,8 +678,11 @@ export const make = Effect.gen(function* () {
       case "thread.settled":
         return cleanUpSettledThread(event.threadId).pipe(Effect.andThen(enqueueFullSweep()));
       case "thread.archived":
-      case "thread.deleted":
         return enqueueFullSweep();
+      case "thread.deleted":
+        return Effect.sync(() => settleActionRunAt.delete(event.threadId)).pipe(
+          Effect.andThen(enqueueFullSweep()),
+        );
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "provider-session.detached":
@@ -719,8 +722,6 @@ export const make = Effect.gen(function* () {
         )
           ? enqueueThread(event.threadId)
           : Effect.void;
-      case "thread.deleted":
-        return Effect.sync(() => settleActionRunAt.delete(event.threadId));
       default:
         return Effect.void;
     }
