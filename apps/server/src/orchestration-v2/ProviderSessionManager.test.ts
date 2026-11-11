@@ -692,7 +692,8 @@ function layerTest(input: {
           layerConfiguredMcpRegistry,
           layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
-          ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          input.projectServiceLayer ??
+            Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
         ),
       ),
     ),

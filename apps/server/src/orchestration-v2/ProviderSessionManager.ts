@@ -353,6 +353,7 @@ export const layerWithOptions = (
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | McpSessionRegistry.McpSessionRegistry
+  | ProjectService.ProjectService
   | ProjectionStore.ProjectionStoreV2
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
@@ -366,7 +367,7 @@ export const layerWithOptions = (
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
-      const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      const projectService = yield* ProjectService.ProjectService;
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const promptSuggestionStore = yield* SubscriptionRef.make<
@@ -398,9 +399,7 @@ export const layerWithOptions = (
               (entry) => entry.enableAgentDeviceAccess !== undefined,
             );
             if (browserOverridden || deviceOverridden) {
-              const project = Option.isSome(projectService)
-                ? yield* projectService.value.getById(thread.projectId)
-                : Option.none();
+              const project = yield* projectService.getById(thread.projectId);
               if (Option.isNone(project))
                 return {
                   browser: browserOverridden ? false : settings.enableAgentBrowserAccess,

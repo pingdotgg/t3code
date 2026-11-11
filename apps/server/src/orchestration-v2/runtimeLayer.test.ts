@@ -57,6 +57,17 @@ import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import * as ManagedEndpointRuntime from "../cloud/ManagedEndpointRuntime.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -10284,4 +10295,114 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
         }),
     );
   },
+);
+
+const agentDeviceAccessProjectId = ProjectId.make("project:agent-device-access");
+
+const layerAgentDeviceAccessProduction = (
+  issued: Deferred.Deferred<ReadonlySet<string> | undefined>,
+) =>
+  RuntimeLayer.layerProduction.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(AnalyticsService.AnalyticsService)({}),
+        Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
+        Layer.mock(TextGeneration.TextGeneration)({}),
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+        Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(SecretResolver.SecretResolver)({}),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+        Layer.mock(PreviewManager.PreviewManager)({}),
+        Layer.mock(TerminalManager.TerminalManager)({}),
+        Layer.mock(WorkspacePaths.WorkspacePaths)({
+          normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
+        }),
+        Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
+          getAvailable: () =>
+            Effect.succeed({
+              repositoryIdentity: null,
+              faviconPath: null,
+              repositoryIdentityResolved: false,
+            }),
+          invalidate: () => Effect.void,
+        }),
+        ServerSecretStore.layer,
+        ManagedPolicy.layerTest(),
+        ProjectStore.layer,
+        McpProviderSessions.layer,
+        Layer.effect(
+          McpSessionRegistry.McpSessionRegistry,
+          Effect.map(McpSessionRegistry.McpSessionRegistry, (registry) => ({
+            ...registry,
+            issue: (request) =>
+              Deferred.succeed(issued, request.capabilities).pipe(
+                Effect.andThen(registry.issue(request)),
+              ),
+          })),
+        ).pipe(Layer.provide(McpSessionRegistryTestkit.layer)),
+      ),
+    ),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(layerCheckpointStoreTest),
+    Layer.provide(layerServerConfig),
+    Layer.provide(
+      ServerSettings.layerTest({
+        enableAgentDeviceAccess: false,
+        projectSettingsOverrides: {
+          [agentDeviceAccessProjectId]: { enableAgentDeviceAccess: true },
+        },
+      }),
+    ),
+    Layer.provide(layerTestProviderInstanceRegistry),
+    Layer.provide(layerGitWorkflowTest),
+    Layer.provide(layerPlatformTest),
+  );
+
+it.effect("production wiring gives a thread its project's agent device access override", () =>
+  Effect.gen(function* () {
+    const issued = yield* Deferred.make<ReadonlySet<string> | undefined>();
+    yield* Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const threadId = ThreadId.make("thread:agent-device-access");
+      yield* projects.create({
+        commandId: CommandId.make("agent-device-access-project-create"),
+        projectId: agentDeviceAccessProjectId,
+        title: "Agent device access",
+        workspaceRoot: "/tmp/agent-device-access",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("agent-device-access-thread-create"),
+        threadId,
+        projectId: agentDeviceAccessProjectId,
+        title: "Agent device access",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      // The fixture adapter refuses to open; the credential is issued before that.
+      yield* manager
+        .open({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session:agent-device-access"),
+          modelSelection,
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: "/tmp" },
+        })
+        .pipe(Effect.exit);
+    }).pipe(Effect.provide(layerAgentDeviceAccessProduction(issued)));
+
+    const capabilities = yield* Deferred.await(issued);
+    assert.isTrue(
+      capabilities?.has("device"),
+      `the project's enableAgentDeviceAccess override must grant device tools; issued: ${[...(capabilities ?? [])].join(", ")}`,
+    );
+  }),
 );

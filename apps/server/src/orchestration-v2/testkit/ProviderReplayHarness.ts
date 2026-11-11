@@ -42,6 +42,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
+import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderAuthService from "../../provider/ProviderAuthService.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -394,6 +395,7 @@ export function layerWithRegistry<Error>(
         McpSessionRegistryTestkit.layer,
         layerProviderEventIngestorProvided,
         layerStores,
+        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
       ),
     ),
   );
