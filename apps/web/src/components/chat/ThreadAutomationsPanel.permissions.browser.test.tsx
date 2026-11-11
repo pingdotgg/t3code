@@ -7,7 +7,6 @@ vi.mock(import("../../state/session"), async (importOriginal) => ({
   useEnvironmentScope: () => state.allowed,
   readEnvironmentScope: () => state.allowed,
 }));
-// The panel reads the run permission through an atom; the grant is the boundary under test.
 vi.mock(import("@effect/atom-react"), async (importOriginal) => ({
   ...(await importOriginal()),
   useAtomValue: (() => state.allowed) as never,
