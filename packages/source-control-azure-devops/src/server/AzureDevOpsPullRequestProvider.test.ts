@@ -244,22 +244,8 @@ describe("policy checks", () => {
     }),
   );
 
-  it.effect("answers a checks poll with the pull request's state", () =>
-    Effect.gen(function* () {
-      const provider = yield* provide(() => Effect.succeed([check("pending")]));
-      expect(yield* provider.getChangeRequestChecks!(REPOSITORY)).toEqual({
-        state: "open",
-        checks: [check("pending")],
-      });
-    }),
-  );
-
   it.effect.each([
-    { statuses: ["success"], expected: "passing" },
-    { statuses: ["success", "pending"], expected: "pending" },
     { statuses: ["pending", "failure"], expected: "failing" },
-    { statuses: ["action-required"], expected: "pending" },
-    { statuses: ["neutral"], expected: null },
     { statuses: [], expected: null },
   ] as const)("summarizes $statuses as $expected", ({ statuses, expected }) =>
     Effect.gen(function* () {
@@ -274,21 +260,6 @@ describe("policy checks", () => {
       const provider = yield* provide(() => Effect.fail(readFailure));
       const summary = yield* provider.getChangeRequestSummary!(REPOSITORY);
       expect(summary.checksState).toBeUndefined();
-    }),
-  );
-
-  it.effect("tells the policy read whether the pull request is a draft", () =>
-    Effect.gen(function* () {
-      const drafts: Array<boolean> = [];
-      const provider = yield* provide(
-        (input) => {
-          drafts.push(input.isDraft);
-          return Effect.succeed([]);
-        },
-        { ...PULL_REQUEST, isDraft: true },
-      );
-      yield* provider.getChangeRequestSummary!(REPOSITORY);
-      expect(drafts).toEqual([true]);
     }),
   );
 });

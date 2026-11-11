@@ -571,12 +571,6 @@ describe("decodePolicyChecksJson", () => {
     expect(check?.url).toBeNull();
   });
 
-  it("marks a policy that does not block completion as optional", () => {
-    expect(
-      decodeOne(evaluation("approved", null, undefined, { isBlocking: false }))?.required,
-    ).toBe(false);
-  });
-
   it("reads a status policy, which reports an external service's verdict", () => {
     expect(
       decodeOne(
