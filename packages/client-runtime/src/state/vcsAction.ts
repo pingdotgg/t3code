@@ -227,6 +227,12 @@ export function vcsStackedActionThreadKey(
   return `${environmentId}:${threadId}`;
 }
 
+const vcsStackedActionThreadAtom = Atom.family((key: string) =>
+  Atom.make((get) => get(vcsStackedActionThreadsAtom).get(key)).pipe(
+    Atom.withLabel(`vcs-stacked-action-thread:${key}`),
+  ),
+);
+
 export function isThreadStackedActionRunning(
   thread: { readonly environmentId: EnvironmentIdType; readonly id: ThreadId },
   running: ReadonlyMap<string, unknown> | ReadonlySet<string>,
@@ -700,6 +706,8 @@ export function createVcsActionManager<R, E>(
   return {
     stateAtom: getVcsActionStateAtom,
     stackedActionThreadsAtom: vcsStackedActionThreadsAtom,
+    stackedActionThreadAtom: (environmentId: EnvironmentIdType, threadId: ThreadId) =>
+      vcsStackedActionThreadAtom(vcsStackedActionThreadKey(environmentId, threadId)),
     runStackedAction: (target: VcsActionTarget) => getRunStackedActionCommand(target),
     track: async <A, E>(
       registry: AtomRegistry.AtomRegistry,

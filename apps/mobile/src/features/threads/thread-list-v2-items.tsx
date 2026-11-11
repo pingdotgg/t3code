@@ -793,8 +793,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selected = props.selected === true;
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
-  const stackedActionThreads = useAtomValue(vcsActionManager.stackedActionThreadsAtom);
-  const stackedAction = stackedActionThreads.get(`${thread.environmentId}:${thread.id}`);
+  const stackedAction = useAtomValue(
+    vcsActionManager.stackedActionThreadAtom(thread.environmentId, thread.id),
+  );
   const sourceControlStatus = resolveSourceControlThreadStatus(stackedAction);
   const status = resolveThreadListV2Status(thread, { sourceControlStatus });
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);

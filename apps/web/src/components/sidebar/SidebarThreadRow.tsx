@@ -722,8 +722,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     : null;
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const stackedActionThreads = useAtomValue(vcsActionManager.stackedActionThreadsAtom);
-  const stackedAction = stackedActionThreads.get(`${thread.environmentId}:${thread.id}`);
+  const stackedAction = useAtomValue(
+    vcsActionManager.stackedActionThreadAtom(thread.environmentId, thread.id),
+  );
   const sourceControlStatus = resolveSourceControlThreadStatus(stackedAction);
   const status = resolveSidebarThreadStatus(thread, { sourceControlStatus });
   const workingStartedAt =
