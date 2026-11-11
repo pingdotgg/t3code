@@ -6,6 +6,7 @@ import { CONTEXT_CHIP_ACCENTS, contextChipColorVariable } from "./lib/contextChi
 
 import {
   applyThemePalette,
+  applyThemeColorPreview,
   contextChipVariables,
   getThemeColorsForMode,
   getThemeModes,
@@ -552,6 +553,64 @@ describe("theme files", () => {
     vi.unstubAllGlobals();
     invalidateCustomThemes();
   });
+});
+
+describe("sidebar selection foreground", () => {
+  it.each([
+    ["#88c0d0", "--contrast-accent-foreground", "#88c0d0", "#f5f5f5"],
+    ["rgb(136 192 208)", "--contrast-accent-foreground", "#88c0d0", "#f5f5f5"],
+    ["#2e3440", "--contrast-sidebar-foreground", "#88c0d0", "#f5f5f5"],
+    ["#88c0d033", "--contrast-sidebar-foreground", "#88c0d0", "#f5f5f5"],
+    ["#88c0d0", "--contrast-accent-foreground", "#88c0d1", "#f5f5f5"],
+    ["#88c0d033", "--contrast-sidebar-foreground", "#88c0d033", "#f5f5f5"],
+    ["#808080", null, "#88c0d0", "#f5f5f5"],
+    ["#88c0d1", "--contrast-sidebar-foreground", "#88c0d0", "#102030"],
+    ["#88c0d0", "--contrast-accent-foreground", "#88c0d0", "#102030"],
+  ] as const)(
+    "pairs selection %s with readable text",
+    (selection, foreground, highlight, sidebarForeground) => {
+      const properties = new Map<string, string>();
+      vi.stubGlobal("window", { localStorage: { getItem: () => null } });
+      vi.stubGlobal("document", {
+        documentElement: {
+          dataset: {},
+          classList: { toggle: () => {} },
+          style: {
+            setProperty: (name: string, value: string) => properties.set(name, value),
+            removeProperty: (name: string) => properties.delete(name),
+          },
+        },
+      });
+      invalidateCustomThemes();
+      try {
+        applyThemeColorPreview(
+          {
+            ...getStandardThemeColors("dark"),
+            accentSurface: highlight,
+            accentSurfaceForeground: "#18232b",
+            sidebarRowSelected: selection,
+            sidebarForeground,
+          },
+          "dark",
+        );
+        const selectedForeground = properties.get("--app-theme-sidebar-row-selected-foreground")!;
+        if (foreground === null) {
+          expect(contrastRatio(selectedForeground, selection)).toBeGreaterThanOrEqual(4.5);
+        } else {
+          expect(selectedForeground).toBe(`var(${foreground})`);
+        }
+        applyThemePalette("t3-chat", "dark");
+        expect(properties.get("--app-theme-sidebar-row-selected-foreground")).toBe(
+          "var(--contrast-sidebar-foreground)",
+        );
+        applyThemePalette("system", "dark");
+        expect(properties.has("--app-theme-sidebar-row-selected-foreground")).toBe(false);
+      } finally {
+        vi.unstubAllGlobals();
+        invalidateCustomThemes();
+      }
+    },
+  );
 });
 
 describe("context chip colors", () => {

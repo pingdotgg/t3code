@@ -658,7 +658,7 @@ function PlatformIcon(props: {
             type="button"
             aria-label={`${props.row.title}: ${props.label} ${available ? "available" : "not available"}`}
             className={cn(
-              "relative grid size-6 shrink-0 place-items-center rounded-md outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              "relative grid size-6 shrink-0 place-items-center rounded-md outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring hover:text-accent-foreground",
               available ? "text-foreground" : "text-muted-foreground/45",
             )}
           />
