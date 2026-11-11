@@ -4,6 +4,7 @@ import {
   isXAiTaskCompletedWakeNotification,
   xAiRateLimitedErrorCode,
 } from "./xaiAcpExtension.ts";
+import { discoverGrokSkills, leadingGrokSkillMention } from "./skills.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
@@ -13,11 +14,10 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { GrokSettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -79,6 +79,8 @@ import {
   type AcpAdapterV2RuntimeInput,
 } from "@t3tools/provider-acp/server/adapter";
 
+const isXAiPromptFailureText = Schema.is(XAiPromptFailureText);
+
 export const GROK_PROVIDER = ProviderDriverKind.make("grok");
 const GROK_DRIVER_KIND = GROK_PROVIDER;
 export const GROK_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GROK_DRIVER_KIND);
@@ -128,7 +130,7 @@ export interface GrokAdapterV2Options {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
   >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
@@ -153,11 +155,7 @@ const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensi
     ),
   );
 
-/**
- * Grok intercepts exit_plan_mode and reverse-requests client approval. Capture
- * the plan into T3's proposed-plan card and abandon the native gate so the turn
- * does not hang (#8358; mirrors the Claude ExitPlanMode pattern).
- */
+// Capture the reverse-requested plan, then abandon the native gate to finish the turn.
 const registerGrokExitPlanModeExtensions = ({
   runtime,
   captureProposedPlan,
@@ -214,11 +212,7 @@ const registerGrokAskUserQuestionExtensions = ({
     { discard: true },
   );
 
-/**
- * Grok's permission mode is fixed at launch. Explicit approval or sandbox
- * overrides launch it asking, so every mutating prompt reaches T3's policy
- * check instead of being bypassed by always-approve or Grok's auto classifier.
- */
+/** Explicit policy overrides launch in ask mode so Grok cannot bypass T3 approval checks. */
 export function grokLaunchRuntimeMode(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
 ): RuntimeMode {
@@ -236,21 +230,32 @@ export function makeGrokAcpAdapterFlavor(
     runtimeHarness: "Grok",
     capabilities: GrokProviderCapabilitiesV2,
     interruptPromptOnCancel: false,
-    // User Stop (requestRuntimeRestart) still hard-kills the process group and
-    // respawns so existing background tasks stop too. Non-Stop interrupts
-    // (mid-prompt steering, restart_active) omit requestRuntimeRestart and stay
-    // soft: session/cancel carries cancelTrigger=ctrl_c, the session survives,
-    // and background work remains available to the replacement turn.
+    // User Stop restarts the process group; steering cancels softly to preserve background work.
     restartRuntimeAfterInterrupt: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
-    // Steering restarts on a settled turn additionally skip session/cancel so
-    // fire-and-forget subagents survive the steer (E1 harness confirmed the
-    // Grok CLI accepts a concurrent session/prompt in that state).
+    // Settled Grok sessions accept concurrent prompts; skip cancel to preserve background subagents.
     preserveRuntimeOnSettledInterrupt: true,
-    // Grok ACP initialize reports promptCapabilities.image:false but the agent
-    // still accepts image content blocks (verified with real screenshots).
+    // Grok accepts image blocks despite advertising promptCapabilities.image:false.
     supportsImagePrompts: true,
     supportsCompaction: true,
+    // Grok expands only a leading `/name`, while the `$` picker inserts `$name` from the
+    // `grok inspect` catalog. Ask that catalog again so other `$` text is left alone.
+    rewriteUserText: (text, turnInput) => {
+      const mention = leadingGrokSkillMention(text);
+      if (mention === undefined) return Effect.succeed(text);
+      return discoverGrokSkills(
+        options.settings,
+        options.environment,
+        turnInput.runtimePolicy.cwd ?? undefined,
+      ).pipe(
+        Effect.map((skills) =>
+          skills.some((skill) => skill.enabled && skill.name === mention.name)
+            ? `/${mention.name}${mention.rest}`
+            : text,
+        ),
+        Effect.orElseSucceed(() => text),
+      );
+    },
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     getModelContextWindow: (selection, session) => {
       if (selection.instanceId !== options.instanceId) return undefined;
@@ -294,8 +299,7 @@ export function makeGrokAcpAdapterFlavor(
           environment: options.environment,
           runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
         })),
-    // In its Auto mode Grok decides routine actions itself and only asks about
-    // what its classifier blocked, so every prompt it sends goes to the user.
+    // Auto prompts represent classifier refusals and must reach the user.
     permissionDisposition: (policy, request) =>
       grokLaunchRuntimeMode(policy) === "auto" ? "ask" : acpPermissionDisposition(policy, request),
     approvalOptions: grokApprovalOptions,
@@ -304,10 +308,9 @@ export function makeGrokAcpAdapterFlavor(
         cause,
         ...(isAcpRequestError(cause)
           ? {
-              message:
-                cause.cause instanceof XAiPromptFailureText
-                  ? cause.cause.message
-                  : cause.errorMessage,
+              message: isXAiPromptFailureText(cause.cause)
+                ? cause.cause.message
+                : cause.errorMessage,
               code: String(cause.code),
               class: cause.code === xAiRateLimitedErrorCode ? "usage_limit" : "provider_error",
             }
@@ -355,7 +358,7 @@ export const makeGrokAdapterV2 = Effect.fn("makeGrokAdapterV2")(function* (
 
 export type GrokAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | Path.Path
@@ -404,40 +407,3 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
       ),
   ),
 };
-
-const layer: Layer.Layer<
-  ProviderAdapter.ProviderAdapterV2,
-  never,
-  | Path.Path
-  | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
-  | FileSystem.FileSystem
-  | IdAllocator.IdAllocatorV2
-  | McpProviderSessions.McpProviderSessions
-  | ProviderEventLoggers.ProviderEventLoggers
-  | ProviderHost.ProviderHost
-> = Layer.effect(
-  ProviderAdapter.ProviderAdapterV2,
-  Effect.gen(function* () {
-    const hostEnvironment = yield* HostProcess.Environment;
-    const hostPlatform = yield* HostProcess.Platform;
-    const selfInvocation = yield* resolveSelfInvocation();
-    const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-    const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-    const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-    return yield* makeGrokAdapterV2({
-      instanceId: GROK_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_GROK_SETTINGS,
-      environment: hostEnvironment,
-      hostPlatform,
-      selfInvocation,
-      continuationRequests,
-      nativeLogging: (threadId) =>
-        makeNativeLogger({
-          nativeEventLogger: providerEventLoggers.native,
-          provider: GROK_PROVIDER,
-          threadId,
-        }),
-    });
-  }),
-);

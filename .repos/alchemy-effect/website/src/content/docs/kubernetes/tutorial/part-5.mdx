@@ -6,7 +6,7 @@ sidebar:
 ---
 
 import Terminal from "../../../../components/Terminal.astro";
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 Everything you built in Parts 1–4 runs on a cluster on your machine.
 None of it is specific to that cluster. The Deployment, the Effect
@@ -62,7 +62,7 @@ replace the `Cluster` declaration:
 
 ```diff lang="typescript"
 +import { Stage } from "alchemy";
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import * as Effect from "effect/Effect";
 
 -export const Cluster = Kubernetes.LocalCluster("Cluster", {
@@ -114,20 +114,7 @@ return {
 
 ## Deploy to prod
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy --stage prod" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy -- --stage prod" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy --stage prod" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy --stage prod" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy --stage prod" />
 
 <Terminal content={`[u]Plan[/u]: [g]5 to create[/g]
 
@@ -169,7 +156,7 @@ where it's missing:
 
 ```diff lang="typescript"
 +import { Stage } from "alchemy";
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 ```
 
 ```diff lang="typescript"
@@ -195,20 +182,7 @@ Deploying `prod` again now plans the chart for deletion there.
 Destroy your own stage to remove everything on your machine,
 including the kind cluster and its registry:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy destroy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy destroy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy destroy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy destroy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy destroy" />
 
 Alchemy deletes the resources in reverse dependency order and the
 cluster last. The next `alchemy deploy` recreates it in about 30
