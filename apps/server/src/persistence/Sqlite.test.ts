@@ -21,6 +21,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
 import { migrationManifest, runMigrations } from "./Migrations.ts";
+import { FORK_MIGRATIONS_TABLE } from "./splitLegacyForkLedger.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
 const workers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
@@ -285,6 +286,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("layerCliConfig",
       if (opened._tag === "Failure") {
         assert.instanceOf(opened.failure, SqlitePersistence.ServerOwnsDatabaseError);
       }
+    }).pipe(Effect.scoped, Effect.provide(layerT3Home)),
+  );
+
+  it.effect("does not start the fork ledger behind a running server", () =>
+    Effect.gen(function* () {
+      yield* migrateTo();
+      const { dbPath } = yield* ServerConfig.ServerConfig;
+      const forkLedger = Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return yield* sql`SELECT name FROM sqlite_master WHERE name = ${FORK_MIGRATIONS_TABLE}`;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+      // Upstream's ledger is current; only the fork's is missing, as on an upstream-built home.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`DROP TABLE ${sql(FORK_MIGRATIONS_TABLE)}`;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+      yield* ownT3Home();
+
+      const opened = yield* Effect.void.pipe(
+        Effect.provide(SqlitePersistence.layerCliConfig),
+        Effect.result,
+      );
+
+      assert.equal(opened._tag, "Failure");
+      if (opened._tag === "Failure") {
+        assert.instanceOf(opened.failure, SqlitePersistence.ServerOwnsDatabaseError);
+      }
+      assert.deepEqual(yield* forkLedger, []);
     }).pipe(Effect.scoped, Effect.provide(layerT3Home)),
   );
 

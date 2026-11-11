@@ -51,11 +51,12 @@ export class ServerOwnsDatabaseError extends Schema.TaggedError<ServerOwnsDataba
 
 // A history the migrations refuse is left unchanged, and exits with a code supervisors do not restart.
 const migrateOrRefuse = runMigrations().pipe(
-  Effect.catchTag("MigrationError", (error) =>
-    Effect.fail(
-      error.kind === "BadState" ? new DatabaseRefusedError({ detail: error.message }) : error,
-    ),
-  ),
+  Effect.catchTags({
+    MigrationError: (error) =>
+      Effect.fail(
+        error.kind === "BadState" ? new DatabaseRefusedError({ detail: error.message }) : error,
+      ),
+  }),
 );
 
 // CLI commands open the server's database from another process; migrating behind its owner changes the schema it runs on.

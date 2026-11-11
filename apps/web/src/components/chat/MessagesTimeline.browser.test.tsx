@@ -28,7 +28,7 @@ import {
   type ReactElement,
 } from "react";
 import * as DateTime from "effect/DateTime";
-import { Atom, AsyncResult } from "effect/reactivity";
+import { Atom } from "effect/reactivity";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import "~/index.css";
@@ -57,25 +57,50 @@ import {
 } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 
-const environmentQuery = vi.hoisted(() => ({
-  error: "Pull request not found" as string | null,
-  data: null as unknown,
-}));
-vi.mock(import("~/state/query"), async (original) => ({
-  ...(await original()),
-  useEnvironmentQuery: (() => ({
-    data: environmentQuery.data,
-    dataUpdatedAt: 0,
-    error: environmentQuery.error,
-    failure: null,
-    isPending: false,
-    isSuccess: false,
-    refresh: () => {},
-  })) as never,
-}));
+const environmentQuery = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    error: "Pull request not found" as string | null,
+    data: null as unknown,
+    version: 0,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    /** Re-renders mounted readers, as a query store does when data arrives. */
+    publish(data: unknown) {
+      this.data = data;
+      this.version++;
+      for (const listener of listeners) listener();
+    },
+  };
+});
+vi.mock(import("~/state/query"), async (original) => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    ...(await original()),
+    useEnvironmentQuery: (() => {
+      useSyncExternalStore(environmentQuery.subscribe, () => environmentQuery.version);
+      return {
+        data: environmentQuery.data,
+        dataUpdatedAt: 0,
+        error: environmentQuery.error,
+        failure: null,
+        isPending: false,
+        isSuccess: false,
+        refresh: () => {},
+      };
+    }) as never,
+  };
+});
 
 // The fork has no render override for HTML pages; a test that needs a local page swaps the frame.
 const htmlRenderFrame = vi.hoisted(() => ({ render: null as null | (() => ReactElement) }));
+const commandOutputStreaming = vi.hoisted(() => ({ enabled: false }));
+vi.mock(import("./CommandOutputPanel"), async (original) => ({
+  ...(await original()),
+  useCommandOutputStreaming: () => commandOutputStreaming.enabled,
+}));
 vi.mock(import("./HtmlRenderFrame"), async (original) => {
   const actual = await original();
   return {
@@ -229,6 +254,7 @@ async function click(element: HTMLElement) {
 function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
   environmentQuery.error = "Pull request not found";
   environmentQuery.data = { tasks: scheduledTasks };
+  commandOutputStreaming.enabled = false;
 }
 
 const TASK_ID = ScheduledTaskId.make("task-1");
@@ -803,6 +829,7 @@ describe("MessagesTimeline messages", () => {
           }
         : null;
     environmentQuery.error = null;
+    commandOutputStreaming.enabled = !inline;
     const props = baseProps();
     const composerOverlayHeight = mode === "grouped-end" ? 140 : 200;
     const tallEntries = Array.from({ length: 12 }, (_, index) =>
@@ -813,10 +840,6 @@ describe("MessagesTimeline messages", () => {
       ),
     );
     const projectedItem = makeStreamingTimelineFixture().visibleTurnItems[1]!;
-    const source = {
-      detail: () => Atom.make(AsyncResult.initial()),
-      commandOutput: () => Atom.make(AsyncResult.initial()),
-    };
     let outerGrowth = false;
     let routeThreadKey = props.routeThreadKey;
     const timeline = () => (
@@ -824,14 +847,6 @@ describe("MessagesTimeline messages", () => {
         {...props}
         routeThreadKey={routeThreadKey}
         liveFollowEnabled={false}
-        {...(inline
-          ? {}
-          : {
-              turnItemSource: {
-                detail: () => source.detail(),
-                commandOutput: () => source.commandOutput(),
-              },
-            })}
         contentInsetEndAdjustment={composerOverlayHeight}
         timelineEntries={[
           ...tallEntries.slice(0, 6),
@@ -985,11 +1000,12 @@ describe("MessagesTimeline messages", () => {
         expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom() + 1),
       );
       await vi.waitFor(() => expect(screen.text()).toContain("Loading output"));
-      environmentQuery.data = {
-        output: { text: `${"output line\n".repeat(20)}TOOL_INPUT_END`, truncated: false },
-        running: false,
-      };
-      await screen.rerender(timeline());
+      await act(() =>
+        environmentQuery.publish({
+          output: { text: `${"output line\n".repeat(20)}TOOL_INPUT_END`, truncated: false },
+          running: false,
+        }),
+      );
     }
     const inputEnd = () =>
       Array.from(screen.container.querySelectorAll<HTMLElement>("*")).findLast((element) =>

@@ -34,6 +34,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
@@ -261,7 +262,12 @@ const make = Effect.gen(function* () {
       Effect.retry({
         times: 1,
         schedule: Schedule.spaced("1 second"),
-        while: (error) => certificateErrorCode(error) === undefined,
+        // A drop or a 5xx from a proxy is brief; a 4xx has already said what is there.
+        while: (error) =>
+          HttpClientError.isHttpClientError(error) &&
+          ("response" in error.reason
+            ? error.reason.response.status >= 500
+            : error.reason._tag === "TransportError" && certificateErrorCode(error) === undefined),
       }),
       Effect.timeout(probeTimeout(origin)),
       Effect.map((descriptor) => Result.succeed(descriptor)),

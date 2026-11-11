@@ -267,6 +267,13 @@ describe("evaluatePullRequestWatch", () => {
       [],
     );
 
+    // A base-branch rule that passes still waits for a workflow awaiting approval.
+    const approval = { ...check("Deploy", "action-required"), url: run(3) };
+    const held = detail({ checks: [required("test", "success"), approval] });
+    assert.deepEqual(evaluatePullRequestWatch(watch(), held, noRemarks, ["test"]).changes, [
+      { kind: "checks-awaiting-approval", checks: [approval] },
+    ]);
+
     const plain = detail({ checks: [check("test", "success"), check("bot", "pending")] });
     assert.deepEqual(
       evaluatePullRequestWatch(watch(), plain, noRemarks, NONE_REQUIRED).changes,

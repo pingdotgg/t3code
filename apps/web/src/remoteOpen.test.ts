@@ -69,7 +69,11 @@ describe("resolveRemoteOpenState", () => {
     // desktop's home and still be reached through a pairing.
     expect(
       resolveRemoteOpenState({
-        target: new BearerConnectionTarget({ environmentId, label: "sol", connectionId: "bearer-1" }),
+        target: new BearerConnectionTarget({
+          environmentId,
+          label: "sol",
+          connectionId: "bearer-1",
+        }),
         sshTarget: null,
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
@@ -81,7 +85,11 @@ describe("resolveRemoteOpenState", () => {
   it("uses deep links for other environments when the desktop home has its own", () => {
     expect(
       resolveRemoteOpenState({
-        target: new BearerConnectionTarget({ environmentId, label: "sol", connectionId: "bearer-1" }),
+        target: new BearerConnectionTarget({
+          environmentId,
+          label: "sol",
+          connectionId: "bearer-1",
+        }),
         sshTarget: null,
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,

@@ -64,7 +64,11 @@ it("recognizes the desktop host service and direct browser loopback, excluding r
   expect(isClientHostEnvironment(REMOTE, null, null, true)).toBe(false);
   for (const target of [
     new SshConnectionTarget({ environmentId: REMOTE, label: "SSH", connectionId: "ssh-1" }),
-    new BearerConnectionTarget({ environmentId: REMOTE, label: "Paired", connectionId: "bearer-1" }),
+    new BearerConnectionTarget({
+      environmentId: REMOTE,
+      label: "Paired",
+      connectionId: "bearer-1",
+    }),
   ]) {
     expect(isClientHostEnvironment(REMOTE, "service", target, true)).toBe(false);
   }
