@@ -131,16 +131,18 @@ async function refreshHeads(
 
 // One load of each kind per list scope. The atoms are not kept alive, so leaving a scope (a
 // filter change, unmount) interrupts its load and aborts the requests.
-const pageLoadFamily = Atom.family((scopeKey: string) =>
-  Atom.fn((retry: boolean, get) =>
-    Effect.promise((signal) => loadNextPages(get.registry, JSON.parse(scopeKey), retry, signal)),
-  ),
-);
-const refreshLoadFamily = Atom.family((scopeKey: string) =>
-  Atom.fn((_: void, get) =>
-    Effect.promise((signal) => refreshHeads(get.registry, JSON.parse(scopeKey), signal)),
-  ),
-);
+const pageLoadFamily = Atom.family((scopeKey: string) => {
+  const targets: readonly ListTarget[] = JSON.parse(scopeKey);
+  return Atom.fn((retry: boolean, get) =>
+    Effect.promise((signal) => loadNextPages(get.registry, targets, retry, signal)),
+  );
+});
+const refreshLoadFamily = Atom.family((scopeKey: string) => {
+  const targets: readonly ListTarget[] = JSON.parse(scopeKey);
+  return Atom.fn((_: void, get) =>
+    Effect.promise((signal) => refreshHeads(get.registry, targets, signal)),
+  );
+});
 
 // Changes when any of the scope's environments brings up a new session.
 const sessionsFamily = Atom.family((scopeKey: string) =>
@@ -162,8 +164,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   const refreshAtom = refreshLoadFamily(scopeKey);
   const page = useAtomValue(pageAtom);
   const refresh = useAtomValue(refreshAtom);
-  // Starting one kind of load clears the other, so at most one holds an error.
-  const loadError = settledError(refresh) ?? settledError(page);
+  const loadError = settledError(page);
 
   // A page or refresh asked for while an environment was unreachable fails at once, and its
   // error stops loading on scroll. Once it is back, ask for the page again; a refresh's error is
@@ -184,7 +185,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     const pageResult = registry.get(pageAtom);
     const refreshResult = registry.get(refreshAtom);
     if (pageResult.waiting || refreshResult.waiting) return;
-    if (!retry && (settledError(refreshResult) ?? settledError(pageResult))) return;
+    if (!retry && settledError(pageResult)) return;
     if (!continuations(registry, targets).length) return;
     registry.set(refreshAtom, Atom.Reset);
     registry.set(pageAtom, retry);
