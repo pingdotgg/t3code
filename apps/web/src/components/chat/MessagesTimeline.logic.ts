@@ -633,6 +633,7 @@ type MessagesTimelineRowContent =
       kind: "proposed-plan";
       id: string;
       createdAt: string;
+      streaming: boolean;
       proposedPlan: ProposedPlan;
     }
   | {
@@ -1469,6 +1470,17 @@ function runningSubagentsAtRunTail(entries: ReadonlyArray<TimelineEntry>, runId:
   return running;
 }
 
+/**
+ * Zen mode hides every assistant message except the turn's last one, unless this id
+ * exempts it. A pin the user just chose wins over a citation that is still in the URL.
+ */
+export function resolveTimelineRevealedMessageId(
+  citationMessageId: MessageId | null | undefined,
+  pinnedMessageId: MessageId | null | undefined,
+): MessageId | null {
+  return pinnedMessageId ?? citationMessageId ?? null;
+}
+
 function timelineRowEntries(
   input: Pick<
     MessagesTimelineRowsInput,
@@ -2138,6 +2150,7 @@ export function deriveMessagesTimelineRows(input: {
         kind: "proposed-plan",
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
+        streaming: timelineEntry.streaming,
         proposedPlan: timelineEntry.proposedPlan,
       });
       continue;
@@ -2750,7 +2763,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     }
 
     case "proposed-plan":
-      return a.proposedPlan === (b as typeof a).proposedPlan;
+      return (
+        a.streaming === (b as typeof a).streaming && a.proposedPlan === (b as typeof a).proposedPlan
+      );
 
     case "viewed-images": {
       const bv = b as typeof a;

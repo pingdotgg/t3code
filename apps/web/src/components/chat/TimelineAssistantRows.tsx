@@ -347,7 +347,7 @@ export function ProposedPlanTimelineRow({
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
         findActive={ctx.findActive}
-        pin={pin}
+        pin={row.streaming ? undefined : pin}
       />
     </div>
   );

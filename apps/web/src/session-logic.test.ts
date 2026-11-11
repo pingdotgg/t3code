@@ -927,7 +927,29 @@ describe("V2 session presentation", () => {
     if (entries[0]?.kind === "proposed-plan") {
       expect(entries[0].proposedPlan.status).toBe("completed");
       expect(entries[0].proposedPlan.planMarkdown).toBe("Finished plan");
+      expect(entries[0].streaming).toBe(false);
     }
+    const streamingEntries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: visibleTurnItems.map((row) =>
+        row.item.type === "proposed_plan"
+          ? { ...row, item: { ...row.item, streaming: true } }
+          : row,
+      ),
+      optimisticMessages: [],
+      plans: [
+        {
+          id: planId,
+          threadId,
+          runId,
+          nodeId,
+          kind: "proposed_plan",
+          markdown: "",
+          status: "completed",
+          detailInTurnItem: true,
+        },
+      ],
+    });
+    expect(streamingEntries[0]).toMatchObject({ kind: "proposed-plan", streaming: true });
     expect(entries[1]?.kind).toBe("work");
     if (entries[1]?.kind === "work") {
       expect(entries[1].entry.detail).toBeUndefined();

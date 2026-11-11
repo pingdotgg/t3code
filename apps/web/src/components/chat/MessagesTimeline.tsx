@@ -87,6 +87,7 @@ import {
   resolveTimelineMinimapHitStripWidth,
   TIMELINE_MINIMAP_TARGET_OFFSET,
   timelineTurnFoldRunIdsByEntryId,
+  resolveTimelineRevealedMessageId,
   liveAnswerPreview,
   type MessagesTimelineRow,
   type TimelineLatestRun,
@@ -645,9 +646,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
         (entry) => entry.kind === "message" && entry.message.id === entryReveal.entryId,
       )
     : undefined;
-  const revealedMessageId =
-    citationRequest?.citation.messageId ??
-    (revealedMessageEntry?.kind === "message" ? revealedMessageEntry.message.id : null);
+  const revealedMessageId = resolveTimelineRevealedMessageId(
+    citationRequest?.citation.messageId,
+    revealedMessageEntry?.kind === "message" ? revealedMessageEntry.message.id : null,
+  );
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({

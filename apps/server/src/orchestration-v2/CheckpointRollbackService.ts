@@ -428,7 +428,8 @@ export const layer: Layer.Layer<
                 threadId: input.threadId,
                 providerInstanceId: thread.providerInstanceId,
                 occurredAt: now,
-                payload: { ...thread, entryPins: keptPins },
+                // The snapshot predates this batch, whose run updates already moved updatedAt to now.
+                payload: { ...thread, entryPins: keptPins, updatedAt: now },
               }),
             );
           }

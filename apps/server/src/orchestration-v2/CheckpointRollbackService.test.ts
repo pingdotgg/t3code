@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -843,6 +844,8 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           "Failure",
         );
 
+        const beforeRollback = yield* history.store.getThread(threadId);
+        yield* TestClock.adjust("1 minute");
         yield* history.rollback(2);
 
         assert.deepEqual(history.rollbackCounts, [4]);
@@ -877,10 +880,12 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           checkpoints.map((checkpoint) => checkpoint.status),
           ["ready", "ready", "ready", "stale", "stale", "stale", "stale", "stale", "ready"],
         );
+        const afterRollback = yield* history.store.getThread(threadId);
         assert.deepEqual(
-          (yield* history.store.getThread(threadId)).entryPins?.map((pin) => pin.runId),
+          afterRollback.entryPins?.map((pin) => pin.runId),
           [runId(1)],
         );
+        assert.isTrue(DateTime.isGreaterThan(afterRollback.updatedAt, beforeRollback.updatedAt));
       }),
     );
 
