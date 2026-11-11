@@ -75,6 +75,17 @@ function formatHistoryError(error: unknown): string {
   return "Could not load earlier activity.";
 }
 
+// Steers join a running turn; every other user message opens one. The timeline shows every
+// notification as a response boundary, whether it opened its run or arrived mid-run.
+function startsTurn(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.type === "notification" ||
+    (item.type === "user_message" &&
+      item.inputIntent !== "steer" &&
+      item.inputIntent !== "promoted_queued_to_steer")
+  );
+}
+
 function historyMetaFromCachedSnapshot(
   snapshot: OrchestrationV2ThreadDetailSnapshot,
 ): ThreadHistoryMeta {
@@ -777,9 +788,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               ? page.nextCursor !== null
               : throughEntryId === undefined &&
                 page.hasMoreHistory &&
-                !page.items.some(
-                  ({ item }) => item.type === "user_message" && item.createdBy === "user",
-                ));
+                !page.items.some(({ item }) => startsTurn(item)));
           if (keepPaging && (page.nextCursor === null || page.nextCursor === requestCursor))
             return yield* failLoad(
               workAnchorId === undefined
