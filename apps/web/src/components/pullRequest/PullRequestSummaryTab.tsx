@@ -297,9 +297,9 @@ function Section({
     >
       <div
         ref={headingRef}
-        className="sticky top-0 z-10 flex w-full items-center bg-(--code-surface) pr-4"
+        className="sticky top-0 z-10 flex w-full flex-wrap items-center gap-x-2 bg-(--code-surface) pr-4"
       >
-        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-label text-foreground">
+        <CollapsibleTrigger className="flex min-w-fit flex-1 items-center gap-1.5 px-4 py-3 text-left text-label text-foreground">
           <span>{title}</span>
           {count !== undefined ? (
             <span className="font-normal tabular-nums text-muted-foreground">
@@ -1070,7 +1070,7 @@ export function PullRequestSummaryTab({
         }
         meta={conversationMeta}
         actions={
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <Menu>
               <MenuTrigger
                 render={<Button size="xs" variant="ghost-muted" />}
