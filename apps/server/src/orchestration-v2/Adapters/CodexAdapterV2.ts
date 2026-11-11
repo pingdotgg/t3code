@@ -6451,6 +6451,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeThreadId != null &&
                 (goalsByNativeThread.get(nativeThreadId)?.status === "active" ||
                   (activation !== undefined && !activation.stopped));
+              const executedModel = reportedTurnModel(nativeThreadId ?? "", input.nativeTurnId);
               const completedTurn: OrchestrationV2ProviderTurn = {
                 id: input.context.providerTurnId,
                 providerThreadId: input.context.providerThread.id,
@@ -6473,11 +6474,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ),
                   input.nativeTurnId,
                   input.status === "completed",
-                  reportedTurnModel(
-                    input.context.providerThread.nativeThreadRef?.nativeId ?? "",
-                    input.nativeTurnId,
-                  ),
+                  executedModel,
                 ),
+                ...(executedModel === undefined ? {} : { model: executedModel }),
               };
               if (!holdsForGoal) {
                 yield* emitProviderEvent({
