@@ -1,4 +1,9 @@
-import type { PullRequestRef, PullRequestReviewCommentDraft } from "@t3tools/contracts";
+import type { SelectedLineRange } from "@pierre/diffs";
+import type {
+  PullRequestRef,
+  PullRequestReviewCommentDraft,
+  PullRequestReviewPosition,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 import type { DiffFoldOverride } from "./pullRequestDiff.logic";
 
@@ -21,6 +26,22 @@ export function pullRequestReviewKey(reference: PullRequestRef): string {
   ]);
 }
 
+export interface PullRequestDraftAnchor {
+  readonly fileKey: string;
+  readonly contentVersion: number;
+  readonly path: string;
+  readonly oldPath: string | null;
+  readonly position: PullRequestReviewPosition;
+  readonly startPosition?: PullRequestReviewPosition;
+  readonly range: SelectedLineRange;
+}
+
+export interface PullRequestSelectedLines {
+  readonly id: string;
+  readonly contentVersion: number;
+  readonly range: SelectedLineRange;
+}
+
 export interface PullRequestCodeViewState {
   readonly selectedCommitOid: string | null;
   readonly foldOverride: DiffFoldOverride;
@@ -28,6 +49,9 @@ export interface PullRequestCodeViewState {
   readonly scrollTop: number;
   readonly loadedPageCount: number;
   readonly chromeCondensed: boolean;
+  readonly selectedLines: PullRequestSelectedLines | null;
+  readonly draft: PullRequestDraftAnchor | null;
+  readonly draftText: string;
 }
 
 export const EMPTY_CODE_VIEW: PullRequestCodeViewState = {
@@ -37,6 +61,9 @@ export const EMPTY_CODE_VIEW: PullRequestCodeViewState = {
   scrollTop: 0,
   loadedPageCount: 1,
   chromeCondensed: false,
+  selectedLines: null,
+  draft: null,
+  draftText: "",
 };
 
 export function pullRequestCodeViewKey(

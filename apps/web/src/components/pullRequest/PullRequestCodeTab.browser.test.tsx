@@ -8,12 +8,13 @@ import {
   type PullRequestDiffResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, firstPage, pagedDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -47,6 +48,7 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     "page-2": { patch: filePatch("late.test.ts"), truncated: false, nextCursor: null },
   };
   return {
+    firstPage,
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
@@ -79,6 +81,11 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 import { render } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
 import { usePullRequestReviewStore } from "./pullRequestReviewStore";
+import {
+  buildFileDiffContentVersion,
+  buildFileDiffIdentityKey,
+  getRenderablePatch,
+} from "~/lib/diffRendering";
 
 const detail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
@@ -204,6 +211,48 @@ it("scrolls to a file asked for as the tab opens", async () => {
   await using screen = await render(tab(0, { path: "early-39.ts", nonce: 1 }), { container });
 
   await expectFileHeaderShown(screen, container, "early-39.ts");
+});
+
+it("keeps an unfinished inline comment when the panel unmounts and returns", async () => {
+  setup({ paged: false });
+  const parsed = getRenderablePatch(firstPage.patch, "draft", { compactPartialHunkOffsets: true });
+  if (parsed?.kind !== "files") throw new Error("fixture must parse as files");
+  const file = parsed.files[0]!;
+  usePullRequestReviewStore.getState().updateCodeView("code-view", (current) => ({
+    ...current,
+    foldOverride: "expanded",
+    draft: {
+      fileKey: buildFileDiffIdentityKey(file),
+      contentVersion: buildFileDiffContentVersion(file),
+      path: "a.ts",
+      oldPath: null,
+      position: { kind: "context", oldLine: 2, newLine: 2, side: "right" },
+      range: { start: 2, end: 2, side: "additions" },
+    },
+  }));
+  const element = () => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      codeViewKey="code-view"
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={detail}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+      onAddToAgentSelection={() => {}}
+    />
+  );
+  const container = pagedContainer();
+  {
+    await using screen = await render(element(), { container });
+    const composer = screen.getByRole("textbox", { name: "Comment on lines a.ts:2" });
+    await userEvent.type(composer, "Half a thought");
+  }
+  await using screen = await render(element(), { container });
+  await expect
+    .element(screen.getByRole("textbox", { name: "Comment on lines a.ts:2" }))
+    .toHaveValue("Half a thought");
 });
 
 it("pages forward to a file asked for that is not loaded yet, then scrolls to it", async () => {

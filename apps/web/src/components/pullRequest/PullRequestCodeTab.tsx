@@ -15,7 +15,6 @@ import type {
   PullRequestDiffSide,
   PullRequestDiffResult,
   PullRequestRef,
-  PullRequestReviewPosition,
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
 } from "@t3tools/contracts";
@@ -45,6 +44,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type ComponentProps,
 } from "react";
 
 import { observeIntersection } from "~/lib/observeIntersection";
@@ -150,6 +150,8 @@ import {
   usePendingReviewComments,
   usePullRequestReviewStore,
   type PendingReviewComment,
+  type PullRequestDraftAnchor,
+  type PullRequestSelectedLines,
 } from "./pullRequestReviewStore";
 
 interface ReviewAnnotationGroup {
@@ -329,14 +331,31 @@ interface MutableAnnotationGroup {
   draft: boolean;
 }
 
-interface DraftAnchor {
-  readonly fileKey: string;
-  readonly contentVersion: number;
-  readonly path: string;
-  readonly oldPath: string | null;
-  readonly position: PullRequestReviewPosition;
-  readonly startPosition?: PullRequestReviewPosition;
-  readonly range: SelectedLineRange;
+type DraftAnchor = PullRequestDraftAnchor;
+
+// Subscribes to the stored text itself so typing re-renders only the composer.
+function StoredDraftCommentAnnotation({
+  codeViewKey,
+  ...props
+}: Omit<ComponentProps<typeof DiffCommentAnnotation>, "text" | "onTextChange"> & {
+  readonly codeViewKey: string;
+}) {
+  const text = usePullRequestReviewStore(
+    (store) => (store.codeViews[codeViewKey] ?? EMPTY_CODE_VIEW).draftText,
+  );
+  return (
+    <DiffCommentAnnotation
+      {...props}
+      text={text}
+      onTextChange={(next) =>
+        usePullRequestReviewStore
+          .getState()
+          .updateCodeView(codeViewKey, (current) =>
+            current.draftText === next ? current : { ...current, draftText: next },
+          )
+      }
+    />
+  );
 }
 
 export interface PullRequestAgentSelectionInput {
@@ -419,12 +438,21 @@ function PullRequestCodeTab({
     Schema.Boolean,
   );
   const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
-  const [selectedLines, setSelectedLines] = useState<{
-    id: string;
-    contentVersion: number;
-    range: SelectedLineRange;
-  } | null>(null);
-  const [draft, setDraft] = useState<DraftAnchor | null>(null);
+  // The panel unmounts when another right-panel surface opens; the draft outlives it.
+  const savedSelectedLines = usePullRequestReviewStore(
+    (store) => (store.codeViews[codeViewKey] ?? EMPTY_CODE_VIEW).selectedLines,
+  );
+  const savedDraft = usePullRequestReviewStore(
+    (store) => (store.codeViews[codeViewKey] ?? EMPTY_CODE_VIEW).draft,
+  );
+  const setSelectedLines = (next: PullRequestSelectedLines | null) =>
+    updateCodeView(codeViewKey, (current) =>
+      current.selectedLines === next ? current : { ...current, selectedLines: next },
+    );
+  const setDraft = (next: DraftAnchor | null) =>
+    updateCodeView(codeViewKey, (current) =>
+      current.draft === next ? current : { ...current, draft: next, draftText: "" },
+    );
   const [threadPending, setThreadPending] = useState(false);
   const [orphansOpen, setOrphansOpen] = useState(false);
   // Scope slices before reset to prevent using a previous pull request's data or cursor.
@@ -447,8 +475,7 @@ function PullRequestCodeTab({
   const [scrollRestoration, setScrollRestoration] = useState(
     () => new PullRequestCodeScrollRestoration(readPullRequestCodeView(codeViewKey)),
   );
-  // The panel keeps this mounted across pull requests, so an open composer would otherwise
-  // survive the switch and attach its comment to whichever one is on screen when it is sent.
+  // The panel keeps this mounted across pull requests; the composer is kept per pull request.
   const [stateScopeKey, setStateScopeKey] = useState(scopeKey);
   if (stateScopeKey !== scopeKey) {
     setStateScopeKey(scopeKey);
@@ -456,8 +483,6 @@ function PullRequestCodeTab({
     setScrollRestoration(
       new PullRequestCodeScrollRestoration(readPullRequestCodeView(codeViewKey)),
     );
-    setDraft(null);
-    setSelectedLines(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
@@ -662,19 +687,19 @@ function PullRequestCodeTab({
   const hiddenTestFileCount = loadedFiles.length - files.length;
   // A file on a page not read yet is not gone; only a complete diff can say it is.
   const diffComplete = loadedSlices.length > 0 && loadedSlices.at(-1)?.nextCursor === null;
-  if (
-    selectedLines !== null &&
-    isPullRequestSelectionStale(
+  const selectedLines =
+    savedSelectedLines !== null &&
+    !isPullRequestSelectionStale(
       loadedFiles,
-      { ...selectedLines, fileKey: selectedLines.id },
+      { ...savedSelectedLines, fileKey: savedSelectedLines.id },
       diffComplete,
     )
-  ) {
-    setSelectedLines(null);
-  }
-  if (draft !== null && isPullRequestSelectionStale(loadedFiles, draft, diffComplete)) {
-    setDraft(null);
-  }
+      ? savedSelectedLines
+      : null;
+  const draft =
+    savedDraft !== null && !isPullRequestSelectionStale(loadedFiles, savedDraft, diffComplete)
+      ? savedDraft
+      : null;
   const changeSelectedLines = (selection: { id: string; range: SelectedLineRange } | null) => {
     const file =
       selection === null
@@ -1159,13 +1184,13 @@ function PullRequestCodeTab({
         />
       ))}
       {annotation.metadata.draft && draft && canSelectLines ? (
-        <DiffCommentAnnotation
+        <StoredDraftCommentAnnotation
+          codeViewKey={codeViewKey}
           environmentId={environmentId}
           projectId={reference.projectId}
           ownerKey={JSON.stringify([environmentId, reviewKey, draft])}
           kind="draft"
           rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
-          text=""
           completionScope={canCommentOnLines ? completionScope : null}
           submitLabel={canCommentOnLines ? "Add to review" : "Add to agent"}
           {...(canCommentOnLines && onAddToAgentSelection
