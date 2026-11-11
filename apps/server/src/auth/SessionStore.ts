@@ -10,7 +10,7 @@ import {
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -24,6 +24,7 @@ import * as Option from "effect/Option";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
+import * as PayloadSigner from "./PayloadSigner.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   REUSABLE_DEV_SESSION_EXPIRES_AT,
@@ -35,8 +36,6 @@ import {
   base64UrlEncode,
   resolveLegacySessionCookieName,
   resolveSessionCookieName,
-  signPayload,
-  timingSafeEqualBase64Url,
 } from "./utils.ts";
 
 export interface IssuedSession {
@@ -491,12 +490,14 @@ function toAuthClientSession(input: Omit<AuthClientSession, "current">): AuthCli
 }
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const authSessions = yield* AuthSessions.AuthSessionRepository;
-  const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
+  const signer = yield* PayloadSigner.fromSecret(
+    yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32),
+  );
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
   // Newest session per DPoP key. A live socket moves to it at expiry, so a
@@ -643,8 +644,8 @@ const make = Effect.gen(function* () {
   const issue: SessionStore["Service"]["issue"] = Effect.fn("SessionStore.issue")(
     function* (input) {
       const sessionId = AuthSessionId.make(
-        yield* crypto
-          .randomUUIDv4()
+        yield* random
+          .uuidV4()
           .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ cause }))),
       );
       const issuedAt = yield* DateTime.now;
@@ -679,7 +680,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      const signature = signPayload(encodedPayload, signingSecret);
+      const signature = yield* signer.sign(encodedPayload);
       const client = input?.client ?? createDefaultClientMetadata();
       const sessionRecord = {
         sessionId,
@@ -791,8 +792,7 @@ const make = Effect.gen(function* () {
         return yield* new MalformedSessionTokenError({});
       }
 
-      const expectedSignature = signPayload(encodedPayload, signingSecret);
-      if (!timingSafeEqualBase64Url(signature, expectedSignature)) {
+      if (!(yield* signer.verify(encodedPayload, signature))) {
         return yield* new InvalidSessionTokenSignatureError({});
       }
 
@@ -879,7 +879,7 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
-    const signature = signPayload(encodedPayload, signingSecret);
+    const signature = yield* signer.sign(encodedPayload);
     return {
       token: `${encodedPayload}.${signature}`,
       expiresAt,
@@ -894,8 +894,7 @@ const make = Effect.gen(function* () {
       return yield* new MalformedWebSocketTokenError({});
     }
 
-    const expectedSignature = signPayload(encodedPayload, signingSecret);
-    if (!timingSafeEqualBase64Url(signature, expectedSignature)) {
+    if (!(yield* signer.verify(encodedPayload, signature))) {
       return yield* new InvalidWebSocketTokenSignatureError({});
     }
 

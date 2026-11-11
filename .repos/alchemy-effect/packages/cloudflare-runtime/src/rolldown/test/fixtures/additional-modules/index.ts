@@ -46,9 +46,7 @@ export default {
         return Response.json({ result: instance.exports.add(3, 4) });
       }
       case "/wasm-with-module-param": {
-        const instance = (await WebAssembly.instantiate(
-          wasmWithModuleParam,
-        )) as Instance;
+        const instance = (await WebAssembly.instantiate(wasmWithModuleParam)) as Instance;
         return Response.json({ result: instance.exports.add(5, 6) });
       }
       case "/wasm-with-init-param": {

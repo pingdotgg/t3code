@@ -90,6 +90,8 @@ export interface CursorAgentSdkSendInput<Error> {
   readonly message: string | SDKUserMessage;
   readonly options?: Omit<SendOptions, "onDelta">;
   readonly onDelta?: (update: InteractionUpdate) => Effect.Effect<void, Error>;
+  /** Runs `agent.summarize()` instead, which takes no message or options. */
+  readonly summarize?: boolean;
 }
 
 export interface CursorAgentSdkRun {
@@ -142,6 +144,8 @@ export interface CursorAgentSdkLoggedAgentOptions {
 export interface CursorAgentSdkLoggedSendOptions {
   readonly model?: SendOptions["model"];
   readonly mode?: SendOptions["mode"];
+  readonly hasMcpServers?: boolean;
+  readonly mcpServerNames?: ReadonlyArray<string>;
   readonly local?: {
     readonly force?: boolean;
     readonly hasCustomTools?: boolean;
@@ -319,9 +323,12 @@ export function loggedCursorSendOptions(
   if (options === undefined) {
     return {};
   }
+  const mcpServerNames =
+    options.mcpServers === undefined ? undefined : Object.keys(options.mcpServers).toSorted();
   return {
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.mode === undefined ? {} : { mode: options.mode }),
+    ...(mcpServerNames === undefined ? {} : { hasMcpServers: true, mcpServerNames }),
     ...(options.local === undefined
       ? {}
       : {
@@ -371,20 +378,23 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
       if (yield* Ref.getAndSet(sandboxSupportPrimeStarted, true)) {
         return yield* Deferred.await(sandboxSupportPrimed);
       }
-      yield* Effect.tryPromise(async () => {
-        const cwd = typeof options.local?.cwd === "string" ? options.local.cwd : undefined;
-        const platform = await sdk
-          .load()
-          .createAgentPlatform(cwd === undefined ? {} : { workspaceRef: cwd });
-        const release = await platform.prewarmLocalWorkspace({
-          ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
-          local: {
-            ...(cwd === undefined ? {} : { cwd }),
-            settingSources: [],
-            sandboxOptions: { enabled: true },
-          },
-        });
-        await release();
+      yield* Effect.tryPromise({
+        try: async () => {
+          const cwd = typeof options.local?.cwd === "string" ? options.local.cwd : undefined;
+          const platform = await sdk
+            .load()
+            .createAgentPlatform(cwd === undefined ? {} : { workspaceRef: cwd });
+          const release = await platform.prewarmLocalWorkspace({
+            ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+            local: {
+              ...(cwd === undefined ? {} : { cwd }),
+              settingSources: [],
+              sandboxOptions: { enabled: true },
+            },
+          });
+          await release();
+        },
+        catch: (cause) => runnerError(cause, "prewarmLocalWorkspace"),
       }).pipe(Effect.ignore, Effect.ensuring(Deferred.succeed(sandboxSupportPrimed, undefined)));
     },
   );
@@ -487,16 +497,18 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           const startRun = () =>
             Effect.tryPromise({
               try: () =>
-                agent.send(sendInput.message, {
-                  ...sendInput.options,
-                  onDelta: async ({ update }) => {
-                    if (!callbacksReady) {
-                      pendingUpdates.push(update);
-                      return;
-                    }
-                    await dispatchUpdate(update);
-                  },
-                }),
+                sendInput.summarize === true
+                  ? agent.summarize()
+                  : agent.send(sendInput.message, {
+                      ...sendInput.options,
+                      onDelta: async ({ update }) => {
+                        if (!callbacksReady) {
+                          pendingUpdates.push(update);
+                          return;
+                        }
+                        await dispatchUpdate(update);
+                      },
+                    }),
               catch: (cause) => runnerError(cause, "run.start"),
             });
           const run = yield* startRun().pipe(

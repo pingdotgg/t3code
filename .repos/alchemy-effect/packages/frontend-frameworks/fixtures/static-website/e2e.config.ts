@@ -1,5 +1,5 @@
-import * as Options from "@alchemy.run/cloudflare-test-tools/e2e/Options";
 import path from "node:path";
+import * as Options from "@alchemy.run/cloudflare-test-tools/e2e/Options";
 
 // Target-scoped config carriage (the canonical form): `target.cloudflare`
 // carries the worker config (dev/build) and the miniflare preview config.

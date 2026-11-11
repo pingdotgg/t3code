@@ -3,11 +3,20 @@
   "include": ["src/**/*", "alchemy.run.ts", ".astro/*.d.ts"],
   "compilerOptions": {
     "noEmit": true,
-    "types": ["astro/client"]
+    "types": ["astro/client", "vite/client"]
   },
   "references": [
     {
       "path": "../packages/alchemy/tsconfig.json"
-    }
+    },
+    { "path": "../packages/sql/tsconfig.json" },
+    { "path": "../packages/redis/tsconfig.json" },
+    { "path": "../packages/docker/tsconfig.json" },
+    { "path": "../packages/kubernetes/tsconfig.json" },
+    { "path": "../packages/domain/tsconfig.json" },
+    { "path": "../packages/aws/tsconfig.json" },
+    { "path": "../packages/gcp/tsconfig.json" },
+    { "path": "../packages/cloudflare/tsconfig.json" },
+    { "path": "../packages/github/tsconfig.json" }
   ]
 }

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - drives agent-device and the Hermes inspector; the probe types its own JSON.
+// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off - drives agent-device and the Hermes inspector; the probe types its own JSON.
 /**
  * One simulator, driven two ways: T3's `agent-device` CLI for real touches and system actions,
  * and the dev-only behavior probe (`apps/mobile/src/features/development/behavior-probe.ts`)
@@ -7,7 +7,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeSocket from "@effect/platform-node/NodeSocket";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -183,7 +183,7 @@ export function makeDevice(options: DeviceOptions) {
       }
     },
     Effect.scoped,
-    Effect.provide(NodeSocket.layerWebSocketConstructorWS),
+    Effect.provide(NodeWS.layerWebSocketConstructor),
     Effect.timeoutOrElse({
       duration: "20 seconds",
       orElse: () => Effect.fail(new DeviceError({ message: "The inspector did not answer." })),
