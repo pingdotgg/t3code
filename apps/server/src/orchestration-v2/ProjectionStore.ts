@@ -42,7 +42,6 @@ import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
-  GuestShareId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
@@ -613,10 +612,6 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
-  /** The thread whose current guest share has this id. Scans thread rows; only redeem uses it. */
-  readonly findGuestShareThreadId: (
-    shareId: GuestShareId,
-  ) => Effect.Effect<ThreadId | null, ProjectionStoreV2Error>;
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
@@ -7831,18 +7826,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return Object.fromEntries(rows.map((row) => [row.thread_id, row.title]));
     }, Effect.mapError(shellSnapshotReadError));
 
-    const findGuestShareThreadId = Effect.fn("ProjectionStore.findGuestShareThreadId")(function* (
-      shareId: GuestShareId,
-    ) {
-      const rows = yield* sql<{ readonly thread_id: string }>`
-        SELECT thread_id
-        FROM orchestration_v2_projection_threads
-        WHERE json_extract(payload_json, '$.guestShare.id') = ${shareId}
-        LIMIT 1
-      `;
-      return rows[0] === undefined ? null : ThreadId.make(rows[0].thread_id);
-    }, Effect.mapError(shellSnapshotReadError));
-
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
     )(function* ({ before, projectIds, limit }) {
@@ -7993,7 +7976,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readShellSnapshot: readOnReader(readShellSnapshot),
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),
       getThreadShell: readOnReader(getThreadShell),
-      findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
       putProfileSnapshotContent,
       getProfileSnapshotContent: readOnReader(getProfileSnapshotContent),

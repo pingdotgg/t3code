@@ -1,7 +1,6 @@
 import { threadShellHasActiveWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type {
   OrchestrationV2ThreadLinkMetadata,
-  GuestShareId,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
@@ -503,9 +502,6 @@ export interface OrchestratorV2Shape {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, OrchestratorV2Error>;
-  readonly findGuestShareThreadId: (
-    shareId: GuestShareId,
-  ) => Effect.Effect<ThreadId | null, OrchestratorV2Error>;
   /** Titles of the given threads that exist, archived ones included. */
   readonly getThreadLinkMetadata: (
     threadIds: ReadonlyArray<ThreadId>,
@@ -585,10 +581,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.archive":
     case "thread.unarchive":
     case "thread.delete":
-    case "thread.guest-share.open":
-    case "thread.guest-share.redeem":
     case "thread.guest-share.close":
-    case "thread.guest-message.submit":
     case "thread.guest-message.dismiss":
     case "thread.settle":
     case "thread.auto-settle":
@@ -14027,10 +14020,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);
         break;
-      case "thread.guest-share.open":
-      case "thread.guest-share.redeem":
       case "thread.guest-share.close":
-      case "thread.guest-message.submit":
       case "thread.guest-message.dismiss":
         yield* dispatchGuestShare(command, events, effects);
         break;
@@ -15264,11 +15254,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return projectionStore
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
-    }),
-    findGuestShareThreadId: Effect.fn("OrchestratorV2.findGuestShareThreadId")(function (shareId) {
-      return projectionStore
-        .findGuestShareThreadId(shareId)
-        .pipe(Effect.mapError(shellProjectionError));
     }),
     getThreadLinkMetadata: Effect.fn("OrchestratorV2.getThreadLinkMetadata")(function (threadIds) {
       return projectionStore

@@ -8,6 +8,7 @@ import {
   PAIRING_CODE_LENGTH,
   parseMcpApprovalCode,
   type ServerAuthBootstrapMethod,
+  withoutRetiredScopes,
 } from "@t3tools/contracts";
 import {
   DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
@@ -414,6 +415,7 @@ const make = Effect.gen(function* () {
       ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
       expiresAt,
     };
+    const scopes = withoutRetiredScopes(input?.scopes ?? AuthStandardClientScopes);
     const subject = mcpApproval
       ? `${AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX}${mcpApproval}`
       : (input?.subject ?? "one-time-token");
@@ -422,7 +424,7 @@ const make = Effect.gen(function* () {
         id,
         credential,
         method: "one-time-token",
-        scopes: input?.scopes ?? AuthStandardClientScopes,
+        scopes,
         subject,
         label: input?.label ?? null,
         proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
@@ -444,7 +446,7 @@ const make = Effect.gen(function* () {
     if (!mcpApproval) {
       yield* emitUpsert({
         id,
-        scopes: input?.scopes ?? AuthStandardClientScopes,
+        scopes,
         subject,
         ...(input?.label ? { label: input.label } : {}),
         createdAt: now,

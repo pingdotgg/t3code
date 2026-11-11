@@ -3,7 +3,13 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { authScopeResponse, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthOrchestrationReadScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+  authScopeResponse,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
@@ -14,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -358,6 +365,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
 
         expect(yield* reasonFor(`Bearer ${revoked.token}`)).toBe("revoked");
         expect(yield* reasonFor("Bearer not-a-session.token")).toBe("generic");
+      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+    );
+
+    it.effect("issues no relay scopes and still verifies a stored session that has them", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sql = yield* SqlClient.SqlClient;
+        const issued = yield* serverAuth.issueSession({
+          scopes: [AuthOrchestrationReadScope, AuthRelayReadScope, AuthRelayWriteScope],
+        });
+        expect(issued.scopes).toEqual([AuthOrchestrationReadScope]);
+
+        // Sessions T3 Connect issued before its removal keep relay scopes in storage.
+        const stored = JSON.stringify([AuthOrchestrationReadScope, AuthRelayReadScope]);
+        yield* sql`UPDATE auth_sessions SET scopes = ${stored} WHERE session_id = ${issued.sessionId}`;
+        const verified = yield* serverAuth.authenticateHttpRequest(makeBearerRequest(issued.token));
+        expect(verified.sessionId).toBe(issued.sessionId);
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );
 

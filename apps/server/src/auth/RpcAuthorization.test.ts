@@ -37,6 +37,12 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
+  it("requires no retired relay scope for any RPC", () => {
+    expect(
+      Object.values(RPC_REQUIRED_SCOPES).filter((scope) => scope.startsWith("relay:")),
+    ).toEqual([]);
+  });
+
   it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {
     for (const method of [
       WS_METHODS.scheduledTasksListWebhookDeliveries,

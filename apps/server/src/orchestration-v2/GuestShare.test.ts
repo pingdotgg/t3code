@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   GuestMessageId,
   GuestShareId,
   MessageId,
@@ -18,6 +19,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -63,13 +65,39 @@ const setup = Effect.gen(function* () {
     createdBy: "user",
     creationSource: "web",
   });
-  yield* orchestrator.dispatch({
-    type: "thread.guest-share.open",
-    commandId: CommandId.make("open-guest-share"),
-    threadId,
-    shareId,
-    host: "env.t3.test",
-    expiresAt: DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 24 })),
+  // Guest links can no longer be opened; this is a share stored before they were removed.
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const thread = yield* projections.getThread(threadId);
+  const now = yield* DateTime.now;
+  const at = DateTime.formatIso(now);
+  yield* (yield* EventSink.EventSinkV2).write({
+    events: [
+      {
+        id: EventId.make("event:stored-guest-share"),
+        type: "thread.guest-share-updated",
+        threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          guestShare: {
+            id: shareId,
+            host: "env.t3.test",
+            createdAt: at,
+            expiresAt: DateTime.formatIso(DateTime.add(now, { hours: 24 })),
+            guestName: "Sam",
+            messages: [
+              {
+                id: guestMessageId,
+                text: "Why not keep the old cache?",
+                status: "pending",
+                submittedAt: at,
+              },
+            ],
+          },
+        },
+      },
+    ],
   });
   return orchestrator;
 });
@@ -88,29 +116,10 @@ const sendGuestMessage = (orchestrator: Orchestrator.OrchestratorV2["Service"], 
     creationSource: "web",
   });
 
-it.effect("redeems a guest link once and sends each guest message once, with its turn", () =>
+it.effect("shows a stored guest message and sends it once, with its turn", () =>
   Effect.gen(function* () {
     const orchestrator = yield* setup;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const redeem = (id: string) =>
-      orchestrator.dispatch({
-        type: "thread.guest-share.redeem",
-        commandId: CommandId.make(id),
-        threadId,
-        shareId,
-        guestName: "Sam",
-      });
-    yield* redeem("redeem-1");
-    assert.isTrue(Exit.isFailure(yield* Effect.exit(redeem("redeem-2"))));
-
-    yield* orchestrator.dispatch({
-      type: "thread.guest-message.submit",
-      commandId: CommandId.make("submit-1"),
-      threadId,
-      shareId,
-      guestMessageId,
-      text: "Why not keep the old cache?",
-    });
     assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 1);
 
     yield* sendGuestMessage(orchestrator, "send-1");
@@ -139,20 +148,35 @@ it.effect("redeems a guest link once and sends each guest message once, with its
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("rejects guest messages until the link is redeemed and after archive", () =>
+it.effect("lets the owner dismiss a stored guest message and close the share", () =>
   Effect.gen(function* () {
     const orchestrator = yield* setup;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const submit = orchestrator.dispatch({
-      type: "thread.guest-message.submit",
-      commandId: CommandId.make("submit-early"),
+    yield* orchestrator.dispatch({
+      type: "thread.guest-message.dismiss",
+      commandId: CommandId.make("dismiss"),
       threadId,
-      shareId,
       guestMessageId,
-      text: "Hello",
     });
-    assert.isTrue(Exit.isFailure(yield* Effect.exit(submit)));
+    assert.equal(
+      (yield* projections.getThread(threadId)).guestShare?.messages[0]?.status,
+      "dismissed",
+    );
+    assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 0);
 
+    yield* orchestrator.dispatch({
+      type: "thread.guest-share.close",
+      commandId: CommandId.make("close"),
+      threadId,
+    });
+    assert.isNull((yield* projections.getThread(threadId)).guestShare ?? null);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("drops the stored share when the thread is archived", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* setup;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
     yield* orchestrator.dispatch({
       type: "thread.archive",
       commandId: CommandId.make("archive-guest-share"),
@@ -202,21 +226,6 @@ it.effect("keeps a queued guest message unchanged when the owner tries to edit i
       creationSource: "web",
     });
     yield* orchestrator.dispatch({
-      type: "thread.guest-share.redeem",
-      commandId: CommandId.make("redeem"),
-      threadId,
-      shareId,
-      guestName: "Sam",
-    });
-    yield* orchestrator.dispatch({
-      type: "thread.guest-message.submit",
-      commandId: CommandId.make("submit"),
-      threadId,
-      shareId,
-      guestMessageId,
-      text: "Why?",
-    });
-    yield* orchestrator.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make("send-queued"),
       threadId,
@@ -244,7 +253,7 @@ it.effect("keeps a queued guest message unchanged when the owner tries to edit i
     const message = (yield* projections.getThreadProjection(threadId)).messages.find(
       (candidate) => candidate.id === MessageId.make("send-queued"),
     );
-    assert.equal(message?.context?.guest?.text, "Why?");
+    assert.equal(message?.context?.guest?.text, "Why not keep the old cache?");
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -262,21 +271,6 @@ it.effect("shows a guest message as dismissed when the owner cancels its queued 
       dispatchMode: { type: "defer_start" },
       createdBy: "user",
       creationSource: "web",
-    });
-    yield* orchestrator.dispatch({
-      type: "thread.guest-share.redeem",
-      commandId: CommandId.make("redeem"),
-      threadId,
-      shareId,
-      guestName: "Sam",
-    });
-    yield* orchestrator.dispatch({
-      type: "thread.guest-message.submit",
-      commandId: CommandId.make("submit"),
-      threadId,
-      shareId,
-      guestMessageId,
-      text: "Why?",
     });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
@@ -305,39 +299,5 @@ it.effect("shows a guest message as dismissed when the owner cancels its queued 
       thread.guestShare?.messages.find((message) => message.id === guestMessageId)?.status,
       "dismissed",
     );
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("brings a settled thread back when its guest sends a request", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* setup;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    yield* orchestrator.dispatch({
-      type: "thread.guest-share.redeem",
-      commandId: CommandId.make("redeem"),
-      threadId,
-      shareId,
-      guestName: "Sam",
-    });
-    yield* orchestrator.dispatch({
-      type: "thread.settle",
-      commandId: CommandId.make("settle"),
-      threadId,
-    });
-    assert.equal(
-      (yield* projections.getThreadProjection(threadId)).thread.settledOverride,
-      "settled",
-    );
-    yield* orchestrator.dispatch({
-      type: "thread.guest-message.submit",
-      commandId: CommandId.make("submit"),
-      threadId,
-      shareId,
-      guestMessageId,
-      text: "Why?",
-    });
-    const { thread } = yield* projections.getThreadProjection(threadId);
-    assert.isNull(thread.settledOverride);
-    assert.isNull(thread.settledAt);
   }).pipe(Effect.provide(layerTest)),
 );

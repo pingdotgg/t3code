@@ -70,6 +70,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
     ),
   );
 
+  it.effect("never grants relay scopes, even when a pairing request asks for them", () =>
+    Effect.gen(function* () {
+      const pairing = yield* PairingGrantStore.PairingGrantStore;
+      const issued = yield* pairing.issueOneTimeToken({
+        scopes: ["orchestration:read", "relay:read", "relay:write"],
+      });
+      const listed = (yield* pairing.listActive()).find((link) => link.id === issued.id);
+      expect(listed?.scopes).toEqual(["orchestration:read"]);
+      const grant = yield* pairing.consume(issued.credential, {
+        requestedScopes: ["orchestration:read", "relay:read"],
+      });
+      expect(grant.scopes).toEqual(["orchestration:read"]);
+    }).pipe(Effect.provide(layerPairingGrantStore())),
+  );
+
   it.effect("atomically consumes a one-time token when multiple requests race", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
