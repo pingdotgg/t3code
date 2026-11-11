@@ -182,9 +182,9 @@ export function buildCursorDiscoveredModelsFromSdk(
   });
 }
 
-function cursorSdkAuth(user: SDKUser, type: "api-key" | "browser"): ServerProviderAuth {
-  const email = user.userEmail?.trim();
-  const apiKeyName = user.apiKeyName.trim();
+function cursorSdkAuth(user: SDKUser | undefined, type: "api-key" | "browser"): ServerProviderAuth {
+  const email = user?.userEmail?.trim();
+  const apiKeyName = user?.apiKeyName.trim();
   return {
     status: "authenticated",
     type,

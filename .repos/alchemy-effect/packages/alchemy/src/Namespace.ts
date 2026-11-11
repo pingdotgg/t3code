@@ -7,9 +7,7 @@ export interface NamespaceNode {
   Parent?: NamespaceNode;
 }
 
-export class Namespace extends Context.Service<Namespace, NamespaceNode>()(
-  "Alchemy/Namespace",
-) {}
+export class Namespace extends Context.Service<Namespace, NamespaceNode>()("Alchemy/Namespace") {}
 
 export function push<const Id extends string, A, Err = never, Req = never>(
   id: Id,
@@ -18,9 +16,7 @@ export function push<const Id extends string, A, Err = never, Req = never>(
 
 export function push<const Id extends string>(
   id: Id,
-): <A, Err = never, Req = never>(
-  eff: Effect.Effect<A, Err, Req>,
-) => Effect.Effect<A, Err, Req>;
+): <A, Err = never, Req = never>(eff: Effect.Effect<A, Err, Req>) => Effect.Effect<A, Err, Req>;
 
 export function push(id: string, eff?: Effect.Effect<any, any, any>) {
   return eff
@@ -34,10 +30,7 @@ export function push(id: string, eff?: Effect.Effect<any, any, any>) {
 }
 
 export const set = (namespace: string | NamespaceNode) =>
-  Effect.provideService(
-    Namespace,
-    typeof namespace === "string" ? { Id: namespace } : namespace,
-  );
+  Effect.provideService(Namespace, typeof namespace === "string" ? { Id: namespace } : namespace);
 
 export const CurrentNamespace = Effect.serviceOption(Namespace)
 

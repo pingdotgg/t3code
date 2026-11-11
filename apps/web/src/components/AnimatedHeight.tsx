@@ -16,6 +16,7 @@ export function AnimatedHeight({
     readonly isClipping: boolean;
   }>({ height: null, isClipping: false });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fallback timer that ends clipping when the height transition never reports its end
   useEffect(() => {
     if (!heightState.isClipping) return;
     const timeoutId = window.setTimeout(() => {
@@ -30,6 +31,7 @@ export function AnimatedHeight({
     heightState.isClipping,
   ]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the content element and observes its size before paint to animate height
   useLayoutEffect(() => {
     if (holdHeight) return;
     const element = contentRef.current;

@@ -21,8 +21,11 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 
+import delegatedRecoveryIndexes from "../persistence/Migrations/079_DelegatedRecoveryIndexes.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -210,55 +213,184 @@ it.effect.each(["startup", "shutdown"] as const)(
     }).pipe(Effect.provide(layerRecoveryTest)),
 );
 
-it.effect("stops a session its thread detached, which kept its live status", () =>
-  Effect.gen(function* () {
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
-    const now = yield* DateTime.now;
-    const threadId = yield* createThread("detached-session");
-    const providerSessionId = ProviderSessionId.make("session:recovery:detached");
-    yield* projections.apply({
-      id: EventId.make("event:recovery:detached-session:attached"),
-      type: "provider-session.attached",
-      threadId,
-      driver,
-      providerInstanceId,
-      occurredAt: now,
-      payload: {
-        id: providerSessionId,
+it.effect.each(["startup", "shutdown"] as const)(
+  "stops a detached session and its orphaned active provider thread on %s",
+  (trigger) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+      const now = yield* DateTime.now;
+      const threadId = yield* createThread("detached-session");
+      const providerSessionId = ProviderSessionId.make("session:recovery:detached");
+      yield* projections.apply({
+        id: EventId.make("event:recovery:detached-session:attached"),
+        type: "provider-session.attached",
+        threadId,
         driver,
         providerInstanceId,
-        status: "ready",
-        cwd: "/workspace",
-        model: modelSelection.model,
-        capabilities: CodexProviderCapabilitiesV2,
-        createdAt: now,
-        updatedAt: now,
-        lastError: null,
-      },
-    });
-    yield* projections.apply({
-      id: EventId.make("event:recovery:detached-session:detached"),
-      type: "provider-session.detached",
-      threadId,
-      driver,
-      providerInstanceId,
-      occurredAt: now,
-      payload: { providerSessionId, detachedAt: now, reason: "Thread settled." },
-    });
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), [threadId]);
+        occurredAt: now,
+        payload: {
+          id: providerSessionId,
+          driver,
+          providerInstanceId,
+          status: "ready",
+          cwd: "/workspace",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:recovery:detached-session:detached"),
+        type: "provider-session.detached",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { providerSessionId, detachedAt: now, reason: "Thread settled." },
+      });
+      const providerThreadId = ProviderThreadId.make("provider-thread:recovery:detached");
+      yield* projections.apply({
+        id: EventId.make("event:recovery:detached-provider-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "active",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), [threadId]);
 
-    const summary = yield* recovery.reconcile("startup");
+      const summary = yield* recovery.reconcile(trigger);
 
-    assert.equal(summary.stoppedSessions, 1);
-    const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql<{ readonly status: string }>`
+      assert.equal(summary.stoppedSessions, 1);
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{ readonly status: string }>`
       SELECT status FROM orchestration_v2_projection_provider_sessions
       WHERE provider_session_id = ${providerSessionId}
     `;
-    assert.deepEqual(rows, [{ status: "stopped" }]);
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), []);
-  }).pipe(Effect.provide(layerRecoveryTest)),
+      assert.deepEqual(rows, [{ status: "stopped" }]);
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(projection.providerThreads[0]?.status, "idle");
+      const eventStore = yield* EventStore.EventStoreV2;
+      const sequence = yield* eventStore.latestSequence();
+      assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), []);
+      yield* recovery.reconcile(trigger);
+      assert.equal(yield* eventStore.latestSequence(), sequence);
+    }).pipe(Effect.provide(layerRecoveryTest)),
+);
+
+it.effect.each(["attached", "detached", "replaced"] as const)(
+  "recovers attached sessions without restoring detached errors, session=%s",
+  (state) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+      const now = yield* DateTime.now;
+      const threadId = yield* createThread("failed-status-session");
+      const providerSessionId = ProviderSessionId.make("session:recovery:failed-status");
+      const session = {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "error" as const,
+        cwd: "/workspace",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        extensionStatuses: [{ key: "watch", text: "Watching" }],
+        createdAt: now,
+        updatedAt: now,
+        lastError: "Rate limited",
+      };
+      yield* projections.apply({
+        id: EventId.make("event:recovery:failed-status:attached"),
+        type: "provider-session.attached",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: session,
+      });
+      if (state !== "attached") {
+        yield* projections.apply({
+          id: EventId.make("event:recovery:failed-status:detached"),
+          type: "provider-session.detached",
+          threadId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: { providerSessionId, detachedAt: now, reason: "Thread settled." },
+        });
+      }
+      const replacementSessionId = ProviderSessionId.make("session:recovery:replacement");
+      if (state === "replaced") {
+        yield* projections.apply({
+          id: EventId.make("event:recovery:replacement:attached"),
+          type: "provider-session.attached",
+          threadId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...session,
+            id: replacementSessionId,
+            status: "ready",
+            extensionStatuses: [],
+            lastError: null,
+          },
+        });
+        yield* createRun(threadId, "completed");
+      }
+      assert.deepEqual(
+        yield* projections.getRecoveryThreadIds("runtime"),
+        state === "detached" ? [] : [threadId],
+      );
+      yield* recovery.reconcile("startup");
+      const eventStore = yield* EventStore.EventStoreV2;
+      const stored = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
+      const sessionUpdates = stored.flatMap(({ event }) =>
+        event.type === "provider-session.updated"
+          ? [
+              {
+                id: event.payload.id,
+                status: event.payload.status,
+                lastError: event.payload.lastError,
+                extensionStatuses: event.payload.extensionStatuses,
+              },
+            ]
+          : [],
+      );
+      assert.deepEqual(
+        sessionUpdates,
+        state === "detached"
+          ? []
+          : [
+              {
+                id: state === "attached" ? providerSessionId : replacementSessionId,
+                status: state === "attached" ? "error" : "stopped",
+                lastError: state === "attached" ? "Rate limited" : null,
+                extensionStatuses: [],
+              },
+            ],
+      );
+      assert.deepEqual(yield* projections.getRecoveryThreadIds("runtime"), []);
+    }).pipe(Effect.provide(layerRecoveryTest)),
 );
 
 it.effect("selects unfinished recovery work without reading settled thread histories", () =>
@@ -356,8 +488,28 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       new Set(yield* projections.getRecoveryThreadIds("runtime")),
       new Set([queued, archived, blocked, background, outboxOnly, requestOnly]),
     );
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("delegated-completions"), [delivery]);
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
+    for (const [kind, expected, index] of [
+      ["delegated-completions", [delivery], "runs_delegated_delivery_idx"],
+      ["subagent-results", [], "threads_subagent_result_idx"],
+    ] as const) {
+      const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+      const observe: Statement.Transformer = (statement) => {
+        statements.push(statement.compile());
+        return Effect.succeed(statement);
+      };
+      assert.deepEqual(
+        yield* projections
+          .getRecoveryThreadIds(kind)
+          .pipe(Effect.provideService(Statement.CurrentTransformer, observe)),
+        expected,
+      );
+      const [query, params] = statements[0]!;
+      const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+      assert.isTrue(
+        plan.some((row) => row.detail.includes(index)),
+        JSON.stringify(plan),
+      );
+    }
     const recoveryState = yield* projections.getRuntimeRecoveryProjection(queued);
     assert.deepEqual(
       recoveryState.runs.map((run) => run.id),
@@ -367,6 +519,84 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       queued,
       ThreadId.make("thread:recovery:settled-599"),
     ]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("maintains delegated candidate indexes across legacy rows and payload transitions", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const parent = yield* createThread("index-parent");
+    const child = yield* createThread("index-child");
+    const run = yield* createRun(child, "completed");
+    const rows = yield* sql<{ payload_json: string }>`
+      SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ${child}
+    `;
+    const original = JSON.parse(rows[0]!.payload_json);
+    for (const payload of [
+      "{broken",
+      JSON.stringify({
+        ...original,
+        lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
+        forkedFrom: { type: "provider_thread" },
+      }),
+      JSON.stringify({
+        ...original,
+        lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
+        forkedFrom: { type: "node", nodeId: "node:index" },
+      }),
+      JSON.stringify({
+        ...original,
+        lineage: { parentThreadId: child, relationshipToParent: "subagent" },
+        forkedFrom: { type: "node", nodeId: "node:index" },
+      }),
+      JSON.stringify(original),
+    ]) {
+      yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${payload}
+        WHERE thread_id = ${child}`;
+      const expected = payload.includes('"type":"node"') ? [child] : [];
+      assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), expected);
+    }
+    for (const entry of [
+      ["{broken", false],
+      ["{}", false],
+      ['{"delegatedCompletion":{"delivery":null}}', false],
+      ['{"delegatedCompletion":{"delivery":[]}}', false],
+      ['{"delegatedCompletion":{"delivery":{}}}', true],
+      ["{}", false],
+    ] as const) {
+      const [payload, included] = entry;
+      yield* sql`UPDATE orchestration_v2_projection_runs SET payload_json = ${payload}
+        WHERE run_id = ${run}`;
+      assert.deepEqual(
+        yield* projections.getRecoveryThreadIds("delegated-completions"),
+        included ? [child] : [],
+      );
+    }
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{broken'
+      WHERE thread_id = ${parent}`;
+    yield* sql`UPDATE orchestration_v2_projection_runs SET payload_json = '{broken'
+      WHERE run_id = ${run}`;
+    const existing = yield* createThread("index-existing", {
+      lineage: { parentThreadId: child, relationshipToParent: "subagent", rootThreadId: parent },
+      forkedFrom: { type: "node", nodeId: NodeId.make("node:index-existing") },
+    });
+    yield* createRun(existing, "completed", {
+      delegatedCompletion: {
+        disposition: "open",
+        nextGeneration: 2,
+        delivery: {
+          generation: 1,
+          messageId: MessageId.make("message:index-existing"),
+          taskIds: [],
+        },
+      },
+    });
+    yield* sql`DROP INDEX orchestration_v2_projection_threads_subagent_result_idx`;
+    yield* sql`DROP INDEX orchestration_v2_projection_runs_delegated_delivery_idx`;
+    yield* delegatedRecoveryIndexes;
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [existing]);
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("delegated-completions"), [existing]);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -444,10 +674,7 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each([
-  { name: "SQLite", layer: layerTest },
-  { name: "memory", layer: ProjectionStore.layerMemory },
-])("recovers only recorded follow-up results with $name projections", ({ layer }) =>
+it.effect("recovers only recorded follow-up results with SQLite projections", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const now = yield* DateTime.now;
@@ -523,7 +750,7 @@ it.effect.each([
       payload: { ...task, status: "completed", result: "Follow-up result.", completedAt: now },
     });
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
-  }).pipe(Effect.provide(layer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("includes shared sessions and provider-owned background rosters in recovery", () =>
@@ -641,6 +868,28 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
       new Set(yield* projections.getRecoveryThreadIds("runtime")),
       new Set([first, second, roster, prepared]),
     );
+    assert.deepEqual(
+      new Set(yield* projections.getRecoveryThreadIds("restart-continuations")),
+      new Set([first, second, prepared]),
+    );
+    assert.deepEqual(
+      yield* projections.getRecoveryThreadIds("restart-continuations", { include: [] }),
+      [],
+    );
+    assert.deepEqual(
+      yield* projections.getRecoveryThreadIds("restart-continuations", {
+        exclude: ["project:recovery"],
+      }),
+      [],
+    );
+    assert.deepEqual(
+      new Set(
+        yield* projections.getRecoveryThreadIds("restart-continuations", {
+          include: ["project:recovery"],
+        }),
+      ),
+      new Set([first, second, prepared]),
+    );
     const preparedState = yield* projections.getRuntimeRecoveryProjection(prepared);
     assert.deepEqual(
       preparedState.providerSessions.map((session) => session.id),
@@ -656,6 +905,258 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
     assert.deepEqual(
       new Set(yield* projections.getUnreadableThreadIds()),
       new Set([first, second]),
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("bounds streaming recovery reads by candidate runs and preserves message ordering", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = yield* createThread("streaming");
+    const other = yield* createThread("streaming-other");
+    const empty = yield* createThread("streaming-empty");
+    const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+    const observe: Statement.Transformer = (statement) => {
+      const compiled = statement.compile();
+      if (compiled[0].includes("SELECT message.payload_json")) statements.push(compiled);
+      return Effect.succeed(statement);
+    };
+    const expected: MessageId[] = [];
+    const statuses = [
+      "queued",
+      "preparing",
+      "starting",
+      "running",
+      "waiting",
+      "completed",
+      "interrupted",
+      "rolled_back",
+      "failed",
+      "cancelled",
+    ] as const;
+    for (const [index, status] of statuses.entries()) {
+      const runId = yield* createRun(threadId, status, { ordinal: index + 1 });
+      for (const suffix of ["b", "a", "settled", "wrong-thread"]) {
+        const id = MessageId.make(`message:streaming:${index}:${suffix}`);
+        const streaming = suffix !== "settled";
+        const messageThread = suffix === "wrong-thread" ? other : threadId;
+        const createdAt = DateTime.add(now, { seconds: -index });
+        yield* projections.apply({
+          id: EventId.make(`event:${id}`),
+          type: "message.updated",
+          threadId: messageThread,
+          runId,
+          occurredAt: now,
+          payload: {
+            id,
+            threadId: messageThread,
+            runId,
+            nodeId: null,
+            role: "assistant",
+            text: id,
+            attachments: [],
+            streaming,
+            createdAt,
+            updatedAt: now,
+            createdBy: "agent",
+            creationSource: "provider",
+          },
+        });
+      }
+      if (index < 5)
+        expected.unshift(
+          MessageId.make(`message:streaming:${index}:a`),
+          MessageId.make(`message:streaming:${index}:b`),
+        );
+    }
+    const foreignRun = yield* createRun(other, "running");
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_messages
+        (message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json)
+      VALUES ('foreign-run', ${threadId}, ${foreignRun}, 'assistant', 1, '', '', '{}')
+    `;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_messages
+        (message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json)
+      VALUES ('old-history', ${empty}, NULL, 'assistant', 1, '', '', '{}')
+    `;
+    const projection = yield* projections
+      .getRuntimeRecoveryProjection(threadId)
+      .pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+    assert.deepEqual(
+      projection.messages.map((message) => message.id),
+      expected,
+    );
+    const emptyProjection = yield* projections
+      .getRuntimeRecoveryProjection(empty)
+      .pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+    assert.deepEqual(emptyProjection.messages, []);
+    assert.equal(statements.length, 2);
+    for (const [query, params] of statements) {
+      const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+      assert.isTrue(
+        plan.some((row) => row.detail.includes("SEARCH message_run ")),
+        JSON.stringify(plan),
+      );
+      assert.isTrue(
+        plan.some((row) => row.detail.includes("messages_run_idx")),
+        JSON.stringify(plan),
+      );
+      assert.isFalse(
+        plan.some((row) => /\bSCAN message\b/.test(row.detail)),
+        JSON.stringify(plan),
+      );
+      assert.isFalse(
+        plan.some((row) => row.detail.includes("messages_thread_created_idx")),
+        JSON.stringify(plan),
+      );
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("bounds runtime provider-thread reads by ownership and preserves recovery liveness", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = yield* createThread("ownership");
+    const other = yield* createThread("other-owner");
+    const ownerNodeId = NodeId.make("node:recovery:owner");
+    yield* projections.apply({
+      id: EventId.make("event:recovery:owner"),
+      type: "node.updated",
+      threadId,
+      nodeId: ownerNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: ownerNodeId,
+        threadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: ownerNodeId,
+        kind: "root_turn",
+        status: "completed",
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: now,
+      },
+    });
+    const cases = [
+      { name: "direct", ownership: "direct", status: "active", ordinal: 2, included: true },
+      { name: "owner", ownership: "owner", status: "active", ordinal: null, included: true },
+      { name: "owner-only", ownership: "owner", status: "active", ordinal: 1, included: true },
+      { name: "subagent", ownership: "subagent", status: "active", ordinal: 1, included: true },
+      { name: "duplicate", ownership: "all", status: "active", ordinal: 1, included: true },
+      { name: "roster", ownership: "direct", status: "idle", ordinal: 3, included: true },
+      { name: "run", ownership: "owner", status: "idle", ordinal: 4, included: true },
+      { name: "item", ownership: "subagent", status: "idle", ordinal: 5, included: true },
+      { name: "waiting-run", ownership: "direct", status: "idle", ordinal: 6, included: true },
+      { name: "settled", ownership: "all", status: "idle", ordinal: 7, included: false },
+      { name: "unrelated", ownership: "none", status: "active", ordinal: 8, included: false },
+      { name: "unrelated-run", ownership: "none", status: "idle", ordinal: 9, included: false },
+    ] as const;
+    for (const entry of cases) {
+      const id = ProviderThreadId.make(`provider-thread:ownership:${entry.name}`);
+      yield* projections.apply({
+        id: EventId.make(`event:${id}`),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id,
+          appThreadId:
+            entry.name === "owner-only"
+              ? null
+              : entry.ownership === "direct" || entry.ownership === "all"
+                ? threadId
+                : other,
+          ownerNodeId:
+            entry.ownership === "owner" || entry.ownership === "all" ? ownerNodeId : null,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: entry.status,
+          firstRunOrdinal: entry.ordinal,
+          lastRunOrdinal: entry.ordinal,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          pendingBackgroundTasks:
+            entry.name === "roster"
+              ? [{ taskId: "shell", description: "background", kind: "command" }]
+              : [],
+        },
+      });
+      if (entry.ownership === "subagent" || entry.ownership === "all") {
+        for (const suffix of ["a", "b"]) {
+          yield* sql`
+            INSERT INTO orchestration_v2_projection_subagents
+              (subagent_id, thread_id, parent_node_id, provider, provider_thread_id,
+               origin, status, updated_at, payload_json)
+            VALUES (${`${id}:${suffix}`}, ${threadId}, ${ownerNodeId}, 'codex', ${id},
+              'provider_native', 'completed', '', '{}')
+          `;
+        }
+      }
+      if (entry.name === "run" || entry.name === "unrelated-run") {
+        yield* createRun(threadId, "waiting", { ordinal: entry.ordinal, providerThreadId: id });
+      }
+    }
+    const waitingProviderThreadId = ProviderThreadId.make("provider-thread:ownership:waiting-run");
+    const waitingRunId = yield* createRun(threadId, "completed", {
+      ordinal: 6,
+      providerThreadId: waitingProviderThreadId,
+    });
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, node_id, provider_thread_id, ordinal, type,
+         status, updated_at, payload_json)
+      VALUES ('item:ownership', ${threadId}, ${waitingRunId}, ${ownerNodeId},
+        ${ProviderThreadId.make("provider-thread:ownership:item")}, 1, 'assistant_message', 'waiting', '', '{}')
+    `;
+    const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+    const observe: Statement.Transformer = (statement) => {
+      const compiled = statement.compile();
+      if (compiled[0].includes("SELECT provider_thread.payload_json")) statements.push(compiled);
+      return Effect.succeed(statement);
+    };
+    const projection = yield* projections
+      .getRuntimeRecoveryProjection(threadId)
+      .pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+    assert.deepEqual(
+      projection.providerThreads.map((row) => row.id),
+      cases
+        .filter((entry) => entry.included)
+        .toSorted((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0) || a.name.localeCompare(b.name))
+        .map((entry) => ProviderThreadId.make(`provider-thread:ownership:${entry.name}`)),
+    );
+    assert.equal(statements.length, 1);
+    const [query, params] = statements[0]!;
+    const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+    assert.isFalse(
+      plan.some((row) => /^SCAN provider_thread(?:$| )/.test(row.detail)),
+      JSON.stringify(plan),
+    );
+    assert.isTrue(
+      plan.some((row) => row.detail.includes("provider_threads_owner_idx")),
+      JSON.stringify(plan),
+    );
+    assert.isFalse(
+      plan.some((row) => /SEARCH (owner|n) USING INDEX .*nodes_thread/.test(row.detail)),
+      JSON.stringify(plan),
     );
   }).pipe(Effect.provide(layerTest)),
 );
