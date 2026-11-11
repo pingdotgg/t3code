@@ -208,6 +208,8 @@ function envCaptureEnd(name: string): string {
   return `__T3CODE_ENV_${name}_END__`;
 }
 
+const DEBUG_TRAP_SHELLS = new Set(["bash", "zsh", "sh", "ksh", "ksh93"]);
+
 export function buildEnvironmentCaptureCommand(
   shell: string,
   names: ReadonlyArray<string>,
@@ -215,7 +217,7 @@ export function buildEnvironmentCaptureCommand(
   const executableName = NodePath.basename(shell).toLowerCase();
   const isNushell = executableName.startsWith("nu");
 
-  return names
+  const capture = names
     .map((name) => {
       if (!SHELL_ENV_NAME_PATTERN.test(name)) {
         throw new Error(`Unsupported environment variable name: ${name}`);
@@ -249,6 +251,12 @@ export function buildEnvironmentCaptureCommand(
       ].join("; ");
     })
     .join("; ");
+
+  // A DEBUG trap that echoes each command (e.g. into the terminal title) would print the markers.
+  // OpenBSD ksh (also its /bin/sh) exits on `trap - DEBUG`, so try it in a subshell first.
+  return DEBUG_TRAP_SHELLS.has(executableName)
+    ? `(trap - DEBUG) 2>/dev/null && trap - DEBUG; ${capture}`
+    : capture;
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
