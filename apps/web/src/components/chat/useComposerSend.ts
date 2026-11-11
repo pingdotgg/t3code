@@ -229,6 +229,7 @@ interface ComposerSendInput {
   /** Tracked repositories a new worktree takes; undefined leaves the choice to the server. */
   readonly worktreeRepositories: ReadonlyArray<{ readonly path: string }> | undefined;
   readonly startFromOrigin: boolean;
+  readonly checkoutBranch: boolean;
   readonly localCheckoutBranchMismatch: {
     readonly threadBranch: string;
     readonly currentBranch: string;
@@ -331,6 +332,7 @@ export function useComposerSend(input: ComposerSendInput) {
     sendEnvMode,
     worktreeRepositories,
     startFromOrigin,
+    checkoutBranch,
     localCheckoutBranchMismatch,
     logicalProjectEnvironments,
     providerInstanceEntries,
@@ -1038,10 +1040,7 @@ export function useComposerSend(input: ComposerSendInput) {
       freshContext: freshArm !== undefined,
     });
     if (missingWorktreeBaseBranch) {
-      setThreadError(
-        threadIdForSend,
-        m(msg("Select a base branch before sending in New worktree mode.")),
-      );
+      setThreadError(threadIdForSend, m(msg("Pick a branch before sending.")));
       return;
     }
     // A project may set its worktrees up with its own commands, which run only once a person
@@ -1566,7 +1565,11 @@ export function useComposerSend(input: ComposerSendInput) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
-                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      ...(checkoutBranch
+                        ? { checkoutExisting: true }
+                        : startFromOrigin
+                          ? { startFromOrigin: true }
+                          : {}),
                       ...(worktreeRepositories ? { repositories: worktreeRepositories } : {}),
                     },
                     runSetupScript: true,

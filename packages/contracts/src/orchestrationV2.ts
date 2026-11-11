@@ -804,6 +804,8 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
           description: "Tracked Git folders to give a worktree. Default: all, or none above 8.",
         }),
     ),
+    // Check out `baseRef` itself in the new worktree instead of branching from it.
+    checkoutExisting: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =

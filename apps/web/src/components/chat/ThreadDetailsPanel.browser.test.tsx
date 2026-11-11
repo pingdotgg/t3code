@@ -225,8 +225,9 @@ function Panel({
         envLocked={draftEnvMode === undefined}
         availableEnvironments={onMachines ? machines : []}
         {...(onMachines ? { onEnvironmentChange: noop } : {})}
-        onEnvModeChange={noop}
+        onWorkspaceModeChange={noop}
         envMode={draftEnvMode ?? "local"}
+        checkoutBranch={false}
         startFromOrigin={false}
         onStartFromOriginChange={noop}
         onComposerFocusRequest={noop}

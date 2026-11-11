@@ -1,14 +1,16 @@
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
-import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
+import { FolderGit2Icon, FolderGitIcon, FolderIcon, GitBranchPlusIcon } from "lucide-react";
 import { memo, type MouseEvent as ReactMouseEvent } from "react";
 import { T, useGT, useMessages } from "gt-react";
 
 import {
-  resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
   resolveLockedWorkspaceLabel,
+  resolveWorkspaceModeLabel,
+  WORKSPACE_MODES,
   type EnvMode,
+  type WorkspaceMode,
 } from "./BranchToolbar.logic";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
@@ -31,8 +33,9 @@ interface BranchToolbarEnvModeSelectorProps {
   forceNewWorktree?: boolean;
   envLocked: boolean;
   effectiveEnvMode: EnvMode;
+  workspaceMode: WorkspaceMode;
   activeWorktreePath: string | null;
-  onEnvModeChange: (mode: EnvMode) => void;
+  onWorkspaceModeChange: (mode: WorkspaceMode) => void;
   previousWorktreeLabel?: string | null;
   previousWorktreeBranch?: string | null;
   onUsePreviousWorktree?: () => void;
@@ -42,8 +45,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   forceNewWorktree = false,
   envLocked,
   effectiveEnvMode,
+  workspaceMode,
   activeWorktreePath,
-  onEnvModeChange,
+  onWorkspaceModeChange,
   previousWorktreeLabel,
   previousWorktreeBranch = null,
   onUsePreviousWorktree,
@@ -57,11 +61,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   );
   const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
   const envModeItems = [
-    {
-      value: "local",
-      label: resolveCurrentWorkspaceLabel(activeWorktreePath, m),
-    },
-    { value: "worktree", label: resolveEnvModeLabel("worktree", m) },
+    ...WORKSPACE_MODES.map((entry) => ({ value: entry.mode, label: m(entry.label) })),
     ...(showPreviousWorktree && previousWorktreeLabel
       ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
       : []),
@@ -110,13 +110,13 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   return (
     <Select
       modal={false}
-      value={effectiveEnvMode}
+      value={workspaceMode}
       onValueChange={(value: string | null) => {
         if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
           onUsePreviousWorktree?.();
           return;
         }
-        onEnvModeChange(value as EnvMode);
+        onWorkspaceModeChange(value as WorkspaceMode);
       }}
       items={envModeItems}
     >
@@ -133,20 +133,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         }
         label={
           <>
-            {effectiveEnvMode === "worktree"
-              ? resolveEnvModeLabel("worktree", m)
-              : resolveCurrentWorkspaceLabel(activeWorktreePath, m)}
+            {m(WORKSPACE_MODES.find((entry) => entry.mode === workspaceMode)!.description)}
             {shortcutLabel ? ` · ${shortcutLabel}` : null}
           </>
         }
       >
-        {effectiveEnvMode === "worktree" ? (
-          <FolderGit2Icon className="size-3" />
-        ) : activeWorktreePath ? (
-          <FolderGitIcon className="size-3" />
-        ) : (
-          <FolderIcon className="size-3" />
-        )}
+        <WorkspaceModeIcon mode={workspaceMode} />
         <ComposerContextLabel>
           <SelectValue />
         </ComposerContextLabel>
@@ -154,28 +146,17 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       <SelectPopup
         alignItemWithTrigger={false}
         {...composerFloatingLayerProps}
-        className={showPreviousWorktree ? "w-[min(21rem,calc(100vw-2rem))]" : undefined}
+        className="w-[min(21rem,calc(100vw-2rem))]"
       >
         <SelectGroup>
           <SelectGroupLabel>
             <T>Workspace</T>
           </SelectGroupLabel>
-          <SelectItem value="local">
-            <span className="inline-flex items-center gap-1.5">
-              {activeWorktreePath ? (
-                <FolderGitIcon className="size-3" />
-              ) : (
-                <FolderIcon className="size-3" />
-              )}
-              {resolveCurrentWorkspaceLabel(activeWorktreePath, m)}
-            </span>
-          </SelectItem>
-          <SelectItem value="worktree">
-            <span className="inline-flex items-center gap-1.5">
-              <FolderGit2Icon className="size-3" />
-              {resolveEnvModeLabel("worktree", m)}
-            </span>
-          </SelectItem>
+          {WORKSPACE_MODES.map((entry) => (
+            <SelectItem key={entry.mode} value={entry.mode}>
+              <WorkspaceModeItemContent mode={entry.mode} />
+            </SelectItem>
+          ))}
           {showPreviousWorktree && previousWorktreeLabel ? (
             <SelectItem value={PREVIOUS_WORKTREE_SELECT_VALUE}>
               <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
@@ -186,3 +167,26 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     </Select>
   );
 });
+
+function WorkspaceModeIcon({ mode }: { mode: WorkspaceMode }) {
+  if (mode === "branch-off") return <GitBranchPlusIcon className="size-3" />;
+  if (mode === "open") return <FolderGit2Icon className="size-3" />;
+  return <FolderIcon className="size-3" />;
+}
+
+export function WorkspaceModeItemContent({ mode }: { mode: WorkspaceMode }) {
+  const m = useMessages();
+  return (
+    <span className="flex items-start gap-1.5">
+      <span className="pt-0.75">
+        <WorkspaceModeIcon mode={mode} />
+      </span>
+      <span className="flex min-w-0 flex-col">
+        <span>{resolveWorkspaceModeLabel(mode, m)}</span>
+        <span className="text-muted-foreground text-xs">
+          {m(WORKSPACE_MODES.find((entry) => entry.mode === mode)!.description)}
+        </span>
+      </span>
+    </span>
+  );
+}

@@ -186,6 +186,7 @@ interface StartThreadBootstrap {
     readonly startFromOrigin?: boolean;
     /** Tracked repositories to give a worktree; absent leaves the choice to the server. */
     readonly repositories?: ReadonlyArray<{ readonly path: string }>;
+    readonly checkoutExisting?: boolean;
   };
   readonly runSetupScript?: boolean;
 }
@@ -812,6 +813,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
             ...(prepareWorktree.repositories === undefined
               ? {}
               : { repositories: prepareWorktree.repositories }),
+            ...(prepareWorktree.checkoutExisting === true ? { checkoutExisting: true } : {}),
           }
         : bootstrap?.worktreePath
           ? {
