@@ -352,9 +352,11 @@ export function UsagePage() {
         (presentation.serverConfig?.providers ?? []).some(usesChatGptSharing),
     );
 
+  // Like the day label, the hour label names the first and last periods shown.
+  const lastHour = hours.at(-1);
   const windowLabel =
-    shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
-      ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} to ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12)}`
+    shownHourly && shownWindow.sinceTime !== undefined && lastHour !== undefined
+      ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} to ${formatDateTimeShort(lastHour, shownWindow.timeZone, hour12)}`
       : `${formatDayShort(shownWindow.sinceDay)} to ${formatDayShort(shownWindow.untilDay)}`;
   const topbarContent = (
     <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
@@ -562,7 +564,6 @@ export function UsagePage() {
             hours,
             resolution: shownHourly ? "hour" : "day",
             timeZone: shownWindow.timeZone,
-            referenceTime: shownWindow.untilTime,
             hour12,
           }}
           onSetPrice={(model) => setPriceDialog({ model })}
@@ -773,7 +774,6 @@ function UsageOverview({
             hours={hours}
             hourly={merged.hourly}
             metric={metric}
-            referenceTime={shownWindow.untilTime}
             resolution={shownHourly ? "hour" : "day"}
             timeZone={shownWindow.timeZone}
             hour12={hour12}
