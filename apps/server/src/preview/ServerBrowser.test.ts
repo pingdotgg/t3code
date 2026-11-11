@@ -309,7 +309,7 @@ function makeEncoderPage() {
       return { width: 1280, height: 800, close() {} };
     },
     Uint8Array: class extends Uint8Array {
-      // Chrome 156 has Uint8Array.fromBase64; Node 26 does not without a flag.
+      // The pinned Chrome has Uint8Array.fromBase64; Node does not without a flag.
       static override fromBase64 = (base64: string) =>
         new Uint8Array(Buffer.from(base64, "base64"));
     },
