@@ -680,17 +680,17 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  // A push can start new checks, so a watch that saw every check finish forgets that answer and
-  // holds its thread until it reads the pull request again. The run is still going, so the
+  // A push can start new checks, so the thread's watches forget whether checks were running and
+  // hold the thread until they read the pull request again. The run is still going, so the
   // thread never shows as done in between.
   const reopenWatchedChecks = Effect.fn("PullRequestSyncReactor.reopenWatchedChecks")(
     function* (threadId: ThreadId, item: CommandExecution) {
       if (isOrchestrationV2WorkActive(item.status) || !isPushCommand(item.input)) return;
       const threads = yield* projections.getThreadsWithPullRequests(threadId);
-      const released = threads.some((thread) =>
-        (thread.pullRequests ?? []).some((link) => link.watch?.checksPending === false),
+      const answered = threads.some((thread) =>
+        (thread.pullRequests ?? []).some((link) => link.watch?.checksPending !== undefined),
       );
-      if (!released) return;
+      if (!answered) return;
       yield* engine.dispatch({
         type: "thread.pull-request-watch.checks-reopen",
         // Stable per command, so a repeated settlement clears an answer read since only once.

@@ -4244,13 +4244,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.pull-request-watch.checks-reopen": {
           const linked = threadPullRequestsOf(thread);
-          if (!linked.some((link) => link.watch?.checksPending === false)) return thread;
+          if (!linked.some((link) => link.watch?.checksPending !== undefined)) return thread;
           return {
             ...thread,
             pullRequests: linked.map((link) =>
-              link.watch?.checksPending === false
-                ? { ...link, watch: withoutChecksAnswer(link.watch) }
-                : link,
+              link.watch?.checksPending === undefined
+                ? link
+                : { ...link, watch: withoutChecksAnswer(link.watch) },
             ),
           };
         }
@@ -4318,9 +4318,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...(existing.endedWatch?.approvalAnnounced !== undefined && {
                       approvalAnnounced: existing.endedWatch.approvalAnnounced,
                     }),
-                    ...(existing.endedWatch?.checksPending !== undefined && {
-                      checksPending: existing.endedWatch.checksPending,
-                    }),
+                    // A finished-checks answer may be an older head's; a fresh read decides.
+                    ...(existing.endedWatch?.checksPending === true && { checksPending: true }),
                     ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                       checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
                     }),
@@ -14053,6 +14052,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planned.events.length > 0 ||
           isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
+          // A read can answer a watch again before a push's reopen lands; nothing is left to clear.
+          command.type === "thread.pull-request-watch.checks-reopen" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||

@@ -1588,7 +1588,7 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
-  it.effect("reopens a released watch's checks when its thread's agent pushes", () =>
+  it.effect("reopens a watch's checks when its thread's agent pushes", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -1610,10 +1610,8 @@ describe("PullRequestSyncReactor", () => {
                 makeLink(7, { state: "open" }, { watch: { ...watch, checksPending: false } }),
               ],
             }),
-            makeThread("waiting", {
-              pullRequests: [
-                makeLink(8, { state: "open" }, { watch: { ...watch, checksPending: true } }),
-              ],
+            makeThread("unread", {
+              pullRequests: [makeLink(8, { state: "open" }, { watch })],
             }),
           ]),
         });
@@ -1623,8 +1621,8 @@ describe("PullRequestSyncReactor", () => {
           const agent = ThreadId.make("agent");
           yield* Queue.offerAll(fixture.domainEvents, [
             commandRan(agent, "git status && echo 'then git push'", undefined, "status"),
-            // A watch still waiting on its checks has no answer to forget.
-            commandRan(ThreadId.make("waiting"), "git push", undefined, "waiting-push"),
+            // A watch that has not read its checks yet has no answer to forget.
+            commandRan(ThreadId.make("unread"), "git push", undefined, "unread-push"),
             commandRan(agent, "cd app && git -C . push --force-with-lease", undefined, "push"),
             commandRan(agent, '/bin/zsh -lc "gh stack submit --auto"', undefined, "stack"),
           ]);

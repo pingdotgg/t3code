@@ -3623,6 +3623,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* reactor.sweep;
         assert.deepEqual(yield* summaries, ["#17: checks failed"]);
         assert.isTrue(yield* checksPending);
+        const reopen = (id: string) =>
+          orchestrator.dispatch({
+            type: "thread.pull-request-watch.checks-reopen",
+            commandId: CommandId.make(`pr-watch-quiet-${id}`),
+            threadId,
+          });
+        // A push forgets a running answer too, so a read begun before it cannot settle it.
+        yield* reopen("push-pending");
+        assert.isUndefined(yield* checksPending);
 
         e2e = "success";
         yield* TestClock.adjust("10 minutes");
@@ -3650,11 +3659,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* TestClock.adjust("10 minutes");
         const inFlight = yield* reactor.sweep.pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(started);
-        yield* orchestrator.dispatch({
-          type: "thread.pull-request-watch.checks-reopen",
-          commandId: CommandId.make("pr-watch-quiet-push"),
-          threadId,
-        });
+        yield* reopen("push");
+        // Another push before the watch read again finds nothing to clear, which is fine.
+        yield* reopen("push-again");
         gate = null;
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(inFlight);
@@ -3767,13 +3774,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* worker.drain();
       assert.deepEqual(yield* summaries, [firstSummary]);
 
-      // A new watch on the same pull request knows what the last one told, and whether its
-      // checks were still running: a run awaiting approval waits on a person, not CI.
+      // A new watch on the same pull request knows what the last one told, and that its checks
+      // were still running. A finished answer may be an older head's, so it reads again.
       yield* watch(false, "stop");
       yield* watch(true, "again");
       assert.strictEqual(
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.checksPending,
-        !approval,
+        approval ? undefined : true,
       );
       yield* restarted.sweep;
       yield* worker.drain();
