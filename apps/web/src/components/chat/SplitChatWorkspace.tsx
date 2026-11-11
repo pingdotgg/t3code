@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 import { Columns2, Maximize2, Minimize2, Rows2, X } from "lucide-react";
 import { memo, type CSSProperties, useRef, useState, useEffect, useLayoutEffect } from "react";
@@ -26,6 +27,12 @@ import {
 interface SplitChatWorkspaceProps {
   readonly primaryTarget: ThreadRouteTarget | null;
   readonly modalOpen: boolean;
+}
+
+// Stays the draft's key after promotion so the pane keeps its ChatView mounted.
+function paneKey(target: ThreadRouteTarget | undefined): string {
+  if (!target) return "";
+  return target.kind === "server" ? scopedThreadKey(target.threadRef) : `draft:${target.draftId}`;
 }
 
 export const SplitChatWorkspace = memo(function SplitChatWorkspace({
@@ -144,7 +151,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
           ? Math.min(index, next.length - 1)
           : activeIndex;
     if (index === 0) navigatePrimary(nextPrimary);
-    if (activeIndex === index) focusTargetRef.current = threadTargetKey(next[active]);
+    if (activeIndex === index) focusTargetRef.current = paneKey(next[active]);
     store.replaceSecondaryPanes(next.slice(1), active);
   };
   const resolveDrop = (
@@ -190,7 +197,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     if (!nextPrimary) return false;
     if (threadTargetKey(nextPrimary) !== threadTargetKey(effectivePrimary))
       navigatePrimary(nextPrimary);
-    focusTargetRef.current = threadTargetKey(target);
+    focusTargetRef.current = paneKey(target);
     store.replaceSecondaryPanes(next.slice(1), zone.index);
     setDropZone(null);
     return true;
@@ -298,9 +305,9 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
         {panes.map((target, index) => (
           <div
             // The primary pane keeps one key so draft promotion keeps its ChatView mounted.
-            key={index === 0 ? "primary" : threadTargetKey(target)}
+            key={index === 0 ? "primary" : paneKey(target)}
             data-split-pane-index={index}
-            data-split-pane-key={threadTargetKey(target)}
+            data-split-pane-key={paneKey(target)}
             tabIndex={-1}
             hidden={maximized !== null && maximized !== index}
             style={{

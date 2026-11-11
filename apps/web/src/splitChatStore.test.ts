@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach } from "vite-plus/test";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
+import { type DraftId, useComposerDraftStore } from "./composerDraftStore";
 import { useSplitChatStore, MAX_SPLIT_CHATS } from "./splitChatStore";
 import type { ThreadRouteTarget } from "./threadRoutes";
 
@@ -59,6 +60,12 @@ describe("splitChatStore", () => {
     expect(useSplitChatStore.getState().openToSide(thread3, thread3)).toBe(true);
     expect(useSplitChatStore.getState().secondaryPanes).toHaveLength(2);
     expect(useSplitChatStore.getState().activePaneIndex).toBe(0);
+
+    useComposerDraftStore.setState({ promotedDraftRedirects: { "draft-4": thread4.threadRef } });
+    useSplitChatStore.getState().openToSide({ kind: "draft", draftId: "draft-4" as DraftId });
+    expect(useSplitChatStore.getState().openToSide(thread4)).toBe(true);
+    expect(useSplitChatStore.getState().secondaryPanes).toHaveLength(3);
+    expect(useSplitChatStore.getState().activePaneIndex).toBe(3);
   });
 
   it("enforces the maximum limit of 4 chats total (3 secondary)", () => {

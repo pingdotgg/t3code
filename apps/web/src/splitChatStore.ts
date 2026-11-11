@@ -2,6 +2,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import { useComposerDraftStore } from "./composerDraftStore";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadRouteTarget } from "./threadRoutes";
 
@@ -18,7 +19,10 @@ interface SplitChatPersisted {
 
 export function threadTargetKey(target: ThreadRouteTarget | null | undefined): string {
   if (!target) return "";
-  return target.kind === "server" ? scopedThreadKey(target.threadRef) : `draft:${target.draftId}`;
+  if (target.kind === "server") return scopedThreadKey(target.threadRef);
+  // A promoted draft pane shows its server thread, so it dedupes as that thread.
+  const promoted = useComposerDraftStore.getState().getPromotedDraftRedirect(target.draftId);
+  return promoted ? scopedThreadKey(promoted) : `draft:${target.draftId}`;
 }
 
 interface SplitChatState {
