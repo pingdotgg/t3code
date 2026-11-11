@@ -334,20 +334,27 @@ export const execDrainGitBundle = (input: {
   bundle: Effect.fn("FleetDrainGitBundle.bundle")(
     // A worker cannot push: its origin is the read-only shared mirror, it holds
     // no credentials, and a branch behind origin rejects a push anyway. A
-    // bundle carries every ref (branches and the refs/t3 checkpoints holding
-    // uncommitted work) to the drain sink, base64 so exec stdout stays text.
+    // bundle carries the refs (branches and the refs/t3 checkpoints holding
+    // uncommitted work) the mirror lacks, base64 so exec stdout stays text.
     ({ sandboxName, workspaceRoot }) =>
       Effect.gen(function* () {
+        const maxBytes = input.maxBytes ?? MAX_DRAIN_BUNDLE_BYTES;
+        const root = shellQuote(workspaceRoot);
+        const revs = `--branches --glob='refs/t3/*' --not --remotes`;
         const exported = yield* input.exec(sandboxName, [
           "sh",
           "-c",
+          // An empty bundle is not a failure: it means the mirror already has
+          // every ref (git would refuse to write it), and the drain acks it.
           `b="\${TMPDIR:-/tmp}/t3-fleet-drain-$$.bundle"; ` +
-            `git -C ${shellQuote(workspaceRoot)} bundle create "$b" --all && base64 "$b" && rm -f "$b"`,
+            `if [ "$(git -C ${root} rev-list --count ${revs})" -eq 0 ]; then exit 0; fi; ` +
+            `git -C ${root} bundle create "$b" ${revs} || exit $?; ` +
+            // The cap is enforced before base64, so an oversized bundle never
+            // crosses exec as one string (it would exceed V8's string limit).
+            `if [ "$(wc -c <"$b" | tr -d '[:space:]')" -gt ${maxBytes} ]; then rm -f "$b"; exit 4; fi; ` +
+            `base64 "$b"; rc=$?; rm -f "$b"; exit $rc`,
         ]);
-        // A bundle beyond the cap would land as one oversized string; the drain
-        // fails closed instead and force removal stays the explicit way out.
-        const maxBytes = input.maxBytes ?? MAX_DRAIN_BUNDLE_BYTES;
-        if (Math.floor((exported.stdout.length * 3) / 4) > maxBytes)
+        if (exported.exitCode === 4)
           return yield* new FleetDrainStepError({
             step: "bundle",
             message: `The checkout bundle of ${workspaceRoot} exceeds the drain size cap.`,

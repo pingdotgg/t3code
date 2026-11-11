@@ -9,7 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
-import Migration0084 from "../persistence/Migrations/084_FleetDrainImports.ts";
+import Migration0085 from "../persistence/Migrations/085_FleetDrainImports.ts";
 import * as OpenShellFleetBundleImport from "./OpenShellFleetBundleImport.ts";
 
 const ENVIRONMENT = "environment:worker";
@@ -409,7 +409,7 @@ describe("sqlite import store", () => {
     Effect.gen(function* () {
       const context = yield* Layer.build(Sqlite.layerMemory);
       const sql = Context.get(context, SqlClient.SqlClient);
-      yield* Migration0084.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+      yield* Migration0085.pipe(Effect.provideService(SqlClient.SqlClient, sql));
       const store = OpenShellFleetBundleImport.sqliteFleetDrainImportStore(sql);
 
       expect(yield* store.find("thread:x")).toBeNull();

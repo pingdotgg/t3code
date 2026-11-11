@@ -247,15 +247,15 @@ describe("fileDrainSink attachments", () => {
 });
 
 describe("execDrainGitBundle", () => {
-  const execStub = (stdout: string, commands?: Array<ReadonlyArray<string>>) => ({
+  const execStub = (stdout: string, commands?: Array<ReadonlyArray<string>>, exitCode = 0) => ({
     exec: (_sandboxName: string, command: ReadonlyArray<string>) =>
       Effect.sync(() => {
         commands?.push(command);
-        return { exitCode: 0, stdout, stderr: "" };
+        return { exitCode, stdout, stderr: "" };
       }),
   });
 
-  it.effect("bundles every ref without contacting a remote", () =>
+  it.effect("bundles only the refs the mirror lacks, without contacting a remote", () =>
     Effect.gen(function* () {
       const commands: Array<ReadonlyArray<string>> = [];
       const adapter = OpenShellFleetDrainAdapters.execDrainGitBundle({
@@ -270,18 +270,38 @@ describe("execDrainGitBundle", () => {
       const line = commands[0]?.join(" ") ?? "";
       // No push: a worker's origin is a read-only mirror, and a branch that
       // fell behind would reject a push as non-fast-forward anyway. --all
-      // carries the refs/t3 checkpoints holding uncommitted work too.
+      // would re-export the seeded history, so only what origin lacks travels.
+      expect(line).toContain("rev-list --count");
       expect(line).toContain("bundle create");
-      expect(line).toContain("--all");
+      expect(line).toContain("--branches");
+      expect(line).toContain("--glob='refs/t3/*'");
+      expect(line).toContain("--not --remotes");
+      expect(line).not.toContain("--all");
       expect(line).not.toContain("push");
       expect(line).toContain("'/work/a'");
     }),
   );
 
-  it.effect("refuses a bundle beyond the size cap", () =>
+  it.effect("passes an empty export through for the drain to acknowledge", () =>
     Effect.gen(function* () {
       const adapter = OpenShellFleetDrainAdapters.execDrainGitBundle({
-        ...execStub("Qg==".repeat(12)),
+        ...execStub(""),
+      });
+      const result = yield* adapter.bundle({
+        environmentId: EnvironmentId.make("environment:worker"),
+        sandboxName: "sandbox-1",
+        workspaceRoot: "/work/a",
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("");
+    }),
+  );
+
+  it.effect("refuses a bundle beyond the size cap before base64 runs", () =>
+    Effect.gen(function* () {
+      const commands: Array<ReadonlyArray<string>> = [];
+      const adapter = OpenShellFleetDrainAdapters.execDrainGitBundle({
+        ...execStub("", commands, 4),
         maxBytes: 8,
       });
       const outcome = yield* adapter
@@ -293,6 +313,9 @@ describe("execDrainGitBundle", () => {
         .pipe(Effect.flip);
       expect(outcome.step).toBe("bundle");
       expect(outcome.message).toContain("size cap");
+      const line = commands[0]?.join(" ") ?? "";
+      expect(line).toContain("-gt 8");
+      expect(line.indexOf("wc -c")).toBeLessThan(line.indexOf("base64"));
     }),
   );
 });
