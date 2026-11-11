@@ -284,6 +284,7 @@ class T3WorkspaceNavigationView(
       },
     ) {
       val fraction = progress.coerceIn(0f, 1f)
+      val railShape = RoundedCornerShape(topEnd = 16.dp * fraction, bottomEnd = 16.dp * fraction)
       if (fraction > 0f) {
         Scrim(
           contentDescription = "Close navigation rail",
@@ -295,8 +296,8 @@ class T3WorkspaceNavigationView(
         Modifier
           .fillMaxHeight()
           .width(lerp(RAIL_WIDTH, EXPANDED_RAIL_WIDTH, progress.coerceAtLeast(0f)))
-          .shadow(RAIL_SHADOW * fraction, RAIL_EXPANDED_SHAPE, clip = false)
-          .background(Color(containerColor), RAIL_EXPANDED_SHAPE)
+          .shadow(RAIL_SHADOW * fraction, railShape, clip = false)
+          .background(Color(containerColor), railShape)
           .padding(top = safeAreaTop.dp, bottom = safeAreaBottom.dp + 12.dp)
           .selectableGroup(),
       ) {
@@ -319,11 +320,14 @@ class T3WorkspaceNavigationView(
             )
           }
         }
+        // Other tabs keep the button's slot so the destinations below never move between tabs.
         if (selectedTab == "threads") {
           newThreadButton(fraction) {
             expanded = false
             onNewThread(emptyMap<String, Any>())
           }
+        } else {
+          Spacer(Modifier.padding(top = 12.dp).height(FAB_SIZE))
         }
         Spacer(Modifier.weight(1f))
         tabs.forEach { tab ->
@@ -437,7 +441,6 @@ class T3WorkspaceNavigationView(
     val FAB_SIZE = 48.dp
     val ICON_SIZE = 24.dp
     val RAIL_SHADOW = 6.dp
-    val RAIL_EXPANDED_SHAPE = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
     const val DISABLED_ALPHA = 0.4f
 
     // Labels fade in over the second half of the widening, once there is room for them, and

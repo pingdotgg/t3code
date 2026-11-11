@@ -1,10 +1,10 @@
-import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Fly from "@alchemy.run/fly";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/http/HttpClient";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 import { USERS } from "../src/users.ts";
 
@@ -17,11 +17,14 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 const getJson = (url: string) =>
   HttpClient.get(url).pipe(
     Effect.flatMap((res) =>
-      res.status === 200
-        ? res.json
-        : Effect.fail(new Error(`HTTP ${res.status}`)),
+      res.status === 200 ? res.json : Effect.fail(new Error(`HTTP ${res.status}`)),
     ),
-    Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 20 }),
+    Effect.retry({
+      // Back off, but keep polling every 3s: a new fly.dev hostname can take
+      // a minute or more to start serving.
+      schedule: Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("3 seconds")]),
+      times: 35,
+    }),
   );
 
 const stack = beforeAll(deploy(Stack), { timeout: 400_000 });
