@@ -55,7 +55,7 @@ export function applyUsageLimitsUpdate(input: {
   const { previous, update } = input;
   // Every block is recorded with its own time, even without a grant to revoke, so a probe that
   // started before it cannot grant over it.
-  const revokesCredits = update.continuesOnCredits === false && previous !== undefined;
+  const revokesCredits = update.continuesOnCredits === false;
   if (
     (update.windows.length === 0 && !revokesCredits) ||
     previous?.unavailable?.reason === "unsupported"

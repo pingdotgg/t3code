@@ -86,7 +86,7 @@ describe("applyUsageLimitsUpdate", () => {
     const previous = { ...published, continuesOnCredits: true };
     const checkedAtNext = "2026-09-03T12:00:05.000Z";
     const revoke = (
-      limits: typeof published & { readonly continuesOnCredits?: boolean },
+      limits: (typeof published & { readonly continuesOnCredits?: boolean }) | undefined,
       windows = [] as ReadonlyArray<typeof weekly>,
     ) =>
       applyUsageLimitsUpdate({
@@ -117,6 +117,15 @@ describe("applyUsageLimitsUpdate", () => {
       resolveUsageLimitsAfterProbe({
         published: repeated,
         probed: { ...published, checkedAt: "2026-09-03T12:00:01.000Z", continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(false);
+    // The first streamed update can land before the initial probe commits.
+    const firstUpdate = revoke(undefined, [weekly]);
+    expect(firstUpdate?.continuesOnCredits).toBe(false);
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: firstUpdate,
+        probed: { ...published, continuesOnCredits: true },
       })?.continuesOnCredits,
     ).toBe(false);
   });
