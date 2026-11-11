@@ -47,6 +47,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpMethod from "effect/http/HttpMethod";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import { relayRequestFailureDetail } from "./errorPresentation.ts";
 
 export interface ManagedRelayDpopProofInput {
   readonly method: HttpMethod.HttpMethod;
@@ -159,8 +160,9 @@ export class ManagedRelayRequestFailedError extends Schema.TaggedError<ManagedRe
   },
 ) {
   override get message(): string {
-    const message = `Could not ${this.action}.`;
-    return this.transportFailed ? `${message} ${NETWORK_BLOCKING_HINT}` : message;
+    if (this.transportFailed) return `Could not ${this.action}. ${NETWORK_BLOCKING_HINT}`;
+    const detail = relayRequestFailureDetail(this);
+    return detail ? `Could not ${this.action}: ${detail}` : `Could not ${this.action}.`;
   }
 }
 
@@ -408,15 +410,13 @@ function tokenMatches(
   );
 }
 
-function relayAccountId(clerkToken: string): Option.Option<string> {
-  try {
-    return Option.fromNullishOr(decodeRelayJwt(clerkToken).sub).pipe(
-      Option.filter((subject) => subject.length > 0),
-    );
-  } catch {
-    return Option.none();
-  }
-}
+const relayAccountId = Effect.fn("clientRuntime.managedRelay.relayAccountId")(function* (
+  clerkToken: string,
+) {
+  const claims = yield* decodeRelayJwt(clerkToken).pipe(Effect.option);
+  const sub = Option.isSome(claims) ? claims.value.sub : undefined;
+  return typeof sub === "string" && sub.length > 0 ? Option.some(sub) : Option.none<string>();
+});
 
 function bearerHeaders(clerkToken: string) {
   return { authorization: `Bearer ${clerkToken}` };
@@ -564,7 +564,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
         "relay.scopes": input.scopes.join(" "),
       });
       const nowMillis = yield* Clock.currentTimeMillis;
-      const accountId = relayAccountId(input.clerkToken);
+      const accountId = yield* relayAccountId(input.clerkToken);
       if (Option.isNone(accountId)) {
         yield* Effect.annotateCurrentSpan({
           "relay.token_cache.result": "bypass",

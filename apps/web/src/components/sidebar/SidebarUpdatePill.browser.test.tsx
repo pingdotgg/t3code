@@ -81,7 +81,7 @@ function publish(update: DesktopUpdateState | null) {
   });
 }
 
-const releaseNotes = () => document.querySelector('[aria-label="Nightly update release notes"]');
+const releaseNotes = () => document.querySelector('[aria-label="Update release notes"]');
 
 describe("SidebarUpdatePill release notes", () => {
   it("closes when the release notes stop applying", async () => {
@@ -100,8 +100,19 @@ describe("SidebarUpdatePill release notes", () => {
     await userEvent.tab();
     expect(releaseNotes()).toBeNull();
 
-    await publish(nightlyUpdate(RELEASE_NOTES));
-    await vi.waitFor(() => expect(releaseNotes()).not.toBeNull());
+    await publish(
+      nightlyUpdate([
+        {
+          version: "0.0.50-nightly.2",
+          items: ["**One-time tasks.** Pick a date."],
+          totalItems: 1,
+          stats: "3 changes from 2 contributors",
+          footer: "Plus 2 more bug fixes.",
+        },
+      ]),
+    );
+    await expect.element(page.getByText("One-time tasks.", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Plus 2 more bug fixes.")).toBeVisible();
   });
 });
 
