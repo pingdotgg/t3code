@@ -11424,6 +11424,141 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // Windows paths need no uid, so this runs on every host.
+  it.effect("follows and stops one background Bash task the roster lists", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tmp = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-background-output-",
+        });
+        const stoppedTasks: Array<string> = [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          environment: { CLAUDE_CODE_TMPDIR: tmp },
+          stopTask: (taskId) =>
+            Effect.sync(() => {
+              stoppedTasks.push(taskId);
+            }),
+        });
+        const taskId = "dev-server-task";
+        const tasks = path.join(tmp, "claude", "project", WAKE_NATIVE_SESSION, "tasks");
+        yield* fileSystem.makeDirectory(tasks, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(tasks, `${taskId}.output`), "ready on :5173\n");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-background-output"),
+            text: "Start the dev server in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            description: "vp run dev",
+            is_backgrounded: true,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000b01",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        while (
+          !(yield* Queue.take(
+            harness.providerThreadReceipts,
+          )).providerThread.pendingBackgroundTasks?.some((task) => task.taskId === taskId)
+        );
+
+        const output = harness.runtime.backgroundTaskOutput!;
+        const stop = harness.runtime.stopBackgroundTask!;
+        const target = { providerThread: harness.providerThread, taskId };
+        assert.deepEqual(
+          Array.from(yield* Stream.runCollect(output(target).pipe(Stream.take(1)))),
+          ["ready on :5173\n"],
+        );
+
+        const missing = { ...target, taskId: "already-finished" };
+        assert.isTrue(Exit.isFailure(yield* Stream.runCollect(output(missing)).pipe(Effect.exit)));
+        assert.isTrue(Exit.isFailure(yield* stop(missing).pipe(Effect.exit)));
+        yield* stop(target);
+        assert.deepEqual(stoppedTasks, [taskId]);
+
+        // A command that sends its stdout to a file is followed there, not in Claude's capture.
+        const logFile = path.join(tmp, "dev.log");
+        yield* fileSystem.writeFileString(logFile, "listening\n");
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_redirected_bash",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu_redirected_bash",
+                  name: "Bash",
+                  input: {
+                    command: `vp run dev > "${logFile}" 2>&1`,
+                    run_in_background: true,
+                  },
+                },
+              ],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000b02",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "redirected-task",
+            tool_use_id: "toolu_redirected_bash",
+            description: "vp run dev",
+            is_backgrounded: true,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000b03",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        while (
+          !(yield* Queue.take(
+            harness.providerThreadReceipts,
+          )).providerThread.pendingBackgroundTasks?.some(
+            (task) => task.taskId === "redirected-task",
+          )
+        );
+        const redirected = { ...target, taskId: "redirected-task" };
+        assert.deepEqual(
+          Array.from(yield* Stream.runCollect(output(redirected).pipe(Stream.take(1)))),
+          ["listening\n"],
+        );
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("lets the native SDK acknowledge Stop before closing its own query", () =>
     Effect.scoped(
       Effect.gen(function* () {

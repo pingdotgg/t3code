@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,13 +15,22 @@ const MAX_LOCATE_ATTEMPTS = 40;
 /** Skip ahead of fast writers; only the tail is displayed. */
 const MAX_READ_BYTES = 256 * 1024;
 
-/** Claude Code's per-user temp root, or none where it has no uid (Windows). */
+/** Claude Code's temp root: per user (`claude-<uid>`) on POSIX, and `claude` on Windows, which has no uid. */
 export function claudeTaskOutputRoot(
   environment: Readonly<Record<string, string | undefined>> | undefined,
   path: Path.Path,
   cwd: string | null,
   platform: NodeJS.Platform,
 ): string | undefined {
+  if (platform === "win32") {
+    // Claude Code's `os.tmpdir()`, read from the environment it was launched with.
+    const base =
+      environment?.CLAUDE_CODE_TMPDIR?.trim() ||
+      environment?.TEMP ||
+      environment?.TMP ||
+      NodeOS.tmpdir();
+    return path.resolve(cwd ?? ".", base, "claude");
+  }
   const uid = process.getuid?.();
   if (uid === undefined) return undefined;
   // Claude Code's macOS build falls back to /tmp and ignores the TMPDIR that
@@ -65,21 +76,34 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
   readonly stop: Deferred.Deferred<void>;
   readonly onChunk: (chunk: string) => Effect.Effect<void>;
 }) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const pause = Deferred.await(input.stop).pipe(
-    Effect.as(true),
-    Effect.timeoutOrElse({
-      duration: CLAUDE_TASK_OUTPUT_POLL_MS,
-      orElse: () => Effect.succeed(false),
-    }),
-  );
+  const pause = pauseUntilStop(input.stop);
   let file = Option.none<string>();
   for (let attempt = 0; Option.isNone(file); attempt += 1) {
     file = yield* locate(input);
     if (Option.isSome(file)) break;
     if (attempt + 1 >= MAX_LOCATE_ATTEMPTS || (yield* pause)) return;
   }
-  const filePath = file.value;
+  yield* tailOutputFile({ filePath: file.value, stop: input.stop, onChunk: input.onChunk });
+});
+
+const pauseUntilStop = (stop: Deferred.Deferred<void>) =>
+  Deferred.await(stop).pipe(
+    Effect.as(true),
+    Effect.timeoutOrElse({
+      duration: CLAUDE_TASK_OUTPUT_POLL_MS,
+      orElse: () => Effect.succeed(false),
+    }),
+  );
+
+/** Follows a file from its recent tail until `stop`, waiting for it to appear and restarting when it is truncated. */
+export const tailOutputFile = Effect.fn("ClaudeTaskOutputTail.tailFile")(function* (input: {
+  readonly filePath: string;
+  readonly stop: Deferred.Deferred<void>;
+  readonly onChunk: (chunk: string) => Effect.Effect<void>;
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const pause = pauseUntilStop(input.stop);
+  const filePath = input.filePath;
   let decoder = new TextDecoder("utf-8", { fatal: false });
   let offset = 0;
   let last = yield* Deferred.isDone(input.stop);

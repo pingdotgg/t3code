@@ -689,6 +689,16 @@ export interface ProviderAdapterV2SessionRuntime {
     readonly taskIds: ReadonlyArray<string>;
     readonly awaited: boolean;
   }) => Effect.Effect<{ readonly matched: ReadonlyArray<string> }, ProviderAdapterV2Error>;
+  /** Stops one task from the provider thread's `pendingBackgroundTasks`, leaving the rest running. */
+  readonly stopBackgroundTask?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly taskId: string;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /** A background task's raw output, from its recent tail onward, read only while consumed. */
+  readonly backgroundTaskOutput?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly taskId: string;
+  }) => Stream.Stream<string, ProviderAdapterV2Error>;
   readonly interruptTurn: (
     input: ProviderAdapterV2InterruptInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;

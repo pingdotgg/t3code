@@ -5,7 +5,11 @@ import {
   toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
-import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
+import {
+  claudeTaskOutputRoot,
+  tailClaudeTaskOutput,
+  tailOutputFile,
+} from "./ClaudeTaskOutputTail.ts";
 import {
   dynamicToolTitle,
   formatReadToolLabel,
@@ -73,6 +77,7 @@ import type {
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { shellStdoutFile } from "@t3tools/shared/shellStdoutFile";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   claudeMcpToolName,
@@ -261,6 +266,8 @@ function claudePromptCacheTtlMs(
 // Below that, Claude compacts 33,000 tokens short of the window: Claude Code 2.1.305's
 // getContextUsage reports a 150,000 window as a 117,000 threshold, for every catalog model.
 const CLAUDE_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
+/** Bounds remembered Bash output locations; only tasks still running are ever read. */
+const MAX_TASK_OUTPUT_FILES = 256;
 
 function claudeAutoCompactThreshold(autoCompactWindow: string, maxTokens: number | null) {
   const windowTokens = Number(autoCompactWindow);
@@ -4526,6 +4533,8 @@ interface ClaudeLiveQueryContext {
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
+  // Where Bash starts, for relative paths a command redirects its output to.
+  readonly bashCwd: string | undefined;
 }
 
 interface ActiveClaudeToolCall {
@@ -5195,6 +5204,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           string,
           { readonly fiber: Fiber.Fiber<void>; readonly stop: Deferred.Deferred<void> }
         >();
+        // Where each Bash task's output lands, so a viewer can follow one left running: the file
+        // its command redirects stdout to, else Claude's own capture.
+        const taskOutputFiles = new Map<
+          string,
+          | { readonly kind: "redirect"; readonly filePath: string }
+          | { readonly kind: "claude"; readonly root: string; readonly sessionId: string }
+        >();
+        // Git Bash on Windows spells C:\ as /c/.
+        const resolveRedirectTarget = (target: string, cwd: string | undefined) =>
+          path.resolve(
+            cwd ?? ".",
+            hostPlatform === "win32" ? target.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:") : target,
+          );
         // Waits for the tail's last read so its output lands before the call settles.
         const stopTaskOutputTail = (toolUseId: string) =>
           Effect.suspend(() => {
@@ -9714,6 +9736,37 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (message.type === "system" && message.subtype === "task_started") {
             if (isClaudeNonSubagentTask(message)) {
+              if (message.task_type === "local_bash") {
+                const launch =
+                  message.tool_use_id === undefined
+                    ? undefined
+                    : findToolCall(context, message.tool_use_id);
+                const command =
+                  launch?.classification.itemType === "command_execution"
+                    ? firstStringInputField(launch.input, ["command"])
+                    : undefined;
+                const redirect = command === undefined ? undefined : shellStdoutFile(command);
+                const output =
+                  redirect !== undefined
+                    ? {
+                        kind: "redirect" as const,
+                        filePath: resolveRedirectTarget(redirect, liveQuery.bashCwd),
+                      }
+                    : liveQuery.taskOutputRoot !== undefined
+                      ? {
+                          kind: "claude" as const,
+                          root: liveQuery.taskOutputRoot,
+                          sessionId: message.session_id,
+                        }
+                      : undefined;
+                if (output !== undefined) {
+                  if (taskOutputFiles.size >= MAX_TASK_OUTPUT_FILES) {
+                    const [oldest] = taskOutputFiles.keys();
+                    if (oldest !== undefined) taskOutputFiles.delete(oldest);
+                  }
+                  taskOutputFiles.set(message.task_id, output);
+                }
+              }
               const tailedCall =
                 message.tool_use_id === undefined
                   ? undefined
@@ -11321,6 +11374,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resolvedTurnCwd,
               hostPlatform,
             ),
+            bashCwd: resolvedTurnCwd ?? undefined,
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
           yield* Ref.update(queryContext, (replaced) => {
@@ -12359,6 +12413,74 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             );
           }),
+          stopBackgroundTask: Effect.fn("ClaudeAdapterV2.stopBackgroundTask")(function* ({
+            providerThread,
+            taskId,
+          }) {
+            const liveQuery = yield* Ref.get(queryContext);
+            const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+            if (
+              liveQuery === null ||
+              liveQuery.stopping ||
+              nativeThreadId == null ||
+              liveQuery.nativeThreadId !== nativeThreadId ||
+              !(yield* hasPendingBackgroundTaskOnNativeThread(nativeThreadId, taskId))
+            ) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "No running background task belongs to this provider thread",
+              });
+            }
+            // Claude reports the stop through task_notification, which updates the roster.
+            yield* liveQuery.query.stopTask(taskId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: "Background task stop request failed",
+                    cause,
+                  }),
+              ),
+            );
+          }),
+          backgroundTaskOutput: ({ providerThread, taskId }) =>
+            Stream.callback<string, ProviderAdapter.ProviderAdapterV2Error>((queue) =>
+              Effect.gen(function* () {
+                const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+                const file = taskOutputFiles.get(taskId);
+                if (
+                  nativeThreadId == null ||
+                  file === undefined ||
+                  !(yield* hasPendingBackgroundTaskOnNativeThread(nativeThreadId, taskId))
+                ) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: "No readable background task output belongs to this provider thread",
+                  });
+                }
+                const stop = yield* Deferred.make<void>();
+                yield* Effect.addFinalizer(() => Deferred.succeed(stop, undefined));
+                const onChunk = (chunk: string) => Queue.offer(queue, chunk).pipe(Effect.asVoid);
+                // Only a path from a command this thread's agent ran is ever read here.
+                // Claude's capture ends the stream when Claude never writes it.
+                yield* (
+                  file.kind === "redirect"
+                    ? tailOutputFile({ filePath: file.filePath, stop, onChunk })
+                    : tailClaudeTaskOutput({
+                        root: file.root,
+                        sessionId: file.sessionId,
+                        taskId,
+                        stop,
+                        onChunk,
+                      })
+                ).pipe(
+                  Effect.andThen(Queue.end(queue)),
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                  Effect.forkScoped,
+                );
+              }),
+            ),
           awaitBackgroundTasks: Effect.fn("ClaudeAdapterV2.awaitBackgroundTasks")(
             function* ({ providerThread, taskIds, awaited }) {
               const nativeThreadId = providerThread.nativeThreadRef?.nativeId;

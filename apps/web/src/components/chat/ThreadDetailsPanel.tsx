@@ -23,6 +23,7 @@ import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
+import { ThreadRunningPanel, type ThreadRunningBackgroundWork } from "./ThreadRunningPanel";
 import {
   ThreadDetailsContext,
   ThreadDetailsUsage,
@@ -84,6 +85,7 @@ interface ThreadDetailsPanelProps extends Pick<
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  backgroundWork: ThreadRunningBackgroundWork | null;
   usage: ThreadDetailsUsageInput;
 }
 
@@ -238,6 +240,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     ) : null}
                   </div>
                 </ThreadDetailsSection>
+              ) : null}
+
+              {density === "full" && !props.draftId && visible.running ? (
+                <ThreadRunningPanel
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                  backgroundWork={props.backgroundWork}
+                />
               ) : null}
 
               {density === "full" && !props.draftId && visible.servers ? (

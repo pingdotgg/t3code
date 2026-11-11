@@ -1,3 +1,8 @@
+import {
+  appendTerminalOutput,
+  EMPTY_TERMINAL_OUTPUT,
+  terminalOutputResumeText,
+} from "@t3tools/shared/terminalOutput";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -15,6 +20,11 @@ import {
   MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
+  OrchestrationV2StopBackgroundTaskError,
+  type OrchestrationV2StopBackgroundTaskInput,
+  OrchestrationV2CommandOutputError,
+  type OrchestrationV2CommandOutputFrame,
+  type OrchestrationV2SubscribeBackgroundTaskOutputInput,
   OrchestrationV2ForceStopThreadError,
   type OrchestrationV2ForceStopThreadInput,
   type OrchestrationV2ForceStopThreadResult,
@@ -475,6 +485,12 @@ export interface ThreadManagementServiceShape {
   readonly forceStopThread: (
     input: OrchestrationV2ForceStopThreadInput,
   ) => Effect.Effect<OrchestrationV2ForceStopThreadResult, OrchestrationV2ForceStopThreadError>;
+  readonly stopBackgroundTask: (
+    input: OrchestrationV2StopBackgroundTaskInput,
+  ) => Effect.Effect<void, OrchestrationV2StopBackgroundTaskError>;
+  readonly subscribeBackgroundTaskOutput: (
+    input: OrchestrationV2SubscribeBackgroundTaskOutputInput,
+  ) => Stream.Stream<OrchestrationV2CommandOutputFrame, OrchestrationV2CommandOutputError>;
   readonly awaitBackgroundTasks: (input: {
     readonly threadId: ThreadId;
     readonly taskIds: ReadonlyArray<string>;
@@ -574,6 +590,8 @@ function latestSteerableRun(
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 const FORCE_STOP_REASON = "Force stopped by user";
 const FORCE_STOP_RELEASE_WAIT = "10 seconds";
+/** Matches CommandOutputHub: larger reads go to clients as a bounded replace. */
+const BACKGROUND_TASK_OUTPUT_MAX_APPEND_CHARS = 16 * 1024;
 const isForceStopThreadError = Schema.is(OrchestrationV2ForceStopThreadError);
 
 const make = Effect.gen(function* () {
@@ -1481,6 +1499,98 @@ const make = Effect.gen(function* () {
     return { matched, unmatched: input.taskIds.filter((taskId) => !matchedIds.has(taskId)) };
   });
 
+  // The provider thread whose roster lists the task, with its live runtime if any.
+  const findBackgroundTask = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly taskId: string;
+  }) {
+    const records = yield* orchestrator.getThreadRecords(input.threadId, ["providerThreads"]);
+    const providerThread = records.providerThreads.find(
+      (candidate) =>
+        candidate.appThreadId === input.threadId &&
+        candidate.pendingBackgroundTasks?.some((task) => task.taskId === input.taskId),
+    );
+    if (records.thread.deletedAt !== null || providerThread === undefined) return null;
+    const runtime =
+      providerThread.providerSessionId == null
+        ? Option.none()
+        : yield* sessions.get(providerThread.providerSessionId);
+    return { providerThread, runtime };
+  });
+
+  const stopBackgroundTask: ThreadManagementServiceShape["stopBackgroundTask"] = Effect.fn(
+    "ThreadManagementService.stopBackgroundTask",
+  )(
+    function* (input) {
+      const fail = (reason: OrchestrationV2StopBackgroundTaskError["reason"], cause?: unknown) =>
+        new OrchestrationV2StopBackgroundTaskError({
+          ...input,
+          reason,
+          ...(cause === undefined ? {} : { cause }),
+        });
+      const found = yield* findBackgroundTask(input).pipe(
+        Effect.mapError((cause) => fail("unavailable", cause)),
+      );
+      if (found === null) return yield* fail("not-running");
+      if (Option.isNone(found.runtime)) return yield* fail("unavailable");
+      const stop = found.runtime.value.stopBackgroundTask;
+      if (stop === undefined) return yield* fail("unsupported");
+      // Bounded so a provider that never answers cannot hold the thread lock.
+      yield* stop({ providerThread: found.providerThread, taskId: input.taskId }).pipe(
+        Effect.timeout("15 seconds"),
+        Effect.mapError((cause) => fail("stop-failed", cause)),
+      );
+    },
+    (effect, input) => effect.pipe((effect) => threadDispatch.withLock(input.threadId, effect)),
+  );
+
+  const subscribeBackgroundTaskOutput: ThreadManagementServiceShape["subscribeBackgroundTaskOutput"] =
+    (input) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const failure = (message: string, cause?: unknown) =>
+            new OrchestrationV2CommandOutputError({
+              threadId: input.threadId,
+              message,
+              ...(cause === undefined ? {} : { cause }),
+            });
+          const found = yield* findBackgroundTask(input).pipe(
+            Effect.mapError((cause) => failure("Couldn't find the background task.", cause)),
+          );
+          if (found === null) return yield* failure("This background task is no longer running.");
+          const read = Option.isSome(found.runtime)
+            ? found.runtime.value.backgroundTaskOutput
+            : undefined;
+          if (read === undefined) {
+            return yield* failure("This provider doesn't share background task output.");
+          }
+          let tail = EMPTY_TERMINAL_OUTPUT;
+          const frames = read({ providerThread: found.providerThread, taskId: input.taskId }).pipe(
+            Stream.map((chunk): OrchestrationV2CommandOutputFrame => {
+              tail = appendTerminalOutput(tail, chunk);
+              // A large first read (the file's recent tail) goes out bounded.
+              return chunk.length > BACKGROUND_TASK_OUTPUT_MAX_APPEND_CHARS
+                ? {
+                    kind: "replace",
+                    text: terminalOutputResumeText(tail),
+                    truncated: tail.truncated,
+                    running: true,
+                  }
+                : { kind: "append", text: chunk, truncated: tail.truncated, running: true };
+            }),
+            Stream.mapError((cause) => failure("Lost the background task's output.", cause)),
+          );
+          // An opening empty frame lets a quiet command show as running rather than loading.
+          const opening: OrchestrationV2CommandOutputFrame = {
+            kind: "replace",
+            text: "",
+            truncated: false,
+            running: true,
+          };
+          return Stream.concat(Stream.succeed(opening), frames);
+        }),
+      );
+
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = Effect.fn(
     "ThreadManagementService.stopDelegatedTasks",
   )(function* (input) {
@@ -1641,6 +1751,8 @@ const make = Effect.gen(function* () {
     stopDelegatedTasks,
     stopWorkflow,
     forceStopThread,
+    stopBackgroundTask,
+    subscribeBackgroundTaskOutput,
     awaitBackgroundTasks,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,

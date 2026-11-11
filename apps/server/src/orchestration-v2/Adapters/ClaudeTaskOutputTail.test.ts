@@ -164,4 +164,19 @@ describe("claudeTaskOutputRoot", () => {
         );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("uses Claude Code's shared claude folder in the Windows temp dir", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const temp = path.resolve("Users", "me", "AppData", "Local", "Temp");
+      const root = (environment: Record<string, string>) =>
+        claudeTaskOutputRoot(environment, path, null, "win32");
+      assert.equal(root({ TEMP: temp, TMP: "ignored" }), path.join(temp, "claude"));
+      assert.equal(root({ TMP: temp }), path.join(temp, "claude"));
+      assert.equal(
+        root({ CLAUDE_CODE_TMPDIR: path.resolve("srv"), TEMP: temp }),
+        path.resolve("srv", "claude"),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

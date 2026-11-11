@@ -3648,12 +3648,14 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getWorkflowScript: "orchestration.getWorkflowScript",
   getNativeChildWork: "orchestration.getNativeChildWork",
   stopWorkflow: "orchestration.stopWorkflow",
+  stopBackgroundTask: "orchestration.stopBackgroundTask",
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
+  subscribeBackgroundTaskOutput: "orchestration.subscribeBackgroundTaskOutput",
   subscribePromptSuggestion: "orchestration.subscribePromptSuggestion",
 } as const;
 
@@ -3683,6 +3685,14 @@ export class OrchestrationV2CommandOutputError extends Schema.TaggedError<Orches
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+/** A command the agent left running; frames follow its output for as long as the client subscribes. */
+export const OrchestrationV2SubscribeBackgroundTaskOutputInput = Schema.Struct({
+  threadId: ThreadId,
+  taskId: TrimmedNonEmptyString,
+});
+export type OrchestrationV2SubscribeBackgroundTaskOutputInput =
+  typeof OrchestrationV2SubscribeBackgroundTaskOutputInput.Type;
 
 export const OrchestrationV2SubscribePromptSuggestionInput = Schema.Struct({
   threadId: ThreadId,
@@ -4065,6 +4075,36 @@ export class OrchestrationV2StopWorkflowError extends Schema.TaggedError<Orchest
   }
 }
 
+export const OrchestrationV2StopBackgroundTaskInput = Schema.Struct({
+  threadId: ThreadId,
+  taskId: TrimmedNonEmptyString,
+});
+export type OrchestrationV2StopBackgroundTaskInput =
+  typeof OrchestrationV2StopBackgroundTaskInput.Type;
+
+export class OrchestrationV2StopBackgroundTaskError extends Schema.TaggedError<OrchestrationV2StopBackgroundTaskError>()(
+  "OrchestrationV2StopBackgroundTaskError",
+  {
+    threadId: ThreadId,
+    taskId: Schema.String,
+    reason: Schema.Literals(["not-running", "unsupported", "unavailable", "stop-failed"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "not-running":
+        return "This background task is no longer running.";
+      case "unsupported":
+        return "This provider cannot stop a single background task.";
+      case "unavailable":
+        return "This background task has no live provider session.";
+      case "stop-failed":
+        return "Failed to stop the background task.";
+    }
+  }
+}
+
 export const OrchestrationV2ForceStopThreadInput = Schema.Struct({
   threadId: ThreadId,
   /** The run the user saw ignore Stop; Force stop refuses once a newer run has started. */
@@ -4341,6 +4381,10 @@ export const OrchestrationV2RpcSchemas = {
     input: OrchestrationV2StopWorkflowInput,
     output: Schema.Void,
   },
+  stopBackgroundTask: {
+    input: OrchestrationV2StopBackgroundTaskInput,
+    output: Schema.Void,
+  },
   forceStopThread: {
     input: OrchestrationV2ForceStopThreadInput,
     output: OrchestrationV2ForceStopThreadResult,
@@ -4371,6 +4415,10 @@ export const OrchestrationV2RpcSchemas = {
   },
   subscribeCommandOutput: {
     input: OrchestrationV2SubscribeCommandOutputInput,
+    output: OrchestrationV2CommandOutputFrame,
+  },
+  subscribeBackgroundTaskOutput: {
+    input: OrchestrationV2SubscribeBackgroundTaskOutputInput,
     output: OrchestrationV2CommandOutputFrame,
   },
   subscribePromptSuggestion: {

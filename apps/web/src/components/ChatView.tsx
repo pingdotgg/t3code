@@ -2397,6 +2397,7 @@ export default function ChatView(props: ChatViewProps) {
     showBranchMismatchBanner,
     threadStatusLine,
     shortcuts: threadLifecycleShortcuts,
+    backgroundWork,
   } = useThreadLifecycle({
     environmentId,
     routeThreadKey,
@@ -3892,6 +3893,7 @@ export default function ChatView(props: ChatViewProps) {
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
+                  backgroundWork={backgroundWork}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,

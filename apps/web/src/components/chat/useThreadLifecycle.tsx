@@ -606,6 +606,17 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         onOpenThread: onOpenRelatedThreadStable,
       })
     : null;
+  const backgroundWork = activeThread
+    ? {
+        tasks: pendingBackgroundTasks,
+        turnItems,
+        // While a turn runs, the composer's Stop owns the interrupt.
+        stopDisabled: isWorking || !canOperateThread || isStoppingBackgroundWork,
+        stopping: isStoppingBackgroundWork,
+        onStop: handleStopBackgroundWorkStable,
+        onOpenThread: onOpenRelatedThreadStable,
+      }
+    : null;
   // The relative times read the clock; nowMinute re-renders them on the minute.
   const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
   const settledAt = activeThreadShell?.settledAt ?? null;
@@ -696,6 +707,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     shortcuts,
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
+    backgroundWork,
     // A Stop that went unanswered needs the user; one in progress is the thread's work.
     attentionNow: runStop?.state === "unresponsive" ? runStopNow : childInputNow,
     workNow: runStop?.state === "stopping" ? runStopNow : backgroundWorkNow,

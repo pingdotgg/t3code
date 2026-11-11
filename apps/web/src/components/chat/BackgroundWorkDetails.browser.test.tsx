@@ -6,6 +6,7 @@ import { page } from "vite-plus/test/browser";
 vi.mock(import("./CommandOutputPanel"), () => ({
   useCommandOutputStreaming: () => true,
   CommandOutputPanel: () => <div>Command output stream</div>,
+  BackgroundTaskOutputPanel: () => <div>Background task output</div>,
 }));
 
 import { render } from "../../../test/render";
