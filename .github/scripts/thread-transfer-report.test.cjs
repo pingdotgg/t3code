@@ -55,7 +55,18 @@ test("validates the fixed artifact schema", () => {
 test("resolves a fallback PR with a redacted head repo and exact main baseline", async () => {
   const outputs = {};
   const listWorkflowRunArtifacts = () => {};
-  const listWorkflowRuns = () => {};
+  // The exact base run sits far past the newest page of main CI runs.
+  const mainRuns = Array.from({ length: 1_000 }, (_, index) => ({
+    id: 1_000 - index,
+    head_sha: index === 900 ? "base-sha" : `main-sha-${index}`,
+  }));
+  const listWorkflowRuns = async ({ head_sha, per_page }) => ({
+    data: {
+      workflow_runs: mainRuns
+        .filter((run) => head_sha === undefined || run.head_sha === head_sha)
+        .slice(0, per_page),
+    },
+  });
   const listPullRequestsAssociatedWithCommit = () => {};
   const github = {
     paginate: async (method, input) => {
@@ -76,9 +87,6 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
             runId: input.run_id,
           },
         ];
-      }
-      if (method === listWorkflowRuns) {
-        return [{ id: 1, head_sha: "base-sha" }];
       }
       throw new Error("unexpected pagination call");
     },
@@ -123,7 +131,7 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
   assert.equal(outputs.publish, "true");
   assert.equal(outputs.pull_number, "5350");
   assert.equal(outputs.pr_artifact, "true");
-  assert.equal(outputs.baseline_run_id, "1");
+  assert.equal(outputs.baseline_run_id, "100");
   assert.equal(outputs.baseline_matches_base, "true");
 });
 

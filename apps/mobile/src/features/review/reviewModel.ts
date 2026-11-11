@@ -534,17 +534,22 @@ export function buildReviewSectionItems(input: {
     },
   );
 
-  const gitItems = input.gitSections.map<ReviewSectionItem>((section) => ({
-    id: `git:${section.kind}`,
-    kind: section.kind,
-    title: section.title,
-    subtitle: gitSubtitle(section),
-    diff: section.diff,
-    source: section,
-    ...(section.files ? { files: section.files } : {}),
-    truncated: section.truncated,
-    isLoading: false,
-  }));
+  const gitItems = input.gitSections
+    .filter(
+      (section): section is typeof section & { kind: ReviewSectionKind } =>
+        section.kind !== "commit",
+    )
+    .map<ReviewSectionItem>((section) => ({
+      id: `git:${section.kind}`,
+      kind: section.kind,
+      title: section.title,
+      subtitle: gitSubtitle(section),
+      diff: section.diff,
+      source: section,
+      ...(section.files ? { files: section.files } : {}),
+      truncated: section.truncated,
+      isLoading: false,
+    }));
   const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
   const visibleGitItems =
     input.loadingGitSections && !hasChangesItem
@@ -604,7 +609,9 @@ export function buildReviewParsedDiff(
   try {
     const cacheKey = buildPatchCacheKey(text, cacheScope);
     const patchId = getReviewPatchId(cacheKey);
-    const parsedPatches = runDiffParserSilently(() => parsePatchFiles(text, cacheKey));
+    const parsedPatches = runDiffParserSilently(() =>
+      parsePatchFiles(text, { cacheKeyPrefix: cacheKey }),
+    );
     const rawFiles = new Map<string, string | null>();
     if (!truncated) {
       for (const rawFile of text.split(/(?=^diff --git )/m)) {

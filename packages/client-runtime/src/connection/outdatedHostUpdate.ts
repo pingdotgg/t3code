@@ -141,20 +141,31 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
           capabilities.serverSelfUpdateProgress === true
             ? yield* Effect.gen(function* () {
                 const terminal = yield* Ref.make(Option.none<ServerSelfUpdateResult>());
+                let receivedProgress = false;
                 const streamExit = yield* client[WS_METHODS.serverUpdateServerWithProgress](
                   input,
                 ).pipe(
                   Stream.runForEach((event) =>
                     event.type === "complete"
                       ? Ref.set(terminal, Option.some(event.result))
-                      : onStage(event.stage),
+                      : Effect.sync(() => {
+                          receivedProgress = true;
+                        }).pipe(Effect.andThen(onStage(event.stage))),
                   ),
                   Effect.exit,
                 );
+                const selfUpdateMethod = capabilities.serverSelfUpdate;
+                // Desktop preparation needs its terminal commit token.
+                const accepted =
+                  receivedProgress &&
+                  (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn")
+                    ? { targetVersion: input.targetVersion, method: selfUpdateMethod }
+                    : undefined;
                 return yield* resolveServerUpdateProgressResult(
                   input.targetVersion,
                   yield* Ref.get(terminal),
                   streamExit,
+                  accepted,
                 );
               })
             : yield* client[WS_METHODS.serverUpdateServer](input).pipe(

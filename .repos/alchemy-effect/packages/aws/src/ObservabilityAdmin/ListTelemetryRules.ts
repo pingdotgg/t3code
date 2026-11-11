@@ -1,0 +1,39 @@
+import type * as obs from "@distilled.cloud/aws/observabilityadmin";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `observabilityadmin:ListTelemetryRules` — enumerates
+ * the account's telemetry rules (name, ARN, telemetry type, source types),
+ * e.g. for an audit function that reports which auto-enable rules exist.
+ *
+ * Provide `AWS.ObservabilityAdmin.ListTelemetryRulesHttp` on the hosting
+ * Lambda Function to satisfy the requirement.
+ * ### Listing Telemetry Rules
+ * **Example:** Enumerate the account's telemetry rules
+ * ```typescript
+ * // init — grants observabilityadmin:ListTelemetryRules
+ * const listTelemetryRules = yield* AWS.ObservabilityAdmin.ListTelemetryRules();
+ *
+ * // runtime
+ * const { TelemetryRuleSummaries } = yield* listTelemetryRules();
+ * for (const rule of TelemetryRuleSummaries ?? []) {
+ *   yield* Effect.log(`${rule.RuleName}: ${rule.TelemetryType}`);
+ * }
+ * ```
+ *
+ * @binding
+ */
+export interface ListTelemetryRules extends Binding.Service<
+  ListTelemetryRules,
+  "AWS.ObservabilityAdmin.ListTelemetryRules",
+  () => Effect.Effect<
+    (
+      request?: obs.ListTelemetryRulesInput,
+    ) => Effect.Effect<obs.ListTelemetryRulesOutput, obs.ListTelemetryRulesError>
+  >
+> {}
+
+export const ListTelemetryRules = Binding.Service<ListTelemetryRules>(
+  "AWS.ObservabilityAdmin.ListTelemetryRules",
+);

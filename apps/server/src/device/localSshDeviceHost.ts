@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as Context from "effect/Context";
 import { runSshCommand } from "@t3tools/ssh/command";
 import * as Effect from "effect/Effect";
+import { HostnameLookupError } from "@t3tools/shared/HostProcess";
 
 export const LocalDeviceHostAddresses = Context.Reference<ReadonlySet<string>>(
   "LocalDeviceHostAddresses",
@@ -45,7 +46,10 @@ export const isLocalSshDeviceHost = Effect.fn("isLocalSshDeviceHost")(function* 
   if (!hostname) return false;
   const addresses = NodeNet.isIP(hostname)
     ? [hostname]
-    : yield* Effect.tryPromise(() => NodeDnsPromises.lookup(hostname, { all: true })).pipe(
+    : yield* Effect.tryPromise({
+        try: () => NodeDnsPromises.lookup(hostname, { all: true }),
+        catch: (cause) => new HostnameLookupError({ hostname, cause }),
+      }).pipe(
         Effect.map((entries) => entries.map((entry) => entry.address)),
         Effect.timeout("2 seconds"),
         Effect.orElseSucceed(() => [] as string[]),

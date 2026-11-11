@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Stands in for an Electron debugger.
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { DesktopBrowserEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -34,6 +34,8 @@ const command = (
 const makeDebuggee = (
   options: {
     readonly deferFocus?: boolean;
+    /** The guest is still loading its first page. */
+    readonly loading?: boolean;
     readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
   } = {},
 ) => {
@@ -69,10 +71,13 @@ const makeDebuggee = (
         sendWaiters.shift()?.();
       }),
   });
+  let destroyed = false;
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
+    isLoadingMainFrame: () => options.loading === true,
+    isDestroyed: () => destroyed,
   });
   return {
     tab: {
@@ -81,6 +86,12 @@ const makeDebuggee = (
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     navigate: () => webContents.emit("did-navigate"),
+    domReady: () => webContents.emit("dom-ready"),
+    destroy: () => {
+      destroyed = true;
+    },
+    failLoad: (code: number) =>
+      webContents.emit("did-fail-load", {}, code, "Failed", "http://localhost/", true),
     /** Ids of the commands the debugger received, in order. */
     sent,
     focusEmulation,
@@ -141,6 +152,109 @@ describe("DesktopBrowserHost", () => {
 
       expect(yield* takeEvents(host, 1)).toEqual([{ type: "attached", ...key }]);
       expect(yield* takeEvents(host, 1)).toEqual([{ type: "attached", ...key }]);
+    }),
+  );
+
+  it.effect("announces a guest still loading its first page only once that page is up", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const loading = makeDebuggee({ loading: true });
+      const other = { ...key, tabId: "tab-2" };
+      const reader = yield* takeEvents(host, 3).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      host.attach(key, loading.tab);
+      host.setShown(key, true);
+      host.attach(other, makeDebuggee().tab);
+      loading.domReady();
+
+      expect(yield* Fiber.join(reader)).toEqual([
+        { type: "attached", ...other },
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: true },
+      ]);
+    }),
+  );
+
+  it.effect(
+    "keeps a loading guest unannounced across a replaced navigation and a new backend",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const loading = makeDebuggee({ loading: true });
+        const other = { ...key, tabId: "tab-2" };
+        host.attach(key, loading.tab);
+        loading.failLoad(-3);
+        const reader = yield* takeEvents(host, 2).pipe(Effect.forkScoped);
+
+        yield* Effect.yieldNow;
+        host.attach(other, makeDebuggee().tab);
+        loading.domReady();
+
+        expect(yield* Fiber.join(reader)).toEqual([
+          { type: "attached", ...other },
+          { type: "attached", ...key },
+        ]);
+      }),
+  );
+
+  it.effect(
+    "announces a first page that never comes up, but never a tab closed or destroyed first",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const closed = { ...key, tabId: "tab-2" };
+        const destroyed = { ...key, tabId: "tab-3" };
+        const destroyedGuest = makeDebuggee({ loading: true });
+        const reader = yield* takeEvents(host, 1).pipe(Effect.forkScoped);
+
+        yield* Effect.yieldNow;
+        host.attach(closed, makeDebuggee({ loading: true }).tab);
+        host.detach(closed);
+        host.attach(destroyed, destroyedGuest.tab);
+        destroyedGuest.destroy();
+        host.attach(key, makeDebuggee({ loading: true }).tab);
+        yield* TestClock.adjust("5 seconds");
+
+        expect(yield* Fiber.join(reader)).toEqual([{ type: "attached", ...key }]);
+      }),
+  );
+
+  it.effect("re-sends shown to a backend that starts later and when a tab attaches again", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      host.attach(key, makeDebuggee().tab);
+      host.setShown(key, true);
+      const reader = yield* takeEvents(host, 5).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      host.detach(key);
+      host.attach(key, makeDebuggee().tab);
+
+      expect(yield* Fiber.join(reader)).toEqual([
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: true },
+        { type: "detached", ...key },
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: true },
+      ]);
+    }),
+  );
+
+  it.effect("replays an explicit hidden report before announcing another tab", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const other = { ...key, tabId: "tab-2" };
+      host.setShown(key, false);
+      host.attach(key, makeDebuggee().tab);
+      host.setShown(other, true);
+      host.attach(other, makeDebuggee().tab);
+
+      expect(yield* takeEvents(host, 3)).toEqual([
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: false },
+        { type: "attached", ...other },
+      ]);
     }),
   );
 
@@ -917,12 +1031,14 @@ describe("DesktopBrowserHost", () => {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
       const paths: Array<string> = [];
       const item = {
         setSavePath: (path: string) => void paths.push(path),
       } as unknown as Electron.DownloadItem;
 
       expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(false);
+      const sent = debuggee.nextSend();
       yield* host.handleCommandLine(
         encodeJson({
           type: "cdp",
@@ -934,10 +1050,15 @@ describe("DesktopBrowserHost", () => {
           }),
         }),
       );
-      debuggee.emit("Browser.downloadWillBegin", { guid: "guid-1", suggestedFilename: "r.csv" });
+      yield* Effect.promise(() => sent);
+      debuggee.release();
+      expect(yield* Queue.take(replies)).toBe(1);
+      debuggee.emit("Page.downloadWillBegin", { guid: "guid-1", suggestedFilename: "r.csv" });
+      expect(host.placeDownload(makeDebuggee().tab.webContents, item)).toBe(false);
       expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(true);
       expect(paths).toEqual(["/srv/downloads/guid-1"]);
-    }),
+      expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(false);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("tells a download the person clicked from one the agent's input started", () =>
@@ -967,5 +1088,74 @@ describe("DesktopBrowserHost", () => {
       );
       expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(false);
     }),
+  );
+
+  it.effect("detaches only the tab whose CDP event is too large to relay", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const tabs = [makeDebuggee({ deferFocus: true }), makeDebuggee()];
+      const send = vi.spyOn(tabs[0]!.tab.debugger, "sendCommand");
+      const keys = [key, { threadId: "thread-2", tabId: "tab-2" }];
+      const events = yield* Queue.unbounded<DesktopBrowserEvent>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) =>
+          Queue.offer(events, decodeEvent(new TextDecoder().decode(line))),
+        ),
+        Effect.forkScoped,
+      );
+      for (const [index, tabKey] of keys.entries()) {
+        host.attach(tabKey, tabs[index]!.tab);
+        expect(yield* Queue.take(events)).toEqual({ type: "attached", ...tabKey });
+        yield* host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...tabKey,
+            message: encodeJson({ id: 1, method: "Target.setAutoAttach" }),
+          }),
+        );
+        // The command's reply and the page announcement.
+        yield* Queue.takeN(events, 2);
+      }
+
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: encodeJson({
+            id: 2,
+            method: "Target.setAutoAttach",
+            params: { autoAttach: true, waitForDebuggerOnStart: true, flatten: true },
+            sessionId: "t3-preview-page",
+          }),
+        }),
+      );
+      yield* command(host, 3, "Page.startScreencast");
+      tabs[0]!.emit("Runtime.consoleAPICalled", {
+        args: Array(2048).fill("x".repeat(40 * 1024)),
+      });
+      tabs[1]!.emit("Page.loadEventFired", { timestamp: 1 });
+      const [detached, next] = yield* Queue.takeN(events, 2);
+
+      const { type, threadId, tabId } = detached!;
+      expect({ type, threadId, tabId }).toEqual({ type: "detached", ...key });
+      expect(send).toHaveBeenCalledWith("Target.setAutoAttach", {
+        autoAttach: false,
+        waitForDebuggerOnStart: false,
+        flatten: true,
+      });
+      tabs[0]!.settleFocus();
+      yield* settle;
+      expect(send).not.toHaveBeenCalledWith("Target.setAutoAttach", {
+        autoAttach: true,
+        waitForDebuggerOnStart: true,
+        flatten: true,
+      });
+      expect(send).toHaveBeenCalledWith("Page.stopScreencast");
+      expect(tabs[0]!.focusEmulation).toEqual([true, false]);
+      expect(next).toMatchObject({ type: "cdp", ...keys[1] });
+      expect(JSON.parse((next as { message: string }).message)).toMatchObject({
+        method: "Page.loadEventFired",
+      });
+    }).pipe(Effect.scoped),
   );
 });
