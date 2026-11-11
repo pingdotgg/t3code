@@ -3,12 +3,12 @@ import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import {
   useClientSettings,
   useClientSettingsHydrated,
-  useUpdateClientSettings,
+  updateClientSettings,
 } from "~/hooks/useSettings";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
+import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { searchableSetting } from "./settingsSearch";
 
@@ -21,8 +21,7 @@ const preferences = [
 
 type LoadPreference = (typeof preferences)[number]["value"];
 
-/** Snaps a saved weight (older builds stored a slider value) onto the four preferences. */
-export function loadPreferenceForWeight(weight: number | undefined): LoadPreference {
+function loadPreferenceForWeight(weight: number | undefined): LoadPreference {
   if (weight === undefined || weight === 50) return 50;
   if (weight === 0) return 0;
   return weight < 50 ? 25 : 100;
@@ -32,11 +31,7 @@ function preferenceLabel(preference: LoadPreference): string {
   return preferences.find((entry) => entry.value === preference)!.label;
 }
 
-/**
- * Closed-header summary: the machines not at Normal, so the folded section
- * still tells you what is set. Null when every machine is at the default.
- */
-export function summarizeLoadPreferences(
+function summarizeLoadPreferences(
   environments: ReadonlyArray<Pick<EnvironmentPresentation, "environmentId" | "label">>,
   weights: Readonly<Record<string, number>>,
 ): string | null {
@@ -49,20 +44,16 @@ export function summarizeLoadPreferences(
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
-/**
- * Folded section under the environments list. Its switch turns balancing on
- * for this client, and the body holds one row per switched-on machine with
- * how often that machine should receive new threads. Rendered only when two
- * or more machines are on, since one machine has nothing to balance against.
- */
 export function LoadBalancingSettings({
   environments,
 }: {
   environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
-  const settings = useClientSettings();
+  const settings = useClientSettings((current) => ({
+    loadBalancingEnabled: current.loadBalancingEnabled,
+    loadBalancingWeights: current.loadBalancingWeights,
+  }));
   const settingsHydrated = useClientSettingsHydrated();
-  const updateSettings = useUpdateClientSettings();
 
   if (environments.length < 2) return null;
 
@@ -81,7 +72,7 @@ export function LoadBalancingSettings({
           aria-label="Automatically balance load"
           checked={settings.loadBalancingEnabled}
           disabled={!settingsHydrated}
-          onCheckedChange={(loadBalancingEnabled) => updateSettings({ loadBalancingEnabled })}
+          onCheckedChange={(loadBalancingEnabled) => updateClientSettings({ loadBalancingEnabled })}
         />
       }
     >
@@ -94,7 +85,7 @@ export function LoadBalancingSettings({
           key={environment.environmentId}
           kind={resolveEnvironmentMachineKind(environment.serverConfig)}
           label={environment.label}
-          subtitle={environmentTransportLabel(environment)}
+          subtitle={<EnvironmentTransportLabel environment={environment} />}
         >
           <Select
             items={preferences}
@@ -104,7 +95,7 @@ export function LoadBalancingSettings({
             disabled={!settingsHydrated || !settings.loadBalancingEnabled}
             onValueChange={(value) => {
               if (value === null) return;
-              updateSettings({
+              updateClientSettings({
                 loadBalancingWeights: {
                   ...settings.loadBalancingWeights,
                   [environment.environmentId]: value,

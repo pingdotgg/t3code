@@ -96,8 +96,6 @@ const RECORDINGS = {
     runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
   },
   skill_invocation: {
-    // The adapter rewrites a discovered `$review` mention to Cursor's native
-    // `/review` invocation before sending, so the SDK sees the rewritten form.
     prompts: [SKILL_INVOCATION_CURSOR_MESSAGE],
     output: "../src/orchestration-v2/testkit/fixtures/skill_invocation/cursor_transcript.ndjson",
     workspaceFiles: skillInvocationInput().workspaceFiles,

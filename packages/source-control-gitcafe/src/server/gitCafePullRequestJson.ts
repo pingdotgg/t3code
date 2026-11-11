@@ -1,10 +1,5 @@
-/**
- * GitCafe's REST bodies, and their conversion into the neutral `Provider*` shapes. Every
- * conversion takes the repository's host, so a staging repository's links stay on staging.
- *
- * @module source-control-gitcafe/server/gitCafePullRequestJson
- */
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
+import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import {
@@ -14,9 +9,11 @@ import {
   TrimmedNonEmptyString,
   type PullRequestActor,
   type PullRequestCheck,
+  type PullRequestChecksState,
   type PullRequestComment,
   type PullRequestReaction,
   type PullRequestReactionContent,
+  type PullRequestReviewerCandidate,
   type PullRequestReviewThread,
   type PullRequestViewerPermissions,
 } from "@t3tools/contracts";
@@ -34,13 +31,19 @@ const Actor = Schema.Union([
     handle: TrimmedNonEmptyString,
     displayName: Schema.NullOr(Schema.String),
     avatarUrl: Schema.NullOr(Schema.String),
+    bot: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     kind: Schema.Literal("github"),
     actorId: Schema.String,
     login: TrimmedNonEmptyString,
     avatarUrl: Schema.NullOr(Schema.String),
-    linkedProfile: Schema.optional(Schema.NullOr(Schema.Struct({ handle: TrimmedNonEmptyString }))),
+    accountType: Schema.optional(Schema.NullOr(Schema.String)),
+    linkedProfile: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({ handle: TrimmedNonEmptyString, actorId: Schema.optional(Schema.String) }),
+      ),
+    ),
   }),
   Schema.Struct({ kind: Schema.Literal("unavailable"), actorId: Schema.String }),
 ]);
@@ -81,10 +84,13 @@ export const GitCafePullDetail = Schema.Struct({
   closedAt: Schema.NullOr(IsoDateTime),
   mergedAt: Schema.NullOr(IsoDateTime),
   sourceRepo: Schema.NullOr(Schema.Struct({ owner: Schema.String, name: Schema.String })),
-  /** The base GitCafe last compared the pull request against, which a provider merge fences on. */
   observedBaseOid: Schema.optional(Schema.NullOr(Schema.String)),
   mergeRoute: Schema.optional(Schema.Literals(["native", "provider", "unsupported"])),
   lockedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  viewerActorId: Schema.optional(Schema.NullOr(Schema.String)),
+  // Set once GitHub has merged a pull request GitCafe routed there, which can be before the
+  // sync brings the merged state back.
+  providerMerge: Schema.optional(Schema.NullOr(Schema.Struct({ mergedAt: IsoDateTime }))),
   capabilities: Schema.Struct({
     comment: Schema.Boolean,
     review: Schema.Boolean,
@@ -107,13 +113,12 @@ const CommentCapabilities = Schema.Struct({
 const GitCafeComment = Schema.Struct({
   id: TrimmedNonEmptyString,
   threadId: TrimmedNonEmptyString,
-  /** What a resolution or rewrite fences on; absent from older answers. */
   version: Schema.optional(NonNegativeInt),
   author: Actor,
   body: Schema.NullOr(Schema.String),
   createdAt: IsoDateTime,
   path: Schema.NullOr(Schema.String),
-  // The API allows any integer here; only a positive line anchors a review thread.
+  // Only positive lines anchor review threads; the API allows any integer.
   line: Schema.NullOr(Schema.Int),
   side: Schema.NullOr(Schema.Literals(["left", "right"])),
   commitOid: Schema.NullOr(Schema.String),
@@ -150,6 +155,24 @@ export const GitCafeCommits = Schema.Struct({
   headOid: Schema.String,
 });
 
+export const GitCafeLabels = Schema.Struct({
+  items: Schema.Array(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      name: TrimmedNonEmptyString,
+      color: Schema.NullOr(Schema.String),
+      description: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ),
+  next: Schema.NullOr(Schema.String),
+});
+
+/** A pull request's reviewers and its reviewer candidates, each actor under its id. */
+export const GitCafeActorEntries = Schema.Struct({
+  items: Schema.Array(Schema.Struct({ id: TrimmedNonEmptyString, actor: Actor })),
+  next: Schema.NullOr(Schema.String),
+});
+
 export const GitCafeReactions = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
@@ -172,7 +195,6 @@ export const GitCafeReactions = Schema.Struct({
 const GitCafeStack = Schema.Struct({
   id: TrimmedNonEmptyString,
   number: PositiveInt,
-  /** What a land or restack fences on. */
   revision: PositiveInt,
   landingBase: Schema.String,
   members: Schema.Array(
@@ -213,7 +235,7 @@ const GitCafeDiffFile = Schema.Struct({
   isSubmodule: Schema.optional(Schema.Boolean),
   oldOid: Schema.optional(Schema.String),
   newOid: Schema.optional(Schema.String),
-  // Structural pages (`/changes`, `/compare`) list files without hunks; the batched reads fill them.
+  // `/changes` and `/compare` omit hunks; batched reads fill them.
   hunks: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -237,6 +259,9 @@ export const GitCafeDiff = Schema.Struct({
 export const GitCafeChecks = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
+      id: Schema.optional(Schema.NullOr(Schema.String)),
+      provider: Schema.optional(Schema.NullOr(Schema.String)),
+      githubApp: Schema.optional(Schema.NullOr(Schema.String)),
       name: TrimmedNonEmptyString,
       status: Schema.Literals(["queued", "in_progress", "completed"]),
       conclusion: Schema.NullOr(Schema.String),
@@ -246,6 +271,29 @@ export const GitCafeChecks = Schema.Struct({
   ),
   next: Schema.NullOr(Schema.String),
 });
+
+/** A user search answer and a collaborator page carry the same fields a picker shows. */
+export const GitCafePeople = Schema.Struct({
+  items: Schema.Array(
+    Schema.Struct({
+      handle: TrimmedNonEmptyString,
+      displayName: Schema.optional(Schema.NullOr(Schema.String)),
+      avatarUrl: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ),
+  next: Schema.NullOr(Schema.String),
+});
+
+export function toPeople(
+  people: typeof GitCafePeople.Type,
+  host: string,
+): ReadonlyArray<PullRequestActor> {
+  return people.items.map((person) => ({
+    login: person.handle,
+    name: person.displayName ?? null,
+    avatarUrl: person.avatarUrl == null ? null : new URL(person.avatarUrl, `https://${host}`).href,
+  }));
+}
 
 interface RepositoryOnHost {
   readonly repository: string;
@@ -257,12 +305,16 @@ function toActor(actor: Actor, host: string): PullRequestActor | null {
   return {
     login: actor.kind === "local" ? actor.handle : actor.login,
     name: actor.kind === "local" ? actor.displayName : null,
+    // A mirrored GitHub account says it is a bot by its account type, not its login.
+    ...((actor.kind === "local" && actor.bot === true) ||
+    (actor.kind === "github" && actor.accountType === "bot")
+      ? { isBot: true }
+      : {}),
     // GitCafe serves its own avatars by path, so a relative one is read against the host.
     avatarUrl: actor.avatarUrl === null ? null : new URL(actor.avatarUrl, `https://${host}`).href,
   };
 }
 
-/** The reviewers GitCafe has asked, as the detail's reviewer list shows them. */
 export function toReviewers(
   pull: Pick<GitCafePull, "reviewers">,
   host: string,
@@ -273,7 +325,22 @@ export function toReviewers(
   });
 }
 
-/** A linked GitHub reviewer answers to both logins, so either one finds the review request. */
+export function toReviewerCandidates(
+  candidates: typeof GitCafeActorEntries.Type,
+  input: {
+    readonly requested: ReadonlySet<string>;
+    readonly authorActorId: string;
+    readonly host: string;
+  },
+): ReadonlyArray<PullRequestReviewerCandidate> {
+  return candidates.items.flatMap(({ id, actor }) => {
+    const reviewer = id === input.authorActorId ? null : toActor(actor, input.host);
+    return reviewer === null
+      ? []
+      : [{ ...reviewer, id, kind: "user" as const, isRequested: input.requested.has(id) }];
+  });
+}
+
 function reviewerLogins(actor: Actor, host: string): ReadonlyArray<string> {
   const reviewer = toActor(actor, host);
   if (reviewer === null) return [];
@@ -303,18 +370,25 @@ export function toChangeRequest(
     reviewRequestLogins: (pull.reviewers ?? []).flatMap(({ actor }) =>
       reviewerLogins(actor, target.host),
     ),
-    labels: pull.labels ?? [],
+    labels: (pull.labels ?? []).map(({ name, color }) => ({ name, color })),
   };
 }
 
-/** What GitCafe's own capabilities let this viewer do with the pull request. */
+function isViewerAuthor(detail: GitCafePullDetail): boolean {
+  const viewer = detail.viewerActorId;
+  if (viewer == null) return false;
+  const { author } = detail;
+  return (
+    author.actorId === viewer ||
+    (author.kind === "github" && author.linkedProfile?.actorId === viewer)
+  );
+}
+
 export function toViewerPermissions(detail: GitCafePullDetail): PullRequestViewerPermissions {
   const { comment, edit, review, merge, moderate } = detail.capabilities;
-  // A locked conversation keeps its composer for moderators only.
   const open = comment && (detail.lockedAt == null || moderate);
   return {
     actions: [
-      // A merged pull request is settled; a closed one can only be reopened.
       ...(edit && detail.state === "open"
         ? ([detail.draft ? "ready" : "draft", "close"] as const)
         : edit && detail.state === "closed"
@@ -324,10 +398,15 @@ export function toViewerPermissions(detail: GitCafePullDetail): PullRequestViewe
     ],
     stackRebase: merge,
     comment: open,
-    // Each thread's root narrows this further with its own `canResolve`.
     resolve: open,
-    verdicts: review ? ["approve", "request-changes", "comment"] : [],
-    requestReviewers: false,
+    // GitCafe refuses an author's approval and request for changes, as GitHub does.
+    verdicts: !review
+      ? []
+      : isViewerAuthor(detail)
+        ? ["comment"]
+        : ["approve", "request-changes", "comment"],
+    requestReviewers: edit && detail.state === "open",
+    labels: edit && detail.state === "open",
     editChangeRequest: edit,
     // GitCafe's only branch update moves a whole stack.
     updateMethods: [],
@@ -345,7 +424,6 @@ const REACTIONS: Readonly<Record<string, PullRequestReactionContent>> = {
   "👀": "eyes",
 };
 
-/** The emoji GitCafe takes for one of the shared reactions. */
 export const REACTION_EMOJI: Readonly<Record<PullRequestReactionContent, string>> = {
   "thumbs-up": "👍",
   "thumbs-down": "👎",
@@ -357,7 +435,6 @@ export const REACTION_EMOJI: Readonly<Record<PullRequestReactionContent, string>
   eyes: "👀",
 };
 
-/** The shared reaction an emoji stands for; custom and unlisted ones stand for none. */
 export function reactionContent(emoji: string): PullRequestReactionContent | undefined {
   return REACTIONS[emoji.replaceAll("\uFE0F", "")];
 }
@@ -390,7 +467,6 @@ const REVIEW_STATES = {
   comment: "commented",
 } as const;
 
-/** GitCafe persists a thread's identity apart from its line, so threads group by `threadId`. */
 export function toActivity(input: {
   readonly comments: typeof GitCafeComments.Type;
   readonly reviews: typeof GitCafeReviews.Type;
@@ -410,7 +486,6 @@ export function toActivity(input: {
     ...(comment.capabilities === undefined ? {} : { canEdit: comment.capabilities.edit }),
     ...(reactions === undefined ? {} : { reactions: reactions.byComment.get(comment.id) ?? [] }),
   });
-  // Stable, so remarks written in the same instant keep GitCafe's own order.
   const ordered = input.comments.items.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
   const groups = new Map<string, Array<GitCafeComment>>();
   for (const comment of ordered) {
@@ -492,7 +567,10 @@ export function toStack(stack: GitCafeStack, target: RepositoryOnHost): Provider
   };
 }
 
-/** Converts GitCafe's structured hunks into a unified patch, keeping omitted files' counts. */
+function isEOFMarker(origin: string | undefined) {
+  return origin === "=" || origin === ">" || origin === "<";
+}
+
 export function toDiff(diff: typeof GitCafeDiff.Type): ProviderDiffSlice {
   const chunks: Array<string> = [];
   const omittedFileStats: Array<{ path: string; additions: number; deletions: number }> = [];
@@ -508,7 +586,16 @@ export function toDiff(diff: typeof GitCafeDiff.Type): ProviderDiffSlice {
     if (file.status === "deleted") lines.push(`deleted file mode ${mode}`);
     if (file.status === "renamed" || file.status === "copied") {
       const action = file.status === "renamed" ? "rename" : "copy";
+      const hasChanges =
+        (file.hunks?.length ?? 0) > 0 ||
+        (file.additions ?? 0) > 0 ||
+        (file.deletions ?? 0) > 0 ||
+        file.binary ||
+        file.tooLarge ||
+        file.hunksOmitted;
+      // GitCafe has no similarity score; Pierre needs this header to retain rename metadata.
       lines.push(
+        `similarity index ${hasChanges ? 0 : 100}%`,
         `${action} from ${quoteGitPatchPath(oldPath)}`,
         `${action} to ${quoteGitPatchPath(file.path)}`,
       );
@@ -533,10 +620,19 @@ export function toDiff(diff: typeof GitCafeDiff.Type): ProviderDiffSlice {
       if (hunks.length > 0) lines.push(`--- ${before}`, `+++ ${after}`);
       for (const hunk of hunks) {
         lines.push(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`);
-        for (const line of hunk.lines) {
-          // GitCafe marks a missing final newline with libgit2's own origins.
-          if (["=", ">", "<"].includes(line.origin)) lines.push("\\ No newline at end of file");
-          else lines.push(`${line.origin}${line.content.replace(/\n$/u, "")}`);
+        for (const [index, line] of hunk.lines.entries()) {
+          if (isEOFMarker(line.origin)) {
+            lines.push("\\ No newline at end of file");
+          } else {
+            lines.push(`${line.origin}${line.content.replace(/\n$/u, "")}`);
+            if (
+              ["+", "-", " "].includes(line.origin) &&
+              !line.content.endsWith("\n") &&
+              !isEOFMarker(hunk.lines[index + 1]?.origin)
+            ) {
+              lines.push("\\ No newline at end of file");
+            }
+          }
         }
       }
     }
@@ -568,11 +664,53 @@ function checkStatus(check: (typeof GitCafeChecks.Type.items)[number]): PullRequ
   }
 }
 
+type GitCafeCheck = (typeof GitCafeChecks.Type.items)[number];
+
+/** A check run's id, which grows with each run. Commit statuses (`status:…`) carry no such order. */
+function runOrder(check: GitCafeCheck): bigint | null {
+  return check.id != null && /^\d+$/u.test(check.id) ? BigInt(check.id) : null;
+}
+
+/**
+ * GitCafe lists every run of a commit's checks, so a re-run arrives beside the run it replaced.
+ * The newest run is the check's state; an older failure is history, not a failing check. Runs whose
+ * order cannot be told apart are all kept, so no failure is hidden. Two reporters may share a check
+ * name, so a run only replaces runs from the same provider and GitHub app.
+ */
 export function toChecks(checks: typeof GitCafeChecks.Type): ReadonlyArray<PullRequestCheck> {
-  return checks.items.map((check) => ({
-    name: check.name,
-    status: checkStatus(check),
-    description: check.summary,
-    url: check.detailsUrl,
-  }));
+  const kept: Array<GitCafeCheck> = [];
+  const newestByKey = new Map<string, { index: number; order: bigint }>();
+  for (const check of checks.items) {
+    const order = runOrder(check);
+    if (order === null) {
+      kept.push(check);
+      continue;
+    }
+    const key = JSON.stringify([check.provider ?? null, check.githubApp ?? null, check.name]);
+    const newest = newestByKey.get(key);
+    if (newest === undefined) {
+      newestByKey.set(key, { index: kept.length, order });
+      kept.push(check);
+    } else if (order > newest.order) {
+      kept[newest.index] = check;
+      newest.order = order;
+    }
+  }
+  return sortChecks(
+    kept.map((check) => ({
+      name: check.name,
+      status: checkStatus(check),
+      description: check.summary,
+      url: check.detailsUrl,
+    })),
+  );
+}
+
+export function checksStateOf(
+  checks: ReadonlyArray<PullRequestCheck>,
+): PullRequestChecksState | null {
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  return statuses.has("success") ? "passing" : null;
 }

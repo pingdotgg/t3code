@@ -2,7 +2,6 @@ import {
   ModelSelection,
   OrchestrationV2ThreadProjection,
   ProviderSessionId,
-  ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -21,8 +20,6 @@ import {
 
 export interface ProviderSwitchPlanV2 {
   readonly instanceChanged: boolean;
-  readonly modelChanged: boolean;
-  readonly targetProviderThreadId: ProviderThreadId | null;
   readonly releaseProviderSessionIds: ReadonlyArray<ProviderSessionId>;
   readonly transition: ProviderSessionTransition;
 }
@@ -51,8 +48,6 @@ export class ProviderSwitchServiceV2 extends Context.Service<
   ProviderSwitchServiceV2Shape
 >()("t3/orchestration-v2/ProviderSwitchService/ProviderSwitchServiceV2") {}
 
-// Stopped and errored records stay in session history but can no longer be
-// restarted or released; only live sessions participate in a transition.
 const isLiveProviderSession = (
   session: OrchestrationV2ThreadProjection["providerSessions"][number],
 ) => session.status !== "stopped" && session.status !== "error";
@@ -66,11 +61,10 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
     return ProviderSwitchServiceV2.of({
-      plan: ({ projection, targetModelSelection }) =>
-        Effect.gen(function* () {
+      plan: Effect.fn("ProviderSwitchService.plan")(
+        function* ({ projection, targetModelSelection }) {
           const current = projection.thread.modelSelection;
           const instanceChanged = current.instanceId !== targetModelSelection.instanceId;
-          const modelChanged = current.model !== targetModelSelection.model;
           const getMetadata = (instanceId: typeof current.instanceId) =>
             adapters.getMetadata !== undefined
               ? adapters.getMetadata(instanceId)
@@ -96,12 +90,8 @@ export const layer: Layer.Layer<
                 DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
             );
           const currentSession = currentSessions.find(isLiveProviderSession);
-          // Negotiated capabilities describe the provider, not the dead
-          // process; the newest record still reports what the instance
-          // supports after its session stops.
           const negotiatedCapabilities =
             currentSession?.capabilities ?? currentSessions[0]?.capabilities;
-          // Detaching a process removes its session binding, not its native history.
           const currentProviderThread = projection.providerThreads.find(
             (thread) =>
               thread.id === projection.thread.activeProviderThreadId &&
@@ -144,8 +134,6 @@ export const layer: Layer.Layer<
                             currentSession?.cwd ??
                             projection.thread.worktreePath ??
                             "<unresolved-workspace>",
-                          capabilities:
-                            negotiatedCapabilities ?? currentInstance.value.capabilities,
                         },
                   target: {
                     driver: targetInstance.value.driver,
@@ -160,7 +148,6 @@ export const layer: Layer.Layer<
                       projection.thread.worktreePath ??
                       currentSession?.cwd ??
                       "<unresolved-workspace>",
-                    capabilities: targetInstance.value.capabilities,
                     available: targetInstance.value.enabled,
                   },
                   ...(selectionTransition === undefined ? {} : { selectionTransition }),
@@ -172,23 +159,11 @@ export const layer: Layer.Layer<
               cause: transition.reason,
             });
           }
-          const targetProviderThread = projection.providerThreads
-            .filter(
-              (thread) =>
-                thread.appThreadId === projection.thread.id &&
-                thread.ownerNodeId === null &&
-                thread.providerInstanceId === targetModelSelection.instanceId,
-            )
-            .toSorted(
-              (left, right) =>
-                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-            )[0];
           const releaseProviderSessionIds = projection.providerSessions
             .filter((session) => {
               if (!isLiveProviderSession(session)) return false;
               if (transition.type === "restart_and_resume") {
-                // Other live records may serve pooled or delegated bindings;
-                // only the session being replaced is released.
+                // Release only the replaced session; peers can serve pooled or delegated bindings.
                 return session.id === currentSession?.id;
               }
               if (transition.type === "create_with_handoff") {
@@ -199,21 +174,22 @@ export const layer: Layer.Layer<
             .map((session) => session.id);
           return {
             instanceChanged,
-            modelChanged,
-            targetProviderThreadId: targetProviderThread?.id ?? null,
             releaseProviderSessionIds,
             transition,
           };
-        }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderSwitchPlanError({
-                threadId: projection.thread.id,
-                targetProviderInstanceId: targetModelSelection.instanceId,
-                cause,
-              }),
+        },
+        (effect, { projection, targetModelSelection }) =>
+          effect.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderSwitchPlanError({
+                  threadId: projection.thread.id,
+                  targetProviderInstanceId: targetModelSelection.instanceId,
+                  cause,
+                }),
+            ),
           ),
-        ),
+      ),
     });
   }),
 );

@@ -8,11 +8,6 @@ const {
   withDangerousMod,
 } = require("expo/config-plugins");
 
-// @react-native-menu/menu renders an AppCompat PopupMenu on Android, which
-// inherits the dated default popup chrome from the app theme. These resources
-// restyle it to match the app palette (global.css --color-card / --color-foreground)
-// with rounded corners, and anchor it below the button instead of overlapping it.
-
 const POPUP_BACKGROUND_DRAWABLE = `<?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
   <solid android:color="@color/popup_menu_background" />
@@ -20,9 +15,6 @@ const POPUP_BACKGROUND_DRAWABLE = `<?xml version="1.0" encoding="utf-8"?>
 </shape>
 `;
 
-// Checkable menu rows insert a CheckBox at the row's right edge; the theme
-// swaps its square-box button for this check glyph so the selected option
-// shows a plain right-aligned check.
 const CHECK_DRAWABLE = `<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="18dp"
@@ -36,7 +28,6 @@ const CHECK_DRAWABLE = `<?xml version="1.0" encoding="utf-8"?>
 </vector>
 `;
 
-// CheckBox button drawable: check glyph when selected, nothing otherwise.
 const CHECKBOX_BUTTON_SELECTOR = `<?xml version="1.0" encoding="utf-8"?>
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
   <item android:state_checked="true" android:drawable="@drawable/ic_menu_check" />
@@ -44,8 +35,6 @@ const CHECKBOX_BUTTON_SELECTOR = `<?xml version="1.0" encoding="utf-8"?>
 </selector>
 `;
 
-// Replaces the default filled-triangle submenu indicator with a stroked ">"
-// chevron.
 const SUBMENU_ARROW_DRAWABLE = `<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="20dp"
@@ -98,21 +87,14 @@ function withPopupMenuStyles(config) {
         "textAppearanceSmallPopupMenu",
         "@style/AppPopupMenu.TextAppearance",
       );
-      // Submenu popups show their parent item as a header row that reads a
-      // separate theme attribute, so it needs the same themed text color.
+      // Submenu headers read a separate text appearance.
       assignStyleItem(
         appTheme,
         "textAppearancePopupMenuHeader",
         "@style/AppPopupMenu.HeaderTextAppearance",
       );
-      // Menu item views resolve their submenu arrow from this style
-      // (android:listMenuViewStyle / android:subMenuArrow are public attrs).
       assignStyleItem(appTheme, "android:listMenuViewStyle", "@style/AppPopupMenuListMenuView");
-      // Checkable rows inflate a plain CheckBox at the row end; restyle its
-      // button so the selected option shows a right-aligned check glyph
-      // instead of a square box. Both framework and AppCompat attrs are set
-      // since the popup may inflate either CheckBox flavor. App-wide for
-      // native checkboxes, which the app otherwise doesn't use.
+      // Popups may inflate framework or AppCompat CheckBoxes.
       assignStyleItem(appTheme, "android:checkboxStyle", "@style/AppPopupMenuCheckBox");
       assignStyleItem(appTheme, "checkboxStyle", "@style/AppPopupMenuCheckBoxCompat");
     }
@@ -142,8 +124,6 @@ function withPopupMenuStyles(config) {
         item: [
           { _: "15sp", $: { name: "android:textSize" } },
           { _: "@color/popup_menu_item_text", $: { name: "android:textColor" } },
-          // DM Sans (--font-sans); embedded by the expo-font plugin config in
-          // app.config.ts.
           { _: "@font/xml_dm_sans_regular", $: { name: "android:fontFamily" } },
         ],
       },
@@ -158,8 +138,7 @@ function withPopupMenuStyles(config) {
           { _: "@font/xml_dm_sans_regular", $: { name: "android:fontFamily" } },
         ],
       },
-      // The framework default (Widget.Material.ListMenuView) only carries
-      // subMenuArrow, so replacing the style wholesale is safe.
+      // The framework default only carries subMenuArrow.
       {
         $: { name: "AppPopupMenuListMenuView" },
         item: [{ _: "@drawable/popup_menu_submenu_arrow", $: { name: "android:subMenuArrow" } }],

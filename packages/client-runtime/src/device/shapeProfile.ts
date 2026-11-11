@@ -23,7 +23,6 @@ export interface DeviceShapeProfile {
   };
 }
 
-/** Original family silhouettes, rather than claims to reproduce individual hardware models. */
 export const IOS_PHONE_SHAPE: DeviceShapeProfile = {
   id: "ios-phone",
   bezel: 0.055,
@@ -104,7 +103,6 @@ const ANDROID_TABLET_SHAPE: DeviceShapeProfile = {
   backColor: 0x697b80,
 };
 
-/** Names identify a family when available; wide unknown screens get a generic tablet shell. */
 export function resolveDeviceShape(options: {
   platform: DevicePlatform;
   name?: string;

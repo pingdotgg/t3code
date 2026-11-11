@@ -21,7 +21,6 @@ interface GitDiffFileContentsSource {
   readonly sourceKind: ReviewDiffPreviewSourceKind;
   readonly baseRef: string | null;
   readonly headRef: string | null;
-  /** The comparison identity Pierre carries into its hydrated render cache. */
   readonly cacheKey: string;
 }
 
@@ -75,7 +74,6 @@ function createDiffFileContentsLoader(
   };
 }
 
-/** Turns the host's Git file-content RPC into the full-file loader Pierre uses for hunk expansion. */
 export function createGitDiffFileContentsLoader<E>(
   getDiffFileContents: GetDiffFileContents<E>,
   source: GitDiffFileContentsSource,
@@ -100,7 +98,6 @@ export function createGitDiffFileContentsLoader<E>(
   }, source.cacheKey);
 }
 
-/** Loads host-backed PR files, which may name revisions this checkout has never fetched. */
 export function createPullRequestDiffFileContentsLoader<E>(
   getDiffFileContents: GetPullRequestDiffFileContents<E>,
   source: PullRequestDiffFileContentsSource,

@@ -1,10 +1,3 @@
-/**
- * Single Zustand store for terminal UI state keyed by scoped thread identity.
- *
- * Terminal UI transition helpers are intentionally private to keep the public
- * API constrained to store actions/selectors.
- */
-
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
@@ -26,7 +19,6 @@ interface ThreadTerminalUiState {
   activeTerminalGroupId: string;
 }
 
-// Keep the old storage key so existing drawer layout preferences migrate.
 const TERMINAL_UI_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
 
 interface PersistedTerminalUiStateStoreState {
@@ -421,9 +413,15 @@ function closeThreadTerminal(
   }
 
   const closedTerminalIndex = normalized.terminalIds.indexOf(terminalId);
+  const groupTerminalIds =
+    normalized.terminalGroups.find((group) => group.terminalIds.includes(terminalId))
+      ?.terminalIds ?? [];
+  const groupIndex = groupTerminalIds.indexOf(terminalId);
   const nextActiveTerminalId =
     normalized.activeTerminalId === terminalId
-      ? (remainingTerminalIds[Math.min(closedTerminalIndex, remainingTerminalIds.length - 1)] ??
+      ? (groupTerminalIds[groupIndex + 1] ??
+        groupTerminalIds[groupIndex - 1] ??
+        remainingTerminalIds[Math.min(closedTerminalIndex, remainingTerminalIds.length - 1)] ??
         remainingTerminalIds[0] ??
         "")
       : normalized.activeTerminalId;
@@ -562,7 +560,6 @@ function removeRecordEntry<T>(record: Record<string, T>, key: string): Record<st
 
 interface TerminalUiStateStoreState {
   terminalUiStateByThreadKey: Record<string, ThreadTerminalUiState>;
-  /** Closed ids hidden from stale server metadata until that id is explicitly opened again. */
   suppressedTerminalIdsByThreadKey: Record<string, string[]>;
   setTerminalOpen: (threadRef: ScopedThreadRef, open: boolean) => void;
   setTerminalHeight: (threadRef: ScopedThreadRef, height: number) => void;

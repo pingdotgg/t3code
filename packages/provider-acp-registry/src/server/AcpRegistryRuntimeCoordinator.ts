@@ -32,7 +32,6 @@ interface UrlAuthActionUpdate {
   readonly action: AcpRegistryUrlAuthAction | null;
 }
 
-/** Pending URL logins auto-decline after this window so stale prompts cannot be accepted later. */
 const URL_AUTH_ACTION_TTL = Duration.minutes(10);
 
 interface PendingUrlAuthAction {
@@ -41,7 +40,6 @@ interface PendingUrlAuthAction {
   readonly expiresAt: DateTime.Utc;
 }
 
-/** Gives a user-started ACP process priority over disposable discovery for the same agent. */
 export class AcpRegistryRuntimeCoordinator extends Context.Service<
   AcpRegistryRuntimeCoordinator,
   {
@@ -53,7 +51,6 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
       agentId: string,
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<Option.Option<A>, E, R>;
-    /** Serializes native-session imports and deletes across all client connections. */
     readonly withSessionMutation: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E, R>;
@@ -143,8 +140,7 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
-        // Subscribe before checking state so a foreground start cannot land
-        // in the gap between the check and the interruptible probe.
+        // Subscribe first so foreground starts cannot slip between the state check and probe.
         const subscription = yield* PubSub.subscribe(foregroundStarts);
         if ((yield* Ref.get(activeForegroundCounts)).has(agentId)) {
           return Option.none();
@@ -154,7 +150,7 @@ const make = Effect.gen(function* () {
           Stream.runHead,
           Effect.as(Option.none()),
         );
-        return yield* Effect.raceFirst(effect.pipe(Effect.map(Option.some)), foregroundStarted);
+        return yield* Effect.raceFirst(effect.pipe(Effect.asSome), foregroundStarted);
       }),
     );
 
@@ -195,8 +191,7 @@ const make = Effect.gen(function* () {
     (instanceId, onUpdate) =>
       Effect.scoped(
         Effect.gen(function* () {
-          // Subscribe before reading the current value so a publication in
-          // between is either observed from the snapshot, the queue, or both.
+          // Subscribe before reading to avoid missing publications.
           const subscription = yield* PubSub.subscribe(availableCommandsUpdates);
           const current = yield* getAvailableCommands(instanceId);
           if (Option.isSome(current)) {

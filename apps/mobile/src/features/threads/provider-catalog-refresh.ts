@@ -10,7 +10,6 @@ type RefreshProvidersTarget = {
   readonly input: { readonly refreshModels: true };
 };
 
-/** Pull-to-refresh in the model picker shares any pending discovery. */
 export function createProviderCatalogRefreshRunner<Result>(
   refreshProviders: (target: RefreshProvidersTarget) => Promise<Result>,
 ) {

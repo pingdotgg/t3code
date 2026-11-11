@@ -1,5 +1,4 @@
 import type {
-  ProviderApprovalDecision,
   ProviderApprovalOption,
   ProviderUserInputAnswers,
   UserInputQuestion,
@@ -12,6 +11,13 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
+
+import {
+  ANTIGRAVITY_EDIT_DIFF_OMITTED,
+  antigravityEditPatch,
+  isAntigravitySnippetPatch,
+  readAntigravityPreEditFile,
+} from "./AntigravityEditLocation.ts";
 
 const TOOL_TEXT_LIMIT = 8_000;
 const TOOL_TEXT_TRUNCATED = "[Earlier output truncated]\n\n";
@@ -46,19 +52,6 @@ export function isAntigravityUserInputRequest(
   return request.toolCall.toolCallId.startsWith("interaction_");
 }
 
-export function selectAntigravityPermissionOptionId(
-  request: EffectAcpSchema.RequestPermissionRequest,
-  decision: ProviderApprovalDecision,
-): string | undefined {
-  if (decision === "cancel" || isAntigravityUserInputRequest(request)) {
-    return undefined;
-  }
-  const kind =
-    decision === "accept" ? "allow_once" : decision === "decline" ? "reject_once" : "allow_always";
-  const option = request.options.find((entry) => entry.kind === kind);
-  return option?.optionId.trim() ? option.optionId : undefined;
-}
-
 /** Copy truncated text so V8 cannot retain the original large string. */
 const SECURITY_WARNING_META_KEY = "agy.security.warning";
 const WARNING_TEXT_LIMIT = 512;
@@ -69,10 +62,7 @@ const decodeSecurityWarning = Schema.decodeUnknownOption(
   }),
 );
 
-/**
- * The agent marks "Allow Always" on shell and web tools with a prompt injection
- * warning in `_meta`. Surface it as option text so both clients can show it.
- */
+/** Expose shell/web Allow Always _meta warnings as option text for both clients. */
 function antigravitySecurityWarning(option: EffectAcpSchema.PermissionOption): string | undefined {
   const meta = option._meta;
   if (!Predicate.isObject(meta)) return undefined;
@@ -84,7 +74,6 @@ function antigravitySecurityWarning(option: EffectAcpSchema.PermissionOption): s
     : text;
 }
 
-/** Only advertise decisions that the native request can honor. */
 export function antigravityApprovalOptions(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): ReadonlyArray<ProviderApprovalOption> {
@@ -154,7 +143,6 @@ export function extractAntigravityUserInputQuestion(
   };
 }
 
-/** Return undefined for an invalid answer so the adapter keeps the question open. */
 export function makeAntigravityUserInputResponse(
   request: EffectAcpSchema.RequestPermissionRequest,
   answers: ProviderUserInputAnswers,
@@ -181,6 +169,12 @@ function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
     ? text
     : copyBoundedText(`${TOOL_TEXT_TRUNCATED}${text.slice(-limit)}`);
 }
+
+/** Keeps the tail of long tool text, as every bounded tool payload does. */
+export { boundText as boundAntigravityToolText };
+
+/** True when bounding cut some of this text. */
+export const isCutAntigravityToolText = (text: string) => text.includes(TOOL_TEXT_TRUNCATED);
 
 interface ToolPayloadBudget {
   nodes: number;
@@ -230,12 +224,92 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
   return Object.fromEntries(entries);
 }
 
-/** Bound both retained raw events and display data before they enter the event stream. */
 export function sanitizeAntigravityToolPayload(payload: unknown): unknown {
   return sanitizeToolValue(payload, { nodes: 512, text: 64_000 }, 0);
 }
+const isJsonRecord = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
-/** The runtime uses this before it retains tool state or dispatches raw callbacks. */
+const ANTIGRAVITY_CLIENT_READ_TITLES = new Set([
+  "Running client_view_file",
+  "Run client_view_file?",
+]);
+
+function antigravityClientReadPath(update: {
+  readonly title?: string | null;
+  readonly locations?: ReadonlyArray<{ readonly path: string }> | null;
+  readonly rawInput?: unknown;
+}): string | undefined {
+  if (!update.title || !ANTIGRAVITY_CLIENT_READ_TITLES.has(update.title)) return undefined;
+  const target =
+    update.locations?.[0]?.path ??
+    (Predicate.isObject(update.rawInput) ? update.rawInput.absolute_path : undefined);
+  return typeof target === "string" && target ? target : undefined;
+}
+
+/**
+ * The agent never completes a subagent's `client_view_file` call, then fails every open call
+ * with the next unrelated step error. Report reads T3 served as completed instead.
+ */
+export function makeAntigravityReadRepair() {
+  type Outcome = "served" | "refused";
+  const openReads = new Map<
+    string,
+    { readonly path: string; readonly sessionId: string; outcome?: Outcome }
+  >();
+  // The agent runs a client tool in a background task, so its request can precede the announcement.
+  const earlyOutcomes: Array<{ readonly path: string; readonly outcome: Outcome }> = [];
+  return {
+    /** Earlier turns' rows are already settled, and their unanswered reads must not take credit. */
+    reset: () => {
+      openReads.clear();
+      earlyOutcomes.length = 0;
+    },
+    /**
+     * Each `fs/read_text_file` request answers the oldest open read of its path, in order.
+     * Returns the call a served read completes, so T3 can report it without waiting.
+     */
+    attempted: (path: string, served: boolean) => {
+      const outcome = served ? "served" : "refused";
+      for (const [toolCallId, read] of openReads) {
+        if (read.path !== path || read.outcome !== undefined) continue;
+        read.outcome = outcome;
+        return served ? { sessionId: read.sessionId, toolCallId } : undefined;
+      }
+      earlyOutcomes.push({ path, outcome });
+      return undefined;
+    },
+    repair: (
+      notification: EffectAcpSchema.SessionNotification,
+    ): EffectAcpSchema.SessionNotification => {
+      const update = notification.update;
+      if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+        return notification;
+      }
+      const path = antigravityClientReadPath(update);
+      if (path !== undefined && !openReads.has(update.toolCallId)) {
+        const early = earlyOutcomes.findIndex((entry) => entry.path === path);
+        const outcome = early === -1 ? undefined : earlyOutcomes.splice(early, 1)[0]?.outcome;
+        const sessionId = notification.sessionId;
+        openReads.set(
+          update.toolCallId,
+          outcome === undefined ? { path, sessionId } : { path, sessionId, outcome },
+        );
+      }
+      const read = openReads.get(update.toolCallId);
+      if (update.status === "pending" || update.status === "in_progress") {
+        return read?.outcome === "served"
+          ? { ...notification, update: { ...update, status: "completed" } }
+          : notification;
+      }
+      if (update.status !== "completed" && update.status !== "failed") return notification;
+      openReads.delete(update.toolCallId);
+      if (update.status === "completed" || read?.outcome !== "served") return notification;
+      const { rawOutput: _stepError, ...rest } = update;
+      return { ...notification, update: { ...rest, status: "completed" } };
+    },
+  };
+}
+
 export function normalizeAntigravitySessionUpdate(
   notification: EffectAcpSchema.SessionNotification,
 ): EffectAcpSchema.SessionNotification {
@@ -263,9 +337,7 @@ export function normalizeAntigravitySessionUpdate(
         ? { rawOutput: sanitizeAntigravityToolPayload(update.rawOutput) }
         : {}),
       ...(update.content !== undefined ? { content: content ?? [] } : {}),
-      ...(update._meta !== undefined
-        ? { _meta: Schema.is(Schema.Record(Schema.String, Schema.Json))(meta) ? meta : null }
-        : {}),
+      ...(update._meta !== undefined ? { _meta: isJsonRecord(meta) ? meta : null } : {}),
     },
   };
 }
@@ -291,7 +363,58 @@ function localImagePath(imagePath: string | undefined): string | undefined {
   return /^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path) ? undefined : path;
 }
 
-export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToolCallState {
+function hasTruncatedText(value: unknown): boolean {
+  if (typeof value === "string") return value.startsWith(TOOL_TEXT_TRUNCATED);
+  return Predicate.isObject(value) && Object.values(value).some(hasTruncatedText);
+}
+
+/** The ACP adapter renders a diff's `patch.text` ahead of its bare old/new snippets. */
+function withAntigravityEditPatches(
+  content: ReadonlyArray<unknown>,
+  data: Record<string, unknown>,
+  readPreEditFile: ((path: string) => string | undefined) | undefined,
+) {
+  return content.map((entry) => {
+    if (!Predicate.isObject(entry) || entry.type !== "diff" || typeof entry.path !== "string")
+      return entry;
+    // Keep the first patch: once the edit runs, the file no longer holds the old text. A later
+    // update's shared text budget can cut or drop it, and a cut patch would misplace the hunk.
+    if (entry.patch !== undefined) {
+      const patch: unknown = entry.patch;
+      const cut =
+        Predicate.isObject(patch) &&
+        patch.format !== "omitted" &&
+        (typeof patch.text !== "string" || patch.text.startsWith(TOOL_TEXT_TRUNCATED));
+      return cut ? { ...entry, patch: { format: "omitted" } } : entry;
+    }
+    // Bounding keeps only the tail of long text, so a cut snippet cannot be located and a cut
+    // old or new text would render the cut as file content.
+    if ([data.rawInput, entry.oldText, entry.newText].some(hasTruncatedText))
+      return { ...entry, patch: { format: "omitted" } };
+    const text = antigravityEditPatch({
+      path: entry.path,
+      rawInput: data.rawInput,
+      locations: data.locations,
+      readPreEditFile,
+    });
+    // A truncated patch would no longer parse, and bare snippets would render at line 1.
+    if (
+      text === ANTIGRAVITY_EDIT_DIFF_OMITTED ||
+      (text !== undefined && text.length > TOOL_TEXT_LIMIT)
+    )
+      return { ...entry, patch: { format: "omitted" } };
+    if (text === undefined) return entry;
+    return {
+      ...entry,
+      patch: isAntigravitySnippetPatch(text) ? { format: "snippet", text } : { text },
+    };
+  });
+}
+
+export function normalizeAntigravityToolCall(
+  toolCall: AcpToolCallState,
+  readPreEditFile = readAntigravityPreEditFile,
+): AcpToolCallState {
   const input = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawInput));
   const output = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawOutput));
   const nativeCommand =
@@ -323,6 +446,17 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
   if (command !== undefined) data.command = command;
   if (cwd !== undefined) data.cwd = cwd;
   if (imagePath !== undefined) data.imagePath = imagePath;
+  if (kind === "edit") {
+    const content = Array.isArray(data.content) ? data.content : [];
+    // Full-access edits report only a path; without a hunk the checkpoint diff is the review.
+    data.content = content.some((entry) => Predicate.isObject(entry) && entry.type === "diff")
+      ? withAntigravityEditPatches(
+          content,
+          data,
+          toolCall.status === "pending" ? readPreEditFile : undefined,
+        )
+      : [...content, { type: "diff", patch: { format: "omitted" } }];
+  }
   if (kind === "execute") {
     data.item = {
       ...(Predicate.isObject(data.item) ? data.item : {}),
@@ -346,39 +480,27 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
   };
 }
 
-/** Only commands still running after end_turn become background tasks. */
-export function isAntigravityOpenCommand(toolCall: AcpToolCallState): boolean {
-  return toolCall.kind === "execute" && toolCall.status === "inProgress";
-}
+const ANTIGRAVITY_SUBAGENT_TITLES = new Set([
+  "Running start_subagent",
+  "Run start_subagent?",
+  "Running invoke_subagent",
+  "Run invoke_subagent?",
+]);
 
-/**
- * ACP 1.1.1 exposes subagent invocations as ordinary tools, without child IDs
- * or models. Reads the update's `_meta` from `data.meta`, or from the raw
- * notification when given.
- */
+/** The ACP agent reports subagent calls as ordinary tools without child IDs or models. */
 export function classifyAntigravitySubagentToolCall(
   toolCall: AcpToolCallState,
   rawPayload?: unknown,
 ): "subagent" | "mcp" | undefined {
   if (
     (toolCall.kind !== undefined && toolCall.kind !== "other") ||
-    (toolCall.title !== "Running start_subagent" && toolCall.title !== "Run start_subagent?")
+    toolCall.title === undefined ||
+    !ANTIGRAVITY_SUBAGENT_TITLES.has(toolCall.title)
   )
     return undefined;
   const update = Predicate.isObject(rawPayload) ? rawPayload.update : undefined;
   const meta = Predicate.isObject(update) ? update._meta : toolCall.data.meta;
   return Predicate.isObject(meta) && meta.is_mcp_tool_call === true ? "mcp" : "subagent";
-}
-
-/** History sends a completed start before the separate result and its final status. */
-export function isAntigravitySubagentReplayStart(rawPayload: unknown): boolean {
-  const update = Predicate.isObject(rawPayload) ? rawPayload.update : undefined;
-  return (
-    Predicate.isObject(update) &&
-    update.sessionUpdate === "tool_call" &&
-    update.status === "completed" &&
-    (update.rawOutput === undefined || update.rawOutput === null)
-  );
 }
 
 export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | undefined {

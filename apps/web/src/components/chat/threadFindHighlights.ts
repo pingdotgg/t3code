@@ -1,5 +1,5 @@
 import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindText";
 
 const THREAD_FIND_HIGHLIGHT_NAME = "t3-thread-find";
@@ -14,7 +14,6 @@ interface ThreadFindRange {
   readonly range: Range;
 }
 
-/** Collects visible occurrences without modifying rendered markdown. */
 export function collectThreadFindRanges(container: HTMLElement, query: string): ThreadFindRange[] {
   if (query.length === 0) return [];
 
@@ -29,7 +28,6 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
     let text = "";
     let nodes: { node: Node; start: number; end: number }[] = [];
     const flush = () => {
-      // Offsets ascend, so both node cursors only move forward: linear in text nodes.
       let startIndex = 0;
       let endIndex = 0;
       for (const offset of findThreadSearchOccurrences(text, query)) {
@@ -74,10 +72,8 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
   return ranges;
 }
 
-/** Ancestors that hide (`hidden`) or clip (`data-thread-find-fold`) text until find opens them. */
 const FOLD_SELECTOR = "[hidden], [data-thread-find-fold]";
 
-/** Folds around the range that currently keep it out of sight, innermost first. */
 function foldsHiding(range: Range, container: HTMLElement): Element[] {
   const folds: Element[] = [];
   for (
@@ -85,7 +81,6 @@ function foldsHiding(range: Range, container: HTMLElement): Element[] {
     fold && container.contains(fold);
     fold = fold.parentElement?.closest(FOLD_SELECTOR)
   ) {
-    // A clipped body still shows its first lines; only text past the cutoff is folded.
     if (
       fold.hasAttribute("hidden") ||
       range.getBoundingClientRect().bottom > fold.getBoundingClientRect().bottom
@@ -95,7 +90,6 @@ function foldsHiding(range: Range, container: HTMLElement): Element[] {
   return folds;
 }
 
-/** Dispatches `beforematch` on each fold hiding the range; returns whether any existed. */
 function revealFolded(range: Range, container: HTMLElement): boolean {
   const folds = foldsHiding(range, container);
   for (const fold of folds) fold.dispatchEvent(new Event("beforematch"));
@@ -107,7 +101,6 @@ function affectsSearchableText(record: MutationRecord): boolean {
   const target =
     record.target.nodeType === 1 ? (record.target as Element) : record.target.parentElement;
   if (target?.closest(THREAD_FIND_TEXT_SELECTOR)) return true;
-  // Rows mounting or unmounting add or remove whole searchable scopes.
   const touchesScope = (node: Node) =>
     node.nodeType === 1 &&
     ((node as Element).matches(THREAD_FIND_TEXT_SELECTOR) ||
@@ -126,14 +119,13 @@ export function useThreadFindHighlights(input: {
 
   const rangesRef = useRef<readonly ThreadFindRange[]>([]);
   const paintRef = useRef<ReturnType<typeof makeThreadFindHighlightPainter> | null>(null);
-  const selectionRef = useRef({ activeRowId, activeOccurrence, onActiveRange });
-  useLayoutEffect(() => {
-    selectionRef.current = { activeRowId, activeOccurrence, onActiveRange };
-  }, [activeRowId, activeOccurrence, onActiveRange]);
+  // The observer repaints with whichever match is selected when text changes.
+  const readSelection = useEffectEvent(() => ({ activeRowId, activeOccurrence, onActiveRange }));
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- paints CSS Highlight ranges for the query, repainting on DOM mutations, and clears them on cleanup
   useEffect(() => {
     if (typeof CSS === "undefined" || !CSS.highlights || typeof Highlight === "undefined") {
-      selectionRef.current.onActiveRange(null);
+      readSelection().onActiveRange(null);
       return;
     }
     const clearHighlights = () => {
@@ -142,13 +134,11 @@ export function useThreadFindHighlights(input: {
     };
     rangesRef.current = [];
     if (!container || query.length === 0) {
-      selectionRef.current.onActiveRange(null);
+      readSelection().onActiveRange(null);
       clearHighlights();
       return;
     }
 
-    // Selection changes reuse ranges. Only changed or newly mounted rows
-    // need their text walked again; removed rows release their DOM references.
     const cache = new Map<Element, readonly ThreadFindRange[]>();
     const paint = makeThreadFindHighlightPainter(container);
     paintRef.current = paint;
@@ -170,11 +160,11 @@ export function useThreadFindHighlights(input: {
       }
       for (const row of cache.keys()) if (!rows.has(row)) cache.delete(row);
       rangesRef.current = ranges;
-      paint(ranges, selectionRef.current);
+      paint(ranges, readSelection());
     };
     let frame: number | null = null;
     const observer = new MutationObserver((mutations) => {
-      // Timers and status chrome tick every second; only searchable text and folds matter.
+      // Ignore timer and status mutations outside searchable text and folds.
       const relevant = mutations.filter(affectsSearchableText);
       if (relevant.length === 0) return;
       for (const mutation of relevant) {
@@ -217,12 +207,18 @@ export function useThreadFindHighlights(input: {
     };
   }, [container, query]);
 
+  // onActiveRange is read at paint time: its identity follows the caller's
+  // layout inputs, and repainting the active highlight for those is wasted work.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- repaints the active CSS Highlight range when the selected match changes
   useEffect(() => {
-    paintRef.current?.(rangesRef.current, { activeRowId, activeOccurrence, onActiveRange });
-  }, [activeOccurrence, activeRowId, onActiveRange]);
+    paintRef.current?.(rangesRef.current, {
+      activeRowId,
+      activeOccurrence,
+      onActiveRange: readSelection().onActiveRange,
+    });
+  }, [activeOccurrence, activeRowId]);
 }
 
-/** Selection changes touch only the old and new match; layout checks run once per DOM scan. */
 function makeThreadFindHighlightPainter(container: HTMLElement) {
   let previousRanges: readonly ThreadFindRange[] | null = null;
   const rangesByRow = new Map<string, Range[]>();

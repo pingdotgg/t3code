@@ -7,12 +7,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 
-/**
- * One header row for every file surface in the side panel, whether the file
- * comes from the workspace or was captured as an attachment: crumbs on the
- * left, icon-only actions on the right. Attachments and workspace files must
- * not grow separate chrome.
- */
 export const FILE_SURFACE_SUBHEADER_CLASS =
   "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent";
 
@@ -64,11 +58,6 @@ export const FILE_LINK_REVEAL_UNSAFE_CSS = `
   }
 `;
 
-/**
- * An icon-only header action with its label in a tooltip, the same control workspace files use.
- * A `pressed` action is a toggle and says so; a command (Copy, Save, Close) is a plain button,
- * because announcing it as an unpressed toggle tells a screen reader it has a state it has not.
- */
 export function FileSurfaceAction(props: {
   readonly label: string;
   readonly pressed?: boolean;

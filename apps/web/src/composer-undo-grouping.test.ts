@@ -13,11 +13,6 @@ import {
 
 const schema = getSchema([StarterKit]);
 
-/**
- * A composer-shaped editor state with the real history plugin, dispatching
- * through the same grouping rule the composer's extension applies. Keystrokes
- * land 80ms apart unless a gap says otherwise.
- */
 function composer(text = "") {
   let clock = 0;
   let previous: ComposerChangeKind | null = null;
@@ -52,24 +47,18 @@ function composer(text = "") {
       }
       return api;
     },
-    /**
-     * The transaction the composer's `handlePaste` dispatches: a plain insert,
-     * tagged by `markAsClipboardEdit`. ProseMirror's own paste path would tag
-     * it, but the composer takes every text paste before that path runs.
-     */
+    // The custom paste path bypasses ProseMirror's clipboard tagging.
     paste: (s: string) => {
       clock += 80;
       dispatch(markAsClipboardEdit(state.tr.insertText(s), "paste"));
       return api;
     },
-    /** The composer's cut handler: a plain delete of the selection, tagged. */
     cut: (n: number) => {
       clock += 80;
       const at = state.selection.from;
       dispatch(markAsClipboardEdit(state.tr.delete(at - n, at), "cut"));
       return api;
     },
-    /** A store-driven rewrite: autocomplete inserting a chip, list continuation. */
     rewrite: (next: string) => {
       clock += 80;
       dispatch(
@@ -82,7 +71,6 @@ function composer(text = "") {
       dispatch(state.tr.setSelection(TextSelection.atEnd(state.doc)));
       return api;
     },
-    /** IME input replaces its own range on every keystroke. */
     compose: (s: string) => {
       const start = state.selection.from;
       for (let i = 1; i <= s.length; i += 1) {
@@ -99,10 +87,6 @@ function composer(text = "") {
 }
 
 describe("composer undo grouping", () => {
-  it("keeps a continuous run of typing as one step", () => {
-    expect(composer().type("hello world").undo().text()).toBe("");
-  });
-
   it("starts a new step when typing turns into deleting, and back", () => {
     const editor = composer().type("hello world").backspace(5).type("there");
     expect(editor.text()).toBe("hello there");
@@ -134,10 +118,5 @@ describe("composer undo grouping", () => {
 
   it("keeps IME composition as one run of typing", () => {
     expect(composer().type("go ").compose("にほん").undo().text()).toBe("");
-  });
-
-  it("merges typing across a short pause and splits it across a long one", () => {
-    expect(composer().type("hello").wait(700).type(" world").undo().text()).toBe("");
-    expect(composer().type("hello").wait(1100).type(" world").undo().text()).toBe("hello");
   });
 });

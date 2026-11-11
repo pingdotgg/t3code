@@ -4,10 +4,6 @@ import type { ProviderReplayTranscript } from "@t3tools/contracts";
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import { assertSemanticProjectionIntegrity, projectionFor } from "../shared.ts";
 
-/**
- * Stop while a native subagent runs: Stop reaches Muse, and the run, the
- * subagent, its child thread and the thread's background work all settle.
- */
 export function assertMuseSubagentInterruptOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

@@ -279,7 +279,6 @@ layer("026_CanonicalizeModelSelectionOptions", (it) => {
 
       yield* runMigrations({ toMigrationInclusive: 26 });
 
-      // Projection projects
       const projectRows = yield* sql<{
         readonly projectId: string;
         readonly defaultModelSelection: string | null;
@@ -323,7 +322,6 @@ layer("026_CanonicalizeModelSelectionOptions", (it) => {
         ],
       );
 
-      // Projection threads
       const threadRows = yield* sql<{
         readonly threadId: string;
         readonly modelSelection: string | null;
@@ -353,8 +351,6 @@ layer("026_CanonicalizeModelSelectionOptions", (it) => {
             selection: {
               provider: "claudeAgent",
               model: "claude-opus-4-6",
-              // Only the scalar string survives; nested object, whitespace
-              // string, and null are dropped.
               options: [{ id: "effort", value: "high" }],
             },
           },
@@ -381,7 +377,6 @@ layer("026_CanonicalizeModelSelectionOptions", (it) => {
         ],
       );
 
-      // Orchestration events
       const eventRows = yield* sql<{
         readonly eventId: string;
         readonly payloadJson: string;
@@ -436,14 +431,12 @@ layer("026_CanonicalizeModelSelectionOptions", (it) => {
         ],
       });
 
-      // Already-array records are left untouched.
       assert.deepStrictEqual(payloads["event-thread-already-array"].modelSelection, {
         provider: "codex",
         model: "gpt-5.4",
         options: [{ id: "reasoningEffort", value: "medium" }],
       });
 
-      // Events with no modelSelection at all are untouched.
       assert.isUndefined(payloads["event-activity-append"].modelSelection);
       assert.isUndefined(payloads["event-activity-append"].defaultModelSelection);
     }),

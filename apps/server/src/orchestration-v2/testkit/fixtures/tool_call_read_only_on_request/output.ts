@@ -15,10 +15,6 @@ import {
 const PROBE_FILE = ".codex-probe-write-action.txt";
 const PROBE_CONTENT = "codex app-server approval fixture";
 
-// The prompt allows a shell command or a file edit, so the approval kind
-// follows whichever tool the provider picked. What matters is the permission:
-// a read-only sandbox with on-request approval must ask exactly once, the
-// accepted request must resolve, and the approved tool must then run.
 export function assertToolCallReadOnlyOnRequestOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -57,8 +53,7 @@ export function assertToolCallReadOnlyOnRequestOutput(
     writes.some((item) => item.status === "completed"),
     "the approved write must complete",
   );
-  // Grok's write reports an ACP v1 diff ({ path, oldText, newText }); the
-  // file_change must still carry it, like the v2 patch form.
+  // Grok returns ACP v1 diffs ({ path, oldText, newText }); retain them in file_change like v2 patches.
   for (const item of writes) {
     const content = writtenContent(item);
     assert.isDefined(content, `the approved ${item.type} must carry what it wrote`);
@@ -66,10 +61,6 @@ export function assertToolCallReadOnlyOnRequestOutput(
   }
 }
 
-// T3 advertises no client fs or terminal to Grok, so Grok reads and writes the
-// workspace itself and gates the write with its own permission prompt: T3
-// answers that prompt (the shared assertion pins it as the only request) and
-// never serves a file or terminal request.
 export function assertToolCallReadOnlyOnRequestGrokOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -86,7 +77,6 @@ export function assertToolCallReadOnlyOnRequestGrokOutput(
   });
   assert.deepEqual(permissionKinds, ["edit"], "Grok must ask T3 before its own write");
 
-  // Grok's edit prompt is the one whose "always" answer lasts only the session.
   const approval = projectionFor(result, transcript.scenario).turnItems.find(
     (item) => item.type === "approval_request",
   );
@@ -105,4 +95,39 @@ function writtenContent(item: OrchestrationV2TurnItem): string | undefined {
     default:
       return undefined;
   }
+}
+
+// Kiro gates the write with its own prompt and, Supervised under the explicit
+// approval policy, then asks the user to review the turn's changes. Its
+// prompts carry the tool call id but no kind, and only the choices T3 can
+// honour (no session-wide "always") reach the card.
+export function assertToolCallReadOnlyOnRequestKiroOutput(
+  result: OrchestratorV2ScenarioResult,
+  transcript: ProviderReplayTranscript,
+) {
+  assertBaseProjection({ result, transcript, runCount: 1, runStatuses: ["completed"] });
+  const projection = projectionFor(result, transcript.scenario);
+  assertSemanticProjectionIntegrity(projection);
+  assertUserMessagesInclude(projection, [TOOL_CALL_WRITE_PROMPT]);
+  assertNoAcpClientFileOrTerminalRequests(transcript);
+  assert.deepEqual(
+    projection.runtimeRequests.map((request) => [request.status, request.decision]),
+    [
+      ["resolved", "accept"],
+      ["resolved", "accept"],
+    ],
+    "the write and Kiro's review of changes both reach the user",
+  );
+  const writes = projection.turnItems.filter(
+    (item) => item.type === "command_execution" || item.type === "file_change",
+  );
+  assert.isTrue(
+    writes.some((item) => item.status === "completed"),
+    "the approved write must complete",
+  );
+  const approval = projection.turnItems.find((item) => item.type === "approval_request");
+  assert.deepEqual(
+    approval?.type === "approval_request" ? approval.options?.map((option) => option.decision) : [],
+    ["accept", "decline", "cancel"],
+  );
 }

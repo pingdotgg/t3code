@@ -2,22 +2,22 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
-import {
-  describeReadinessCause,
-  waitForHttpReady as waitForHttpReadyShared,
-} from "@t3tools/shared/httpReadiness";
+import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 import { cliReleaseDownloadBaseUrl } from "@t3tools/shared/cliRelease";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -28,12 +28,12 @@ import * as SshAuth from "./auth.ts";
 import {
   baseSshArgs,
   buildSshHostSpecEffect,
-  collectProcessOutput,
   getLastNonEmptyOutputLine,
   remoteStateKey,
   resolveSshCommand,
   resolveSshTarget,
   runSshCommand,
+  sshTargetLogFields,
   targetConnectionKey,
 } from "./command.ts";
 import {
@@ -51,32 +51,41 @@ const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_READY_TIMEOUT_MS = 20_000;
 const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
+const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
-const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
-// A cold archive launch also downloads and unpacks a ~70 MB release archive
-// and may wait on another installer's lock. The budgets nest: the checksum
-// file is tiny and the archive download is bounded; a waiter outlasts both
-// downloads plus extraction so it can reuse the result; and the SSH command
-// outlasts an install (own or waited-for) plus readiness, with slack for
-// verification and extraction, which have no timeout of their own.
+const REMOTE_LAUNCH_BASE_TIMEOUT_MS = 90_000;
+// Matches the node-script launch command's ssh run without the launch lock wait.
+const SSH_TUNNEL_CONNECT_TIMEOUT_MS = REMOTE_LAUNCH_BASE_TIMEOUT_MS;
+const SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS = 100;
+// Cold archive launches download and extract ~70 MB and may wait on an install lock.
+// Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
+// Leave slack for verification and extraction, which have no timeout.
 const REMOTE_ARCHIVE_CHECKSUMS_SECONDS = 30;
 const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
+const REMOTE_PID_EXIT_WAIT_MS = 2_000;
+// The server answers HTTP before it writes server-runtime.json, which is how
+// a launch for another alias finds it.
+const REMOTE_RUNTIME_RECORD_WAIT_SECONDS = 10;
+// A launch holds the home lock through up to two reuse probes, readiness, two
+// server exit waits, and the runtime record wait; each probe may overrun its
+// deadline by one request.
+const REMOTE_LAUNCH_LOCK_WAIT_SECONDS = Math.ceil(
+  (REMOTE_READY_TIMEOUT_MS +
+    2 * REMOTE_REUSE_READY_TIMEOUT_MS +
+    2 * REMOTE_PID_EXIT_WAIT_MS +
+    REMOTE_RUNTIME_RECORD_WAIT_SECONDS * 1000 +
+    4 * SSH_READY_PROBE_TIMEOUT_MS) /
+    1000,
+);
+const REMOTE_LAUNCH_TIMEOUT_MS =
+  REMOTE_LAUNCH_LOCK_WAIT_SECONDS * 1000 + REMOTE_LAUNCH_BASE_TIMEOUT_MS;
 
 export interface RemoteT3RunnerOptions {
-  /**
-   * Dev mode: run `node <path>` on the remote instead of a release archive.
-   * The only mode that needs Node on the remote.
-   */
   readonly nodeScriptPath?: string | null;
   readonly nodeEngineRange?: string | null;
-  /**
-   * Exact version whose self-contained release archive the remote installs
-   * and runs. Required unless `nodeScriptPath` is set; the remote then needs
-   * neither Node nor npm.
-   */
   readonly archiveVersion?: string | null;
   readonly releaseBaseUrl?: string | null;
 }
@@ -99,7 +108,7 @@ interface SshTunnelEntry {
 
 type SshEnvironmentEffectContext =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
@@ -114,15 +123,6 @@ type SshEnvironmentEffectError =
   | SshReadinessError
   | SshPasswordPromptError
   | NetService.NetError;
-
-function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
-  return {
-    alias: target.alias,
-    hostname: target.hostname,
-    username: target.username,
-    port: target.port,
-  };
-}
 
 function isNodeScriptRunner(runner: RemoteT3RunnerOptions | undefined): boolean {
   return Boolean(runner?.nodeScriptPath?.trim());
@@ -246,11 +246,7 @@ function applyScriptPlaceholders(
   return result;
 }
 
-// Re-exported from the shared HTTP readiness module so existing importers
-// (notably tunnel.test.ts) keep resolving it from here.
-export { describeReadinessCause };
-
-export const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
+const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
 const net = require("node:net");
 const filePath = process.argv[2] ?? "";
 const defaultPort = Number.parseInt(process.argv[3] ?? "", 10);
@@ -471,21 +467,13 @@ t3_runtime_ready() {
 }
 if ! t3_runtime_ready; then
   mkdir -p "$HOME/.t3/runtime/versions"
-  # Concurrent launches (two clients, a retry racing a slow first run) must
-  # not both install: mkdir is the atomic lock and the ready check repeats
-  # under it.
   T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
-  # mkdir is the only portable atomic exclusive create (mv would silently
-  # nest a candidate inside an existing lock). The owner publishes its pid
-  # right after, so a lock with a live owner is never reclaimed however
-  # slow its download is, and a lock whose owner is dead is reclaimed at
-  # once. A lock with no pid at all is a crash between mkdir and the pid
-  # write; it is reclaimed after a short grace so a live owner has time to
-  # publish.
+  # uutils mkdir can report success on EEXIST, so use shell noclobber.
+  # An empty lock gets a short grace period for its owner to publish a PID.
   T3_LOCK_WAITED=0
   T3_LOCK_UNOWNED=0
-  while ! mkdir "$T3_LOCK" 2>/dev/null; do
-    T3_LOCK_OWNER="$(cat "$T3_LOCK/pid" 2>/dev/null || true)"
+  while ! (set -C; printf '%s\\n' "$$" > "$T3_LOCK") 2>/dev/null; do
+    T3_LOCK_OWNER="$(cat "$T3_LOCK" 2>/dev/null || true)"
     if [ -n "$T3_LOCK_OWNER" ]; then
       T3_LOCK_UNOWNED=0
       if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
@@ -506,21 +494,17 @@ if ! t3_runtime_ready; then
     sleep 1
     T3_LOCK_WAITED=$((T3_LOCK_WAITED + 1))
   done
-  printf '%s\\n' "$$" > "$T3_LOCK/pid.tmp" && mv "$T3_LOCK/pid.tmp" "$T3_LOCK/pid"
   trap 'rm -rf "$T3_LOCK"' EXIT
 fi
 if ! t3_runtime_ready; then
-  case "$(uname -s)" in
-    Darwin) T3_PLATFORM="darwin" ;;
-    Linux) T3_PLATFORM="linux" ;;
-    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s)" >&2; exit 1 ;;
+  # Keep aligned with CLI_ARCHIVE_PLATFORM_KEYS in packages/shared/src/cliRelease.ts.
+  case "$(uname -s) $(uname -m)" in
+    "Darwin arm64") T3_PLATFORM_KEY="darwin-arm64" ;;
+    "Linux arm64" | "Linux aarch64") T3_PLATFORM_KEY="linux-arm64" ;;
+    "Linux x86_64" | "Linux amd64") T3_PLATFORM_KEY="linux-x64" ;;
+    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s) $(uname -m)" >&2; exit 1 ;;
   esac
-  case "$(uname -m)" in
-    arm64 | aarch64) T3_ARCH="arm64" ;;
-    x86_64 | amd64) T3_ARCH="x64" ;;
-    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
-  esac
-  T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
+  T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.tar.gz"
   T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
   t3_fetch() {
@@ -570,30 +554,82 @@ MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
+LAUNCH_LOCK="$DEFAULT_SERVER_HOME/ssh-launch/.launch.lock"
+LAUNCH_BREAK_LOCK="$LAUNCH_LOCK.break"
 mkdir -p "$STATE_DIR"
-cleanup_runner_next() {
+cleanup_launch() {
   rm -f "$RUNNER_NEXT"
+  for OWNED_LOCK in "$LAUNCH_LOCK" "$LAUNCH_BREAK_LOCK"; do
+    if [ "$(cat "$OWNED_LOCK" 2>/dev/null || true)" = "$$" ]; then
+      rm -f "$OWNED_LOCK"
+    fi
+  done
 }
-trap cleanup_runner_next EXIT
+trap cleanup_launch EXIT
+# A dropped SSH session signals the launch (PIPE on its next write); exit so
+# the lock is released.
+trap 'exit 1' HUP INT PIPE TERM
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
-RUNNER_CHANGED=0
-if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
-  RUNNER_CHANGED=1
-fi
-mv "$RUNNER_NEXT" "$RUNNER_FILE"
-chmod 700 "$RUNNER_FILE"
+chmod 700 "$RUNNER_NEXT"
 T3_ARCHIVE_MODE=@@T3_ARCHIVE_MODE@@
 if [ "$T3_ARCHIVE_MODE" = "1" ]; then
   # The archive ships the helpers below inside the executable; the remote
   # needs no Node at all. Resolving the runner once here also downloads the
   # archive before the port and readiness probes rely on it.
-  "$RUNNER_FILE" --version >/dev/null
+  "$RUNNER_NEXT" --version >/dev/null
 elif ! ensure_remote_node_path; then
   printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
   exit 1
 fi
+# Recovery runs under its own lock and re-reads the owner there, so a waiter
+# that judged an earlier lock stale cannot remove its successor's lock. No
+# launch removes another's recovery lock: only SIGKILL inside these lines
+# leaves one behind, and the wait below then fails naming it.
+discard_stale_launch_lock() {
+  (set -C; printf '%s\\n' "$$" >"$LAUNCH_BREAK_LOCK") 2>/dev/null || return 1
+  if [ "$(cat "$LAUNCH_LOCK" 2>/dev/null || true)" = "$1" ]; then
+    rm -f "$LAUNCH_LOCK"
+  fi
+  rm -f "$LAUNCH_BREAK_LOCK"
+}
+# Concurrent launches share this home's owner lock and may share this record.
+# Hold the lock from comparing the runner until the server is recorded and
+# ready, so a waiting launch reuses that server instead of starting or
+# replacing one.
+LAUNCH_LOCK_WAITED=0
+LAUNCH_LOCK_UNOWNED=0
+while ! (set -C; printf '%s\\n' "$$" >"$LAUNCH_LOCK") 2>/dev/null; do
+  LAUNCH_LOCK_OWNER="$(cat "$LAUNCH_LOCK" 2>/dev/null || true)"
+  if [ -n "$LAUNCH_LOCK_OWNER" ]; then
+    LAUNCH_LOCK_UNOWNED=0
+    if ! kill -0 "$LAUNCH_LOCK_OWNER" 2>/dev/null && discard_stale_launch_lock "$LAUNCH_LOCK_OWNER"; then
+      continue
+    fi
+  else
+    LAUNCH_LOCK_UNOWNED=$((LAUNCH_LOCK_UNOWNED + 1))
+    if [ "$LAUNCH_LOCK_UNOWNED" -ge 5 ] && discard_stale_launch_lock ""; then
+      LAUNCH_LOCK_UNOWNED=0
+      continue
+    fi
+  fi
+  if [ "$LAUNCH_LOCK_WAITED" -ge @@T3_LAUNCH_LOCK_WAIT_SECONDS@@ ]; then
+    if [ -e "$LAUNCH_BREAK_LOCK" ]; then
+      printf 'A T3 server launch stopped while recovering %s. If no launch is running, delete %s.\\n' "$LAUNCH_LOCK" "$LAUNCH_BREAK_LOCK" >&2
+    else
+      printf 'Another T3 server launch has held %s for too long.\\n' "$LAUNCH_LOCK" >&2
+    fi
+    exit 1
+  fi
+  sleep 1
+  LAUNCH_LOCK_WAITED=$((LAUNCH_LOCK_WAITED + 1))
+done
+RUNNER_CHANGED=0
+if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
+  RUNNER_CHANGED=1
+fi
+mv "$RUNNER_NEXT" "$RUNNER_FILE"
 pick_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then
     "$RUNNER_FILE" __ssh-helper pick-port "$PORT_FILE" "@@T3_DEFAULT_REMOTE_PORT@@" "@@T3_REMOTE_PORT_SCAN_WINDOW@@"
@@ -615,7 +651,7 @@ NODE
 wait_for_pid_exit() {
   PID_TO_WAIT="$1"
   WAIT_COUNT=0
-  while kill -0 "$PID_TO_WAIT" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+  while kill -0 "$PID_TO_WAIT" 2>/dev/null && [ "$WAIT_COUNT" -lt @@T3_PID_EXIT_WAIT_TICKS@@ ]; do
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
@@ -726,6 +762,25 @@ else
   REMOTE_PORT=""
   REMOTE_MANAGED=""
 fi
+# The server may answer long before it publishes its runtime record, or never
+# publish one; another alias's launch record still names it. Only one server
+# owns the home, so the first live one decides.
+if [ -z "$REMOTE_PORT" ] && [ -z "$DEFAULT_RUNTIME_INFO" ]; then
+  for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
+    [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
+    server_running "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" || continue
+    REMOTE_PORT="$(cat "$SIBLING_DIR/port" 2>/dev/null || true)"
+    if [ -n "$REMOTE_PORT" ] && wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+      REMOTE_MANAGED="external"
+      rm -f "$PID_FILE"
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+      printf 'external\\n' >"$MANAGED_FILE"
+    else
+      REMOTE_PORT=""
+    fi
+    break
+  done
+fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
   if [ -z "$REMOTE_PORT" ]; then
@@ -753,6 +808,14 @@ if [ -z "$REMOTE_PORT" ]; then
     rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
     exit 1
   fi
+  # Keep the lock until another alias's launch can find this server, or it
+  # would start a second one that loses the home's owner lock.
+  RECORD_DEADLINE=$(($(date +%s) + @@T3_RUNTIME_RECORD_WAIT_SECONDS@@))
+  while [ "$(date +%s)" -lt "$RECORD_DEADLINE" ]; do
+    DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+    [ "\${DEFAULT_RUNTIME_INFO%% *}" = "$REMOTE_PID" ] && break
+    sleep 0.1
+  done
 fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
@@ -834,7 +897,6 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
   if (archiveVersion !== "" && !EXACT_ARCHIVE_VERSION.test(archiveVersion)) {
     throw new SshInvalidArchiveVersionError({ archiveVersion });
   }
-  // Strip the `/v<version>` the helper appends: the script builds URLs itself.
   const releaseBaseUrl = cliReleaseDownloadBaseUrl("", input?.releaseBaseUrl ?? undefined).replace(
     /\/v$/u,
     "",
@@ -861,7 +923,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
@@ -873,17 +935,20 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
+    T3_PID_EXIT_WAIT_TICKS: String(REMOTE_PID_EXIT_WAIT_MS / 100),
+    T3_LAUNCH_LOCK_WAIT_SECONDS: String(REMOTE_LAUNCH_LOCK_WAIT_SECONDS),
+    T3_RUNTIME_RECORD_WAIT_SECONDS: String(REMOTE_RUNTIME_RECORD_WAIT_SECONDS),
   });
 }
 
-export function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOptions): string {
+function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
     T3_STATE_KEY: stateKey,
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
 }
 
-export function buildRemoteStopScript(stateKey: string): string {
+function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
     T3_STATE_KEY: stateKey,
   });
@@ -903,7 +968,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
   ): Effect.fn.Return<
     { readonly remotePort: number; readonly remoteServerKind: "external" | "managed" | null },
     SshCommandError | SshInvalidTargetError | SshLaunchError,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+    ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
   > {
     const stateKey = yield* remoteStateKey(target);
     yield* Effect.logInfo("ssh.remoteServer.launch.start", {
@@ -965,7 +1030,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     readonly credential: string;
   },
   SshCommandError | SshInvalidTargetError | SshPairingError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const stateKey = yield* remoteStateKey(target);
   yield* Effect.logDebug("ssh.remoteServer.pairingToken.start", {
@@ -975,8 +1040,6 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
     stdin: buildRemotePairingScript(stateKey, runner),
-    // Pairing may be the first command on a cold remote, so it can install
-    // the archive on the way.
     ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
@@ -1019,7 +1082,7 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
 ): Effect.fn.Return<
   void,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const stateKey = yield* remoteStateKey(target);
   yield* Effect.logInfo("ssh.remoteServer.stop.start", {
@@ -1045,7 +1108,7 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
 ): Effect.fn.Return<
   string,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
@@ -1058,7 +1121,7 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
   return result.stdout.trim();
 });
 
-export const waitForHttpReady = (input: {
+const waitForHttpReady = (input: {
   readonly baseUrl: string;
   readonly timeoutMs?: number;
   readonly intervalMs?: number;
@@ -1134,6 +1197,29 @@ const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(fu
   return yield* net.reserveLoopbackPort();
 });
 
+// ssh only binds the forward after it connects, which can take ConnectTimeout per dead address.
+const waitForTunnelForward = Effect.fn("ssh/tunnel.waitForTunnelForward")(function* (input: {
+  readonly target: DesktopSshEnvironmentTarget;
+  readonly localPort: number;
+}) {
+  const net = yield* NetService.NetService;
+  yield* net.hasListenerOnHost(input.localPort, "127.0.0.1").pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced(Duration.millis(SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS)),
+      until: (listening) => listening,
+    }),
+    Effect.timeoutOrElse({
+      duration: Duration.millis(SSH_TUNNEL_CONNECT_TIMEOUT_MS),
+      orElse: () =>
+        Effect.fail(
+          new SshReadinessError({
+            message: `SSH connection to ${input.target.alias} did not come up within ${SSH_TUNNEL_CONNECT_TIMEOUT_MS}ms.`,
+          }),
+        ),
+    }),
+  );
+});
+
 const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: {
   readonly key: string;
   readonly resolvedTarget: DesktopSshEnvironmentTarget;
@@ -1148,7 +1234,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   SshTunnelEntry,
   SshCommandError | SshInvalidTargetError | SshReadinessError,
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
@@ -1194,6 +1280,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "-N",
     "-L",
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
+    "--",
     hostSpec,
   ];
   const sshCommand = yield* resolveSshCommand;
@@ -1254,8 +1341,21 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     process: child,
     scope,
   };
+  // Readiness cancels the exit waiter, but diagnostics must drain until the tunnel closes.
+  let stderrTail = "";
+  const stderrDrain = yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((chunk) =>
+      Effect.sync(() => {
+        stderrTail = (stderrTail + chunk).slice(-TUNNEL_STDERR_TAIL_CHARS);
+      }),
+    ),
+    // Diagnostics are best-effort: a failed read must not hide the real exit.
+    Effect.ignore,
+    Effect.forkIn(scope),
+  );
   const exitFailure = Effect.all(
-    [collectProcessOutput(child.stderr), child.exitCode.pipe(Effect.map(Number))],
+    [Fiber.join(stderrDrain), child.exitCode.pipe(Effect.map(Number))],
     { concurrency: "unbounded" },
   ).pipe(
     Effect.mapError(
@@ -1271,7 +1371,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
           cause,
         }),
     ),
-    Effect.flatMap(([stderr, exitCode]) => {
+    Effect.flatMap(([, exitCode]) => {
+      const stderr = stderrTail;
       const error = new SshCommandError({
         command: tunnelCommand,
         exitCode,
@@ -1294,10 +1395,14 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     }),
   );
   yield* Effect.raceFirst(
-    waitForHttpReady({
-      baseUrl: input.httpBaseUrl,
-      timeoutMs: SSH_READY_TIMEOUT_MS,
-    }),
+    waitForTunnelForward({ target: input.resolvedTarget, localPort: input.localPort }).pipe(
+      Effect.andThen(
+        waitForHttpReady({
+          baseUrl: input.httpBaseUrl,
+          timeoutMs: SSH_READY_TIMEOUT_MS,
+        }),
+      ),
+    ),
     exitFailure,
   ).pipe(
     Effect.tap(() =>
@@ -1436,7 +1541,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       attempt,
       destination: target.alias.trim() || target.hostname.trim(),
       username: target.username,
-      prompt: `Enter the SSH password for ${hostSpec}.`,
+      prompt: `Enter the SSH password or verification code for ${hostSpec}.`,
     });
     if (password === null) {
       yield* Effect.logWarning("ssh.auth.passwordPrompt.cancelled", {
@@ -1477,7 +1582,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       if (input.authSecret !== null) {
         authSecrets.delete(input.key);
       }
-      if (input.promptCount >= 2) {
+      if (input.promptCount >= 2 || SshAuth.isSshAgentSigningFailure(input.error)) {
         return yield* input.error;
       }
 
@@ -1578,7 +1683,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
     tunnels.set(input.key, tunnelEntry);
     const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const cryptoService = yield* Crypto.Crypto;
+    const digestService = yield* Digest.Digest;
     const fileSystemService = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     yield* Scope.addFinalizer(
@@ -1618,7 +1723,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
               },
         ).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-          Effect.provideService(Crypto.Crypto, cryptoService),
+          Effect.provideService(Digest.Digest, digestService),
           Effect.provideService(FileSystem.FileSystem, fileSystemService),
           Effect.provideService(Path.Path, pathService),
         );
@@ -1801,7 +1906,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 });
 
 /**
- * @effect-expect-leaking ChildProcessSpawner | Crypto | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
+ * @effect-expect-leaking ChildProcessSpawner | Digest | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
  */
 export class SshEnvironmentManager extends Context.Service<
   SshEnvironmentManager,

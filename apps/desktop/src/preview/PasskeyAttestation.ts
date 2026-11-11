@@ -1,8 +1,3 @@
-/**
- * Reads the raw `authData` bytes out of a CBOR attestation object
- * (`{ fmt, attStmt, authData }`). Returns undefined for anything malformed.
- * Only the definite-length encodings authenticators emit are understood.
- */
 export const authenticatorDataFromAttestation = (bytes: Uint8Array) => {
   let offset = 0;
   const readHead = () => {

@@ -31,9 +31,7 @@ if (hostPlatform === "linux") {
           NodeFS.statSync(source).mtimeMs,
           NodeFS.statSync(NodeURL.fileURLToPath(import.meta.url)).mtimeMs,
         ) && matchesArchitecture(output);
-  } catch {
-    /* The first build has no output yet. */
-  }
+  } catch {}
   if (!current) {
     let flags;
     try {

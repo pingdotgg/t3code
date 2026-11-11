@@ -6,11 +6,6 @@ import {
   type OrchestratorFixtureInput,
 } from "../shared.ts";
 
-/**
- * While the recorded shell call runs, two messages are queued (the second is
- * cancelled) and one is steered in. OpenCode reads the steer at the call's
- * step boundary; the queued message then runs as its own turn.
- */
 export function openCode2InboxInput(): OrchestratorFixtureInput {
   return {
     steps: [

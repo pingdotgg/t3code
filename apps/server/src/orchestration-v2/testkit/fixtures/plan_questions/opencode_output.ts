@@ -9,9 +9,6 @@ export function assertOpenCodePlanQuestionsOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
 ) {
-  // The shared assertions cover the runtime-request lifecycle. OpenCode owns
-  // its question identifiers, so assert its normalized native header instead
-  // of Codex's fixture-specific id.
   assertPlanQuestionsOutputBase(result, transcript);
   const projection = projectionFor(result, transcript.scenario);
   const requestItem = projection.turnItems.find((item) => item.type === "user_input_request");

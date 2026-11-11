@@ -1,16 +1,28 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon } from "lucide-react";
 import { useState } from "react";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 
-import { parseChangeRequestUrl } from "~/lib/openPullRequestLink";
-import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
-import { useProjects, useServerConfigs, useThreadShell, useThreadShells } from "~/state/entities";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
+import {
+  useAnyEnvironmentHiding,
+  useEnvironmentThreadRefs,
+  useProjects,
+  useServerConfigs,
+  useThreadShell,
+  useVisibleThreadShells,
+} from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
+import { environmentThreadShells } from "~/state/threads";
 import { useEnvironmentQuery } from "~/state/query";
+import { useThreadSearch } from "~/state/queries";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { openCommandPalette } from "~/commandPaletteBus";
 import { Button } from "../ui/button";
@@ -29,7 +41,6 @@ interface PullRequestThreadLinksProps {
   onPickerOpenChange?: (open: boolean) => void;
 }
 
-/** Thread relations belong to the detail environment, including when another environment is active. */
 export function PullRequestThreadLinks(props: PullRequestThreadLinksProps) {
   const configs = useServerConfigs();
   if (
@@ -49,11 +60,17 @@ function EnabledPullRequestThreadLinks({
   display,
   onPickerOpenChange,
 }: PullRequestThreadLinksProps) {
-  const parsed = parseChangeRequestUrl(url);
+  const parsedUrl = sourceControlClients.parseChangeRequestUrl(url);
+  const parsed = parsedUrl?.link ?? null;
+  const term = (parsedUrl?.definition ?? sourceControlClients.get(undefined)).changeRequest
+    .singular;
   const thread = useThreadShell(threadRef?.environmentId === environmentId ? threadRef : null);
   const currentThreadRef = thread === null ? null : threadRef;
   const linking = usePullRequestLinking(environmentId);
   const linkedHere = linking.isLinked(thread, url);
+  const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  const hidingAnywhere = useAnyEnvironmentHiding();
+  const loadedThreadRefs = useEnvironmentThreadRefs(environmentId);
   const relations = useEnvironmentQuery(
     linking.mode === "multiple" && display !== "menu-item"
       ? pullRequestEnvironment.linkedThreads({
@@ -65,8 +82,7 @@ function EnabledPullRequestThreadLinks({
         })
       : null,
   );
-  // Refreshes can briefly clear the query value. Keep the last response so polling
-  // does not hide the linked-thread count between responses.
+  // Retain the last count while refresh temporarily clears query data.
   const [lastRelations, setLastRelations] = useState(relations.data);
   if (relations.data !== null && relations.data !== lastRelations) {
     setLastRelations(relations.data);
@@ -76,17 +92,18 @@ function EnabledPullRequestThreadLinks({
   const changeLink = async (threadId: ThreadId, remove: boolean) => {
     if (parsed === null || pending) return;
     setPending(true);
-    try {
-      await linking.changeLink(scopeThreadRef(environmentId, threadId), url, !remove);
-    } catch (error) {
+    const result = await settlePromise(() =>
+      linking.changeLink(scopeThreadRef(environmentId, threadId), url, !remove),
+    );
+    setPending(false);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: remove ? "Could not unlink the pull request" : "Could not link the pull request",
+        title: remove ? `Could not unlink the ${term}` : `Could not link the ${term}`,
         description: error instanceof Error ? error.message : String(error),
       });
       return;
-    } finally {
-      setPending(false);
     }
     if (linking.mode === "multiple") {
       appAtomRegistry.refresh(
@@ -100,8 +117,13 @@ function EnabledPullRequestThreadLinks({
   };
 
   if (parsed === null || (!linkedHere && !linking.canLink(url))) return null;
-  const linkedThreads =
-    linking.mode === "multiple" ? ((relations.data ?? lastRelations)?.threads ?? []) : [];
+  const linkedThreads = visibleLinkedThreads(
+    linking.mode === "multiple" ? ((relations.data ?? lastRelations)?.threads ?? []) : [],
+    environmentId,
+    loadedThreadRefs,
+    hiddenKeys,
+    hidingAnywhere,
+  );
   const linkedThreadsLabel =
     linkedThreads.length > 0
       ? `Linked from ${linkedThreads.length} ${linkedThreads.length === 1 ? "thread" : "threads"}`
@@ -159,7 +181,7 @@ function EnabledPullRequestThreadLinks({
       {display === "picker" ? (
         <Dialog open onOpenChange={onPickerOpenChange}>
           <DialogPopup className="max-w-md" showCloseButton={false}>
-            <DialogTitle className="sr-only">Link pull request to a thread</DialogTitle>
+            <DialogTitle className="sr-only">Link {term} to a thread</DialogTitle>
             <ThreadPicker
               environmentId={environmentId}
               url={url}
@@ -184,10 +206,12 @@ function ThreadPicker({
   pending: boolean;
   onSelect: (threadId: ThreadId) => void;
 }) {
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const linking = usePullRequestLinking(environmentId);
   const projects = useProjects();
   const [query, setQuery] = useState("");
+  // Mounts older settled threads matching the query, which shells may leave out.
+  useThreadSearch([environmentId], query, { titlesOnly: true });
   const projectNames = new Map(
     projects
       .filter((project) => project.environmentId === environmentId)

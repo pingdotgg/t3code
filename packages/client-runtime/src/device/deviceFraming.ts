@@ -1,6 +1,5 @@
 import { Box3, Vector3 } from "three";
 
-/** Fit the current assembly, with independent framing dynamics so a leaf pivot does not drag it off-screen. */
 export function createDeviceFraming() {
   const center = new Vector3();
   const target = new Vector3();
@@ -62,7 +61,6 @@ export function createDeviceFraming() {
     },
     advance,
     distance() {
-      // Spring lag must never clip the fitted assembly.
       const clearance = Math.max(
         Math.abs(bounds.min.x - center.x) / tanX,
         Math.abs(bounds.max.x - center.x) / tanX,

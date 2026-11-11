@@ -35,7 +35,6 @@ export function WorkLogBlock({
   );
 }
 
-/** Expanded members align with the header and use the same compact row geometry. */
 export function WorkLogList({ children }: { children: ReactNode }) {
   return (
     <GroupedRows value>
@@ -61,8 +60,6 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
     >
       <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
         {icon ? (
-          // Align with the first line's capital letters. Centering line boxes drifts
-          // when font ascent/descent rounding changes at fractional browser zoom.
           <span className="relative w-6 shrink-0 leading-0">
             <span className="inline-block size-6 overflow-hidden align-[calc(0.5cap_-_0.75rem)]">
               <span className="flex size-full items-center justify-center">{icon}</span>
@@ -95,7 +92,6 @@ function useRowClassName(interactive: boolean) {
   );
 }
 
-// No className/style escape hatch: consumers supply content and behavior, not geometry.
 export function WorkLogButton({
   icon,
   label,
@@ -111,7 +107,7 @@ export function WorkLogButton({
   );
 }
 
-/** Div-based disclosure supports selectable detail and nested actions in an entry. */
+/** Div disclosure permits selectable detail and nested actions. */
 export function WorkLogRow({
   icon,
   label,
@@ -129,7 +125,6 @@ export function WorkLogRow({
   );
 }
 
-/** Distance from the end, in px, that still counts as reading the newest text. */
 const LIVE_EDGE_PX = 4;
 
 export function WorkLogDetails({
@@ -139,13 +134,12 @@ export function WorkLogDetails({
 }: {
   children: ReactNode;
   kind?: "text" | "panel" | "media";
-  /** Keep streamed text in view. Scrolling up pauses this until the reader returns to the end. */
+
   followLive?: boolean;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const atLiveEdgeRef = useRef(true);
-  // No deps: each streamed chunk re-renders this, and pinning before paint
-  // shows the new text without a visible jump.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pins the scroller's scrollTop to the bottom after each commit while following live output
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (followLive && atLiveEdgeRef.current && scroller) {

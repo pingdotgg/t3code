@@ -12,11 +12,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * `/hello WORLD` names a workspace command, so it runs through
- * `session.command` and OpenCode expands the template ("Reply with exactly:
- * HELLO $ARGUMENTS") in its own execution, which ends the turn.
- */
 export function assertOpenCode2CommandOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

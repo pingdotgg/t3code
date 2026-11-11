@@ -7,28 +7,14 @@ import type {
 const ELEMENT_CONTEXT_HTML_PREVIEW_LIMIT = 4000;
 const ELEMENT_CONTEXT_STYLES_LIMIT = 4000;
 
-/**
- * Stable, persistable element selection captured from the in-app preview
- * browser. We deliberately keep the shape JSON-serializable so it can ride
- * through `localStorage` persistence, draft restoration, and transcript
- * snapshots without bespoke marshalling.
- */
 export interface ElementContextSelection {
-  /** Page URL where the element was picked. */
   pageUrl: string;
-  /** Best-effort `<title>`. */
   pageTitle: string | null;
-  /** Lowercase tag, e.g. `"button"`. */
   tagName: string;
-  /** CSS selector — may be null when react-grab can't compute one. */
   selector: string | null;
-  /** Truncated outer-HTML preview. */
   htmlPreview: string;
-  /** Nearest React component display name, or null. */
   componentName: string | null;
-  /** Source frame (file + line) — null when unavailable. */
   source: PickedElementStackFrame | null;
-  /** Author CSS (no UA defaults). May be empty. */
   styles: string;
 }
 
@@ -41,11 +27,7 @@ function normalizeText(value: string): string {
   return value.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
 }
 
-/**
- * Sanitize a payload coming back from the desktop bridge before it lands in
- * the composer draft. Trims/clamps every string field so we never persist a
- * 5MB outerHTML blob and silently break `localStorage`.
- */
+/** Clamps string fields to keep large outerHTML payloads within localStorage limits. */
 export function normalizeElementContextSelection(
   raw: PickedElementPayload,
 ): ElementContextSelection | null {
@@ -74,7 +56,6 @@ export function normalizeElementContextSelection(
   };
 }
 
-/** Converts a saved element pick into the annotation shape used by current drafts. */
 export function elementContextToPreviewAnnotation(
   element: ElementContextSelection,
   id: string,

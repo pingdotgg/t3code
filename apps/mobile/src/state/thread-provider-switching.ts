@@ -1,6 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 
 type ThreadStartMarkers = Pick<
   EnvironmentThreadShell,
@@ -14,15 +14,9 @@ function threadShellHasStarted(thread: ThreadStartMarkers | null | undefined): b
   );
 }
 
-/**
- * Whether this thread's model picker may offer providers other than the one it
- * runs on, matching web's locked-provider rule: a thread that never ran a turn
- * is bound to nothing, and a started thread stays on its provider only when its
- * session cannot hand the conversation to another one.
- */
 export function threadAllowsProviderSwitch(input: {
   readonly thread: ThreadStartMarkers | null | undefined;
-  readonly projection: OrchestrationV2ThreadProjection | null | undefined;
+  readonly projection: ThreadStructure | null | undefined;
 }): boolean {
   return input.projection != null
     ? threadSupportsProviderHandoff(input.projection)

@@ -18,6 +18,13 @@
         "image": "macos-tahoe-26.6-xcode-27.1"
       }
     },
+    "development-simulator": {
+      "extends": "development",
+      "ios": {
+        "simulator": true,
+        "image": "macos-tahoe-26.6-xcode-27.1"
+      }
+    },
     "preview": {
       "corepack": true,
       "env": {
@@ -49,35 +56,34 @@
         "image": "macos-tahoe-26.6-xcode-27.1"
       }
     },
-    "v2-preview": {
+    "testflight": {
       "extends": "production",
-      "distribution": "store",
-      "channel": "v2-preview",
       "env": {
-        "T3CODE_MOBILE_UPDATES_ENABLED": "0"
+        "T3CODE_MOBILE_VERSION": "3.0.0"
       }
     },
     "production": {
       "corepack": true,
       "env": {
         "APP_VARIANT": "production",
-        "NODE_OPTIONS": "--max-old-space-size=4096"
+        "NODE_OPTIONS": "--max-old-space-size=4096",
+        "SOURCEMAP_FILE": "/tmp/t3code-ios-main.jsbundle.map",
+        "ORG_GRADLE_PROJECT_reactNativeArchitectures": "armeabi-v7a,arm64-v8a"
       },
       "channel": "production",
       "environment": "production",
       "autoIncrement": true,
+      "android": {
+        "gradleCommand": ":app:bundleRelease -x lintVitalAnalyzeRelease -x lintVitalRelease"
+      },
       "ios": {
         "image": "macos-tahoe-26.6-xcode-27.1"
       }
     }
   },
   "submit": {
-    "v2-preview": {
-      "extends": "production",
-      "android": {
-        "track": "v2",
-        "releaseStatus": "completed"
-      }
+    "testflight": {
+      "extends": "production"
     },
     "production": {
       "ios": {

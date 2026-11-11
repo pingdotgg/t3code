@@ -16,7 +16,6 @@ const layer = it.layer(
 const threadId = ThreadId.make("thread-context");
 const forkId = ThreadId.make("thread-context-fork");
 
-/** An app's tool call in the projection, in a run with the given status. */
 const insertAppItem = (itemId: string, runId: string, runStatus: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -50,8 +49,7 @@ layer("McpAppModelContext", (it) => {
       yield* set(threadId, "item-kept", "kept");
       yield* set(threadId, "item-rolled-back", "from a rolled-back run");
       yield* set(threadId, "item-deleted", "from an item that is gone");
-      // A fork showing the source thread's app keeps its own context, even
-      // after the source rolls that app's run back.
+
       yield* set(forkId, "item-kept", "from the fork");
       yield* set(forkId, "item-rolled-back", "inherited before the rollback");
 
@@ -60,7 +58,6 @@ layer("McpAppModelContext", (it) => {
       assert.deepEqual(yield* texts(threadId), ["kept"]);
       assert.deepEqual(yield* texts(forkId), ["from the fork", "inherited before the rollback"]);
 
-      // Clearing removes the app's context.
       yield* set(threadId, "item-kept", "");
       assert.deepEqual(yield* texts(threadId), []);
     }),

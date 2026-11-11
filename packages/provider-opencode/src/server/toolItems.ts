@@ -1,10 +1,29 @@
-/**
- * Turn-item bodies for OpenCode tool calls, shared by the 1.x and 2.x runtimes.
- * Both report a tool as a name, a JSON input, text output, and free-form
- * metadata; only how they deliver those differs.
- */
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  MAX_TOOL_OUTPUT_IMAGES,
+  readToolOutputImage,
+  type ToolOutputImage,
+} from "@t3tools/shared/toolOutput";
+
+export function openCodeToolOutput(
+  output: string | undefined,
+  files: ReadonlyArray<{ readonly uri: string; readonly mime: string }> = [],
+) {
+  const images: Array<ToolOutputImage & { type: "image" }> = [];
+  for (const file of files) {
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(file.uri);
+    if (match?.[1]?.toLowerCase() !== file.mime.toLowerCase()) continue;
+    const image = readToolOutputImage({ type: "image", mimeType: file.mime, data: match?.[2] });
+    if (image === null) continue;
+    images.push({ type: "image", ...image });
+    if (images.length === MAX_TOOL_OUTPUT_IMAGES) break;
+  }
+  return images.length === 0
+    ? output
+    : { content: [...(output ? [{ type: "text", text: output }] : []), ...images] };
+}
 
 // Search results stay on the timeline wire, so keep their text a preview.
 const SEARCH_PREVIEW_MAX_CHARS = 8_000;
@@ -14,9 +33,10 @@ type ToolItemBase = Omit<
   "type" | "toolName" | "input" | "output"
 >;
 
-export function openCodeToolProjectionKind(
+function openCodeToolProjectionKind(
   toolName: string,
 ): "command_execution" | "file_change" | "file_search" | "web_search" | "dynamic_tool" {
+  if (toolName.startsWith("mcp__") || resolveT3McpToolId(toolName) !== null) return "dynamic_tool";
   const normalized = toolName.toLowerCase();
   if (normalized === "todowrite") {
     return "dynamic_tool";
@@ -53,6 +73,14 @@ function recordString(input: unknown, ...keys: ReadonlyArray<string>): string | 
   return undefined;
 }
 
+function recordText(input: Record<string, unknown>, ...keys: ReadonlyArray<string>) {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
 function recordNumber(input: unknown, ...keys: ReadonlyArray<string>): number | undefined {
   if (typeof input !== "object" || input === null) return undefined;
   for (const key of keys) {
@@ -71,10 +99,29 @@ function stableJson(value: unknown): string {
   }
 }
 
-/**
- * The turn item for one tool call. `completedMetadata` is the tool's metadata
- * once it succeeded: exit codes and diffs are only trusted from a finished call.
- */
+function nativeReadOutput(output: string): string {
+  const header = /^<path>[^\r\n]+<\/path>\r?\n<type>(directory|file)<\/type>\r?\n/.exec(output);
+  if (header === null) return output;
+  const body = output.slice(header[0].length);
+  // File lines are numbered; only a closing tag on its own line ends the envelope.
+  const envelope =
+    header[1] === "directory"
+      ? /^<entries>\r?\n([\s\S]*?)\r?\n<\/entries>(?=\r?\n|$)/.exec(body)
+      : /^<content>(?:\r?\n)?([\s\S]*?)\r?\n<\/content>(?=\r?\n|$)/.exec(body);
+  // OpenCode can append instructions after the envelope; keep that suffix verbatim.
+  return envelope === null ? output : envelope[1] + body.slice(envelope[0].length);
+}
+
+/** OpenCode's shell tool succeeds when the command exits non-zero. */
+export function openCodeCommandFailed(toolName: string, completedMetadata: unknown): boolean {
+  const exitCode = recordNumber(completedMetadata, "exit", "exitCode");
+  return (
+    openCodeToolProjectionKind(toolName) === "command_execution" &&
+    exitCode !== undefined &&
+    exitCode !== 0
+  );
+}
+
 export function openCodeToolTurnItem(
   base: ToolItemBase,
   tool: {
@@ -82,6 +129,7 @@ export function openCodeToolTurnItem(
     readonly input: Record<string, unknown>;
     readonly output: string | undefined;
     readonly completedMetadata: unknown;
+    readonly files?: ReadonlyArray<{ readonly uri: string; readonly mime: string }> | undefined;
   },
 ): OrchestrationV2TurnItem {
   const { input, output } = tool;
@@ -97,9 +145,8 @@ export function openCodeToolTurnItem(
       };
     }
     case "file_change": {
-      const oldStr = recordString(input, "oldString", "oldText");
-      const newStr = recordString(input, "newString", "content", "newText");
-      // A failed edit has no diff; keep its error where the diff would be.
+      const oldStr = recordText(input, "oldString", "oldText");
+      const newStr = recordText(input, "newString", "content", "newText");
       const diffStr =
         recordString(tool.completedMetadata, "diff", "patch") ??
         (base.status === "failed" && output?.trim() ? output : undefined);
@@ -114,8 +161,6 @@ export function openCodeToolTurnItem(
     }
     case "file_search": {
       const pattern = recordString(input, "pattern", "query", "path", "filePath");
-      // OpenCode reports matches as plain text, so keep it as one result row
-      // under the searched path, like the ACP search projection.
       const searchRoot = (recordString(input, "path", "filePath") ?? pattern)?.trim();
       return {
         ...base,
@@ -154,6 +199,8 @@ export function openCodeToolTurnItem(
     }
     case "dynamic_tool": {
       const readPath = recordString(input, "filePath", "path", "file");
+      const cleanedOutput =
+        tool.name === "read" && output !== undefined ? nativeReadOutput(output) : output;
       return {
         ...base,
         title:
@@ -163,7 +210,9 @@ export function openCodeToolTurnItem(
         type: "dynamic_tool",
         toolName: tool.name,
         input,
-        ...(output === undefined ? {} : { output }),
+        ...(cleanedOutput === undefined && !tool.files?.length
+          ? {}
+          : { output: openCodeToolOutput(cleanedOutput, tool.files) }),
       };
     }
   }

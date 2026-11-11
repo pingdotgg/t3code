@@ -17,11 +17,6 @@ import { createAttachmentId } from "../attachmentStore.ts";
 
 const encoder = new TextEncoder();
 
-/**
- * The HTML document in a `resources/read` result, with the `_meta.ui` the
- * resource declared. Only `text/html;profile=mcp-app` content counts; a blob is
- * base64 per MCP. A null document is one too large to store.
- */
 function readMcpAppDocument(
   contents: ReadonlyArray<unknown>,
   uri: string,
@@ -31,9 +26,7 @@ function readMcpAppDocument(
     if (content.uri !== undefined && content.uri !== uri) continue;
     const mimeType = typeof content.mimeType === "string" ? content.mimeType : "";
     if (mimeType.replace(/\s+/g, "").toLowerCase() !== MCP_APP_MIME_TYPE) continue;
-    // Sizes are checked before decoding, so an oversized resource is
-    // refused without first being copied: a string's UTF-8 form is at least
-    // its length, and base64 decodes to three quarters of its own.
+    // Bound before decoding to avoid oversized copies; UTF-8 is at least string length, base64 decodes to 3/4.
     const html =
       typeof content.text === "string"
         ? content.text.length > MCP_APP_MAX_HTML_BYTES
@@ -52,12 +45,6 @@ function readMcpAppDocument(
   return undefined;
 }
 
-/**
- * Stores an app's document as a thread attachment and returns the reference
- * clients host it from. Saving a snapshot keeps the app viewable after the
- * provider exits; interaction still goes through a live provider session.
- * Undefined when the resource is not an MCP App document or is too large.
- */
 export const snapshotMcpApp = Effect.fn("McpAppSnapshot.snapshot")(function* (input: {
   readonly attachmentsDir: string;
   readonly threadId: ThreadId;
@@ -90,8 +77,7 @@ export const snapshotMcpApp = Effect.fn("McpAppSnapshot.snapshot")(function* (in
   const ui = Predicate.isObject(document.meta) ? document.meta : {};
   const csp = readMcpAppCsp(ui.csp);
   const fileSystem = yield* FileSystem.FileSystem;
-  // Only the returned reference lets thread deletion find the document, so a
-  // write that fails or is interrupted removes it.
+  // Failed or interrupted writes remove documents that thread deletion cannot yet find.
   yield* fileSystem
     .writeFileString(filePath, injectMcpAppCsp(html, csp))
     .pipe(Effect.onError(() => fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore)));

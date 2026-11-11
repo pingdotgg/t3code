@@ -27,7 +27,6 @@ export function assertGrokPromptErrorOutput(
   assertSemanticProjectionIntegrity(projection);
   assertUserMessagesInclude(projection, [GROK_PROMPT_ERROR_PROMPT, GROK_PROMPT_ERROR_FOLLOW_UP]);
 
-  // The failed run shows Grok's own API error instead of an empty completion.
   const failedRun = projection.runs.find((run) => run.ordinal === 1);
   const errorItem = projection.turnItems.find(
     (item) => item.runId === failedRun?.id && item.type === "error",
@@ -36,7 +35,6 @@ export function assertGrokPromptErrorOutput(
   assert.equal(errorItem.failure.message, GROK_PROMPT_ERROR_TEXT);
   assert.equal(errorItem.failure.class, "provider_error");
 
-  // The error does not poison the session: the follow-up reaches the model.
   const recoveredRun = projection.runs.find((run) => run.ordinal === 2);
   const recoveredTexts = projection.turnItems.flatMap((item) =>
     item.runId === recoveredRun?.id && item.type === "assistant_message" ? [item.text] : [],

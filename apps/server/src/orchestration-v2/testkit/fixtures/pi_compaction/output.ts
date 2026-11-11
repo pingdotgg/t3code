@@ -13,12 +13,6 @@ function field(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
 }
 
-/**
- * `/compact` reaches Pi as the RPC `compact` command, never as a prompt, with
- * any trailing text as custom instructions. A compaction Pi refuses still
- * settles its run and shows a failed compaction row; a successful one carries
- * Pi's own summary and token counts, and the next turn recalls the marker.
- */
 export function assertPiCompactionOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -78,8 +72,7 @@ export function assertPiCompactionOutput(
     ),
     "compaction must not run a model turn",
   );
-  // Right after compacting, Pi reports context usage as unknown (tokens: null);
-  // the meter keeps Pi's own post-compaction estimate instead of going blank.
+  // Pi reports tokens null after compaction; retain its post-compaction estimate.
   const compactionTurn = projection.providerTurns.find(
     (turn) => turn.runAttemptId === compactionRuns[1]?.activeAttemptId,
   );

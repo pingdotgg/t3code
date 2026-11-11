@@ -15,9 +15,7 @@ export async function openDesktopUpdateReleaseNotes(
 ): Promise<void> {
   try {
     if (shell && (await shell.openExternal(releaseUrl))) return;
-  } catch {
-    // Surface rejected IPC calls through the same user-visible fallback.
-  }
+  } catch {}
   toastManager.add({ type: "error", title: "Unable to open release notes" });
 }
 

@@ -21,7 +21,6 @@ interface ToolResult {
   readonly failed: boolean;
 }
 
-/** Reads the structured/JSON MCP result envelopes retained by the provider adapters. */
 function readResult(value: unknown, depth = 0): ToolResult {
   if (depth > 4) return { failed: false };
   if (typeof value === "string") {
@@ -60,7 +59,7 @@ function readResult(value: unknown, depth = 0): ToolResult {
 
 function readInput(value: unknown): Record<string, unknown> | undefined {
   const input = readResult(value).data;
-  // Cursor retains its MCP args envelope; other adapters retain the arguments directly.
+  // Historical Cursor items retain the MCP args envelope.
   return input && typeof input.toolName === "string" ? asRecord(input.args) : input;
 }
 
@@ -80,7 +79,25 @@ function quantity(count: number, noun: string, plural = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : plural}`;
 }
 
-/** Counts successful effects separately from failed or unfinished tool calls. */
+/** One PR per single call; a batch counts what its result reports. */
+function pullRequestQuantity(
+  calls: ReadonlyArray<{
+    readonly input: Record<string, unknown> | undefined;
+    readonly output: Record<string, unknown> | undefined;
+  }>,
+  countKey: "linkedCount" | "unlinkedCount",
+): string {
+  let count = 0;
+  for (const call of calls) {
+    const reported = call.output?.[countKey];
+    if (typeof reported === "number") count += reported;
+    else if (call.input?.url !== undefined || call.input?.number !== undefined) count += 1;
+    // A batch result too large to compact loses its count, so the label drops the number.
+    else return "pull requests";
+  }
+  return quantity(count, "pull request");
+}
+
 export function summarizeT3ToolCalls(
   action: T3McpToolSummaryAction,
   calls: ReadonlyArray<T3ToolSummaryCall>,
@@ -178,6 +195,9 @@ export function summarizeT3ToolCalls(
     case "task-status":
       label = phrase("Checked", "check", `task status ${times}`);
       break;
+    case "background-wait":
+      label = phrase("Updated", "update", `background waits ${times}`);
+      break;
     case "task-cancel":
       label = phrase(
         "Requested cancellation of",
@@ -203,7 +223,6 @@ export function summarizeT3ToolCalls(
       );
       break;
     case "schedule-delete":
-      // A successful delete can report deleted:false; it still represents a deletion request.
       label = phrase(
         "Requested deletion of",
         "delete",
@@ -336,6 +355,19 @@ export function summarizeT3ToolCalls(
     case "environment-update":
       label = phrase("Updated", "update", `environment preferences ${times}`);
       break;
+    case "environment-links":
+      label = phrase("Listed", "list", `linked environments ${times}`);
+      break;
+    case "environment-link":
+      label = phrase("Asked to link", "ask to link", quantity(selected.length, "environment"));
+      break;
+    case "environment-unlink":
+      label = phrase(
+        "Forgot",
+        "forget",
+        quantity(countEntities(entityIds("environmentId")), "linked environment"),
+      );
+      break;
     case "attachment-prepare":
       label = phrase(
         "Prepared",
@@ -351,7 +383,6 @@ export function summarizeT3ToolCalls(
       );
       break;
     case "attachment-send": {
-      // A message can contain several attachments. Count retries by message identity.
       const messages = new Map<string, (typeof selected)[number]>();
       selected.forEach((call, index) =>
         messages.set(id(call.output?.messageId) ?? `call-${index}`, call),
@@ -377,10 +408,10 @@ export function summarizeT3ToolCalls(
       break;
     }
     case "link-pr":
-      label = phrase("Linked", "link", quantity(selected.length, "pull request"));
+      label = phrase("Linked", "link", pullRequestQuantity(selected, "linkedCount"));
       break;
     case "unlink-pr":
-      label = phrase("Unlinked", "unlink", quantity(selected.length, "pull request"));
+      label = phrase("Unlinked", "unlink", pullRequestQuantity(selected, "unlinkedCount"));
       break;
     case "watch-pr":
       label = phrase("Watching", "watch", quantity(selected.length, "pull request"));
@@ -409,15 +440,19 @@ export function summarizeT3ToolCalls(
       const started = outcomes.filter((outcome) => outcome !== "failed").length;
       const failed = outcomes.length - started;
       failedCount += failed;
-      if (outcomes.length > 0 && started === 0) {
+      if (outcomes.length === 0) {
+        label = phrase(
+          "Started writing",
+          "start writing",
+          `review guides${selected.length === 1 ? "" : ` ${times}`}`,
+        );
+      } else if (started === 0) {
         label = `Could not start ${quantity(failed, "review guide")}`;
       } else {
         label = phrase(
           "Started",
           "start",
-          outcomes.length === 0
-            ? `review guides ${times}`
-            : `${quantity(started, "review guide")}${failed > 0 ? `, ${failed} failed` : ""}`,
+          `${quantity(started, "review guide")}${failed > 0 ? `, ${failed} failed` : ""}`,
         );
       }
       break;

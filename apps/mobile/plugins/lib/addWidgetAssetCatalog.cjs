@@ -1,23 +1,9 @@
 "use strict";
 
-// Bundle the widget asset catalog into an app-extension (widget) target.
-//
-// expo-widgets generates the widget target without a Resources build phase, and
-// hand-adding a PBXResourcesBuildPhase does NOT get picked up — xcodebuild's
-// planner never schedules `actool` for it (verified: even a full re-plan skips
-// it). So instead we add a shell-script phase that runs `actool` directly and
-// drops the compiled Assets.car into the extension bundle. Marked
-// alwaysOutOfDate so the build system always runs it.
-//
-// Idempotent across re-runs. Returns true when it added the phase, false when
-// it was already present. Throws when the target does not exist — that means
-// this ran before expo-widgets created the target (plugin ordering bug) and
-// silently skipping would ship a widget without its assets.
+// xcodebuild ignores Resources phases on expo-widgets targets; compile assets in a shell phase.
 
 const PHASE_NAME = "Compile Widget Assets";
 
-// Compiles ExpoWidgetsTarget/Assets.xcassets into the extension's resources dir.
-// Uses only Xcode-provided build settings so it works for device + simulator.
 const ACTOOL_SCRIPT = [
   "set -e",
   'CATALOG="${SRCROOT}/ExpoWidgetsTarget/Assets.xcassets"',
@@ -46,10 +32,8 @@ function findByName(map, name) {
   return null;
 }
 
-/**
- * @param {import('xcode').XcodeProject} proj
- * @param {{ targetName: string }} opts
- */
+/** @param {import('xcode').XcodeProject} proj
+ * @param {{ targetName: string }} opts */
 function addWidgetAssetCatalog(proj, opts) {
   const objects = proj.hash.project.objects;
   const target = findByName(objects.PBXNativeTarget, opts.targetName);
@@ -73,7 +57,6 @@ function addWidgetAssetCatalog(proj, opts) {
     shellPath: "/bin/sh",
     shellScript: ACTOOL_SCRIPT,
   });
-  // Always run: input-analysis is exactly what skipped the Resources phase.
   objects.PBXShellScriptBuildPhase[uuid].alwaysOutOfDate = 1;
   return true;
 }

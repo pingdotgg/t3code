@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as SchemaAST from "effect/SchemaAST";
 import type * as SchemaIssue from "effect/SchemaIssue";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
@@ -36,6 +37,70 @@ interface AcpSchemaIssueDiagnostics {
   readonly issueKinds: ReadonlyArray<AcpSchemaIssueKind>;
   readonly maximumPathDepth: number;
 }
+
+const MAX_SUMMARY_ISSUES = 3;
+const MAX_SUMMARY_PATH_SEGMENTS = 8;
+
+const summaryPathSegment = (segment: PropertyKey): string =>
+  typeof segment === "number" || /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(String(segment))
+    ? String(segment)
+    : "*";
+
+const summaryPath = (path: ReadonlyArray<PropertyKey>): string => {
+  if (path.length === 0) return "payload";
+  const shown = path.slice(0, MAX_SUMMARY_PATH_SEGMENTS).map(summaryPathSegment).join(".");
+  return path.length > MAX_SUMMARY_PATH_SEGMENTS ? `${shown}…` : shown;
+};
+
+const summaryReason = (issue: SchemaIssue.Issue): string => {
+  switch (issue._tag) {
+    case "MissingKey":
+      return "missing";
+    case "UnexpectedKey":
+      return "unexpected";
+    case "InvalidType":
+      return "wrong type";
+    default:
+      return "invalid";
+  }
+};
+
+const isCatchAllMember = (issue: SchemaIssue.Issue) =>
+  "ast" in issue && SchemaAST.resolveTitle(issue.ast) === "other";
+
+/**
+ * ACP unions end in a member titled "other" that admits custom and future
+ * variants; it fails only because the discriminator names a known variant, so
+ * the known variant's issues are the ones reported.
+ */
+const schemaIssueSummary = (root: SchemaIssue.Issue): string => {
+  const entries = new Set<string>();
+  const visit = (issue: SchemaIssue.Issue, path: ReadonlyArray<PropertyKey>): void => {
+    switch (issue._tag) {
+      case "Filter":
+      case "Encoding":
+        visit(issue.issue, path);
+        return;
+      case "Pointer":
+        visit(issue.issue, [...path, ...issue.path]);
+        return;
+      case "Composite":
+      case "AnyOf": {
+        const known = issue.issues.filter((child) => !isCatchAllMember(child));
+        const children = known.length > 0 ? known : issue.issues;
+        if (children.length === 0) entries.add(`${summaryPath(path)} ${summaryReason(issue)}`);
+        for (const child of children) visit(child, path);
+        return;
+      }
+      default:
+        entries.add(`${summaryPath(path)} ${summaryReason(issue)}`);
+    }
+  };
+  visit(root, []);
+  const shown = [...entries].slice(0, MAX_SUMMARY_ISSUES);
+  const hidden = entries.size - shown.length;
+  return hidden > 0 ? `${shown.join(", ")} (+${hidden} more)` : shown.join(", ");
+};
 
 const schemaIssueDiagnostics = (root: SchemaIssue.Issue): AcpSchemaIssueDiagnostics => {
   let issueCount = 0;
@@ -94,6 +159,7 @@ export class AcpProcessExitedError extends Schema.TaggedError<AcpProcessExitedEr
   "AcpProcessExitedError",
   {
     code: Schema.optional(Schema.Number),
+    signal: Schema.optionalKey(Schema.String),
     pid: Schema.optionalKey(Schema.Int),
     stderr: Schema.optionalKey(Schema.String),
     cause: Schema.optional(Schema.Defect()),
@@ -101,7 +167,11 @@ export class AcpProcessExitedError extends Schema.TaggedError<AcpProcessExitedEr
 ) {
   override get message() {
     const base =
-      this.code === undefined ? "ACP process exited" : `ACP process exited with code ${this.code}`;
+      this.signal !== undefined
+        ? `ACP process exited after signal ${this.signal}`
+        : this.code === undefined
+          ? "ACP process exited"
+          : `ACP process exited with code ${this.code}`;
     const excerpt = this.stderr?.trim();
     return excerpt && excerpt.length > 0 ? `${base}\n${excerpt}` : base;
   }
@@ -123,12 +193,14 @@ export class AcpProtocolParseError extends Schema.TaggedError<AcpProtocolParseEr
     issueCount: Schema.optionalKey(Schema.Number),
     issueKinds: Schema.optionalKey(Schema.Array(AcpSchemaIssueKind)),
     maximumPathDepth: Schema.optionalKey(Schema.Number),
+    issueSummary: Schema.optionalKey(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
   override get message() {
     const method = this.method === undefined ? "" : ` for method '${this.method}'`;
-    return `ACP protocol operation '${this.operation}' failed${method}.`;
+    const summary = this.issueSummary === undefined ? "" : `: ${this.issueSummary}`;
+    return `ACP protocol operation '${this.operation}' failed${method}${summary}.`;
   }
 
   static fromSchemaError(
@@ -140,6 +212,7 @@ export class AcpProtocolParseError extends Schema.TaggedError<AcpProtocolParseEr
       operation,
       method,
       ...schemaIssueDiagnostics(cause.issue),
+      issueSummary: schemaIssueSummary(cause.issue),
       cause,
     });
   }
@@ -171,10 +244,11 @@ export class AcpTransportError extends Schema.TaggedError<AcpTransportError>()(
   },
 ) {
   override get message() {
+    const operation = this.operation ? ` ${this.operation}` : "";
     const method = this.method ? ` for method ${this.method}` : "";
-    return this.operation
-      ? `ACP transport operation ${this.operation} failed${method}.`
-      : "ACP transport operation failed.";
+    // Callers often pass a sentence; strip its period so the message ends with exactly one.
+    const detail = this.detail ? `: ${this.detail.replace(/\.$/, "")}` : "";
+    return `ACP transport operation${operation} failed${method}${detail}.`;
   }
 }
 

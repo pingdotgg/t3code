@@ -47,7 +47,6 @@ describe("readImageDimensions", () => {
   });
 
   it("swaps the axes for a JPEG whose EXIF orientation rotates it 90 degrees", () => {
-    // Big-endian TIFF with one IFD0 entry: tag 0x0112 (orientation), SHORT, count 1, value 6.
     const tiff = [
       0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, 0x00, 0x01, 0x01, 0x12, 0x00, 0x03, 0x00,
       0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -59,13 +58,11 @@ describe("readImageDimensions", () => {
       width: 3024,
       height: 4032,
     });
-    // A later XMP APP1 segment must not clear the rotation.
     const xmp = bytes([0xff, 0xe1], u16(2 + 29), "http://ns.adobe.com/xap/1.0/\0");
     expect(readImageDimensions(bytes([0xff, 0xd8], [...app1], [...xmp], [...sof0]))).toEqual({
       width: 3024,
       height: 4032,
     });
-    // Orientation 1 leaves the frame size alone.
     const upright = [...tiff];
     upright[19] = 0x01;
     const app1Upright = bytes([0xff, 0xe1], u16(2 + 6 + upright.length), "Exif\0\0", upright);
@@ -94,11 +91,9 @@ describe("readImageDimensions", () => {
   it("reads each WebP container flavour", () => {
     const riff = (chunk: string, body: ReadonlyArray<number>) =>
       bytes("RIFF", u32(0), "WEBP", chunk, u32(body.length), body);
-    // VP8: frame tag (3), start code (3), then 14-bit width and height.
     expect(
       readImageDimensions(riff("VP8 ", [0, 0, 0, 0x9d, 0x01, 0x2a, ...u16le(800), ...u16le(600)])),
     ).toEqual({ width: 800, height: 600 });
-    // VP8L: signature 0x2f, then width-1 (14 bits) and height-1 (14 bits) packed LE.
     const packed = (800 - 1) | ((600 - 1) << 14);
     expect(
       readImageDimensions(
@@ -111,7 +106,6 @@ describe("readImageDimensions", () => {
         ]),
       ),
     ).toEqual({ width: 800, height: 600 });
-    // VP8X: flags (4), then 24-bit width-1 and height-1.
     expect(
       readImageDimensions(
         riff("VP8X", [

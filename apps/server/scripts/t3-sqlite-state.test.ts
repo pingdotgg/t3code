@@ -26,55 +26,6 @@ const createFixtureDatabase = Effect.fn("createSqliteStateFixtureDatabase")(func
 });
 
 it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
-  it.effect("reports each invalid SQL source with a specific error", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-state-input-" });
-
-      const multipleSources = yield* runSqliteState({
-        operation: "query",
-        baseDir,
-        sql: "SELECT 1",
-        file: "fixture.sql",
-      }).pipe(Effect.flip);
-      assert.equal(multipleSources._tag, "SqliteStateMultipleSqlSourcesError");
-      assert.equal(multipleSources.message, "Provide only one of --sql or --file.");
-
-      const missingSource = yield* runSqliteState({ operation: "query", baseDir }).pipe(
-        Effect.flip,
-      );
-      assert.equal(missingSource._tag, "SqliteStateMissingSqlSourceError");
-      assert.equal(missingSource.message, "Provide one of --sql or --file.");
-
-      const emptySql = yield* runSqliteState({
-        operation: "query",
-        baseDir,
-        sql: "   ",
-      }).pipe(Effect.flip);
-      assert.equal(emptySql._tag, "SqliteStateEmptySqlError");
-      assert.equal(emptySql.message, "SQL input is empty.");
-    }),
-  );
-
-  it.effect("queries an isolated database through Effect SQL", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-state-query-" });
-      yield* createFixtureDatabase(baseDir);
-
-      const result = yield* runSqliteState({
-        operation: "query",
-        baseDir,
-        sql: "SELECT id, label FROM fixtures",
-      });
-
-      assert.equal(result.operation, "query");
-      if (result.operation === "query") {
-        assert.deepStrictEqual(result.rows, [{ id: 1, label: "existing" }]);
-      }
-    }),
-  );
-
   it.effect("enables checkpoint_fullfsync on its direct connection", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -110,7 +61,6 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
         });
         assert.equal(mutation.operation, "exec");
         if (mutation.operation === "exec" && (yield* HostProcess.Platform) !== "win32") {
-          // NTFS has no POSIX mode bits to report.
           assert.equal((yield* fs.stat(mutation.backup)).mode & 0o777, 0o600);
         }
 

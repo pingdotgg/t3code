@@ -21,20 +21,21 @@ interface ThreadFindBarProps {
   readonly onClose: () => void;
 }
 
-/**
- * Room the open bar takes at the top of the chat canvas: its `h-9` height plus
- * the shared 12px gap below it, so the details card starts on the same rhythm.
- */
 export const THREAD_FIND_BAR_RESERVED_HEIGHT = 36 + THREAD_DETAILS_CARD_GAP;
 
 export function ThreadFindBar(props: ThreadFindBarProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when the bar opens or a find shortcut fires
   useEffect(() => {
     if (!props.open) return;
     inputRef.current?.focus();
     inputRef.current?.select();
-  }, [props.focusRequestId, props.open]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each find shortcut bumps the request id, so an already-open bar refocuses and reselects its query.
+    props.focusRequestId,
+    props.open,
+  ]);
 
   if (!props.open) return null;
 
@@ -59,7 +60,6 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   };
 
   return (
-    // Fades in while the details popover slides out from under it.
     <div
       data-thread-find-bar
       className="absolute top-3 right-3 z-40 w-[min(var(--thread-details-panel-width),calc(100%-1.5rem))] transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"

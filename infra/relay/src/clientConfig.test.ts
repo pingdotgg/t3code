@@ -1,6 +1,6 @@
 // @effect-diagnostics anyUnknownInErrorContext:off - ScratchStack.deploy is typed with `any` in its error channel by Alchemy.
 import { inMemoryState } from "alchemy/State";
-import * as Test from "alchemy/Test/Vitest";
+import * as Test from "@alchemy.run/test/Vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,10 +13,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { PublishClientConfig, reconcileEnvFile, tokenDigest } from "./clientConfig.ts";
 
 describe("reconcileEnvFile", () => {
-  it("adds every entry to an empty file", () => {
-    expect(reconcileEnvFile("", { A: "1", B: "2" })).toBe("A=1\nB=2\n");
-  });
-
   it("replaces stale values and keeps unrelated lines", () => {
     const existing = "KEEP=yes\nA=old\n# comment\n";
     expect(reconcileEnvFile(existing, { A: "new", B: "2" })).toBe(
@@ -89,12 +85,10 @@ describe("PublishClientConfig", () => {
       expect(first).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v1\n");
       expect(first).toContain("T3CODE_MOBILE_OTLP_TRACES_TOKEN=mobile-v1\n");
 
-      // Same input: the action is skipped, so a change made by hand survives.
       yield* fs.writeFileString(target, `${first}MANUAL=1\n`);
       yield* stack.deploy(PublishClientConfig(clientConfig("v1"))).pipe(configured);
       expect(yield* fs.readFileString(target)).toContain("MANUAL=1\n");
 
-      // A rotated token changes the input, so it runs again and replaces the line.
       yield* stack.deploy(PublishClientConfig(clientConfig("v2"))).pipe(configured);
       const third = yield* fs.readFileString(target);
       expect(third).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v2\n");

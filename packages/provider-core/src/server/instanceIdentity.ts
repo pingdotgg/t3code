@@ -3,13 +3,6 @@ import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 
-/**
- * Stamp instance identity onto a `ServerProvider` snapshot produced by the
- * driver-kind-only snapshot helpers. Every driver builds its snapshot without
- * knowing its own instance, so it pipes the draft through this stamper before
- * publishing. Once `buildServerProvider` in `providerSnapshot.ts` is widened to
- * accept `instanceId`/`driver`, this wrapper disappears.
- */
 export const withInstanceIdentity =
   (input: {
     readonly instanceId: ProviderInstance["instanceId"];

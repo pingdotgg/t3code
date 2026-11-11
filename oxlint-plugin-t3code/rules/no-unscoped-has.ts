@@ -13,10 +13,8 @@ const ANCESTOR_PREFIX_PATTERN = /(?:^|:)in-$/u;
 const ATTRIBUTE_PREFIX_PATTERN = /(?:^|:)(?:data|aria)-$/u;
 const QUOTED_PATTERN = /(["'])(?:\\.|(?!\1).)*\1/gu;
 
-// A variant's closing bracket is followed by ":" or a group/peer name like "/row:".
 const VARIANT_END_PATTERN = /^(?:\/[\w-]+)?:/u;
 
-/** Tailwind arbitrary variants in a class token: top-level `[...]` groups used as variants. */
 function variantGroups(token: string): { prefix: string; group: string }[] {
   const groups: { prefix: string; group: string }[] = [];
   let depth = 0;
@@ -36,7 +34,6 @@ function variantGroups(token: string): { prefix: string; group: string }[] {
   return groups;
 }
 
-/** Index of the ")" closing the "(" at `open`, or the selector's length. */
 function closingParen(selector: string, open: number): number {
   let depth = 0;
   for (let index = open; index < selector.length; index++) {
@@ -46,10 +43,6 @@ function closingParen(selector: string, open: number): number {
   return selector.length;
 }
 
-/**
- * Whether nothing after `from` in the enclosing branch is joined by a combinator,
- * i.e. the element ending at `from` is the subject that its wrapper matches.
- */
 function isWrapperSubject(selector: string, from: number): boolean {
   let depth = 0;
   for (let index = from; index < selector.length; index++) {
@@ -69,7 +62,6 @@ function isWrapperSubject(selector: string, from: number): boolean {
   return true;
 }
 
-/** The compound selector each `:has(` in `selector` is attached to. */
 function hasCompounds(selector: string): string[] {
   const compounds: string[] = [];
   let index = selector.indexOf(":has(");
@@ -104,7 +96,6 @@ function hasCompounds(selector: string): string[] {
   return compounds;
 }
 
-/** `compound` without any `:not(...)`, including one left open around the `:has()`. */
 function withoutNegations(compound: string): string {
   let result = "";
   let index = 0;
@@ -124,9 +115,7 @@ function withoutNegations(compound: string): string {
   return result;
 }
 
-/** Arbitrary variants in `text` whose `:has()` is unanchored or anchored to the document root. */
 function findUnscopedHasVariants(text: string): string[] {
-  // Selectors are ASCII case-insensitive.
   if (!text.toLowerCase().includes(":has(")) return [];
   const offenders: string[] = [];
   for (const token of text.split(/\s+/u)) {

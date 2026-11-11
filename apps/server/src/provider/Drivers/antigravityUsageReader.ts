@@ -1,5 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's File.Info has no ctime, which the cache fingerprint needs.
 import * as NodeFSP from "node:fs/promises";
+import { pipe } from "effect/Function";
 
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -13,7 +14,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 type FieldValue = number | bigint | Uint8Array;
 type Fields = Map<number, FieldValue[]>;
 
-/** Antigravity stores usage metadata as protobuf, independently of conversation text. */
 function fields(bytes: Uint8Array): Fields {
   let offset = 0;
   const result: Fields = new Map();
@@ -78,6 +78,8 @@ const timestamp = (value: Fields) => {
   return seconds > 0 ? seconds * 1000 + Math.floor(numberAt(value, 2) / 1_000_000) : null;
 };
 
+// Offline fallback for records without names. New names are learned from the scanned metadata.
+// Cross-checked against ccusage's Antigravity parser and mrexodia/agent-cost-dashboard.
 const MODEL_IDS: Record<number, string> = {
   246: "gemini-2.5-pro",
   312: "gemini-2.5-flash",
@@ -92,6 +94,7 @@ const MODEL_IDS: Record<number, string> = {
   334: "claude-sonnet-4-5",
   340: "claude-haiku-4-5",
   341: "claude-haiku-4-5",
+  342: "gpt-oss-120b-medium",
   1026: "claude-opus-4-6",
   1035: "claude-sonnet-4-6",
   1016: "gemini-3.1-pro",
@@ -100,26 +103,78 @@ const MODEL_IDS: Record<number, string> = {
   1018: "gemini-3-flash-preview",
   1084: "gemini-3-flash-preview",
   1047: "gemini-3-flash-preview",
+  1020: "gemini-3.5-flash-medium",
+  1021: "gemini-3.1-flash-image",
+  1050: "gemini-3.1-flash-lite",
+  1071: "gemini-3.6-flash-high",
+  1072: "gemini-3.6-flash-medium",
+  1073: "gemini-3.6-flash-low",
+  1132: "gemini-3.5-flash-high",
+  1133: "gemini-3.5-flash-high",
+  1187: "gemini-3.5-flash-extra-low",
+  1196: "gemini-3.6-flash",
+  1266: "gemini-3.6-flash",
+  1298: "gemini-3.7-flash-high",
+  1299: "gemini-3.7-flash-medium",
+  1300: "gemini-3.7-flash-low",
+  1301: "gemini-3.7-flash-tiered",
+  1318: "gemini-3.8-flash-high",
+  1319: "gemini-3.8-flash-medium",
+  1320: "gemini-3.8-flash-low",
+  1322: "gemini-3.8-flash-tiered",
+  1402: "claude-opus-5-5",
+  1417: "gemini-4-argon",
+  1418: "gemini-4-argon",
+  1419: "gemini-4-argon",
 };
 
-function modelName(name: string, id: number): string {
+// Effort and routing variants share the base model's price.
+function withRateModel(record: UsageRecord): UsageRecord {
+  const base = record.model.replace(
+    /-(?:extra-low|low|medium|high|tiered|control|thinking|agent)$/,
+    "",
+  );
+  const rateModel = /^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/.test(record.model)
+    ? "gemini-3.5-flash"
+    : record.model === "gemini-3.7-flash-safety-le"
+      ? "gemini-3.7-flash"
+      : base === "gemini-3-flash"
+        ? "gemini-3-flash-preview"
+        : base;
+  return rateModel === record.model ? record : { ...record, rateModel };
+}
+
+function modelName(name: string): string {
   if (name) {
     const normalized = name
       .toLowerCase()
-      .replace(/\s*\([^)]*\)\s*$/, "")
-      .replaceAll(" ", "-");
+      .replace(/\s*\(([^)]*)\)\s*$/, "-$1")
+      .replace(/\s+/g, "-");
     if (normalized.startsWith("claude-")) {
       return normalized
-        .replace(/^claude-(4(?:\.\d+)?)-(sonnet|opus|haiku)/, "claude-$2-$1")
+        .replace(/^claude-(\d+(?:\.\d+)?)-(sonnet|opus|haiku)/, "claude-$2-$1")
         .replaceAll(".", "-");
     }
     return normalized;
   }
-  return MODEL_IDS[id] ?? (id > 0 ? `antigravity-model-${id}` : "");
+  return "";
+}
+
+function isConcreteModel(model: string): boolean {
+  return (
+    /^(?:gemini-\d|claude-(?:sonnet|opus|haiku)-\d|gpt-)/.test(model) &&
+    !/^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/.test(model)
+  );
+}
+
+function rememberModel(models: Map<number, string | null>, id: number, model: string | null) {
+  const previous = models.get(id);
+  models.set(id, previous === undefined || previous === model ? model : null);
 }
 
 interface Metadata {
   model: string;
+  modelId: number;
   timestampMs: number | null;
   usages: Fields[];
 }
@@ -132,17 +187,20 @@ function metadata(bytes: Uint8Array, step: boolean): Metadata {
   const data = step ? root : nested(root, 1);
   const model = step ? nested(data, 24) : data;
   const usage = bytesAt(data, step ? 9 : 4);
-  const usages = usage === undefined ? [] : [fields(usage)];
+  // Copy the usage bytes: subarrays kept in usages would hold each row's whole blob alive.
+  const primaryUsage = usage === undefined ? undefined : fields(usage.slice());
+  const usages = primaryUsage === undefined ? [] : [primaryUsage];
   for (const retry of data.get(step ? 28 : 17) ?? []) {
     if (!(retry instanceof Uint8Array)) throw new Error("Invalid retry metadata");
     const retryUsage = bytesAt(fields(retry), 2);
-    if (retryUsage !== undefined) usages.push(fields(retryUsage));
+    if (retryUsage !== undefined) usages.push(fields(retryUsage.slice()));
   }
+  const names = [textAt(model, step ? 12 : 19), textAt(model, step ? 8 : 21)].map(modelName);
   return {
-    model: modelName(
-      textAt(model, step ? 12 : 19) || textAt(model, step ? 8 : 21),
-      numberAt(model, step ? 1 : 3),
-    ),
+    model:
+      names.find(isConcreteModel) ?? names.find((name) => name && !/^model[_-]/.test(name)) ?? "",
+    modelId:
+      numberAt(model, step ? 1 : 3) || (primaryUsage === undefined ? 0 : numberAt(primaryUsage, 1)),
     timestampMs: step
       ? (timestamp(nested(data, 8)) ?? timestamp(nested(data, 1)))
       : timestamp(nested(nested(data, 9), 4)),
@@ -157,11 +215,12 @@ function blob(value: unknown): Uint8Array {
 
 interface UsageCandidate {
   record: UsageRecord;
+  modelId: number;
+  modelQuality: number;
   keys: readonly string[];
   timestampQuality: number;
 }
 
-/** A conversation database whose usage tables are missing or undecodable. */
 class AntigravityDatabaseDecodeError extends Schema.TaggedError<AntigravityDatabaseDecodeError>()(
   "AntigravityDatabaseDecodeError",
   { path: Schema.String, cause: Schema.optional(Schema.Defect()) },
@@ -170,6 +229,10 @@ class AntigravityDatabaseDecodeError extends Schema.TaggedError<AntigravityDatab
     return `Antigravity usage could not be decoded from ${this.path}.`;
   }
 }
+
+/** Generation rows can hold megabytes of context; read one at a time to bound blocking statement.all(). */
+const GENERATION_PAGE_ROWS = 1;
+const STEP_PAGE_ROWS = 64;
 
 const readDatabase = Effect.fn("readDatabase")(function* (
   path: string,
@@ -192,43 +255,78 @@ const readDatabase = Effect.fn("readDatabase")(function* (
     if (!tables.has("gen_metadata") && !tables.has("steps")) {
       return yield* new AntigravityDatabaseDecodeError({ path });
     }
+    // Seek by rowid regardless of indexes; idx normally aliases rowid, but sort for layouts where it does not.
     const readMetadata = Effect.fnUntraced(function* (
       query: string,
-      column: string,
+      pageRows: number,
       step: boolean,
     ) {
       const entries: Array<{ idx: number; entry: Metadata }> = [];
-      for (const row of yield* sql.unsafe<Record<string, unknown>>(query)) {
-        const idx = row.idx;
-        if (typeof idx !== "number") {
-          return yield* new AntigravityDatabaseDecodeError({ path });
+      let after = -Infinity;
+      while (true) {
+        const rows = yield* sql
+          .unsafe<{
+            readonly row_id: number;
+            readonly idx: unknown;
+            readonly data: unknown;
+          }>(query, [after, pageRows])
+          .pipe(Effect.withTracerEnabled(false));
+        for (const row of rows) {
+          // Filter outside SQL to bound scans to one page, including rows without metadata.
+          if (step && row.data === null) continue;
+          const idx = row.idx;
+          if (typeof idx !== "number") {
+            return yield* new AntigravityDatabaseDecodeError({ path });
+          }
+          entries.push({ idx, entry: yield* decode(() => metadata(blob(row.data), step)) });
         }
-        entries.push({ idx, entry: yield* decode(() => metadata(blob(row[column]), step)) });
-        if (entries.length % 256 === 0) yield* Effect.yieldNow;
+        if (rows.length < pageRows) break;
+        after = rows[rows.length - 1]!.row_id;
+        yield* Effect.yieldNow;
       }
-      return entries;
+      return entries.sort((a, b) => a.idx - b.idx);
     });
     const generations = tables.has("gen_metadata")
-      ? yield* readMetadata("SELECT idx, data FROM gen_metadata ORDER BY idx", "data", false)
+      ? yield* readMetadata(
+          "SELECT rowid AS row_id, idx, data FROM gen_metadata WHERE rowid > ? ORDER BY rowid LIMIT ?",
+          GENERATION_PAGE_ROWS,
+          false,
+        )
       : [];
     let trajectoryTimestamp: number | null = null;
     if (tables.has("trajectory_metadata_blob")) {
       for (const row of yield* sql.unsafe<{ readonly data: unknown }>(
         "SELECT data FROM trajectory_metadata_blob",
       )) {
-        trajectoryTimestamp ??= yield* decode(() => timestamp(nested(fields(blob(row.data)), 2)));
+        trajectoryTimestamp ??= yield* decode(() =>
+          pipe(blob(row.data), fields, (message) => nested(message, 2), timestamp),
+        );
       }
     }
     const steps = tables.has("steps")
       ? yield* readMetadata(
-          "SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx",
-          "metadata",
+          "SELECT rowid AS row_id, idx, metadata AS data FROM steps WHERE rowid > ? ORDER BY rowid LIMIT ?",
+          STEP_PAGE_ROWS,
           true,
         )
       : [];
-    return yield* decode(() =>
-      usageCandidates(sessionId, generations, steps, trajectoryTimestamp, fallbackTimestamp),
-    );
+    return yield* decode(() => {
+      const models = new Map<number, string | null>();
+      for (const { entry } of [...generations, ...steps]) {
+        if (entry.modelId > 0 && isConcreteModel(entry.model))
+          rememberModel(models, entry.modelId, entry.model);
+      }
+      return {
+        candidates: usageCandidates(
+          sessionId,
+          generations,
+          steps,
+          trajectoryTimestamp,
+          fallbackTimestamp,
+        ),
+        models,
+      };
+    });
   }).pipe(sql.withTransaction);
 });
 
@@ -240,13 +338,23 @@ function usageCandidates(
   fallbackTimestamp: number,
 ): UsageCandidate[] {
   const records: UsageCandidate[] = [];
-  const generationModels = new Map(generations.map(({ idx, entry }) => [idx, entry.model]));
+  const generationModels = new Map(generations.map(({ idx, entry }) => [idx, entry]));
   for (const [source, entries] of [
     ["step", steps],
     ["generation", generations],
   ] as const) {
     for (const [index, { idx, entry }] of entries.entries()) {
       for (const [usageIndex, usage] of entry.usages.entries()) {
+        const modelId = numberAt(usage, 1) || entry.modelId;
+        const generation = source === "step" ? generationModels.get(idx) : undefined;
+        // A retry can use a different model than its enclosing generation or step.
+        const matches = (metadata: Metadata) => modelId === 0 || metadata.modelId === modelId;
+        const model =
+          matches(entry) && entry.model
+            ? entry.model
+            : generation && matches(generation)
+              ? generation.model
+              : "";
         const outputTokens = Math.max(numberAt(usage, 3), numberAt(usage, 9) + numberAt(usage, 10));
         const totals = {
           uncachedInputTokens: numberAt(usage, 2),
@@ -271,12 +379,7 @@ function usageCandidates(
           provider: "antigravity",
           sessionId,
           timestampMs: entry.timestampMs ?? trajectoryTimestamp ?? fallbackTimestamp,
-          model:
-            MODEL_IDS[numberAt(usage, 1)] ||
-            entry.model ||
-            (source === "step" ? generationModels.get(idx) : "") ||
-            modelName("", numberAt(usage, 1)) ||
-            "antigravity-unknown",
+          model,
           totals,
           reportedCostUsd: null,
           speed: "standard",
@@ -284,6 +387,8 @@ function usageCandidates(
         };
         records.push({
           record,
+          modelId,
+          modelQuality: isConcreteModel(model) ? 4 : model ? 1 : 0,
           keys,
           timestampQuality: entry.timestampMs !== null ? 2 : trajectoryTimestamp !== null ? 1 : 0,
         });
@@ -295,22 +400,12 @@ function usageCandidates(
 
 interface CachedDatabase {
   readonly fingerprint: string;
-  readonly candidates: readonly UsageCandidate[];
+  readonly data: Effect.Success<ReturnType<typeof readDatabase>>;
 }
 
-/**
- * Parsed databases keyed by canonical path. An entry is reused only while both
- * the database and its `-wal` sidecar keep the same size, mtime and ctime: new
- * rows land in the WAL without touching the main file until a checkpoint, and
- * ctime moves on any content write even when mtime is restored.
- */
+/** Fingerprint canonical DB/WAL paths by size, mtime and ctime; WAL holds new rows, and ctime catches restored mtimes. */
 export const makeAntigravityUsageCache = () => new Map<string, CachedDatabase>();
 
-/**
- * Reads and merges aliases across every configured Antigravity store before date
- * filtering. With a cache, databases unchanged since the previous read are not
- * decoded again.
- */
 export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* (
   conversationsDirectories: string | readonly string[],
   sinceMs: number,
@@ -324,6 +419,8 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
       : conversationsDirectories;
   const files: Array<{ root: string; path: string; records: UsageRecord[] }> = [];
   const errors: string[] = [];
+  const models = new Map<number, string | null>();
+  const pending: Array<{ data: CachedDatabase["data"]; fileIndex: number }> = [];
   const identities = new Map<string, number>();
   const groups: Array<
     UsageCandidate & { parent: number; size: number; owner: number; fileIndex: number }
@@ -346,6 +443,12 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
     const target = groups[a]!;
     const source = groups[b]!;
     const first = target.owner < source.owner ? target : source;
+    const bestModel =
+      source.modelQuality === target.modelQuality
+        ? first
+        : source.modelQuality > target.modelQuality
+          ? source
+          : target;
     const bestTime =
       source.timestampQuality > target.timestampQuality ||
       (source.timestampQuality === target.timestampQuality &&
@@ -356,12 +459,7 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
     const y = source.record.totals;
     target.record = {
       ...first.record,
-      model:
-        first.record.model === "antigravity-unknown"
-          ? first === target
-            ? source.record.model
-            : target.record.model
-          : first.record.model,
+      model: bestModel.record.model,
       timestampMs: bestTime.record.timestampMs,
       totals: {
         uncachedInputTokens: Math.max(x.uncachedInputTokens, y.uncachedInputTokens),
@@ -372,6 +470,7 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
       },
     };
     target.timestampQuality = bestTime.timestampQuality;
+    target.modelQuality = bestModel.modelQuality;
     target.owner = first.owner;
     target.fileIndex = first.fileIndex;
     target.size += source.size;
@@ -393,70 +492,95 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
     if (visited.has(canonical)) return null;
     visited.add(canonical);
     const fingerprintOf = (file: string) =>
-      Effect.tryPromise(() => NodeFSP.stat(file)).pipe(
+      Effect.tryPromise({
+        try: () => NodeFSP.stat(file),
+        catch: (cause) => new AntigravityDatabaseDecodeError({ path: file, cause }),
+      }).pipe(
         Effect.map((stat) => ({ stat, part: `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}` })),
       );
     const { stat, part } = yield* fingerprintOf(path);
     const wal = yield* fingerprintOf(`${path}-wal`).pipe(Effect.option);
     const fingerprint = `${part}/${wal._tag === "Some" ? wal.value.part : "-"}`;
     const cached = cache?.get(canonical);
-    if (cached?.fingerprint === fingerprint) return cached.candidates;
-    const candidates = yield* readDatabase(
-      path,
-      pathService.basename(path, ".db"),
-      stat.mtimeMs,
-    ).pipe(Effect.provide(NodeSqliteClient.layer({ filename: path, readonly: true })));
-    cache?.set(canonical, { fingerprint, candidates });
-    return candidates;
+    if (cached?.fingerprint === fingerprint) return cached.data;
+    const data = yield* readDatabase(path, pathService.basename(path, ".db"), stat.mtimeMs).pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: path, readonly: true })),
+    );
+    cache?.set(canonical, { fingerprint, data });
+    return data;
   });
-  const walk = (directory: string, root: string): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      const names = yield* fileSystem.readDirectory(directory).pipe(
-        Effect.catchTags({
-          PlatformError: (cause) => {
-            if (cause.reason._tag !== "NotFound") errors.push(directory);
-            return Effect.succeed(null);
-          },
-        }),
-      );
-      if (names === null) return;
-      names.sort((a, b) => a.localeCompare(b));
-      for (const name of names) {
-        const path = pathService.join(directory, name);
-        // Like a directory listing's entry types: symlinks are neither files nor directories.
-        const isLink = Exit.isSuccess(yield* Effect.exit(fileSystem.readLink(path)));
-        const type = isLink
-          ? "SymbolicLink"
-          : yield* fileSystem.stat(path).pipe(
-              Effect.map((info) => info.type),
-              Effect.orElseSucceed(() => null),
-            );
-        if (type === "Directory") {
-          yield* walk(path, root);
-        } else if ((type === "File" || type === null) && name.endsWith(".db")) {
-          const candidates = yield* readFile(path).pipe(
-            Effect.catch(() => {
-              errors.push(path);
-              return Effect.succeed(null);
-            }),
+  const walk = Effect.fn("antigravityUsageReader.walk")(function* (
+    directory: string,
+    root: string,
+  ): Effect.fn.Return<void> {
+    const names = yield* fileSystem.readDirectory(directory).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) => {
+          if (cause.reason._tag !== "NotFound") errors.push(directory);
+          return Effect.succeed(null);
+        },
+      }),
+    );
+    if (names === null) return;
+    names.sort((a, b) => a.localeCompare(b));
+    for (const name of names) {
+      const path = pathService.join(directory, name);
+      // Like a directory listing's entry types: symlinks are neither files nor directories.
+      const isLink = Exit.isSuccess(yield* Effect.exit(fileSystem.readLink(path)));
+      const type = isLink
+        ? "SymbolicLink"
+        : yield* fileSystem.stat(path).pipe(
+            Effect.map((info) => info.type),
+            Effect.orElseSucceed(() => null),
           );
-          if (candidates === null) continue;
-          const fileIndex = files.length;
-          files.push({ root, path, records: [] });
-          for (const [index, candidate] of candidates.entries()) {
-            append(candidate, fileIndex);
-            if (index % 256 === 255) yield* Effect.yieldNow;
-          }
+      if (type === "Directory") {
+        yield* walk(path, root);
+      } else if ((type === "File" || type === null) && name.endsWith(".db")) {
+        const data = yield* readFile(path).pipe(
+          Effect.catch(() => {
+            errors.push(path);
+            return Effect.succeed(null);
+          }),
+        );
+        if (data === null) continue;
+        for (const [id, model] of data.models) {
+          rememberModel(models, id, model);
         }
+        const fileIndex = files.length;
+        files.push({ root, path, records: [] });
+        pending.push({ data, fileIndex });
       }
-    });
+    }
+  });
   for (const root of roots) yield* walk(root, root);
   if (cache !== undefined) {
     for (const key of cache.keys()) if (!visited.has(key)) cache.delete(key);
   }
+  for (const { data, fileIndex } of pending) {
+    for (const [index, candidate] of data.candidates.entries()) {
+      const learned = models.get(candidate.modelId);
+      const fallback = learned === null ? undefined : MODEL_IDS[candidate.modelId];
+      const model =
+        (candidate.modelQuality === 4 ? candidate.record.model : "") ||
+        learned ||
+        fallback ||
+        candidate.record.model ||
+        (candidate.modelId > 0 ? `antigravity-model-${candidate.modelId}` : "antigravity-unknown");
+      append(
+        {
+          ...candidate,
+          record: { ...candidate.record, model },
+          modelQuality:
+            candidate.modelQuality === 4 ? 4 : learned ? 3 : fallback ? 2 : candidate.modelQuality,
+        },
+        fileIndex,
+      );
+      if (index % 256 === 255) yield* Effect.yieldNow;
+    }
+  }
   for (const [index, group] of groups.entries()) {
     if (group.parent === index && group.record.timestampMs >= sinceMs) {
-      files[group.fileIndex]!.records.push(group.record);
+      files[group.fileIndex]!.records.push(withRateModel(group.record));
     }
   }
   return { files, errors };

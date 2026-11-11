@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { type PanelAnimationDurationMs } from "@t3tools/contracts/settings";
 
 import { useMediaQuery } from "./hooks/useMediaQuery";
@@ -8,14 +8,11 @@ const PanelAnimationSuppressionContext = createContext(false);
 
 export const PanelAnimationSuppressionProvider = PanelAnimationSuppressionContext.Provider;
 
-/**
- * Suppresses panel motion for the first painted frame of an initial route or navigation.
- * State restored by a route must be visible immediately; later user actions can animate.
- */
 export function usePanelNavigationSuppression(navigationKey: string): boolean {
   const [paintedNavigationKey, setPaintedNavigationKey] = useState<string | null>(null);
   const suppressed = paintedNavigationKey !== navigationKey;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Wait two browser frames so the new route paints before panel animations are re-enabled; cancel the frames on change or unmount.
   useEffect(() => {
     if (!suppressed) return;
     let releaseFrame = 0;
@@ -41,7 +38,6 @@ export function usePanelAnimationSettings(): {
   return { active: durationMs > 0 && !prefersReducedMotion && !suppressed, durationMs };
 }
 
-/** Keeps closing panel content mounted until its opt-in transition ends. */
 export function usePanelPresence<T>(
   open: boolean,
   value: T | null,
@@ -50,30 +46,24 @@ export function usePanelPresence<T>(
   durationMs: PanelAnimationDurationMs,
 ): { present: boolean; value: T | null } {
   const [present, setPresent] = useState(open);
-  const retainedRef = useRef<{ scopeKey: string | null; value: T | null } | null>(
+  const [retained, setRetained] = useState<{ scopeKey: string | null; value: T | null } | null>(
     open ? { scopeKey, value } : null,
   );
+  if (open && (retained?.scopeKey !== scopeKey || retained.value !== value)) {
+    setRetained({ scopeKey, value });
+  }
 
+  if (open && !present) setPresent(true);
+  if (!open && !animated && present) setPresent(false);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the closing panel mounted for its CSS exit transition, then unmount it; the timer is cleared on reopen or unmount.
   useEffect(() => {
-    if (open) retainedRef.current = { scopeKey, value };
-  }, [open, scopeKey, value]);
-
-  useEffect(() => {
-    if (open) {
-      setPresent(true);
-      return;
-    }
-    if (!animated) {
-      setPresent(false);
-      return;
-    }
-
+    if (open || !animated) return;
     const timeout = window.setTimeout(() => setPresent(false), durationMs);
     return () => window.clearTimeout(timeout);
   }, [animated, durationMs, open]);
 
-  const retainedValue =
-    retainedRef.current?.scopeKey === scopeKey ? retainedRef.current.value : null;
-  const visible = open || (animated && present && retainedRef.current?.scopeKey === scopeKey);
+  const retainedValue = retained?.scopeKey === scopeKey ? retained.value : null;
+  const visible = open || (animated && present && retained?.scopeKey === scopeKey);
   return { present: visible, value: open ? value : visible ? retainedValue : null };
 }

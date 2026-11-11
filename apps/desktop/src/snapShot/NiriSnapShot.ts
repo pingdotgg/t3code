@@ -48,7 +48,6 @@ const isWindowChanged = Schema.is(WindowChanged);
 const isWindowClosed = Schema.is(WindowClosed);
 const isScreenshotCaptured = Schema.is(ScreenshotCaptured);
 
-/** A session hint, never a probe of another compositor or a sandbox escape. */
 export function niriSocketPath(env = process.env): string | undefined {
   if (env.FLATPAK_ID || env.SNAP) return undefined;
   if (!env.XDG_CURRENT_DESKTOP?.split(":").some((name) => name.toLowerCase() === "niri"))
@@ -56,7 +55,6 @@ export function niriSocketPath(env = process.env): string | undefined {
   return env.NIRI_SOCKET && NodePath.isAbsolute(env.NIRI_SOCKET) ? env.NIRI_SOCKET : undefined;
 }
 
-/** One bounded exchange or event subscription. All waiters end when the socket closes. */
 class NiriConnection {
   private readonly socket: NodeNet.Socket;
   private readonly listeners = new Set<(value: unknown) => void>();

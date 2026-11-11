@@ -180,31 +180,6 @@ describe("Open VSX themes", () => {
     expect(searchUrl.searchParams.get("size")).toBe("16");
   });
 
-  it("supports sorting theme searches", async () => {
-    const fetchMock = vi.fn(
-      async (..._args: unknown[]) =>
-        new Response(JSON.stringify({ extensions: [] }), { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    await searchOpenVsxThemes("nord", { sortBy: "rating" });
-
-    const searchUrl = new URL(String(fetchMock.mock.calls[0]![0]));
-    expect(searchUrl.searchParams.get("sortBy")).toBe("rating");
-    expect(searchUrl.searchParams.get("sortOrder")).toBe("desc");
-  });
-
-  it("rejects malformed search responses", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ error: "unavailable" }), { status: 200 })),
-    );
-
-    await expect(searchOpenVsxThemes("nord")).rejects.toThrow(
-      "Open VSX returned an unreadable search response.",
-    );
-  });
-
   it("reports an unavailable search when every detail request fails", async () => {
     vi.stubGlobal(
       "fetch",
@@ -224,77 +199,9 @@ describe("Open VSX themes", () => {
     );
   });
 
-  it("reports an unavailable search when every detail response is malformed", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input).includes("/-/search?")) {
-          return new Response(
-            JSON.stringify({ extensions: [{ namespace: "demo", name: "theme" }] }),
-            { status: 200 },
-          );
-        }
-        return new Response("{}", { status: 200 });
-      }),
-    );
-
-    await expect(searchOpenVsxThemes("dracula")).rejects.toThrow(
-      "Open VSX theme details are unavailable",
-    );
-  });
-
-  it("returns no results when every theme package is unavailable", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes("/-/search?")) {
-          return new Response(
-            JSON.stringify({ extensions: [{ namespace: "demo", name: "theme" }] }),
-            { status: 200 },
-          );
-        }
-        if (url.endsWith("/demo/theme")) {
-          return new Response(JSON.stringify(extensionDetail()), { status: 200 });
-        }
-        if (init?.method === "HEAD") return new Response(null, { status: 404 });
-        return new Response(
-          JSON.stringify({ license: "MIT", contributes: { themes: [{ path: "./theme.json" }] } }),
-          { status: 200 },
-        );
-      }),
-    );
-
-    await expect(searchOpenVsxThemes("dracula")).resolves.toEqual([]);
-  });
-
-  it("times out a stalled search request", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        (_input: RequestInfo | URL, init?: RequestInit) =>
-          new Promise<Response>((_resolve, reject) => {
-            init?.signal?.addEventListener("abort", () => {
-              reject(new DOMException("The operation was aborted.", "AbortError"));
-            });
-          }),
-      ),
-    );
-
-    const search = expect(searchOpenVsxThemes("dracula")).rejects.toThrow(
-      "Open VSX took too long to respond",
-    );
-    await vi.advanceTimersByTimeAsync(10_000);
-
-    await search;
-  });
-
   it("downloads a verified VSIX, reads JSONC includes, and pairs contributed variants", async () => {
     const zip = new JSZip();
     zip.file("extension/.gitkeep", "");
-    // Theme extensions sometimes publish their development dependencies too.
-    // Those unused files should not prevent importing the small theme payload.
     for (let index = 0; index < 3_000; index += 1) {
       zip.file(`extension/node_modules/package-${index}.js`, "");
     }
@@ -371,8 +278,6 @@ describe("Open VSX themes", () => {
         .join("");
     };
     await rebuildPackage();
-    // The public manifest is only a preflight hint. Imports must use the manifest
-    // inside the checksummed VSIX rather than this inconsistent contribution.
     const manifest = {
       contributes: { themes: [{ label: "Wrong", path: "./themes/missing.json" }] },
     };

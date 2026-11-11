@@ -14,12 +14,6 @@ class CatalogDependencyResolutionError extends Schema.TaggedError<CatalogDepende
   }
 }
 
-/**
- * Resolve `catalog:` dependency specs using the workspace catalog.
- *
- * Pure function: returns a new record with every `catalog:…` value replaced by
- * the concrete version string found in `catalog`. Throws on missing entries.
- */
 export function resolveCatalogDependencies(
   dependencies: Record<string, string>,
   catalog: Record<string, string>,
@@ -32,8 +26,6 @@ export function resolveCatalogDependencies(
       }
 
       const catalogKey = spec.slice("catalog:".length).trim();
-      // Overrides can include a parent selector and a version range. A bare
-      // `catalog:` looks up the final package name, keeping its scope intact.
       const selector = name.split(">").at(-1) ?? name;
       const versionIndex = selector.indexOf("@", 1);
       const packageName = versionIndex === -1 ? selector : selector.slice(0, versionIndex);

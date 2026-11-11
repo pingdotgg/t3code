@@ -1,7 +1,6 @@
 import { Quaternion, Vector3 } from "three";
 const y = new Vector3(0, 1, 0);
 
-/** Each useful view permits a small yaw. Pick the closest member of each family, then the closest family. */
 export function nearestDeviceView<T extends { rotation: Quaternion; yawLimit: number }>(
   rotation: Quaternion,
   snaps: readonly T[],

@@ -1,9 +1,14 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { FileTreeBatchOperation, FileTreeSortComparator, GitStatus } from "@pierre/trees";
+import type {
+  FileTreeBatchOperation,
+  FileTreeIconConfig,
+  FileTreeSortComparator,
+  GitStatus,
+} from "@pierre/trees";
 
 import { resolveFileDiffPath } from "~/lib/diffRendering";
+import { basenameOfPath, resolvePierreIconForEntry, T3_PIERRE_ICONS } from "~/pierre-icons";
 
-/** One changed file as the tree shows it: its current path and how it changed. */
 export interface DiffFileTreeEntry {
   readonly path: string;
   readonly status: GitStatus;
@@ -23,11 +28,6 @@ function toGitStatus(file: FileDiffMetadata): GitStatus {
   }
 }
 
-/**
- * Maps parsed diff files to tree entries, keeping the diff's own order. A path
- * appears once: a type change (regular file to symlink) is a deletion plus an
- * addition of the same path, and the tree shows the surviving file as modified.
- */
 export function diffFileTreeEntries(
   files: ReadonlyArray<FileDiffMetadata>,
 ): ReadonlyArray<DiffFileTreeEntry> {
@@ -41,10 +41,37 @@ export function diffFileTreeEntries(
   return [...statusByPath].map(([path, status]) => ({ path, status }));
 }
 
-/**
- * Every directory on the way to each file, registered with the trailing slash Pierre uses for
- * directory ids. Parents come before children so the tree can add them in order.
- */
+// Pierre cannot store a file and a directory at the same path. Give only those
+// files an invisible suffix, keeping real paths at the diff/viewer boundary.
+export function diffFileTreeModel(paths: ReadonlyArray<string>) {
+  const directories = new Set(collectDirectoryPaths(paths));
+  // Icon overrides match basenames case-insensitively, so aliases must also avoid
+  // real names in other directories, including names that already contain the suffix.
+  const occupiedNames = new Set(paths.flatMap((path) => path.toLowerCase().split("/")));
+  const selectionByModelPath = new Map<string, string>();
+  const modelBySelectionPath = new Map<string, string>();
+  const byFileName: FileTreeIconConfig["byFileName"] = { ...T3_PIERRE_ICONS.byFileName };
+  const modelPaths = paths.map((path) => {
+    if (!directories.has(`${path}/`)) return path;
+    let modelPath = path;
+    do {
+      modelPath += "\u200b";
+    } while (occupiedNames.has(basenameOfPath(modelPath).toLowerCase()));
+    occupiedNames.add(basenameOfPath(modelPath).toLowerCase());
+    selectionByModelPath.set(modelPath, path);
+    modelBySelectionPath.set(path, modelPath);
+    const icon = resolvePierreIconForEntry(path, "file");
+    if (icon !== null) byFileName[basenameOfPath(modelPath)] = icon;
+    return modelPath;
+  });
+  return {
+    paths: modelBySelectionPath.size === 0 ? paths : modelPaths,
+    selectionPath: (modelPath: string) => selectionByModelPath.get(modelPath) ?? modelPath,
+    modelPath: (path: string) => modelBySelectionPath.get(path) ?? path,
+    icons: modelBySelectionPath.size === 0 ? T3_PIERRE_ICONS : { ...T3_PIERRE_ICONS, byFileName },
+  };
+}
+
 export function collectDirectoryPaths(paths: ReadonlyArray<string>): ReadonlyArray<string> {
   const directories = new Set<string>();
   for (const path of paths) {
@@ -58,7 +85,6 @@ export function collectDirectoryPaths(paths: ReadonlyArray<string>): ReadonlyArr
   return [...directories];
 }
 
-/** A folder takes the position of its first file in the diff. */
 export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap<string, number> {
   const positions = new Map<string, number>();
   paths.forEach((path, index) => {
@@ -70,6 +96,36 @@ export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap
     }
   });
   return positions;
+}
+
+// A flat list in tree order: each directory stays contiguous, siblings ranked as
+// compareDiffFileTreeEntries ranks them, so the list never disagrees with the tree.
+export function orderDiffFilesLikeTree(
+  files: ReadonlyArray<FileDiffMetadata>,
+): ReadonlyArray<FileDiffMetadata> {
+  const paths = files.map(resolveFileDiffPath);
+  const positions = diffFileTreePositions(paths);
+  const keys = paths.map((path) => {
+    const key: number[] = [];
+    let directory = "";
+    for (const segment of path.split("/").slice(0, -1)) {
+      directory += `${segment}/`;
+      key.push(positions.get(directory)!);
+    }
+    key.push(positions.get(path)!);
+    return key;
+  });
+  return files
+    .map((file, index) => ({ file, key: keys[index]! }))
+    .toSorted((left, right) => {
+      const length = Math.min(left.key.length, right.key.length);
+      for (let index = 0; index < length; index++) {
+        const difference = left.key[index]! - right.key[index]!;
+        if (difference !== 0) return difference;
+      }
+      return left.key.length - right.key.length;
+    })
+    .map(({ file }) => file);
 }
 
 export function compareDiffFileTreeEntries(
@@ -90,14 +146,6 @@ function pathDepth(path: string): number {
   return path.split("/").filter(Boolean).length;
 }
 
-/**
- * The adds and removes that turn one set of file paths into another, so a diff that changes
- * under the reader (a new slice, a refresh after an agent edit) keeps the directories they
- * have already opened or closed instead of rebuilding the tree from scratch.
- *
- * Directories are removed only once no file needs them; a directory that gains its first file
- * is added before that file.
- */
 export function buildDiffFileTreeUpdates(
   previousPaths: ReadonlyArray<string>,
   nextPaths: ReadonlyArray<string>,
@@ -111,7 +159,6 @@ export function buildDiffFileTreeUpdates(
   for (const path of previousPaths) {
     if (!next.has(path)) updates.push({ type: "remove", path });
   }
-  // Deepest first: a directory can only go once everything under it has.
   const removedDirectories = [...previousDirectories]
     .filter((directory) => !nextDirectories.has(directory))
     .toSorted((left, right) => pathDepth(right) - pathDepth(left));
@@ -119,7 +166,6 @@ export function buildDiffFileTreeUpdates(
     updates.push({ type: "remove", path: directory, recursive: true });
   }
 
-  // Shallowest first: a file's directory has to exist before the file does.
   const addedDirectories = [...nextDirectories]
     .filter((directory) => !previousDirectories.has(directory))
     .toSorted((left, right) => pathDepth(left) - pathDepth(right));

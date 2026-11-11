@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { View } from "react-native";
 
-/** Shared leading column and text alignment for PR activity and commit rows. */
 export function PullRequestEntryRow({
   leading,
   children,

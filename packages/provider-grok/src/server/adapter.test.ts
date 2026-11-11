@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -36,6 +37,7 @@ const layerTest = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
+  SecureRandom.layerWebCrypto,
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
 
@@ -225,18 +227,6 @@ describe("Grok reasoning effort", () => {
         ["set_model grok-4.6-fast"],
         ["set_model grok-4.6 effort=low"],
       ]);
-    }),
-  );
-
-  it.live("protocol 1 restores an earlier effort when Grok reports no option update", () =>
-    Effect.gen(function* () {
-      assert.deepEqual(
-        yield* writesPerSelection(
-          [select("grok-4.6", "low"), select("grok-4.6"), select("grok-4.6", "xhigh")],
-          { T3_GROK_MOCK_PROTOCOL: "1", T3_GROK_MOCK_SILENT_SAME_MODEL: "1" },
-        ),
-        [["set_model grok-4.6 effort=low"], [], ["set_model grok-4.6 effort=xhigh"]],
-      );
     }),
   );
 

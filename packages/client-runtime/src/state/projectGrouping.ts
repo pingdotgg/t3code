@@ -78,7 +78,7 @@ export function derivePhysicalProjectKey(
   return derivePhysicalProjectKeyFromPath(project.environmentId, project.workspaceRoot);
 }
 
-export function deriveProjectGroupingOverrideKey(
+function deriveProjectGroupingOverrideKey(
   project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
 ): string {
   return derivePhysicalProjectKey(project);
@@ -90,7 +90,7 @@ export function getProjectOrderKey(
   return derivePhysicalProjectKey(project);
 }
 
-export function resolveProjectGroupingMode(
+function resolveProjectGroupingMode(
   project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
   settings: ProjectGroupingSettings,
 ): SidebarProjectGroupingMode {
@@ -126,7 +126,7 @@ function deriveRepositoryScopedKey(
     : `${canonicalKey}::${relativeProjectPath}`;
 }
 
-export function deriveLogicalProjectKey(
+function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
     "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
@@ -163,7 +163,6 @@ export function deriveLogicalProjectKeyFromSettings(
   });
 }
 
-/** Resolves a scratch filter selected before its environment config identified the project. */
 export function resolveScratchProjectScopeKey(
   key: string | null,
   projects: ReadonlyArray<
@@ -243,6 +242,17 @@ export interface ProjectGroup<TProject extends EnvironmentProject = EnvironmentP
   readonly representative: TProject;
   readonly members: ReadonlyArray<ProjectGroupMember<TProject>>;
   readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+  /** Clients write every member together. When members still disagree, the project stays visible. */
+  readonly pinned: boolean;
+  readonly archived: boolean;
+}
+
+/** The groups a project picker offers: archived groups left out, pinned ones first. */
+export function pickableProjectGroups<
+  TGroup extends { readonly pinned: boolean; readonly archived: boolean },
+>(groups: ReadonlyArray<TGroup>): TGroup[] {
+  const open = groups.filter((group) => !group.archived);
+  return [...open.filter((group) => group.pinned), ...open.filter((group) => !group.pinned)];
 }
 
 function projectFreshnessTime(project: EnvironmentProject): number {
@@ -285,19 +295,10 @@ function selectProjectIdentitySource<TProject extends EnvironmentProject>(
   return freshestIdentifiedProject ?? winner;
 }
 
-/**
- * Builds logical project groups without losing the physical projects that
- * remain the actual navigation and task-creation targets.
- *
- * Presentation-specific metadata, filtering, and activity sorting stay in
- * each client. Grouping modes, overrides, physical deduplication, labels, and
- * member preservation live here so web and mobile cannot drift.
- */
 export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   readonly projects: ReadonlyArray<TProject>;
   readonly settings: ProjectGroupingSettings;
   readonly preferredEnvironmentId?: EnvironmentId | null;
-  /** Filter equivalence does not change the default ownership of mutable project settings. */
   readonly groupScratchProjects?: boolean;
 }): ReadonlyArray<ProjectGroup<TProject>> {
   const projectsByPhysicalKey = new Map<string, TProject[]>();
@@ -373,14 +374,12 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       representative,
       members,
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
+      pinned: members.some((member) => member.project.pinnedAt != null),
+      archived: members.every((member) => member.project.archivedAt != null),
     };
   });
 }
 
-/**
- * Orders projects the way a sorted group list shows them: by the first group holding each
- * project. Projects in no group follow, and ties keep their incoming order.
- */
 export function sortProjectsByGroupOrder<
   TProject extends { readonly id: string; readonly environmentId: string },
 >(

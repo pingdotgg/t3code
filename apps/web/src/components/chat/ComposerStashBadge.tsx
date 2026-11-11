@@ -4,29 +4,23 @@ import { memo } from "react";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 
-/**
- * Bookmark tab that shows the stash count beside the composer's other attachments
- * and opens the stash menu.
- *
- * On save the badge gives one quiet acknowledgement: it lifts to full
- * opacity and the count ticks over. `pulseKey` changes per stash, remounting
- * the count so the transition replays without a continuous animation.
- */
 export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   count: number;
   menuOpen: boolean;
+  /** Bumped per stash; each new key replays the pulse. 0 means never pulsed. */
   pulseKey: number;
-  pulsing: boolean;
   onToggleMenu: () => void;
 }) {
   if (props.count === 0) return null;
+  const pulsed = props.pulseKey > 0;
   const count = (
     <ComposerBanner.Count
+      // Remounting the count per stash restarts its CSS pulse; no timer has to end it.
       key={props.pulseKey}
       className={cn(
-        props.pulsing
-          ? "text-primary transition-[opacity,translate] duration-180 ease-out starting:translate-y-0.5 starting:opacity-0 motion-reduce:transition-none"
-          : "text-muted-foreground",
+        "text-muted-foreground",
+        pulsed &&
+          "animate-stash-pulse-count transition-[opacity,translate] duration-180 ease-out starting:translate-y-0.5 starting:opacity-0 motion-reduce:transition-none",
       )}
     >
       {props.count}
@@ -48,9 +42,11 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
         className={cn(
           "transition-colors duration-200",
           props.menuOpen && "pointer-events-none",
-          props.menuOpen || props.pulsing
-            ? "text-foreground"
-            : "text-muted-foreground hover:text-foreground",
+          props.menuOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+          // The button keeps its identity (focus, hover) across stashes. Swapping between two
+          // identical keyframes restarts the row's animation instead.
+          pulsed &&
+            (props.pulseKey % 2 === 0 ? "animate-stash-pulse-row-alt" : "animate-stash-pulse-row"),
         )}
         onPointerDown={(event) => event.preventDefault()}
         onClick={props.onToggleMenu}

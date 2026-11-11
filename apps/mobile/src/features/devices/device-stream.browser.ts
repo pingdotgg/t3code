@@ -23,7 +23,6 @@ export function command(button: "home" | "back" | "appSwitcher" | "rotate") {
   else activeClient?.pressButton(button);
 }
 
-/** Bundled into the existing native WebView without React or Expo's web runtime. */
 export function start(configuration: DeviceStreamConfiguration) {
   stop();
   // oxlint-disable-next-line unicorn/require-post-message-target-origin -- The native WebView bridge takes one string.
@@ -131,24 +130,24 @@ export function start(configuration: DeviceStreamConfiguration) {
   const unauthorized = () => {
     if (activeClient === client) post({ type: "unauthorized" });
   };
-  const client = createDeviceStreamClient(
-    { ...configuration, preferMjpeg: platform === "ios" },
-    canvas,
-    {
-      onStatus: reportStatus,
-      onScreen: layout,
-      onMjpegFallback: () => {
-        canvas.style.display = "none";
-        image.style.display = "block";
-      },
-      onUnauthorized: unauthorized,
-      onInputConnected: (connected) => {
-        inputConnected = connected;
-        inputStatus.style.display = streaming && !connected ? "block" : "none";
-        post({ type: "input", connected });
-      },
+  const client = createDeviceStreamClient(configuration, canvas, {
+    onStatus: reportStatus,
+    onScreen: layout,
+    onMjpegFallback: () => {
+      canvas.style.display = "none";
+      image.style.display = "block";
     },
-  );
+    onCanvasVideo: () => {
+      image.style.display = "none";
+      canvas.style.display = "";
+    },
+    onUnauthorized: unauthorized,
+    onInputConnected: (connected) => {
+      inputConnected = connected;
+      inputStatus.style.display = streaming && !connected ? "block" : "none";
+      post({ type: "input", connected });
+    },
+  });
   activeClient = client;
   client.setMjpegImage(image);
   const touch = (event: PointerEvent, phase: "begin" | "move" | "end") => {

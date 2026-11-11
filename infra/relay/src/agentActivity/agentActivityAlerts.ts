@@ -11,9 +11,9 @@ export interface AgentActivityAlert {
   readonly body: string;
 }
 
-export const TERMINAL_NOTIFICATION_FRESHNESS_MS = 2 * 60 * 1_000;
+const TERMINAL_NOTIFICATION_FRESHNESS_MS = 2 * 60 * 1_000;
 
-export function isFreshTerminalNotification(updatedAt: string, nowMs: number): boolean {
+function isFreshTerminalNotification(updatedAt: string, nowMs: number): boolean {
   const timestamp = Option.getOrNull(DateTime.make(updatedAt));
   return (
     timestamp !== null && nowMs - timestamp.epochMilliseconds <= TERMINAL_NOTIFICATION_FRESHNESS_MS
@@ -30,11 +30,22 @@ function rowKey(row: RelayAgentActivityAggregateRow): string {
   return JSON.stringify([row.environmentId, row.threadId]);
 }
 
+export function rowPhasesChanged(
+  previousAggregate: RelayAgentActivityAggregateState,
+  nextAggregate: RelayAgentActivityAggregateState,
+): boolean {
+  if (previousAggregate.activities.length !== nextAggregate.activities.length) return true;
+  const previousPhases = new Map(
+    previousAggregate.activities.map((row) => [rowKey(row), row.phase]),
+  );
+  return nextAggregate.activities.some((row) => previousPhases.get(rowKey(row)) !== row.phase);
+}
+
 function isAttentionPhase(phase: string): boolean {
   return phase === "waiting_for_approval" || phase === "waiting_for_input";
 }
 
-export function alertAllowedForPhase(
+function alertAllowedForPhase(
   preferences: RelayAgentAwarenessPreferences | null,
   phase: string,
 ): boolean {
@@ -67,9 +78,7 @@ export function attentionTransitionRows(input: TransitionInput) {
   );
 }
 
-// Reconciliation uses only observed transitions. Event-driven delivery can
-// include fresh completions whose running update never reached the device.
-export function newlyTerminalRows(
+function newlyTerminalRows(
   previousAggregate: RelayAgentActivityAggregateState | null,
   nextAggregate: RelayAgentActivityAggregateState,
   includeUnobserved = false,

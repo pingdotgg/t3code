@@ -1,11 +1,32 @@
-import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScopedProjectRef,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
-} from "./logicalProject";
-import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
+} from "@t3tools/client-runtime/state/project-grouping";
 import type { Project } from "./types";
+
+export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
+  repository: "Group by repository",
+  repository_path: "Group by repository path",
+  separate: "Keep separate",
+};
+
+export function withProjectGroupingOverride(
+  overrides: Readonly<Record<string, SidebarProjectGroupingMode>> | undefined,
+  overrideKey: string,
+  selection: SidebarProjectGroupingMode | "inherit",
+): Record<string, SidebarProjectGroupingMode> {
+  const next = { ...overrides };
+  if (selection === "inherit") delete next[overrideKey];
+  else next[overrideKey] = selection;
+  return next;
+}
 
 export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
 
@@ -19,16 +40,13 @@ export interface SidebarProjectSnapshot extends Project {
   displayName: string;
   groupedProjectCount: number;
   environmentPresence: EnvironmentPresence;
-  // True iff every non-primary member of this group lives in a
-  // desktop-local environment. The sidebar uses this
-  // to differentiate "lives on this machine but in a sandbox" from
-  // "lives on a real remote" so the project header can pick a
-  // local-device treatment instead of the generic remote treatment.
   allRemoteMembersAreDesktopLocal: boolean;
   allRemoteMembersAreWsl: boolean;
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];
   remoteEnvironmentLabels: readonly string[];
+  pinned: boolean;
+  archived: boolean;
 }
 
 export function projectGroupsSpanEnvironments(
@@ -50,7 +68,6 @@ export interface SidebarProjectPickerEntry {
   isPreferred: boolean;
 }
 
-/** A merged filter still opens settings for the chosen physical project. */
 export function getSidebarProjectSettingsKey(
   group: SidebarProjectSnapshot,
   settings: ProjectGroupingSettings,
@@ -72,7 +89,6 @@ export function getSidebarProjectSettingsKey(
   );
 }
 
-/** Retains a saved physical scratch scope when its environment config coalesces the group. */
 export function resolveSidebarProjectScopeKey(input: {
   readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
   readonly key: string | null;
@@ -89,6 +105,17 @@ export function resolveSidebarProjectScopeKey(input: {
           candidate.projectKey,
     );
   return group?.projectKey ?? (input.canClearMissingScope ? null : input.key);
+}
+
+export function resolveSidebarProjectScopeKeys(input: {
+  readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly keys: ReadonlyArray<string>;
+  readonly settings?: ProjectGroupingSettings;
+  readonly canClearMissingScope?: boolean;
+}): string[] {
+  return [
+    ...new Set(input.keys.flatMap((key) => resolveSidebarProjectScopeKey({ ...input, key }) ?? [])),
+  ];
 }
 
 export function buildPhysicalToLogicalProjectKeyMap(input: {
@@ -116,10 +143,6 @@ export function buildSidebarProjectSnapshots(input: {
   groupScratchProjects?: boolean;
   primaryEnvironmentId: EnvironmentId | null;
   resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
-  // Returns true when an env id maps to a desktop-local saved-env
-  // record. Defaults to "false for every
-  // env" so callers that don't care about the distinction get the
-  // legacy behavior.
   isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
   isWslEnvironment?: (environmentId: EnvironmentId) => boolean;
 }): SidebarProjectSnapshot[] {
@@ -177,6 +200,8 @@ export function buildSidebarProjectSnapshots(input: {
       memberProjects: members,
       memberProjectRefs: group.memberProjectRefs,
       remoteEnvironmentLabels,
+      pinned: group.pinned,
+      archived: group.archived,
     };
   });
 }
@@ -214,12 +239,8 @@ export function buildSidebarProjectPickerEntries(input: {
 
     return [{ group, targetProject, isPreferred }];
   });
-  const preferredIndex = entries.findIndex((entry) => entry.isPreferred);
-  if (preferredIndex <= 0) return entries;
-
-  return [
-    entries[preferredIndex]!,
-    ...entries.slice(0, preferredIndex),
-    ...entries.slice(preferredIndex + 1),
-  ];
+  // The current project leads, even ahead of pinned projects.
+  const preferred = entries.find((entry) => entry.isPreferred);
+  if (!preferred) return entries;
+  return [preferred, ...entries.filter((entry) => entry !== preferred)];
 }

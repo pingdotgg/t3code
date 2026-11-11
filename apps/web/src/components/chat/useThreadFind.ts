@@ -1,98 +1,49 @@
 import type { InlineSkill } from "@t3tools/shared/inlineSkills";
-import type {
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2SearchThreadResult,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { OrchestrationV2SearchThreadResult, ScopedThreadRef } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { orchestrationEnvironment } from "~/state/orchestration";
+import { useThreadProjection } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
+import { type ThreadFindMatch, type ThreadFindStart, stepThreadFindIndex } from "./threadFind";
 import {
-  type ThreadFindPositionReader,
-  type ThreadFindStart,
-  stepThreadFindIndex,
-} from "./threadFind";
-import { subscribeThreadFindOpen } from "./threadFindActionBus";
-import { toastManager } from "../ui/toast";
+  CLOSED_THREAD_FIND,
+  closeThreadFind,
+  setThreadFindQuery,
+  useThreadFindOpen,
+  useThreadFindStore,
+  type ThreadFindLocalSelection,
+  type ThreadFindState,
+} from "./threadFindStore";
 
 const EMPTY_SKILLS: readonly InlineSkill[] = [];
 
-const CLOSED_FIND = {
-  threadKey: null as string | null,
-  query: "",
-  offset: 0,
-  start: undefined as ThreadFindStart | undefined,
-  focusRequestId: 0,
-  navigationId: 0,
-  requestId: 0,
-  localSelection: null as {
-    base: OrchestrationV2SearchThreadResult;
-    baseNavigationId: number;
-    activeIndex: number;
-    match: NonNullable<OrchestrationV2SearchThreadResult["match"]>;
-    navigationId: number;
-  } | null,
-};
-
-/** Owns find state for the active thread and its environment. */
 export function useThreadFind({
   thread,
   enabled,
   progressive = false,
   skills = EMPTY_SKILLS,
-  content,
 }: {
   thread: ScopedThreadRef | null;
   enabled: boolean;
   progressive?: boolean;
   skills?: readonly InlineSkill[];
-  content: Pick<OrchestrationV2ThreadProjection, "visibleTurnItems" | "runs"> | undefined;
 }) {
-  const findPositionReaderRef = useRef<ThreadFindPositionReader | null>(null);
+  // Read here rather than passed in: a streamed delta re-renders only the find
+  // provider, which refreshes open results from it.
+  const content = useThreadProjection(enabled ? thread : null)?.projection;
   const lastContentRef = useRef(content);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshAfterSearchRef = useRef(false);
   const threadKey = thread ? scopedThreadKey(thread) : null;
-  const [state, setState] = useState(CLOSED_FIND);
-  if (state.threadKey !== null && (!enabled || state.threadKey !== threadKey))
-    setState(CLOSED_FIND);
-  const isOpen = enabled && threadKey !== null && state.threadKey === threadKey;
-  const open = useCallback(() => {
-    if (threadKey === null) return;
-    if (!enabled) {
-      toastManager.add({
-        id: "thread-find-unavailable",
-        title: "Thread search is unavailable on this server.",
-        description: "Update the server to enable it.",
-      });
-      return;
-    }
-    const start =
-      state.threadKey === threadKey && state.query.trim()
-        ? findPositionReaderRef.current?.(state.query.trim())
-        : undefined;
-    setState((previous) => {
-      const current = previous.threadKey === threadKey ? previous : CLOSED_FIND;
-      return {
-        ...current,
-        threadKey,
-        focusRequestId: previous.focusRequestId + 1,
-        ...(current.query.trim()
-          ? {
-              start,
-              offset: 0,
-              localSelection: null,
-              navigationId: current.navigationId + 1,
-              requestId: current.navigationId + 1,
-            }
-          : {}),
-      };
-    });
-  }, [enabled, state.query, state.threadKey, threadKey]);
-  const close = useCallback(() => setState(CLOSED_FIND), []);
-  useEffect(() => subscribeThreadFindOpen(open), [open]);
+  const isOpen = useThreadFindOpen(thread, enabled);
+  const stored = useThreadFindStore();
+  const state = isOpen ? stored : CLOSED_THREAD_FIND;
+  const setState = (update: (previous: ThreadFindState) => Partial<ThreadFindState>) =>
+    useThreadFindStore.setState((previous) =>
+      previous.threadKey === threadKey ? update(previous) : previous,
+    );
 
   const remote = useServerResults(
     isOpen ? thread : null,
@@ -119,16 +70,28 @@ export function useThreadFind({
   const entryId = selectedMatch?.entryId;
   const runId = selectedMatch?.runId;
   const occurrence = selectedMatch?.occurrence;
-  // Finishing the count must not rerender the timeline or request another jump.
-  const match = useMemo(
-    () =>
+  const counting = remote.data?.complete === false;
+  const navigationId = localSelection?.navigationId ?? remote.navigationId;
+  const findExpanded = isOpen && state.query.trim().length > 0;
+  const findQuery = isOpen && remote.data?.match ? state.query : "";
+  const nextTimeline: TimelineFields = {
+    findOpen: isOpen,
+    findExpanded,
+    findQuery,
+    activeFindMatch:
       entryId !== undefined && occurrence !== undefined
         ? { entryId, runId: runId ?? null, occurrence }
         : null,
-    [entryId, runId, occurrence],
-  );
-  const counting = remote.data?.complete === false;
-  const navigationId = localSelection?.navigationId ?? remote.navigationId;
+    findNavigationId: navigationId,
+  };
+  // Keep timeline identity stable during count and response updates to avoid extra jumps.
+  const [storedTimeline, setTimeline] = useState(nextTimeline);
+  let timeline = storedTimeline;
+  if (!sameTimeline(timeline, nextTimeline)) {
+    timeline = nextTimeline;
+    setTimeline(timeline);
+  }
+  const match = timeline.activeFindMatch;
   const step = (delta: number) => {
     if (count === 0 || counting) return;
     setState((previous) => {
@@ -187,54 +150,53 @@ export function useThreadFind({
     });
   };
 
-  // Refresh at most once per 300 ms, even while tokens continue arriving.
-  // An identity anchor keeps newly inserted matches from shifting the selection.
-  const refreshLiveResultsRef = useRef(() => {});
-  useLayoutEffect(() => {
-    refreshLiveResultsRef.current = () => {
-      if (!isOpen || !state.query.trim()) return;
-      // Paging can change client content while the server is still counting.
-      // Coalesce those updates instead of repeatedly restarting the scan.
-      if (progressive && remote.isPending) {
-        refreshAfterSearchRef.current = true;
-        return;
-      }
-      if (!match || state.navigationId !== navigationId) {
-        remote.refresh();
-        return;
-      }
-      const start = { entryId: match.entryId, occurrence: match.occurrence };
-      if (
-        state.offset === 0 &&
-        state.start?.entryId === start.entryId &&
-        state.start.occurrence === start.occurrence &&
-        state.requestId === state.navigationId
-      ) {
-        remote.refresh();
-      } else {
-        setState((previous) => ({
-          ...previous,
-          start,
-          offset: 0,
-          requestId: previous.navigationId,
-        }));
-      }
-    };
+  // Runs from the refresh timer and after a coalesced search settles, against
+  // the results and selection showing by then.
+  const refreshLiveResults = useEffectEvent(() => {
+    if (!isOpen || !state.query.trim()) return;
+    // Coalesce paging updates while the server counts to avoid restarting scans.
+    if (progressive && remote.isPending) {
+      refreshAfterSearchRef.current = true;
+      return;
+    }
+    if (!match || state.navigationId !== navigationId) {
+      remote.refresh();
+      return;
+    }
+    const start = { entryId: match.entryId, occurrence: match.occurrence };
+    if (
+      state.offset === 0 &&
+      state.start?.entryId === start.entryId &&
+      state.start.occurrence === start.occurrence &&
+      state.requestId === state.navigationId
+    ) {
+      remote.refresh();
+    } else {
+      setState((previous) => ({
+        ...previous,
+        start,
+        offset: 0,
+        requestId: previous.navigationId,
+      }));
+    }
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reruns a live refresh that was coalesced behind a server search once that search settles
   useEffect(() => {
     if (!refreshAfterSearchRef.current || remote.isPending) return;
     refreshAfterSearchRef.current = false;
-    if (!remote.error) refreshLiveResultsRef.current();
+    if (!remote.error) refreshLiveResults();
   }, [remote.isPending, remote.error]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a debounce timer to refresh find results when streamed thread content changes
   useEffect(() => {
     if (lastContentRef.current === content) return;
     lastContentRef.current = content;
     if (!isOpen || !state.query.trim() || refreshTimerRef.current !== null) return;
     refreshTimerRef.current = setTimeout(() => {
       refreshTimerRef.current = null;
-      refreshLiveResultsRef.current();
+      refreshLiveResults();
     }, 300);
   }, [content, isOpen, state.query]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending refresh timer when the thread, open state or query changes
   useEffect(() => {
     if (!isOpen || threadKey === null || !state.query.trim()) return;
     return () => {
@@ -244,25 +206,7 @@ export function useThreadFind({
     };
   }, [threadKey, isOpen, state.query]);
 
-  const findExpanded = isOpen && state.query.trim().length > 0;
-  const findQuery = isOpen && remote.data?.match ? state.query : "";
-  const timelineProps = useMemo(
-    () => ({
-      findOpen: isOpen,
-      // Keep folds open between keystrokes while the next result loads.
-      findExpanded,
-      findPositionReaderRef,
-      findQuery,
-      activeFindMatch: match,
-      findNavigationId: navigationId,
-    }),
-    [isOpen, findExpanded, findQuery, match, navigationId],
-  );
-
   return {
-    isOpen,
-    open,
-    close,
     barProps: {
       open: isOpen,
       query: state.query,
@@ -273,28 +217,42 @@ export function useThreadFind({
       focusRequestId: state.focusRequestId,
       onRetry: remote.refresh,
       onQueryChange: (query: string) => {
-        const start = findPositionReaderRef.current?.(query.trim());
-        setState((previous) => ({
-          ...previous,
-          query,
-          offset: 0,
-          start,
-          localSelection: null,
-          navigationId: previous.navigationId + 1,
-          requestId: previous.navigationId + 1,
-        }));
+        if (threadKey !== null) setThreadFindQuery(threadKey, query);
       },
       onNext: () => step(1),
       onPrevious: () => step(-1),
-      onClose: close,
+      onClose: closeThreadFind,
     },
-    timelineProps,
+    timelineProps: timeline,
   };
 }
 
-/** A response for an older anchor can update counts without undoing newer local steps. */
+export interface TimelineFields {
+  readonly findOpen: boolean;
+  readonly findExpanded: boolean;
+  readonly findQuery: string;
+  readonly activeFindMatch: ThreadFindMatch | null;
+  readonly findNavigationId: number;
+}
+
+function sameTimeline(a: TimelineFields, b: TimelineFields) {
+  const aMatch = a.activeFindMatch;
+  const bMatch = b.activeFindMatch;
+  return (
+    a.findOpen === b.findOpen &&
+    a.findExpanded === b.findExpanded &&
+    a.findQuery === b.findQuery &&
+    a.findNavigationId === b.findNavigationId &&
+    (aMatch === null || bMatch === null
+      ? aMatch === bMatch
+      : aMatch.entryId === bMatch.entryId &&
+        aMatch.runId === bMatch.runId &&
+        aMatch.occurrence === bMatch.occurrence)
+  );
+}
+
 function rebaseLocalSelection(
-  selection: typeof CLOSED_FIND.localSelection,
+  selection: ThreadFindLocalSelection | null,
   data: OrchestrationV2SearchThreadResult | null,
   navigationId: number,
 ) {
@@ -307,7 +265,6 @@ function rebaseLocalSelection(
   return activeIndex === selection.activeIndex ? selection : { ...selection, activeIndex };
 }
 
-/** Query atoms cancel obsolete requests; navigation retains only the current query's result. */
 function useServerResults(
   thread: ScopedThreadRef | null,
   query: string,
@@ -317,41 +274,34 @@ function useServerResults(
   skills: readonly InlineSkill[],
   progressive: boolean,
 ) {
-  const skillLabels = useMemo(
-    () => skills.map(({ name, displayName }) => ({ name, displayName })),
-    [skills],
-  );
+  const skillLabels = skills.map(({ name, displayName }) => ({ name, displayName }));
   const normalizedQuery = query.trim();
   const debouncedQuery = useDebouncedValue(normalizedQuery, 100);
   const environmentId = thread?.environmentId;
   const threadId = thread?.threadId;
-  const atom = useMemo(
-    () =>
-      environmentId && threadId && debouncedQuery && normalizedQuery === debouncedQuery
-        ? (progressive
-            ? orchestrationEnvironment.threadFindProgressive
-            : orchestrationEnvironment.threadFind)({
-            environmentId,
-            input: {
-              threadId,
-              query: debouncedQuery,
-              ...(start ? { start } : {}),
-              ...(offset !== 0 ? { offset } : {}),
-              skills: skillLabels,
-            },
-          })
-        : null,
-    [
-      environmentId,
-      threadId,
-      debouncedQuery,
-      normalizedQuery,
-      start,
-      offset,
-      skillLabels,
-      progressive,
-    ],
-  );
+  const target =
+    environmentId && threadId && debouncedQuery && normalizedQuery === debouncedQuery
+      ? {
+          environmentId,
+          input: {
+            threadId,
+            query: debouncedQuery,
+            ...(start ? { start } : {}),
+            ...(offset !== 0 ? { offset } : {}),
+            skills: skillLabels,
+          },
+        }
+      : null;
+  const targetKey = target ? JSON.stringify([progressive, target]) : null;
+  const [storedAtom, setStoredAtom] = useState(() => ({
+    key: targetKey,
+    atom: resolveThreadFindAtom(target, progressive),
+  }));
+  let atom = storedAtom.atom;
+  if (storedAtom.key !== targetKey) {
+    atom = resolveThreadFindAtom(target, progressive);
+    setStoredAtom({ key: targetKey, atom });
+  }
   const result = useEnvironmentQuery(atom);
   const key = thread
     ? JSON.stringify([thread.environmentId, thread.threadId, normalizedQuery, skillLabels])
@@ -383,4 +333,14 @@ function useServerResults(
       normalizedQuery.length > 0 &&
       (normalizedQuery !== debouncedQuery || result.isPending),
   };
+}
+
+function resolveThreadFindAtom(
+  target: Parameters<typeof orchestrationEnvironment.threadFind>[0] | null,
+  progressive: boolean,
+) {
+  if (!target) return null;
+  return progressive
+    ? orchestrationEnvironment.threadFindProgressive(target)
+    : orchestrationEnvironment.threadFind(target);
 }

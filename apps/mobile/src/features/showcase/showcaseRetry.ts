@@ -30,7 +30,6 @@ async function runAttemptWithTimeout(
   }
 }
 
-/** Retry transient showcase setup work until it succeeds or the owning effect unmounts. */
 export async function retryShowcaseOperation(
   operation: () => Promise<boolean>,
   options: ShowcaseRetryOptions,

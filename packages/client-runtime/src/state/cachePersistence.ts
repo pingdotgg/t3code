@@ -2,7 +2,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 
-// The sliding queue keeps only the latest pending snapshot while writes cool down.
 // Do not debounce upstream: its consumer can retain an older snapshot during a save.
 export const runCachePersistence = Effect.fn("runCachePersistence")(function* <A, E, R>(
   queue: Queue.Queue<A>,

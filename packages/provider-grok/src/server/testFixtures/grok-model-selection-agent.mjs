@@ -1,17 +1,13 @@
-// Grok's model and reasoning-effort wire contract (grok 1.0.41 transcripts):
-// per-model efforts on `models`, a `thought_level` config option named
-// `reasoning_effort`, and a `config_option_update` after `session/set_model`.
-// T3_GROK_MOCK_PROTOCOL picks the negotiated protocol (default 1).
-// T3_GROK_MOCK_REJECT_EFFORT names an advertised effort Grok refuses to set.
-// T3_GROK_MOCK_SILENT_SAME_MODEL=1 skips `config_option_update` after a
-// same-model `session/set_model`, which no recording shows Grok sending.
+// Grok's model and effort wire contract (grok 1.0.41): per-model efforts on `models`, a
+// `thought_level` option `reasoning_effort`, and `config_option_update` after set_model.
+// T3_GROK_MOCK_PROTOCOL picks the protocol (default 1); T3_GROK_MOCK_REJECT_EFFORT names
+// an advertised effort Grok refuses.
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
 
 const sessionId = "grok-model-selection-session";
 const protocolVersion = Number(process.env.T3_GROK_MOCK_PROTOCOL ?? "1");
 const rejectedEffort = process.env.T3_GROK_MOCK_REJECT_EFFORT;
-const silentSameModel = process.env.T3_GROK_MOCK_SILENT_SAME_MODEL === "1";
 const models = {
   "grok-4.6": { efforts: ["xhigh", "high", "medium", "low"], defaultEffort: "xhigh" },
   "grok-4.6-fast": { efforts: ["high", "low"], defaultEffort: "high" },
@@ -83,14 +79,12 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
       };
       break;
     case "session/set_model": {
-      const sameModel = request.params.modelId === currentModelId;
       const error = switchTo(request.params.modelId, request.params._meta?.reasoningEffort);
       if (error !== undefined) {
         fail(error);
         continue;
       }
       write({ jsonrpc: "2.0", id: request.id, result: {} });
-      if (silentSameModel && sameModel) continue;
       write({
         jsonrpc: "2.0",
         method: "session/update",

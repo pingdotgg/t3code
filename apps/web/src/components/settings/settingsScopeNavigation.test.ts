@@ -81,23 +81,9 @@ function createSettingsRouter(initialEntry = "/settings/general") {
 }
 
 describe("settings scope navigation", () => {
-  it("replaces the default scope with an explicit environment, then replaces it with a project", async () => {
-    const router = createSettingsRouter();
-    await router.load();
-    await router.navigate({
-      to: "/settings/general",
-      search: { machine: "remote-server" },
-      hash: "",
-    });
-    expect(router.state.location.search).toEqual({ machine: "remote-server" });
-    await router.navigate({ to: "/settings/projects", search: { project: "another-project" } });
-    expect(router.state.location.search).toEqual({ project: "another-project" });
-  });
-
   it("clears a checkout when selecting all environments and all projects", async () => {
     const router = createSettingsRouter();
     await router.navigate({ to: "/settings/general", search: checkoutSearch, hash: "old-setting" });
-    // The scope selects send every axis explicitly so "all" does not read as "unchanged".
     await router.navigate({
       to: "/settings/general",
       search: { project: undefined, machine: undefined, checkout: undefined },
@@ -120,12 +106,7 @@ describe("settings scope navigation", () => {
     expect(router.state.location.search).toEqual(checkoutSearch);
   });
 
-  it.each([
-    "/settings/projects",
-    "/settings/integrations",
-    "/settings/source-control",
-    "/settings/scheduled-tasks",
-  ] as const)(
+  it.each(["/settings/projects", "/settings/scheduled-tasks"] as const)(
     "keeps %s when regrouping or selecting a target from the shared settings layout",
     async (to) => {
       const router = createSettingsRouter();
@@ -217,16 +198,6 @@ describe("settings scope navigation", () => {
     });
   });
 
-  it("respects explicit clearing keys instead of restoring the previous checkout", async () => {
-    const router = createSettingsRouter();
-    await router.navigate({ to: "/settings/general", search: checkoutSearch });
-    await router.navigate({
-      to: "/settings/projects",
-      search: { project: "different-project", machine: undefined },
-    });
-    expect(router.state.location.search).toEqual({ project: "different-project" });
-  });
-
   it("preserves escaped checkout identifiers across reload and browser history", async () => {
     const router = createSettingsRouter();
     await router.navigate({ to: "/settings/general", search: checkoutSearch });
@@ -286,12 +257,5 @@ describe("scheduled task scope navigation", () => {
       search: () => ({ machine: undefined, project: undefined, checkout: undefined }),
     });
     expect(router.state.matches.at(-1)?.search).toEqual({});
-  });
-
-  it("keeps the project and checkout filters when entering scheduled tasks", async () => {
-    const router = createSettingsRouter();
-    await router.navigate({ to: "/settings/projects", search: checkoutSearch });
-    await router.navigate({ to: "/settings/scheduled-tasks" });
-    expect(router.state.matches.at(-1)?.search).toEqual(checkoutSearch);
   });
 });

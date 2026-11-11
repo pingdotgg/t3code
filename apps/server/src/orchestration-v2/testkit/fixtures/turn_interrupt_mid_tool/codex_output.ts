@@ -122,8 +122,6 @@ export function assertTurnInterruptMidToolCodexOutput(
   assert.isDefined(commandItem);
   assert.isDefined(interruptRequest);
   assert.isDefined(interruptResult);
-  // Interrupted Codex turns must terminalize mid-flight commandExecution items so
-  // the projected card is never left running forever after turn.terminal.
   assert.equal(commandItem.status, "interrupted");
   assert.isNotNull(commandItem.completedAt);
   assert.include(commandItem.input, "node -e");

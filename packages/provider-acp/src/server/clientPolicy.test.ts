@@ -90,7 +90,6 @@ describe("acpPermissionDisposition", () => {
   });
 
   it("auto-accept-edits approves file changes without locations and asks for the rest", () => {
-    // ACP permission requests need not carry locations.
     const autoAcceptEdits: AcpRuntimePolicy = { runtimeMode: "auto-accept-edits", cwd };
     for (const kind of ["edit", "delete", "move"] as const) {
       assert.equal(acpPermissionDisposition(autoAcceptEdits, permissionRequest(kind)), "allow");

@@ -1,9 +1,4 @@
-/**
- * Tracks app-initiated OS-surface handoffs (image picker, auth tab, share
- * sheet). Android reports the app as backgrounded while one of these covers
- * the activity, so background-triggered work — like a deferred app update
- * restart — has to wait them out instead of tearing down the mid-flow runtime.
- */
+/** Android handoffs report background; deferred work must wait to avoid tearing down active flows. */
 let activeHandoffs = 0;
 
 /** Returns an idempotent end function; call it when the handoff resolves. */

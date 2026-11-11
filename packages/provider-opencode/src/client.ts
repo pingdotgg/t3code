@@ -1,9 +1,3 @@
-/**
- * OpenCode's client definition: settings form, label, and glyph.
- * Browser- and React Native-safe.
- *
- * @module provider-opencode/client
- */
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { defineProviderClient } from "@t3tools/provider-core/client";
 
@@ -12,6 +6,7 @@ import { OpenCodeSettings } from "./settings.ts";
 export const openCodeClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("opencode"),
   label: "OpenCode",
+  acpRegistryAgentIds: ["opencode", "opencode-v2"],
   settingsSchema: OpenCodeSettings,
   icon: {
     viewBox: "0 0 32 40",

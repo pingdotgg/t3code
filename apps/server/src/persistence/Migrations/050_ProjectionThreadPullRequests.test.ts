@@ -142,7 +142,6 @@ layer("050_ProjectionThreadPullRequests", (it) => {
         },
       ]);
 
-      // The legacy column stays so a rollback keeps its data.
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_threads)
       `;

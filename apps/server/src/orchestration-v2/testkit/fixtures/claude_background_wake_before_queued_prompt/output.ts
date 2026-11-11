@@ -21,9 +21,7 @@ function frameField(frame: unknown, key: string): unknown {
   return typeof frame === "object" && frame !== null ? Reflect.get(frame, key) : undefined;
 }
 
-// The recording itself shows the ordering this fixture guards: the CLI ran a
-// wake turn between the resume prompt's offer and that prompt's own turn, and
-// only the prompt's turn echoed its uuid.
+// A CLI wake can precede the offered prompt's turn; only the latter echoes its uuid.
 function assertRecordedWakeBeforePrompt(transcript: ProviderReplayTranscript) {
   const resumeOfferIndex = transcript.entries.findIndex(
     (entry) => entry.type === "expect_outbound" && entry.label === "prompt.offer:3",
@@ -60,8 +58,6 @@ function repliesByMessage(projection: OrchestrationV2ThreadProjection) {
   });
 }
 
-// A wake turn that Claude runs before a queued prompt belongs to a
-// continuation run; the prompt's run shows only the prompt's own reply.
 export function assertClaudeBackgroundWakeBeforeQueuedPromptOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -81,8 +77,6 @@ export function assertClaudeBackgroundWakeBeforeQueuedPromptOutput(
   const continuationReplies = runs.filter((run) => !run.fromUser).flatMap((run) => run.replies);
   assert.sameMembers(continuationReplies, ["A_REPORTED", STOP_WAKE_REPLY]);
   assert.isTrue(projection.runs.every((run) => run.status === "completed"));
-  // TaskStop ended Agent B and its Bash together; the stop wake names both,
-  // and mixed kinds report as generic background work.
   assert.deepEqual(
     backgroundNotifications(projection).map(({ summary, source }) => [summary, source.kind]),
     [

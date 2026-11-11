@@ -2,7 +2,6 @@ import { defineRule, type ESTree } from "@oxlint/plugins";
 
 const MESSAGE = "Catch known tags with `Effect.catchTags({ Tag: handler })`, even for one tag.";
 
-/** Reports `Effect.catchTag`, through any namespace import of `effect/Effect` or a named import. */
 export default defineRule({
   meta: {
     type: "suggestion",
@@ -11,7 +10,6 @@ export default defineRule({
     },
   },
   create(context) {
-    // Whether `identifier` is bound by `import * as X from "effect/Effect"`, not a shadowing local.
     const isEffectNamespace = (identifier: ESTree.IdentifierReference) => {
       let scope = context.sourceCode.getScope(identifier);
       while (true) {

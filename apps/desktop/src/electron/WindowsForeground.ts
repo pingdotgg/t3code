@@ -14,7 +14,6 @@ export interface WindowsForegroundApi {
     | { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
     | undefined;
   readonly getProcessImagePath: (processId: number) => string;
-  /** High bit of `GetAsyncKeyState`: whether the virtual key is currently down. */
   readonly isKeyDown: (virtualKey: number) => boolean;
   readonly attachThreadInput: (
     sourceThreadId: number,
@@ -55,7 +54,7 @@ export function activateWindowsForegroundWithApi(
   }
 }
 
-export function isWindowsShellHostedForegroundWithApi(api: WindowsForegroundApi): boolean {
+function isWindowsShellHostedForegroundWithApi(api: WindowsForegroundApi): boolean {
   const foregroundWindow = api.getForegroundWindow();
   return (
     foregroundWindow !== 0n &&

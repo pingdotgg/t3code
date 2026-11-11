@@ -1,4 +1,3 @@
-/** Keep hit testing in the original layout while rows make room for the lifted item. */
 export function threadDragGapOffset(
   rowOffset: number,
   sourceOffset: number,

@@ -1,17 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - a one-off maintenance script with no
 // Effect runtime; it only spawns vitest and reads and writes two files.
-// Run with: node apps/server/scripts/update-test-shard-weights.ts
-// Runs the whole server suite once and records how long each test file takes,
-// so CI can split the suite into shards of equal duration. See
-// src/testUtils/weightedShardSequencer.ts. Rerun it when a shard in CI runs
-// much longer than the others.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-// Files faster than this are all treated alike, which keeps the weights file short.
 const MIN_RECORDED_SECONDS = 0.5;
 
 interface VitestJsonReport {
@@ -27,8 +21,7 @@ const weightsPath = NodePath.join(serverDir, "src/testUtils/shardWeights.json");
 const reportDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-server-test-report-"));
 const reportPath = NodePath.join(reportDir, "report.json");
 
-// `node --run` puts the package's own `vp` on PATH, on every platform. Failing
-// tests still report their duration, so the exit code is not checked.
+// `node --run` finds the package's vp; failed tests still report durations, so ignore exit status.
 NodeChildProcess.spawnSync(
   process.execPath,
   ["--run", "test", "--", "--reporter=json", `--outputFile=${reportPath}`],

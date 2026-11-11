@@ -1,5 +1,5 @@
 import { fileBasename } from "@t3tools/shared/path";
-import { formatFilePathPosition } from "@t3tools/shared/fileLinks";
+import { fileLinkLabel } from "@t3tools/shared/fileLinks";
 import {
   inlineCodeFilePathCandidate,
   normalizeMarkdownLinkDestination,
@@ -33,18 +33,6 @@ export type MarkdownLinkPresentation =
     };
 
 export type MarkdownFileIcon = keyof typeof MARKDOWN_FILE_ICON_SOURCES;
-
-export type MarkdownLinkIcon = "github";
-
-/**
- * Sites whose brand mark replaces the generic external-link glyph. The marks
- * are monochrome and tinted with the link color, so they follow the theme.
- */
-export function resolveMarkdownLinkIcon(host: string): MarkdownLinkIcon | null {
-  const hostname = host.toLowerCase();
-  if (hostname === "github.com" || hostname.endsWith(".github.com")) return "github";
-  return null;
-}
 
 const FILE_ICON_BY_NAME: Readonly<Record<string, MarkdownFileIcon>> = {
   ".babelrc": "babel",
@@ -275,9 +263,7 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
         host: parsed.hostname,
       };
     }
-  } catch {
-    // Relative paths and non-URL link destinations are handled below.
-  }
+  } catch {}
 
   const target = parseMarkdownFileLink(normalized);
   if (target) {
@@ -285,7 +271,7 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
       kind: "file",
       href: normalized,
       icon: resolveMarkdownFileIcon(target.path),
-      label: fileBasename(formatFilePathPosition(target)),
+      label: fileLinkLabel(target, new Map()),
       path: target.path,
       ...(target.line ? { line: target.line } : {}),
       ...(target.column ? { column: target.column } : {}),
@@ -294,7 +280,6 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
 
   return {
     kind: "link",
-    // A thread link keeps its href so a press reaches the feed, which opens the thread.
     href:
       /^(?:mailto|tel):/i.test(normalized) || parseThreadLinkHref(normalized) !== null
         ? normalized
@@ -302,7 +287,6 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
   };
 }
 
-/** Backticks become file references only when the shared path heuristic recognizes the whole span. */
 export function resolveMarkdownInlineCodePresentation(
   content: string,
 ): Extract<MarkdownLinkPresentation, { readonly kind: "file" }> | null {

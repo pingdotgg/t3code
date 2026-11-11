@@ -1,12 +1,7 @@
 name: Mobile Android APK
 
-# Publishes the newest nightly-compatible Android build as a sideloadable APK
-# on the rolling "android-nightly" prerelease, for nightly users who can't join
-# the Play testing group. Play re-signs uploaded bundles with the app signing
-# key, so its universal APK matches the Play Store install and needs no signing
-# secrets here. EAS submits asynchronously (--no-wait), so this polls Play
-# instead of chaining off mobile-eas-production.yml; runs with nothing new exit
-# early.
+# Checks closed testing hourly. Each new beta gets one versioned prerelease.
+# Unchanged checks publish nothing.
 on:
   schedule:
     # Avoid minute zero, when GitHub scheduled jobs are busiest.
@@ -19,18 +14,14 @@ concurrency:
 
 jobs:
   mirror:
-    name: Mirror Play APK
+    name: Mirror beta APK
+    if: github.repository == 'pingdotgg/t3code'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: write
     env:
       PACKAGE_NAME: com.t3tools.t3code
-      # eas.json submits v2-preview builds to this closed testing track; they
-      # speak the orchestration protocol nightly servers use, which the Play
-      # Store release can't.
-      PLAY_TRACK: v2
-      RELEASE_TAG: android-nightly
     steps:
       - id: credentials
         name: Check for Play credentials

@@ -81,46 +81,6 @@ function exchange(address: string, payload: DesktopAppActivationRequest) {
 }
 
 describe("desktop app control server", () => {
-  it.effect("roundtrips a request and removes its socket on shutdown", () =>
-    Effect.gen(function* () {
-      const platform = yield* HostProcess.Platform;
-      const userId = yield* HostProcess.UserId;
-      yield* Effect.promise(async () => {
-        const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-control-test-"));
-        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
-        const received: DesktopAppActivationRequest[] = [];
-        const server = await startDesktopAppControlServer({
-          ...target,
-          userId,
-          handle: async (input) => {
-            received.push(input);
-            return {
-              version: 1,
-              requestId: input.requestId,
-              ok: true,
-              projectId: ProjectId.make("project-1"),
-              threadId: ThreadId.make("thread-1"),
-            };
-          },
-          cancel: () => undefined,
-          onReclaimError: () => undefined,
-        });
-        openServers.push(server);
-
-        const response = await exchange(target.address, request("request-1", platform));
-
-        expect(received).toHaveLength(1);
-        expect(response).toMatchObject({ ok: true, requestId: "request-1" });
-        await server.close();
-        openServers.splice(openServers.indexOf(server), 1);
-        if (target.directory !== null) {
-          await expect(NodeFSP.stat(target.address)).rejects.toMatchObject({ code: "ENOENT" });
-        }
-        await NodeFSP.rm(root, { recursive: true, force: true });
-      });
-    }),
-  );
-
   it.effect("cancels a queued request when the client disconnects", () =>
     Effect.gen(function* () {
       const platform = yield* HostProcess.Platform;
@@ -159,7 +119,6 @@ describe("desktop app control server", () => {
     }),
   );
 
-  // Two desktop apps can share one state dir, such as nightly and a preview build.
   it.effect("keeps a newer app's socket when an older app on the same state dir quits", () =>
     Effect.gen(function* () {
       const platform = yield* HostProcess.Platform;

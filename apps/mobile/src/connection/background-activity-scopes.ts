@@ -15,9 +15,7 @@ function notify(): void {
   for (const listener of listeners) {
     try {
       listener();
-    } catch {
-      // A failing observer must not corrupt retained-scope lifetime.
-    }
+    } catch {}
   }
 }
 

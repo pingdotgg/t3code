@@ -23,7 +23,6 @@ const DESKTOP_KEY_ALIASES: Readonly<Record<string, string>> = {
   minus: "-",
 };
 
-/** Portal labels are descriptions, not a keybinding protocol. Only parse known key notation. */
 export function parseDesktopSnapShotShortcut(label: string): KeybindingShortcut | null {
   const text = label.trim().replace(/^Press\s+/i, "");
   if (!text) return null;

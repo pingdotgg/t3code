@@ -1,5 +1,3 @@
-"use client";
-
 import { Toggle as TogglePrimitive } from "@base-ui/react/toggle";
 import { cva, type VariantProps } from "class-variance-authority";
 
@@ -52,5 +50,4 @@ function Toggle({
   );
 }
 
-// The *Variants function is for components/ui modules only.
 export { Toggle, toggleVariants };

@@ -42,7 +42,6 @@ it.effect("finds the revert boundary across pages of newest-first turns", () =>
   Effect.gen(function* () {
     const client = yield* CodexClient.CodexAppServerClient;
     const result = yield* revertCodexThread(client, "thread", 3).pipe(Effect.flip);
-    // The final request reaches the server with the third-newest turn, not a turn on the first page.
     assert.equal(result.message, "boundary reached");
   }).pipe(
     Effect.provide(

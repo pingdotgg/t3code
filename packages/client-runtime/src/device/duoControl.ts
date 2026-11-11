@@ -1,7 +1,6 @@
 // @effect-diagnostics globalTimers:off - The stream owns this browser control queue and its timeout.
 import type { DeviceScreenSize } from "./stream.ts";
 
-/** Native hinge presets. Each one also sets the device's physical orientation. */
 export type DuoPose = "closed" | "book" | "open" | "laptop" | "tent";
 export type DuoOrientation =
   | "portrait"
@@ -21,10 +20,9 @@ export type DuoControlState = {
 };
 
 /**
- * Whether the reporting display is the one the fold shows: the cover when closed, the inner
- * display when open. A fold across the closed position hands off in steps, and the outgoing
- * display first reports the incoming one's orientation, so an unsettled screen's orientation
- * does not say how the phone is held. Stands such as Tent can also rest unsettled on the cover.
+ * A fold across the closed position hands off in steps, and the outgoing display first reports
+ * the incoming one's orientation, so an unsettled screen's orientation does not say how the
+ * phone is held. Stands such as Tent can also rest unsettled on the cover.
  */
 export function duoScreenSettled(screen: Pick<DeviceScreenSize, "screenId" | "hingeAngle">) {
   const angle = screen.hingeAngle ?? (screen.screenId === 1 ? 0 : 180);
@@ -32,9 +30,8 @@ export function duoScreenSettled(screen: Pick<DeviceScreenSize, "screenId" | "hi
 }
 
 /**
- * The fold the device is in and the way it is held. Missing hinge fields fall back the same way
- * the 3D view does, so controls never disagree with what is drawn. The inner panel is mounted a
- * quarter turn from the cover, so its landscape orientation means a vertical phone.
+ * The inner panel is mounted a quarter turn from the cover, so its landscape
+ * orientation means a vertical phone.
  */
 export function duoFoldState(
   screen: Pick<DeviceScreenSize, "orientation" | "screenId" | "hingeAngle" | "hingePose">,
@@ -49,11 +46,6 @@ export function duoFoldState(
   } as const;
 }
 
-/**
- * The rotation that holds the phone vertical or horizontal. Native rotation is
- * read in the frame of the display active when it arrives, and the inner panel
- * is mounted a quarter turn from the cover.
- */
 export function duoHoldOrientation(
   vertical: boolean,
   screenId: number | undefined,
@@ -62,7 +54,6 @@ export function duoHoldOrientation(
   return vertical ? "landscape_left" : "portrait_upside_down";
 }
 
-/** One in-flight native transaction. Hinge motion coalesces; presets replace queued motion. Nothing replays after reconnect. */
 export function createDuoControl(options: {
   send: (request: { requestId: number; command: DuoCommand }) => boolean;
   onChange: (state: DuoControlState) => void;
@@ -119,7 +110,6 @@ export function createDuoControl(options: {
   };
 }
 
-/** A pinch keeps its own accumulator across asynchronous native acknowledgements. */
 export function createDuoPinch(options: {
   angle: () => number;
   contains: (x: number, y: number) => boolean;

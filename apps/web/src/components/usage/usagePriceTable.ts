@@ -35,7 +35,6 @@ function modelAlias(target: UsagePriceTarget, model: string) {
   return target.aliases && Object.hasOwn(target.aliases, model) ? target.aliases[model] : undefined;
 }
 
-/** The "Map to" cell across the selected environments, read like a price cell. */
 export function usageAliasCell(targets: readonly UsagePriceTarget[], model: string) {
   if (targets.some((target) => target.aliases === null))
     return { value: "", placeholder: "Unavailable" };
@@ -62,7 +61,6 @@ export function usagePriceCell(
   };
 }
 
-/** Only edited cells replace rates; untouched cells retain each environment's own values. */
 export function usagePriceTableChanges(
   target: UsagePriceTarget,
   drafts: readonly UsagePriceDraft[],
@@ -78,9 +76,15 @@ export function usagePriceTableChanges(
       if (currentAlias !== undefined) changes.push({ model, alias: null });
       continue;
     }
-    // A mapped model is priced as its target, so mapping it drops its own price.
     const alias = (draft.alias ?? currentAlias ?? "").trim();
     if (alias !== "") {
+      if (draft.alias === undefined && Object.keys(draft.values).length > 0) {
+        errors.set(
+          draft.id,
+          `${target.label} maps this model. Remove it from "Apply to" or clear its mapping first.`,
+        );
+        continue;
+      }
       if (model === "") errors.set(draft.id, "Enter a model ID.");
       else if (alias === model) errors.set(draft.id, "Map to a different model.");
       else {
@@ -91,7 +95,6 @@ export function usagePriceTableChanges(
     }
     if (currentAlias !== undefined) {
       changes.push({ model, alias: null });
-      // Clearing a mapping without entering prices returns to automatic pricing.
       if (
         !modelPrice(target, model) &&
         Object.values(draft.values).every((value) => value.trim() === "")
@@ -119,10 +122,29 @@ export function usagePriceTableChanges(
     if (USAGE_PRICE_FIELDS.some((field) => original[field.key] !== next[field.key]))
       changes.push(parsed);
   }
+  // Check the final batch so clearing a mapping and reversing it in one save stays valid.
+  const aliases = new Map(Object.entries(target.aliases ?? {}));
+  for (const change of changes) {
+    if (!("alias" in change)) continue;
+    if (change.alias === null) aliases.delete(change.model);
+    else aliases.set(change.model, change.alias);
+  }
+  for (const draft of drafts) {
+    if (draft.removed || errors.has(draft.id)) continue;
+    let model = draft.model.trim();
+    const seen = new Set<string>();
+    while (aliases.has(model)) {
+      if (seen.has(model)) {
+        errors.set(draft.id, `Model mappings cannot form a cycle on ${target.label}.`);
+        break;
+      }
+      seen.add(model);
+      model = aliases.get(model)!;
+    }
+  }
   return { changes, errors };
 }
 
-/** Unavailable destinations report a save failure without blocking writable environments. */
 export function usagePriceTableErrors(
   targets: readonly UsagePriceTarget[],
   drafts: readonly UsagePriceDraft[],

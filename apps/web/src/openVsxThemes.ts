@@ -248,8 +248,6 @@ export async function searchOpenVsxThemes(
   url.searchParams.set("category", "Themes");
   url.searchParams.set("sortBy", sortBy);
   url.searchParams.set("sortOrder", "desc");
-  // Ask for a few extras because results without a supported SPDX license
-  // are intentionally omitted.
   url.searchParams.set("size", "16");
   const value = await withSearchTimeout(async (requestSignal) => {
     const response = await fetch(url, { signal: requestSignal });
@@ -450,8 +448,7 @@ function inspectZipDirectory(bytes: Uint8Array): Uint8Array {
   const commentLength = view.getUint16(endOffset + 20, true);
   if (commentLength === 0) return bytes;
 
-  // JSZip mistakes EOCD-like bytes inside an archive comment for the real EOCD.
-  // The comment is not needed for theme import, so remove it before parsing.
+  // Strip ZIP comments; JSZip can mistake EOCD-like comment bytes for the real record.
   const withoutComment = bytes.slice(0, endOffset + 22);
   withoutComment[endOffset + 20] = 0;
   withoutComment[endOffset + 21] = 0;

@@ -1,4 +1,4 @@
-import { SymbolView } from "../components/AppSymbol";
+import { SymbolView } from "./ui/AppSymbol";
 import { Image, type ImageStyle, type StyleProp } from "react-native";
 
 import { markdownFileIconSource } from "../lib/markdownFileIcons";

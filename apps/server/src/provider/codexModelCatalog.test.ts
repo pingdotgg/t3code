@@ -4,7 +4,6 @@ import type * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 
 import { applyCodexModelCatalog } from "./codexModelCatalog.ts";
 
-/** Synthetic models only; real Codex model data lives in model-manifest.json. */
 const model = (overrides: Partial<ServerProviderModel>): ServerProviderModel => ({
   slug: "gpt-test",
   name: "GPT Test",
@@ -56,13 +55,9 @@ describe("applyCodexModelCatalog", () => {
       { slug: "gpt-next", name: "GPT Next", badge: "new", minVersion: "1.2.0" },
     ]);
     for (const result of [
-      // The CLI is new enough.
       applyCodexModelCatalog(draft("1.2.0"), catalog),
-      // The CLI already lists the model, even under a qualified slug.
       applyCodexModelCatalog(draft("1.1.9", [model({ slug: "openai.gpt-next" })]), catalog),
-      // An unknown version cannot be compared.
       applyCodexModelCatalog(draft(null), catalog),
-      // A qualified catalog slug still matches the discovered family.
       applyCodexModelCatalog(draft("1.1.9", [model({ slug: "gpt-next" })]), {
         ...catalog,
         models: [{ ...catalog.models[0]!, slug: "openai.gpt-next" }],

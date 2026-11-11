@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -39,7 +40,7 @@ const layerTest = () =>
     ),
   );
 
-it.layer(NodeServices.layer)("CliState", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CliState", (it) => {
   it.effect("persists desired exposure and clears provisioned relay state", () =>
     Effect.gen(function* () {
       const secrets = yield* ServerSecretStore.ServerSecretStore;
@@ -104,7 +105,6 @@ it.layer(NodeServices.layer)("CliState", (it) => {
       yield* CliState.setCliDesiredCloudLink(true, "managed");
       assert.equal(yield* CliState.readCliDesiredLinkMode, "managed");
 
-      // A pre-existing link persisted the literal "true"; treat it as managed.
       yield* secrets.set(CliState.CLOUD_CLI_DESIRED_LINK_SECRET, new TextEncoder().encode("true"));
       assert.isTrue(yield* CliState.readCliDesiredCloudLink);
       assert.equal(yield* CliState.readCliDesiredLinkMode, "managed");

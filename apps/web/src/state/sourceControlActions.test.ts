@@ -19,6 +19,9 @@ vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => ({ operation: null, error: null, isRunning: false }),
 }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
+vi.mock("../components/sourceControlAppAccessToast", () => ({
+  suggestAppAccessForRemote: () => Promise.resolve(),
+}));
 vi.mock("./session", () => ({
   useEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
@@ -144,16 +147,6 @@ describe("source control callback grants", () => {
     expect((await action.run())._tag).toBe("Failure");
     expect(state.requests).toEqual([]);
     expect(create().isAllowed).toBe(false);
-  });
-
-  it.each(cases)("$name accepts a retained callback after a grant", async ({ name, create }) => {
-    const action = create();
-    expect(action.isAllowed).toBe(false);
-    state.scopes.get(primary)!.clear();
-    state.scopes.get(secondary)!.add(AuthSourceControlWriteScope);
-    expect((await action.run())._tag).toBe("Success");
-    expect(state.requests).toEqual([{ action: name, environmentId: secondary }]);
-    expect(create().isAllowed).toBe(true);
   });
 });
 

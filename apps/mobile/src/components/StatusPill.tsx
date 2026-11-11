@@ -1,6 +1,6 @@
 import { View } from "react-native";
 
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 import { cn } from "../lib/cn";
 
 export interface StatusTone {

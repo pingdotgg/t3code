@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as HttpObservability from "@t3tools/shared/httpObservability";
 import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
 import * as SharedObservability from "@t3tools/shared/observability";
@@ -15,6 +16,7 @@ import * as ServerConfig from "../config.ts";
 import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 import * as ServerLogger from "../serverLogger.ts";
 import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
+import * as HeapAttribution from "./HeapAttribution.ts";
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
@@ -22,17 +24,15 @@ export const layer = Layer.unwrap(
 
     const traces = config.otlpTracesExport;
     const metrics = config.otlpMetricsExport;
-    // The trace serializer stays in the returned context because the browser
-    // trace forwarder exports on the same signal.
+    // Keep serialization in context for the browser trace forwarder's exporter.
     const layerSerialization = SharedObservability.layerOtlpSerialization(traces.protocol);
-    const resource = ServerConfig.otlpResource(config);
+    const resource = ServerConfig.otlpResource(config, yield* HostProcess.Hostname);
     const attribution = yield* ResourceAttribution.ResourceAttribution;
 
     const layerTraceReferences = Layer.mergeAll(
       Layer.succeed(Tracer.MinimumTraceLevel, config.traceMinLevel),
       Layer.succeed(References.TracerTimingEnabled, config.traceTimingEnabled),
-      // Keeps each SQL statement's span current while it waits for a connection,
-      // so the client can record the lock wait on it.
+      // Preserve SQL spans while awaiting connections so lock waits can be recorded on them.
       Layer.succeed(Statement.SpanPropagationEnabled, true),
       HttpObservability.layer,
     );
@@ -72,8 +72,11 @@ export const layer = Layer.unwrap(
           ...(delegate ? { delegate } : {}),
         });
 
+        const heapAttribution = yield* HeapAttribution.make(tracer);
+        yield* heapAttribution.run;
+
         return Layer.mergeAll(
-          Layer.succeed(Tracer.Tracer, tracer),
+          Layer.succeed(Tracer.Tracer, heapAttribution.tracer),
           BrowserTraceCollector.layer(sink),
         );
       }),
@@ -89,7 +92,6 @@ export const layer = Layer.unwrap(
             resource,
           }).pipe(Layer.provide(SharedObservability.layerOtlpSerialization(metrics.protocol)));
 
-    // Logged once the server's loggers are installed, so the warnings use them.
     const layerOtelWarnings = Layer.effectDiscard(
       Effect.forEach(config.otelEnvironment.warnings, (warning) => Effect.logWarning(warning)),
     );

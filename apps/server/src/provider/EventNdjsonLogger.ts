@@ -1,10 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * Best-effort provider event logging with one shared writer per thread.
- *
- * Native and canonical views share batching, rotation, and retention state so
- * they cannot race while appending to the same thread-scoped file.
- */
+/** Native and canonical views share write state to avoid races on the same thread file. */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -23,7 +19,10 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
-import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
+import {
+  ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import type * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 
 const MEBIBYTE = 1024 * 1024;
@@ -77,30 +76,7 @@ export interface EventNdjsonLogStoreOptions {
   readonly maxBytes?: number;
   readonly maxFiles?: number;
   readonly batchWindowMs?: number;
-  readonly maxTotalBytes?: number;
-  readonly maxAgeMs?: number;
-  readonly retentionCheckIntervalMs?: number;
-  readonly maxBufferedBytes?: number;
-  readonly maxBufferedRecords?: number;
   readonly attribution?: ResourceAttribution.ResourceAttribution["Service"];
-}
-
-export interface EventNdjsonLoggerOptions extends EventNdjsonLogStoreOptions {
-  readonly stream: EventNdjsonStream;
-}
-
-export class EventNdjsonLogConfigurationError extends Schema.TaggedError<EventNdjsonLogConfigurationError>()(
-  "EventNdjsonLogConfigurationError",
-  {
-    filePath: Schema.String,
-    option: Schema.String,
-    value: Schema.Number,
-    minimum: Schema.Number,
-  },
-) {
-  override get message(): string {
-    return `Provider event log option '${this.option}' must be an integer >= ${this.minimum}; received ${this.value} for '${this.filePath}'`;
-  }
 }
 
 export class EventNdjsonLogDirectoryError extends Schema.TaggedError<EventNdjsonLogDirectoryError>()(
@@ -115,9 +91,7 @@ export class EventNdjsonLogDirectoryError extends Schema.TaggedError<EventNdjson
   }
 }
 
-export type EventNdjsonLogStoreError =
-  | EventNdjsonLogConfigurationError
-  | EventNdjsonLogDirectoryError;
+export type EventNdjsonLogStoreError = EventNdjsonLogDirectoryError;
 
 interface ResolvedOptions {
   readonly maxBytes: number;
@@ -144,6 +118,7 @@ interface StoreState {
   readonly pending: Array<PendingRecord>;
   readonly pendingBytes: number;
   readonly sinks: ReadonlyMap<string, AsyncFileSink>;
+  readonly writtenSinceRetention: ReadonlySet<string>;
   readonly flushScheduled: boolean;
   readonly closed: boolean;
   readonly lastRetentionAt: number;
@@ -174,8 +149,13 @@ function logWarning(message: string, context: Record<string, unknown>): Effect.E
 }
 
 function resolveThreadSegment(raw: string | null | undefined): string {
-  const normalized = typeof raw === "string" ? toSafeThreadAttachmentSegment(raw) : null;
-  return normalized ?? GLOBAL_THREAD_SEGMENT;
+  if (typeof raw !== "string") return GLOBAL_THREAD_SEGMENT;
+  const normalized = toSafeThreadAttachmentSegment(raw);
+  if (normalized === null) return GLOBAL_THREAD_SEGMENT;
+  // Delegated thread ids share a prefix longer than the segment, so ids that may be cut get a hash.
+  if (raw.length <= ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS) return normalized;
+  const hash = NodeCrypto.createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  return `${normalized}-${hash}`;
 }
 
 function resolveStreamLabel(stream: EventNdjsonStream): string {
@@ -205,8 +185,7 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
 
     const nested = Reflect.get(event, "event");
     const envelope = typeof nested === "object" && nested !== null ? nested : event;
-    // Decoded frames carry the same information as raw frames without another
-    // copy of every token delta. Decode failures have their own diagnostic frame.
+    // Decoded frames preserve raw-frame information without duplicating every token delta.
     if (Reflect.get(envelope, "stage") === "raw") return false;
     const decodedPayload = Reflect.get(envelope, "payload");
     const nativeEvent =
@@ -225,6 +204,9 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
     }
 
     const nativeType = Reflect.get(nativeEvent, "type");
+    if (nativeType === "system" && Reflect.get(nativeEvent, "subtype") === "thinking_tokens") {
+      return false;
+    }
     if (nativeType === "message.part.delta") return false;
     if (nativeType === "stream_event") {
       const streamEvent = Reflect.get(nativeEvent, "event");
@@ -255,7 +237,7 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
       const partType = Reflect.get(part, "type");
       if (partType === "text" || partType === "reasoning") return false;
       if (partType === "tool") {
-        // Running snapshots repeat growing output. Pending and terminal states stay in the log.
+        // Running snapshots repeat growing output.
         const state = Reflect.get(part, "state");
         if (typeof state === "object" && state !== null) {
           return Reflect.get(state, "status") !== "running";
@@ -338,7 +320,6 @@ function summarizeProviderEvent(event: unknown): unknown {
   }
 }
 
-/** Bounds traversal before adapters copy payloads or the logger encodes them. */
 export function boundProviderEventForLogging(event: unknown): unknown {
   let remainingCharacters = MAX_RECORD_CHARACTERS;
   let remainingFields = MAX_RECORD_FIELDS;
@@ -368,9 +349,7 @@ export function boundProviderEventForLogging(event: unknown): unknown {
   };
   try {
     if (fits(event, 0)) return event;
-  } catch {
-    // A failing accessor must not escape into provider processing.
-  }
+  } catch {}
   return summarizeProviderEvent(event);
 }
 
@@ -481,48 +460,19 @@ async function enforceRetention(input: {
   return { failures };
 }
 
-function validateOption(input: {
-  readonly filePath: string;
-  readonly option: string;
-  readonly value: number;
-  readonly minimum: number;
-}): EventNdjsonLogConfigurationError | undefined {
-  if (Number.isInteger(input.value) && input.value >= input.minimum) return undefined;
-  return new EventNdjsonLogConfigurationError(input);
-}
-
-function resolveOptions(
-  filePath: string,
-  options: EventNdjsonLogStoreOptions,
-): Effect.Effect<ResolvedOptions, EventNdjsonLogConfigurationError> {
+function resolveOptions(options: EventNdjsonLogStoreOptions): Effect.Effect<ResolvedOptions> {
   const resolved = {
     maxBytes: options.maxBytes ?? DEFAULT_MAX_BYTES,
     maxFiles: options.maxFiles ?? DEFAULT_MAX_FILES,
     batchWindowMs: options.batchWindowMs ?? DEFAULT_BATCH_WINDOW_MS,
-    maxTotalBytes: options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES,
-    maxAgeMs: options.maxAgeMs ?? DEFAULT_MAX_AGE_MS,
-    retentionCheckIntervalMs:
-      options.retentionCheckIntervalMs ?? DEFAULT_RETENTION_CHECK_INTERVAL_MS,
-    maxBufferedBytes: options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES,
-    maxBufferedRecords: options.maxBufferedRecords ?? DEFAULT_MAX_BUFFERED_RECORDS,
+    maxTotalBytes: DEFAULT_MAX_TOTAL_BYTES,
+    maxAgeMs: DEFAULT_MAX_AGE_MS,
+    retentionCheckIntervalMs: DEFAULT_RETENTION_CHECK_INTERVAL_MS,
+    maxBufferedBytes: DEFAULT_MAX_BUFFERED_BYTES,
+    maxBufferedRecords: DEFAULT_MAX_BUFFERED_RECORDS,
     attribution: options.attribution,
   } satisfies ResolvedOptions;
 
-  const validations = [
-    ["maxBytes", resolved.maxBytes, 1],
-    ["maxFiles", resolved.maxFiles, 1],
-    ["batchWindowMs", resolved.batchWindowMs, 0],
-    ["maxTotalBytes", resolved.maxTotalBytes, 1],
-    ["maxAgeMs", resolved.maxAgeMs, 1],
-    ["retentionCheckIntervalMs", resolved.retentionCheckIntervalMs, 1],
-    ["maxBufferedBytes", resolved.maxBufferedBytes, 1],
-    ["maxBufferedRecords", resolved.maxBufferedRecords, 1],
-  ] as const;
-
-  for (const [option, value, minimum] of validations) {
-    const error = validateOption({ filePath, option, value, minimum });
-    if (error) return Effect.fail(error);
-  }
   return Effect.succeed(resolved);
 }
 
@@ -543,6 +493,7 @@ const drainPending = Effect.fnUntraced(function* (input: {
   }
 
   const sinks = new Map(input.state.sinks);
+  const writtenSegments = new Set(input.state.writtenSinceRetention);
   const failures: Array<FileOperationFailure> = [];
   const attributionByStream = new Map<
     EventNdjsonStream,
@@ -568,6 +519,7 @@ const drainPending = Effect.fnUntraced(function* (input: {
       sink = created.success;
       sinks.set(threadSegment, sink);
     }
+    writtenSegments.add(threadSegment);
 
     const written = yield* writeBatchedMessages(
       sink,
@@ -594,6 +546,13 @@ const drainPending = Effect.fnUntraced(function* (input: {
 
   const retentionDue =
     input.now - input.state.lastRetentionAt >= input.options.retentionCheckIntervalMs;
+  if (retentionDue) {
+    // A sink idle for a whole retention interval reopens from disk on its next
+    // write, so retention may remove its files without leaving a stale size.
+    for (const threadSegment of sinks.keys()) {
+      if (!writtenSegments.has(threadSegment)) sinks.delete(threadSegment);
+    }
+  }
   const retention = retentionDue
     ? yield* Effect.promise(() =>
         enforceRetention({
@@ -623,6 +582,7 @@ const drainPending = Effect.fnUntraced(function* (input: {
       pending: [],
       pendingBytes: 0,
       sinks,
+      writtenSinceRetention: retentionDue ? new Set() : writtenSegments,
       flushScheduled: input.timerFired ? false : input.state.flushScheduled,
       closed: input.close,
       lastRetentionAt: retentionDue ? input.now : input.state.lastRetentionAt,
@@ -650,7 +610,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
 > {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const resolved = yield* resolveOptions(filePath, options);
+  const resolved = yield* resolveOptions(options);
   const directory = NodePath.dirname(filePath);
   const filePrefix = providerLogPrefix(filePath);
 
@@ -689,6 +649,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
     pending: [],
     pendingBytes: 0,
     sinks: new Map(),
+    writtenSinceRetention: new Set(),
     flushScheduled: false,
     closed: false,
     lastRetentionAt: initializedAt,
@@ -764,8 +725,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       if (!shouldPersistProviderEvent(stream, event)) return;
       let payload = yield* serializeEvent(boundProviderEventForLogging(event));
       if (payload === undefined) return;
-      // Escaping can expand strings beyond their input size. Keep that bounded
-      // serialization out of the file too, while retaining routing/error fields.
+      // Escaping can expand strings beyond their input size.
       if (Buffer.byteLength(payload) > MAX_RECORD_CHARACTERS) {
         payload = yield* serializeEvent(summarizeProviderEvent(event));
         if (payload === undefined) return;
@@ -774,12 +734,13 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
       const line = `[${observedAt}] ${resolveStreamLabel(stream)}: ${payload}\n`;
       const bytes = Buffer.byteLength(line);
+      const threadSegment = resolveThreadSegment(threadId);
       const action = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
         if (state.closed) {
           return Effect.succeed([{ flush: false }, state] as const);
         }
         const pending = state.pending;
-        pending.push({ stream, threadSegment: resolveThreadSegment(threadId), line, bytes });
+        pending.push({ stream, threadSegment, line, bytes });
         const pendingBytes = state.pendingBytes + bytes;
         const flush =
           resolved.batchWindowMs === 0 ||
@@ -812,23 +773,4 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   };
 
   return { filePath, logger, close } satisfies EventNdjsonLogStore;
-});
-
-export const makeEventNdjsonLogger = Effect.fnUntraced(function* (
-  filePath: string,
-  options: EventNdjsonLoggerOptions,
-): Effect.fn.Return<
-  ProviderEventLoggers.EventNdjsonLogger | undefined,
-  never,
-  FileSystem.FileSystem | Path.Path
-> {
-  const store = yield* makeEventNdjsonLogStore(filePath, options).pipe(
-    Effect.catch((error) =>
-      logWarning(error.message, { error }).pipe(
-        Effect.as<EventNdjsonLogStore | undefined>(undefined),
-      ),
-    ),
-  );
-  if (!store) return undefined;
-  return { ...store.logger(options.stream), close: store.close };
 });

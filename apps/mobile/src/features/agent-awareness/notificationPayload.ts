@@ -41,7 +41,11 @@ function encodeThreadDeepLink(input: {
   if (input.environmentId.length === 0 || input.threadId.length === 0) {
     return null;
   }
-  return `/threads/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
+  try {
+    return `/threads/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeThreadDeepLink(value: string): string | null {
@@ -69,11 +73,6 @@ function normalizeThreadDeepLink(value: string): string | null {
   }
 }
 
-/**
- * The deep link a notification would have to carry to target the thread the
- * given route is showing, including its nested screens such as the file
- * inspector. Null when the route is not inside a thread.
- */
 export function threadDeepLinkOnScreen(pathname: string): string | null {
   const match = /^\/threads\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
   if (!match?.[1] || !match[2]) {
@@ -109,11 +108,11 @@ export function routeAgentNotificationResponseOnce(input: {
   if (responseId && input.handledResponseIds.has(responseId)) {
     return;
   }
-  if (responseId) {
-    input.handledResponseIds.add(responseId);
-  }
   const deepLink = extractAgentNotificationDeepLink(input.response);
   if (deepLink) {
     input.navigate(deepLink);
+  }
+  if (responseId) {
+    input.handledResponseIds.add(responseId);
   }
 }

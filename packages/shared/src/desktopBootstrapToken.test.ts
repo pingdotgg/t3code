@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Older desktops derive the token with Node's HMAC.
+import * as NodeCrypto from "node:crypto";
+
+import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 
 import {
   DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
@@ -10,41 +15,39 @@ const SECRET = "desktop-secret";
 const WINDOW = DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS;
 
 describe("desktop bootstrap token", () => {
-  it("rotates every window and stays accepted for one more", () => {
-    const issuedAt = 10 * WINDOW + 1;
-    const token = currentDesktopBootstrapToken(SECRET, issuedAt);
+  it.effect("rotates every window and stays accepted for one more", () =>
+    Effect.gen(function* () {
+      const issuedAt = 10 * WINDOW + 1;
+      const token = yield* currentDesktopBootstrapToken(SECRET, issuedAt);
 
-    expect(currentDesktopBootstrapToken(SECRET, issuedAt + WINDOW)).not.toBe(token);
-    expect(isValidDesktopBootstrapToken(SECRET, token, issuedAt)).toBe(true);
-    expect(isValidDesktopBootstrapToken(SECRET, token, issuedAt + WINDOW)).toBe(true);
-    expect(isValidDesktopBootstrapToken(SECRET, token, issuedAt + 2 * WINDOW)).toBe(false);
-  });
+      expect(token).toBe(
+        NodeCrypto.createHmac("sha256", SECRET).update("t3-desktop-bootstrap:10").digest("hex"),
+      );
+      expect(yield* currentDesktopBootstrapToken(SECRET, issuedAt + WINDOW)).not.toBe(token);
+      expect(yield* isValidDesktopBootstrapToken(SECRET, token, issuedAt)).toBe(true);
+      expect(yield* isValidDesktopBootstrapToken(SECRET, token, issuedAt + WINDOW)).toBe(true);
+      expect(yield* isValidDesktopBootstrapToken(SECRET, token, issuedAt + 2 * WINDOW)).toBe(false);
+    }).pipe(Effect.provide(PlatformNodeCrypto.layerMac)),
+  );
 
-  it("accepts a token from a desktop clock slightly ahead of the backend", () => {
-    // Windows crossed the boundary, the WSL clock has not yet.
-    const desktopNow = 10 * WINDOW + 500;
-    const backendNow = 10 * WINDOW - 500;
+  it.effect("accepts a token from a desktop clock slightly ahead of the backend", () =>
+    Effect.gen(function* () {
+      const desktopNow = 10 * WINDOW + 500;
+      const backendNow = 10 * WINDOW - 500;
+      const ahead = yield* currentDesktopBootstrapToken(SECRET, desktopNow);
+      const tooFarAhead = yield* currentDesktopBootstrapToken(SECRET, desktopNow + WINDOW);
 
-    expect(
-      isValidDesktopBootstrapToken(
-        SECRET,
-        currentDesktopBootstrapToken(SECRET, desktopNow),
-        backendNow,
-      ),
-    ).toBe(true);
-    expect(
-      isValidDesktopBootstrapToken(
-        SECRET,
-        currentDesktopBootstrapToken(SECRET, desktopNow + WINDOW),
-        backendNow,
-      ),
-    ).toBe(false);
-  });
+      expect(yield* isValidDesktopBootstrapToken(SECRET, ahead, backendNow)).toBe(true);
+      expect(yield* isValidDesktopBootstrapToken(SECRET, tooFarAhead, backendNow)).toBe(false);
+    }).pipe(Effect.provide(PlatformNodeCrypto.layerMac)),
+  );
 
-  it("rejects tokens derived from another secret", () => {
-    const token = currentDesktopBootstrapToken("other-secret", WINDOW);
+  it.effect("rejects tokens derived from another secret", () =>
+    Effect.gen(function* () {
+      const token = yield* currentDesktopBootstrapToken("other-secret", WINDOW);
 
-    expect(isValidDesktopBootstrapToken(SECRET, token, WINDOW)).toBe(false);
-    expect(isValidDesktopBootstrapToken(SECRET, "short", WINDOW)).toBe(false);
-  });
+      expect(yield* isValidDesktopBootstrapToken(SECRET, token, WINDOW)).toBe(false);
+      expect(yield* isValidDesktopBootstrapToken(SECRET, "short", WINDOW)).toBe(false);
+    }).pipe(Effect.provide(PlatformNodeCrypto.layerMac)),
+  );
 });
