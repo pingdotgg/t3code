@@ -81,6 +81,15 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
     input: { ...args, label: args.label.slice(1) },
   }));
   const run = (calls: SampleRun["calls"]) => ({ calls, text: "", stopReason: "end_turn" });
+  // A `/regex/` arg is case-sensitive, unlike `~text`: webhook placeholders are.
+  const placeholder = {
+    calls: [{ tool: "schedule_task", args: { prompt: "/\\{\\{body\\.ref\\}\\}/" } }],
+  };
+  const saved = (prompt: string) => run([{ step: 0, tool: "schedule_task", input: { prompt } }]);
+  assert.deepEqual(failed(placeholder, saved("Review {{body.ref}}.")), []);
+  assert.deepEqual(failed(placeholder, saved("Review {{BODY.REF}}.")), [
+    `calls schedule_task ${JSON.stringify(placeholder.calls[0]!.args)}`,
+  ]);
   assert.deepEqual(failed({ distinctCalls }, run(cards)), []);
   assert.deepEqual(
     failed(

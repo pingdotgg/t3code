@@ -1646,6 +1646,9 @@ const matches = (expected: unknown, actual: unknown): boolean => {
   if (typeof expected === "string" && expected.startsWith("~")) {
     return valueText(actual).toLowerCase().includes(expected.slice(1).toLowerCase());
   }
+  if (typeof expected === "string" && expected.length > 2 && /^\/.*\/$/s.test(expected)) {
+    return new RegExp(expected.slice(1, -1)).test(valueText(actual));
+  }
   if (Array.isArray(expected)) {
     return (
       Array.isArray(actual) && expected.every((item) => actual.some((at) => matches(item, at)))
