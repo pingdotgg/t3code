@@ -21,6 +21,7 @@ import {
   compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
+  parseLegacyServiceState,
   parseServiceState,
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf,
@@ -542,9 +543,17 @@ async function discardDatabaseBackup(baseDir: string, updateId: string): Promise
 
 export async function readServiceState(filePath: string): Promise<ServiceState> {
   const contents = await NodeFSP.readFile(filePath, "utf8");
-  const state = parseServiceState(contents);
+  const state = parseServiceState(contents) ?? adoptLegacyServiceState(contents);
   if (state === undefined) throw new Error("Service state is invalid or unsupported.");
   return state;
+}
+
+// An older coordinator can write protocol 2 beside a newer runtime. Adopt
+// only its install record, in memory: rewriting it outside the selection lock
+// could replace state a concurrent install wrote after this read.
+function adoptLegacyServiceState(contents: string): ServiceState | undefined {
+  const legacy = parseLegacyServiceState(contents);
+  return legacy && { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion: legacy.activeVersion };
 }
 
 export async function writeServiceState(filePath: string, state: ServiceState): Promise<void> {
@@ -1242,7 +1251,15 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
       ...(options.serviceUnit === undefined ? {} : { T3_BOOT_SERVICE_UNIT: options.serviceUnit }),
     });
     const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
-    const state = await readServiceState(statePath);
+    const contents = await NodeFSP.readFile(statePath, "utf8");
+    let state = parseServiceState(contents);
+    if (state === undefined) {
+      state = adoptLegacyServiceState(contents);
+      if (state === undefined) throw new Error("Service state is invalid or unsupported.");
+      if (!(await runtimeExists(baseDir, state.activeVersion))) {
+        throw new Error(`Selected t3@${state.activeVersion} runtime is missing or incomplete.`);
+      }
+    }
     const serviceUnit = serviceUnitFromEnvironment(environment);
     const launcher = new Launcher(baseDir, state, {
       environment,
