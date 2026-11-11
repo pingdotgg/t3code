@@ -5,7 +5,7 @@ import {
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 
-import type { RelayEnvironmentRegistration } from "../relay/discovery.ts";
+import type { RelayEnvironmentStanding } from "../relay/discovery.ts";
 
 import type {
   ConnectionAttemptError,
@@ -42,8 +42,8 @@ export interface ConnectionDiagnosisInput {
     RelayEnvironmentStatusResponse,
     "status" | "endpointFailure" | "endpointStatus" | "offlineReason"
   > | null;
-  /** Whether the account's environment list still has this host. */
-  readonly relayRegistration?: RelayEnvironmentRegistration;
+  /** Whether the account's environment list still has this host, or a newer link replaced it. */
+  readonly relayRegistration?: RelayEnvironmentStanding;
   readonly clientVersion?: string | undefined;
   readonly serverVersion?: string | null | undefined;
 }
@@ -57,6 +57,7 @@ interface Located {
     | "released"
     | "session_pending"
     | "unregistered"
+    | "superseded"
     | null;
   /** The failure named no hop, so the hops before this one were never probed. */
   readonly guessed?: true;
@@ -83,8 +84,9 @@ function locate(input: ConnectionDiagnosisInput): Located | null {
     return {
       hop: failure.hop,
       cause:
-        cause === "not_linked" && input.relayRegistration === "unregistered"
-          ? "unregistered"
+        cause === "not_linked" &&
+        (input.relayRegistration === "unregistered" || input.relayRegistration === "superseded")
+          ? input.relayRegistration
           : cause,
     };
   }
@@ -121,6 +123,8 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
       return `${host} is not linked to your T3 Connect account`;
     case "unregistered":
       return `${host} is no longer on your T3 Connect account`;
+    case "superseded":
+      return `A newer link to ${host} replaced this one on your T3 Connect account`;
     case "relay_error":
       return "T3 Connect returned an error";
     case "tunnel_pending":
@@ -190,6 +194,10 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
       return [
         `If you still use ${host}, turn T3 Connect on there in Settings > Sharing & access, check that this device uses the same T3 Connect account, then retry.`,
         `If T3 Code was reinstalled on ${host}, or you no longer use it, remove it from this device.`,
+      ];
+    case "superseded":
+      return [
+        `T3 Code on ${host} now links under a new identity, usually after a reinstall. Remove this old entry from this device.`,
       ];
     case "tunnel_pending":
       return ["Wait a minute. T3 Code retries on its own.", checkHost];
@@ -264,6 +272,7 @@ function helpSection(
     case "session_pending":
     case "not_linked":
     case "unregistered":
+    case "superseded":
     case "tunnel_not_enabled":
       return "sign-in-account-or-link-problems";
     case "relay_error":
