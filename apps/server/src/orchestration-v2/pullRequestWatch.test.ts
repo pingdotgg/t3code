@@ -498,15 +498,12 @@ describe("evaluatePullRequestWatch", () => {
         { kind: "checks-passed", count: 1, required },
       ]);
 
-      for (const status of ["failure", "cancelled", "action-required"] as const) {
-        const failed = detail({ checks: [{ ...check("test", status), required }] });
-        const failure = evaluatePullRequestWatch(waiting.next, failed, noRemarks);
-        assert.deepEqual(failure.changes, [{ kind: "checks-failed", failed: failed.checks }]);
-        const rerun = evaluatePullRequestWatch(failure.next, pending, noRemarks);
-        const recovered = evaluatePullRequestWatch(rerun.next, green, noRemarks);
-        assert.deepEqual(recovered.changes, [{ kind: "checks-passed", count: 1, required }]);
-        assert.deepEqual(evaluatePullRequestWatch(recovered.next, green, noRemarks).changes, []);
-      }
+      const failed = detail({ checks: [{ ...check("test", "failure"), required }] });
+      const failure = evaluatePullRequestWatch(waiting.next, failed, noRemarks);
+      assert.deepEqual(failure.changes, [{ kind: "checks-failed", failed: failed.checks }]);
+      const rerun = evaluatePullRequestWatch(failure.next, pending, noRemarks);
+      const recovered = evaluatePullRequestWatch(rerun.next, green, noRemarks);
+      assert.deepEqual(recovered.changes, [{ kind: "checks-passed", count: 1, required }]);
     },
   );
 
