@@ -484,6 +484,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "screen-reader-announcements",
+    title: "Screen reader announcements",
+    to: "/settings/chat",
+    searchTerms: [
+      "accessibility a11y screen reader nvda jaws voiceover orca narrator speech announce read aloud messages activity steps",
+    ],
+  },
+  {
     id: "guest-links",
     title: "Guest links",
     to: "/settings/labs",
