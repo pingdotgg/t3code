@@ -623,8 +623,26 @@ export function useComposerSend(input: ComposerSendInput) {
         composerThreadContexts.length +
         composerEnvironmentContexts.length,
     });
+    const commandText = directAnnotation ? trimmed : promptAtSend.trim();
+    if (
+      trayCitations.length > 0 &&
+      ((freshSessionAvailable && isClearComposerCommand(commandText)) ||
+        (ctxSelectedProvider === "codex" &&
+          multipleModelSelections === null &&
+          parseCodexFeedbackCommand(commandText) !== null))
+    ) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "This command takes text only",
+          description: "Remove the tray citations, then send the command again.",
+        }),
+      );
+      return;
+    }
     const feedbackCommand =
       ctxSelectedProvider === "codex" &&
+      trayCitations.length === 0 &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
@@ -632,7 +650,7 @@ export function useComposerSend(input: ComposerSendInput) {
       composerReviewComments.length === 0 &&
       composerThreadContexts.length === 0 &&
       composerEnvironmentContexts.length === 0
-        ? parseCodexFeedbackCommand(trimmed)
+        ? parseCodexFeedbackCommand(commandText)
         : null;
     if (feedbackCommand && multipleModelSelections === null) {
       if (!isServerThread || activeThread.activeProviderThreadId === null) {
@@ -649,7 +667,7 @@ export function useComposerSend(input: ComposerSendInput) {
       await submitCodexFeedback({
         submission: {
           id: newMessageId(),
-          command: trimmed,
+          command: commandText,
           createdAt: new Date().toISOString(),
         },
         clearDraft: () => {
@@ -681,6 +699,7 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const composerHoldsOnlyText =
+      trayCitations.length === 0 &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
@@ -688,7 +707,7 @@ export function useComposerSend(input: ComposerSendInput) {
       composerReviewComments.length === 0 &&
       composerThreadContexts.length === 0 &&
       composerEnvironmentContexts.length === 0;
-    if (freshSessionAvailable && composerHoldsOnlyText && isClearComposerCommand(trimmed)) {
+    if (freshSessionAvailable && composerHoldsOnlyText && isClearComposerCommand(commandText)) {
       armFreshSession(routeThreadKey);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
