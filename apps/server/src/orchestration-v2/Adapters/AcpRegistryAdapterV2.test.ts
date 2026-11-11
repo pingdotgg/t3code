@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -66,7 +67,9 @@ const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
   AcpRegistryAdapterV2Driver.configSchema,
 );
 
-const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+const layerHost = TestProviderHost.layer().pipe(
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 
 const layerRegistry = Layer.succeed(
   HttpClient.HttpClient,
@@ -110,6 +113,7 @@ const layerInjectedRuntimeCatalog = Layer.mock(AcpRegistrySupport.AcpRegistryCat
 
 const layerTest = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
   layerHost,
@@ -1274,6 +1278,85 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("the agent process env names the thread it serves", () =>
+    Effect.gen(function* () {
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* (yield* Path.Path).fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const endpoint = "http://127.0.0.1:43123/mcp";
+      const instanceId = ProviderInstanceId.make("acp-registry-thread-env");
+      const threadId = ThreadId.make("thread-acp-registry-thread-env");
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-acp-registry-thread-env"),
+        threadId,
+        providerSessionId: "mcp-session-acp-registry-thread-env",
+        providerInstanceId: instanceId,
+        endpoint,
+        authorizationHeader: "Bearer thread-env-token",
+        browserToolsAvailable: false,
+      });
+      // Several agents can run from one directory at once; the spawn env is how
+      // a process the agent starts (an MCP server, a shell tool) finds its own
+      // T3 thread, the same way Claude and Codex sessions do.
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnEnvironments: Array<Record<string, unknown> | undefined> = [];
+      const capturingSpawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          if (command._tag === "StandardCommand") spawnEnvironments.push(command.options.env);
+        }).pipe(Effect.andThen(spawner.spawn(command))),
+      );
+      const withCapturedSpawns = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capturingSpawner),
+        );
+      const adapter = yield* withCapturedSpawns(
+        makeAcpRegistryAdapterV2({
+          selfInvocation,
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "claude-acp" }),
+          environment: {},
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+              resolve: () =>
+                Effect.succeed({
+                  distribution: "local" as const,
+                  spawn: {
+                    command: process.execPath,
+                    args: [mockAgentPath],
+                    env: { T3_ACP_SESSION_LIFECYCLE: "1" },
+                  },
+                }),
+            }),
+          ),
+        ),
+      );
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* withCapturedSpawns(
+        adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-registry-thread-env"),
+          modelSelection,
+          runtimePolicy,
+        }),
+      );
+      yield* withCapturedSpawns(runtime.ensureThread({ threadId, modelSelection, runtimePolicy }));
+      const agentEnvironment = spawnEnvironments.find(
+        (environment) => environment?.T3_ACP_SESSION_LIFECYCLE === "1",
+      );
+      assert.isDefined(agentEnvironment, "the agent itself must have been spawned");
+      assert.equal(agentEnvironment?.T3CODE_THREAD_ID, "thread-acp-registry-thread-env");
+      assert.equal(agentEnvironment?.T3_ACP_MCP_ENDPOINT, endpoint);
+      assert.equal(agentEnvironment?.T3_ACP_MCP_AUTHORIZATION, "Bearer thread-env-token");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect.each(["before", "after"] as const)(
     "reconciles a full prompt echo %s acknowledgment",
     (ordering) =>
@@ -1507,7 +1590,6 @@ describe("AcpRegistryAdapterV2", () => {
         [
           { usedTokens: 2_500, maxTokens: 10_000, cost: { amount: 0.42, currency: "USD" } },
           { usedTokens: 2_500, maxTokens: 10_000, cost: { amount: 0.42, currency: "USD" } },
-          { usedTokens: 3_000 },
         ],
       );
       assert.deepEqual(childThreads.at(-1)?.nativeMetadata, {
@@ -1756,6 +1838,290 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("retains streamed child tool output through the generic Devin route", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open,
+          ...claudeFrames.prompt(1),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "early-tool",
+            status: "in_progress",
+            rawInput: { command: "echo early" },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "early-tool",
+            content: { type: "content", content: { type: "text", text: "early" } },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "early-tool",
+            status: "completed",
+          }),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            status: "in_progress",
+            _meta: { "cognition.ai/subagent_started": { agentId: "child-1", task: "Review" } },
+          }),
+          ...[CLAUDE_ROOT_SESSION, "child-1"].map((sessionId) =>
+            update(sessionId, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "shared-tool",
+              title: "Read package",
+              kind: "execute",
+              status: "in_progress",
+              rawInput: { command: "cat package.json" },
+              ...(sessionId === "child-1"
+                ? { content: [{ type: "content", content: { type: "text", text: "one" } }] }
+                : {}),
+            }),
+          ),
+          update("child-1", {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "shared-tool",
+            content: { type: "content", content: { type: "text", text: "two" } },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            status: "completed",
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [{ type: "content", content: { type: "text", text: "replacement" } }],
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [],
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            rawOutput: { stdout: "structured", stderr: "" },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [{ type: "content", content: { type: "text", text: "display" } }],
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            rawOutput: { type: "Text", text: "vendor" },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [{ type: "content", content: { type: "text", text: "display" } }],
+          }),
+          claudeMarker("tools complete"),
+          claudeFrames.idle("end_turn"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("tools complete");
+      const child = events.find((event) => event.type === "subagent.updated");
+      if (child?.type !== "subagent.updated") throw new Error("Missing child");
+      const tools = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      const childTools = tools.filter((item) => item.threadId === child.subagent.childThreadId);
+      assert.deepEqual(
+        childTools.map((item) => item.output),
+        [
+          [{ type: "content", content: { type: "text", text: "one" } }],
+          [{ type: "content", content: { type: "text", text: "onetwo" } }],
+          [{ type: "content", content: { type: "text", text: "onetwo" } }],
+          [{ type: "content", content: { type: "text", text: "replacement" } }],
+          [],
+          { stdout: "structured", stderr: "" },
+          { stdout: "structured", stderr: "" },
+          { type: "Text", text: "vendor" },
+          { type: "Text", text: "vendor" },
+        ],
+      );
+      assert.equal(new Set(childTools.map((item) => item.id)).size, 1);
+      assert.equal(childTools.at(-1)?.nativeItemRef?.nativeId, "child-1:tool:shared-tool");
+      assert.equal(childTools.at(-1)?.status, "completed");
+      assert.deepEqual(childTools.at(-1)?.input, { command: "cat package.json" });
+      const parentTools = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "command_execution" &&
+        event.turnItem.threadId === session.turnInput(1).threadId &&
+        event.turnItem.nativeItemRef?.nativeId === "shared-tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(parentTools, 1);
+      assert.isUndefined(parentTools[0]?.output);
+      assert.isFalse(
+        events.some(
+          (event) => event.type === "message.updated" && event.message.text.includes("onetwo"),
+        ),
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps stopped child tools interrupted when a late output chunk arrives", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            status: "in_progress",
+            _meta: { "cognition.ai/subagent_started": { agentId: "child-1", task: "Review" } },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "stopped-tool",
+            status: "in_progress",
+          }),
+          claudeMarker("before cancel"),
+          {
+            type: "expect_outbound",
+            frame: {
+              kind: "notification",
+              method: "session/cancel",
+              params: { sessionId: CLAUDE_ROOT_SESSION },
+            },
+          },
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "stopped-tool",
+            status: "failed",
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "stopped-tool",
+            content: [{ type: "content", content: { type: "text", text: "stopping" } }],
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "stopped-tool",
+            content: { type: "content", content: { type: "text", text: "cancelled" } },
+          }),
+          claudeMarker("late output"),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            status: "failed",
+            _meta: { "cognition.ai/subagent_completed": { agentId: "child-1", success: false } },
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "cancelled" },
+            },
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      const starting = yield* session.runtime
+        .startTurn(session.turnInput(1))
+        .pipe(Effect.forkScoped);
+      const started = yield* session.throughMarker("before cancel");
+      const running = started.findLast((event) => event.type === "provider_turn.updated");
+      if (running?.type !== "provider_turn.updated") throw new Error("Missing active turn");
+      const closing = yield* session.runtime
+        .interruptTurn({
+          providerThread: session.providerThread,
+          providerTurnId: running.providerTurn.id,
+        })
+        .pipe(Effect.forkScoped);
+      const events = yield* session.throughMarker("late output");
+      yield* Fiber.join(closing);
+      yield* Fiber.join(starting);
+      const tools = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        tools.map((item) => item.status),
+        ["interrupted", "interrupted", "interrupted"],
+      );
+      assert.deepEqual(tools.at(-1)?.output, [
+        { type: "content", content: { type: "text", text: "stoppingcancelled" } },
+      ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps native child tools interrupted after idle and late output", () =>
+    Effect.gen(function* () {
+      const { update, childState } = claudeFrames;
+      const session = yield* openClaudeReplaySession([
+        ...claudeFrames.open,
+        ...claudeFrames.prompt(1),
+        ...claudeChild.slice(0, -1),
+        update("child-1", {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "unfinished",
+          status: "in_progress",
+        }),
+        childState(CLAUDE_ROOT_SESSION, "child-1", "idle"),
+        update("child-1", {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "unfinished",
+          content: { type: "content", content: { type: "text", text: "late" } },
+        }),
+        claudeMarker("late native output"),
+        claudeFrames.idle("end_turn"),
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ]);
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("late native output");
+      const tools = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        tools.map((tool) => tool.status),
+        ["running", "interrupted", "interrupted"],
+      );
+      assert.deepEqual(tools.at(-1)?.output, [
+        { type: "content", content: { type: "text", text: "late" } },
+      ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect.each(["error", "end_turn"])(
     "hands live Claude child tools to the next run after %s and keeps nested output in the child",
     (stopReason) =>
@@ -1846,6 +2212,18 @@ describe("AcpRegistryAdapterV2", () => {
               kind: "execute",
               status: "in_progress",
               rawInput: { command: "cat nested/package.json" },
+            }),
+            ...["one", "two"].map((text) =>
+              update("grandchild", {
+                sessionUpdate: "tool_call_content_chunk",
+                toolCallId: "nested-tool",
+                content: { type: "content", content: { type: "text", text } },
+              }),
+            ),
+            update("grandchild", {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "nested-tool",
+              status: "completed",
             }),
             update("grandchild", {
               sessionUpdate: "agent_message_chunk",
@@ -1944,7 +2322,7 @@ describe("AcpRegistryAdapterV2", () => {
         if (messages[0]?.type === "message.updated") {
           assert.equal(messages[0].message.threadId, row.subagent.childThreadId);
         }
-        const nestedTool = nested.find(
+        const nestedTool = nested.findLast(
           (event) =>
             event.type === "turn_item.updated" &&
             event.turnItem.type === "dynamic_tool" &&
@@ -1954,9 +2332,36 @@ describe("AcpRegistryAdapterV2", () => {
         assert.isDefined(nestedTool);
         if (nestedTool?.type === "turn_item.updated") {
           assert.equal(nestedTool.turnItem.threadId, row.subagent.childThreadId);
-          if (nestedTool.turnItem.type === "dynamic_tool")
+          if (nestedTool.turnItem.type === "dynamic_tool") {
             assert.deepEqual(nestedTool.turnItem.input, { command: "cat nested/package.json" });
+            assert.equal(nestedTool.turnItem.status, "completed");
+          }
+          const toolUpdates = nested.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.id === nestedTool.turnItem.id
+              ? [event.turnItem]
+              : [],
+          );
+          assert.deepEqual(
+            toolUpdates.map((item) => item.output),
+            [
+              null,
+              [{ type: "content", content: { type: "text", text: "one" } }],
+              [{ type: "content", content: { type: "text", text: "onetwo" } }],
+              [{ type: "content", content: { type: "text", text: "onetwo" } }],
+            ],
+          );
         }
+        assert.isFalse(
+          nested.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.threadId === session.turnInput(1).threadId &&
+              event.turnItem.type === "dynamic_tool" &&
+              JSON.stringify(event.turnItem.output).includes("onetwo"),
+          ),
+        );
         assert.isTrue(
           nested.some(
             (event) =>
@@ -2644,6 +3049,175 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(queuedTerminal.status, "interrupted");
       assert.isNull(queuedTerminal.failure);
       assert.isFalse(yield* queued.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      failure: "a lost session",
+      error: {
+        code: -32603,
+        message: "Internal error",
+        data: {
+          details:
+            "Request session.send failed with message: session event delivery failed: session not found: copilot-session",
+        },
+      },
+      restarts: true,
+    },
+    {
+      failure: "a lost session reported in the message",
+      error: {
+        code: -32603,
+        message:
+          "Request session.send failed with message: session event delivery failed: session not found: copilot-session",
+      },
+      restarts: true,
+    },
+    {
+      failure: "a session-lock timeout",
+      error: {
+        code: -32603,
+        message: "Internal error",
+        data: {
+          details:
+            "session lock unavailable during is_session_generation_current: acquisition timed out",
+        },
+      },
+      restarts: true,
+    },
+    {
+      failure: "a session-lock timeout reported in the message",
+      error: {
+        code: -32603,
+        message:
+          "Request session.send failed with message: session lock unavailable during is_session_generation_current: acquisition timed out",
+      },
+      restarts: true,
+    },
+    {
+      failure: "an unrelated internal error",
+      error: {
+        code: -32603,
+        message: "Request session.send failed with message: Session directory no longer exists",
+      },
+      restarts: false,
+    },
+  ] as const)("runs Copilot's next message after $failure", ({ error, restarts }) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const replayDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-copilot-lost-" });
+      const scriptPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+      );
+      const request = (method: string, params: unknown = "<any>") => ({
+        type: "expect_outbound",
+        frame: { kind: "request", method, params },
+      });
+      const respond = (method: string, response: object) => ({
+        type: "emit_inbound",
+        frame: { kind: "response", method, ...response },
+      });
+      const start = (sessionId: string) => [
+        request("initialize"),
+        respond("initialize", {
+          result: { protocolVersion: 1, agentCapabilities: { loadSession: true } },
+        }),
+        request("session/new"),
+        respond("session/new", { result: { sessionId } }),
+      ];
+      const failedPrompt = [
+        ...start("copilot-session"),
+        request("session/prompt"),
+        respond("session/prompt", { error }),
+      ];
+      const completedPrompt = [
+        request("session/prompt"),
+        respond("session/prompt", { result: { stopReason: "end_turn" } }),
+      ];
+      const processes = restarts
+        ? [
+            failedPrompt,
+            [
+              ...start("replacement-session"),
+              request("session/load", {
+                sessionId: "copilot-session",
+                cwd: "<workspace>",
+                mcpServers: "<any>",
+              }),
+              respond("session/load", { result: {} }),
+              ...completedPrompt,
+            ],
+          ]
+        : [[...failedPrompt, ...completedPrompt]];
+      let spawned = 0;
+      const instanceId = ProviderInstanceId.make("copilot-lost-session");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        selfInvocation: yield* resolveSelfInvocation(),
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "github-copilot-cli" }),
+        environment: {},
+        makeRuntime: (runtimeInput) =>
+          Effect.gen(function* () {
+            const index = spawned++;
+            const transcript = yield* decodeAcpReplayTranscript(
+              {
+                provider: ACP_REGISTRY_PROVIDER,
+                protocol: "acp.ndjson-jsonrpc",
+                version: "1",
+                scenario: `copilot-lost-session-${index}`,
+                entries: processes[index] as never,
+              },
+              ACP_REGISTRY_PROVIDER,
+            ).pipe(Effect.orDie);
+            return yield* makeAcpReplayRuntime({
+              transcript,
+              statusPath: path.join(replayDir, `status-${index}.json`),
+              scriptPath,
+              childProcessSpawner,
+              fileSystem,
+            })(runtimeInput);
+          }),
+      }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+      const threadId = ThreadId.make("thread-copilot-lost-session");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: replayDir,
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("session-copilot-lost-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const runTurn = (ordinal: number) =>
+        runtime
+          .startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          )
+          .pipe(
+            Effect.andThen(
+              runtime.events.pipe(
+                Stream.filter((event) => event.type === "turn.terminal"),
+                Stream.take(1),
+                Stream.runCollect,
+              ),
+            ),
+            Effect.map(([terminal]) => terminal?.status),
+          );
+      assert.equal(yield* runTurn(1), "failed");
+      assert.equal(yield* runTurn(2), "completed");
+      assert.equal(spawned, restarts ? 2 : 1);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });
