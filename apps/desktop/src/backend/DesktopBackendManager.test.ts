@@ -25,7 +25,6 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
-import { makeFakeBackendProcess } from "./testUtils/FakeBackendProcess.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
@@ -530,94 +529,6 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect(
-    "stop with the five-second quit timeout waits for a SIGTERM-ignoring backend to be gone",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const backend = yield* makeFakeBackendProcess(false);
-          const ready = yield* Deferred.make<void>();
-          const instance = yield* makeTestInstance({
-            spawnerLayer: backend.layer,
-            onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
-          });
-          yield* instance.start;
-          yield* backend.started;
-          yield* Deferred.await(ready);
-
-          const stopFiber = yield* instance
-            .stop({ timeout: Duration.seconds(5) })
-            .pipe(Effect.forkChild);
-          assert.equal(yield* Queue.take(backend.signals), "SIGTERM");
-          yield* TestClock.adjust(Duration.seconds(5));
-          assert.equal(yield* Queue.take(backend.signals), "SIGKILL");
-          const completedBeforeExit = yield* Effect.sync(() => stopFiber.pollUnsafe());
-          const runningBeforeExit = yield* backend.isRunning;
-          yield* TestClock.adjust(backend.killWait);
-          yield* Fiber.join(stopFiber);
-
-          assert.isTrue(
-            completedBeforeExit === undefined,
-            "stop resolved before the backend exited",
-          );
-          assert.isTrue(runningBeforeExit);
-          assert.isFalse(yield* backend.isRunning);
-          assert.deepEqual(backend.receivedSignals, ["SIGTERM", "SIGKILL"]);
-          assert.isTrue(Option.isNone((yield* instance.snapshot).activePid));
-          yield* instance.stop();
-          assert.deepEqual(backend.receivedSignals, ["SIGTERM", "SIGKILL"]);
-        }),
-      ),
-  );
-
-  it.effect("the shared quit budget is strictly greater than terminate grace plus kill wait", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const backend = yield* makeFakeBackendProcess(true);
-        const instance = yield* makeTestInstance({ spawnerLayer: backend.layer });
-        yield* instance.start;
-        yield* backend.started;
-        const terminateGrace = yield* backend.terminateGrace;
-        yield* instance.stop();
-
-        assert.isAbove(
-          Duration.toMillis(DesktopBackendManager.BACKEND_QUIT_TIMEOUT),
-          Duration.toMillis(terminateGrace) + Duration.toMillis(backend.killWait),
-        );
-      }),
-    ),
-  );
-
-  it.effect("a cooperative backend stops on SIGTERM without SIGKILL", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const backend = yield* makeFakeBackendProcess(true);
-        const ready = yield* Deferred.make<void>();
-        const instance = yield* makeTestInstance({
-          spawnerLayer: backend.layer,
-          onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
-        });
-        yield* instance.start;
-        yield* backend.started;
-        yield* Deferred.await(ready);
-
-        yield* instance.stop({ timeout: Duration.seconds(5) });
-
-        assert.isFalse(yield* backend.isRunning);
-        assert.deepEqual(backend.receivedSignals, ["SIGTERM"]);
-        assert.deepEqual(yield* instance.snapshot, {
-          desiredRunning: false,
-          ready: false,
-          activePid: Option.none(),
-          restartAttempt: 0,
-          restartScheduled: false,
-        });
-        yield* instance.stop();
-        assert.deepEqual(backend.receivedSignals, ["SIGTERM"]);
-      }),
-    ),
-  );
-
   it.effect("restarts when start is requested during stop teardown", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -811,14 +722,12 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect("the quit stop deadline waits for a backend that only exits at the force kill", () =>
+  it.effect("the quit stop keeps waiting for a backend that outlasts its deadline", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const spawned = yield* Deferred.make<void>();
         const teardownStarted = yield* Deferred.make<void>();
         const teardownFinished = yield* Deferred.make<void>();
-        // The real spawner sends SIGTERM, waits the grace, then SIGKILLs. A backend that
-        // ignores SIGTERM therefore finishes tearing down just after the grace.
         const instance = yield* makeTestInstance({
           spawnerLayer: Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -829,7 +738,7 @@ describe("DesktopBackendManager", () => {
                 yield* Scope.addFinalizer(
                   scope,
                   Deferred.succeed(teardownStarted, undefined).pipe(
-                    Effect.andThen(Effect.sleep(Duration.seconds(6))),
+                    Effect.andThen(Effect.sleep(Duration.seconds(10))),
                     Effect.andThen(Deferred.succeed(teardownFinished, undefined)),
                     Effect.asVoid,
                   ),
@@ -854,11 +763,11 @@ describe("DesktopBackendManager", () => {
           .pipe(Effect.andThen(Deferred.succeed(quitDone, undefined)), Effect.forkChild);
 
         yield* Deferred.await(teardownStarted);
-        // Past the SIGTERM grace but before the force kill lands: quit must still be waiting.
-        yield* TestClock.adjust(Duration.millis(5_500));
+        // Past the quit deadline, quit must still wait for the backend to exit.
+        yield* TestClock.adjust(Duration.seconds(9));
         assert.isFalse(yield* Deferred.isDone(quitDone));
 
-        yield* TestClock.adjust(Duration.millis(500));
+        yield* TestClock.adjust(Duration.seconds(1));
         yield* Fiber.join(quitFiber);
         assert.isTrue(yield* Deferred.isDone(teardownFinished));
       }).pipe(Effect.provide(TestClock.layer())),

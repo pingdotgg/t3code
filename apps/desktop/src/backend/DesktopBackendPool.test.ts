@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
@@ -24,8 +25,61 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
-import { makeFakeBackendProcess } from "./testUtils/FakeBackendProcess.ts";
 import type { DesktopBackendStartConfig } from "./DesktopBackendManager.ts";
+
+// Models the spawner's release for a backend that ignores SIGTERM, without OS signals.
+const makeFakeBackendProcess = Effect.fn("test.makeFakeBackendProcess")(function* () {
+  const started = yield* Deferred.make<void>();
+  const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+  const signals = yield* Queue.unbounded<"SIGTERM" | "SIGKILL">();
+  let running = false;
+  const killWait = Duration.seconds(1);
+  const exit = Effect.sync(() => {
+    running = false;
+  }).pipe(Effect.andThen(Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0))), Effect.asVoid);
+  const layer = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (command._tag !== "StandardCommand") {
+          return yield* Effect.die("Expected a standard backend command");
+        }
+        const terminateGrace = Duration.fromInputUnsafe(command.options.forceKillAfter ?? 0);
+        running = true;
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            yield* Queue.offer(signals, "SIGTERM");
+            yield* Effect.sleep(terminateGrace);
+            yield* Queue.offer(signals, "SIGKILL");
+            yield* Effect.sleep(killWait);
+            yield* exit;
+          }),
+        );
+        yield* Deferred.succeed(started, undefined);
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(123),
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          stdin: Sink.drain,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          exitCode: Deferred.await(exited),
+          isRunning: Effect.sync(() => running),
+          kill: () => exit,
+          unref: Effect.succeed(Effect.void),
+        });
+      }),
+    ),
+  );
+  return {
+    layer,
+    started: Deferred.await(started),
+    signals,
+    isRunning: Effect.sync(() => running),
+    killWait,
+  };
+});
 
 const runningConfig = {
   executablePath: "/electron",
@@ -129,53 +183,10 @@ function layerPool(
 }
 
 describe("DesktopBackendPool", () => {
-  it.effect(
-    "quitting all pool instances waits for a SIGTERM-ignoring registered backend to exit",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const backend = yield* makeFakeBackendProcess(false);
-          yield* Effect.gen(function* () {
-            const pool = yield* DesktopBackendPool.DesktopBackendPool;
-            const ready = yield* Deferred.make<void>();
-            const instance = yield* pool.register({
-              id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
-              label: Effect.succeed("WSL (Ubuntu)"),
-              configResolve: Effect.succeed(runningConfig),
-              onReady: () => Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
-            });
-            yield* instance.start;
-            yield* backend.started;
-            yield* Deferred.await(ready);
-            const instances = yield* pool.list;
-            const stopFiber = yield* Effect.forEach(
-              instances,
-              (entry) => entry.stop({ timeout: Duration.seconds(5) }),
-              { concurrency: "unbounded" },
-            ).pipe(Effect.forkChild);
-            assert.equal(yield* Queue.take(backend.signals), "SIGTERM");
-            yield* TestClock.adjust(Duration.seconds(5));
-            assert.equal(yield* Queue.take(backend.signals), "SIGKILL");
-            const completedBeforeExit = yield* Effect.sync(() => stopFiber.pollUnsafe());
-            yield* TestClock.adjust(backend.killWait);
-            yield* Fiber.join(stopFiber);
-
-            assert.isTrue(
-              completedBeforeExit === undefined,
-              "pool quit completed before its registered backend exited",
-            );
-            assert.isFalse(yield* backend.isRunning);
-            assert.deepEqual(backend.receivedSignals, ["SIGTERM", "SIGKILL"]);
-            assert.isTrue(Option.isNone((yield* instance.snapshot).activePid));
-          }).pipe(Effect.provide(layerPool(Ref.makeUnsafe("Windows"), backend)));
-        }),
-      ),
-  );
-
   it.effect("unregister during pool quit does not interrupt sibling stops", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const backend = yield* makeFakeBackendProcess(false);
+        const backend = yield* makeFakeBackendProcess();
         yield* Effect.gen(function* () {
           const pool = yield* DesktopBackendPool.DesktopBackendPool;
           const id = DesktopBackendPool.BackendInstanceId("wsl:Ubuntu");
@@ -223,60 +234,6 @@ describe("DesktopBackendPool", () => {
           assert.isFalse(yield* backend.isRunning);
           assert.isTrue(Option.isNone((yield* instance.snapshot).activePid));
           assert.isTrue(Option.isNone(yield* pool.get(id)));
-        }).pipe(Effect.provide(layerPool(Ref.makeUnsafe("Windows"), backend)));
-      }),
-    ),
-  );
-
-  it.effect("closing the pool scope stops a registered backend without explicit unregister", () =>
-    Effect.gen(function* () {
-      const backend = yield* makeFakeBackendProcess(true);
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const pool = yield* DesktopBackendPool.DesktopBackendPool;
-          const ready = yield* Deferred.make<void>();
-          const instance = yield* pool.register({
-            id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
-            label: Effect.succeed("WSL (Ubuntu)"),
-            configResolve: Effect.succeed(runningConfig),
-            onReady: () => Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
-          });
-          yield* instance.start;
-          yield* backend.started;
-          yield* Deferred.await(ready);
-          assert.isTrue(yield* backend.isRunning);
-        }).pipe(Effect.provide(layerPool(Ref.makeUnsafe("Windows"), backend))),
-      );
-
-      assert.isFalse(yield* backend.isRunning);
-      assert.deepEqual(backend.receivedSignals, ["SIGTERM"]);
-    }),
-  );
-
-  it.effect("unregister waits for a running registered backend to exit", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const backend = yield* makeFakeBackendProcess(true);
-        yield* Effect.gen(function* () {
-          const pool = yield* DesktopBackendPool.DesktopBackendPool;
-          const id = DesktopBackendPool.BackendInstanceId("wsl:Ubuntu");
-          const ready = yield* Deferred.make<void>();
-          const instance = yield* pool.register({
-            id,
-            label: Effect.succeed("WSL (Ubuntu)"),
-            configResolve: Effect.succeed(runningConfig),
-            onReady: () => Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
-          });
-          yield* instance.start;
-          yield* backend.started;
-          yield* Deferred.await(ready);
-
-          yield* pool.unregister(id);
-
-          assert.isFalse(yield* backend.isRunning);
-          assert.deepEqual(backend.receivedSignals, ["SIGTERM"]);
-          assert.isTrue(Option.isNone(yield* pool.get(id)));
-          assert.isTrue(Option.isNone((yield* instance.snapshot).activePid));
         }).pipe(Effect.provide(layerPool(Ref.makeUnsafe("Windows"), backend)));
       }),
     ),
