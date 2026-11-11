@@ -4982,17 +4982,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ).pipe(Effect.map((result) => result.exitCode === 0))
           : false;
 
+      const newTrackingBranch =
+        !localInputExists && remoteExists && !localTrackingBranch && !localTrackedBranchTargetExists
+          ? localTrackedBranchCandidate
+          : null;
+
       const checkoutArgs = localInputExists
         ? ["checkout", input.refName]
         : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
           ? ["checkout", input.refName]
-          : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
-            : remoteExists && localTrackingBranch
-              ? ["checkout", localTrackingBranch]
-              : ["checkout", input.refName];
+          : newTrackingBranch
+            ? ["checkout", newTrackingBranch]
+            : remoteExists && !localTrackingBranch
+              ? ["checkout", "--track", input.refName]
+              : remoteExists && localTrackingBranch
+                ? ["checkout", localTrackingBranch]
+                : ["checkout", input.refName];
 
       yield* refuseOptionLikeRefName("GitVcsDriver.switchRef", input.cwd, checkoutArgs.at(-1));
+
+      // Created before the checkout so the shared-config lock is not held while files are written.
+      if (newTrackingBranch) {
+        yield* executeGit(
+          "GitVcsDriver.switchRef.createTrackingBranch",
+          input.cwd,
+          ["branch", "--track", "--", newTrackingBranch, input.refName],
+          {
+            timeoutMs: 10_000,
+            fallbackErrorDetail: "git branch create failed",
+            writesSharedConfig: true,
+          },
+        );
+      }
 
       // A stale ref must not turn into a path checkout that discards local edits.
       yield* executeGitWithStableDiagnostics(
@@ -5003,9 +5024,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           // Killing a checkout midway (large or LFS repos) leaves a half-updated working tree.
           timeoutMs: null,
           fallbackErrorDetail: "git checkout failed",
-          // Checking out a remote branch creates a local one that tracks it.
-          writesSharedConfig: !localInputExists,
+          // Creating a branch writes its upstream; Git also guesses a remote branch for a missing name.
+          writesSharedConfig: checkoutArgs[1] === "--track" || (!localInputExists && !remoteExists),
         },
+      ).pipe(
+        Effect.tapError(() =>
+          newTrackingBranch
+            ? executeGit(
+                "GitVcsDriver.switchRef.removeTrackingBranch",
+                input.cwd,
+                ["branch", "-D", "--", newTrackingBranch],
+                { timeoutMs: 10_000, writesSharedConfig: true },
+              ).pipe(Effect.ignore)
+            : Effect.void,
+        ),
       );
 
       const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [

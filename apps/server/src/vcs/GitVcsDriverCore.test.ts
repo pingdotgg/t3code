@@ -1982,11 +1982,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect("lets a slow branch checkout finish instead of killing it", () =>
+    it.effect("lets a slow remote branch checkout finish without blocking config writes", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
-        yield* git(cwd, ["branch", "feature"]);
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", "HEAD:refs/heads/feature"]);
+        yield* git(cwd, ["fetch", "origin"]);
         const checkoutStarted = yield* Deferred.make<void>();
         const releaseCheckout = yield* Deferred.make<void>();
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -2010,14 +2014,43 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
 
         const switching = yield* driver
-          .switchRef({ cwd, refName: "feature" })
+          .switchRef({ cwd, refName: "origin/feature" })
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(checkoutStarted);
         yield* TestClock.adjust("60 seconds");
+        yield* driver.createRef({ cwd, refName: "other" });
         yield* Deferred.succeed(releaseCheckout, undefined);
 
         const result = yield* Fiber.join(switching);
         assert.equal(result.refName, "feature");
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "feature@{upstream}"]),
+          "origin/feature",
+        );
+      }),
+    );
+
+    it.effect("removes the tracking branch it created when the checkout fails", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["checkout", "-b", "feature"]);
+        yield* writeTextFile(cwd, "README.md", "feature\n");
+        yield* git(cwd, ["commit", "-am", "feature"]);
+        yield* git(cwd, ["push", "-u", "origin", "feature"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+        yield* git(cwd, ["branch", "-D", "feature"]);
+        yield* writeTextFile(cwd, "README.md", "uncommitted work\n");
+        const branches = yield* driver.listLocalBranchNames(cwd);
+
+        yield* driver.switchRef({ cwd, refName: "origin/feature" }).pipe(Effect.flip);
+
+        assert.deepEqual(yield* driver.listLocalBranchNames(cwd), branches);
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
       }),
     );
 
