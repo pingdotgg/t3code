@@ -2390,6 +2390,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
         updatedAt: now,
       };
+      // Resume can clear the hold before the stopped run ends; its Stop marker still makes the drain explicit.
+      const endedRunId = options?.endedRunId;
+      const queueDelivery =
+        endedRunId === undefined ||
+        queuedRun.queueHeld === true ||
+        (yield* projectionStore
+          .getThreadRecords(threadId, ["turnItems"], {
+            turnItemTypes: ["run_interrupt_request"],
+            turnItemRunIds: [endedRunId],
+          })
+          .pipe(
+            Effect.map(({ turnItems }) => turnItems.length > 0),
+            Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+          ))
+          ? "explicit-queue"
+          : "automatic-queue";
       const startingRun: OrchestrationV2Run = {
         ...queuedRun,
         providerThreadId: queuedProviderThread.id,
@@ -2408,9 +2424,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             delegatedCompletion: queuedMessage.delegatedCompletion,
             restartContinuationOfRunId: queuedRun.restartContinuationOfRunId,
           },
-          options?.endedRunId === undefined || queuedRun.queueHeld === true
-            ? "explicit-queue"
-            : "automatic-queue",
+          queueDelivery,
         ),
       };
       const userTurnItem: OrchestrationV2TurnItem = {
