@@ -601,7 +601,7 @@ it.live.each([false, true])(
         );
         assert.deepEqual(
           captured.started.map((turn) => turn.runtimeMode),
-          ["approval-required", "auto"],
+          continuation ? ["approval-required", "approval-required"] : ["approval-required", "auto"],
         );
       }),
     ),

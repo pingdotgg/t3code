@@ -2494,7 +2494,22 @@ export const layerWithOptions = (
                   providerInstanceId: existing.runtime.instanceId,
                 });
                 yield* touchActivity(input.providerSessionId);
-                return existing.exposedRuntime;
+                const runtime = existing.exposedRuntime;
+                const runtimeMode = existing.runtimeMode;
+                if (
+                  input.preserveRuntimeMode === true &&
+                  !runtime.providerSession.capabilities.sessions.supportsRuntimeModeSwitchInSession
+                ) {
+                  return {
+                    ...runtime,
+                    startTurn: (turnInput) =>
+                      runtime.startTurn({
+                        ...turnInput,
+                        runtimePolicy: { ...turnInput.runtimePolicy, runtimeMode },
+                      }),
+                  };
+                }
+                return runtime;
               }
 
               const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
