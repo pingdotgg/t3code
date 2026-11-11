@@ -13,7 +13,6 @@ import {
 import { GitForkIcon, PlusIcon, SquarePenIcon, SquareTerminal } from "lucide-react";
 import {
   memo,
-  useEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -114,9 +113,6 @@ function resolveRenameCommit(input: {
   if (trimmed === input.originalTitle) return { action: "noop" };
   return { action: "commit", title: trimmed };
 }
-
-// Delay the input-swallowing native menu through the double-click rename interval.
-const TITLE_MENU_OPEN_DELAY_MS = 500;
 
 const OPEN_BESIDE_MENU: ContextMenuItem<LayoutBesideKind>[] = [
   { id: "browser", label: "Browser", icon: "globe" },
@@ -263,46 +259,15 @@ export const ChatHeader = memo(function ChatHeader({
     leadingItems: layoutMenuItems,
     onLeadingAction: runLayoutMenuAction,
   });
-  const titleButtonRef = useRef<HTMLButtonElement | null>(null);
-  const titleMenuTimerRef = useRef<number | null>(null);
-  const cancelPendingTitleMenu = () => {
-    if (titleMenuTimerRef.current === null) return;
-    clearTimeout(titleMenuTimerRef.current);
-    titleMenuTimerRef.current = null;
-  };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending title-menu timer when the thread switches or the header unmounts
-  useEffect(
-    () => () => {
-      if (titleMenuTimerRef.current === null) return;
-      clearTimeout(titleMenuTimerRef.current);
-      titleMenuTimerRef.current = null;
-    },
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A pending title menu belongs to the thread that was clicked, so switching threads drops it.
-    [activeThreadEnvironmentId, activeThreadId],
-  );
-  const openTitleMenuNow = () => {
-    cancelPendingTitleMenu();
-    const rect = titleButtonRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    openMenu({ x: rect.left, y: rect.bottom + 4 });
-  };
   const openMenuFromTitle = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (isTrailingDoubleClick(event.detail)) return;
-    // Keyboard activation can never be the first half of a double-click, so
-    // it opens without waiting.
-    if (event.detail === 0 || window.desktopBridge === undefined) {
-      openTitleMenuNow();
-      return;
-    }
-    cancelPendingTitleMenu();
-    titleMenuTimerRef.current = window.setTimeout(() => {
-      titleMenuTimerRef.current = null;
-      openTitleMenuNow();
-    }, TITLE_MENU_OPEN_DELAY_MS);
+    const rect = event.currentTarget.getBoundingClientRect();
+    openMenu({ x: rect.left, y: rect.bottom + 4 });
   };
+  // A native menu takes the second click, so only the in-page menu lets a double-click reach here.
   const handleTitleDoubleClick = (event: ReactMouseEvent) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    cancelPendingTitleMenu();
+    if ((event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null) return;
     closeMenu();
     // A ghost tab is kept first; the next double-click renames.
     if (ghostShown && layoutTabId !== null) {
@@ -316,7 +281,6 @@ export const ChatHeader = memo(function ChatHeader({
     if (!isServerThread) {
       const layoutItems = layoutMenuItems();
       if (onOpenProjectSettings === undefined && layoutItems.length === 0) return;
-      cancelPendingTitleMenu();
       event.preventDefault();
       const api = readLocalApi();
       if (!api) return;
@@ -343,13 +307,11 @@ export const ChatHeader = memo(function ChatHeader({
         });
       return;
     }
-    cancelPendingTitleMenu();
     event.preventDefault();
     openMenu({ x: event.clientX, y: event.clientY });
   };
   const handleTabAuxClick = (event: ReactMouseEvent) => {
     if (layoutTabId === null) return;
-    cancelPendingTitleMenu();
     closeLayoutTabOnMiddleClick(event, layoutTabId);
   };
   const handleRenameKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -448,7 +410,6 @@ export const ChatHeader = memo(function ChatHeader({
                   render={
                     isServerThread ? (
                       <PaneTabButton
-                        ref={titleButtonRef}
                         data-layout-pane-tab={layoutTabId ?? undefined}
                         type="button"
                         aria-label={`Thread actions for ${activeThreadTitle}`}
@@ -457,7 +418,6 @@ export const ChatHeader = memo(function ChatHeader({
                         onAuxClick={handleTabAuxClick}
                         onPointerDown={handleTabPointerDown}
                         onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
-                        onBlur={cancelPendingTitleMenu}
                       />
                     ) : (
                       <div

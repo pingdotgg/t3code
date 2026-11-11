@@ -157,6 +157,7 @@ export function NoProjectsComposer({
           activeThreadId={null}
           activeProjectId={null}
           activeThread={undefined}
+          activeThreadRuns={EMPTY_ENTRIES}
           promptHistoryEntries={EMPTY_ENTRIES}
           forceExpandedOnMobile={false}
           projectSelectionRequired={false}

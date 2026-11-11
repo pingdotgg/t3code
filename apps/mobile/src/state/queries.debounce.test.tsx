@@ -75,19 +75,28 @@ const target = {
   query: "src",
 };
 
-it("keeps the original search deadline when rerenders have equivalent targets", () => {
+it.each([
+  { query: "src", expected: "src" },
+  { query: "a".repeat(256), expected: "a".repeat(256) },
+  {
+    query: ["a".repeat(86), "b".repeat(86), "c".repeat(86), "unique.ts"].join("/"),
+    expected: ["a".repeat(86), "b".repeat(86), "c".repeat(82)].join("/"),
+  },
+  { query: `${"a".repeat(255)}😀/boundary.ts`, expected: "a".repeat(255) },
+  { query: `${"a".repeat(254)}😀/boundary.ts`, expected: `${"a".repeat(254)}😀` },
+])("keeps the search deadline and bounds the request for query: $query", ({ query, expected }) => {
   using harness = setup();
   harness.render({ ...target, query: null });
-  harness.render({ ...target, query: " src " });
+  harness.render({ ...target, query: ` ${query} ` });
   act(() => vi.advanceTimersByTime(100));
-  harness.render(target);
+  harness.render({ ...target, query });
   act(() => vi.advanceTimersByTime(99));
   expect(mocks.searchEntries).not.toHaveBeenCalled();
 
   act(() => vi.advanceTimersByTime(1));
   expect(mocks.searchEntries).toHaveBeenCalledExactlyOnceWith({
     environmentId: target.environmentId,
-    input: { cwd: target.cwd, query: target.query, limit: 20 },
+    input: { cwd: target.cwd, query: expected, limit: 20 },
   });
 });
 
@@ -95,10 +104,15 @@ it.each([
   { field: "environment", changed: { ...target, environmentId: EnvironmentId.make("other") } },
   { field: "project directory", changed: { ...target, cwd: "/other" } },
   { field: "query", changed: { ...target, query: "test" } },
-])("restarts the search deadline when the $field changes", ({ changed }) => {
+  {
+    field: "query suffix beyond the request limit",
+    initial: { ...target, query: `${"src/".repeat(65)}first.ts` },
+    changed: { ...target, query: `${"src/".repeat(65)}other.ts` },
+  },
+])("restarts the search deadline when the $field changes", ({ initial = target, changed }) => {
   using harness = setup();
   harness.render({ ...target, query: null });
-  harness.render(target);
+  harness.render(initial);
   act(() => vi.advanceTimersByTime(100));
   harness.render(changed);
 
@@ -110,7 +124,7 @@ it.each([
   act(() => vi.advanceTimersByTime(1));
   expect(mocks.searchEntries).toHaveBeenCalledExactlyOnceWith({
     environmentId: changed.environmentId,
-    input: { cwd: changed.cwd, query: changed.query, limit: 20 },
+    input: { cwd: changed.cwd, query: changed.query.slice(0, 256), limit: 20 },
   });
 });
 
