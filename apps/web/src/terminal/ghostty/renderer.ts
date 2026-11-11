@@ -20,6 +20,8 @@ export interface GhosttyCellRange {
 const DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
 const POWERLINE_SOLID_RIGHT = "\ue0b0";
 const POWERLINE_SOLID_LEFT = "\ue0b2";
+const POWERLINE_ROUND_RIGHT = "\ue0b4";
+const POWERLINE_ROUND_LEFT = "\ue0b6";
 
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -36,12 +38,17 @@ function sameTextStyle(left: GhosttyCell, right: GhosttyCell): boolean {
 }
 
 function isSolidPowerlineSeparator(text: string): boolean {
-  return text === POWERLINE_SOLID_RIGHT || text === POWERLINE_SOLID_LEFT;
+  return (
+    text === POWERLINE_SOLID_RIGHT ||
+    text === POWERLINE_SOLID_LEFT ||
+    text === POWERLINE_ROUND_RIGHT ||
+    text === POWERLINE_ROUND_LEFT
+  );
 }
 
 // Fallback fonts inset or scale these private-use glyphs, leaving a gap where
-// the separator should meet the next cell. Fill the triangle from the cell's
-// own edges instead, as native terminals do.
+// the separator should meet the next cell. Fill the triangle or half-ellipse
+// from the cell's own edges instead, as native terminals do.
 function fillSolidPowerlineSeparator(
   context: CanvasRenderingContext2D,
   text: string,
@@ -49,12 +56,26 @@ function fillSolidPowerlineSeparator(
   top: number,
   width: number,
   height: number,
+  seamOverlap: number,
 ): void {
   const right = left + width;
+  const middle = top + height / 2;
+  if (text === POWERLINE_ROUND_RIGHT || text === POWERLINE_ROUND_LEFT) {
+    const [base, start, inward] =
+      text === POWERLINE_ROUND_RIGHT ? [left, -Math.PI / 2, -1] : [right, Math.PI / 2, 1];
+    context.beginPath();
+    context.ellipse(base, middle, width, height / 2, 0, start, start + Math.PI);
+    context.closePath();
+    // Overlap the segment this cap closes so anti-aliasing at a fractional
+    // cell edge does not leave a hairline seam.
+    context.rect(Math.min(base, base + inward * seamOverlap), top, seamOverlap, height);
+    context.fill();
+    return;
+  }
   const [base, point] = text === POWERLINE_SOLID_RIGHT ? [left, right] : [right, left];
   context.beginPath();
   context.moveTo(base, top);
-  context.lineTo(point, top + height / 2);
+  context.lineTo(point, middle);
   context.lineTo(base, top + height);
   context.closePath();
   context.fill();
@@ -234,6 +255,7 @@ export function renderGhosttySnapshot(options: {
             top,
             metrics.width,
             height,
+            1,
           );
         }
         runStart += 1;
@@ -311,7 +333,7 @@ export function renderGhosttySnapshot(options: {
       if (cell?.text) {
         context.fillStyle = cssColor(snapshot.background);
         if (isSolidPowerlineSeparator(cell.text)) {
-          fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height);
+          fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height, 0);
         } else {
           context.font = fontForCell(cell, fontSize, fontFamily);
           context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
