@@ -65,6 +65,7 @@ import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 
 const layerPlatformTest = Layer.merge(
   Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
@@ -4149,9 +4150,11 @@ const layerSteeredTaskTest = OrchestratorMcpService.layer.pipe(
         list: () => Effect.succeed([]),
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(RemoteDelegation.RemoteDelegation)({}),
       Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       ServerSettings.layerTest(),
       NodeServices.layer,
+      NodeCrypto.layer,
     ),
   ),
   Layer.provideMerge(layerTest),
