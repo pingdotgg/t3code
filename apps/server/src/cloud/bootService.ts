@@ -756,7 +756,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           entry.waitWhile === undefined
             ? Effect.asVoid(command)
             : command.pipe(Effect.ignore, Effect.andThen(waitWhile(entry, entry.waitWhile)));
-        return entry.optional === true ? run.pipe(Effect.ignore) : run.pipe(Effect.asVoid);
+        return entry.optional === true ? run.pipe(Effect.ignore) : run;
       },
       { discard: true },
     );
