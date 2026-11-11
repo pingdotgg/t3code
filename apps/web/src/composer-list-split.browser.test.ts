@@ -68,6 +68,25 @@ describe("Backspace at the start of a line", () => {
     editor.commands.keyboardShortcut("Backspace");
     expect(storedDraft(editor)).toBe(expected);
   });
+
+  // Neither item has a list of its own kind one level up to lift into.
+  it.each([
+    ["- a\n  - [ ] x\n  - [ ] y", "- a\n  - [ ] xy"],
+    ["- [ ] a\n  - x\n  - y", "- [ ] a\n  - xy"],
+    ["- a\n  - [ ] y\n  - [ ] q", "- ay\n  - [ ] q"],
+  ])("joins y in %j onto the line above", (value, expected) => {
+    using editor = makeEditor(value);
+    placeCaret(editor, "y");
+    editor.commands.keyboardShortcut("Backspace");
+    expect(storedDraft(editor)).toBe(expected);
+  });
+
+  it("removes an empty checkbox under a bullet", () => {
+    using editor = makeEditor("- a\n  - [ ] x\n  - [ ]");
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
+    editor.commands.keyboardShortcut("Backspace");
+    expect(storedDraft(editor)).toBe("- a\n  - [ ] x");
+  });
 });
 
 describe("blocks that a list item or quote cannot hold", () => {

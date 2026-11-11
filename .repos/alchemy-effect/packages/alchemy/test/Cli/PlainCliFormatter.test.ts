@@ -1,7 +1,7 @@
-import { plainCliFormatter } from "@/Cli/PlainCliFormatter.ts";
+import { expect, it } from "@alchemy.run/test";
 import * as Context from "effect/Context";
 import * as Option from "effect/Option";
-import { expect, it } from "alchemy-test";
+import { plainCliFormatter } from "@/Cli/PlainCliFormatter.ts";
 
 it(
   "compacts enum flag types and bounds every line",
@@ -19,9 +19,7 @@ it(
           name: "log-level",
           aliases: [],
           type: "all|trace|debug|info|warn|warning|error|fatal|none",
-          description: Option.some(
-            "Sets the minimum log level for every command and provider.",
-          ),
+          description: Option.some("Sets the minimum log level for every command and provider."),
           required: false,
         },
       ],
