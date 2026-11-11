@@ -701,7 +701,9 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
           ...(isOcwBlockedError(cause) ? { blocked: cause.reason } : { error: String(cause) }),
         });
       return new CourseIngestError({
-        message: `Could not find the OCW course download: ${String(cause)}`,
+        message: `Could not find the OCW course download: ${
+          isOcwBlockedError(cause) ? cause.reason : String(cause)
+        }`,
       });
     },
   });
