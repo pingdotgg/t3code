@@ -1,4 +1,9 @@
-import { StackActions, useNavigation, type NavigationAction } from "@react-navigation/native";
+import {
+  CommonActions,
+  StackActions,
+  useNavigation,
+  type NavigationAction,
+} from "@react-navigation/native";
 import { Platform } from "react-native";
 
 import { rootNavigationRef } from "../../lib/rootNavigation";
@@ -28,9 +33,14 @@ export function useOpenWorkspaceDetail() {
         if (root?.key !== undefined) rootNavigationRef.dispatch({ ...action, target: root.key });
         else navigation.dispatch(action);
       };
-      if (step.type === "stay") return;
+      if (step.type === "push" || !state) {
+        dispatch(StackActions.push(detail.name, detail.params));
+        return;
+      }
+      // Carry new params (e.g. a PR link's anchor) onto the reused page, as Android's select does.
+      const reused = state.routes[state.index - (step.type === "pop" ? step.count : 0)];
+      dispatch({ ...CommonActions.replaceParams(detail.params), source: reused?.key });
       if (step.type === "pop") dispatch(StackActions.pop(step.count));
-      else dispatch(StackActions.push(detail.name, detail.params));
     }
   };
 }
