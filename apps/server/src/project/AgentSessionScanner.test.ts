@@ -1878,7 +1878,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const record = (fields: Record<string, unknown>) =>
           encodeTranscriptRecord({ sessionId: "claude-long", ...fields });
         const longText = "x".repeat(64 * 1024);
-        const middleCount = 400;
+        const middleCount = 600;
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-slug", "claude-long.jsonl"),
           contents: [
@@ -1887,7 +1887,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               cwd: workspace,
               message: { role: "user", content: "First prompt" },
             }),
-            // The whole history exceeds the real 32 MiB selected-history budget; the shown window fits.
+            // 600 x 64 KiB exceeds the 32 MiB selected-history budget; the shown window fits.
             ...Array.from({ length: middleCount }, (_, index) => {
               const role = index % 2 === 0 ? "assistant" : "user";
               return record({ type: role, message: { role, content: longText } });
