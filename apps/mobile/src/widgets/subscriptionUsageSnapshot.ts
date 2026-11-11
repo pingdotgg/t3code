@@ -13,7 +13,7 @@ import type { WidgetTheme } from "./widgetTheme";
 
 export interface WidgetLimitAccount {
   name: string;
-  color?: string | undefined;
+  color?: string;
   /** Absent when this account does not report the window. */
   remaining?: number;
   refill?: number;
@@ -87,14 +87,14 @@ function clockLabel(at: number, from: number) {
 
 function widgetAccounts(window: LimitPoolWindow): WidgetLimitAccount[] {
   return window.columns.map((column) => {
-    const name = accountName(column.account);
     const color = normalizeProviderAccentColor(column.account.accentColor);
-    if (column.window === null) return { name, color };
+    // expo-widgets cannot convert an explicit undefined into a Kotlin value.
+    const account = { name: accountName(column.account), ...(color && { color }) };
+    if (column.window === null) return account;
     const resetsAt = column.window.resetsAt ? Date.parse(column.window.resetsAt) : NaN;
     const reset = Number.isFinite(resetsAt);
     return {
-      name,
-      color,
+      ...account,
       remaining: remainingPercent(column.window),
       refill: reset ? column.refillPercent : 0,
       ...(reset && {

@@ -93,7 +93,7 @@ describe("subscription widget snapshots", () => {
       deepLink,
     );
     const session = snapshot.providers[0]?.windows.find((w) => w.kind === "session");
-    expect(session?.accounts).toEqual([
+    expect(session?.accounts).toStrictEqual([
       {
         name: "smol",
         color: "#4c6ef5",

@@ -44,7 +44,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
         surface: palette.background,
         onSurface: palette.foreground,
         muted: palette.secondary,
-        track: palette.subtle ?? palette.track,
+        track: palette.track,
         error: palette.danger,
       }
     : {
@@ -105,6 +105,8 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
     1,
     Math.min(9, Math.floor(contentHeight / (full ? fullRow : compactRow))),
   );
+  // Rows share any spare height so short lists do not bunch at the top.
+  const rowHeight = Math.min(full ? 52 : 28, contentHeight / Math.min(lines.length, capacity));
   const shown = lines.length > capacity ? lines.slice(0, capacity - 1) : lines;
   const hidden = lines.length - shown.length;
 
@@ -250,7 +252,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
         <Row
           key={`${line.provider}-note`}
           verticalAlignment="center"
-          modifiers={[fillMaxWidth(), height(full ? fullRow : compactRow)]}
+          modifiers={[fillMaxWidth(), height(rowHeight)]}
         >
           <Text color={colors.onSurface} maxLines={1} style={{ fontSize: 11 }}>
             {`${line.provider}  `}
@@ -262,11 +264,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
       );
     if (!full)
       return (
-        <Row
-          key={label}
-          verticalAlignment="center"
-          modifiers={[fillMaxWidth(), height(compactRow)]}
-        >
+        <Row key={label} verticalAlignment="center" modifiers={[fillMaxWidth(), height(rowHeight)]}>
           <Text
             color={colors.muted}
             maxLines={1}
@@ -282,7 +280,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
         </Row>
       );
     return (
-      <Row key={label} verticalAlignment="center" modifiers={[fillMaxWidth(), height(fullRow)]}>
+      <Row key={label} verticalAlignment="center" modifiers={[fillMaxWidth(), height(rowHeight)]}>
         <Column modifiers={[width(labelWidth)]}>
           <Text color={colors.muted} maxLines={1} style={{ fontSize: 10 }}>
             {label}
