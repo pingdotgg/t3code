@@ -40,7 +40,6 @@ interface ElectronWebview extends HTMLElement {
   preload?: string;
   webpreferences?: string;
   getWebContentsId: () => number;
-  getURL: () => string;
   executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
 }
 
@@ -192,17 +191,13 @@ export function HostedBrowserWebview(props: {
         new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
       );
     };
-    const markPainted = () => {
-      if (webview.getURL() === "about:blank") return;
-      setPaintedGeneration(webviewGeneration);
-    };
     const onGuestMessage = (event: Event) => {
-      if ((event as Event & { channel?: string }).channel === GUEST_PAINTED_CHANNEL) markPainted();
+      if ((event as Event & { channel?: string }).channel !== GUEST_PAINTED_CHANNEL) return;
+      setPaintedGeneration(webviewGeneration);
     };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
     webview.addEventListener("ipc-message", onGuestMessage);
-    webview.addEventListener("did-finish-load", markPainted);
     webview.addEventListener("render-process-gone", recoverGuest);
     webview.addEventListener("focus", dismissHostPopups);
     register();
@@ -212,7 +207,6 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("ipc-message", onGuestMessage);
-      webview.removeEventListener("did-finish-load", markPainted);
       webview.removeEventListener("render-process-gone", recoverGuest);
       webview.removeEventListener("focus", dismissHostPopups);
     };

@@ -1811,9 +1811,9 @@ ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotatio
 });
 ipcRenderer.on(CANCEL_PICK_CHANNEL, () => activeSession?.teardown(false));
 
-// Rendering, and with it rAF, waits for render-blocking stylesheets, so this marks the first real frame.
-window.addEventListener("DOMContentLoaded", () => {
+// Chromium runs no frame until the body exists and render-blocking stylesheets load, so this is the first paint.
+if (location.href !== "about:blank") {
   requestAnimationFrame(() =>
     requestAnimationFrame(() => ipcRenderer.sendToHost(GUEST_PAINTED_CHANNEL)),
   );
-});
+}
