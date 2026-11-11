@@ -165,14 +165,14 @@ vi.mock("./use-composer-drafts", async (importOriginal) => ({
   setFreshSessionPending: vi.fn(),
   undoComposerDraftMerge: vi.fn(),
   updateComposerDraftSettings: vi.fn(),
-  waitForComposerDraftsLoaded: vi.fn(),
+  waitForComposerDraftsLoaded: vi.fn(async () => {}),
 }));
 
 import { appAtomRegistry } from "./atom-registry";
 import { environmentSession } from "./session";
 import { dispatchingQueuedMessageIdAtom, editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import { createThreadOutboxDelivery } from "./threadOutboxDelivery";
-import { composerDraftsAtom } from "./use-composer-drafts";
+import { composerDraftsAtom, waitForComposerDraftsLoaded } from "./use-composer-drafts";
 
 const message = (overrides: Partial<QueuedThreadMessage> = {}): QueuedThreadMessage => ({
   environmentId: EnvironmentId.make("secondary"),
@@ -418,26 +418,28 @@ describe("queued task operation access", () => {
   });
 
   it.each([
-    { queued: ["approval-required"], pick: "approval-required", refused: false, kept: false },
-    { queued: ["full-access"], pick: "full-access", refused: false, kept: false },
-    { queued: ["approval-required"], pick: "approval-required", refused: true, kept: true },
+    { queued: ["approval-required"], pick: "approval-required", failed: null, kept: false },
+    { queued: ["full-access"], pick: "full-access", failed: null, kept: false },
+    { queued: ["approval-required"], pick: "approval-required", failed: "mode", kept: true },
+    // Saved drafts could still load afterwards and bring back the draft the release emptied.
+    { queued: ["approval-required"], pick: "approval-required", failed: "drafts", kept: true },
     // Picked again after the Full access message was queued; that message still moves the thread.
     {
       queued: ["approval-required", "full-access"],
       pick: "approval-required",
-      refused: false,
+      failed: null,
       kept: true,
     },
     // A message without a mode, as an MCP app sends, follows the thread and moves nothing.
     {
       queued: ["approval-required", undefined],
       pick: "approval-required",
-      refused: false,
+      failed: null,
       kept: false,
     },
   ] as const)(
-    "keeps the composer's mode pick until a delivered send applied it last ($queued, refused: $refused)",
-    async ({ queued, pick, refused, kept }) => {
+    "keeps the composer's mode pick until a delivered send applied it last ($queued, failed: $failed)",
+    async ({ queued, pick, failed, kept }) => {
       setOperateGrant("secondary", true);
       const draft = { text: "unsent follow-up", attachments: [] };
       appAtomRegistry.set(composerDraftsAtom, {
@@ -453,7 +455,10 @@ describe("queued task operation access", () => {
           }),
         );
       }
-      if (refused) {
+      if (failed === "drafts") {
+        vi.mocked(waitForComposerDraftsLoaded).mockRejectedValueOnce(new Error("Read failed."));
+      }
+      if (failed === "mode") {
         state.runtime.mockResolvedValueOnce(
           AsyncResult.failure(Cause.fail(new Error("Mode change refused."))),
         );
