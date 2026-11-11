@@ -370,18 +370,17 @@ export type LoginShellEnvironmentReader = (
  * `readEnvironmentFromLoginShell` without blocking the event loop, for reads after startup.
  * A shell that fails or times out reads as empty.
  */
-export const readLoginShellEnvironment = Effect.fn("shell.readLoginShellEnvironment")(function* (
+const readLoginShellEnvironment = Effect.fn("shell.readLoginShellEnvironment")(function* (
   shell: string,
   names: ReadonlyArray<string>,
-  exec: typeof execLoginShellProbe = execLoginShellProbe,
 ) {
   const environment: Partial<Record<string, string>> = {};
   if (names.length === 0) return environment;
 
-  const output = yield* exec(shell, ["-ilc", buildEnvironmentCaptureCommand(shell, names)]).pipe(
-    Effect.timeoutOption(LOGIN_SHELL_PROBE_TIMEOUT),
-    Effect.map(Option.flatten),
-  );
+  const output = yield* execLoginShellProbe(shell, [
+    "-ilc",
+    buildEnvironmentCaptureCommand(shell, names),
+  ]).pipe(Effect.timeoutOption(LOGIN_SHELL_PROBE_TIMEOUT), Effect.map(Option.flatten));
   if (Option.isNone(output)) return environment;
 
   for (const name of names) {

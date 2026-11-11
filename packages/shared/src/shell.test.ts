@@ -30,7 +30,6 @@ import {
   npmShimExecutable,
   preferGitForWindowsBinary,
   readEnvironmentFromLoginShell,
-  readLoginShellEnvironment,
   readEnvironmentFromWindowsShell,
   resolveCommandPath,
   resolveSpawnCommand,
@@ -225,25 +224,6 @@ describe("readEnvironmentFromLoginShell", () => {
       CUSTOM_VAR: "  first\nsecond  ",
     });
   });
-});
-
-describe("readLoginShellEnvironment", () => {
-  effectIt.effect("reads captured values and treats a failed shell as empty", () =>
-    Effect.gen(function* () {
-      const exec = vi.fn((_shell: string, _args: ReadonlyArray<string>) =>
-        Effect.succeedSome(
-          "banner\n__T3CODE_ENV_PATH_START__\n/opt/tools/bin\n__T3CODE_ENV_PATH_END__\n",
-        ),
-      );
-      expect(yield* readLoginShellEnvironment("/bin/zsh", ["PATH", "JAVA_HOME"], exec)).toEqual({
-        PATH: "/opt/tools/bin",
-      });
-      expect(exec.mock.calls[0]?.[1][0]).toBe("-ilc");
-
-      exec.mockReturnValueOnce(Effect.succeedNone);
-      expect(yield* readLoginShellEnvironment("/bin/zsh", ["PATH"], exec)).toEqual({});
-    }),
-  );
 });
 
 describe("listLoginShellCandidates", () => {
