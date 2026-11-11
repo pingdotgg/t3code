@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as Electron from "electron";
 
@@ -41,6 +42,9 @@ const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
 const { logError: logMenuError } = makeComponentLogger("desktop-menu");
 
+// Long enough for the detached updater event to publish, short enough that the menu cannot hang.
+const MANUAL_UPDATE_CHECK_SETTLE_TIMEOUT = "5 seconds";
+
 const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function* (
   action: string,
 ): Effect.fn.Return<void, DesktopWindow.DesktopWindowError, DesktopWindow.DesktopWindow> {
@@ -68,7 +72,29 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const result = yield* updates.check("menu");
-  const updateState = result.state;
+  // Up-to-date and error are applied in detached updater events, so the check
+  // promise can resolve while this snapshot is still "checking".
+  const settled =
+    result.state.status === "checking"
+      ? yield* Effect.scoped(
+          Effect.gen(function* () {
+            const { latest, changes } = yield* updates.subscribe;
+            if (latest.status !== "checking") {
+              return Option.some(latest);
+            }
+            return yield* changes.pipe(
+              Stream.filter((state) => state.status !== "checking"),
+              Stream.take(1),
+              Stream.runHead,
+            );
+          }),
+        ).pipe(Effect.timeoutOption(MANUAL_UPDATE_CHECK_SETTLE_TIMEOUT), Effect.map(Option.flatten))
+      : Option.some(result.state);
+  if (Option.isNone(settled)) {
+    yield* logUpdaterInfo("manual update check was still running when the menu stopped waiting");
+    return;
+  }
+  const updateState = settled.value;
 
   if (updateState.status === "up-to-date") {
     yield* electronDialog.showMessageBox({

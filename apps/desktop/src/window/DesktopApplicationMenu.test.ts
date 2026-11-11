@@ -1,8 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { DesktopUpdateState, DesktopUpdateStatus } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as Electron from "electron";
 import { vi } from "vite-plus/test";
@@ -63,11 +68,48 @@ const layerElectronDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
   showErrorBox: () => Effect.void,
 } satisfies ElectronDialog.ElectronDialog["Service"]);
 
-const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
+const layerRecordingDialog = (shown: Deferred.Deferred<Electron.MessageBoxOptions>) =>
+  Layer.succeed(ElectronDialog.ElectronDialog, {
+    pickFolder: () => Effect.succeedNone,
+    pickFiles: () => Effect.succeed([]),
+    showMessageBox: (options) =>
+      Deferred.succeed(shown, options).pipe(Effect.as({ response: 0, checkboxChecked: false })),
+    showErrorBox: () => Effect.void,
+  } satisfies ElectronDialog.ElectronDialog["Service"]);
+
+const menuUpdateState = (
+  status: DesktopUpdateStatus,
+  overrides: Partial<DesktopUpdateState> = {},
+): DesktopUpdateState => ({
+  enabled: true,
+  status,
+  channel: "latest",
+  currentVersion: "1.2.3",
+  hostArch: "arm64",
+  appArch: "arm64",
+  runningUnderArm64Translation: false,
+  availableVersion: null,
+  downloadedVersion: null,
+  releaseNotes: [],
+  omittedReleaseCount: 0,
+  downloadPercent: null,
+  checkedAt: null,
+  message: null,
+  errorContext: null,
+  canRetry: false,
+  ...overrides,
+});
+
+const desktopUpdatesService = (
+  overrides: Partial<DesktopUpdates.DesktopUpdates["Service"]> = {},
+): DesktopUpdates.DesktopUpdates["Service"] => ({
   getState: Effect.die("unexpected getState"),
   isActionActive: Effect.succeed(false),
   isInstallActive: Effect.succeed(false),
-  subscribe: Effect.die("unexpected subscribe"),
+  subscribe: Effect.succeed({
+    latest: menuUpdateState("idle"),
+    changes: Stream.empty,
+  }),
   emitState: Effect.void,
   disabledReason: Effect.succeedNone,
   configure: Effect.void,
@@ -76,7 +118,13 @@ const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   download: Effect.die("unexpected download"),
   install: Effect.die("unexpected install"),
   installPrepared: () => Effect.die("unexpected installPrepared"),
-} satisfies DesktopUpdates.DesktopUpdates["Service"]);
+  ...overrides,
+});
+
+const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, desktopUpdatesService());
+
+const layerDesktopUpdatesWith = (overrides: Partial<DesktopUpdates.DesktopUpdates["Service"]>) =>
+  Layer.succeed(DesktopUpdates.DesktopUpdates, desktopUpdatesService(overrides));
 
 const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -113,6 +161,8 @@ const configureMenu = (
   selectedAction: Deferred.Deferred<string>,
   applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
   environment: Partial<DesktopEnvironment.MakeDesktopEnvironmentInput> = {},
+  updates: Layer.Layer<DesktopUpdates.DesktopUpdates> = layerDesktopUpdates,
+  dialog: Layer.Layer<ElectronDialog.ElectronDialog> = layerElectronDialog,
 ) =>
   Effect.gen(function* () {
     const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
@@ -122,8 +172,8 @@ const configureMenu = (
       DesktopApplicationMenu.layer.pipe(
         Layer.provideMerge(layerElectronMenu(applicationMenuTemplate)),
         Layer.provideMerge(layerDesktopWindow(selectedAction)),
-        Layer.provideMerge(layerDesktopUpdates),
-        Layer.provideMerge(layerElectronDialog),
+        Layer.provideMerge(updates),
+        Layer.provideMerge(dialog),
         Layer.provideMerge(layerElectronApp),
         Layer.provideMerge(
           DesktopEnvironment.layer({ ...environmentInput, ...environment }).pipe(
@@ -133,6 +183,18 @@ const configureMenu = (
       ),
     ),
   );
+
+const clickCheckForUpdates = (template: readonly Electron.MenuItemConstructorOptions[]) => {
+  const helpMenu = template.find((item) => item.role === "help");
+  if (!Array.isArray(helpMenu?.submenu)) {
+    throw new Error("Expected Help menu submenu to be an array.");
+  }
+  const checkForUpdates = helpMenu.submenu.find((item) => item.label === "Check for Updates...");
+  if (typeof checkForUpdates?.click !== "function") {
+    throw new Error("Expected Check for Updates menu item to have a click handler.");
+  }
+  checkForUpdates.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+};
 
 describe("DesktopApplicationMenu", () => {
   it.effect("leaves the accelerator to Chromium instead of injecting a paste", () =>
@@ -283,6 +345,200 @@ describe("DesktopApplicationMenu", () => {
 
       reload.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
       assert.equal(yield* Deferred.await(selectedAction), "main-reload");
+    }),
+  );
+
+  it.effect("explains when updates are disabled without checking", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const shown = yield* Deferred.make<Electron.MessageBoxOptions>();
+      let checked = false;
+
+      yield* configureMenu(
+        selectedAction,
+        applicationMenuTemplate,
+        {},
+        layerDesktopUpdatesWith({
+          disabledReason: Effect.succeed(Option.some("This build has no update feed.")),
+          check: () =>
+            Effect.sync(() => {
+              checked = true;
+            }).pipe(Effect.andThen(Effect.die("unexpected check"))),
+        }),
+        layerRecordingDialog(shown),
+      );
+
+      clickCheckForUpdates(yield* Deferred.await(applicationMenuTemplate));
+      const dialog = yield* Deferred.await(shown);
+      assert.equal(dialog.title, "Updates unavailable");
+      assert.equal(dialog.detail, "This build has no update feed.");
+      assert.isFalse(checked);
+    }),
+  );
+
+  it.effect("shows the settled up-to-date and error dialogs from a manual check", () =>
+    Effect.gen(function* () {
+      const cases = [
+        {
+          state: menuUpdateState("up-to-date"),
+          title: "You're up to date!",
+          message: "T3 Code 1.2.3 is currently the newest version available.",
+          detail: undefined,
+        },
+        {
+          state: menuUpdateState("error", { message: "feed down" }),
+          title: "Update check failed",
+          message: "Could not check for updates.",
+          detail: "feed down",
+        },
+        {
+          state: menuUpdateState("error"),
+          title: "Update check failed",
+          message: "Could not check for updates.",
+          detail: "An unknown error occurred. Please try again later.",
+        },
+      ];
+
+      for (const expected of cases) {
+        const selectedAction = yield* Deferred.make<string>();
+        const applicationMenuTemplate =
+          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+        const shown = yield* Deferred.make<Electron.MessageBoxOptions>();
+        yield* configureMenu(
+          selectedAction,
+          applicationMenuTemplate,
+          {},
+          layerDesktopUpdatesWith({
+            check: () => Effect.succeed({ checked: true, state: expected.state }),
+            subscribe: Effect.die("unexpected subscribe"),
+          }),
+          layerRecordingDialog(shown),
+        );
+
+        clickCheckForUpdates(yield* Deferred.await(applicationMenuTemplate));
+        const dialog = yield* Deferred.await(shown);
+        assert.equal(dialog.title, expected.title);
+        assert.equal(dialog.message, expected.message);
+        assert.equal(dialog.detail, expected.detail);
+      }
+    }),
+  );
+
+  it.effect("stays quiet when a manual check finds or already has an update", () =>
+    Effect.gen(function* () {
+      for (const status of ["available", "downloaded"] as const) {
+        const selectedAction = yield* Deferred.make<string>();
+        const applicationMenuTemplate =
+          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+        const shown = yield* Deferred.make<Electron.MessageBoxOptions>();
+        yield* configureMenu(
+          selectedAction,
+          applicationMenuTemplate,
+          {},
+          layerDesktopUpdatesWith({
+            check: () => Effect.succeed({ checked: true, state: menuUpdateState(status) }),
+            subscribe: Effect.die("unexpected subscribe"),
+          }),
+          layerRecordingDialog(shown),
+        );
+
+        clickCheckForUpdates(yield* Deferred.await(applicationMenuTemplate));
+        yield* Effect.yieldNow;
+        assert.isFalse(yield* Deferred.isDone(shown));
+      }
+    }),
+  );
+
+  it.effect("waits until a manual check leaves checking before choosing a dialog", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const shown = yield* Deferred.make<Electron.MessageBoxOptions>();
+      const settled = yield* Queue.unbounded<DesktopUpdateState>();
+      yield* configureMenu(
+        selectedAction,
+        applicationMenuTemplate,
+        {},
+        layerDesktopUpdatesWith({
+          check: () => Effect.succeed({ checked: true, state: menuUpdateState("checking") }),
+          subscribe: Effect.succeed({
+            latest: menuUpdateState("checking"),
+            changes: Stream.fromQueue(settled),
+          }),
+        }),
+        layerRecordingDialog(shown),
+      );
+
+      clickCheckForUpdates(yield* Deferred.await(applicationMenuTemplate));
+      assert.isFalse(yield* Deferred.isDone(shown));
+      yield* Queue.offer(settled, menuUpdateState("error", { message: "feed down" }));
+      const dialog = yield* Deferred.await(shown);
+      assert.equal(dialog.title, "Update check failed");
+      assert.equal(dialog.detail, "feed down");
+    }),
+  );
+
+  it.effect("uses the subscribed snapshot when the check result is still checking", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const shown = yield* Deferred.make<Electron.MessageBoxOptions>();
+      yield* configureMenu(
+        selectedAction,
+        applicationMenuTemplate,
+        {},
+        layerDesktopUpdatesWith({
+          check: () => Effect.succeed({ checked: true, state: menuUpdateState("checking") }),
+          subscribe: Effect.succeed({
+            latest: menuUpdateState("up-to-date"),
+            changes: Stream.never,
+          }),
+        }),
+        layerRecordingDialog(shown),
+      );
+
+      clickCheckForUpdates(yield* Deferred.await(applicationMenuTemplate));
+      const dialog = yield* Deferred.await(shown);
+      assert.equal(dialog.title, "You're up to date!");
+      assert.equal(dialog.message, "T3 Code 1.2.3 is currently the newest version available.");
+    }),
+  );
+
+  it.effect("does not invent a dialog when a manual check stays checking", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const shown = yield* Deferred.make<Electron.MessageBoxOptions>();
+      const subscribed = yield* Deferred.make<void>();
+      const settled = yield* Queue.unbounded<DesktopUpdateState>();
+      yield* configureMenu(
+        selectedAction,
+        applicationMenuTemplate,
+        {},
+        layerDesktopUpdatesWith({
+          check: () => Effect.succeed({ checked: true, state: menuUpdateState("checking") }),
+          subscribe: Deferred.succeed(subscribed, undefined).pipe(
+            Effect.as({
+              latest: menuUpdateState("checking"),
+              changes: Stream.fromQueue(settled),
+            }),
+          ),
+        }),
+        layerRecordingDialog(shown),
+      );
+
+      clickCheckForUpdates(yield* Deferred.await(applicationMenuTemplate));
+      yield* Deferred.await(subscribed);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+      yield* Queue.offer(settled, menuUpdateState("up-to-date"));
+      yield* Effect.yieldNow;
+      assert.isFalse(yield* Deferred.isDone(shown));
     }),
   );
 });
