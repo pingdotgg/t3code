@@ -400,15 +400,15 @@ export function useThreadComposerState(input: {
     : null;
 
   const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
-  const resumeCompactionTokens = (text: string, now: string) =>
+  const resumeCompactionTokens = (selection: ModelSelection | null, text: string, now: string) =>
     selectedEnvironmentRuntime?.connectionState === "connected" &&
     selectedThreadProjection !== null &&
     serverConfig != null &&
-    modelSelection !== null
+    selection !== null
       ? compactBeforeSendTokens({
           projection: selectedThreadProjection.projection,
           visibleTurnItems: selectedThreadVisibleTurnItems,
-          selection: modelSelection,
+          selection,
           providers: serverConfig.providers,
           settings: serverConfig.settings,
           text,
@@ -424,7 +424,7 @@ export function useThreadComposerState(input: {
   const compactTokens =
     selectedDraft.freshContext === true
       ? null
-      : resumeCompactionTokens("", new Date(nowMinuteMs).toISOString());
+      : resumeCompactionTokens(modelSelection, "", new Date(nowMinuteMs).toISOString());
   const fullHistoryThreadKeys = useAtomValue(fullHistoryThreadKeysAtom);
   const keepFullHistory =
     selectedThreadKey !== null && fullHistoryThreadKeys[selectedThreadKey] === true;
@@ -766,7 +766,7 @@ export function useThreadComposerState(input: {
       !freshContext &&
       followUpDispatchMode === null &&
       appAtomRegistry.get(fullHistoryThreadKeysAtom)[threadKey] !== true &&
-      resumeCompactionTokens(text, metadata.createdAt) !== null;
+      resumeCompactionTokens(modelSelection, text, metadata.createdAt) !== null;
     const messageId = MessageId.make(metadata.messageId);
     onWillEnqueue?.();
     clearThreadComposerError(threadKey);

@@ -38,7 +38,7 @@ const state = vi.hoisted(() => ({
   pendingRequests: { approvals: [], userInputs: [] } as PendingThreadRequests,
   enqueue: vi.fn(async () => undefined),
   freshPending: false,
-  compactDue: false,
+  compactModel: null as string | null,
   setFreshPending: vi.fn(),
   clearDraft: vi.fn(),
   approve: vi.fn(),
@@ -79,7 +79,8 @@ vi.mock("react", () => ({
 vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
 vi.mock("@t3tools/client-runtime/state/context-window", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/context-window")>()),
-  compactBeforeSendTokens: () => (state.compactDue ? 248_000 : null),
+  compactBeforeSendTokens: (input: { readonly selection: ModelSelection }) =>
+    input.selection.model === state.compactModel ? 248_000 : null,
 }));
 vi.mock("../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
@@ -204,7 +205,7 @@ beforeEach(() => {
     runtimeMode: undefined,
   };
   state.freshPending = false;
-  state.compactDue = false;
+  state.compactModel = null;
   state.thread.latestRun = null;
   state.projection = null;
   state.serverConfig = {
@@ -315,13 +316,20 @@ describe("mobile task permissions", () => {
       visibleTurnItems: [],
       updatedAt: DateTime.makeUnsafe(0),
     } as unknown as OrchestrationV2ThreadProjection;
-    state.compactDue = true;
-    const composer = useThreadComposerState(NO_SIDE_CHATS);
-    expect(composer.compactBeforeSend?.tokens).toBe(248_000);
-    await composer.onSendMessage();
+    state.compactModel = "gpt-5.5";
+    const stale = useThreadComposerState(NO_SIDE_CHATS);
+    expect(stale.compactBeforeSend).toBeNull();
+    // A model picked after the last render still decides the send.
+    state.draft = {
+      ...state.draft,
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
+    };
+    await stale.onSendMessage();
     expect(state.enqueue).toHaveBeenLastCalledWith(
       expect.objectContaining({ compactBeforeSend: true }),
     );
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(composer.compactBeforeSend?.tokens).toBe(248_000);
     composer.compactBeforeSend?.keepFullHistory();
     const kept = useThreadComposerState(NO_SIDE_CHATS);
     expect(kept.compactBeforeSend).toBeNull();
