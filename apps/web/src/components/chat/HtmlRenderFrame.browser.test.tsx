@@ -8,22 +8,25 @@ import "~/index.css";
 import { render } from "../../../test/render";
 
 vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
-  useLongLivedAssetUrl: () => ({
-    _tag: "Success",
+  useLongLivedAssetUrl: vi.fn(() => ({
+    _tag: "Success" as const,
     url: "about:blank",
     expiresAt: Date.now() + 60 * 60_000,
-  }),
+  })),
 }));
 vi.mock(import("~/assets/assetUrls"), async (importOriginal) => ({
   ...(await importOriginal()),
   useAssetUrlRefresh: () => async () => "about:blank",
 }));
 
+import * as longLivedAssetUrls from "~/assets/longLivedAssetUrls";
+
 import { GuestHtmlRender } from "../guest/GuestHtmlRender";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 
 describe("HtmlRenderFrame", () => {
   it("reports leaving full screen when it unmounts while expanded", async () => {
+    vi.mocked(longLivedAssetUrls.useLongLivedAssetUrl).mockReset();
     const onFullscreenChange = vi.fn();
     await using screen = await render(
       <HtmlRenderFrame
@@ -43,11 +46,22 @@ describe("HtmlRenderFrame", () => {
   });
 });
 
-it.each(["inside", "outside", "touch", "sibling", "guest"])(
+it.each(["inside", "outside", "touch", "sibling", "guest", "navigation"])(
   "holds sizing until release: %s",
   async (kind) => {
     const outside = kind === "outside" || kind === "sibling" || kind === "guest";
     const border = kind === "guest" ? 2 : 0;
+    const nextUrl = URL.createObjectURL(
+      new Blob(
+        [
+          injectHtmlRenderBootstrap(
+            '<div style="height:300px">New document</div><script>addEventListener("load", function () { parent.postMessage("navigated", "*"); });</script>',
+          ),
+        ],
+        { type: "text/html" },
+      ),
+    );
+    using _nextUrl = { [Symbol.dispose]: () => URL.revokeObjectURL(nextUrl) };
     const url = URL.createObjectURL(
       new Blob(
         [
@@ -63,6 +77,13 @@ it.each(["inside", "outside", "touch", "sibling", "guest"])(
       ),
     );
     using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(url) };
+    vi.mocked(longLivedAssetUrls.useLongLivedAssetUrl)
+      .mockReset()
+      .mockReturnValue({
+        _tag: "Success",
+        url,
+        expiresAt: Date.now() + 60 * 60_000,
+      });
     const pin = vi.fn();
     await using screen = await render(
       <>
@@ -90,12 +111,16 @@ it.each(["inside", "outside", "touch", "sibling", "guest"])(
       </>,
     );
     const frame = screen.container.querySelector("iframe")!;
+    const loaded = new Promise<void>((resolve) =>
+      frame.addEventListener("load", () => resolve(), { once: true }),
+    );
     frame.src = url;
     const sibling = screen.container.querySelectorAll("iframe")[1];
     if (sibling) sibling.src = url;
     let cancelled = false,
       ready = false,
-      siblingReady = !sibling;
+      siblingReady = !sibling,
+      navigated = false;
     const receive = (event: MessageEvent) => {
       if (sibling && event.source === sibling.contentWindow && event.data === "ready")
         siblingReady = true;
@@ -104,9 +129,11 @@ it.each(["inside", "outside", "touch", "sibling", "guest"])(
         pin(event.data.params.held);
       if (event.data === "cancelled") cancelled = true;
       if (event.data === "ready") ready = true;
+      if (event.data === "navigated") navigated = true;
     };
     window.addEventListener("message", receive);
     using _listener = { [Symbol.dispose]: () => window.removeEventListener("message", receive) };
+    await loaded;
     await vi.waitFor(() => expect(ready && siblingReady).toBe(true));
     await vi.waitFor(() => expect(frame.clientHeight).toBe(216 - border));
     const outer = window.frameElement!.getBoundingClientRect();
@@ -136,6 +163,20 @@ it.each(["inside", "outside", "touch", "sibling", "guest"])(
       });
       await vi.waitFor(() => expect(pin).toHaveBeenLastCalledWith(true));
       expect(frame.clientHeight).toBe(216 - border);
+      if (kind === "navigation") {
+        frame.src = nextUrl;
+        await vi.waitFor(() => expect(navigated).toBe(true));
+        await vi.waitFor(() => expect(pin).toHaveBeenLastCalledWith(false));
+        await cdp().send("Input.dispatchMouseEvent", {
+          type: "mouseReleased",
+          x,
+          y,
+          button: "left",
+          buttons: 0,
+          clickCount: 1,
+        });
+        return;
+      }
       await cdp().send("Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x,

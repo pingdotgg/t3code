@@ -10,6 +10,13 @@ export function useHtmlRenderPointerHold(frameRef: RefObject<HTMLIFrameElement |
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bridges pointer releases across sandboxed frames and their host before the page can report a hold
   useLayoutEffect(() => {
     let held = false;
+    const frame = frameRef.current;
+    const onLoad = () => {
+      if (!held) return;
+      held = false;
+      setPointerHeld(false);
+    };
+    frame?.addEventListener("load", onLoad);
     const release = (event: Event) => {
       if (
         !held ||
@@ -55,6 +62,7 @@ export function useHtmlRenderPointerHold(frameRef: RefObject<HTMLIFrameElement |
     ];
     for (const event of events) window.addEventListener(event, release, true);
     return () => {
+      frame?.removeEventListener("load", onLoad);
       window.removeEventListener("message", onMessage);
       for (const event of events) window.removeEventListener(event, release, true);
     };
