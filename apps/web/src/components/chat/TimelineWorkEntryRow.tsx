@@ -46,6 +46,8 @@ import {
 import { cn } from "~/lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
+import { TodoChecklist } from "./TodoChecklist";
+import { grokTodoStepsFromTool, isGrokTodoWriteTool } from "../../grokTodoPlan";
 import { SubagentNotificationLink } from "./V2LifecycleRow";
 import {
   TimelineRowCtx,
@@ -323,6 +325,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? undefined
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
   const isReasoning = workEntry.itemType === "reasoning";
+  const projectedTurnItem = workEntry.projectedItem?.item;
+  const todoSteps =
+    projectedTurnItem?.type === "todo_list"
+      ? projectedTurnItem.steps
+      : projectedTurnItem?.type === "dynamic_tool" && isGrokTodoWriteTool(projectedTurnItem)
+        ? grokTodoStepsFromTool(projectedTurnItem)
+        : null;
   const questionHeading = workEntry.questionAnswer
     ? getQuestionTextPreview(workEntry.questionAnswer)
     : "";
@@ -381,17 +390,19 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     workEntry.projectedItem !== undefined &&
     turnItemNeedsDetailFetch(workEntry.projectedItem.item);
   const canExpandProjectedItem =
-    plainOutput !== undefined
-      ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
-      : workEntry.projectedItem === undefined
-        ? canExpand
-        : isReasoning
-          ? Boolean(workEntry.detail?.trim())
-          : Boolean(
-              viewedImage ||
-              workEntry.questionAnswer ||
-              turnItemHasDetail(workEntry.projectedItem.item),
-            );
+    todoSteps !== null && todoSteps.length > 0
+      ? false
+      : plainOutput !== undefined
+        ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
+        : workEntry.projectedItem === undefined
+          ? canExpand
+          : isReasoning
+            ? Boolean(workEntry.detail?.trim())
+            : Boolean(
+                viewedImage ||
+                workEntry.questionAnswer ||
+                turnItemHasDetail(workEntry.projectedItem.item),
+              );
   const iconWrapperClass = cn(
     "flex size-4 items-center justify-center",
     showWarningIndicator
@@ -553,6 +564,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         </>
       }
     >
+      {todoSteps !== null && todoSteps.length > 0 ? (
+        <TodoChecklist className="ms-7 mt-1" steps={todoSteps} />
+      ) : null}
       {expanded && viewedImage && threadRef ? (
         <WorkLogDetails kind="media">
           <ChatMarkdownAssetImage

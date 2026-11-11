@@ -38,6 +38,7 @@ import type {
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { threadRuntimeHasInterruptibleRun } from "@t3tools/client-runtime/state/thread-execution";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import { isGrokTodoWriteTool } from "./grokTodoPlan";
 
 import {
   isImageAttachment,
@@ -499,6 +500,19 @@ export interface TimelineEntriesProjection {
   readonly entries: TimelineEntry[];
 }
 
+/** Grok's `todo_write` tool repeats the plan event, and merge args omit step text. */
+function omitSupersededGrokTodoTools(
+  entries: TimelineEntry[],
+  visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+): TimelineEntry[] {
+  if (!visibleTurnItems.some((row) => row.item.type === "todo_list")) return entries;
+  return entries.filter((entry) => {
+    if (entry.kind !== "work") return true;
+    const item = entry.entry.projectedItem?.item;
+    return !(item?.type === "dynamic_tool" && isGrokTodoWriteTool(item));
+  });
+}
+
 export function deriveTimelineEntriesFromVisibleTurnItems(
   input: TimelineEntriesInput,
 ): TimelineEntry[] {
@@ -680,6 +694,12 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       entry: projectedWorkEntry(row),
       ...attemptMetadata,
     });
+  }
+
+  const withoutSupersededTodoTools = omitSupersededGrokTodoTools(entries, input.visibleTurnItems);
+  if (withoutSupersededTodoTools !== entries) {
+    entries.length = 0;
+    entries.push(...withoutSupersededTodoTools);
   }
 
   const retainedMessageIds = new Set([...committedMessageIds, ...foldedAnswerMessageIds]);
@@ -959,7 +979,7 @@ function reuseTimelineEntries(
       }),
     );
   }
-  return entries;
+  return omitSupersededGrokTodoTools(entries, input.visibleTurnItems);
 }
 
 export function deriveTimelineEntriesFromVisibleTurnItemsWithState(

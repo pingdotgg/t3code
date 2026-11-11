@@ -638,6 +638,80 @@ describe("V2 session presentation", () => {
     },
   );
 
+  it("drops Grok's Updating plan tool once the task list is in the timeline", () => {
+    const projection = makeThreadProjectionFixture();
+    const now = DateTime.makeUnsafe("2026-09-04T00:00:00.000Z");
+    const runId = RunId.make("run-grok-todo");
+    const base = (id: string, ordinal: number) => ({
+      id: TurnItemId.make(id),
+      threadId: projection.thread.id,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "completed" as const,
+      title: null as string | null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    });
+    const tool = {
+      ...base("item-updating-plan", 0),
+      type: "dynamic_tool" as const,
+      title: "Updating plan",
+      toolName: "todo_write",
+      input: {
+        variant: "TodoWrite",
+        merge: true,
+        todos: [{ id: "1", content: null, status: "in_progress" }],
+      },
+      output: {
+        type: "Todo",
+        TodosUpdated: {
+          todos: [{ content: "Reinstall the CLI", status: "in_progress" }],
+        },
+      },
+    } satisfies OrchestrationV2TurnItem;
+    const todo = {
+      ...base("item-tasks", 1),
+      type: "todo_list" as const,
+      planId: PlanId.make("plan-grok"),
+      steps: [{ id: "1", text: "Reinstall the CLI", status: "running" as const }],
+    } satisfies OrchestrationV2TurnItem;
+    const visible = (item: OrchestrationV2TurnItem, position: number) => ({
+      position,
+      visibility: "local" as const,
+      sourceThreadId: projection.thread.id,
+      sourceItemId: item.id,
+      item,
+    });
+
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [visible(tool, 0), visible(todo, 1)],
+        optimisticMessages: [],
+      }).map((entry) => entry.id),
+    ).toEqual([todo.id]);
+
+    const toolOnly = deriveTimelineEntriesFromVisibleTurnItemsWithState({
+      visibleTurnItems: [visible(tool, 0)],
+      optimisticMessages: [],
+    });
+    expect(toolOnly.entries.map((entry) => entry.id)).toEqual([tool.id]);
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItemsWithState(
+        {
+          visibleTurnItems: [visible(tool, 0), visible(todo, 1)],
+          optimisticMessages: [],
+        },
+        toolOnly,
+      ).entries.map((entry) => entry.id),
+    ).toEqual([todo.id]);
+  });
+
   it("waits for a dispatched turn item before adding queued input to the timeline", () => {
     const projection = makeThreadProjectionFixture();
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
