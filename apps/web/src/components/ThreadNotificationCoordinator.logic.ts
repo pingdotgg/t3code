@@ -1,7 +1,7 @@
 export type ThreadNotificationKind = "input" | "completion";
 
 export interface ThreadNotificationObservation {
-  /** Run, status and request key while the thread needs attention, otherwise null. */
+  /** Status and request key, or status and run without a request, while the thread needs attention. */
   readonly attention: string | null;
   /** The pending request's id, when it has one; null whenever attention is. */
   readonly requestId: string | null;
