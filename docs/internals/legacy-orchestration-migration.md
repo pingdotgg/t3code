@@ -3,9 +3,11 @@
 Orchestration v2 snapshots `state.sqlite` into `statev2.sqlite` before opening writable persistence
 on its first launch. Only the copy receives v2 migrations; the original remains available to v1.
 Later server starts reuse the copy, except that a copy whose v1 projects or threads fell behind and
-which holds no v2 work (threads, messages, projects, or scheduled tasks created in v2) is moved to
-`statev2.sqlite.stale` and taken again. Only the server does this, under its ownership lock, because
-CLI commands open persistence while a server may be running. V2 creates v2 thread shell events first and imports
+which holds no v2 work (threads, messages, projects, or scheduled tasks created in v2) is backed up
+to `statev2.sqlite.stale` and overwritten with v1 in place. Only the server does this, under its
+ownership lock. The copy goes through SQLite's backup API rather than a file rename because CLI
+commands open persistence without that lock, and a connection they hold must keep writing to the
+live database. V2 creates v2 thread shell events first and imports
 the complete user and assistant transcript lazily when a client reads or continues the thread. The
 v1 projection tables remain the import source and provide a read-only recovery source if an import
 needs investigation.

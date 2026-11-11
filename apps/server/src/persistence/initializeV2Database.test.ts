@@ -242,18 +242,26 @@ it.effect("re-seeds a V2 store without V2 work when V1 only updated an existing 
       v1.close();
     }
 
+    // A CLI command opens persistence without server ownership and may write after the re-copy.
+    const cli = yield* Effect.acquireRelease(
+      Effect.sync(() => new NodeSqlite.DatabaseSync(NodePath.join(directory, "statev2.sqlite"))),
+      (cli) => Effect.sync(() => cli.close()),
+    );
+    cli.prepare("SELECT count(*) FROM auth_sessions").get();
+
     assert.deepEqual(yield* startV2, ["thread-a"]);
     assert.include(backups(directory), "statev2.sqlite.stale");
+    cli.exec(`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
+      VALUES ('cli-session', 'cli', '[]', 'browser-session-cookie', '2026-01-03T00:00:00.000Z', '2027-01-03T00:00:00.000Z')`);
     const rows = yield* inV2(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        return yield* sql`SELECT title FROM projection_threads`;
+        return yield* sql`SELECT
+          (SELECT title FROM projection_threads) AS title,
+          (SELECT count(*) FROM auth_sessions WHERE session_id = 'cli-session') AS cliSessions`;
       }),
     );
-    assert.deepEqual(
-      rows.map((row) => row.title),
-      ["Renamed in V1"],
-    );
+    assert.deepEqual(rows, [{ title: "Renamed in V1", cliSessions: 1 }]);
   }).pipe(Effect.scoped),
 );
 

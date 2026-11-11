@@ -140,14 +140,14 @@ function hasV2Revocations(source: NodeSqlite.DatabaseSync, copy: NodeSqlite.Data
   });
 }
 
-// Leaves the main file complete, so moving it alone moves the whole database.
-function checkpointCopy(destinationPath: string) {
-  const copy = new NodeSqlite.DatabaseSync(destinationPath);
+// Copies through SQLite instead of renaming files: a CLI command may hold the V2 database open
+// without server ownership, and its later writes must land in the live database.
+async function backupInto(sourcePath: string, destinationPath: string) {
+  const database = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
   try {
-    const result = copy.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
-    if (result?.busy !== 0) throw new Error("The V2 database is in use by another process");
+    await NodeSqlite.backup(database, destinationPath);
   } finally {
-    copy.close();
+    database.close();
   }
 }
 
@@ -213,8 +213,8 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
 
 /**
  * Replaces a V2 copy nobody worked in when V1 changed after it was taken, as after a preview or a
- * rollback while the user kept using V1. Moving the database aside is only safe while holding
- * server ownership, so CLI processes that open persistence never call this.
+ * rollback while the user kept using V1. Only the server calls this, under its ownership lock, so
+ * two processes never replace the copy at once.
  */
 export const replaceStaleV2Database = Effect.fn("replaceStaleV2Database")(function* (
   destinationPath: string,
@@ -237,34 +237,30 @@ export const replaceStaleV2Database = Effect.fn("replaceStaleV2Database")(functi
       return;
     }
     const backupPath = `${destinationPath}.stale`;
-    const moved = yield* Effect.gen(function* () {
-      yield* Effect.try({
-        try: () => checkpointCopy(destinationPath),
-        catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
-      });
+    const replaced = yield* Effect.gen(function* () {
       // A previous backup was also a copy without V2 work, so one backup is enough.
       for (const suffix of ["", "-wal", "-shm"]) {
         yield* fs.remove(backupPath + suffix, { force: true });
       }
-      // The main file goes first: after the checkpoint it holds everything, so a failed rename
-      // moves nothing.
-      yield* fs.rename(destinationPath, backupPath);
+      yield* Effect.tryPromise({
+        try: async () => {
+          await backupInto(destinationPath, backupPath);
+          await backupInto(sourcePath, destinationPath);
+        },
+        catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
+      });
     }).pipe(
       Effect.as(true),
       Effect.catch((cause) =>
         Effect.logWarning(
-          "The V2 database predates newer V1 data, but it could not be moved aside; keeping it",
+          "The V2 database predates newer V1 data, but it could not be copied again; keeping it",
           { destinationPath, cause },
         ).pipe(Effect.as(false)),
       ),
     );
-    if (!moved) return;
-    // Checkpointed sidecars are empty, so one left behind cannot corrupt the fresh copy.
-    for (const suffix of ["-wal", "-shm"]) {
-      yield* fs.rename(destinationPath + suffix, backupPath + suffix).pipe(Effect.ignore);
-    }
+    if (!replaced) return;
     yield* Effect.logWarning(
-      "The V2 database predates newer V1 data and holds no V2 work; moved it aside and copied V1 again",
+      "The V2 database predates newer V1 data and holds no V2 work; backed it up and copied V1 again",
       { backupPath },
     );
   }).pipe(
