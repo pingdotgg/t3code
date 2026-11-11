@@ -187,9 +187,9 @@ it("hands thread navigation shortcuts from a focused terminal back to the app", 
     fixture.pendingSurfaces.shift()?.();
   });
   const terminalHandles = (key: string, code: string) =>
-    fixture.surfaceOptions.at(-1)!.beforeKey(
-      new KeyboardEvent("keydown", { key, code, ctrlKey: true, shiftKey: true }),
-    );
+    fixture.surfaceOptions
+      .at(-1)!
+      .beforeKey(new KeyboardEvent("keydown", { key, code, ctrlKey: true, shiftKey: true }));
 
   expect([terminalHandles("{", "BracketLeft"), terminalHandles("}", "BracketRight")]).toEqual([
     false,
