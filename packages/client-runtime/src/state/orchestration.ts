@@ -24,8 +24,6 @@ import {
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
-import * as ManagedRelayDpopSigner from "../relay/managedRelay.ts";
 import { EnvironmentRpcUnavailableError, request } from "../rpc/client.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
@@ -118,10 +116,6 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         return yield* fetchEnvironmentThreadTranscript({
           prepared: prepared.value,
           threadId: input.threadId,
-          signer: yield* Effect.serviceOption(ManagedRelayDpopSigner.ManagedRelayDpopSigner),
-          remoteAuthorization: yield* Effect.serviceOption(
-            RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-          ),
         });
       }),
     }),

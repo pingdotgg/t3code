@@ -13,9 +13,7 @@ import type {
   SpeechPostProcessingOptions,
 } from "@t3tools/contracts";
 
-import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
-import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   makeEnvironmentHttpApiGroupClient,
   makeEnvironmentHttpApiUrlBuilder,
@@ -42,16 +40,12 @@ const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(functio
   readonly path: (urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[G]) => string;
   readonly run: (input: {
     readonly client: EnvironmentApiClient<G>;
-    readonly headers: { readonly authorization?: string; readonly dpop?: string };
+    readonly headers: { readonly authorization?: string };
   }) => Effect.Effect<A, E>;
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     group: input.group,
     prepared: input.prepared,
-    signer: yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner),
-    remoteAuthorization: yield* Effect.serviceOption(
-      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-    ),
     method: input.method,
     url: input.path,
     timeoutMs: input.timeoutMs ?? 30_000,

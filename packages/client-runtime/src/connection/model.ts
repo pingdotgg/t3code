@@ -1,5 +1,4 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Schema from "effect/Schema";
 
 const ConnectionTargetBase = {
@@ -24,13 +23,6 @@ export class BearerConnectionTarget extends Schema.TaggedClass<BearerConnectionT
   },
 ) {}
 
-export class RelayConnectionTarget extends Schema.TaggedClass<RelayConnectionTarget>()(
-  "RelayConnectionTarget",
-  {
-    ...ConnectionTargetBase,
-  },
-) {}
-
 export class SshConnectionTarget extends Schema.TaggedClass<SshConnectionTarget>()(
   "SshConnectionTarget",
   {
@@ -42,14 +34,12 @@ export class SshConnectionTarget extends Schema.TaggedClass<SshConnectionTarget>
 export const ConnectionTarget = Schema.Union([
   PrimaryConnectionTarget,
   BearerConnectionTarget,
-  RelayConnectionTarget,
   SshConnectionTarget,
 ]);
 export type ConnectionTarget = typeof ConnectionTarget.Type;
 
 export const PersistedConnectionTarget = Schema.Union([
   BearerConnectionTarget,
-  RelayConnectionTarget,
   SshConnectionTarget,
 ]);
 export type PersistedConnectionTarget = typeof PersistedConnectionTarget.Type;
@@ -61,9 +51,7 @@ export const ConnectionTransientReason = Schema.Literals([
   "timeout",
   "transport",
   "endpoint-unavailable",
-  "relay-unavailable",
   "remote-unavailable",
-  "session-pending",
 ]);
 export type ConnectionTransientReason = typeof ConnectionTransientReason.Type;
 
@@ -75,30 +63,17 @@ export const ConnectionBlockedReason = Schema.Literals([
 ]);
 export type ConnectionBlockedReason = typeof ConnectionBlockedReason.Type;
 
-/** A part of the path to an environment: this device, T3 Connect, the host's tunnel, or T3 Code on the host. */
-export const ConnectionHop = Schema.Literals(["device", "relay", "tunnel", "server"]);
+/** A part of the path to an environment: this device or T3 Code on the host. */
+export const ConnectionHop = Schema.Literals(["device", "server"]);
 export type ConnectionHop = typeof ConnectionHop.Type;
 
-/** The relay's endpoint failures plus the causes the client can name from other errors. */
-export const ConnectionFailureCause = Schema.Literals([
-  ...RelayEnvironmentEndpointFailure.literals,
-  "clock_skew",
-  "not_linked",
-  "relay_error",
-  "tunnel_pending",
-  "tunnel_not_enabled",
-  "pairing_revoked",
-]);
+/** Causes the client can name from the errors it sees. */
+export const ConnectionFailureCause = Schema.Literals(["pairing_revoked"]);
 export type ConnectionFailureCause = typeof ConnectionFailureCause.Type;
 
-/**
- * Where and why a failure happened, when the code that saw it knows. See
- * `presentConnectionDiagnosis`. `via` names the route when the hop alone does
- * not: T3 Code on the host can fail behind the tunnel or on a direct route.
- */
+/** Where and why a failure happened, when the code that saw it knows. See `presentConnectionDiagnosis`. */
 const ConnectionFailureFields = {
   hop: Schema.optionalKey(ConnectionHop),
-  via: Schema.optionalKey(Schema.Literals(["relay", "direct"])),
   failureCause: Schema.optionalKey(ConnectionFailureCause),
   httpStatus: Schema.optionalKey(Schema.Number),
 };
@@ -135,18 +110,10 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
 
 export type ConnectionAttemptError = ConnectionTransientError | ConnectionBlockedError;
 
-export const DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
-
-export type PreparedHttpAuthorization =
-  | {
-      readonly _tag: "Bearer";
-      readonly token: string;
-    }
-  | {
-      readonly _tag: "Dpop";
-      readonly accessToken: string;
-      readonly expiresAtEpochMs: number;
-    };
+export interface PreparedHttpAuthorization {
+  readonly _tag: "Bearer";
+  readonly token: string;
+}
 
 export interface PreparedConnection {
   readonly environmentId: EnvironmentId;

@@ -1,6 +1,6 @@
 import {
   EnvironmentId,
-  type RelayClientInstallProgressEvent,
+  type ServerSelfUpdateProgressEvent,
   type ServerConfig,
   type ServerLifecycleStreamEvent,
   WS_METHODS,
@@ -36,13 +36,13 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
-const INSTALL_CHECKING: RelayClientInstallProgressEvent = {
-  type: "progress",
-  stage: "checking",
-};
-const INSTALL_DOWNLOADING: RelayClientInstallProgressEvent = {
+const UPDATE_DOWNLOADING: ServerSelfUpdateProgressEvent = {
   type: "progress",
   stage: "downloading",
+};
+const UPDATE_INSTALLING: ServerSelfUpdateProgressEvent = {
+  type: "progress",
+  stage: "installing",
 };
 
 function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
@@ -83,18 +83,20 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 describe("environment RPC", () => {
   it.effect("binds finite streaming commands to one active session", () =>
     Effect.gen(function* () {
-      const firstEvents = yield* Queue.unbounded<RelayClientInstallProgressEvent>();
-      const secondEvents = yield* Queue.unbounded<RelayClientInstallProgressEvent>();
+      const firstEvents = yield* Queue.unbounded<ServerSelfUpdateProgressEvent>();
+      const secondEvents = yield* Queue.unbounded<ServerSelfUpdateProgressEvent>();
       const firstClient = {
-        [WS_METHODS.cloudInstallRelayClient]: () => Stream.fromQueue(firstEvents),
+        [WS_METHODS.serverUpdateServerWithProgress]: () => Stream.fromQueue(firstEvents),
       } as unknown as WsRpcProtocolClient;
       const secondClient = {
-        [WS_METHODS.cloudInstallRelayClient]: () => Stream.fromQueue(secondEvents),
+        [WS_METHODS.serverUpdateServerWithProgress]: () => Stream.fromQueue(secondEvents),
       } as unknown as WsRpcProtocolClient;
       const { activeSession, supervisor } = yield* makeHarness();
 
       yield* SubscriptionRef.set(activeSession, Option.some(session(firstClient)));
-      const resultFiber = yield* runStream(WS_METHODS.cloudInstallRelayClient, {}).pipe(
+      const resultFiber = yield* runStream(WS_METHODS.serverUpdateServerWithProgress, {
+        targetVersion: "1.0.0",
+      }).pipe(
         Stream.take(2),
         Stream.runCollect,
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
@@ -102,12 +104,12 @@ describe("environment RPC", () => {
       );
       yield* Effect.yieldNow;
 
-      yield* Queue.offer(firstEvents, INSTALL_CHECKING);
+      yield* Queue.offer(firstEvents, UPDATE_DOWNLOADING);
       yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
-      yield* Queue.offer(secondEvents, INSTALL_DOWNLOADING);
-      yield* Queue.offer(firstEvents, INSTALL_DOWNLOADING);
+      yield* Queue.offer(secondEvents, UPDATE_INSTALLING);
+      yield* Queue.offer(firstEvents, UPDATE_INSTALLING);
 
-      expect(yield* Fiber.join(resultFiber)).toEqual([INSTALL_CHECKING, INSTALL_DOWNLOADING]);
+      expect(yield* Fiber.join(resultFiber)).toEqual([UPDATE_DOWNLOADING, UPDATE_INSTALLING]);
     }),
   );
 

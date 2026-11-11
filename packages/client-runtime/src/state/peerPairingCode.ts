@@ -17,11 +17,9 @@ import * as Option from "effect/Option";
 import type { Atom } from "effect/reactivity";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import * as ManagedRelay from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { createEnvironmentCommand } from "./runtime.ts";
 
@@ -48,14 +46,8 @@ const mintPairingCredential = Effect.fn("clientRuntime.state.mintPairingCredenti
   prepared: PreparedConnection,
   payload: AuthCreatePairingCredentialInput,
 ): Effect.fn.Return<AuthPairingCredentialResult, PeerPairingCodeError, HttpClient.HttpClient> {
-  const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
-  const remoteAuthorization = yield* Effect.serviceOption(
-    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-  );
   const minted = yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared,
-    signer,
-    remoteAuthorization,
     group: "auth",
     method: "POST",
     url: (urls) => urls.pairingCredential(),

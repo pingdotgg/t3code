@@ -9,7 +9,6 @@ import type * as Socket from "effect/socket/Socket";
 import { describeOutdatedHost, updateOutdatedHost } from "../connection/outdatedHostUpdate.ts";
 import type * as ConnectionResolver from "../connection/resolver.ts";
 import type * as EnvironmentRegistry from "../connection/registry.ts";
-import type * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import { createAtomCommandScheduler, createRuntimeCommand } from "./runtime.ts";
 import {
   serverUpdateFailureMessage,
@@ -41,7 +40,6 @@ export function createOutdatedServerUpdateCommand<E>(
   runtime: Atom.AtomRuntime<
     | EnvironmentRegistry.EnvironmentRegistry
     | ConnectionResolver.ConnectionResolver
-    | RelayEnvironmentDiscovery.RelayEnvironmentDiscovery
     | Socket.WebSocketConstructor
     | HttpClient.HttpClient,
     E
