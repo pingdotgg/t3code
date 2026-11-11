@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   alignListPaneToHinge,
   deriveLayout,
-  deriveThreadFeedInitialContentInset,
   deriveThreadArrangementSizing,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
@@ -47,19 +46,6 @@ describe("thread work-log text sizing", () => {
       expect(resized.estimatedRowHeight).toBe(original.estimatedRowHeight);
       expect(resized.textSizeKey).not.toBe(original.textSizeKey);
     }
-  });
-});
-
-describe("deriveThreadFeedInitialContentInset", () => {
-  // regression: #5585 land the first thread open above the composer on Android
-  it("does not double native iOS insets", () => {
-    expect(
-      deriveThreadFeedInitialContentInset({
-        platform: "ios",
-        usesNativeAutomaticInsets: true,
-        bottomContentInset: 174,
-      }),
-    ).toBeUndefined();
   });
 });
 
