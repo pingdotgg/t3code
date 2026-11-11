@@ -1,9 +1,10 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
-import { createRef, useState } from "react";
+import { createRef, use, useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
 import { page, userEvent } from "vite-plus/test/browser";
@@ -18,6 +19,7 @@ vi.mock(import("@tanstack/react-router"), async (importOriginal) => ({
   useParams: (() => navigation.params) as typeof import("@tanstack/react-router").useParams,
 }));
 
+import { ComposerContextActionsContext } from "./composerContextActions";
 import { findAssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { act, render } from "../../test/render";
 import {
@@ -296,3 +298,27 @@ it.each(["blocked", "refusedLater"] as const)(
       .toHaveAttribute("data-prompt", `See ${serializeAssistantCitation(citation)}x `);
   },
 );
+
+it("reveals a side-chat citation using the composer scope on its parent route", async () => {
+  navigation.navigate.mockClear();
+  navigation.params = { environmentId: "environment", threadId: "parent-thread" };
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  function SideChatComposer() {
+    const actions = use(ComposerContextActionsContext);
+    return (
+      <ComposerContextActionsContext
+        value={{ ...actions, threadRef: scopeThreadRef(citation.environmentId, citation.threadId) }}
+      >
+        <Composer question={false} editorRef={editorRef} sourceVisible={false} />
+      </ComposerContextActionsContext>
+    );
+  }
+  try {
+    await using screen = await render(<SideChatComposer />);
+    await screen.getByRole("link", { name: "View cited assistant text: hello" }).click();
+    await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+    expect(navigation.navigate).toHaveBeenCalledOnce();
+  } finally {
+    navigation.params = { environmentId: "environment", threadId: "thread" };
+  }
+});

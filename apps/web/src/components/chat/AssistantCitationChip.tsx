@@ -7,6 +7,7 @@ import {
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { QuoteIcon } from "lucide-react";
 import {
+  use,
   useEffect,
   useEffectEvent,
   useRef,
@@ -30,10 +31,12 @@ import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCom
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { textDirection } from "~/textDirection";
+import { ComposerContextActionsContext } from "../composerContextActions";
 
 function useCitationSourceLinkProps(citation: AssistantCitation, editComment = false) {
   const navigate = useNavigate();
-  const { environmentId, threadId } = useParams({ strict: false });
+  const route = useParams({ strict: false });
+  const composerScope = use(ComposerContextActionsContext).threadRef ?? route;
   const sourceThread = useQuietThreadShell(
     scopeThreadRef(citation.environmentId, citation.threadId),
   );
@@ -48,7 +51,8 @@ function useCitationSourceLinkProps(citation: AssistantCitation, editComment = f
       // Keep the draft editor mounted when editing a quote from another scope.
       if (
         editComment &&
-        (citation.environmentId !== environmentId || citation.threadId !== threadId)
+        (citation.environmentId !== composerScope.environmentId ||
+          citation.threadId !== composerScope.threadId)
       )
         return;
       void navigate(assistantCitationNavigation(citation, sourceThread));
