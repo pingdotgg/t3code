@@ -233,10 +233,11 @@ const make = Effect.gen(function* () {
           message: "Pass target.model from orchestrator_capabilities with this environmentId.",
         });
       }
+      // Cyber access comes with the login on each machine, so it is never inherited across one.
       const options =
         target.options ??
         (instanceId === inherited.instanceId && model === inherited.model
-          ? inherited.options
+          ? inherited.options?.filter((option) => option.id !== "cyberAccessProgram")
           : undefined);
       // Modes asked for are checked against this thread. Omitted ones are left
       // to the other side, which inherits this thread's modes capped by the

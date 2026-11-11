@@ -20,7 +20,6 @@ import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
-  codexDefaultCyberAccessProgram,
 } from "../CodexProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -243,12 +242,10 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const resolveRuntime = runtime.auth.controller.withAccess!(runtime.resolve);
   // Launch settings bind the refresh command to the signed-in profile. The registry
   // already wraps openSession in withAccess, so resolve without re-entering it.
+  const models = snapshot.getSnapshot.pipe(Effect.map((value) => value.models));
   const orchestrationAdapter = yield* createCodexAdapterV2(input, {
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
-    defaultCyberAccessProgram: (model) =>
-      snapshot.getSnapshot.pipe(
-        Effect.map((value) => codexDefaultCyberAccessProgram(value.models, model)),
-      ),
+    models,
     resolveRuntime: runtime.resolve,
   }).pipe(
     Effect.mapError(
@@ -264,7 +261,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const nativeGeneration = yield* makeCodexTextGeneration(
     config,
     undefined,
-    snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
+    models,
     resolveRuntime,
   );
   const protect = <A>(operation: string, effect: Effect.Effect<A, TextGenerationError>) =>

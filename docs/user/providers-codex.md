@@ -102,17 +102,11 @@ for command and file approvals.
 
 ## Use Daybreak
 
-Models that list cyber access programs show a Cyber Access choice in the model
-options next to the composer. T3 Code sends it with every turn. As in the Codex
-CLI, the default is Standard unless you set `daybreak = true` in Codex's
-`config.toml`. Your last choice stays selected for new threads until you change
-it, so check it before starting unrelated work. Models that only offer Daybreak
-start on Daybreak, but you can still pick Standard to opt out. Custom models do
-not show the choice.
-
-If Codex reports that you are not logged in with a Daybreak key, sign in to
-Codex again using the appropriate Daybreak credentials for your account, then
-retry the turn. Use the same Codex home as the provider instance in T3 Code.
+Models with cyber access programs show a Cyber Access option in the model
+options. It starts on Standard, or on Daybreak when Codex's `config.toml` sets
+`daybreak = true`, and your choice carries over to new threads. Custom models
+do not offer it. If Codex rejects a turn because your login lacks the program,
+sign in to Codex with the right account and send the message again.
 
 ## Codex says I hit a usage limit
 

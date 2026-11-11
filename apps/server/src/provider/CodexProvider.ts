@@ -82,6 +82,18 @@ const CodexRoutingConfig = Schema.Struct({
 });
 const decodeCodexRoutingConfig = Schema.decodeUnknownOption(CodexRoutingConfig);
 
+const CodexCyberAccessConfig = Schema.Struct({
+  daybreak: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  features: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        api_key_cyber_access_programs: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+      }),
+    ),
+  ),
+});
+const decodeCodexCyberAccessConfig = Schema.decodeUnknownOption(CodexCyberAccessConfig);
+
 function routesToNativeOpenai(config: unknown): boolean {
   const decoded = decodeCodexRoutingConfig(config);
   if (Option.isNone(decoded)) return false;
@@ -291,23 +303,20 @@ export function mapCodexModelCapabilities(
   }
   const cyberAccessPrograms = model.availableAccessPrograms?.cyber ?? [];
   if (cyberAccessPrograms.length > 0) {
-    // Codex's own clients request Standard unless Daybreak is on; omitting the field does not.
-    const defaultProgram = cyberAccessPrograms.includes("standard")
-      ? "standard"
-      : cyberAccessPrograms[0];
+    const hasStandard = cyberAccessPrograms.includes("standard");
+    const defaultProgram = hasStandard ? "standard" : cyberAccessPrograms[0];
     optionDescriptors.push({
       id: "cyberAccessProgram",
       label: "Cyber Access",
       type: "select",
-      // Standard stays selectable as an opt-out; Codex rejects it visibly if the account can't use it.
-      options: (cyberAccessPrograms.includes("standard")
-        ? cyberAccessPrograms
-        : ["standard", ...cyberAccessPrograms]
-      ).map((program) => ({
-        id: program,
-        label: CYBER_ACCESS_PROGRAM_LABELS[program] ?? program,
-        ...(program === defaultProgram ? { isDefault: true } : {}),
-      })),
+      // Standard stays selectable as an opt-out; Codex rejects it visibly when the login cannot use it.
+      options: (hasStandard ? cyberAccessPrograms : ["standard", ...cyberAccessPrograms]).map(
+        (program) => ({
+          id: program,
+          label: CYBER_ACCESS_PROGRAM_LABELS[program] ?? program,
+          ...(program === defaultProgram ? { isDefault: true } : {}),
+        }),
+      ),
       ...(defaultProgram === undefined ? {} : { currentValue: defaultProgram }),
     });
   }
@@ -350,68 +359,43 @@ export function applyPreferredCodexDefaultModel(
   });
 }
 
-/** Mirrors Codex: `daybreak = true` prefers a Daybreak program, Blue before Red. */
-export function applyConfiguredCodexCyberAccess(
+function mapCodexOptionDescriptors(
   models: ReadonlyArray<ServerProviderModel>,
-  input: {
-    readonly daybreakEnabled: boolean;
-    readonly apiKeyProgramsDisabled: boolean;
-  },
+  update: (
+    descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+    model: ServerProviderModel,
+  ) => ReadonlyArray<ProviderOptionDescriptor>,
 ): ReadonlyArray<ServerProviderModel> {
-  if (!input.daybreakEnabled && !input.apiKeyProgramsDisabled) return models;
   return models.map((model) => {
-    const descriptors = model.capabilities?.optionDescriptors;
-    if (!model.capabilities || !descriptors) return model;
+    if (!model.capabilities?.optionDescriptors) return model;
     return {
       ...model,
       capabilities: {
         ...model.capabilities,
-        // Codex rejects explicit programs in this session, so none can be offered or sent.
-        optionDescriptors: (input.apiKeyProgramsDisabled
-          ? descriptors.filter((descriptor) => descriptor.id !== "cyberAccessProgram")
-          : descriptors
-        ).map((descriptor) => {
-          if (descriptor.id !== "cyberAccessProgram" || descriptor.type !== "select") {
-            return descriptor;
-          }
-          const value = ["daybreakBlue", "daybreakRed"].find((program) =>
-            descriptor.options.some((option) => option.id === program),
-          );
-          if (!value) return descriptor;
-          return {
-            ...descriptor,
-            currentValue: value,
-            options: descriptor.options.map(({ isDefault: _isDefault, ...option }) =>
-              option.id === value ? { ...option, isDefault: true } : option,
-            ),
-          };
-        }),
+        optionDescriptors: update(model.capabilities.optionDescriptors, model),
       },
     };
   });
 }
 
-/** Applies when a selection names no program, such as older threads and agent-started turns. */
-export function codexDefaultCyberAccessProgram(
+function withConfiguredSelectDefault(
   models: ReadonlyArray<ServerProviderModel>,
-  slug: string,
-): string | undefined {
-  const descriptor = models
-    .find((model) => model.slug === slug)
-    ?.capabilities?.optionDescriptors?.find(({ id }) => id === "cyberAccessProgram");
-  return descriptor?.type === "select" ? descriptor.currentValue : undefined;
-}
-
-/** An unread config may have them disabled, and Codex rejects a program it does not allow. */
-export function codexApiKeyCyberAccessProgramsDisabled(
-  account: CodexSchema.V2GetAccountResponse["account"],
-  config: Readonly<Record<string, unknown>> | undefined,
-): boolean {
-  return (
-    account?.type === "apiKey" &&
-    (config === undefined ||
-      (config["features"] as { readonly api_key_cyber_access_programs?: unknown } | undefined)
-        ?.api_key_cyber_access_programs === false)
+  descriptorId: string,
+  pick: (options: ReadonlyArray<{ readonly id: string }>) => string | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  return mapCodexOptionDescriptors(models, (descriptors) =>
+    descriptors.map((descriptor) => {
+      if (descriptor.id !== descriptorId || descriptor.type !== "select") return descriptor;
+      const value = pick(descriptor.options);
+      if (!value) return descriptor;
+      return {
+        ...descriptor,
+        currentValue: value,
+        options: descriptor.options.map(({ isDefault: _isDefault, ...option }) =>
+          option.id === value ? { ...option, isDefault: true } : option,
+        ),
+      };
+    }),
   );
 }
 
@@ -420,48 +404,50 @@ function applyConfiguredCodexServiceTier(
   serviceTier: string | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!serviceTier) return models;
-  return models.map((model) => {
-    if (!model.capabilities?.optionDescriptors) return model;
-    return {
-      ...model,
-      capabilities: {
-        ...model.capabilities,
-        optionDescriptors: model.capabilities.optionDescriptors.map((descriptor) => {
-          if (descriptor.id !== "serviceTier" || descriptor.type !== "select") return descriptor;
-          const value = descriptor.options.find(
-            (option) =>
-              option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
-          )?.id;
-          if (!value) return descriptor;
-          return {
-            ...descriptor,
-            currentValue: value,
-            options: descriptor.options.map(({ isDefault: _isDefault, ...option }) =>
-              option.id === value ? { ...option, isDefault: true } : option,
-            ),
-          };
-        }),
-      },
-    };
-  });
+  return withConfiguredSelectDefault(
+    models,
+    "serviceTier",
+    (options) =>
+      options.find(
+        (option) =>
+          option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
+      )?.id,
+  );
+}
+
+/** Mirrors Codex: `daybreak = true` prefers a Daybreak program, Blue before Red. */
+function applyConfiguredCodexCyberAccess(
+  models: ReadonlyArray<ServerProviderModel>,
+  snapshot: Pick<
+    CodexAppServerProviderSnapshot,
+    "daybreakEnabled" | "apiKeyCyberAccessProgramsDisabled"
+  >,
+): ReadonlyArray<ServerProviderModel> {
+  // Access is per catalog model and per login: a custom slug borrowing descriptors
+  // and an API key without the programs offer no choice, so no turn sends one.
+  const offered = mapCodexOptionDescriptors(models, (descriptors, model) =>
+    model.isCustom || snapshot.apiKeyCyberAccessProgramsDisabled === true
+      ? descriptors.filter((descriptor) => descriptor.id !== "cyberAccessProgram")
+      : descriptors,
+  );
+  if (snapshot.daybreakEnabled !== true) return offered;
+  return withConfiguredSelectDefault(offered, "cyberAccessProgram", (options) =>
+    ["daybreakBlue", "daybreakRed"].find((program) =>
+      options.some((option) => option.id === program),
+    ),
+  );
 }
 
 /**
  * Codex has no static default capability set, so a bare custom slug borrows
  * the first built-in's descriptors; an entry with its own capabilities keeps
- * them. Daybreak access is per model, so a borrowed slug never inherits it.
+ * them.
  */
-export function appendCustomCodexModels(
+function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
-  const borrowed = models.find((model) => model.capabilities)?.capabilities ?? null;
-  const fallbackCapabilities = borrowed && {
-    ...borrowed,
-    optionDescriptors: borrowed.optionDescriptors?.filter(
-      (descriptor) => descriptor.id !== "cyberAccessProgram",
-    ),
-  };
+  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
   return providerModelsFromSettings(models, customModels, fallbackCapabilities);
 }
 
@@ -760,6 +746,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     { concurrency: "unbounded" },
   );
 
+  const cyberAccess = Option.getOrUndefined(decodeCodexCyberAccessConfig(config));
   return {
     account: accountResponse,
     nativeUsage,
@@ -767,11 +754,11 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     version,
     models,
     serviceTier: config?.service_tier ?? undefined,
-    daybreakEnabled: config?.["daybreak"] === true,
-    apiKeyCyberAccessProgramsDisabled: codexApiKeyCyberAccessProgramsDisabled(
-      accountResponse.account,
-      config,
-    ),
+    daybreakEnabled: cyberAccess?.daybreak === true,
+    // An API key may have the programs turned off, and an unread config cannot rule that out.
+    apiKeyCyberAccessProgramsDisabled:
+      accountResponse.account?.type === "apiKey" &&
+      (config === undefined || cyberAccess?.features?.api_key_cyber_access_programs === false),
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });
@@ -1036,11 +1023,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
       applyPreferredCodexDefaultModel,
       (models) => applyConfiguredCodexServiceTier(models, snapshot.serviceTier),
-      (models) =>
-        applyConfiguredCodexCyberAccess(models, {
-          daybreakEnabled: snapshot.daybreakEnabled === true,
-          apiKeyProgramsDisabled: snapshot.apiKeyCyberAccessProgramsDisabled === true,
-        }),
+      (models) => applyConfiguredCodexCyberAccess(models, snapshot),
     ),
     skills: snapshot.skills,
     slashCommands: [
