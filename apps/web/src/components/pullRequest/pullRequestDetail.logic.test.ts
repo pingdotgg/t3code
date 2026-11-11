@@ -558,7 +558,10 @@ describe("review thread conversations", () => {
       "> picked\n> lines\n\n",
     );
     expect(pullRequestQuoteReply({ ...loose, author: null }, "<!-- keep -->")).toBe(
-      "> <!-- keep -->\n\n",
+      "> \\<\\!\\-\\- keep \\-\\-\\>\n\n",
+    );
+    expect(pullRequestQuoteReply({ ...loose, author: null }, "# Heading")).toBe(
+      "> \\# Heading\n\n",
     );
     expect(
       pullRequestQuoteReply({

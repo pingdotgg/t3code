@@ -532,7 +532,7 @@ export function visibleBody(body: string): string | null {
 /** Quotes `selection` when the reader picked part of the comment, else the whole body. */
 export function pullRequestQuoteReply(comment: PullRequestComment, selection?: string): string {
   const body =
-    selection?.trim() ||
+    selection?.trim().replace(/[\\`*_[\]{}()#+.!|~<>-]/gu, "\\$&") ||
     comment.body.replace(
       /(```[\s\S]*?```|`[^`\n]*`)|<!--[\s\S]*?-->/gu,
       (_, code?: string) => code ?? "",
