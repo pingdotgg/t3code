@@ -96,7 +96,7 @@ import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
-import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { AssistantCitationEmbed } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import { mathKind } from "@t3tools/shared/markdownMath";
 import remarkMath from "remark-math";
@@ -964,6 +964,15 @@ const ChatMarkdownRendererContext = React.createContext<
 // Isolate streamed source text from the renderer context; only offset-based renderers need it.
 const ChatMarkdownTextContext = React.createContext("");
 
+// A quote card is a block. These say nothing else shares its paragraph or list item on that side.
+const LIST_MARKER = String.raw`(?:[-*+]|\d+[.)])[ \t]+`;
+const CITATION_LEADS_BLOCK = new RegExp(
+  String.raw`(?:(?:^|\n[ \t]*\n)[ \t>]*(?:${LIST_MARKER})?|\n[ \t>]*${LIST_MARKER})$`,
+);
+const CITATION_ENDS_BLOCK = new RegExp(
+  String.raw`^[ \t]*(?:$|\n[ \t]*(?:\n|$)|\n[ \t>]*${LIST_MARKER})`,
+);
+
 function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   const Tag = `h${level}` as const;
   return function MarkdownHeading({
@@ -1108,7 +1117,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
-    if (citation) return <AssistantCitationChip citation={citation} />;
+    if (citation) {
+      const before = node?.position?.start.offset;
+      const after = node?.position?.end.offset;
+      return (
+        <AssistantCitationEmbed
+          citation={citation}
+          leading={before !== undefined && CITATION_LEADS_BLOCK.test(text.slice(0, before))}
+          trailing={after !== undefined && CITATION_ENDS_BLOCK.test(text.slice(after))}
+        />
+      );
+    }
     const threadLink = href ? parseThreadLinkHref(href) : null;
     if (threadLink) {
       const written = hastPlainTextDeep(node);
