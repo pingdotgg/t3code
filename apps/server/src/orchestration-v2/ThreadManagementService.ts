@@ -413,6 +413,7 @@ export interface ThreadManagementServiceShape {
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>;
   readonly listActiveSubagentThreadIds: Orchestrator.OrchestratorV2["Service"]["listActiveSubagentThreadIds"];
   readonly countThreads: Orchestrator.OrchestratorV2["Service"]["countThreads"];
+  readonly countArchivedThreadMessages: Orchestrator.OrchestratorV2["Service"]["countArchivedThreadMessages"];
   readonly listActiveShellIndex: Orchestrator.OrchestratorV2["Service"]["listActiveShellIndex"];
   readonly listOlderSettledThreads: Orchestrator.OrchestratorV2["Service"]["listOlderSettledThreads"];
   readonly readShellSnapshot: (
@@ -504,13 +505,15 @@ export class ThreadManagementService extends Context.Service<
   ThreadManagementServiceShape
 >()("t3/orchestration-v2/ThreadManagementService") {}
 
+export const ACTIVE_RUN_STATUSES = [
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+] as const satisfies ReadonlyArray<OrchestrationV2Run["status"]>;
+
 export function isActiveRun(run: OrchestrationV2Run): boolean {
-  return (
-    run.status === "preparing" ||
-    run.status === "starting" ||
-    run.status === "running" ||
-    run.status === "waiting"
-  );
+  return (ACTIVE_RUN_STATUSES as ReadonlyArray<OrchestrationV2Run["status"]>).includes(run.status);
 }
 
 export function isTerminalRunStatus(
@@ -1598,6 +1601,7 @@ const make = Effect.gen(function* () {
     getShellSnapshot: orchestrator.getShellSnapshot,
     listActiveSubagentThreadIds: orchestrator.listActiveSubagentThreadIds,
     countThreads: orchestrator.countThreads,
+    countArchivedThreadMessages: orchestrator.countArchivedThreadMessages,
     listActiveShellIndex: orchestrator.listActiveShellIndex,
     listOlderSettledThreads: orchestrator.listOlderSettledThreads,
     readShellSnapshot: orchestrator.readShellSnapshot,

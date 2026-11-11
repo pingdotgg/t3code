@@ -1049,6 +1049,10 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   );
 }
 
+export function isCoveredByModal(element: Pick<Element, "closest"> | null): boolean {
+  return element?.closest('[aria-hidden="true"]') != null;
+}
+
 // Returning to the window should land the caret in the composer, so the reader can type right
 // away. The exceptions are places where focus is deliberate: another text field, a terminal in
 // the drawer or the right panel, an open dialog, menu, or popup, or a region or sidebar row
@@ -1072,7 +1076,7 @@ export function shouldRefocusComposerOnWindowFocus(
   }
   return (
     activeElement.closest(
-      '[data-workspace-area]:focus-visible, [data-sidebar-row]:focus-visible, [role="dialog"], [role="alertdialog"], [role="application"], [role="menu"], [role="listbox"], [data-slot$="-popup"], [data-terminal-owner]',
+      '[data-workspace-keyboard-focus], [data-sidebar-row]:focus-visible, [role="dialog"], [role="alertdialog"], [role="application"], [role="menu"], [role="listbox"], [data-slot$="-popup"], [data-terminal-owner]',
     ) === null
   );
 }
