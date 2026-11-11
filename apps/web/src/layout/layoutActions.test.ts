@@ -14,7 +14,11 @@ vi.mock(import("../state/entities"), async (original) => ({
       : null) as never,
 }));
 
-import { closeLayoutTabByUser, closeOtherLayoutTabsByUser } from "./layoutActions";
+import {
+  closeLayoutTabByUser,
+  closeOtherLayoutTabsByUser,
+  toggleFocusedLayoutFill,
+} from "./layoutActions";
 import {
   createLayoutState,
   findLayoutTab,
@@ -38,7 +42,7 @@ const other: LayoutTabContent = {
 };
 
 function setup(contents: ReadonlyArray<LayoutTabContent>) {
-  const original = useLayoutStore.getState().layout;
+  const original = useLayoutStore.getState();
   useLayoutStore.setState({ layout: createLayoutState() });
   for (const content of contents) {
     useLayoutStore.getState().openTab(content, { placement: "active-pane", position: "end" });
@@ -57,7 +61,7 @@ function setup(contents: ReadonlyArray<LayoutTabContent>) {
         .flatMap((pane) => pane.tabs.map((tab) => tab.content)),
     [Symbol.dispose]: () => {
       unsubscribe();
-      useLayoutStore.setState({ layout: original });
+      useLayoutStore.setState(original);
     },
   };
 }
@@ -100,6 +104,29 @@ describe("closeLayoutTabByUser", () => {
       expect(layout.chats()).toEqual(contents.filter((content) => content !== subagent));
     },
   );
+});
+
+describe("toggleFocusedLayoutFill", () => {
+  it("restores a filled thread when returning to its tab and lets it unfill", () => {
+    using layout = setup([parent, other]);
+    const store = useLayoutStore.getState();
+    const tabId = layout.tabOf(parent)!.id;
+    store.focusTab(tabId);
+    toggleFocusedLayoutFill();
+    expect(useLayoutStore.getState().maximizedTabId).toBe(tabId);
+    store.focusTab(layout.tabOf(other)!.id);
+    expect(useLayoutStore.getState().maximizedTabId).toBeNull();
+    store.focusTab(tabId);
+    expect(useLayoutStore.getState().maximizedTabId).toBe(tabId);
+    toggleFocusedLayoutFill();
+    expect(useLayoutStore.getState().maximizedTabId).toBeNull();
+    toggleFocusedLayoutFill();
+    store.replaceTabContent(tabId, subagent);
+    expect(useLayoutStore.getState().maximizedTabId).toBeNull();
+    store.replaceTabContent(tabId, parent);
+    expect(useLayoutStore.getState().maximizedTabId).toBe(tabId);
+    toggleFocusedLayoutFill();
+  });
 });
 
 describe("runInNewLayoutTab", () => {
