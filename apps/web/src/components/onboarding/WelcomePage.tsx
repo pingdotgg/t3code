@@ -1064,6 +1064,15 @@ function OnboardingCodexSetup({
   // The server only signs in to its own runtime, so ChatGPT sign-in saves "managed" first.
   // An attempt that ends without signing in puts back what was saved before it.
   const modeBeforeSignIn = useRef<{ readonly setupMode: unknown } | null>(null);
+  const reportSaveFailure = (result: Awaited<ReturnType<typeof persistProviderInstance>>) => {
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    const cause = squashAtomCommandFailure(result);
+    toastManager.add({
+      type: "error",
+      title: "Could not save Codex setup",
+      ...(cause instanceof Error ? { description: cause.message } : {}),
+    });
+  };
   const changeMode = (setupMode: "managed" | "existing") => {
     // "Use existing CLI" also opens a terminal to install or sign in to the CLI.
     onUseCliChange(setupMode === "existing");
@@ -1082,14 +1091,7 @@ function OnboardingCodexSetup({
       if (result._tag === "Failure") {
         modeBeforeSignIn.current = null;
         onUseCliChange(false);
-        if (!isAtomCommandInterrupted(result)) {
-          const cause = squashAtomCommandFailure(result);
-          toastManager.add({
-            type: "error",
-            title: "Could not save Codex setup",
-            ...(cause instanceof Error ? { description: cause.message } : {}),
-          });
-        }
+        reportSaveFailure(result);
       }
     });
   };
@@ -1110,7 +1112,7 @@ function OnboardingCodexSetup({
         ...current,
         config: before.setupMode === undefined ? rest : { ...rest, setupMode: before.setupMode },
       },
-    });
+    }).then(reportSaveFailure);
   };
   return (
     <CodexSetupSection

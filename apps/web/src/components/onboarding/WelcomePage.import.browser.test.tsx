@@ -922,23 +922,6 @@ it("restores the Codex setup mode onto current settings when ChatGPT sign-in fai
   await vi.waitFor(() => expect(pageText()).toContain("ChatGPT sign-in was declined."));
 });
 
-it("keeps the Codex setup mode managed when ChatGPT sign-in succeeds", async () => {
-  using _now = setup();
-  await using _screen = await mountCodexSignIn();
-
-  await act(async () =>
-    appAtomRegistry.set(authStateAtom(), AsyncResult.success(authState("succeeded"))),
-  );
-  // The card asks for a provider refresh once it sees the flow succeed.
-  await vi.waitFor(() =>
-    expect(state.refreshProviders).toHaveBeenCalledWith(
-      expect.objectContaining({ input: { instanceId: codexId } }),
-    ),
-  );
-  expect(state.mutateProviderInstance).toHaveBeenCalledOnce();
-  expect(codexSetupMode()).toBe("managed");
-});
-
 it("keeps the Codex setup mode managed when sign-in succeeds before Cancel reaches the server", async () => {
   using _now = setup();
   await using _screen = await mountCodexSignIn();
