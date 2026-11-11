@@ -93,13 +93,22 @@ function scrollsSideways(element: Element): boolean {
   return overflowX === "auto" || overflowX === "scroll";
 }
 
-export function sidewaysWheelScrollsStrip(
-  path: readonly EventTarget[],
-  strip: Element,
-  deltaX: number,
-  deltaY: number,
-): boolean {
-  if (Math.abs(deltaX) <= Math.abs(deltaY)) return false;
+/**
+ * The sideways travel a wheel event asks for, 0 for a vertical one. A plain
+ * Shift+wheel some browsers report as vertical counts as sideways, as their
+ * native scrolling treats it.
+ */
+export function sidewaysWheelDelta(
+  event: Pick<WheelEvent, "deltaX" | "deltaY" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey">,
+): number {
+  if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && event.deltaX === 0) {
+    return event.deltaY;
+  }
+  return Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : 0;
+}
+
+/** Whether a sideways wheel moves the strip: no scroller inside it along `path` moves sideways. */
+export function sidewaysWheelScrollsStrip(path: readonly EventTarget[], strip: Element): boolean {
   for (const node of path) {
     if (node === strip) return scrollsSideways(strip);
     if (node instanceof Element && scrollsSideways(node)) return false;

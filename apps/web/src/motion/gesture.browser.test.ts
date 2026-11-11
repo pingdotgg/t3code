@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sidewaysWheelScrollsStrip } from "./gesture";
+import { sidewaysWheelDelta, sidewaysWheelScrollsStrip } from "./gesture";
 
 function mountStrip(stripOverflow: string) {
   const strip = document.createElement("div");
@@ -25,20 +25,40 @@ function mountStrip(stripOverflow: string) {
 describe("sidewaysWheelScrollsStrip", () => {
   it("gives a sideways swipe to the nearest scroller that moves sideways", () => {
     using strip = mountStrip("auto");
-    const scrolls = (selector: string, deltaX: number, deltaY: number) =>
-      sidewaysWheelScrollsStrip(strip.pathFrom(selector), strip, deltaX, deltaY);
+    const scrolls = (selector: string) =>
+      sidewaysWheelScrollsStrip(strip.pathFrom(selector), strip);
 
-    expect(scrolls("[data-row]", 40, 3)).toBe(true);
-    expect(scrolls("[data-row]", -40, -3)).toBe(true);
-    expect(scrolls("[data-narrow]", 40, 0)).toBe(true);
-    expect(scrolls("[data-row]", 3, 40)).toBe(false);
-    expect(scrolls("[data-wide]", 40, 0)).toBe(false);
+    expect(scrolls("[data-row]")).toBe(true);
+    expect(scrolls("[data-narrow]")).toBe(true);
+    expect(scrolls("[data-wide]")).toBe(false);
     strip.querySelector("[data-wide]")!.scrollLeft = 9999;
-    expect(scrolls("[data-wide]", 40, 0)).toBe(false);
+    expect(scrolls("[data-wide]")).toBe(false);
   });
 
   it("leaves the swipe alone while the strip itself cannot scroll", () => {
     using strip = mountStrip("hidden");
-    expect(sidewaysWheelScrollsStrip(strip.pathFrom("[data-row]"), strip, 40, 3)).toBe(false);
+    expect(sidewaysWheelScrollsStrip(strip.pathFrom("[data-row]"), strip)).toBe(false);
+  });
+});
+
+describe("sidewaysWheelDelta", () => {
+  const wheel = (deltaX: number, deltaY: number, keys: Partial<WheelEvent> = {}) =>
+    sidewaysWheelDelta({
+      deltaX,
+      deltaY,
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      ...keys,
+    });
+
+  it("reads sideways travel, including a Shift+wheel reported as vertical", () => {
+    expect(wheel(40, 3)).toBe(40);
+    expect(wheel(-40, -3)).toBe(-40);
+    expect(wheel(3, 40)).toBe(0);
+    expect(wheel(0, 120, { shiftKey: true })).toBe(120);
+    expect(wheel(120, 0, { shiftKey: true })).toBe(120);
+    expect(wheel(0, 120, { shiftKey: true, ctrlKey: true })).toBe(0);
   });
 });

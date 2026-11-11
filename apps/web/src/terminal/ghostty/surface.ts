@@ -1748,7 +1748,10 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onWheel = (event: WheelEvent) => {
-    if (event.deltaY === 0 || Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+    // Shift+wheel is sideways travel for the workspace strip, in browsers that report it as vertical too.
+    if (event.shiftKey || event.deltaY === 0 || Math.abs(event.deltaY) < Math.abs(event.deltaX)) {
+      return;
+    }
     event.preventDefault();
     const delta = terminalWheelDeltaRows(
       event,
