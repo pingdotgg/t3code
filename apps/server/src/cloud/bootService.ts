@@ -194,6 +194,16 @@ export interface BootServiceManager {
   readonly finalize: ReadonlyArray<BootServiceStep>;
 }
 
+const defaultSystemdUnitDir = (path: Path.Path, homeDir: string, xdgConfigHome: string) =>
+  path.join(
+    path.isAbsolute(xdgConfigHome) ? xdgConfigHome : path.join(homeDir, ".config"),
+    "systemd",
+    "user",
+  );
+
+const launchdPlistPath = (path: Path.Path, homeDir: string) =>
+  path.join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE);
+
 function systemdManager(input: {
   readonly path: Path.Path;
   readonly unitDir: string;
@@ -270,12 +280,7 @@ function launchdManager(input: {
   readonly uid: number;
   readonly environmentPath: string;
 }): BootServiceManager {
-  const unitPath = input.path.join(
-    input.homeDir,
-    "Library",
-    "LaunchAgents",
-    BOOT_SERVICE_PLIST_FILE,
-  );
+  const unitPath = launchdPlistPath(input.path, input.homeDir);
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
   // Unloaded jobs may reject bootout/enable. Bootstrap starts RunAtLoad/KeepAlive jobs; kickstart would restart them.
@@ -349,13 +354,7 @@ function selectBootServiceManager(input: {
       path: input.path,
       unitDir:
         input.systemdUnitDir ??
-        input.path.join(
-          input.path.isAbsolute(input.xdgConfigHome)
-            ? input.xdgConfigHome
-            : input.path.join(input.homeDir, ".config"),
-          "systemd",
-          "user",
-        ),
+        defaultSystemdUnitDir(input.path, input.homeDir, input.xdgConfigHome),
     });
   }
   if (input.platform === "darwin" && input.uid !== undefined) {
@@ -402,6 +401,20 @@ const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit
   },
   Effect.orElseSucceed(() => undefined),
 );
+
+/** Where this platform's service manager keeps the unit, whether or not one is installed. */
+export const bootServiceUnitPath = Effect.fn("cloud.boot_service.unit_path")(function* () {
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  const homeDir = yield* HostProcess.HomeDirectory;
+  if (homeDir === "") return undefined;
+  if (platform === "darwin") return launchdPlistPath(path, homeDir);
+  if (platform !== "linux") return undefined;
+  const unitDir =
+    (yield* readSystemdUnitDirectory()) ??
+    defaultSystemdUnitDir(path, homeDir, (yield* HostProcess.Environment).XDG_CONFIG_HOME ?? "");
+  return path.join(unitDir, BOOT_SERVICE_UNIT_FILE);
+});
 
 export class BootServiceUnsupportedError extends Schema.TaggedError<BootServiceUnsupportedError>()(
   "BootServiceUnsupportedError",
