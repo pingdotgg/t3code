@@ -17,22 +17,19 @@ import { fetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import { useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { Keyboard, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Keyboard, Pressable, ScrollView, TextInput, View } from "react-native";
 
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { AppBar } from "../../components/ui/AppBar";
+import { useContentBottomInset, useContentTopInset } from "../../components/ui/useBarInset";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Progress } from "../../components/ui/Progress";
-import { Toolbar } from "../../components/ui/Toolbar";
-import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import * as Dialog from "../../components/ui/Dialog";
-import { FilePreviewModal } from "../../components/FilePreviewModal";
+import { FilePreviewModal } from "../../components/ui/FilePreviewModal";
 import {
   nativeViewerErrorMessage,
   shareGeneratedAttachment,
@@ -296,67 +293,32 @@ function ZipTreeRowView(props: {
 function ZipArchiveHeader(props: {
   readonly name: string;
   readonly subtitle: string;
-  readonly tintColor: string;
   readonly onSave: () => void;
   readonly onRemove: (() => void) | null;
 }) {
   const navigation = useNavigation();
-  const isAndroid = Platform.OS === "android";
   return (
-    <>
-      <NativeStackScreenOptions
-        options={{
-          headerShown: !isAndroid,
-          headerTintColor: props.tintColor,
-          headerTitle: props.name,
-          title: props.name,
-          unstable_headerSubtitle: isAndroid ? undefined : props.subtitle,
-        }}
-      />
-      {isAndroid ? (
-        <AppBar
-          embedded
-          title={props.name}
-          subtitle={props.subtitle}
-          onBack={() => {
-            if (navigation.canGoBack()) navigation.goBack();
-          }}
-          actions={[
-            { accessibilityLabel: "Save ZIP", icon: "square.and.arrow.up", onPress: props.onSave },
-            ...(props.onRemove
-              ? [
-                  {
-                    accessibilityLabel: "Remove from draft",
-                    icon: "trash" as const,
-                    onPress: props.onRemove,
-                    destructive: true,
-                    overflowOnly: true,
-                  },
-                ]
-              : []),
-          ]}
-        />
-      ) : (
-        <Toolbar placement="right">
-          {props.onRemove ? (
-            <Toolbar.Menu accessibilityLabel="ZIP actions" icon="ellipsis">
-              <Toolbar.MenuAction icon="square.and.arrow.up" onPress={props.onSave}>
-                Save ZIP
-              </Toolbar.MenuAction>
-              <Toolbar.MenuAction icon="trash" destructive onPress={props.onRemove}>
-                Remove from draft
-              </Toolbar.MenuAction>
-            </Toolbar.Menu>
-          ) : (
-            <Toolbar.Button
-              accessibilityLabel="Save ZIP"
-              icon="square.and.arrow.up"
-              onPress={props.onSave}
-            />
-          )}
-        </Toolbar>
-      )}
-    </>
+    <AppBar
+      title={props.name}
+      subtitle={props.subtitle}
+      onBack={() => {
+        if (navigation.canGoBack()) navigation.goBack();
+      }}
+      actions={[
+        { accessibilityLabel: "Save ZIP", icon: "square.and.arrow.up", onPress: props.onSave },
+        ...(props.onRemove
+          ? [
+              {
+                accessibilityLabel: "Remove from draft",
+                icon: "trash" as const,
+                onPress: props.onRemove,
+                destructive: true,
+                overflowOnly: true,
+              },
+            ]
+          : []),
+      ]}
+    />
   );
 }
 
@@ -433,16 +395,17 @@ function ZipArchiveList(props: {
       return next;
     });
   const fileCount = archive.fileCount;
+  const bottomInset = useContentBottomInset();
   return (
     <View className="flex-1 bg-sheet">
       <LegendList
-        renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
-        contentInsetStartAdjustment={props.headerInset}
+        renderScrollComponent={NativeScrollView}
+        contentInset={{ top: props.headerInset, bottom: bottomInset }}
         className="flex-1"
         data={rows}
         keyExtractor={(row) => `${row.node.entry ? "f" : "d"}:${row.node.path}`}
-        contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
-        automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustsScrollIndicatorInsets
         estimatedItemSize={44}
         recycleItems
         keyboardDismissMode="on-drag"
@@ -509,7 +472,6 @@ function ZipArchiveList(props: {
 export function ZipArchiveView(props: {
   readonly name: string;
   readonly subtitle: string;
-  readonly tintColor: string;
   readonly sizeBytes: number;
   readonly uri: string | null;
   readonly isLocal: boolean;
@@ -529,9 +491,7 @@ export function ZipArchiveView(props: {
   const selected = selection && selection.archive === archive ? selection.entry : null;
   const entryOpen = selected !== null;
   usePreventRemove(entryOpen, () => setSelection(null));
-  const insets = useSafeAreaInsets();
-  const columnMetrics = useNativeColumnLayoutMetrics();
-  const headerInset = Platform.OS === "ios" ? (columnMetrics?.safeArea.top ?? insets.top) : 0;
+  const headerInset = useContentTopInset();
   return (
     <View className="flex-1 bg-sheet">
       {entryOpen ? null : (
@@ -542,7 +502,6 @@ export function ZipArchiveView(props: {
               ? `${archive.fileCount} ${archive.fileCount === 1 ? "file" : "files"}${props.sizeBytes > 0 ? ` · ${formatAttachmentSize(props.sizeBytes)}` : ""}`
               : props.subtitle
           }
-          tintColor={props.tintColor}
           onSave={props.onSave}
           onRemove={props.onRemove}
         />
@@ -753,73 +712,49 @@ function ZipEntryView(props: {
   });
   const folders = entry.path.split("/").slice(0, -1);
   const subtitle = `${[props.archiveName, ...folders].join(" / ")} · ${formatAttachmentSize(entry.sizeBytes)}`;
-  const isAndroid = Platform.OS === "android";
   return (
     <View className="flex-1 bg-sheet">
-      <NativeStackScreenOptions
-        options={{
-          headerShown: !isAndroid,
-          headerTitle: entry.name,
-          title: entry.name,
-          unstable_headerSubtitle: isAndroid ? undefined : subtitle,
-        }}
+      <AppBar
+        title={entry.name}
+        subtitle={subtitle}
+        onBack={props.onBack}
+        menus={[
+          {
+            title: "File actions",
+            icon: "ellipsis",
+            items: [
+              ...(renderedMode
+                ? [
+                    {
+                      id: "toggle-rendered",
+                      title: rendered ? "Show source" : "Show preview",
+                      icon: rendered ? "doc.text" : "eye",
+                      onPress: () => setRendered((value) => !value),
+                    },
+                  ]
+                : []),
+              ...(canAddToChat
+                ? [
+                    {
+                      id: "add-to-chat",
+                      title: "Add to chat",
+                      icon: "plus.bubble",
+                      disabled: busy !== null,
+                      onPress: addToChat,
+                    },
+                  ]
+                : []),
+              {
+                id: "save",
+                title: "Save file",
+                icon: "square.and.arrow.up",
+                disabled: busy !== null,
+                onPress: save,
+              },
+            ],
+          },
+        ]}
       />
-      {isAndroid ? (
-        <AppBar
-          embedded
-          title={entry.name}
-          subtitle={subtitle}
-          onBack={props.onBack}
-          actions={[
-            ...(renderedMode
-              ? [
-                  {
-                    accessibilityLabel: rendered ? "Show source" : "Show preview",
-                    icon: rendered ? ("doc.text" as const) : ("eye" as const),
-                    onPress: () => setRendered((value) => !value),
-                  },
-                ]
-              : []),
-            ...(canAddToChat
-              ? [
-                  {
-                    accessibilityLabel: "Add to chat",
-                    icon: "plus.bubble" as const,
-                    onPress: addToChat,
-                    disabled: busy !== null,
-                  },
-                ]
-              : []),
-            {
-              accessibilityLabel: "Save file",
-              icon: "square.and.arrow.up",
-              onPress: save,
-              loading: busy === "save",
-            },
-          ]}
-        />
-      ) : (
-        <Toolbar placement="right">
-          <Toolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
-            {renderedMode ? (
-              <Toolbar.MenuAction
-                icon={rendered ? "doc.text" : "eye"}
-                onPress={() => setRendered((value) => !value)}
-              >
-                {rendered ? "Show source" : "Show preview"}
-              </Toolbar.MenuAction>
-            ) : null}
-            {canAddToChat ? (
-              <Toolbar.MenuAction icon="plus.bubble" disabled={busy !== null} onPress={addToChat}>
-                Add to chat
-              </Toolbar.MenuAction>
-            ) : null}
-            <Toolbar.MenuAction icon="square.and.arrow.up" disabled={busy !== null} onPress={save}>
-              Save file
-            </Toolbar.MenuAction>
-          </Toolbar.Menu>
-        </Toolbar>
-      )}
       {content.status === "failed" ? (
         <ScrollView contentContainerClassName="flex-grow items-center justify-center px-6">
           <EmptyState
