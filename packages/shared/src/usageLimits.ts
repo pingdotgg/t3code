@@ -148,6 +148,7 @@ function providersWithLimits(providers: readonly ServerProvider[]): readonly Ser
       provider.enabled &&
       provider.installed &&
       isProviderAvailable(provider) &&
+      provider.auth.status !== "unauthenticated" &&
       provider.usageLimits !== undefined,
   );
 }
