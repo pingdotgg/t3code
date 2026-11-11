@@ -314,6 +314,7 @@ function modelReconciliationHarness(
   const shells = createEnvironmentThreadShellAtoms({
     catalogValueAtom,
     snapshotAtom: () => snapshotAtom,
+    shellStatusAtom: () => Atom.make("live" as const),
     hiddenThreadTagsAtom: () => Atom.make(null),
   });
   const selectedShell = shells.threadShellAtom({ environmentId, threadId: selectedThreadId });

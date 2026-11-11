@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   isListedThreadLineage,
+  isLiveSubagentShell,
   isProviderNativeSubagentThread,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
@@ -18,6 +19,7 @@ import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
 import { hiddenThreadKeys, NO_HIDDEN_THREADS } from "./threadTagFilter.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
+import type { EnvironmentShellStatus } from "./shell.ts";
 import {
   arrayElementsEqual,
   parseProjectRefCollectionKey,
@@ -58,8 +60,8 @@ const isChildRunLive = (
 /**
  * Whether a thread shows under its parent rather than in thread lists: a
  * subagent, a side chat, or a task a linked environment delegated here whose parent the
- * client lists (`delegatedUnderParent`, by thread key). A task whose parent
- * the client cannot list stays in the lists, so its work is never out of reach.
+ * client lists (`delegatedUnderParent`, by thread key). Quiet completed tasks also wait
+ * under an unavailable parent; other tasks stay listed so their work remains reachable.
  */
 export function isShownUnderParent(
   ref: ScopedThreadRef,
@@ -205,6 +207,7 @@ export function createEnvironmentThreadShellAtoms(input: {
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
+  readonly shellStatusAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellStatus>;
   /** Tags whose threads display lists leave out; null while the filter is off. */
   readonly hiddenThreadTagsAtom: (
     environmentId: EnvironmentId,
@@ -670,13 +673,24 @@ export function createEnvironmentThreadShellAtoms(input: {
     for (const environmentId of environmentIds) {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         const parent = thread.delegatedFrom;
-        if (
-          parent !== undefined &&
-          environmentIds.has(parent.environmentId) &&
-          // An archived parent leaves navigation; its task there stays listed on its own.
-          get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)?.archivedAt ===
-            null
-        ) {
+        if (parent === undefined || !environmentIds.has(parent.environmentId)) continue;
+        const parentThread = get(environmentThreadIndexAtom(parent.environmentId)).get(
+          parent.threadId,
+        );
+        // A missing parent in a cached shell does not prove its completed task is an orphan.
+        const awaitingParent =
+          parentThread === undefined &&
+          get(input.shellStatusAtom(parent.environmentId)) !== "live" &&
+          thread.status === "completed" &&
+          thread.activeRunId === null &&
+          !isLiveSubagentShell(thread) &&
+          (thread.pendingGuestMessageCount ?? 0) === 0 &&
+          thread.lastError == null &&
+          !thread.hasActionableProposedPlan &&
+          thread.pinnedAt == null &&
+          thread.settledOverride !== "active" &&
+          !get(pendingSubagentRequestsAtom(environmentId)).has(thread.id);
+        if (parentThread?.archivedAt === null || awaitingParent) {
           next.add(threadKey({ environmentId, threadId: thread.id }));
         }
       }
