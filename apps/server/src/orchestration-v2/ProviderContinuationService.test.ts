@@ -424,7 +424,7 @@ describe("ProviderContinuationService", () => {
     "clears a sticky continuation offer when a non-delegated wake dispatch fails generically",
     () => {
       return Effect.gen(function* () {
-        const wakeHeld = yield* Ref.make(true);
+        const cleared = yield* Deferred.make<void>();
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(projection),
           dispatch: (command) =>
@@ -442,20 +442,13 @@ describe("ProviderContinuationService", () => {
           ),
         );
 
-        // Claude and Muse never self-clear their wake latch; only clearIfCurrent releases it.
         yield* Effect.gen(function* () {
           const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
           yield* requests.offer({
             ...request(),
-            clearIfCurrent: () => Ref.set(wakeHeld, false),
+            clearIfCurrent: () => Deferred.succeed(cleared, undefined),
           });
-          yield* Effect.yieldNow;
-          yield* Effect.yieldNow;
-          assert.isFalse(
-            yield* Ref.get(wakeHeld),
-            "a failed non-delegated wake dispatch is dropped without calling clearIfCurrent, " +
-              "so the adapter's wake latch stays set and later wakes are silently dropped",
-          );
+          yield* Deferred.await(cleared);
         }).pipe(
           Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
           Effect.scoped,

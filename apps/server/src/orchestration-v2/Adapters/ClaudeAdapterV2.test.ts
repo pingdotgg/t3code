@@ -12563,14 +12563,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.offerAndWait(wakeAssistant);
         yield* harness.offerAndWait(wakeResult);
 
-        // The continuation service could not dispatch the first wake (e.g. a full disk),
-        // so it never attaches; the service's only way to release the adapter is clearIfCurrent.
+        // A failed dispatch never attaches the wake turn; clearIfCurrent is the only release.
         const failed = harness.continuationRequests[0]!;
-        assert.isDefined(
-          failed.clearIfCurrent,
-          "the Claude wake request offers no clearIfCurrent, so a failed dispatch can never " +
-            "release the wake latch and every later wake on this process is dropped",
-        );
+        assert.isDefined(failed.clearIfCurrent);
         yield* failed.clearIfCurrent!();
 
         yield* harness.offerAndWait(
@@ -12586,14 +12581,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.offerAndWait(
           claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000124" }),
         );
-        assert.lengthOf(
-          harness.continuationRequests,
-          2,
-          "a later wake after a failed continuation dispatch must still be offered",
-        );
+        assert.lengthOf(harness.continuationRequests, 2);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
@@ -12669,14 +12665,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.offerAndWait(
           claudeSdkFrame({ ...wakeAssistant, uuid: "00000000-0000-4000-8000-000000000135" }),
         );
-        assert.lengthOf(
-          harness.continuationRequests,
-          2,
-          "clearing the first wake's request must not release the second wake's latch",
-        );
+        assert.lengthOf(harness.continuationRequests, 2);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
