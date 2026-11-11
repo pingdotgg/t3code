@@ -415,12 +415,12 @@ const blankNonMarkup = (html: string) => {
 export function injectHtmlRenderBootstrap(html: string): string {
   const scan = blankNonMarkup(html);
   const markup = bootstrapMarkup(scan);
-  const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
+  const headOpen = /<head(?:\s(?:[^"'>]|"[^"]*"|'[^']*')*)?>/i.exec(scan);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
     return html.slice(0, at) + markup + html.slice(at);
   }
-  const htmlOpen = /<html(?:\s[^>]*)?>/i.exec(scan);
+  const htmlOpen = /<html(?:\s(?:[^"'>]|"[^"]*"|'[^']*')*)?>/i.exec(scan);
   if (htmlOpen) {
     const at = htmlOpen.index + htmlOpen[0].length;
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
