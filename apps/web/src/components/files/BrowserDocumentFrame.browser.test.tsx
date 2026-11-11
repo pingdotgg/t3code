@@ -1,5 +1,6 @@
 import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { commands, page } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -33,6 +34,37 @@ describe("HtmlRenderDocument", () => {
     window.postMessage(sizeChanged(999), "*");
     await delivered;
     expect(onContentHeight).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the page copy to the clipboard when the reader clicks its button", async () => {
+    await commands.grantClipboardWrite();
+    await using _permissions = { [Symbol.asyncDispose]: () => commands.revokePermissions() };
+    using pageUrl = (() => {
+      const page = `<button>Copy</button><script>
+        document.querySelector("button").onclick = () => navigator.clipboard.writeText("echo hello-27402").then(
+          () => parent.postMessage({ copy: "resolved" }, "*"),
+          (error) => parent.postMessage({ copy: \`\${error.name}: \${error.message}\` }, "*"),
+        );
+      </script>`;
+      const url = URL.createObjectURL(new Blob([page], { type: "text/html" }));
+      return { url, [Symbol.dispose]: () => URL.revokeObjectURL(url) };
+    })();
+    const copied = new Promise<unknown>((resolve) =>
+      window.addEventListener("message", function onMessage(event) {
+        if (typeof event.data !== "object" || event.data === null || !("copy" in event.data))
+          return;
+        window.removeEventListener("message", onMessage);
+        resolve(event.data.copy);
+      }),
+    );
+    await using screen = await render(<HtmlRenderDocument src={pageUrl.url} title="Report" />);
+
+    await page
+      .frameLocator(screen.getByTitle("Report"))
+      .getByRole("button", { name: "Copy" })
+      .click();
+
+    expect(await copied).toBe("resolved");
   });
 });
 

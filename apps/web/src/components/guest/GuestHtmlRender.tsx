@@ -89,6 +89,7 @@ export function GuestHtmlRender({
         src={src}
         title={reference.title}
         sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+        allow="clipboard-write"
         className="block size-full rounded-lg border border-border"
       />
     </div>
