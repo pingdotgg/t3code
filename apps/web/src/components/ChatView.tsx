@@ -132,7 +132,10 @@ import {
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
+import {
+  assistantCitationFromLocation,
+  useSideChatCitationReveal,
+} from "../lib/assistantCitationNavigation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useStore } from "zustand";
 import { shallow } from "zustand/vanilla/shallow";
@@ -240,7 +243,7 @@ import { type TerminalContextDraft } from "../lib/terminalContext";
 import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
-import { useEnvironmentQuery } from "../state/query";
+import { useEnvironmentQueryRefresh } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
 import {
   primaryServerAvailableEditorsAtom,
@@ -252,7 +255,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
-import { vcsEnvironment } from "../state/vcs";
+import { chatGitStatusAtom, NO_CHAT_GIT_STATUS_ATOM, vcsEnvironment } from "../state/vcs";
 import {
   type EnvironmentPresentation,
   useEnvironment,
@@ -406,6 +409,7 @@ import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplat
 const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_TURN_ITEMS: ThreadStructure["turnItems"] = [];
+const EMPTY_RUNS: ThreadStructure["runs"] = [];
 const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
 const EMPTY_COMPOSER_BANNER_ITEMS: ReadonlyArray<ComposerBannerStackItem> = [];
 const EMPTY_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
@@ -593,7 +597,9 @@ export default function ChatView(props: ChatViewProps) {
     // Other panes navigating must not rerender this thread's timeline.
     select: (location) => {
       const citation = assistantCitationFromLocation(location.href);
-      return citation && citation.environmentId === environmentId && citation.threadId === threadId
+      return citation &&
+        citation.environmentId === environmentId &&
+        (citation.threadId === threadId || (!embedded && layoutPane.focused))
         ? {
             href: location.href,
             key:
@@ -605,11 +611,20 @@ export default function ChatView(props: ChatViewProps) {
     },
     structuralSharing: true,
   });
-  const citationRequest = (() => {
-    if (!citationLocation) return null;
-    const citation = assistantCitationFromLocation(citationLocation.href);
-    return citation ? { citation, key: citationLocation.key } : null;
-  })() as AssistantCitationRequest | null;
+  const locationCitation = citationLocation
+    ? assistantCitationFromLocation(citationLocation.href)
+    : null;
+  const citationActivation = citationLocation?.key ?? "";
+  const citationRequest = (
+    locationCitation && locationCitation.threadId === threadId
+      ? { citation: locationCitation, key: citationActivation }
+      : null
+  ) as AssistantCitationRequest | null;
+  useSideChatCitationReveal(
+    embedded || !layoutPane.focused ? null : routeThreadRef,
+    locationCitation,
+    citationActivation,
+  );
   const citationHistory = useCitedHistory(citationRequest);
   const { resolvedTheme } = useTheme();
   const composerRuntimeMode = useComposerDraftStore(
@@ -1679,14 +1694,17 @@ export default function ChatView(props: ChatViewProps) {
       })
     : null;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
-  const gitStatusQuery = useEnvironmentQuery(
+  const gitStatusAtom =
     gitStatusCwd === null
       ? null
       : vcsEnvironment.status({
           environmentId,
           input: { cwd: gitStatusCwd },
-        }),
-  );
+        });
+  const gitStatusQuery = {
+    data: useAtomValue(gitStatusAtom ? chatGitStatusAtom(gitStatusAtom) : NO_CHAT_GIT_STATUS_ATOM),
+    refresh: useEnvironmentQueryRefresh(gitStatusAtom).refresh,
+  };
   useWorkspaceMutationRefresh({
     enabled: gitStatusCwd !== null,
     mutationId: workspaceMutationId,
@@ -3769,6 +3787,7 @@ export default function ChatView(props: ChatViewProps) {
                               draftId={draftId}
                               activeThreadId={activeThreadId}
                               activeThread={activeThread}
+                              activeThreadRuns={serverProjection?.runs ?? EMPTY_RUNS}
                               promptHistoryEntries={timelineEntries}
                               forceExpandedOnMobile={
                                 forceExpandedMobileComposer && isDraftHeroState
