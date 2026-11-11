@@ -361,6 +361,21 @@ const knowsMember = (device: Device, member: Device | string, nodeId: string | n
     ],
   });
 
+/** Seeds `device`'s roster directly, as if syncs had brought it. Nothing goes over the network. */
+const withRoster = (
+  device: Device,
+  entries: ReadonlyArray<readonly [ExecutionEnvironmentDescriptor, "full-access" | "read-only"]>,
+) =>
+  device.membership.adopt({
+    members: entries.map(([member, access]) => ({
+      environmentId: member.environmentId,
+      label: member.label,
+      nodeId: `n-${member.environmentId}`,
+      access,
+      updatedAt: { wallMs: 1, counter: 0, node: device.descriptor.environmentId },
+    })),
+  });
+
 /** Sends a sync to a device as whoever holds `token`. */
 const syncAs = (
   device: { readonly url: string },
@@ -1220,7 +1235,11 @@ describe("revocation holds", () => {
 
   it.live("an agent cannot revoke the machine its own link comes from", () =>
     Effect.gen(function* () {
-      const { b } = yield* threeDevices;
+      const b = yield* serveDevice(studio, yield* makeTailnet);
+      yield* withRoster(b, [
+        [studio, "full-access"],
+        [laptop, "full-access"],
+      ]);
 
       const refused = yield* b.devices
         .setAccess(laptop.environmentId, "revoked", "agent", laptop.environmentId)
@@ -1506,17 +1525,26 @@ describe("removing and leaving", () => {
 
   it.live("the last full-access machine cannot leave others stranded", () =>
     Effect.gen(function* () {
-      const { a, b, c } = yield* threeDevices;
-      yield* a.devices.setAccess(studio.environmentId, "read-only", "user");
-      yield* a.devices.setAccess(box.environmentId, "read-only", "user");
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* withRoster(a, [
+        [laptop, "full-access"],
+        [studio, "read-only"],
+        [box, "read-only"],
+      ]);
+      yield* withRoster(b, [
+        [laptop, "full-access"],
+        [studio, "read-only"],
+      ]);
 
       expect(yield* a.devices.leave.pipe(Effect.flip)).toMatchObject({ reason: "forbidden" });
-      expect(yield* c.membership.accessOf(laptop.environmentId)).toEqual(
+      expect(yield* a.membership.accessOf(laptop.environmentId)).toEqual(
         Option.some("full-access"),
       );
-      // A member below full access may leave.
+      // A member below full access may leave; how the others learn it is the test above.
       yield* b.devices.leave;
-      expect(yield* a.membership.accessOf(studio.environmentId)).toEqual(Option.some("revoked"));
+      expect(yield* b.membership.members).toEqual([]);
     }),
   );
 });
