@@ -1,19 +1,17 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
-  pullRequestHostOf,
   type EnvironmentId,
   type ProjectId,
   type PullRequestInvolvement,
   type PullRequestListFilters,
   type PullRequestListResult,
   type PullRequestListState,
-  type SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
-import { useDebouncedValue } from "~/state/queries";
 import {
   applyPullRequestOverrides,
   findProjectForRepository,
@@ -38,10 +36,11 @@ import {
 import type { PullRequestExpectedHost } from "./PullRequestListFilters";
 import type { PullRequestListPreferences, PullRequestListSort } from "./pullRequestListPreferences";
 import { assignProjectsToEnvironments } from "./pullRequestProjectAssignment.logic";
-import { pullRequestFilterProjects } from "./pullRequestProjectFilter.logic";
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
+  readonly selectedUrl?: string;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly host?: string;
@@ -60,9 +59,7 @@ export function usePullRequestScope(search: PullRequestsSearch) {
   const allProjects = useProjects();
   const projectsKnown = useAllEnvironmentShellsBootstrapped();
   const capableEnvironments = environments
-    .filter(
-      (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
-    )
+    .filter((environment) => environment.serverConfig !== null)
     .toSorted((left, right) => left.environmentId.localeCompare(right.environmentId));
   const scopedEnvironmentId =
     capableEnvironments.find((environment) => environment.environmentId === search.environmentId)
@@ -143,6 +140,16 @@ export function usePullRequestScope(search: PullRequestsSearch) {
   const assignmentKey = environmentQueries
     .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)
     .join("|");
+  // The URL is user-controlled and stands in for the PR link until detail loads.
+  const selectedLink = search.selectedUrl
+    ? sourceControlClients.parseChangeRequestUrl(search.selectedUrl)?.link
+    : undefined;
+  const selectedUrl =
+    selectedLink !== undefined &&
+    selectedLink.number === search.number &&
+    selectedLink.repository.toLowerCase() === search.repository?.toLowerCase()
+      ? search.selectedUrl
+      : undefined;
   const linkedSelection =
     search.repository && search.number && selectedProject
       ? {
@@ -150,15 +157,16 @@ export function usePullRequestScope(search: PullRequestsSearch) {
           repository: search.repository,
           number: search.number,
           projectId: selectedProject.id,
+          ...(selectedUrl ? { url: selectedUrl, revealUrl: selectedUrl } : {}),
           ...(selectedHost ? { host: selectedHost } : {}),
         }
       : null;
   const expectedHosts = (() => {
     const byHost = new Map<string, PullRequestExpectedHost>();
     for (const project of projects) {
-      const kind = project.repositoryIdentity?.provider as SourceControlProviderKind | undefined;
+      const kind = project.repositoryIdentity?.provider;
       if (kind === undefined) continue;
-      const host = pullRequestHostOf(project.repositoryIdentity, kind);
+      const host = sourceControlClients.changeRequestHost(project.repositoryIdentity, kind);
       if (!byHost.has(host)) byHost.set(host, { host, kind });
     }
     return [...byHost.values()];
@@ -186,7 +194,12 @@ export function usePullRequestScope(search: PullRequestsSearch) {
 }
 
 export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuery: string) {
-  const sentQuery = useDebouncedValue(typedQuery, SEARCH_DEBOUNCE_MS);
+  const [sentQuery, setSentQuery] = useState(typedQuery);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- debounce timer that sends the typed query after SEARCH_DEBOUNCE_MS
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSentQuery(typedQuery), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [typedQuery]);
   const typedParsed = parsePullRequestQuery(typedQuery);
   const sentParsed = parsePullRequestQuery(sentQuery);
 
@@ -204,6 +217,7 @@ export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuer
   const hasLocalFilters = Object.keys(localFilters).length > 0;
   return {
     sentQuery,
+    submitQuery: (query: string) => setSentQuery(query.trim()),
     querySettled: typedQuery === sentQuery,
     typedParsed,
     sentParsed,
