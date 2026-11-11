@@ -623,11 +623,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           ),
           stopIfRevoked(host, true),
         );
-      const hostSummaries = yield* Effect.forEach(hosts.values(), (candidate) => candidate.summary);
+      const summarized = [...hosts.values()];
+      const hostSummaries = yield* Effect.forEach(summarized, (candidate) => candidate.summary);
       return yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
           if (!(yield* confirmStarted(host, true))) return null;
-          yield* publish((state) => ({ ...state, hosts: hostSummaries }));
+          // A reconcile while the summaries ran has already published the newer host list.
+          if (
+            summarized.length === hosts.size &&
+            summarized.every((candidate) => hosts.get(candidate.id) === candidate)
+          )
+            yield* publish((state) => ({ ...state, hosts: hostSummaries }));
           yield* setHostStatus(host.id, { status: "ready" });
           return { hostId: host.id, ...ready };
         }),

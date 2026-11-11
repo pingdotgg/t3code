@@ -220,8 +220,12 @@ it.effect("reads host summaries outside the lifecycle lock when agent tools star
     const agent = yield* service.agentReadinessIfSupported("agent").pipe(Effect.forkChild);
     yield* Deferred.await(summaryEntered);
     expect((yield* service.readiness("other")).hostId).toBe("other");
+    yield* service.withLifecycleLock(
+      Effect.sync(() => hosts.delete("other")).pipe(Effect.andThen(service.refreshHosts)),
+    );
     yield* Deferred.succeed(finishSummary, undefined);
     expect((yield* Fiber.join(agent))?.hostId).toBe("agent");
+    expect((yield* service.state).hosts.map((summary) => summary.id)).toEqual(["agent"]);
   }).pipe(
     Effect.provide(
       ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
