@@ -3790,7 +3790,7 @@ export function permissionResultFromDecision(input: {
 }
 
 // The SDK forwards these at runtime without typing them. Each marks an ask that no stored
-// grant may answer: an ask rule, a safety check, or a card the user answers on.
+// grant may answer: an ask rule, a hook's ask, a safety check, or a card the user answers on.
 function askNeedsPerson(callbackOptions: Parameters<CanUseTool>[2]): boolean {
   const untyped = callbackOptions as Parameters<CanUseTool>[2] & {
     readonly requiresUserInteraction?: boolean;
@@ -3799,6 +3799,7 @@ function askNeedsPerson(callbackOptions: Parameters<CanUseTool>[2]): boolean {
   return (
     untyped.requiresUserInteraction === true ||
     untyped.decisionReasonType === "rule" ||
+    untyped.decisionReasonType === "hook" ||
     untyped.decisionReasonType === "safetyCheck"
   );
 }
