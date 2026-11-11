@@ -794,6 +794,20 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("reads the PR this thread opened before status sync reports it", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const harness = yield* makeHarness({
+        thread: makeThread([makeLink(43, { source: "created" })]),
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+        },
+      });
+      yield* harness.call("pull_request_read", { sections: ["summary"] });
+      expect(asked).toMatchObject([{ number: 43 }]);
+    }),
+  );
+
   it.effect("merges pinned to the head the agent checked", () =>
     Effect.gen(function* () {
       const actions: Array<PullRequestActionInput> = [];
