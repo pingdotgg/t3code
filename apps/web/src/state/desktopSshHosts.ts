@@ -18,7 +18,10 @@ export function filterDiscoveredSshHosts(
     const alias = host.alias.toLowerCase();
     if (alias.startsWith(normalizedQuery)) {
       prefixMatches.push(host);
-    } else if (alias.includes(normalizedQuery)) {
+    } else if (
+      alias.includes(normalizedQuery) ||
+      host.hostname.toLowerCase().includes(normalizedQuery)
+    ) {
       substringMatches.push(host);
     }
   }
@@ -48,9 +51,7 @@ function getDesktopSshDiscoveryBridge(): DesktopSshDiscoveryBridge | undefined {
   return typeof window === "undefined" ? undefined : window.desktopBridge;
 }
 
-export function createDesktopSshHostsStateAtom(
-  getBridge: () => DesktopSshDiscoveryBridge | undefined,
-) {
+function createDesktopSshHostsStateAtom(getBridge: () => DesktopSshDiscoveryBridge | undefined) {
   const discoverDesktopSshHosts = Effect.fn("discoverDesktopSshHosts")(function* () {
     const bridge = getBridge();
     if (!bridge) {
