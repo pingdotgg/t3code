@@ -1787,7 +1787,7 @@ export const make = Effect.gen(function* () {
     return remoteUrl === null ? null : remoteName;
   });
 
-  // worktree add can set origin/main as upstream; this base is not the branch's published PR head.
+  // worktree add can set the branch's base as upstream; that is not its published PR head.
   const resolveLookupHeadContext = Effect.fn("resolveLookupHeadContext")(function* (
     cwd: string,
     details: {
@@ -1816,9 +1816,8 @@ export const make = Effect.gen(function* () {
       headContext.headBranch === details.defaultBranch ||
       (details.defaultBranch === null &&
         (headContext.headBranch === "main" || headContext.headBranch === "master")) ||
-      // A worktree cut from a non-default base records it here and still tracks it.
       headContext.headBranch ===
-        (yield* readConfigValueNullable(cwd, `branch.${details.branch}.gh-merge-base`));
+        (yield* gitCore.readBranchBase(cwd, details.branch).pipe(Effect.orElseSucceed(() => null)));
     if (!upstreamHeadIsBase) {
       return { headContext, lookup: true };
     }

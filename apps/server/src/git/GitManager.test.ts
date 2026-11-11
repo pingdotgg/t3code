@@ -2643,23 +2643,22 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* runGit(repoDir, ["fetch", "origin"]);
         yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
         yield* runGit(repoDir, ["checkout", "-b", "feature/from-dev", "origin/dev"]);
-        yield* runGit(repoDir, ["config", "branch.feature/from-dev.gh-merge-base", "dev"]);
+        yield* runGit(repoDir, ["config", "branch.feature/from-dev.t3-merge-base", "dev"]);
 
-        const { manager, ghCalls } = yield* makeManager({
-          ghScenario: {
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: {
             prListByHeadSelector: {
-              dev: JSON.stringify([
+              dev: [
                 {
                   number: 49,
                   title: "Release dev to main",
                   url: "https://github.com/pingdotgg/codething-mvp/pull/49",
                   baseRefName: "main",
                   headRefName: "dev",
-                  state: "MERGED",
-                  mergedAt: "2026-08-20T10:00:00Z",
+                  state: "merged",
                   updatedAt: "2026-08-20T10:00:00Z",
                 },
-              ]),
+              ],
             },
           },
         });
@@ -2667,7 +2666,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const status = yield* manager.status({ cwd: repoDir });
         expect(status.refName).toBe("feature/from-dev");
         expect(status.pr).toBeNull();
-        expect(ghCalls.some((call) => call.includes("--head dev"))).toBe(false);
+        expect(listedSelectors(providerCalls).includes("dev")).toBe(false);
       }),
   );
 
