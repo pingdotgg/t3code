@@ -2,6 +2,8 @@
 import * as NodeFS from "node:fs";
 
 import { catalog } from "@handy-computer/models";
+import { recommendSpeechModels } from "@t3tools/shared/speech";
+import policy from "../../../packages/shared/src/speechRecommendationPolicy.json" with { type: "json" };
 import { expect, it } from "vite-plus/test";
 
 import manifest from "../package.json" with { type: "json" };
@@ -15,6 +17,8 @@ const generate = (models = catalog.models) =>
   );
 
 it("reproduces the bundled registry byte for byte without upstream requests", async () => {
+  const { fastCpuMaxWaitSeconds, ...methodology } = catalog.methodology;
+  expect(policy).toEqual({ ...methodology, fastMaxWaitSeconds: fastCpuMaxWaitSeconds });
   expect(NodeFS.readFileSync(new URL("../src/speech/catalog.json", import.meta.url), "utf8")).toBe(
     await renderSpeechCatalog(
       catalog.data,
@@ -53,16 +57,38 @@ it("reproduces the bundled registry byte for byte without upstream requests", as
       {
         ...catalog.data,
         models: [parakeet],
-        results: { [parakeet.id]: { accuracy: {}, performance } },
+        results: { [parakeet.id]: { accuracy: { en: { error: 3.99 } }, performance } },
       },
       "0.2.3",
       "0.4.1",
     );
     expect(result.models[0]?.benchmark.secondsPer30s).toEqual({
-      cpu: performance.cpu ? 15 : null,
-      accelerated: performance.accelerated ? 3 : null,
+      cpu: performance.cpu ? 30 / performance.cpu : null,
+      accelerated: performance.accelerated ? 30 / performance.accelerated : null,
     });
   }
+});
+
+it("preserves Handy's accelerated balanced pick after filtering T3's offered candidates", () => {
+  const offered = generate().models;
+  const sources = catalog.models.filter((model) =>
+    offered.some(({ id }) => id === model.repository),
+  );
+  for (const languages of [["en"], ["de"], ["ja"], ["en", "de"], ["en", "fr"], ["hi", "mr"]]) {
+    const expected = catalog
+      .recommendModels(sources, languages)
+      .find((pick) => pick.status !== "unbenchmarked" && pick.roles.includes("best"));
+    expect(
+      recommendSpeechModels(offered, languages, "accelerated").keys().next().value,
+      languages.join(","),
+    ).toBe(expected?.model.repository);
+  }
+  const excluded = { ...catalog.models[0]!, license: "cc-by-nc-4.0" };
+  const allowed = { ...catalog.models[1]!, languages: ["en"] };
+  const filtered = generate([excluded, allowed]).models;
+  expect([...recommendSpeechModels(filtered, ["en"], "accelerated").keys()]).toEqual([
+    allowed.repository,
+  ]);
 });
 
 it("filters restricted licenses, unsupported roles, engines, architectures and files", () => {

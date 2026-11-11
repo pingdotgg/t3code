@@ -30,7 +30,11 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
-import { cloudSpeechLanguages } from "@t3tools/shared/speech";
+import {
+  cloudSpeechLanguages,
+  recommendSpeechModels,
+  type SpeechRecommendationRole,
+} from "@t3tools/shared/speech";
 import {
   AudioLinesIcon,
   CheckIcon,
@@ -163,7 +167,8 @@ const spellingsOf = (words: SpeechCustomWords) =>
 type ModelCardProps = {
   readonly model: EnvironmentSpeechModel;
   readonly comparisonLanguages: readonly string[];
-  readonly benchmarkTier: SpeechBenchmarkTier;
+  readonly recommendation: SpeechRecommendationRole | undefined;
+  readonly benchmarkTier: SpeechBenchmarkTier | undefined;
   readonly busy: boolean;
   readonly canCancel: boolean;
   readonly onDownload: () => void;
@@ -195,11 +200,23 @@ function ModelCard(props: ModelCardProps) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-sm font-medium leading-5">{model.name}</span>
-          {model.recommended ? (
+          {props.recommendation ? (
             <ModelBadge
               icon={<StarIcon className="mr-1 size-3" />}
-              label="Recommended"
-              tooltip="A good default pick for the languages it covers."
+              label={
+                props.recommendation === "recommended"
+                  ? "Recommended"
+                  : props.recommendation === "faster"
+                    ? "Faster"
+                    : "More accurate"
+              }
+              tooltip={
+                props.recommendation === "recommended"
+                  ? "Balanced accuracy and speed for your selected languages on Handy’s reference benchmarks."
+                  : props.recommendation === "faster"
+                    ? "Quicker than Recommended on this reference tier, with useful accuracy."
+                    : "Higher accuracy with a longer reference processing budget for your selected languages."
+              }
             />
           ) : null}
           {model.supportsStreaming ? (
@@ -816,14 +833,20 @@ function SpeechModelBrowser(props: {
     accuracy: `Best ${languageLabel(accuracyLanguage)} accuracy`,
     speed: "Fastest transcription",
   };
-  const sortedModels = filterSpeechModels(models, {
-    search,
-    languages: selectedLanguages,
-    downloadedOnly,
-    sort,
-    accuracyLanguage,
-    benchmarkTier: status?.supported ? status.benchmarkTier : "accelerated",
-  });
+  const benchmarkTier = status?.supported ? status.benchmarkTier : undefined;
+  const recommendations = recommendSpeechModels(models, selectedLanguages, benchmarkTier);
+  const sortedModels = filterSpeechModels(
+    models,
+    {
+      search,
+      languages: selectedLanguages,
+      downloadedOnly,
+      sort,
+      accuracyLanguage,
+      benchmarkTier,
+    },
+    recommendations,
+  );
   const activeModel = models.find((model) => model.active);
   const renderedModels =
     activeModel && !sortedModels.includes(activeModel)
@@ -845,7 +868,11 @@ function SpeechModelBrowser(props: {
           <p className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
             Pick languages to see models that support all of them. Accuracy is word or character
             error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on
-            Handy’s benchmark {status.benchmarkTier === "cpu" ? "CPU" : "GPU"}.
+            Handy’s reference {benchmarkTier === "cpu" ? "CPU" : "GPU"}, matching this environment’s
+            transcription backend.
+            {selectedLanguages.length > 0
+              ? " Recommendations balance accuracy across every selected language on that reference tier, not timings measured on your hardware."
+              : " Select a language for recommendations."}
           </p>
           <div className="@min-[32rem]/voice-models:grid @min-[32rem]/voice-models:grid-cols-[11rem_minmax(0,1fr)]">
             <div className="flex min-h-0 flex-col border-b border-border/60 bg-muted/10 @min-[32rem]/voice-models:border-r @min-[32rem]/voice-models:border-b-0">
@@ -955,6 +982,8 @@ function SpeechModelBrowser(props: {
                 )}
                 {renderedModels.map((model) => {
                   const card: ModelCardProps = {
+                    recommendation: recommendations.get(model.id),
+                    benchmarkTier,
                     model:
                       model.id === requestedDownload && model.state === "downloadable"
                         ? { ...model, state: "downloading" }
@@ -962,7 +991,6 @@ function SpeechModelBrowser(props: {
                     busy: controlsDisabled,
                     canCancel,
                     comparisonLanguages: selectedLanguages,
-                    benchmarkTier: status.benchmarkTier,
                     onDownload: () =>
                       void run(
                         "Could not download the model",
