@@ -337,6 +337,8 @@ interface ServerTab {
   desktopViewportNext: Promise<ServerTab["desktopViewport"]> | null;
   /** A page resize or load since the last read started; status measures again. */
   desktopViewportStale: boolean;
+  /** Counts page resizes, loads and dialog closes, so a caller can tell one landed during a read. */
+  desktopViewportChanges: number;
   /** Settles at the desktop page's next main-frame resize. */
   desktopResize: PromiseWithResolvers<void>;
   loading: boolean;
@@ -707,12 +709,12 @@ const make = Effect.gen(function* () {
     };
   };
 
-  // Page resizes and loads mark the size stale; only then does status read the page. A page
-  // resize during the read it waits for can leave that answer old, so it reads once more.
+  // Page resizes and loads mark the size stale; only then does status read the page. One
+  // during the read it waits for can leave that answer old, so it reads once more.
   const desktopStatusViewport = async (tab: ServerTab) => {
-    const resizes = tab.desktopResize;
+    const changes = tab.desktopViewportChanges;
     await (tab.desktopViewportStale || tab.dialog ? layoutSize(tab) : tab.desktopViewportRead);
-    if (tab.desktopResize !== resizes) await layoutSize(tab);
+    if (tab.desktopViewportChanges !== changes) await layoutSize(tab);
     return tab.desktopViewport;
   };
 
@@ -926,6 +928,7 @@ const make = Effect.gen(function* () {
       desktopViewportRead: Promise.resolve(null),
       desktopViewportNext: null,
       desktopViewportStale: true,
+      desktopViewportChanges: 0,
       desktopResize: Promise.withResolvers<void>(),
       loading: false,
       loadError: undefined,
@@ -946,6 +949,7 @@ const make = Effect.gen(function* () {
       // The desktop resizes and zooms its webview itself; viewers map input with the new size.
       const remeasure = () => {
         tab.desktopViewportStale = true;
+        tab.desktopViewportChanges += 1;
         if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
       };
       cdp.on("Page.frameResized", () => {
@@ -2303,13 +2307,13 @@ const make = Effect.gen(function* () {
         // Half the time left keeps room for the read, which runs even if nothing was drawn,
         // because a page can keep another size than the one asked for.
         if (changed) await within(drawn, Math.min(DESKTOP_RESIZE_WAIT_MS, remainingMs() / 2));
-        const resizes = tab.desktopResize;
+        const changes = tab.desktopViewportChanges;
         const measured = await within(measureDesktopViewport(tab), remainingMs());
-        // Only a read after the draw, with no page resize during it, measures this resize.
+        // Only a read after the draw, with no page resize or load during it, measures this resize.
         return {
           tabId: tab.tabId,
           setting,
-          ...(measured && tab.desktopResize === resizes ? { viewport: measured } : {}),
+          ...(measured && tab.desktopViewportChanges === changes ? { viewport: measured } : {}),
         };
       }
       case "setColorScheme": {

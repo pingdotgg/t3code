@@ -2135,11 +2135,12 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
       expect(reads).toBe(0);
       // A status during a read waits for it rather than answer the size before it.
       const pending = yield* Queue.unbounded<PromiseWithResolvers<Record<string, unknown>>>();
-      desktopSizeAnswer = () => {
+      const heldAnswer = () => {
         const read = Promise.withResolvers<Record<string, unknown>>();
         Queue.offerUnsafe(pending, read);
         return read.promise;
       };
+      desktopSizeAnswer = heldAnswer;
       const answer = (width: number, height: number) => ({ result: { value: { width, height } } });
       const refill = broker
         .invoke<PreviewAutomationResizeResult>({
@@ -2181,6 +2182,16 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
       oldRead.resolve(answer(1100, 650));
       expect(yield* Fiber.join(later)).toEqual({ width: 1000, height: 600 });
       expect(yield* Fiber.join(outdated)).toBeUndefined();
+      // So does a load during that read, which may have measured the page before it.
+      desktopSizeAnswer = heldAnswer;
+      const reloaded = yield* refill;
+      const pageRead = yield* Queue.take(pending);
+      const navigated = yield* startStatus;
+      yield* Effect.promise(() => cdp.emitAsync("Page.loadEventFired"));
+      desktopSizeAnswer = async () => answer(900, 560);
+      pageRead.resolve(answer(1000, 600));
+      expect(yield* Fiber.join(navigated)).toEqual({ width: 900, height: 560 });
+      expect(yield* Fiber.join(reloaded)).toBeUndefined();
     }),
   ).pipe(Effect.provide(layer)),
 );
