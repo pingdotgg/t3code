@@ -173,7 +173,11 @@ export function ThreadAutomationsPanel(props: {
                         ? "Paused"
                         : task.lastRunStatus === "running"
                           ? "Running"
-                          : scheduleLabel(task.schedule, tasksQuery.data?.timeZone, task.nextRunAt))}
+                          : scheduleLabel(
+                              task.schedule,
+                              tasksQuery.data?.timeZone,
+                              task.nextRunAt,
+                            ))}
                   </span>
                 </span>
               </MenuTrigger>
