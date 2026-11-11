@@ -1756,6 +1756,31 @@ function OpenCommandPaletteDialog(props: {
         });
       },
     });
+    actionItems.push({
+      kind: "action",
+      value: "action:project-import-claude-sessions",
+      searchTerms: [
+        "import",
+        "adopt",
+        "claude",
+        "session",
+        "sessions",
+        "discover",
+        "project",
+        "history",
+      ],
+      title: "Import Claude sessions",
+      description: contextualProjectGroup.displayName,
+      icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({
+          to: "/projects/$projectKey",
+          params: { projectKey: contextualProjectGroup.projectKey },
+          hash: "import-claude-sessions",
+          hashScrollIntoView: false,
+        });
+      },
+    });
   }
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });

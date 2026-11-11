@@ -81,14 +81,17 @@ over 200,000 tokens. Each Claude provider's settings can override it:
 - **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
   still applies, and you can still compact by hand.
 
-## Adopt existing sessions
+## Import existing sessions
 
 To bring a Claude Code session you already ran outside T3 Code into a managed
-thread, open **Settings > Providers**, expand the Claude instance, choose a
-project under **Adopt sessions**, and select **Discover**. **Adopt** creates a
-T3 thread bound to that session id so later turns resume it instead of starting
-cold. Adopting the same session again returns the existing thread. Onboarding
-can still import every recent session for a project in one step.
+thread, open the project (**Settings > Projects**, the project folder menu, or
+**Import Claude sessions** in the command palette), then under **Import Claude
+sessions** select **Discover**. **Import** creates a T3 thread bound to that
+session id and opens it so later turns resume the session instead of starting
+cold. Importing the same session again opens the existing thread. The same
+controls also live on the Claude provider card. Onboarding can still import
+every recent session for a project in one step. This is separate from connecting
+Claude as an outside MCP app.
 
 ## Usage limits
 

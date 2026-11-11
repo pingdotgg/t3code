@@ -825,6 +825,11 @@ export const make = Effect.gen(function* () {
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
   const baseDir = path.resolve(serverConfig.baseDir);
   const worktreesDir = path.resolve(serverConfig.worktreesDir);
+  // macOS resolves `/var/...` worktrees to `/private/var/...`; match both spellings.
+  const baseDirReal = yield* fileSystem.realPath(baseDir).pipe(Effect.orElseSucceed(() => baseDir));
+  const worktreesDirReal = yield* fileSystem
+    .realPath(worktreesDir)
+    .pipe(Effect.orElseSucceed(() => worktreesDir));
   const isWindows = (yield* HostProcess.Platform) === "win32";
   const foldWorktreeCase = isWindows;
   const hostEnvironment = yield* HostProcess.Environment;
@@ -850,7 +855,11 @@ export const make = Effect.gen(function* () {
     normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
       normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
     ) ||
-    isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase);
+    normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
+      normalizeForWorktreeMatch(baseDirReal, foldWorktreeCase),
+    ) ||
+    isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase) ||
+    isT3ManagedWorktree(candidatePath, worktreesDirReal, foldWorktreeCase);
 
   const listDirectory = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));

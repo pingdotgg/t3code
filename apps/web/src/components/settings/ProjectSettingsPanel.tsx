@@ -48,6 +48,7 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
+import { ClaudeSessionAdoptSection } from "./ClaudeSessionAdoptSection";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import {
@@ -651,6 +652,20 @@ function ProjectDetail({
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
+        {filePickerProject ? (
+          <ClaudeSessionAdoptSection
+            environmentId={filePickerProject.environmentId}
+            lockedProjectId={filePickerProject.id}
+            projects={[
+              {
+                id: filePickerProject.id,
+                title: filePickerProject.title,
+                workspaceRoot: filePickerProject.workspaceRoot,
+              },
+            ]}
+            readOnly={!editableIds.has(filePickerProject.environmentId)}
+          />
+        ) : null}
         {checkoutChoices}
         <SettingsSection title="Danger">
           <SettingsRow

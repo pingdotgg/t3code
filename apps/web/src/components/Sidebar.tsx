@@ -1219,7 +1219,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
 
   const openProjectSettings = useStableCallback(
-    (projectGroup: SidebarProjectSnapshot, projectRef?: ScopedProjectRef) => {
+    (
+      projectGroup: SidebarProjectSnapshot,
+      projectRef?: ScopedProjectRef,
+      options?: { readonly hash?: string },
+    ) => {
       if (isMobile) {
         setOpenMobile(false);
       }
@@ -1233,6 +1237,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             projectRef,
           ),
         },
+        ...(options?.hash === undefined ? {} : { hash: options.hash }),
+        hashScrollIntoView: false,
       });
     },
   );
@@ -1274,6 +1280,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       : { id: "pin", label: "Pin project", icon: "pin" },
                   ]
                 : []),
+              { id: "import-claude-sessions", label: "Import Claude sessions" },
               { id: "project-settings", label: "Project settings", icon: "settings" },
             ],
             position,
@@ -1290,6 +1297,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "pin":
           case "unpin":
             setProjectGroupPinned(group, clicked.value === "pin");
+            return;
+          case "import-claude-sessions":
+            openProjectSettings(group, undefined, { hash: "import-claude-sessions" });
             return;
           case "project-settings":
             openProjectSettings(group);

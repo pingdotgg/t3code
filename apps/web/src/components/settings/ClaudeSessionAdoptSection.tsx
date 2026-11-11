@@ -4,20 +4,24 @@ import {
   type AgentSessionListed,
   type EnvironmentId,
   type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { useNavigate } from "@tanstack/react-router";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { useEnvironmentScope, readEnvironmentScope } from "~/state/session";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { agentSessionAdopt, agentSessionList } from "../../state/agentSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { toastManager } from "../ui/toast";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 interface ClaudeSessionProject {
@@ -32,7 +36,7 @@ function reportFailure(title: string, result: AtomCommandResult<unknown, unknown
   toastManager.add({
     type: "error",
     title,
-    description: error instanceof Error ? error.message : "The adopt operation failed.",
+    description: error instanceof Error ? error.message : "The import operation failed.",
   });
 }
 
@@ -40,22 +44,30 @@ interface ClaudeSessionAdoptProps {
   readonly environmentId: EnvironmentId;
   readonly projects: ReadonlyArray<ClaudeSessionProject>;
   readonly readOnly: boolean;
+  /** When set, skip the project picker and import for this project only. */
+  readonly lockedProjectId?: ProjectId;
 }
 
 export function ClaudeSessionAdoptSection(props: ClaudeSessionAdoptProps) {
-  const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(null);
+  const locked =
+    props.lockedProjectId !== undefined
+      ? (props.projects.find((project) => project.id === props.lockedProjectId) ?? null)
+      : null;
+  const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(locked?.id ?? null);
   const projectId =
+    locked?.id ??
     props.projects.find((project) => project.id === selectedProjectId)?.id ??
     props.projects[0]?.id ??
     null;
-  if (selectedProjectId !== projectId) setSelectedProjectId(projectId);
+  if (locked === null && selectedProjectId !== projectId) setSelectedProjectId(projectId);
 
   return (
     <ProjectSessionAdopt
-      key={JSON.stringify([props.environmentId, projectId])}
+      key={JSON.stringify([props.environmentId, projectId, locked?.id ?? null])}
       {...props}
       projectId={projectId}
       onProjectChange={setSelectedProjectId}
+      projectSelectHidden={locked !== null}
     />
   );
 }
@@ -64,8 +76,10 @@ function ProjectSessionAdopt(
   props: ClaudeSessionAdoptProps & {
     readonly projectId: ProjectId | null;
     readonly onProjectChange: (projectId: ProjectId) => void;
+    readonly projectSelectHidden: boolean;
   },
 ) {
+  const navigate = useNavigate();
   const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const canRead = useEnvironmentScope(props.environmentId, AuthOrchestrationReadScope);
   const { projectId } = props;
@@ -90,6 +104,13 @@ function ProjectSessionAdopt(
   const listSessions = useAtomCommand(agentSessionList, { reportFailure: false });
   const adoptSession = useAtomCommand(agentSessionAdopt, { reportFailure: false });
 
+  const openAdoptedThread = (threadId: ThreadId) => {
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(scopeThreadRef(props.environmentId, threadId)),
+    });
+  };
+
   const loadSessions = async () => {
     const generation = projectGeneration.current;
     if (projectId === null || loading) return;
@@ -109,11 +130,14 @@ function ProjectSessionAdopt(
 
   const adoptListedSession = async (session: AgentSessionListed) => {
     const generation = projectGeneration.current;
+    if (session.importedThreadId !== null) {
+      openAdoptedThread(session.importedThreadId);
+      return;
+    }
     if (
       !readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope) ||
       projectId === null ||
-      adoptingSessionId !== null ||
-      session.importedThreadId !== null
+      adoptingSessionId !== null
     )
       return;
     setAdoptingSessionId(session.providerSessionId);
@@ -137,53 +161,60 @@ function ProjectSessionAdopt(
             : candidate,
         ),
       );
-      toastManager.add({
-        type: "success",
-        title: result.value.adopted ? "Claude session adopted" : "Claude session already adopted",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: result.value.adopted
+            ? "Claude session imported"
+            : "Claude session already imported",
+        }),
+      );
+      openAdoptedThread(result.value.threadId);
       return;
     }
-    reportFailure("Could not adopt Claude session", result);
+    reportFailure("Could not import Claude session", result);
   };
 
   return (
-    <SettingsSection title="Adopt sessions">
+    <SettingsSection id="import-claude-sessions" title="Import Claude sessions">
       <SettingsRow
         title="Existing Claude Code sessions"
         description={
           props.projects.length === 0
-            ? "Add a project before adopting Claude Code sessions from disk."
-            : "Discover Claude Code sessions for this project and adopt one into a T3 thread without starting a new conversation."
+            ? "Add a project before importing Claude Code sessions from disk."
+            : "Discover Claude Code sessions for this project and import one into a T3 thread without starting a new conversation. Distinct from connecting Claude as an outside MCP app."
         }
         control={
           <div className="flex flex-wrap items-center gap-2">
             {props.projects.length > 0 ? (
               <>
-                <Select
-                  value={projectId ?? ""}
-                  disabled={!canRead || loading || adoptingSessionId !== null}
-                  onValueChange={(value) => {
-                    if (value === null) return;
-                    props.onProjectChange(value as ProjectId);
-                  }}
-                >
-                  <SelectTrigger
-                    aria-label="Project for Claude sessions"
-                    className="w-40"
-                    size="sm"
+                {props.projectSelectHidden ? null : (
+                  <Select
+                    value={projectId ?? ""}
+                    disabled={!canRead || loading || adoptingSessionId !== null}
+                    onValueChange={(value) => {
+                      if (value === null) return;
+                      props.onProjectChange(value as ProjectId);
+                    }}
                   >
-                    <SelectValue>
-                      {props.projects.find((project) => project.id === projectId)?.title}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup>
-                    {props.projects.map((project) => (
-                      <SelectItem key={project.id} value={project.id}>
-                        {project.title}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
+                    <SelectTrigger
+                      aria-label="Project for Claude sessions"
+                      className="w-40"
+                      size="sm"
+                    >
+                      <SelectValue>
+                        {props.projects.find((project) => project.id === projectId)?.title}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {props.projects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.title}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                )}
                 <Button
                   type="button"
                   size="sm"
@@ -217,17 +248,16 @@ function ProjectSessionAdopt(
                   variant="ghost-muted"
                   disabled={
                     props.readOnly ||
-                    !canOperate ||
-                    session.importedThreadId !== null ||
+                    (!canOperate && session.importedThreadId === null) ||
                     adoptingSessionId !== null
                   }
                   onClick={() => void adoptListedSession(session)}
                 >
                   {session.importedThreadId !== null
-                    ? "Adopted"
+                    ? "Open"
                     : adoptingSessionId === session.providerSessionId
-                      ? "Adopting"
-                      : "Adopt"}
+                      ? "Importing"
+                      : "Import"}
                 </Button>
               </div>
             ))}
