@@ -84,7 +84,7 @@ export function startThreadNotifications(
   };
   // Toast ids by thread key, so hiding a thread can close its open toasts.
   const openToasts = new Map<string, Array<ToastId>>();
-  const recentToasts: Array<{ toastId: ToastId; open: () => void }> = [];
+  const recentToasts: Array<{ toastId: ToastId; key: string; open: () => void }> = [];
   const graceTimers = new Set<ReturnType<typeof setTimeout>>();
   const dropRecentToast = (toastId: ToastId) => {
     const index = recentToasts.findIndex((entry) => entry.toastId === toastId);
@@ -115,6 +115,9 @@ export function startThreadNotifications(
         toastManager.close(toastId);
       }
       openToasts.delete(key);
+    }
+    for (const { toastId } of recentToasts.filter(({ key }) => shouldClose(key))) {
+      dropRecentToast(toastId);
     }
     const count = pending.size;
     for (const [tag, entry] of pending) {
@@ -205,7 +208,7 @@ export function startThreadNotifications(
         },
       });
       openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), toastId]);
-      recentToasts.push({ toastId, open: openThread });
+      recentToasts.push({ toastId, key: toastKey, open: openThread });
       return;
     }
     if (

@@ -1,5 +1,6 @@
 import type { AnyRouter } from "@tanstack/react-router";
-import { EnvironmentId } from "@t3tools/contracts";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -55,6 +56,9 @@ vi.mock(import("../state/threads"), async (original) => {
       get delegatedUnderParentAtom() {
         return noDelegatedAtom as never;
       },
+      get hiddenThreadKeysAtom() {
+        return hiddenThreadKeysAtom;
+      },
     },
   };
 });
@@ -83,6 +87,7 @@ const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
 const environmentIdsAtom = Atom.make<ReadonlyArray<string>>([]);
 const noRequestsAtom = Atom.make(new Map());
 const noDelegatedAtom = Atom.make<ReadonlySet<string>>(new Set<string>());
+const hiddenThreadKeysAtom = Atom.make<ReadonlySet<string>>(new Set<string>());
 state.shells = { set: (id, value) => registry.set(shellAtom(id), value) };
 
 class TestNotification extends EventTarget {
@@ -192,6 +197,7 @@ function setup() {
   state.inApp = false;
   state.settingsListeners.clear();
   registry.set(environmentIdsAtom, ["one", "two"]);
+  registry.set(hiddenThreadKeysAtom, new Set());
   state.shells.set("one", shell());
   state.shells.set("two", shell());
   focused = false;
@@ -418,11 +424,11 @@ it("opens the newest toast's thread from the shortcut until shortly after it clo
         cancelable: true,
       }),
     );
-  const complete = (environmentId: string) =>
+  const complete = (environmentId: string, completedAt = "2026-09-13T07:00:01.000Z") =>
     state.shells.set(
       environmentId,
       shell({
-        latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+        latestTurn: { turnId: "turn", state: "completed", completedAt },
       }),
     );
   const opened = (environmentId: string) => ({
@@ -439,6 +445,23 @@ it("opens the newest toast's thread from the shortcut until shortly after it clo
 
   toasts[0]!.onRemove();
   vi.advanceTimersByTime(2_000);
+  pressShortcut();
+  expect(state.navigate).toHaveBeenCalledOnce();
+
+  state.shells.set("one", shell());
+  complete("one", "2026-09-13T07:00:02.000Z");
+  state.shells.set("one", shell());
+  complete("one", "2026-09-13T07:00:03.000Z");
+  expect(toasts).toHaveLength(4);
+  toasts[2]!.onRemove();
+  toasts[3]!.onRemove();
+  registry.set(
+    hiddenThreadKeysAtom,
+    new Set([
+      threadKey({ environmentId: EnvironmentId.make("one"), threadId: ThreadId.make(thread.id) }),
+    ]),
+  );
+  pressShortcut();
   pressShortcut();
   expect(state.navigate).toHaveBeenCalledOnce();
 });
