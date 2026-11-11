@@ -596,7 +596,9 @@ export default function ChatView(props: ChatViewProps) {
     // Other panes navigating must not rerender this thread's timeline.
     select: (location) => {
       const citation = assistantCitationFromLocation(location.href);
-      return citation && citation.environmentId === environmentId && (citation.threadId === threadId || (!embedded && layoutPane.focused))
+      return citation &&
+        citation.environmentId === environmentId &&
+        (citation.threadId === threadId || (!embedded && layoutPane.focused))
         ? {
             href: location.href,
             key:

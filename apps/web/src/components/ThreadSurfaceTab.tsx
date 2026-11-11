@@ -762,7 +762,9 @@ function ThreadSurfaceContent({
             initialTab={surface.detailTab ?? "summary"}
             revealUrl={surface.revealUrl}
             onRevealSettled={(revealUrl) => {
-              useRightPanelStore.getState().settlePullRequestReveal(threadRef, surface.id, revealUrl);
+              useRightPanelStore
+                .getState()
+                .settlePullRequestReveal(threadRef, surface.id, revealUrl);
             }}
             onTabChange={(tab) =>
               useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab)
