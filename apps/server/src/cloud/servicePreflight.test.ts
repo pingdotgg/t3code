@@ -33,6 +33,27 @@ it.each([1])("blocks legacy launcher protocol %i with exact recovery steps", (la
   expect(reason).toContain("which -a t3");
 });
 
+// regression: #34435 Windows hosts were told to run `curl | sh` and `~/.local/bin/t3 service install`
+it("gives Windows hosts recovery steps that run on Windows", () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+  try {
+    const result = runServicePreflight({
+      databasePath: "C:\\missing\\state.sqlite",
+      launcherProtocol: 3,
+      version: "9.8.7",
+    });
+    const reason = result.status === "blocked" ? result.reason : "";
+    expect(reason).toMatch(new RegExp(`\\b${SERVICE_LAUNCHER_PROTOCOL}\\b`));
+    expect(reason).toContain("9.8.7");
+    expect(reason).not.toContain("| sh");
+    expect(reason).not.toContain("which -a");
+    expect(reason).not.toContain("~/.local/bin/t3");
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+  }
+});
+
 it.layer(NodeServices.layer)("service preflight database", (it) => {
   it.effect("blocks a database that a newer build migrated", () =>
     Effect.gen(function* () {
