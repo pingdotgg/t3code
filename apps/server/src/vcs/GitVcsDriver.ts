@@ -1,4 +1,5 @@
 import * as NodeBuffer from "node:buffer";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - a synchronous hash of one reflog line.
 import * as NodeCrypto from "node:crypto";
 
 import * as Context from "effect/Context";
@@ -888,6 +889,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "--git-common-dir",
         "--git-path",
         "index",
+        "--git-path",
+        "logs/HEAD",
         "--show-prefix",
         "--verify",
         "--quiet",
@@ -898,11 +901,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     const headExists = result.exitCode === 0;
     const headChecked = headExists || result.exitCode === 1;
     const lines = result.stdout.split("\n");
-    const [gitCommonDir = "", indexPath = "", prefix = ""] = lines;
-    if (headChecked && lines.length === (headExists ? 5 : 4) && lines.at(-1) === "") {
+    const [gitCommonDir = "", indexPath = "", reflogPath = "", prefix = ""] = lines;
+    if (headChecked && lines.length === (headExists ? 6 : 5) && lines.at(-1) === "") {
       return {
         gitCommonDir: gitCommonDir.trim(),
         indexPath: indexPath.trim(),
+        reflogPath: reflogPath.trim(),
         prefix,
         headExists,
       };
@@ -918,6 +922,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     return {
       gitCommonDir: fallbackCommonDir,
       indexPath: undefined,
+      reflogPath: undefined,
       prefix: prefixResult.stdout.replace(/\n$/, ""),
       headExists: headChecked ? headExists : yield* hasHeadCommit(cwd),
     };
@@ -950,14 +955,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const readHeadReflogTail = Effect.fn("GitVcsDriver.readHeadReflogTail")(function* (
     cwd: string,
     cursor: string,
+    knownReflogPath: string | undefined,
   ) {
-    const gitPath = (yield* execute({
-      operation: "GitVcsDriver.checkpoints.readHeadReflogTail",
-      cwd,
-      args: ["rev-parse", "--git-path", "logs/HEAD"],
-    })).stdout.trim();
-    const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
-    const reflogPath = path.resolve(physicalCwd, gitPath);
+    const reflogPath =
+      knownReflogPath ??
+      path.resolve(
+        yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd)),
+        (yield* execute({
+          operation: "GitVcsDriver.checkpoints.readHeadReflogTail",
+          cwd,
+          args: ["rev-parse", "--git-path", "logs/HEAD"],
+        })).stdout.trim(),
+      );
     if (!(yield* fileSystem.exists(reflogPath))) return null;
     const [cursorOffset = "", cursorHash = ""] = cursor.split(" ");
     const range = yield* Effect.scoped(
@@ -1042,9 +1051,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "-c",
         "splitIndex.sharedIndexExpire=never",
       ];
-      const { gitCommonDir, indexPath, prefix, headExists } = yield* resolveCaptureRepository(
-        input.cwd,
-      );
+      const { gitCommonDir, indexPath, reflogPath, prefix, headExists } =
+        yield* resolveCaptureRepository(input.cwd);
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
       const hostEnv = yield* HostProcess.Environment;
@@ -1415,7 +1423,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             : null;
         const [previousCommit = "", previousTree = "", ...previousCursor] =
           previous?.exitCode === 0 ? previous.stdout.trim().split(" ") : [];
-        const reflog = yield* readHeadReflogTail(input.cwd, previousCursor.join(" ")).pipe(
+        const reflog = yield* readHeadReflogTail(
+          input.cwd,
+          previousCursor.join(" "),
+          reflogPath,
+        ).pipe(
           Effect.catch((cause) =>
             Effect.logWarning("checkpoint HEAD reflog read failed", {
               cwd: input.cwd,

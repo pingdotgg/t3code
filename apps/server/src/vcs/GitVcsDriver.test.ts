@@ -1095,6 +1095,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         "ls-files",
         "add",
         "write-tree",
+        "rev-parse",
         "commit-tree",
         "update-ref",
       ]);
