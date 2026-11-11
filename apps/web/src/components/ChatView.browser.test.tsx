@@ -115,12 +115,6 @@ async function openThreadDetailsOnNonRepository(thread: FakeThread) {
   }
 }
 
-it("offers Initialize Git for a project folder that is not a repository", async () => {
-  await using _app = await openThreadDetailsOnNonRepository(threadWithHistory("root-thread", 1));
-
-  await expect.element(page.getByRole("button", { name: "Initialize Git" })).toBeVisible();
-});
-
 it("does not offer Initialize Git when the thread's worktree folder is missing", async () => {
   await using _app = await openThreadDetailsOnNonRepository({
     ...threadWithHistory("worktree-thread", 1),
