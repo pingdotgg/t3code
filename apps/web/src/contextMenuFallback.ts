@@ -245,8 +245,11 @@ export function showContextMenuFallback<T extends string>(
 ): Promise<T | null> {
   dismissContextMenu();
   return new Promise<T | null>((resolve) => {
-    const previouslyFocusedElement =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    let focusedElement = document.activeElement;
+    while (focusedElement?.shadowRoot?.activeElement) {
+      focusedElement = focusedElement.shadowRoot.activeElement;
+    }
+    const previouslyFocusedElement = focusedElement instanceof HTMLElement ? focusedElement : null;
     const menuStack: HTMLDivElement[] = [];
     const submenuTriggerStack: Array<HTMLButtonElement | undefined> = [];
     let isDisposed = false;
@@ -473,6 +476,17 @@ export function showContextMenuFallback<T extends string>(
         label.className = "min-w-0 flex-1 truncate";
         label.textContent = item.label;
         button.appendChild(label);
+
+        if (item.detail) {
+          // The comma gives screen readers a pause between label and detail.
+          button.setAttribute("aria-label", `${item.label}, ${item.detail}`);
+          const detail = document.createElement("span");
+          detail.className = "ms-auto shrink-0 ps-4 text-muted-foreground text-xs";
+          detail.style.cssText =
+            "margin-inline-start:auto;flex-shrink:0;padding-inline-start:1rem;color:var(--contrast-muted-foreground);font-size:0.75rem;";
+          detail.textContent = item.detail;
+          button.appendChild(detail);
+        }
 
         if (hasChildren) {
           button.setAttribute("aria-haspopup", "menu");

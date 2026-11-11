@@ -1,5 +1,5 @@
-import { Counter } from "./components/Counter.tsx";
 import { Card } from "./components/Card.tsx";
+import { Counter } from "./components/Counter.tsx";
 
 export default function Home() {
   return (

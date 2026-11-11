@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -18,7 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { Cursor, InMemoryCredentialStore } from "./sdk.ts";
+import { loadCursorSdk } from "./sdk.ts";
 import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
 
 const AUTH_TIMEOUT_MS = 300_000;
@@ -52,7 +52,7 @@ export interface CursorAuthOptions {
 
 export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: CursorAuthOptions) {
   const scope = yield* Scope.Scope;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const lock = yield* Semaphore.make(1);
   const configuredKey = options.apiKey?.trim() || undefined;
   const emptyState: ProviderAuthState = {
@@ -142,7 +142,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
           Effect.forkIn(child),
         );
         return yield* restore(Fiber.await(fiber)).pipe(
-          Effect.flatMap((result) => result),
+          Effect.flatten,
           Effect.onExit((result) =>
             Exit.isFailure(result) ? Scope.close(child, Exit.void) : Effect.void,
           ),
@@ -160,6 +160,16 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
     function* (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) {
       yield* stopSessions.pipe(Effect.ensuring(stopSessionsWithCredentials));
       // The SDK first writes into memory. Cancellation must not save a late login result.
+      const { Cursor, InMemoryCredentialStore } = yield* Effect.try({
+        try: loadCursorSdk,
+        catch: (cause) =>
+          new ProviderSetupError({
+            instanceId: options.instanceId,
+            operation: "start",
+            detail: "Could not load the Cursor SDK. Try signing in again.",
+            cause,
+          }),
+      });
       const pendingStore = new InMemoryCredentialStore();
       const urls = yield* Queue.unbounded<string>();
       yield* Queue.take(urls).pipe(
@@ -329,7 +339,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
                 operation: "start",
                 detail: "Cursor setup is already in progress.",
               });
-            const id = yield* crypto.randomUUIDv4().pipe(
+            const id = yield* random.uuidV4().pipe(
               Effect.mapError(
                 (cause) =>
                   new ProviderSetupError({

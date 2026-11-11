@@ -1,139 +1,82 @@
 const ROW = "[data-sidebar-row]";
-const CONTROL = 'button, a[href], input, textarea, select, [contenteditable="true"], [tabindex]';
-const TEXT_ENTRY = 'input, textarea, select, [contenteditable="true"]';
 
-function setAttribute(element: Element, name: string, value: string) {
-  if (element.getAttribute(name) !== value) element.setAttribute(name, value);
-}
-
-function setTabIndex(element: HTMLElement, value: number) {
-  if (element.tabIndex !== value) element.tabIndex = value;
-}
-
-export const SIDEBAR_TREE_PROPS = { role: "tree", "aria-label": "Threads" } as const;
-
-/** Ref callback for a sidebar list; installs the tree and returns its cleanup. */
+/** Ref callback for a sidebar list; installs its keyboard navigation and returns its cleanup. */
 export function attachSidebarTree(element: HTMLElement | null) {
   return element ? installSidebarTree(element) : undefined;
 }
 
-/** A roving DOM focus, separate from thread activation, as in VS Code's list commands. */
+/**
+ * Arrow keys move focus between rows without opening them, as in VS Code's list commands.
+ * Rows stay ordinary buttons in the Tab order so screen readers can browse the list.
+ */
 export function installSidebarTree(root: HTMLElement) {
-  let rows: HTMLElement[] = [];
   let focusedId: string | undefined;
+  let focusedParent: string | undefined;
+  let focusedIndex = -1;
   let ownsFocus = false;
-  let tabStop: HTMLElement | undefined;
   let contextMenuRow: HTMLElement | undefined;
-  // A control's own tab index, restored while its row holds the Tab stop and on uninstall.
-  const ownTabIndex = new Map<HTMLElement, number>();
 
-  const rowControls = (row: HTMLElement) => {
-    const id = row.dataset.sidebarRow;
-    const linked = id
-      ? root.querySelectorAll<HTMLElement>(`[data-sidebar-action-for="${CSS.escape(id)}"]`)
-      : [];
-    return [...row.querySelectorAll<HTMLElement>(CONTROL), ...linked].filter(
-      (control) => !control.matches(ROW) && !control.matches(TEXT_ENTRY),
-    );
+  const isVisibleRow = (row: HTMLElement) => {
+    const hidden = row.closest('[hidden], [inert], [aria-hidden="true"]');
+    // A dialog can temporarily make the whole workspace inert. Keep rows navigable
+    // for its return while still excluding exiting row clones.
+    return (!hidden || !root.contains(hidden)) && !row.matches(":disabled");
   };
-  // Tab reaches the buttons of the focused row only, so the tree stays one stop for the rest.
-  const setRowControlsReachable = (row: HTMLElement, reachable: boolean) => {
-    for (const control of rowControls(row)) {
-      if (!ownTabIndex.has(control)) ownTabIndex.set(control, control.tabIndex);
-      setTabIndex(control, reachable ? ownTabIndex.get(control)! : -1);
-    }
-  };
+  const visibleRows = () =>
+    Array.from(root.querySelectorAll<HTMLElement>(ROW)).filter(isVisibleRow);
 
-  const setTabStop = (row: HTMLElement) => {
-    if (tabStop === row) return;
-    if (tabStop) {
-      setTabIndex(tabStop, -1);
-      setRowControlsReachable(tabStop, false);
-    }
-    setTabIndex(row, 0);
-    setRowControlsReachable(row, true);
-    tabStop = row;
-    focusedId = row.dataset.sidebarRow;
+  const ownerRow = (element: HTMLElement) => {
+    const row = element.closest<HTMLElement>(ROW);
+    if (row) return row;
+    const linked = element.dataset.sidebarActionFor;
+    return linked
+      ? root.querySelector<HTMLElement>(`[data-sidebar-row="${CSS.escape(linked)}"]`)
+      : null;
   };
 
   const focusRow = (row: HTMLElement) => {
-    setTabStop(row);
     // Revealing before focusing also materializes content-visibility:auto descendants.
     row.scrollIntoView({ block: "nearest" });
     row.focus({ preventScroll: true });
   };
 
-  const refresh = () => {
-    const previousRows = rows;
-    const previousIndex = previousRows.findIndex((row) => row.dataset.sidebarRow === focusedId);
-    const previous = previousRows[previousIndex];
-    rows = Array.from(root.querySelectorAll<HTMLElement>(ROW)).filter((row) => {
-      const hidden = row.closest('[hidden], [inert], [aria-hidden="true"]');
-      // A dialog can temporarily make the whole workspace inert. Keep the tree's
-      // Tab stop ready for its return while still excluding exiting row clones.
-      return (!hidden || !root.contains(hidden)) && !row.matches(":disabled");
-    });
-    let selected =
+  // A row that moves shelves remounts and drops focus to the body; follow it.
+  const restoreFocus = () => {
+    if (!ownsFocus || focusedId === undefined) return;
+    const active = document.activeElement;
+    const lost =
+      active === document.body ||
+      (active instanceof HTMLElement &&
+        root.contains(active) &&
+        active.matches(ROW) &&
+        !isVisibleRow(active));
+    if (!lost) return;
+    const rows = visibleRows();
+    const target =
       rows.find((row) => row.dataset.sidebarRow === focusedId) ??
-      rows.find((row) => row === document.activeElement);
-    if (!selected) {
-      selected =
-        rows.find((row) => row.dataset.sidebarRow === previous?.dataset.sidebarParent) ??
-        (previousIndex === -1 ? rows.find((row) => row.hasAttribute("aria-current")) : undefined) ??
-        rows[Math.min(Math.max(previousIndex, 0), rows.length - 1)];
-    }
-    focusedId = selected?.dataset.sidebarRow;
-    tabStop = selected;
-    setTabIndex(root, selected ? -1 : 0);
-    const siblings = new Map<string, HTMLElement[]>();
-    for (const row of rows) {
-      const parent = row.dataset.sidebarParent ?? "";
-      const group = siblings.get(parent) ?? [];
-      group.push(row);
-      siblings.set(parent, group);
-      setAttribute(row, "aria-level", parent ? "2" : "1");
-      setTabIndex(row, row === selected ? 0 : -1);
-    }
-    const byId = new Map(rows.map((row) => [row.dataset.sidebarRow, row]));
-    for (const control of ownTabIndex.keys()) if (!control.isConnected) ownTabIndex.delete(control);
-    for (const control of root.querySelectorAll<HTMLElement>(CONTROL)) {
-      if (control.matches(ROW) || control.matches(TEXT_ENTRY)) continue;
-      const linked = control.dataset.sidebarActionFor;
-      const owner = control.closest<HTMLElement>(ROW) ?? (linked ? byId.get(linked) : undefined);
-      if (!owner) continue;
-      if (!ownTabIndex.has(control)) ownTabIndex.set(control, control.tabIndex);
-      setTabIndex(control, owner === selected ? ownTabIndex.get(control)! : -1);
-    }
-    for (const group of siblings.values())
-      group.forEach((row, index) => {
-        setAttribute(row, "aria-posinset", String(index + 1));
-        setAttribute(row, "aria-setsize", String(group.length));
-      });
-    for (const listItem of root.querySelectorAll("li:not([role])"))
-      listItem.setAttribute("role", "presentation");
-    if (
-      ownsFocus &&
-      selected &&
-      (document.activeElement === document.body ||
-        document.activeElement === root ||
-        (root.contains(document.activeElement) &&
-          !rows.includes(document.activeElement as HTMLElement) &&
-          document.activeElement?.matches(ROW)))
-    ) {
-      // A settled row moves to the bottom shelf; scrolling after it fights the route reveal.
-      selected.focus({ preventScroll: true });
-    }
-    if (ownsFocus && !selected && document.activeElement === document.body) root.focus();
+      rows.find((row) => row.dataset.sidebarRow === focusedParent) ??
+      rows[Math.min(Math.max(focusedIndex, 0), rows.length - 1)];
+    // A settled row moves to the bottom shelf; scrolling after it fights the route reveal.
+    target?.focus({ preventScroll: true });
   };
 
-  // Clicking non-focusable content drops focus to the body without a focusin event.
+  // Clicking non-focusable content, including empty list space, drops focus to the body
+  // without a focusin event. A click on the focused row fires no focusin either.
   const onPointerDown = (event: PointerEvent) => {
-    if (!root.contains(event.target as Node)) ownsFocus = false;
+    const focusable =
+      event.target instanceof Element
+        ? event.target.closest(`${ROW}, button, a[href], input, [tabindex]`)
+        : null;
+    ownsFocus = focusable !== null && root.contains(focusable);
   };
   const onFocus = (event: FocusEvent) => {
     ownsFocus = root.contains(event.target as Node);
-    if (!ownsFocus || !(event.target instanceof HTMLElement) || !event.target.matches(ROW)) return;
-    setTabStop(event.target);
+    if (!ownsFocus || !(event.target instanceof HTMLElement)) return;
+    const row = ownerRow(event.target);
+    if (!row) return;
+    focusedId = row.dataset.sidebarRow;
+    focusedParent = row.dataset.sidebarParent;
+    focusedIndex = visibleRows().indexOf(row);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     const row = event.target;
@@ -162,6 +105,7 @@ export function installSidebarTree(root: HTMLElement) {
     )
       return;
     if (!(row instanceof HTMLElement) || !row.matches(ROW)) return;
+    const rows = visibleRows();
     const index = rows.indexOf(row);
     if (index < 0) return;
     let target: HTMLElement | undefined;
@@ -219,34 +163,12 @@ export function installSidebarTree(root: HTMLElement) {
       }),
     );
   };
-  refresh();
-  const observer = new MutationObserver((records) => {
-    if (
-      records.some(
-        (record) =>
-          record.type === "attributes" ||
-          [...record.addedNodes, ...record.removedNodes].some(
-            (node) =>
-              node instanceof Element &&
-              (node.matches(`${ROW}, ${CONTROL}`) || node.querySelector(`${ROW}, ${CONTROL}`)),
-          ),
-      )
-    )
-      refresh();
-  });
+  const observer = new MutationObserver(restoreFocus);
   observer.observe(root, {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: [
-      "data-sidebar-row",
-      "data-sidebar-parent",
-      "aria-expanded",
-      "hidden",
-      "disabled",
-      "inert",
-      "aria-hidden",
-    ],
+    attributeFilter: ["hidden", "inert", "aria-hidden"],
   });
   document.addEventListener("focusin", onFocus);
   document.addEventListener("pointerdown", onPointerDown, true);
@@ -254,8 +176,6 @@ export function installSidebarTree(root: HTMLElement) {
   root.addEventListener("keyup", onKeyUp, true);
   return () => {
     observer.disconnect();
-    // A later install reads these as the controls' own tab indexes.
-    for (const [control, tabIndex] of ownTabIndex) setTabIndex(control, tabIndex);
     document.removeEventListener("focusin", onFocus);
     document.removeEventListener("pointerdown", onPointerDown, true);
     root.removeEventListener("keydown", onKeyDown, true);

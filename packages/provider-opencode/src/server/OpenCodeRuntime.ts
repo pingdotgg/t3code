@@ -13,7 +13,6 @@ import {
 } from "@opencode-ai/sdk/v2";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -102,14 +101,18 @@ export interface OpenCodeServerConnection {
 }
 
 const OPENCODE_RUNTIME_ERROR_TAG = "OpenCodeRuntimeError";
-export class OpenCodeRuntimeError extends Data.TaggedError(OPENCODE_RUNTIME_ERROR_TAG)<{
-  readonly operation: string;
-  readonly cause?: unknown;
-  readonly detail: string;
-  readonly reason?: OpenCodeStartupFailureReason;
-}> {}
+const OpenCodeStartupFailureReason = Schema.Literal("databaseLocked");
+export type OpenCodeStartupFailureReason = typeof OpenCodeStartupFailureReason.Type;
 
-export type OpenCodeStartupFailureReason = "databaseLocked";
+export class OpenCodeRuntimeError extends Schema.TaggedError<OpenCodeRuntimeError>()(
+  OPENCODE_RUNTIME_ERROR_TAG,
+  {
+    operation: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    detail: Schema.String,
+    reason: Schema.optional(OpenCodeStartupFailureReason),
+  },
+) {}
 
 // Classify stderr database locks at exit so callers need not parse diagnostics.
 function classifyStartupExit(stderr: string): OpenCodeStartupFailureReason | undefined {
@@ -226,6 +229,44 @@ export interface ParsedOpenCodeModelSlug {
   readonly providerID: string;
   readonly modelID: string;
 }
+
+export type OpenCodeVariantCache = Map<string, ReadonlySet<string> | undefined>;
+
+export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
+  client: OpencodeClient,
+  model: ParsedOpenCodeModelSlug | undefined,
+  variant: string | undefined,
+  abortSignal?: AbortSignal,
+  cache?: OpenCodeVariantCache,
+) {
+  if (!variant || !model) return variant;
+
+  const key = `${model.providerID}/${model.modelID}`;
+  const cached = cache?.get(key);
+  if (cache?.has(key)) {
+    return cached !== undefined && !cached.has(variant) ? undefined : variant;
+  }
+
+  // Only a confirmed catalog mismatch can invalidate a persisted selection.
+  const response = yield* runOpenCodeSdk("provider.list", (signal) =>
+    client.provider.list(undefined, {
+      signal: abortSignal ? AbortSignal.any([signal, abortSignal]) : signal,
+    }),
+  ).pipe(
+    Effect.timeout("10 seconds"),
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (response?.data === undefined) return variant;
+
+  const catalogModel = response.data.all.find((provider) => provider.id === model.providerID)
+    ?.models[model.modelID];
+  const variants = catalogModel ? new Set(Object.keys(catalogModel.variants ?? {})) : undefined;
+  if (cache !== undefined) {
+    // Keep only this model's names; provider.list can return several megabytes.
+    cache.set(key, variants);
+  }
+  return variants !== undefined && !variants.has(variant) ? undefined : variant;
+});
 
 export interface OpenCodeSkill {
   readonly name?: string | null;

@@ -14,7 +14,22 @@ const CELL_END = Symbol("cell-end");
 type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
+// Parts the document never displays: tracked deletions and moves, field codes, phonetic guides,
+// paragraph properties such as tab-stop definitions.
+const HIDDEN = new Set([
+  "script",
+  "style",
+  "binary-data",
+  "rPh",
+  "delText",
+  "moveFrom",
+  "instrText",
+  "delInstrText",
+  "tracked-changes",
+  "pPr",
+]);
 
+// @effect-diagnostics-next-line extendsNativeError:off - this worker loads no Effect runtime; Truncation is a local throw sentinel.
 class Truncation extends Error {}
 
 interface XmlNode {
@@ -22,6 +37,8 @@ interface XmlNode {
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
   spaceCount?: number;
+  hasText?: boolean;
+  hasTextChoice?: boolean;
 }
 
 function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
@@ -47,10 +64,22 @@ function xml(source: string, odfSpaces = false, htmlEntities = false): XmlNode {
     stack.push(node);
   });
   parser.on("closetag", () => {
-    stack.pop();
+    const node = stack.pop()!;
+    const parent = stack.at(-1)!;
+    // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
+    // Keep one when no Choice carries text, such as a chart with a VML caption.
+    if (node.name === "Fallback" && parent.hasTextChoice) {
+      parent.children.pop();
+      return;
+    }
+    if (!node.hasText) return;
+    parent.hasText = true;
+    if (node.name === "Choice") parent.hasTextChoice = true;
   });
   const text = (value: string) => {
-    stack.at(-1)!.children.push(value);
+    const node = stack.at(-1)!;
+    node.children.push(value);
+    if (value.trim() !== "") node.hasText = true;
   };
   parser.on("text", text);
   parser.on("cdata", text);
@@ -67,7 +96,7 @@ function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNod
   }
 }
 function* text(node: XmlNode): Generator<string, void> {
-  if (["script", "style", "binary-data", "rPh"].includes(node.name)) return;
+  if (HIDDEN.has(node.name)) return;
   if (["tab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
   else if (node.spaceCount !== undefined) {
@@ -80,7 +109,7 @@ function* text(node: XmlNode): Generator<string, void> {
     }
 }
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
-  if (["script", "style", "binary-data"].includes(node.name)) return;
+  if (HIDDEN.has(node.name)) return;
   for (const child of node.children) {
     if (typeof child === "string") yield child;
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
@@ -137,11 +166,7 @@ function odfValue(cell: XmlNode): string {
 function hasCellText(cell: XmlNode): boolean {
   if (odfValue(cell).trim()) return true;
   // Space markers can have enormous repeat counts; emptiness never requires expanding them.
-  if (
-    ["script", "style", "binary-data", "rPh"].includes(cell.name) ||
-    cell.spaceCount !== undefined
-  )
-    return false;
+  if (HIDDEN.has(cell.name) || cell.spaceCount !== undefined) return false;
   return cell.children.some((child) =>
     typeof child === "string" ? !!child.trim() : hasCellText(child),
   );
@@ -384,6 +409,8 @@ function* rtf(source: string): Generator<string, void> {
         i++;
         if (fallback) fallback--;
         else if (rest[0] === "*") state.skip = true;
+        // A backslash before a line break is \par; TextEdit ends paragraphs this way.
+        else if (!state.skip && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
         else if (!state.skip && ["\\", "{", "}"].includes(rest[0]!)) yield rest[0]!;
         else if (!state.skip && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
       }

@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.remove cannot remove an empty directory nonrecursively.
+import * as NodeFSP from "node:fs/promises";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import type {
@@ -6,7 +8,8 @@ import type {
 } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,8 +19,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -53,23 +57,42 @@ export type RelayClientStatus =
 
 export type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
 
-export class RelayClientInstallError extends Data.TaggedError("RelayClientInstallError")<{
-  readonly reason:
-    | "download_failed"
-    | "invalid_checksum"
-    | "install_locked"
-    | "override_missing"
-    | "unsupported_platform"
-    | "validation_failed"
-    | "write_failed";
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+class RelayClientLockRemoveError extends Schema.TaggedError<RelayClientLockRemoveError>()(
+  "RelayClientLockRemoveError",
+  { lockPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not remove the relay client lock ${this.lockPath}.`;
+  }
+}
 
-class CloudflaredCommandError extends Data.TaggedError("CloudflaredCommandError")<{
-  readonly command: string;
-  readonly exitCode: number;
-}> {}
+export class RelayClientInstallError extends Schema.TaggedError<RelayClientInstallError>()(
+  "RelayClientInstallError",
+  {
+    reason: Schema.Literals([
+      "download_failed",
+      "invalid_checksum",
+      "install_locked",
+      "managed_by_policy",
+      "override_missing",
+      "unsupported_platform",
+      "validation_failed",
+      "write_failed",
+    ]),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+const isRelayClientInstallError = Schema.is(RelayClientInstallError);
+
+class CloudflaredCommandError extends Schema.TaggedError<CloudflaredCommandError>()(
+  "CloudflaredCommandError",
+  {
+    command: Schema.String,
+    exitCode: Schema.Number,
+  },
+) {}
 
 export interface CloudflaredReleaseAsset {
   readonly url: string;
@@ -115,7 +138,8 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
 
 const INSTALL_LOCK_RETRY_COUNT = 100;
 const INSTALL_LOCK_RETRY_DELAY = "100 millis";
-const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
+// Legacy locks have no owner; allow both ten-minute download stages and the install tail.
+const INSTALL_LOCK_LEGACY_STALE_MS = 30 * 60 * 1_000;
 const VERSION_PROBE_TIMEOUT = "10 seconds";
 
 const ACTIVATE_RETRY_COUNT = 40;
@@ -194,8 +218,30 @@ class VersionProbeKey extends Data.Class<{
   readonly mtimeMillis: number;
 }> {}
 
-function isAlreadyExists(error: PlatformError.PlatformError): boolean {
-  return error.reason._tag === "AlreadyExists";
+function isLockContention(error: PlatformError.PlatformError): boolean {
+  const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
+  return (
+    error.reason._tag === "AlreadyExists" ||
+    error.reason._tag === "BadResource" ||
+    code === "ENOTEMPTY" ||
+    isWindowsRenameLock(error)
+  );
+}
+
+function parseLockOwnerPid(owner: string): number | null {
+  const separator = owner.indexOf("-");
+  if (separator <= 0) return null;
+  const pid = Number(owner.slice(0, separator));
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as { readonly code?: unknown }).code !== "ESRCH";
+  }
 }
 
 const wrapInstallFailure =
@@ -223,12 +269,14 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   RelayClientShape,
   never,
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
 > {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
   const path = yield* Path.Path;
@@ -437,7 +485,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       ),
     );
     yield* report("verifying");
-    const checksum = yield* crypto.digest("SHA-256", bytes).pipe(
+    const checksum = yield* digest.digest(Digest.sha256, bytes).pipe(
       Effect.mapError(
         (cause) =>
           new RelayClientInstallError({
@@ -456,25 +504,68 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return bytes;
   });
 
+  const removeEmptyLock = (lockPath: string) =>
+    Effect.tryPromise({
+      try: () => NodeFSP.rmdir(lockPath),
+      catch: (cause) => new RelayClientLockRemoveError({ lockPath, cause }),
+    }).pipe(Effect.ignore);
+
+  const releaseOwnedLock = Effect.fn("cloudflared.releaseOwnedLock")(function* (
+    lockPath: string,
+    owner: string,
+  ) {
+    yield* fileSystem.remove(path.join(lockPath, owner), { force: true }).pipe(Effect.ignore);
+    // A replacement contains a different owner entry, so rmdir cannot remove it.
+    yield* removeEmptyLock(lockPath);
+  });
+
   const acquireInstallLock = Effect.fn("cloudflared.acquireInstallLock")(function* (
     lockPath: string,
   ) {
+    const owner = `${process.pid}-${yield* random.uuidV4()}`;
+    const candidate = yield* Effect.acquireRelease(
+      fileSystem.makeTempDirectory({ directory: path.dirname(lockPath), prefix: ".lock-" }),
+      (directory) =>
+        fileSystem.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore),
+    );
+    yield* fileSystem.writeFileString(path.join(candidate, owner), "");
     for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
       const acquired = yield* Effect.acquireRelease(
-        fileSystem.writeFileString(lockPath, "", { flag: "wx" }),
-        () => fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore),
+        // Publish a populated directory atomically, with no ownerless acquisition window.
+        fileSystem.rename(candidate, lockPath),
+        () => releaseOwnedLock(lockPath, owner),
       ).pipe(
         Effect.as(true),
-        Effect.catchIf(isAlreadyExists, () => Effect.succeed(false)),
+        Effect.catchIf(isLockContention, () => Effect.succeed(false)),
       );
       if (acquired) return;
 
-      const now = yield* Clock.currentTimeMillis;
       const lockInfo = yield* fileSystem.stat(lockPath).pipe(Effect.option);
-      const mtime = Option.flatMap(lockInfo, (info) => info.mtime);
-      if (Option.isSome(mtime) && now - mtime.value.getTime() > INSTALL_LOCK_STALE_MS) {
-        yield* fileSystem.remove(lockPath, { force: true });
-        continue;
+      if (Option.isNone(lockInfo)) continue;
+      if (lockInfo.value.type === "Directory") {
+        const owners = yield* fileSystem
+          .readDirectory(lockPath)
+          .pipe(Effect.orElseSucceed(() => []));
+        let recovered = owners.length === 0;
+        for (const entry of owners) {
+          const pid = parseLockOwnerPid(entry);
+          if (pid !== null && !processIsAlive(pid)) {
+            yield* releaseOwnedLock(lockPath, entry);
+            recovered = true;
+          }
+        }
+        if (recovered) {
+          yield* removeEmptyLock(lockPath);
+          continue;
+        }
+      } else {
+        const now = yield* Clock.currentTimeMillis;
+        const mtime = lockInfo.value.mtime;
+        if (Option.isSome(mtime) && now - mtime.value.getTime() > INSTALL_LOCK_LEGACY_STALE_MS) {
+          // Nonrecursive removal also refuses a populated directory that replaced this file.
+          yield* fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore);
+          continue;
+        }
       }
       yield* Effect.sleep(INSTALL_LOCK_RETRY_DELAY);
     }
@@ -568,7 +659,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         });
       }
 
-      const stagedPath = `${managedPath}.${yield* crypto.randomUUIDv4()}.tmp`;
+      const stagedPath = `${managedPath}.${yield* random.uuidV4()}.tmp`;
       yield* report("activating");
       yield* renameWhenUnlocked(executablePath, stagedPath).pipe(
         wrapInstallFailure("write_failed", "Could not stage the relay client."),
@@ -586,7 +677,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }).pipe(
       Effect.scoped,
       Effect.catchIf(
-        (cause) => !(cause instanceof RelayClientInstallError),
+        (cause) => !isRelayClientInstallError(cause),
         (cause) =>
           Effect.fail(
             new RelayClientInstallError({
