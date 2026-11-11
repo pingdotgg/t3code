@@ -9,7 +9,7 @@ import * as Membership from "../peer/Membership.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
-export { DESKTOP_APP_SUBJECT } from "./McpGatewayBroker.ts";
+export { DESKTOP_APP_SUBJECT } from "../auth/PairingGrantStore.ts";
 
 /** A session paired to this server by code, with no identity in the network. */
 export const CODE_PAIRED_SUBJECT = "one-time-token";

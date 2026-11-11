@@ -36,6 +36,7 @@ import * as Stream from "effect/Stream";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import * as Membership from "../peer/Membership.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { DESKTOP_APP_SUBJECT } from "../auth/PairingGrantStore.ts";
 
 const unavailable = (message: string) => new McpGatewayUnavailableError({ message });
 const linksOff = unavailable(
@@ -49,12 +50,6 @@ const gatewayCeiling = (
 const revoked = unavailable(
   "This machine's access to the network was revoked, so its agents cannot act on another machine.",
 );
-
-/**
- * The desktop app's own session on its bundled server. Only the desktop bootstrap secret, which
- * the Electron app holds, mints it (`PairingGrantStore`).
- */
-export const DESKTOP_APP_SUBJECT = "desktop-bootstrap";
 
 /** What this server's agents may reach through connected apps, and why the rest is refused. */
 export interface McpGatewayAccess {

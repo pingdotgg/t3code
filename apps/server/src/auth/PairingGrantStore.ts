@@ -31,6 +31,12 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 
+/**
+ * The desktop app's own session on its bundled server. Only the desktop bootstrap secret, which
+ * the Electron app holds, mints it.
+ */
+export const DESKTOP_APP_SUBJECT = "desktop-bootstrap";
+
 export interface BootstrapGrant {
   readonly method: ServerAuthBootstrapMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
@@ -341,7 +347,7 @@ const make = Effect.gen(function* () {
     yield* seedGrant(config.desktopBootstrapToken, {
       method: "desktop-bootstrap",
       scopes: AuthStandardClientScopes,
-      subject: "desktop-bootstrap",
+      subject: DESKTOP_APP_SUBJECT,
       expiresAt: DateTime.add(now, {
         milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
       }),
@@ -472,7 +478,7 @@ const make = Effect.gen(function* () {
         return {
           method: "desktop-bootstrap",
           scopes: AuthStandardClientScopes,
-          subject: "desktop-bootstrap",
+          subject: DESKTOP_APP_SUBJECT,
           expiresAt: DateTime.add(now, {
             milliseconds: DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
           }),
