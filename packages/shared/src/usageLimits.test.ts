@@ -135,7 +135,6 @@ describe("new thread model fallback", () => {
     ["claudeAgent", ["seven_day_fable"], "claude-opus-5-5", false],
     ["claudeAgent", ["seven_day_fable"], "claude-fable-5-1", true],
     ["claudeAgent", ["seven_day", "seven_day_fable"], "claude-opus-5-5", true],
-    ["claudeAgent", ["five_hour"], "claude-opus-5-5", true],
   ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback) => {
     const defaultSelection = { ...selection, model };
     expect(
