@@ -675,19 +675,34 @@ const connectLinkCommand = Command.make("link", {
   ),
 );
 
+class ConnectAddressCredentialRefreshRequiredError extends Schema.TaggedError<ConnectAddressCredentialRefreshRequiredError>()(
+  "ConnectAddressCredentialRefreshRequiredError",
+  {},
+) {
+  override get message() {
+    return "Stored T3 Connect credential needs refresh. Wait for the running server to refresh it, then retry.";
+  }
+}
+
+const isConnectAddressCredentialRefreshRequiredError = Schema.is(
+  ConnectAddressCredentialRefreshRequiredError,
+);
+
 const decodeConnectEndpointUrl = Schema.decodeEffect(Schema.URLFromString);
 
 const readPublicConnectAddress = Effect.fn("cloud.cli.readPublicAddress")(function* (
   relayUrl: string,
 ) {
   const tokens = yield* CliTokenManager.CloudCliTokenManager;
-  const token = yield* tokens.getExisting;
-  if (Option.isNone(token)) return null;
+  const stored = yield* tokens.peek;
+  if (Option.isNone(stored)) return null;
+  if (stored.value.needsRefresh) return yield* new ConnectAddressCredentialRefreshRequiredError({});
+  const token = stored.value.token;
   const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* environment.getEnvironmentId;
   const httpClient = yield* HttpClient.HttpClient;
   const result = yield* HttpClientRequest.get(`${relayUrl}/v1/environments`).pipe(
-    HttpClientRequest.bearerToken(token.value.accessToken),
+    HttpClientRequest.bearerToken(token.accessToken),
     httpClient.execute,
     Effect.flatMap(filterRelayResponse),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayListEnvironmentsResponse)),
@@ -763,7 +778,9 @@ const connectStatusCommand = Command.make("status", {
           mcpUrl: publicAddress === null ? null : `https://${publicAddress}/mcp`,
           addressLookupError:
             address?._tag === "Failure"
-              ? "Could not read the public address from T3 Connect. Retry when connected and authorized."
+              ? isConnectAddressCredentialRefreshRequiredError(address.failure)
+                ? address.failure.message
+                : "Could not read the public address from T3 Connect. Retry when connected and authorized."
               : null,
           relayClient: executable,
           linkMode,

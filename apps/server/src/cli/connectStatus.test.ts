@@ -43,6 +43,12 @@ vi.mock("../auth/ServerSecretStore.ts", async (importOriginal) => {
             : {
                 "cloud-linked-user-id": "user",
                 "cloud-relay-url": "https://relay.example.test",
+                "cloud-cli-oauth-token":
+                  mode === "near-expiry"
+                    ? '{"accessToken":"synthetic-token","refreshToken":"refresh","expiresAtEpochMs":1}'
+                    : mode === "expired"
+                      ? '{"accessToken":"synthetic-token","refreshToken":"refresh","expiresAtEpochMs":0}'
+                      : '{"accessToken":"synthetic-token","refreshToken":"refresh","expiresAtEpochMs":9999999999999}',
                 ...(mode === "revoked" ? { "cloud-link-revoked": "true" } : {}),
                 ...(mode === "publish_only" ? { "cloud-cli-desired-link": "publish_only" } : {}),
               };
@@ -60,20 +66,6 @@ vi.mock("../auth/ServerSecretStore.ts", async (importOriginal) => {
         });
       }),
     ),
-  };
-});
-vi.mock("../cloud/CliTokenManager.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../cloud/CliTokenManager.ts")>();
-  return {
-    ...actual,
-    layer: Layer.mock(actual.CloudCliTokenManager)({
-      hasCredential: Effect.succeed(true),
-      getExisting: Effect.succeedSome({
-        accessToken: "synthetic-token",
-        refreshToken: "refresh",
-        expiresAtEpochMs: 9999999999999,
-      }),
-    }),
   };
 });
 
@@ -136,7 +128,16 @@ it.effect(
           ...(json ? ["--json"] : []),
         ]).pipe(
           Effect.provide(
-            ConfigProvider.layer(ConfigProvider.fromEnv({ env: { TEST_LINK_MODE: mode } })),
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  TEST_LINK_MODE: mode,
+                  T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA==",
+                  T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_test",
+                  T3CODE_HOSTED_APP_URL: "https://hosted.example.test",
+                },
+              }),
+            ),
           ),
         );
       yield* run("linked");
@@ -159,6 +160,14 @@ it.effect(
           addressLookupError: null,
         });
         assert.equal(fetch.mock.calls.length, 0);
+      }
+      for (const mode of ["near-expiry", "expired"]) {
+        fetch.mockClear();
+        yield* run(mode);
+        const needsRefresh = decodeStatus(String((yield* TestConsole.logLines).at(-1)));
+        assert.isNull(needsRefresh.publicAddress);
+        assert.equal(fetch.mock.calls.length, 0, "status must not refresh or use a stale token");
+        assert.include(needsRefresh.addressLookupError ?? "", "needs refresh");
       }
       fetch.mockResolvedValue(Response.json(replies("manual")));
       yield* run("linked");
