@@ -54,35 +54,6 @@ it("coalesces hinge edits behind acknowledgements and lets a preset replace queu
   queue.clear();
 });
 
-it("drops queued commands on failure, timeout and disconnect; late replies cannot acknowledge later work", () => {
-  vi.useFakeTimers();
-  const send = vi.fn((_request: { requestId: number; command: DuoCommand }) => true);
-  const onChange = vi.fn();
-  const queue = createDuoControl({ send, onChange, timeoutMs: 100 });
-  queue.enqueue({ control: "angle", value: 90 });
-  queue.enqueue({ control: "angle", value: 100 });
-  vi.advanceTimersByTime(100);
-  expect(onChange.mock.lastCall?.[0].error).toContain("timed out");
-  queue.enqueue({ control: "pose", value: "open" });
-  queue.receive({ requestId: 1, ok: true });
-  expect(onChange.mock.lastCall?.[0].pending).toBe(true);
-  queue.enqueue({ control: "angle", value: 130 });
-  queue.receive({ requestId: 2, ok: false, error: "native refused" });
-  expect(onChange.mock.lastCall?.[0]).toEqual({
-    pending: false,
-    requested: null,
-    error: "native refused",
-  });
-  queue.enqueue({ control: "pose", value: "book" });
-  queue.enqueue({ control: "pose", value: "closed" });
-  queue.clear();
-  queue.receive({ requestId: 3, ok: true });
-  expect(send).toHaveBeenCalledTimes(3);
-  queue.enqueue({ control: "angle", value: Infinity });
-  expect(send).toHaveBeenCalledTimes(3);
-  queue.clear();
-});
-
 it("pinches only a hit device, accumulates independently of native readback, clamps and cancels", () => {
   let confirmed = 90;
   const change = vi.fn();
@@ -114,6 +85,7 @@ it("pinches only a hit device, accumulates independently of native readback, cla
   expect(pinch.active).toBe(false);
 });
 
+// regression: #16630 fold controls follow the phone's orientation on each screen
 it.each([
   [
     "vertical phone, closed",

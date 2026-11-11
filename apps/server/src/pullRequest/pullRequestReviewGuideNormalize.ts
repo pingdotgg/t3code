@@ -1,5 +1,6 @@
 import type { PullRequestReviewGuideExcerpt, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import type { ReviewGuideGenerationResult } from "@t3tools/provider-core/server/textGeneration";
+import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 
 const MAX_EXCERPT_LINES = 25;
 
@@ -25,6 +26,18 @@ const hunkRange = (start: string, count: string | undefined): LineRange | null =
   return lines === 0 ? null : { start: Number(start), end: Number(start) + lines - 1 };
 };
 
+/**
+ * Git quotes a name holding a tab, quote or backslash, and ends an unquoted name holding a space
+ * with a tab, so the first literal tab is never part of what the file is called.
+ */
+function headerPath(line: string, prefix: string): string | null {
+  const rest = line.slice(4);
+  const tab = rest.indexOf("\t");
+  const token = tab === -1 ? rest : rest.slice(0, tab);
+  const path = token.startsWith('"') ? unquoteGitPatchPath(token) : token;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : null;
+}
+
 export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewGuideChange {
   const hunks = new Map<string, FileHunks>();
   let oldPath: string | null = null;
@@ -37,9 +50,9 @@ export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewG
       current = null;
       inHunks = false;
     } else if (!inHunks && line.startsWith("--- ")) {
-      oldPath = line.startsWith("--- a/") ? line.slice(6) : null;
+      oldPath = headerPath(line, "a/");
     } else if (!inHunks && line.startsWith("+++ ")) {
-      const path = line.startsWith("+++ b/") ? line.slice(6) : oldPath;
+      const path = headerPath(line, "b/") ?? oldPath;
       if (path === null) continue;
       current = hunks.get(path) ?? { new: [], old: [] };
       hunks.set(path, current);
@@ -74,26 +87,29 @@ function clampExcerpt(
 function mergeExcerpts(
   excerpts: ReadonlyArray<PullRequestReviewGuideExcerpt>,
 ): Array<PullRequestReviewGuideExcerpt> {
-  const merged: Array<PullRequestReviewGuideExcerpt> = [];
+  let merged: Array<PullRequestReviewGuideExcerpt> = [];
   for (const excerpt of excerpts) {
-    const index = merged.findIndex(
-      (other) =>
-        other.path === excerpt.path &&
-        other.side === excerpt.side &&
-        other.start <= excerpt.end + 1 &&
-        excerpt.start <= other.end + 1,
-    );
-    const other = merged[index];
-    if (other === undefined) {
+    const touches = (other: PullRequestReviewGuideExcerpt) =>
+      other.path === excerpt.path &&
+      other.side === excerpt.side &&
+      other.start <= excerpt.end + 1 &&
+      excerpt.start <= other.end + 1;
+    // An excerpt can bridge several earlier ones; fold them all into the first.
+    const group = merged.filter(touches);
+    const first = group[0];
+    if (first === undefined) {
       merged.push(excerpt);
       continue;
     }
-    merged[index] = {
-      ...other,
-      start: Math.min(other.start, excerpt.start),
-      end: Math.max(other.end, excerpt.end),
-      caption: other.caption || excerpt.caption,
+    const combined = {
+      ...first,
+      start: Math.min(excerpt.start, ...group.map((other) => other.start)),
+      end: Math.max(excerpt.end, ...group.map((other) => other.end)),
+      caption: group.find((other) => other.caption)?.caption ?? excerpt.caption,
     };
+    merged = merged.flatMap((other) =>
+      other === first ? [combined] : touches(other) ? [] : [other],
+    );
   }
   return merged.map((excerpt) => ({
     ...excerpt,

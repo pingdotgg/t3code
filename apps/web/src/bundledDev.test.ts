@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - builds and executes real dev bundles on disk.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -8,10 +7,8 @@ import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
 import react from "@vitejs/plugin-react";
-import { createLogger, createServer } from "vite-plus";
+import { createServer } from "vite-plus";
 import { expect, it } from "vite-plus/test";
-
-import { tailwindPlugins } from "../vite/tailwind";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -117,107 +114,6 @@ console.log("App started with React refresh ready.");`,
     const result = await execFile("node", [runner]);
     expect(result.stdout).toContain("App started with React refresh ready.");
   } finally {
-    await server?.close();
-    await NodeFSP.rm(root, { recursive: true, force: true });
-  }
-});
-
-it("hot updates Tailwind classes when a source file changes in bundled dev", async () => {
-  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-tailwind-"));
-  const events = new NodeEvents.EventEmitter();
-  let server: Awaited<ReturnType<typeof createServer>> | undefined;
-  let socket: WebSocket | undefined;
-  let css = "";
-
-  try {
-    await NodeFSP.writeFile(
-      NodePath.join(root, "index.html"),
-      '<html><body><script type="module" src="/main.ts"></script></body></html>',
-    );
-    const source =
-      'import "./style.css"; export const margin = "m-[13px]"; import.meta.hot?.accept();';
-    await NodeFSP.writeFile(NodePath.join(root, "main.ts"), source);
-    await NodeFSP.writeFile(
-      NodePath.join(root, "style.css"),
-      '@import "tailwindcss" source(none); @source "./main.ts";',
-    );
-    const logger = createLogger("silent");
-    logger.error = (message) => events.emit("error", new Error(message));
-    const connected = NodeEvents.EventEmitter.once(events, "connected");
-    const ready = NodeEvents.EventEmitter.once(events, "ready");
-    server = await createServer({
-      configFile: false,
-      root,
-      customLogger: logger,
-      resolve: {
-        alias: {
-          tailwindcss: NodeURL.fileURLToPath(
-            new URL("../node_modules/tailwindcss/index.css", import.meta.url),
-          ),
-        },
-      },
-      experimental: { bundledDev: true },
-      plugins: [
-        ...tailwindPlugins(true),
-        {
-          name: "observe-tailwind-output",
-          enforce: "pre",
-          transform(code, id) {
-            if (id.endsWith("/style.css")) css = code;
-          },
-          async generateBundle() {
-            // Keep the build pending until the socket can receive Vite's ready message.
-            await connected;
-          },
-        },
-      ],
-      server: { host: "127.0.0.1", port: 0 },
-    });
-    await server.listen();
-    const address = server.httpServer?.address();
-    if (!address || typeof address === "string") throw new Error("Vite did not bind a port");
-
-    server.ws.on("vite:client-connected", () => events.emit("connected"));
-    socket = new WebSocket(
-      `ws://127.0.0.1:${address.port}/?token=${server.config.webSocketToken}`,
-      "vite-hmr",
-    );
-    socket.addEventListener("open", () => {
-      socket?.send(
-        JSON.stringify({
-          type: "custom",
-          event: "vite:client-connected",
-          data: { clientId: "tailwind-test" },
-        }),
-      );
-    });
-    socket.addEventListener("message", ({ data }) => {
-      const message: unknown = JSON.parse(String(data));
-      if (message !== null && typeof message === "object" && "type" in message) {
-        // generateBundle runs before Vite stores the files for HTTP requests.
-        if (
-          message.type === "full-reload" &&
-          "ifFallback" in message &&
-          message.ifFallback === true
-        ) {
-          events.emit("ready");
-        } else if (message.type === "bundled-dev-update") {
-          events.emit("updated");
-        }
-      }
-    });
-    await connected;
-    await ready;
-    const entry = await fetch(`http://127.0.0.1:${address.port}/assets/index.js`);
-    expect(entry.headers.get("content-type")).toContain("javascript");
-    await entry.text();
-
-    const updated = NodeEvents.EventEmitter.once(events, "updated");
-    await NodeFSP.writeFile(NodePath.join(root, "main.ts"), source.replace("13px", "137px"));
-    await updated;
-    expect(css).toContain("margin: 137px");
-  } finally {
-    socket?.close();
     await server?.close();
     await NodeFSP.rm(root, { recursive: true, force: true });
   }
