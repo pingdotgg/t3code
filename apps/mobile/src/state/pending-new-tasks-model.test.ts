@@ -104,13 +104,26 @@ function queuedCreation(environmentId: string): QueuedThreadMessage {
 }
 
 describe("buildPendingNewTasks", () => {
-  it("lists only creations waiting for their environment to reconnect", () => {
+  it("lists only creations the outbox is not sending yet", () => {
+    const sending = EnvironmentId.make("sending");
+    const syncing = EnvironmentId.make("syncing");
+    const readOnly = EnvironmentId.make("read-only");
     const tasks = buildPendingNewTasks({
-      queuedMessages: [queuedCreation("online"), queuedCreation("offline")],
+      queuedMessages: ["sending", "syncing", "read-only", "offline"].map(queuedCreation),
       drafts: {},
-      connectedEnvironmentIds: new Set([EnvironmentId.make("online")]),
+      sendGate: {
+        connectedEnvironmentIds: new Set([sending, syncing, readOnly]),
+        operableEnvironmentIds: new Set([sending, syncing]),
+        shellStatuses: new Map([
+          [sending, "live"],
+          [syncing, "synchronizing"],
+          [readOnly, "live"],
+        ]),
+      },
     });
 
-    expect(tasks.map((task) => task.environmentId)).toEqual(["offline"]);
+    expect(new Set(tasks.map((task) => task.environmentId))).toEqual(
+      new Set(["syncing", "read-only", "offline"]),
+    );
   });
 });

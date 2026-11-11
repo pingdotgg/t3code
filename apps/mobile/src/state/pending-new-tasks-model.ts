@@ -1,7 +1,12 @@
+import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
-import type { QueuedThreadCreation, QueuedThreadMessage } from "./thread-outbox-model";
+import {
+  resolveThreadOutboxDeliveryAction,
+  type QueuedThreadCreation,
+  type QueuedThreadMessage,
+} from "./thread-outbox-model";
 import { isNewTaskDraftKey } from "./new-task-draft-key";
 import type { ComposerDraft } from "./use-composer-drafts";
 import { resolveNewTaskDraftWorkspace } from "../features/threads/new-task-context-presentation";
@@ -85,15 +90,38 @@ export function resolvePendingDraftBranch(input: {
   }).branch;
 }
 
+export interface ThreadOutboxSendGate {
+  readonly connectedEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly operableEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly shellStatuses: ReadonlyMap<EnvironmentId, EnvironmentShellStatus>;
+}
+
+/** The outbox drain's gate for a creation: connected, shell live, and operate granted. */
+export function isQueuedCreationSending(
+  message: QueuedThreadMessage,
+  gate: ThreadOutboxSendGate,
+): boolean {
+  const environmentId = message.environmentId;
+  return (
+    gate.operableEnvironmentIds.has(environmentId) &&
+    resolveThreadOutboxDeliveryAction({
+      isCreation: true,
+      threadExists: false,
+      shellStatus: gate.shellStatuses.get(environmentId) ?? "empty",
+      environmentConnected: gate.connectedEnvironmentIds.has(environmentId),
+    }) === "send"
+  );
+}
+
 export function buildPendingNewTasks(input: {
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly drafts: Readonly<Record<string, ComposerDraft>>;
-  readonly connectedEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly sendGate: ThreadOutboxSendGate;
 }): ReadonlyArray<PendingNewTask> {
   const tasks: PendingNewTask[] = [];
   for (const message of input.queuedMessages) {
-    // A connected environment is delivering it now; listing it would flash an "Unsent" row.
-    if (!message.creation || input.connectedEnvironmentIds.has(message.environmentId)) {
+    // Listing a creation already being sent would flash an "Unsent" row.
+    if (!message.creation || isQueuedCreationSending(message, input.sendGate)) {
       continue;
     }
     tasks.push({
