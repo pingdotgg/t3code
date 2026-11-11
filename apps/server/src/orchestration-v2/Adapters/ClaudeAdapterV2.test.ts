@@ -17166,7 +17166,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachmentsDir,
           fileSystem,
           path: yield* Path.Path,
-          crypto: yield* Crypto.Crypto,
+          random: yield* SecureRandom.SecureRandom,
           idAllocator,
           queryRunner: {
             allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
@@ -17178,6 +17178,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
+                mcpServerStatus: Effect.succeed([]),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Queue.shutdown(sdkMessages),
@@ -17252,9 +17256,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           "Claude Code process terminated by signal SIGABRT",
         );
         assert.notInclude(terminal.failure.message, "stderr");
+        assert.equal(terminal.failure.code, "process_killed_by_signal");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
