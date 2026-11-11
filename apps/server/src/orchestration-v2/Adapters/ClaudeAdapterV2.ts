@@ -5378,14 +5378,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
+          // An empty notification turn is often followed by the real one, so only a result
+          // that did work ends the notification's claim on the next idle turn.
+          if (
+            message.type === "result" &&
+            !(isClaudeTaskNotificationOriginResult(message) && message.num_turns === 0)
+          ) {
+            notifiedWhileIdleNativeThreads.delete(nativeThreadId);
+            return;
+          }
           if (isClaudeTurnStartMessage(message)) {
-            const wokenByNotification = notifiedWhileIdleNativeThreads.delete(nativeThreadId);
             const scheduledFor = scheduledWakeupsByNativeThread.get(nativeThreadId);
             if (scheduledFor === undefined) return;
             // Only a turn Claude starts by itself, with no task notification before it, can be
             // the early-jittered wake; anything else leaves the wakeup pending until scheduledFor.
             const earliestWake =
-              (yield* Ref.get(activeTurn)) === null && !wokenByNotification
+              (yield* Ref.get(activeTurn)) === null &&
+              !notifiedWhileIdleNativeThreads.has(nativeThreadId)
                 ? scheduledFor - CLAUDE_SCHEDULED_WAKEUP_EARLY_FIRE_MARGIN_MS
                 : scheduledFor;
             if (DateTime.toEpochMillis(yield* DateTime.now) >= earliestWake) {

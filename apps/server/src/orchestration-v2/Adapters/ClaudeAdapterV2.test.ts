@@ -10680,8 +10680,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.awaitTerminal(1);
 
         yield* TestClock.adjust("60 seconds");
+        // Claude runs an empty turn for the notification and opens the real one right after,
+        // both before the wake run attaches.
         yield* harness.offerAndWait(wakeNotification);
-        yield* harness.offerAndWait(wakeTurnInit);
+        yield* Queue.offer(harness.sdkMessages, wakeTurnInit);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000002503",
+            result: "",
+            numTurns: 0,
+            origin: { kind: "task-notification" },
+            terminalReason: null,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000002504" }),
+        );
         yield* harness.awaitContinuation(1);
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
