@@ -571,6 +571,16 @@ it.layer(layerTest)("ProjectService", (it) => {
         const checkout = NodePath.join(fixture, "separate-git-dir");
         NodeFS.mkdirSync(checkout);
         git(checkout, "init", "-b", "develop", "--separate-git-dir", ".metadata", checkout);
+        // Before its first commit it has neither an index nor worktrees.
+        const fresh = NodePath.join(fixture, "fresh-separate-git-dir");
+        NodeFS.mkdirSync(fresh);
+        git(fresh, "init", "-b", "develop", "--separate-git-dir", ".metadata", fresh);
+        yield* service.create({
+          commandId: CommandId.make("command:bare-root:fresh"),
+          projectId: ProjectId.make("project:bare-root:fresh"),
+          title: "fresh separate git dir",
+          workspaceRoot: fresh,
+        });
         NodeFS.writeFileSync(NodePath.join(checkout, ".gitignore"), ".metadata/\nworktrees/\n");
         git(checkout, "add", ".gitignore");
         git(checkout, "commit", "-m", "init");

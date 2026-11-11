@@ -259,7 +259,7 @@ export const make = Effect.gen(function* () {
 
   // A `.bare` container (`.git` points at a repo inside the root) makes git see the repo metadata
   // and sibling worktrees as changes. A primary checkout with its separate git dir inside looks
-  // the same, but has an index; a bare repository never gets one.
+  // the same, but gets an index before it can have linked worktrees; a bare repository never does.
   const rejectBareRepositoryContainer = Effect.fn("ProjectService.rejectBareRepositoryContainer")(
     function* (projectId: ProjectId, workspaceRoot: string) {
       const realPath = (candidate: string) =>
@@ -285,6 +285,10 @@ export const make = Effect.gen(function* () {
         .exists(path.join(gitDir, "index"))
         .pipe(Effect.orElseSucceed(() => true));
       if (hasIndex) return;
+      const worktrees = yield* fileSystem
+        .readDirectory(path.join(gitDir, "worktrees"))
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      if (worktrees.length === 0) return;
       return yield* new ProjectInvalidError({
         projectId,
         detail: `${workspaceRoot} holds a bare repository and its worktrees. Add an individual worktree as the project instead.`,
