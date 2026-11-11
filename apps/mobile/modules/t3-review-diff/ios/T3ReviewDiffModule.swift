@@ -102,7 +102,8 @@ public class T3ReviewDiffModule: Module {
       // Large, frequently changing JSON values cannot be regular Fabric props. Expo's
       // prop adapter compares strings on the main thread before invoking a setter, which
       // makes a syntax-token patch capable of blocking a frame by itself.
-      AsyncFunction("setRowsJson") { (view: T3ReviewDiffView, rowsJson: String) in
+      AsyncFunction("setRowsJson") { (view: T3ReviewDiffView, rowsJson: String, contentResetKey: String) in
+        view.setContentResetKey(contentResetKey)
         view.setRowsJson(rowsJson)
       }
 
