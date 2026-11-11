@@ -5,6 +5,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -93,6 +94,39 @@ const layerTest = (input: {
     ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
   );
 };
+
+// macOS command lookup cannot search a Windows drive-letter PATH.
+it.effect.skipIf(windowsHost)(
+  "opens home-relative app bundles using the server home directory",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
+      yield* fs.writeFileString(path.join(bin, "open"), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(bin, "open"), 0o755);
+      const spawned: ChildProcess.StandardCommand[] = [];
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
+          yield* launcher.launchEditor({ editor: "file-manager", cwd });
+        }
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { PATH: bin },
+            onSpawn: (command) => spawned.push(command),
+          }),
+        ),
+        Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
+      );
+      assert.deepEqual(
+        spawned.map((command) => command.args),
+        [["/Users/server/Applications/My App.app"], ["/Applications/My App.app"]],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect.skipIf(windowsHost)(
   "launched browsers and editors do not inherit ELECTRON_RUN_AS_NODE",
@@ -301,7 +335,7 @@ it.effect.skipIf(windowsHost)(
       assert.ok(spawned);
       assert.equal(spawned.command, "powershell.exe");
       assert.equal(spawned.options.detached, true);
-      const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
+      const encodedCommand = String(spawned.args[spawned.args.length - 1] ?? "");
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.equal(
         decodedCommand,
@@ -483,7 +517,7 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
     ] as const) {
       yield* fs.makeDirectory(dir, { recursive: true });
       const executable = path.join(dir, name);
-      yield* fs.writeFileString(executable, "#!/bin/sh\n");
+      yield* fs.writeFileString(executable, "#!/bin/sh\necho 'Zed 0.200.0'\n");
       yield* fs.chmod(executable, 0o755);
     }
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
@@ -507,6 +541,83 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
     assert.deepEqual(
       yield* resolve,
       Option.some({ command: path.join(localBin, "zed"), baseArgs: [] }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)("does not offer the OpenZFS zed daemon as Zed on Linux", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-zfs-" });
+    const binDir = path.join(home, "bin");
+    const systemBin = path.join(home, "system-bin");
+    yield* fs.makeDirectory(binDir, { recursive: true });
+    yield* fs.makeDirectory(systemBin, { recursive: true });
+    const zfsZed = path.join(binDir, "zed");
+    // OpenZFS zed only takes short options: `--version` is rejected with usage on stderr.
+    yield* fs.writeFileString(
+      zfsZed,
+      "#!/bin/sh\necho \"Invalid option '--'\" >&2\necho 'Usage: zed [OPTION]...' >&2\nexit 1\n",
+    );
+    yield* fs.chmod(zfsZed, 0o755);
+    const editor = EDITORS.find((editor) => editor.id === "zed")!;
+    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: binDir }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(Path.Path, {
+        ...path,
+        join: (...parts) =>
+          path.join(
+            ...parts.map((part) =>
+              ["/usr/local/bin", "/usr/bin", "/snap/bin"].includes(part) ? systemBin : part,
+            ),
+          ),
+      }),
+    );
+    assert.deepEqual(yield* resolve, Option.none());
+
+    const zedEditor = path.join(home, ".local/bin/zed");
+    yield* fs.makeDirectory(path.dirname(zedEditor), { recursive: true });
+    yield* fs.writeFileString(zedEditor, "#!/bin/sh\necho 'Zed 0.200.0'\n");
+    yield* fs.chmod(zedEditor, 0o755);
+    assert.deepEqual(yield* resolve, Option.some({ command: zedEditor, baseArgs: [] }));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)("does not open Zed with the OpenZFS zed daemon on Linux", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-zfs-launch-" });
+    const binDir = path.join(home, "bin");
+    yield* fs.makeDirectory(binDir, { recursive: true });
+    yield* fs.writeFileString(path.join(binDir, "zed"), "#!/bin/sh\nexit 1\n");
+    yield* fs.chmod(path.join(binDir, "zed"), 0o755);
+
+    const spawned: ChildProcess.StandardCommand[] = [];
+    const exit = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace" }).pipe(Effect.exit);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { HOME: home, PATH: binDir },
+          onSpawn: (command) => spawned.push(command),
+          spawnResult: (command) => (command.args[0] === "--version" ? { exitCode: 1 } : undefined),
+        }),
+      ),
+    );
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      assert.instanceOf(
+        Cause.squash(exit.cause),
+        ExternalLauncher.ExternalLauncherCommandNotFoundError,
+      );
+    }
+    assert.deepEqual(
+      spawned.map((command) => command.args),
+      [["--version"]],
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -712,6 +823,79 @@ it.effect.skipIf(windowsHost)("ignores unusable app bundles and keeps PATH launc
     );
     assert.equal(spawned?.command, "cursor");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "memoizes editor discovery and refreshes in the background after the cache window",
+  () => {
+    let statCalls = 0;
+    const rescanned = Deferred.makeUnsafe<void>();
+    let initialScanDone = false;
+    const fileInfo = { type: "File" } as FileSystem.File.Info;
+    const layerLauncher = ExternalLauncher.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            stat: () =>
+              Effect.sync(() => {
+                statCalls += 1;
+                return fileInfo;
+              }).pipe(
+                Effect.tap(() =>
+                  initialScanDone ? Deferred.succeed(rescanned, undefined) : Effect.void,
+                ),
+              ),
+          }),
+          Path.layer,
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.sync(() => makeMockDetachedHandle())),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+
+      const first = yield* launcher.resolveAvailableEditors();
+      assert.equal(first.includes("vscode"), true);
+      const statCallsAfterFirstScan = statCalls;
+      initialScanDone = true;
+      assert.isAbove(statCallsAfterFirstScan, 0);
+
+      // Past the shared command-resolution cache TTL (30s) but within the
+      // discovery cache window: the memoized set is reused without any scan.
+      yield* TestClock.adjust("31 seconds");
+      const second = yield* launcher.resolveAvailableEditors();
+      assert.deepEqual([...second], [...first]);
+      assert.equal(statCalls, statCallsAfterFirstScan);
+
+      // Past the discovery cache window the next call still answers from the
+      // memoized set and rescans in the background.
+      yield* TestClock.adjust("30 seconds");
+      const third = yield* launcher.resolveAvailableEditors();
+      assert.deepEqual([...third], [...first]);
+      yield* Deferred.await(rescanned);
+      assert.isAbove(statCalls, statCallsAfterFirstScan);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerLauncher,
+          Layer.succeed(HostProcess.Platform, "win32"),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                PATH: "C:\\t3-editor-discovery-cache-test",
+                PATHEXT: ".COM;.EXE;.BAT;.CMD",
+              },
+            }),
+          ),
+          TestClock.layer(),
+        ),
+      ),
+    );
+  },
 );
 
 it.effect("keeps scanning after the caller is interrupted and shares that scan", () => {
