@@ -18,39 +18,30 @@ export function RegeneratePullRequestsDialog({
   candidates,
   shortLabel,
   canRegenerate,
-  isRegenerating,
   onRegenerate,
   onClose,
 }: {
   readonly candidates: ReadonlyArray<RegeneratePullRequestCandidate>;
   readonly shortLabel: string;
   readonly canRegenerate: boolean;
-  readonly isRegenerating: boolean;
   readonly onRegenerate: (
     selected: ReadonlyArray<RegeneratePullRequestCandidate>,
   ) => Promise<ReadonlyArray<{ readonly url: string; readonly message: string }>>;
   readonly onClose: () => void;
 }) {
   const [selectedUrls, setSelectedUrls] = useState<ReadonlySet<string>>(new Set());
-  const [failures, setFailures] = useState<ReadonlyArray<string>>([]);
   const allSelected = selectedUrls.size === candidates.length;
-  const submit = async () => {
-    const failed = await onRegenerate(
-      candidates.filter((candidate) => selectedUrls.has(candidate.url)),
-    );
-    if (failed.length === 0) {
-      onClose();
-    } else {
-      setSelectedUrls(new Set(failed.map((failure) => failure.url)));
-      setFailures(failed.map((failure) => failure.message));
-    }
+  const submit = () => {
+    const selected = candidates.filter((candidate) => selectedUrls.has(candidate.url));
+    onClose();
+    void onRegenerate(selected);
   };
 
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !isRegenerating) onClose();
+        if (!open) onClose();
       }}
     >
       <DialogPopup className="sm:max-w-xl">
@@ -67,7 +58,6 @@ export function RegeneratePullRequestsDialog({
               <label className="flex items-center gap-2 font-medium">
                 <Checkbox
                   aria-label={`Select all ${shortLabel}s`}
-                  disabled={isRegenerating}
                   checked={allSelected}
                   indeterminate={selectedUrls.size > 0 && !allSelected}
                   onCheckedChange={() =>
@@ -94,7 +84,6 @@ export function RegeneratePullRequestsDialog({
                     <Checkbox
                       aria-label={`Regenerate ${shortLabel} #${candidate.number}: ${candidate.title}`}
                       checked={selectedUrls.has(candidate.url)}
-                      disabled={isRegenerating}
                       onCheckedChange={(checked) =>
                         setSelectedUrls((previous) => {
                           const next = new Set(previous);
@@ -118,22 +107,17 @@ export function RegeneratePullRequestsDialog({
               </div>
             </ScrollArea>
           </div>
-          {failures.length > 0 ? (
-            <p role="alert" className="mt-3 whitespace-pre-line text-xs text-destructive">
-              {failures.join("\n")}
-            </p>
-          ) : null}
         </DialogPanel>
         <DialogFooter>
-          <Button variant="outline" size="sm" disabled={isRegenerating} onClick={onClose}>
+          <Button variant="outline" size="sm" onClick={onClose}>
             Cancel
           </Button>
           <Button
             size="sm"
-            disabled={!canRegenerate || isRegenerating || selectedUrls.size === 0}
+            disabled={!canRegenerate || selectedUrls.size === 0}
             onClick={() => void submit()}
           >
-            {isRegenerating ? "Regenerating..." : `Regenerate ${selectedUrls.size || ""}`.trim()}
+            {`Regenerate ${selectedUrls.size || ""}`.trim()}
           </Button>
         </DialogFooter>
       </DialogPopup>

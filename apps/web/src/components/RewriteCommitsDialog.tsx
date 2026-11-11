@@ -15,13 +15,11 @@ export function RewriteCommitsDialog(props: {
   readonly onClose: () => void;
 }) {
   const [mode, setMode] = useState("messages");
-  const [busy, setBusy] = useState(false);
   const controls = (
     <RadioGroup
       aria-label="Rewrite mode"
       value={mode}
       onValueChange={(value) => setMode(String(value))}
-      disabled={busy}
     >
       <label className="flex items-center gap-2 text-sm">
         <Radio value="messages" />
@@ -37,7 +35,7 @@ export function RewriteCommitsDialog(props: {
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !busy) props.onClose();
+        if (!open) props.onClose();
       }}
     >
       <DialogPopup>
@@ -54,7 +52,6 @@ export function RewriteCommitsDialog(props: {
             onOpenChange={(open) => {
               if (!open) props.onClose();
             }}
-            onBusyChange={setBusy}
             controls={controls}
           />
         ) : props.workflow ? (

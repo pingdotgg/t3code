@@ -1,7 +1,7 @@
 import { useEnvironmentQuery } from "~/state/query";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, GitRewriteableCommit } from "@t3tools/contracts";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 
 import { Button } from "~/components/ui/button";
@@ -29,14 +29,12 @@ export function RewriteCommitMessagesForm({
   environmentId,
   cwd,
   onOpenChange,
-  onBusyChange,
   controls,
 }: {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
   readonly onOpenChange: (open: boolean) => void;
   readonly controls?: ReactNode;
-  readonly onBusyChange: (busy: boolean) => void;
 }) {
   const canRewrite = useAtomValue(
     gitEnvironment.rewriteCommitMessages.permissionAtom(environmentId),
@@ -45,8 +43,7 @@ export function RewriteCommitMessagesForm({
     reportFailure: false,
   });
   const [selectedShas, setSelectedShas] = useState<ReadonlySet<string>>(new Set());
-  const [isRewriting, setIsRewriting] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const submitted = useRef(false);
 
   const {
     data: result,
@@ -58,7 +55,7 @@ export function RewriteCommitMessagesForm({
       ? gitEnvironment.rewriteableCommits({ environmentId, input: { cwd } })
       : null,
   );
-  const displayedFailure = failure ?? loadError;
+  const displayedFailure = loadError;
 
   const commits = result?.commits ?? [];
   const selectedCount = selectedShas.size;
@@ -67,6 +64,7 @@ export function RewriteCommitMessagesForm({
   const selectionTooLarge = selectedCount > MAX_SELECTED_COMMITS;
   const submit = () => {
     if (
+      submitted.current ||
       environmentId === null ||
       cwd === null ||
       result === null ||
@@ -75,10 +73,8 @@ export function RewriteCommitMessagesForm({
     ) {
       return;
     }
-    setIsRewriting(true);
-    onBusyChange(true);
-    setFailure(null);
-    void rewriteMessages({
+    submitted.current = true;
+    const completion = rewriteMessages({
       environmentId,
       input: {
         cwd,
@@ -87,11 +83,15 @@ export function RewriteCommitMessagesForm({
           .filter((commit) => selectedShas.has(commit.sha))
           .map((commit) => commit.sha),
       },
-    }).then((commandResult) => {
-      setIsRewriting(false);
-      onBusyChange(false);
+    });
+    onOpenChange(false);
+    void completion.then((commandResult) => {
       if (commandResult._tag === "Failure") {
-        setFailure(errorMessage(squashAtomCommandFailure(commandResult)));
+        toastManager.add({
+          type: "error",
+          title: "Commit message rewrite failed",
+          description: errorMessage(squashAtomCommandFailure(commandResult)),
+        });
         return;
       }
       const count = commandResult.value.rewrittenCount;
@@ -100,7 +100,6 @@ export function RewriteCommitMessagesForm({
         title: `Rewrote ${count} commit ${count === 1 ? "message" : "messages"}`,
         description: commandResult.value.subjects.join("\n"),
       });
-      onOpenChange(false);
     });
   };
 
@@ -125,7 +124,6 @@ export function RewriteCommitMessagesForm({
                 size="sm"
                 onClick={() => {
                   setSelectedShas(new Set());
-                  setFailure(null);
                   load();
                 }}
               >
@@ -203,11 +201,6 @@ export function RewriteCommitMessagesForm({
               Select at most {MAX_SELECTED_COMMITS} commit messages at once.
             </p>
           ) : null}
-          {failure && result !== null ? (
-            <p role="alert" className="text-xs text-destructive">
-              {failure}
-            </p>
-          ) : null}
           {commits.length > 0 ? (
             <p className="text-xs text-muted-foreground">
               Rewriting changes commit IDs and may require a force push. Signed commits are blocked
@@ -217,22 +210,15 @@ export function RewriteCommitMessagesForm({
         </div>
       </DialogPanel>
       <DialogFooter>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={isRewriting}
-          onClick={() => onOpenChange(false)}
-        >
+        <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
           Cancel
         </Button>
         <Button
           size="sm"
-          disabled={
-            !canRewrite || isLoading || isRewriting || selectedCount === 0 || selectionTooLarge
-          }
+          disabled={!canRewrite || isLoading || selectedCount === 0 || selectionTooLarge}
           onClick={submit}
         >
-          {isRewriting ? "Regenerating..." : `Regenerate ${selectedCount || ""}`.trim()}
+          {`Regenerate ${selectedCount || ""}`.trim()}
         </Button>
       </DialogFooter>
     </>
