@@ -51,6 +51,12 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Switch right panel tabs
+
+`mod+alt+right` and `mod+alt+left` move to the next and previous tab in the open
+right panel, wrapping at either end. They work while you type in a side chat too.
+Rebind them under **Right Panel: Next Tab** and **Right Panel: Previous Tab**.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull requests page, use `mod+shift+c`

@@ -14,6 +14,7 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
+  selectAdjacentRightPanelSurface,
   selectThreadPanelOpen,
   type RightPanelSurface,
   useRightPanelStore,
@@ -209,6 +210,18 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     }
   };
   const activateRightPanelSurfaceStable = useStableCallback(activateRightPanelSurface);
+  const activateAdjacentRightPanelSurface = (step: 1 | -1) => {
+    const surface = selectAdjacentRightPanelSurface(
+      useRightPanelStore.getState().byThreadKey,
+      activeThreadRef,
+      step,
+    );
+    if (!surface) return false;
+    activateRightPanelSurface(surface);
+  };
+  const activateAdjacentRightPanelSurfaceStable = useStableCallback(
+    activateAdjacentRightPanelSurface,
+  );
   const toggleRightPanel = () => {
     if (!activeThreadRef) return;
     if (rightPanelOpen) {
@@ -322,12 +335,15 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       if (!activeRightPanelSurface) return false;
       if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
     },
+    "rightPanel.nextTab": () => activateAdjacentRightPanelSurface(1),
+    "rightPanel.previousTab": () => activateAdjacentRightPanelSurface(-1),
     "diff.toggle": () => onToggleDiff(),
   } satisfies ChatShortcutCommands;
 
   return {
     shortcuts,
     activateRightPanelSurfaceStable,
+    activateAdjacentRightPanelSurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
     addFilesSurfaceStable,
