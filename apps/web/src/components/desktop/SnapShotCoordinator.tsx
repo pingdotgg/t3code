@@ -1,4 +1,5 @@
 import {
+  type DesktopBridge,
   type DesktopPendingSnapShot,
   type DesktopSnapShotEvent,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -12,11 +13,16 @@ import {
   type PersistedComposerImageAttachment,
   useComposerDraftStore,
 } from "../../composerDraftStore";
-import { useHandleNewThread } from "../../hooks/useHandleNewThread";
+import {
+  LAST_USED_PROJECT_STORAGE_KEY,
+  lastUsedProjectKeySchema,
+  useHandleNewThread,
+} from "../../hooks/useHandleNewThread";
+import { scopedProjectKey } from "@t3tools/client-runtime/environment";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { getClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { readThreadShell } from "../../state/entities";
-import { compressImageToByteLimit, dataUrlToFile } from "../../lib/imageCompression";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import {
   beginSnapShotAnimation,
@@ -29,16 +35,11 @@ import {
 } from "../../lib/snapShotAnimation";
 import { resizeSnapShotSource } from "../../lib/snapShotSource";
 import { playSnapShotSound } from "../../lib/snapShotSound";
-import {
-  dispatchSnapShotComposerFocus,
-  getDesktopSnapShotBridge,
-  type DesktopSnapShotBridge,
-} from "../../lib/desktopSnapShot";
+import { dispatchSnapShotComposerFocus, getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import {
   countQuestionRequestAttachments,
   openQuestionAttachmentDraft,
 } from "../../questionAttachments";
-import { readFileAsDataUrl } from "../ChatView.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
 type CaptureTarget = DraftId | ScopedThreadRef;
@@ -156,13 +157,15 @@ async function afterNextPaint(): Promise<void> {
 }
 
 export async function deliverSnapShot(
-  bridge: DesktopSnapShotBridge,
+  bridge: DesktopBridge,
   item: DesktopPendingSnapShot,
   resolveTarget: () => CaptureTarget,
 ): Promise<void> {
   const store = useComposerDraftStore.getState();
   updateSnapShotAnimationSource(item.id, item.source);
   const capture = await bridge.readSnapShot(item.id);
+  const { compressImageToByteLimit, dataUrlToFile, readFileAsDataUrl } =
+    await import("../../lib/imageCompression");
   const original = dataUrlToFile(capture.dataUrl, capture.name, capture.mimeType);
   const compressed = await compressImageToByteLimit(original, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
   if (!compressed.ok) {
@@ -213,8 +216,7 @@ export async function deliverSnapShot(
     throw new Error("The captured window could not be saved to the draft.");
   }
 
-  // Reveal the attachment under the flying capture before the desktop tears the overlay down,
-  // otherwise the tile is missing for the frames between the landing and its first paint.
+  // Paint the attachment before removing the capture overlay to avoid missing frames at landing.
   if (getPendingSnapShotAnimations().some((animation) => animation.id === capture.id)) {
     await afterNextPaint();
     await waitForSnapShotAnimationDestination(capture.id).catch(() => undefined);
@@ -230,10 +232,30 @@ export function SnapShotCoordinator() {
     activeDraftThread,
     activeThread,
     defaultProjectRef,
+    defaultProjectFallbackReady,
     handleNewThread,
     routeDraftId,
     routeThreadRef,
   } = useHandleNewThread();
+  const [lastUsedProjectKey, setLastUsedProjectKey] = useLocalStorage(
+    LAST_USED_PROJECT_STORAGE_KEY,
+    null,
+    lastUsedProjectKeySchema,
+  );
+  const currentProject = activeThread ?? activeDraftThread;
+  const currentProjectKey = currentProject
+    ? scopedProjectKey({
+        environmentId: currentProject.environmentId,
+        projectId: currentProject.projectId,
+      })
+    : null;
+  const rememberProject = useEffectEvent((projectKey: string) => {
+    if (projectKey !== lastUsedProjectKey) setLastUsedProjectKey(projectKey);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Persist route changes without overwriting project choices from other tabs.
+  useEffect(() => {
+    if (currentProjectKey) rememberProject(currentProjectKey);
+  }, [currentProjectKey]);
   const captureSound = useClientSettings((settings) =>
     settings.snapShotPlaySound ? settings.snapShotSound : null,
   );
@@ -257,15 +279,13 @@ export function SnapShotCoordinator() {
   ) {
     setLastRouteTarget(currentTarget);
   }
-  // What a resolution settled on (a promoted draft, a new draft, or nothing) stands in for the
-  // route's target until the route moves on, so captures in one drain share one new draft.
+  // Reuse the resolved target until navigation so captures in one drain share a draft.
   const settledTargetRef = useRef<{
     readonly routeTarget: CaptureTarget | null;
     readonly target: CaptureTarget | null;
   } | null>(null);
   const readLastRouteTarget = useStableCallback(() => lastRouteTarget);
-  // A resolution records what it settled on against the route it started from, so a
-  // route change while it is pending cannot hand that draft to the new route.
+  // Scope pending resolutions to their starting route so navigation cannot inherit another route's draft.
   const readSettledTarget = (routeTarget: CaptureTarget | null) => {
     const settled = settledTargetRef.current;
     return settled && settled.routeTarget === routeTarget ? settled.target : routeTarget;
@@ -347,6 +367,7 @@ export function SnapShotCoordinator() {
             ? resolveExistingSnapShotTarget(capturedTarget, routeThreadRef)
             : null;
           if (!target) {
+            if (!defaultProjectFallbackReady) continue;
             await dismissSnapShotAnimation(item.id);
             reportOnce(
               item.id,
@@ -405,11 +426,10 @@ export function SnapShotCoordinator() {
     return operation;
   };
 
-  // Subscriptions read the latest handlers through effect events, so they attach once
-  // instead of restarting (and re-draining) whenever a handler's inputs change.
   const drainPending = useEffectEvent(() => drain());
+  const hasDefaultProject = defaultProjectRef !== null;
   const handleSnapShotEvent = useEffectEvent(
-    (bridge: DesktopSnapShotBridge, event: DesktopSnapShotEvent) => {
+    (bridge: DesktopBridge, event: DesktopSnapShotEvent) => {
       if (!getClientSettings().snapShotEnabled) return;
       switch (event.type) {
         case "requested": {
@@ -475,13 +495,20 @@ export function SnapShotCoordinator() {
       }
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to SnapShot events from the desktop bridge and drains pending ones while enabled
   useEffect(() => {
     const bridge = getDesktopSnapShotBridge();
-    if (!bridge || !enabled) return;
-    void drainPending();
+    if (
+      !bridge ||
+      !enabled ||
+      (!defaultProjectFallbackReady && !hasDefaultProject && !lastRouteTarget)
+    )
+      return;
+    void Promise.resolve(drainingRef.current).then(() => drainPending());
     return bridge.onSnapShotEvent((event) => handleSnapShotEvent(bridge, event));
-  }, [enabled]);
+  }, [enabled, defaultProjectFallbackReady, hasDefaultProject, lastRouteTarget]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches window blur, focus and visibilitychange listeners to dismiss or drain SnapShot animations
   useEffect(() => {
     const dismissOnBlur = () => {
       pendingAnimationStartsRef.current.clear();

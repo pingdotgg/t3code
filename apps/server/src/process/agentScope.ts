@@ -19,6 +19,12 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 const AGENT_SLICE = "app-t3code-agents.slice";
+// Owns every agent slice and competes with the server's unit or scope under app.slice.
+const AGENTS_PARENT_SLICE = "app-t3code.slice";
+// Low weights yield CPU and disk to the server under contention, where the user manager
+// has those controllers: current systemd delegates cpu, rarely io. TasksMax keeps agents
+// below logind's 33% per-user task limit, leaving forks for the server.
+const AGENTS_PARENT_PROPERTIES = ["CPUWeight=10", "IOWeight=10", "TasksMax=25%"];
 
 export function ownedAgentSlice(stateDir: string): string {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
@@ -48,11 +54,7 @@ export interface ScopeState {
   readonly populated: boolean | undefined;
 }
 
-/**
- * Our pipe can close before systemd handles the kill, so a scope that is
- * still stopping, is empty, or already counted an OOM kill is "stopping":
- * systemd records `Result=oom-kill` for it in a moment.
- */
+/** Pipes can close before systemd records oom-kill; stopping, empty or OOM-counted scopes remain pending. */
 export function classifyScope(state: ScopeState): "oom-killed" | "gone" | "running" | "stopping" {
   if (state.result === "oom-kill") return "oom-killed";
   if (
@@ -86,9 +88,9 @@ function parseCgroupCounter(text: string, key: string): number | undefined {
   return match === null ? undefined : Number(match[1]);
 }
 
-// A stop sends SIGTERM, then SIGKILL after this long. systemd's 90 s default
-// would outlast the wait for a previous server's agents below.
-const STOP_TIMEOUT_OPTION = "--property=TimeoutStopSec=10s";
+// systemd's default 90 s stop timeout would outlast our leftover-agent wait.
+// Delegation lets rootless containers (Podman, kind) manage their own cgroups.
+const SCOPE_OPTIONS = ["--property=TimeoutStopSec=10s", "--property=Delegate=yes"];
 const STOPPING_POLL_INTERVAL = "100 millis";
 const STOPPING_POLL_ATTEMPTS = 20;
 const CLEAR_FAILED_INTERVAL = "1 second";
@@ -172,25 +174,33 @@ export const make = Effect.gen(function* () {
           "true",
         ]).pipe(Effect.map((result) => result._tag === "Some" && result.value.code === 0));
       // Scopes take OOMPolicy from systemd 253; older managers still get scopes.
-      const supportsOomPolicy = yield* probe([STOP_TIMEOUT_OPTION, "--property=OOMPolicy=stop"]);
-      if (!supportsOomPolicy && !(yield* probe([STOP_TIMEOUT_OPTION]))) {
+      const supportsOomPolicy = yield* probe([...SCOPE_OPTIONS, "--property=OOMPolicy=stop"]);
+      if (!supportsOomPolicy && !(yield* probe(SCOPE_OPTIONS))) {
         yield* Effect.logInfo("Agent scopes are off: no systemd user manager");
         return undefined;
       }
+      const setProperties = Effect.fn("agentScope.setProperties")(function* (
+        slice: string,
+        properties: ReadonlyArray<string>,
+      ) {
+        const result = yield* run(systemctl, [
+          "--user",
+          "set-property",
+          "--runtime",
+          slice,
+          ...properties,
+        ]);
+        if (result._tag === "None" || result.value.code !== 0) {
+          yield* Effect.logWarning("Could not set resource limits on an agents slice", {
+            slice,
+            properties,
+            stderr: result._tag === "Some" ? result.value.stderr.trim() : undefined,
+          });
+        }
+      });
       const limits = agentSliceMemoryLimits(NodeOS.totalmem());
-      const limited = yield* run(systemctl, [
-        "--user",
-        "set-property",
-        "--runtime",
-        AGENT_SLICE,
-        `MemoryHigh=${limits.high}`,
-        `MemoryMax=${limits.max}`,
-      ]);
-      if (limited._tag === "None" || limited.value.code !== 0) {
-        yield* Effect.logWarning("Could not set memory limits on the agents slice", {
-          stderr: limited._tag === "Some" ? limited.value.stderr.trim() : undefined,
-        });
-      }
+      yield* setProperties(AGENT_SLICE, [`MemoryHigh=${limits.high}`, `MemoryMax=${limits.max}`]);
+      yield* setProperties(AGENTS_PARENT_SLICE, AGENTS_PARENT_PROPERTIES);
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
@@ -205,7 +215,8 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
+  // `shared` scopes serve other threads too: tracked only for OOM diagnosis on old systemd.
+  const scopeByThread = new Map<string, { unit: string; oomKilled: boolean; shared: boolean }>();
 
   const readScope = Effect.fn("agentScope.readScope")(function* (systemctl: string, unit: string) {
     const shown = yield* run(systemctl, [
@@ -267,10 +278,11 @@ export const make = Effect.gen(function* () {
     systemctl: string,
     threadId: string,
     unit: string | undefined,
+    shared = false,
   ) {
     const previous = scopeByThread.get(threadId);
     scopeByThread.delete(threadId);
-    if (unit !== undefined) scopeByThread.set(threadId, { unit, oomKilled: false });
+    if (unit !== undefined) scopeByThread.set(threadId, { unit, oomKilled: false, shared });
     if (previous !== undefined) yield* forget(systemctl, previous.unit);
     if (scopeByThread.size > MAX_TRACKED_THREADS) yield* evictOldest(systemctl);
   });
@@ -330,6 +342,40 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const kill: AgentScopeShape["kill"] = Effect.fn("AgentScope.kill")(function* (threadId) {
+    const tracked = scopeByThread.get(threadId);
+    if (tracked === undefined || tracked.shared) return false;
+    const scope = yield* systemd;
+    if (scope === undefined) return false;
+    const shown = yield* run(scope.systemctl, [
+      "--user",
+      "show",
+      tracked.unit,
+      "--property=ActiveState,ControlGroup",
+    ]);
+    if (shown._tag === "None" || shown.value.code !== 0) return false;
+    const values = parseKeyValues(shown.value.stdout);
+    if (values.get("ActiveState") !== "active") return false;
+    const controlGroup = values.get("ControlGroup") ?? "";
+    // cgroup.kill (Linux 5.14+) kills the whole tree at once; systemd's kill is the fallback.
+    const killedByCgroup =
+      controlGroup.length > 0 &&
+      (yield* fileSystem
+        .writeFileString(path.join("/sys/fs/cgroup", controlGroup, "cgroup.kill"), "1")
+        .pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ));
+    if (killedByCgroup) return true;
+    const killed = yield* run(scope.systemctl, [
+      "--user",
+      "kill",
+      "--signal=SIGKILL",
+      tracked.unit,
+    ]);
+    return killed._tag === "Some" && killed.value.code === 0;
+  });
+
   const clear: AgentScopeShape["clear"] = Effect.fn("agentScope.clear")(function* (threadId) {
     if (!scopeByThread.has(threadId)) return;
     const scope = yield* systemd;
@@ -355,7 +401,8 @@ export const make = Effect.gen(function* () {
       // Clear the launch thread's previous scope instead.
       const continuing = shared === true && scope.supportsOomPolicy;
       const owned = threadId !== undefined && !continuing;
-      if (threadId !== undefined) yield* track(scope.systemctl, threadId, owned ? unit : undefined);
+      if (threadId !== undefined)
+        yield* track(scope.systemctl, threadId, owned ? unit : undefined, shared === true);
       const systemdScope: AgentSystemdScope = {
         systemdRun: scope.systemdRun,
         runtimeDir: scope.runtimeDir,
@@ -364,7 +411,7 @@ export const make = Effect.gen(function* () {
         // Without an owning thread nothing reads the result, so let systemd
         // unload the unit even when it fails.
         options: [
-          STOP_TIMEOUT_OPTION,
+          ...SCOPE_OPTIONS,
           ...(scope.supportsOomPolicy
             ? [`--property=OOMPolicy=${continuing ? "continue" : "stop"}`]
             : []),
@@ -375,6 +422,7 @@ export const make = Effect.gen(function* () {
     }),
     oomKilled,
     stop,
+    kill,
     clear,
   } satisfies AgentScopeShape;
 });
