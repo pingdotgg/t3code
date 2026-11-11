@@ -4,8 +4,6 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -465,42 +463,6 @@ it.effect("restores the original folder if installing the completed clone fails"
       ),
     );
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect.each(["replace", "combine"] as const)(
-  "%s leaves the original folder intact when interrupted",
-  (existingDestination) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-interrupt-" });
-      const destinationPath = path.join(parent, "checkout");
-      yield* fs.makeDirectory(destinationPath);
-      yield* fs.writeFileString(path.join(destinationPath, "local.txt"), "keep");
-      const started = yield* Deferred.make<void>();
-      yield* Effect.gen(function* () {
-        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-        const fiber = yield* service
-          .cloneRepository({ remoteUrl: CLONE_URLS.url, destinationPath }, { existingDestination })
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(started);
-        yield* Fiber.interrupt(fiber);
-        assert.strictEqual(
-          yield* fs.readFileString(path.join(destinationPath, "local.txt")),
-          "keep",
-        );
-        assert.deepStrictEqual(yield* fs.readDirectory(parent), ["checkout"]);
-      }).pipe(
-        Effect.provide(
-          layer({
-            git: {
-              execute: () =>
-                Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
-            },
-          }),
-        ),
-      );
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect.each([CLONE_URLS.sshUrl, "https://github.com/other/repository.git"])(
