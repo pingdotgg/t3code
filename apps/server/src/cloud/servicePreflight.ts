@@ -17,6 +17,7 @@ export type ServicePreflightResult =
 export function runServicePreflight(input: {
   readonly databasePath: string;
   readonly launcherProtocol: number;
+  readonly platform: NodeJS.Platform;
   readonly version?: string;
 }): ServicePreflightResult {
   const version = input.version ?? packageJson.version;
@@ -28,9 +29,18 @@ export function runServicePreflight(input: {
       // reinstall itself and report success, so name the exact install and the path check.
       reason: [
         `The installed service launcher speaks protocol ${input.launcherProtocol}, but t3@${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
-        `On the server machine, install this exact CLI: \`curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=${version} sh\`.`,
-        `Check that \`t3 --version\` prints ${version} and that \`which -a t3\` lists no older t3 (such as an npm or nvm install) first, then run \`~/.local/bin/t3 service install\` (the installer's default path).`,
-        "Updating the desktop app does not update this CLI, and `t3 service update` only repairs the service with whichever CLI runs it.",
+        ...(input.platform === "win32"
+          ? [
+              `On the server machine, install this exact CLI in PowerShell: \`$env:T3CODE_VERSION="${version}"; irm https://t3.codes/install.ps1 | iex\`.`,
+              `Check that \`t3 --version\` prints ${version} and that \`where.exe t3\` lists no older t3 first.`,
+              `Windows has no \`t3 service install\`, so change whatever runs \`t3 __service-launcher\` to start it from \`%USERPROFILE%\\.local\\bin\\t3.cmd\` (the installer's default path) and restart it. Remote updates do not move a Windows launcher, so repeat this whenever a release changes the launcher protocol.`,
+              "Updating the desktop app does not update this CLI.",
+            ]
+          : [
+              `On the server machine, install this exact CLI: \`curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=${version} sh\`.`,
+              `Check that \`t3 --version\` prints ${version} and that \`which -a t3\` lists no older t3 (such as an npm or nvm install) first, then run \`~/.local/bin/t3 service install\` (the installer's default path).`,
+              "Updating the desktop app does not update this CLI, and `t3 service update` only repairs the service with whichever CLI runs it.",
+            ]),
       ].join(" "),
     };
   }

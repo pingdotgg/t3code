@@ -20,6 +20,7 @@ it.each([1])("blocks legacy launcher protocol %i with exact recovery steps", (la
   const result = runServicePreflight({
     databasePath: "/missing/state.sqlite",
     launcherProtocol,
+    platform: "linux",
     version: "9.8.7",
   });
 
@@ -35,23 +36,18 @@ it.each([1])("blocks legacy launcher protocol %i with exact recovery steps", (la
 
 // regression: #34435 Windows hosts were told to run `curl | sh` and `~/.local/bin/t3 service install`
 it("gives Windows hosts recovery steps that run on Windows", () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-  Object.defineProperty(process, "platform", { ...platform, value: "win32" });
-  try {
-    const result = runServicePreflight({
-      databasePath: "C:\\missing\\state.sqlite",
-      launcherProtocol: 3,
-      version: "9.8.7",
-    });
-    const reason = result.status === "blocked" ? result.reason : "";
-    expect(reason).toMatch(new RegExp(`\\b${SERVICE_LAUNCHER_PROTOCOL}\\b`));
-    expect(reason).toContain("9.8.7");
-    expect(reason).not.toContain("| sh");
-    expect(reason).not.toContain("which -a");
-    expect(reason).not.toContain("~/.local/bin/t3");
-  } finally {
-    Object.defineProperty(process, "platform", platform);
-  }
+  const result = runServicePreflight({
+    databasePath: "C:\\missing\\state.sqlite",
+    launcherProtocol: 3,
+    platform: "win32",
+    version: "9.8.7",
+  });
+  const reason = result.status === "blocked" ? result.reason : "";
+  expect(reason).toMatch(new RegExp(`\\b${SERVICE_LAUNCHER_PROTOCOL}\\b`));
+  expect(reason).toContain("9.8.7");
+  expect(reason).not.toContain("| sh");
+  expect(reason).not.toContain("which -a");
+  expect(reason).not.toContain("~/.local/bin/t3");
 });
 
 it.layer(NodeServices.layer)("service preflight database", (it) => {
@@ -68,7 +64,11 @@ it.layer(NodeServices.layer)("service preflight database", (it) => {
       const insert = db.prepare("INSERT INTO effect_sql_migrations VALUES (?, ?)");
       for (const [id, name] of migrationManifest) insert.run(id, name);
       const preflight = () =>
-        runServicePreflight({ databasePath, launcherProtocol: SERVICE_LAUNCHER_PROTOCOL });
+        runServicePreflight({
+          databasePath,
+          launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+          platform: "linux",
+        });
 
       expect(preflight().status).toBe("ready");
       expect(databaseMigrationHead(databasePath)).toBe(BUILD_MIGRATION_HEAD);
@@ -90,6 +90,7 @@ it.layer(NodeServices.layer)("service preflight database", (it) => {
         runServicePreflight({
           databasePath: unreadable,
           launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+          platform: "linux",
         }).status,
       ).toBe("blocked");
       // A missing database is a fresh install.
