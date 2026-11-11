@@ -310,7 +310,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     ) : null}
                   </>
                 );
-                const preview = option.preview?.trim();
+                const preview = option.preview?.trim() ? option.preview : undefined;
                 return (
                   <div key={`${activeQuestion.id}:${optionValue}`}>
                     <button
@@ -332,7 +332,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         cwd={cwd}
                         threadRef={threadRef}
                         className={cn(
-                          "mb-2 ms-9 me-9 text-xs text-foreground/85 sm:ms-8 sm:me-8 [&_img]:max-w-72!",
+                          "mb-2 ms-9 me-9 w-auto text-xs text-foreground/85 sm:ms-8 sm:me-8 [&_img]:max-w-[min(100%,18rem)]!",
                           questionTextAlign,
                         )}
                       />
