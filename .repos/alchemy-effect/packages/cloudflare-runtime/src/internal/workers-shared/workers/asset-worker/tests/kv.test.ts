@@ -1,9 +1,9 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { afterEach, assert, beforeEach, describe, it, vi } from "vitest";
+import type { MockInstance } from "vitest";
 import { getAssetWithMetadataFromKV } from "../src/utils/kv.ts";
 import type { AssetMetadata } from "../src/utils/kv.ts";
-import type { MockInstance } from "vitest";
 
 describe("[Asset Worker] Fetching assets from KV", () => {
   describe("getAssetWithMetadataFromKV()", () => {
@@ -31,9 +31,7 @@ describe("[Asset Worker] Fetching assets from KV", () => {
           metadata: {
             contentType: "text/html",
           },
-        }) as unknown as Promise<
-          KVNamespaceGetWithMetadataResult<ReadableStream, AssetMetadata>
-        >,
+        }) as unknown as Promise<KVNamespaceGetWithMetadataResult<ReadableStream, AssetMetadata>>,
       );
 
       const asset = await getAssetWithMetadataFromKV(mockKVNamespace, "abcd");
@@ -50,9 +48,9 @@ describe("[Asset Worker] Fetching assets from KV", () => {
     }) => {
       spy.mockReturnValue(Promise.reject("Oeps! Something went wrong"));
 
-      await expect(() =>
-        getAssetWithMetadataFromKV(mockKVNamespace, "abcd"),
-      ).rejects.toThrow("KV GET abcd failed.");
+      await expect(() => getAssetWithMetadataFromKV(mockKVNamespace, "abcd")).rejects.toThrow(
+        "KV GET abcd failed.",
+      );
     });
 
     it("should retry three times by default if something went wrong while fetching the asset", async ({
@@ -60,9 +58,9 @@ describe("[Asset Worker] Fetching assets from KV", () => {
     }) => {
       spy.mockReturnValue(Promise.reject("Oeps! Something went wrong"));
 
-      await expect(() =>
-        getAssetWithMetadataFromKV(mockKVNamespace, "abcd"),
-      ).rejects.toThrow("KV GET abcd failed.");
+      await expect(() => getAssetWithMetadataFromKV(mockKVNamespace, "abcd")).rejects.toThrow(
+        "KV GET abcd failed.",
+      );
       expect(spy).toHaveBeenCalledTimes(4);
     });
 
@@ -76,13 +74,11 @@ describe("[Asset Worker] Fetching assets from KV", () => {
     });
 
     it("should inject message with error", async ({ expect }) => {
-      spy.mockReturnValue(
-        Promise.reject(new Error("Oeps! Something went wrong")),
-      );
+      spy.mockReturnValue(Promise.reject(new Error("Oeps! Something went wrong")));
 
-      await expect(() =>
-        getAssetWithMetadataFromKV(mockKVNamespace, "abcd"),
-      ).rejects.toThrow("KV GET abcd failed: Oeps! Something went wrong");
+      await expect(() => getAssetWithMetadataFromKV(mockKVNamespace, "abcd")).rejects.toThrow(
+        "KV GET abcd failed: Oeps! Something went wrong",
+      );
       expect(spy).toHaveBeenCalledTimes(4);
     });
 
@@ -92,18 +88,14 @@ describe("[Asset Worker] Fetching assets from KV", () => {
         if (attempts++ === 0) {
           return Promise.resolve({
             value: null,
-          }) as unknown as Promise<
-            KVNamespaceGetWithMetadataResult<ReadableStream, AssetMetadata>
-          >;
+          }) as unknown as Promise<KVNamespaceGetWithMetadataResult<ReadableStream, AssetMetadata>>;
         } else {
           return Promise.resolve({
             value: "<html>Hello world</html>",
             metadata: {
               contentType: "text/html",
             },
-          }) as unknown as Promise<
-            KVNamespaceGetWithMetadataResult<ReadableStream, AssetMetadata>
-          >;
+          }) as unknown as Promise<KVNamespaceGetWithMetadataResult<ReadableStream, AssetMetadata>>;
         }
       });
 
