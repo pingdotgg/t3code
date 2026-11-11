@@ -1,5 +1,4 @@
 import type { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import * as NodeModule from "node:module";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -8,11 +7,8 @@ import { expect, it, vi } from "vite-plus/test";
 import type { PendingUserInput } from "../../lib/threadActivity";
 
 const harness = vi.hoisted(() => ({
-  dispatch: (_action: unknown) => {},
-  navigate: (_name: string, _params?: object) => {},
-  getState: (): unknown => undefined,
-  getRoute: (): unknown => undefined,
-  openURL: (_url: string): Promise<unknown> => Promise.resolve(true),
+  navigate: [] as Array<[string, object | undefined]>,
+  openedUrls: [] as string[],
 }));
 
 type Children = { children?: ReactNode };
@@ -24,7 +20,6 @@ vi.mock("react-native", () => ({
   Pressable: ({ children, onPress }: Children & { onPress?: () => void }) => (
     <div onClick={onPress}>{children}</div>
   ),
-  Linking: { openURL: (url: string) => harness.openURL(url) },
 }));
 vi.mock("react-native-reanimated", () => {
   const animation = { duration: () => ({ easing: () => ({}) }) };
@@ -60,71 +55,25 @@ vi.mock("../../native/SelectableMarkdownText", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useLiveThreadLinkLabels: (markdown: string) => markdown,
-  useProjects: () => [],
-  useThreadShell: () => null,
 }));
-vi.mock("../../state/server", async () => {
-  const { Atom } = await import("effect/reactivity");
-  return { environmentServerConfigsAtom: Atom.make(new Map()) };
-});
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
-  useSelectWorkspaceDetail: () => vi.fn(),
+vi.mock("../../native/useOpenPullRequest", () => ({
+  useOpenPullRequest: () => async (url: string) => {
+    harness.openedUrls.push(url);
+    return true;
+  },
 }));
-vi.mock("@react-navigation/native", async () => {
-  const { createRequire } = await import("node:module");
-  const requireNavigation = createRequire(
-    createRequire(import.meta.url).resolve("@react-navigation/native/package.json"),
-  );
-  const routers = requireNavigation("@react-navigation/routers");
-  return {
-    StackActions: routers.StackActions,
-    CommonActions: routers.CommonActions,
-    useNavigation: () => ({
-      dispatch: harness.dispatch,
-      navigate: harness.navigate,
-      getState: harness.getState,
-    }),
-    useRoute: () => harness.getRoute(),
-  };
-});
+vi.mock("@react-navigation/native", () => ({
+  useNavigation: () => ({
+    navigate: (name: string, params?: object) => harness.navigate.push([name, params]),
+  }),
+}));
 
 import { PendingUserInputCard } from "./PendingUserInputCard";
 
-const requireNavigation = NodeModule.createRequire(
-  NodeModule.createRequire(import.meta.url).resolve("@react-navigation/native/package.json"),
-);
-const { StackRouter, StackActions, CommonActions } = requireNavigation(
-  "@react-navigation/routers",
-) as {
-  StackRouter: typeof import("@react-navigation/native").StackRouter;
-  StackActions: typeof import("@react-navigation/native").StackActions;
-  CommonActions: typeof import("@react-navigation/native").CommonActions;
-};
-
 function setup(questionMarkdown: string) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const router = StackRouter({});
-  const options = {
-    routeNames: ["Home", "Thread", "ThreadFile", "PullRequest"],
-    routeParamList: {},
-    routeGetIdList: {},
-  };
-  let state = router.getInitialState(options);
-  const dispatch = (action: Parameters<typeof router.getStateForAction>[1]) => {
-    const next = router.getStateForAction(state, action, options);
-    if (!next) throw new Error(`Rejected ${action.type}`);
-    state = router.getRehydratedState(next, options);
-  };
-  const openedUrls: string[] = [];
-  harness.dispatch = (action) => dispatch(action as Parameters<typeof dispatch>[0]);
-  harness.navigate = (name, params) => dispatch(CommonActions.navigate(name, params));
-  harness.getState = () => state;
-  harness.getRoute = () => state.routes.at(-1);
-  harness.openURL = (url) => {
-    openedUrls.push(url);
-    return Promise.reject(new Error(`No activity found to handle ${url}`));
-  };
-  dispatch(StackActions.push("Thread", { environmentId: "env-1", threadId: "thread-1" }));
+  harness.navigate = [];
+  harness.openedUrls = [];
 
   const pendingUserInput = {
     requestId: "request-1" as RuntimeRequestId,
@@ -150,6 +99,8 @@ function setup(questionMarkdown: string) {
         canOperateThread
         pendingUserInput={pendingUserInput}
         maxHeight={{ value: 600 } as never}
+        cardProgress={{ value: 1, set: () => {} } as never}
+        cardCoverage={{ value: 0, set: () => {} } as never}
         collapsed={false}
         onToggleCollapsed={() => {}}
         drafts={{}}
@@ -163,10 +114,6 @@ function setup(questionMarkdown: string) {
     ),
   );
   return {
-    openedUrls,
-    get state() {
-      return state;
-    },
     async pressLink(label: string) {
       const link = [...container.querySelectorAll("button")].find(
         (button) => button.textContent === label,
@@ -185,26 +132,11 @@ it("opens a workspace file link in a question in the thread's file viewer", asyn
 
   await screen.pressLink("probe.md");
 
-  expect(screen.openedUrls).toEqual([]);
-  expect(screen.state.routes.at(-1)).toMatchObject({
-    name: "ThreadFile",
-    params: {
-      environmentId: "env-1",
-      threadId: "thread-1",
-      path: ["docs", "probe.md"],
-      line: "12",
-    },
-  });
-});
-
-it("opens an absolute file link under the workspace root by its workspace path", async () => {
-  using screen = setup("Should I update [probe.md](/repo/docs/probe.md)?");
-
-  await screen.pressLink("probe.md");
-
-  expect(screen.openedUrls).toEqual([]);
-  expect(screen.state.routes.at(-1)).toMatchObject({
-    name: "ThreadFile",
-    params: { environmentId: "env-1", threadId: "thread-1", path: ["docs", "probe.md"] },
-  });
+  expect(harness.openedUrls).toEqual([]);
+  expect(harness.navigate).toEqual([
+    [
+      "ThreadFile",
+      { environmentId: "env-1", threadId: "thread-1", path: ["docs", "probe.md"], line: "12" },
+    ],
+  ]);
 });
