@@ -7,6 +7,7 @@ import {
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -630,20 +631,37 @@ export const layer = Layer.effect(
 
     // PATH is read from the login shell at startup and drivers copy it when built, so a CLI
     // installed later needs a fresh read and a rebuild. Installed instances keep their sessions.
-    const rebuildMissingAfterPathChange = Effect.fn("rebuildMissingAfterPathChange")(function* (
-      instanceId?: ProviderInstanceId,
-    ) {
+    // The PATH merge is global, so every missing instance is rebuilt, not just a refreshed one.
+    const lastPathRereadAt = yield* Ref.make(yield* Clock.currentTimeMillis);
+    const rebuildMissingAfterPathChange = Effect.fn("rebuildMissingAfterPathChange")(function* () {
       const instances = yield* instanceRegistry.listInstances;
       const missing = yield* Effect.filter(instances, (instance) =>
         // ACP also reports installed:false for setup states unrelated to executable discovery.
-        !instance.enabled ||
-        instance.driverKind === "acpRegistry" ||
-        (instanceId !== undefined && instance.instanceId !== instanceId)
+        !instance.enabled || instance.driverKind === "acpRegistry"
           ? Effect.succeed(false)
           : instance.snapshot.getSnapshot.pipe(Effect.map((snapshot) => !snapshot.installed)),
       );
-      if (missing.length === 0 || !(yield* rereadLoginShellPath())) return;
+      if (missing.length === 0) return;
+      yield* Ref.set(lastPathRereadAt, yield* Clock.currentTimeMillis);
+      if (!(yield* rereadLoginShellPath())) return;
       yield* instanceRegistryMutator.rebuild(missing);
+    });
+    // Periodic health checks publish each probe; a missing CLI there rechecks PATH at most once
+    // a minute (the shortest health interval), forked so the rebuild outlives the old stream.
+    const pathRecheckRunning = yield* Ref.make(false);
+    const recheckPathAfterMissingProbe = Effect.fn("recheckPathAfterMissingProbe")(function* (
+      instance: ProviderInstance,
+      provider: ServerProvider,
+    ) {
+      if (!provider.enabled || provider.installed || instance.driverKind === "acpRegistry") return;
+      const now = yield* Clock.currentTimeMillis;
+      if (now - (yield* Ref.get(lastPathRereadAt)) < 60_000) return;
+      if (yield* Ref.getAndSet(pathRecheckRunning, true)) return;
+      yield* rebuildMissingAfterPathChange().pipe(
+        Effect.ignoreCause({ log: true }),
+        Effect.ensuring(Ref.set(pathRecheckRunning, false)),
+        Effect.forkIn(serviceScope),
+      );
     });
 
     type RefreshAllCompletion = Deferred.Deferred<ReadonlyArray<ServerProvider>>;
@@ -713,7 +731,7 @@ export const layer = Layer.effect(
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
     ) {
-      yield* rebuildMissingAfterPathChange(instanceId);
+      yield* rebuildMissingAfterPathChange();
       yield* syncLiveSourcesAndContinue;
       const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
       if (!instance) {
@@ -868,7 +886,10 @@ export const layer = Layer.effect(
         for (const [, instance] of newlyAdded) {
           const source = buildSnapshotSource(instance);
           yield* Stream.runForEach(source.streamChanges, (provider) =>
-            correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
+            correlateSnapshotWithSource(source, provider).pipe(
+              Effect.flatMap(syncProvider),
+              Effect.andThen(recheckPathAfterMissingProbe(instance, provider)),
+            ),
           ).pipe(Effect.forkScoped);
         }
         yield* Effect.yieldNow;
