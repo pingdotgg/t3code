@@ -15,8 +15,7 @@ function humanizeSlug(slug: string): string {
 export function resolveProviderInstanceDisplayName(
   snapshot: Pick<ServerProvider, "instanceId" | "driver" | "displayName">,
 ): string {
-  // Match provider settings: the configured name wins, even when it equals the
-  // driver label, and an unnamed instance shows the driver label.
+  // Must match the provider settings label so the picker and settings agree.
   return (
     snapshot.displayName?.trim() ||
     PROVIDER_DISPLAY_NAMES[snapshot.driver] ||
