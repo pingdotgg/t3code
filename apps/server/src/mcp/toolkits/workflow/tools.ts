@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure, TrimmedNonEmptyString } from "@t3tools/contracts";
+import { OrchestratorMcpFailure, TrimmedNonEmptyString, WorkflowHook } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
@@ -8,11 +8,11 @@ import * as Workflows from "../../../workflows/Workflows.ts";
 import { WorkflowRun, WorkflowRunStatus, WorkflowStep } from "../../../workflows/WorkflowStore.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
-export const WORKFLOW_READ_ACTIONS = ["list", "read", "questions"] as const;
+export const WORKFLOW_READ_ACTIONS = ["list", "read", "questions", "hooks"] as const;
 
 const WorkflowTool = Tool.make("t3_workflow", {
   description:
-    "Durable workflow runs on this server. start: `workflow`, `input`, `idempotencyKey` (same key, same run). list: runs, by `status`. read: one run and its steps. questions: what runs ask a person. signal: wake a wait with `value`, addressed by `runId` and `wait`, or by `workflow` and `key`; answers a question as `{choice, reason?}`. resume: run a paused run's failed step again. cancel.",
+    "Durable workflow runs on this server. start: `workflow`, `input`, `idempotencyKey` (same key, same run). list: runs, by `status`. read: one run and its steps. questions: what runs ask a person. hooks: the URL paths that start runs. signal: wake a wait with `value`, addressed by `runId` and `wait`, or by `workflow` and `key`; answers a question as `{choice, reason?}`. resume: run a paused run's failed step again. cancel.",
   parameters: Schema.Struct({
     action: Schema.Literals([...WORKFLOW_READ_ACTIONS, "start", "signal", "resume", "cancel"]),
     workflow: Schema.optional(TrimmedNonEmptyString),
@@ -35,6 +35,7 @@ const WorkflowTool = Tool.make("t3_workflow", {
     steps: Schema.optional(Schema.Array(WorkflowStep)),
     runs: Schema.optional(Schema.Array(WorkflowRun)),
     questions: Schema.optional(Schema.Array(Workflows.WorkflowQuestion)),
+    hooks: Schema.optional(Schema.Array(WorkflowHook)),
     delivery: Schema.optional(Schema.Literals(["delivered", "buffered"])),
   }),
   failure: OrchestratorMcpFailure,

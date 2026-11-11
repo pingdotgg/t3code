@@ -136,6 +136,10 @@ export class WorkflowStore extends Context.Service<
     readonly mailExpire: Effect.Effect<void>;
     readonly run: (runId: string) => Effect.Effect<RunRow | undefined>;
     readonly runs: (status: WorkflowRunStatus | undefined) => Effect.Effect<ReadonlyArray<RunRow>>;
+    readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
+    readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
+    /** The hook's token: the one kept for it, or `fresh` from now on. */
+    readonly hookToken: (hookId: string, fresh: string) => Effect.Effect<string>;
     readonly steps: (runId: string) => Effect.Effect<ReadonlyArray<StepRow>>;
   }
 >()("t3/workflows/WorkflowStore") {}
@@ -378,6 +382,28 @@ const make = Effect.gen(function* () {
             `
       ).pipe(Effect.orDie);
     }),
+    triggerNext: Effect.fn("WorkflowStore.triggerNext")(function* (triggerId) {
+      const rows = yield* sql<{ next_at: string }>`
+        SELECT next_at FROM workflow_triggers WHERE trigger_id = ${triggerId}
+      `.pipe(Effect.orDie);
+      return rows[0]?.next_at;
+    }),
+    triggerSet: Effect.fn("WorkflowStore.triggerSet")(function* (triggerId, nextAt) {
+      yield* sql`
+        INSERT INTO workflow_triggers (trigger_id, next_at) VALUES (${triggerId}, ${nextAt})
+        ON CONFLICT (trigger_id) DO UPDATE SET next_at = excluded.next_at
+      `.pipe(Effect.orDie);
+    }),
+    hookToken: Effect.fn("WorkflowStore.hookToken")(function* (hookId, fresh) {
+      yield* sql`
+        INSERT INTO workflow_hooks (hook_id, token) VALUES (${hookId}, ${fresh})
+        ON CONFLICT (hook_id) DO NOTHING
+      `;
+      const rows = yield* sql<{ token: string }>`
+        SELECT token FROM workflow_hooks WHERE hook_id = ${hookId}
+      `;
+      return rows[0]?.token ?? fresh;
+    }, Effect.orDie),
     steps: Effect.fn("WorkflowStore.steps")(function* (runId) {
       return yield* sql<StepRow>`
         SELECT name, kind, status, attempts, detail, thread_id, started_at, ended_at
