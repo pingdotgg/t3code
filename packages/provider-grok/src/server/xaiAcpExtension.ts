@@ -11,7 +11,6 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
-const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
 export const xAiRateLimitedErrorCode = -32003;
 const completedXAiPromptIdLimit = 128;
 
@@ -550,7 +549,10 @@ function resolveXAiAcpToolTitle(toolCall: AcpToolCallState): string | undefined 
     nonEmptyString(rawInput?.command) ??
     nonEmptyString(unknownRecord(toolCall.data.rawOutput)?.command);
   if (command !== undefined) {
-    return command.length > 80 ? `${command.slice(0, 77)}...` : command;
+    if (command.length <= 80) return command;
+    const splitsPair =
+      /[\uD800-\uDBFF]/.test(command.charAt(76)) && /[\uDC00-\uDFFF]/.test(command.charAt(77));
+    return `${command.slice(0, splitsPair ? 76 : 77)}...`;
   }
   return nonEmptyString(toolCall.title);
 }
@@ -1257,9 +1259,6 @@ function promptResponseFromXAi(
   const meta: Record<string, Schema.Json> = {
     sessionId: notification.sessionId,
   };
-  if (notification.stopReason === undefined) {
-    meta[xAiStopReasonMissingMetaKey] = true;
-  }
   if (notification.promptId !== undefined) {
     meta.promptId = notification.promptId;
     meta.requestId = notification.promptId;
@@ -1289,14 +1288,19 @@ function xAiPromptFailure(
       code: -32603,
       errorMessage: "Grok ended the turn with an error.",
       operation: "receive-response",
-      ...(agentResult === undefined ? {} : { cause: new XAiPromptFailureText(agentResult) }),
+      ...(agentResult === undefined
+        ? {}
+        : { cause: new XAiPromptFailureText({ message: agentResult }) }),
     });
   }
   return null;
 }
 
 /** Keep unbounded provider text out of structured attributes; read only at presentation. */
-export class XAiPromptFailureText extends Error {}
+export class XAiPromptFailureText extends Schema.TaggedError<XAiPromptFailureText>()(
+  "XAiPromptFailureText",
+  { message: Schema.String },
+) {}
 
 const registerXAiPromptCompletionFallback = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
@@ -1524,10 +1528,9 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
           .pipe(Effect.forkChild);
         return yield* Effect.raceFirst(
           Fiber.join(promptRpcFiber).pipe(
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.succeed(cancelledResponse)
-                : Effect.failCause(cause),
+            Effect.catchCauseIf(
+              (cause) => Cause.hasInterruptsOnly(cause),
+              (_cause) => Effect.succeed(cancelledResponse),
             ),
           ),
           Deferred.await(fallback.deferred),

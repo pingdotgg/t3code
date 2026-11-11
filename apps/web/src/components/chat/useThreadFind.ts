@@ -180,11 +180,13 @@ export function useThreadFind({
       }));
     }
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reruns a live refresh that was coalesced behind a server search once that search settles
   useEffect(() => {
     if (!refreshAfterSearchRef.current || remote.isPending) return;
     refreshAfterSearchRef.current = false;
     if (!remote.error) refreshLiveResults();
   }, [remote.isPending, remote.error]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a debounce timer to refresh find results when streamed thread content changes
   useEffect(() => {
     if (lastContentRef.current === content) return;
     lastContentRef.current = content;
@@ -194,6 +196,7 @@ export function useThreadFind({
       refreshLiveResults();
     }, 300);
   }, [content, isOpen, state.query]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending refresh timer when the thread, open state or query changes
   useEffect(() => {
     if (!isOpen || threadKey === null || !state.query.trim()) return;
     return () => {
@@ -224,7 +227,7 @@ export function useThreadFind({
   };
 }
 
-interface TimelineFields {
+export interface TimelineFields {
   readonly findOpen: boolean;
   readonly findExpanded: boolean;
   readonly findQuery: string;
