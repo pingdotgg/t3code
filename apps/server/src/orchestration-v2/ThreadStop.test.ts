@@ -796,6 +796,112 @@ it.effect("a message the user sends after Stop releases the held queue; an agent
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each(["auto", "steer"] as const)(
+  "an MCP %s send preserves its intent while the target run is stopping",
+  (mode) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const threadId = ThreadId.make(`thread:stop-mcp-send:${mode}`);
+      yield* createWatchingThread(threadId, 6);
+      yield* send(threadId, "active", "start_immediately");
+      const initial = yield* orchestrator.getThreadProjection(threadId);
+      const run = initial.runs[0]!;
+      const providerSessionId = ProviderSessionId.make("session:stop-mcp-send");
+      const now = yield* DateTime.now;
+      yield* projections.apply({
+        id: EventId.make("event:stop-mcp-send:session"),
+        type: "provider-session.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerSessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:stop-mcp-send:provider-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...initial.providerThreads[0]!, providerSessionId },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:stop-mcp-send:running"),
+        type: "run.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "running", startedAt: now },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:stop-mcp-send:turn"),
+        type: "provider-turn.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make("provider-turn:stop-mcp-send"),
+          providerThreadId: run.providerThreadId!,
+          nodeId: run.rootNodeId!,
+          runAttemptId: run.activeAttemptId!,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      yield* send(threadId, "queued before the stop", "queue_after_active");
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop-mcp-send"),
+        threadId,
+      });
+      assert.deepEqual((yield* threadState(threadId)).runs, ["running", "queued:held"]);
+
+      const input = {
+        projectId: ProjectId.make("project:thread-stop"),
+        commandId: CommandId.make("command:stop-mcp-send"),
+        threadId,
+        messageId: MessageId.make("message:stop-mcp-send"),
+        text: "Follow up after Stop",
+        attachments: [],
+        mode,
+        createdBy: "agent",
+        creationSource: "mcp",
+      } as const;
+      if (mode === "steer") {
+        const error = yield* threads.sendToThread(input).pipe(Effect.flip);
+        assert.equal(error._tag, "OrchestratorDispatchError");
+        assert.deepEqual((yield* threadState(threadId)).runs, ["running", "queued:held"]);
+        return;
+      }
+
+      const result = yield* threads.sendToThread(input);
+      assert.equal(result.delivery, "queued");
+      assert.equal(result.run.status, "queued");
+      assert.isTrue(result.run.queueHeld);
+      assert.deepEqual((yield* threadState(threadId)).runs, [
+        "running",
+        "queued:held",
+        "queued:held",
+      ]);
+      const replay = yield* threads.sendToThread(input);
+      assert.equal(replay.run.id, result.run.id);
+      assert.equal(replay.delivery, "queued");
+      assert.lengthOf((yield* threads.getThreadProjection(threadId)).messages, 3);
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "thread.stop ends an idle thread's watches and accepts a thread with nothing to stop",
   () =>
