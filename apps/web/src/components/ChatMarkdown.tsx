@@ -19,6 +19,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
+  remarkAssistantInsights,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -37,6 +38,7 @@ import {
   MessageSquareWarningIcon,
   OctagonAlertIcon,
   PresentationIcon,
+  StarIcon,
   TriangleAlertIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -150,6 +152,8 @@ import {
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -224,6 +228,7 @@ import { reportMarkdownActionFailure } from "./chat/markdownActionFailure";
 const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
 interface ChatMarkdownProps {
+  renderInsights?: boolean;
   /** Compact markdown transforms remove blocks before rendering inside a label. */
   inline?: boolean;
   text: string;
@@ -324,13 +329,18 @@ function CodexArtifactTemplateCard(props: {
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 
 function orderedListGutterStyle(
-  itemCount: number,
+  itemValues: ReadonlyArray<unknown>,
   start: unknown,
 ): { "--list-gutter": string } | undefined {
   const parsedStart = Number.parseInt(String(start ?? 1), 10);
-  const firstNumber = Number.isNaN(parsedStart) ? 1 : parsedStart;
-  const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
-  const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
+  let number = Number.isNaN(parsedStart) ? 1 : parsedStart;
+  let markerWidth = String(number).length;
+  for (const value of itemValues) {
+    const written = Number.parseInt(String(value ?? ""), 10);
+    if (!Number.isNaN(written)) number = written;
+    markerWidth = Math.max(markerWidth, String(number).length);
+    number += 1;
+  }
   if (markerWidth <= 1) return undefined;
   return { "--list-gutter": `${markerWidth + 2}ch` };
 }
@@ -339,6 +349,12 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
   string,
   { label: string; Icon: typeof InfoIcon; borderClassName: string; titleClassName: string }
 > = {
+  insight: {
+    label: "Insight",
+    Icon: StarIcon,
+    borderClassName: "border-info",
+    titleClassName: "text-info",
+  },
   note: {
     label: "Note",
     Icon: InfoIcon,
@@ -611,6 +627,7 @@ function useChatMarkdownState({
               sshTarget: null,
               remoteOpenTargets: undefined,
               isDesktopRenderer: window.desktopBridge !== undefined,
+              hostEnvironmentId: appAtomRegistry.get(hostEnvironmentIdAtom),
             }).mode !== "local-exec"
           ) {
             description = `The file was not found on ${target.label} at ${error.checkedPath ?? error.resource.path}.`;
@@ -1024,10 +1041,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   ol: function MarkdownOrderedList({ node, start, style, ...props }) {
-    const itemCount =
-      node?.children?.filter((child) => child.type === "element" && child.tagName === "li")
-        .length ?? 0;
-    const gutterStyle = orderedListGutterStyle(itemCount, start);
+    const itemValues =
+      node?.children?.flatMap((child) =>
+        child.type === "element" && child.tagName === "li" ? [child.properties.value] : [],
+      ) ?? [];
+    const gutterStyle = orderedListGutterStyle(itemValues, start);
     return (
       <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
     );
@@ -1690,6 +1708,8 @@ const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
 const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();
 
 // One combined list per pair, so a stable extra list shares a renderer and its parse cache.
+const INSIGHT_REMARK_PLUGINS: PluggableList = [remarkAssistantInsights];
+
 function withExtraPlugins(shared: PluggableList, extra: PluggableList): PluggableList {
   if (extra.length === 0) return shared;
   let byShared = combinedPlugins.get(extra);
@@ -1756,10 +1776,12 @@ function ChatMarkdown({
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  renderInsights = false,
   ...props
 }: ChatMarkdownProps) {
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
     useChatMarkdownState({ text, inline, ...props });
+  const hasInsights = renderInsights && text.includes("★ Insight");
   // Streaming re-renders only the last block; offsets for task edits need the whole text.
   const streamingBlocks =
     props.isStreaming === true &&
@@ -1770,6 +1792,7 @@ function ChatMarkdown({
       : null;
   const incrementalParsing =
     props.isStreaming === true &&
+    !hasInsights &&
     streamingBlocks === null &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
@@ -1791,7 +1814,12 @@ function ChatMarkdown({
   const uncachedPlugins = incrementalParsing;
   const remarkPlugins = incrementalParsing
     ? [...sharedRemarkPlugins, ...extraRemarkPlugins, createIncrementalMarkdownPlugin()]
-    : withExtraPlugins(sharedRemarkPlugins, extraRemarkPlugins);
+    : withExtraPlugins(
+        hasInsights
+          ? withExtraPlugins(INSIGHT_REMARK_PLUGINS, sharedRemarkPlugins)
+          : sharedRemarkPlugins,
+        extraRemarkPlugins,
+      );
   const blocks = streamingBlocks ?? [text];
 
   return (
