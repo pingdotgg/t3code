@@ -2085,13 +2085,15 @@ const fakeCursorBackend = Effect.gen(function* () {
           const clientMessage = Buffer.from(appended?.toString() ?? "", "hex");
           const success = protoPath(clientMessage, [2, 10, 1]);
           if (success !== undefined) {
-            const context = protoGet(success, 1) ?? Buffer.alloc(0);
+            const context = protoGet(success, 1);
             Deferred.doneUnsafe(
               requestContext,
-              Effect.succeed({
-                commitAttributionMessage: protoGet(context, 26)?.toString(),
-                prAttributionMessage: protoGet(context, 27)?.toString(),
-              }),
+              context === undefined
+                ? Effect.die(new Error("RequestContextSuccess carried no RequestContext"))
+                : Effect.succeed({
+                    commitAttributionMessage: protoGet(context, 26)?.toString(),
+                    prAttributionMessage: protoGet(context, 27)?.toString(),
+                  }),
             );
           }
           response.setHeader("content-type", "application/proto");
