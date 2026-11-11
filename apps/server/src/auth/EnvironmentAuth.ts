@@ -1371,7 +1371,12 @@ export const make = Effect.gen(function* () {
 
   const listMcpClientSessions: EnvironmentAuth["Service"]["listMcpClientSessions"] = () =>
     listSessions().pipe(
-      Effect.map((active) => active.filter((session) => session.subject === MCP_CLIENT_SUBJECT)),
+      Effect.map((active) =>
+        active.filter(
+          (session) =>
+            session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token",
+        ),
+      ),
       Effect.withSpan("EnvironmentAuth.listMcpClientSessions"),
     );
 

@@ -398,6 +398,33 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
+    it.effect("keeps MCP-subject browser cookies out of MCP listing and revocation", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const pairing = yield* serverAuth.createPairingLink({ subject: "mcp-client" });
+        const browser = yield* serverAuth.createBrowserSession(pairing.credential, requestMetadata);
+        const browserSession = yield* sessions.verify(browser.sessionToken);
+        const mcp = yield* serverAuth.issueMcpClientSession({
+          label: "Bot",
+          access: "read-only",
+          peerLink: false,
+          client: requestMetadata,
+        });
+
+        expect(browserSession.subject).toBe("mcp-client");
+        expect((yield* serverAuth.listMcpClientSessions()).map((entry) => entry.sessionId)).toEqual(
+          [mcp.sessionId],
+        );
+        expect(yield* serverAuth.revokeMcpClientSession(browserSession.sessionId)).toBe(false);
+        expect((yield* sessions.verify(browser.sessionToken)).sessionId).toBe(
+          browserSession.sessionId,
+        );
+        expect(yield* serverAuth.revokeMcpClientSession(mcp.sessionId)).toBe(true);
+        expect(yield* serverAuth.listMcpClientSessions()).toEqual([]);
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
     it.effect("narrows seeded desktop grants to the requested scopes", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

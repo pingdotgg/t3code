@@ -235,6 +235,7 @@ export function formatIssuedMcpClient(
       `Token: ${issued.token}`,
       `Expires at: ${toIsoString(issued.expiresAt)}`,
       "Send it to the environment's /mcp URL as `Authorization: Bearer <token>`.",
+      "Use HTTPS, localhost, or an authenticated encrypted tunnel to protect the token.",
     ].join(newline) + newline
   );
 }

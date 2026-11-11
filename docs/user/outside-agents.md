@@ -126,6 +126,7 @@ t3 auth mcp issue --access full-access --label "Grok Bot" --token-only
 ```
 
 Give the agent the MCP URL and send the token as `Authorization: Bearer <token>`.
+Use HTTPS, localhost, or an authenticated encrypted tunnel to protect the token.
 `--access` takes the same levels as the sign-in page: `read-only`,
 `approval-required` (Supervised), `auto-accept-edits`, `auto` or `full-access`.
 The token lasts 30 days unless you pass `--ttl`, such as `--ttl 90d`. Anyone who
