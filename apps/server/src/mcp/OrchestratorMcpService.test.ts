@@ -1974,6 +1974,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       let delegated = false;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           hasReceipt: () => Effect.succeed(false),
           assertProviderInstanceEnabled: () => Effect.void,
