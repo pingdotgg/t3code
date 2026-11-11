@@ -716,7 +716,10 @@ export default function DiffPanel({
   const fileTreeEntries = diffFileTreeEntries(renderableFiles.filter(isFileShown));
   const codeViewReveal = useCodeViewFileReveal(
     scrollScopeKey,
-    initialScrollPosition && { id: initialScrollPosition.fileKey, offset: initialScrollPosition.offset },
+    initialScrollPosition && {
+      id: initialScrollPosition.fileKey,
+      offset: initialScrollPosition.offset,
+    },
   );
   const revealDiffFile = (filePath: string) => {
     const index = renderableFileEntries.findIndex(

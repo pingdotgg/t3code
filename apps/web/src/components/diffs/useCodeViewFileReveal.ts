@@ -204,10 +204,7 @@ export function createCodeViewFileReveal(restore?: { id: string; offset: number 
 }
 
 /** A new `scopeKey` starts a new reveal, restoring `restore` if given. */
-export function useCodeViewFileReveal(
-  scopeKey?: string,
-  restore?: { id: string; offset: number },
-) {
+export function useCodeViewFileReveal(scopeKey?: string, restore?: { id: string; offset: number }) {
   const [state, setState] = useState(() => ({
     scopeKey,
     reveal: createCodeViewFileReveal(restore),
