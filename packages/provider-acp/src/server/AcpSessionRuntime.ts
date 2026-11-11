@@ -2071,19 +2071,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                   Effect.tap((response) =>
                     Ref.get(configOptionUpdates).pipe(
                       Effect.flatMap((updatesNow) =>
-                        updatesNow !== updatesBefore
-                          ? Effect.void
-                          : updateConfigOptions(response).pipe(
-                              Effect.andThen(
-                                existing?.category === "mode" && typeof value === "string"
-                                  ? updateCurrentModeId(
-                                      parseSessionModeState({
-                                        configOptions: response.configOptions,
-                                      })?.currentModeId ?? value,
-                                    )
-                                  : Effect.void,
-                              ),
-                            ),
+                        updatesNow === updatesBefore ? updateConfigOptions(response) : Effect.void,
                       ),
                     ),
                   ),
@@ -2811,30 +2799,9 @@ const handleSessionUpdate =
     }
     const parsed = parseSessionUpdateEvent(params);
     if (parsed.modeId) {
-      const modeId = (yield* Ref.updateAndGet(modeStateRef, (current) =>
+      yield* Ref.update(modeStateRef, (current) =>
         current === undefined ? current : updateModeState(current, parsed.modeId!),
-      ))?.currentModeId;
-      // A mode-only update leaves the mode option stale, and setConfigOption
-      // skips a value the option already shows, so reapplying the mode would send nothing.
-      const configOptions = yield* SubscriptionRef.get(configOptionsRef);
-      if (
-        modeId !== undefined &&
-        configOptions.some(
-          (option) =>
-            option.category === "mode" &&
-            option.type === "select" &&
-            option.currentValue !== modeId,
-        )
-      ) {
-        yield* SubscriptionRef.set(
-          configOptionsRef,
-          configOptions.map((option) =>
-            option.category === "mode" && option.type === "select"
-              ? { ...option, currentValue: modeId }
-              : option,
-          ),
-        );
-      }
+      );
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
