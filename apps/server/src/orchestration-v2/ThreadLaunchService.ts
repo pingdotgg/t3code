@@ -166,6 +166,19 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
   }
 }
 
+export class ThreadLaunchBranchExistsError extends Schema.TaggedError<ThreadLaunchBranchExistsError>()(
+  "ThreadLaunchBranchExistsError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    branch: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Branch "${this.branch}" already exists in project "${this.projectTitle}".`;
+  }
+}
+
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
@@ -178,7 +191,7 @@ export class ThreadLaunchService extends Context.Service<
     /** Check before creation for early errors; launch otherwise accepts and reports base failures inside the thread. */
     readonly checkWorktreeBase: (
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
-    ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
+    ) => Effect.Effect<void, ThreadLaunchBaseRefError | ThreadLaunchBranchExistsError>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -263,13 +276,23 @@ const make = Effect.gen(function* () {
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
     const strategy = input.workspaceStrategy;
+    if (strategy.type !== "worktree") return;
+    const { baseRef, branch } = strategy;
     // `:/text` is a commit search, which cannot be asked for a commit type.
-    if (strategy.type !== "worktree" || strategy.baseRef.startsWith(":")) return;
-    const { baseRef } = strategy;
-    const unresolved = yield* Effect.gen(function* () {
+    const checkBase = !baseRef.startsWith(":");
+    if (!checkBase && branch === undefined) return;
+    // A failure to read the project or git lets the launch through; provisioning reports it.
+    const refusal = yield* Effect.gen(function* () {
       const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
       if (project === undefined) return undefined;
       const cwd = project.workspaceRoot;
+      if (branch !== undefined && (yield* git.listLocalBranchNames(cwd)).includes(branch))
+        return new ThreadLaunchBranchExistsError({
+          projectId: project.id,
+          projectTitle: project.title,
+          branch,
+        });
+      if (!checkBase) return undefined;
       // `git worktree add` reads `-` as the previous checkout.
       if (yield* git.hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef }))
         return undefined;
@@ -280,15 +303,15 @@ const make = Effect.gen(function* () {
         return undefined;
       // git worktree add accepts remote-tracking branches; let Git decide when any matching ref exists.
       if (yield* git.hasRefNamed({ cwd, refName: baseRef })) return undefined;
-      return (yield* git.hasCommit({ cwd, refName: "HEAD" })) ? project : undefined;
-    }).pipe(Effect.orElseSucceed(() => undefined));
-    if (unresolved !== undefined)
-      return yield* new ThreadLaunchBaseRefError({
-        projectId: unresolved.id,
-        projectTitle: unresolved.title,
-        workspaceRoot: unresolved.workspaceRoot,
+      if (!(yield* git.hasCommit({ cwd, refName: "HEAD" }))) return undefined;
+      return new ThreadLaunchBaseRefError({
+        projectId: project.id,
+        projectTitle: project.title,
+        workspaceRoot: cwd,
         baseRef,
       });
+    }).pipe(Effect.orElseSucceed(() => undefined));
+    if (refusal !== undefined) return yield* refusal;
   });
 
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
