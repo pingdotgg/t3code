@@ -70,6 +70,7 @@ export const BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL = "desktop:bootstrap-ssh-beare
 export const FETCH_SSH_SESSION_STATE_CHANNEL = "desktop:fetch-ssh-session-state";
 export const SSH_PASSWORD_PROMPT_CHANNEL = "desktop:ssh-password-prompt";
 export const RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL = "desktop:resolve-ssh-password-prompt";
+export const SSH_PASSWORD_PROMPT_SETTLED_CHANNEL = "desktop:ssh-password-prompt-settled";
 export const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 export const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
 export const SET_TAILSCALE_SERVE_ENABLED_CHANNEL = "desktop:set-tailscale-serve-enabled";
