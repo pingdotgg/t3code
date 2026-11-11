@@ -72,7 +72,7 @@ export const PreviewAutomationProfile = Schema.Struct({
 export type PreviewAutomationProfile = typeof PreviewAutomationProfile.Type;
 
 const VISIBLE_DESCRIPTION =
-  "True while any client streams this tab's live view. The desktop app's own webview does not count.";
+  "True while a client shows this tab: a streamed live view, or the desktop app's own browser panel.";
 
 export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,

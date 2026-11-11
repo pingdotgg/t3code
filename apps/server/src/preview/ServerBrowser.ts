@@ -762,6 +762,7 @@ const make = Effect.gen(function* () {
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
     tab.closing = true;
+    tab.viewerAttached?.resolve();
     clearAbortedNavigation(tab);
     // A desktop page outlives the connection unless its session closed with it.
     const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
@@ -2110,7 +2111,7 @@ const make = Effect.gen(function* () {
                   force: reveal === true,
                 }),
               );
-              // Only an explicit show is sure to reach a client, and desktop webviews never attach viewers.
+              // Only an explicit show is sure to reach a client; desktop tabs are visible without a viewer.
               if (reveal === true && tab.viewers.size === 0 && tab.desktop === null)
                 shown = awaitViewer(
                   tab,
