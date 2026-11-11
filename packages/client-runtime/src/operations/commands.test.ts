@@ -35,6 +35,7 @@ import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
   type PreparedConnection,
+  type SupervisorConnectionState,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
@@ -60,11 +61,11 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
-const CONNECTED_STATE = {
+const CONNECTED_STATE: SupervisorConnectionState = {
   ...AVAILABLE_CONNECTION_STATE,
   desired: true,
   phase: "connected",
-} as const;
+};
 
 const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(function* (input: {
   readonly commands: OrchestrationV2Command[];
@@ -457,7 +458,10 @@ describe("V2 environment commands", () => {
       expect((yield* Fiber.join(optedOut))._tag).toBe("RpcClientError");
 
       const waiting = yield* send(true);
-      yield* SubscriptionRef.set(supervisor.state, { ...CONNECTED_STATE, phase: "backoff" });
+      yield* SubscriptionRef.set(supervisor.state, {
+        ...CONNECTED_STATE,
+        phase: "backoff" as const,
+      });
       yield* TestClock.adjust("2 minutes");
       expect(waiting.pollUnsafe()).toBeUndefined();
       yield* SubscriptionRef.set(supervisor.state, AVAILABLE_CONNECTION_STATE);
