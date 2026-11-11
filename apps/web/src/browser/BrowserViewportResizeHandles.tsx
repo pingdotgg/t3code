@@ -1,5 +1,3 @@
-"use client";
-
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,

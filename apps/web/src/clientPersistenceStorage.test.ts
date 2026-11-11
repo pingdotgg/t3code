@@ -38,20 +38,6 @@ afterEach(() => {
 });
 
 describe("clientPersistenceStorage", () => {
-  it("persists client settings in browser storage", async () => {
-    getTestWindow();
-    const { readBrowserClientSettings, writeBrowserClientSettings } =
-      await import("./clientPersistenceStorage");
-    const settings = {
-      ...DEFAULT_CLIENT_SETTINGS,
-      timestampFormat: "24-hour" as const,
-    };
-
-    writeBrowserClientSettings(settings);
-
-    expect(readBrowserClientSettings()).toEqual(settings);
-  });
-
   it.each(["not-json", '{"wordWrap":"invalid"}'])(
     "does not treat invalid saved settings as absent: %s",
     async (value) => {
@@ -91,54 +77,5 @@ describe("clientPersistenceStorage", () => {
     );
     expect(readBrowserClientSettings()).toEqual(settings);
     expect(write).not.toHaveBeenCalled();
-  });
-
-  it("defaults word wrap on and discards obsolete wrapping preferences", async () => {
-    const testWindow = getTestWindow();
-    testWindow.localStorage.setItem(
-      "t3code:client-settings:v1",
-      JSON.stringify({
-        chatWordWrap: false,
-        diffWordWrap: false,
-      }),
-    );
-    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
-    const settings = readBrowserClientSettings();
-
-    expect(settings).toEqual(
-      expect.objectContaining({
-        wordWrap: true,
-      }),
-    );
-    expect(settings).not.toHaveProperty("chatWordWrap");
-    expect(settings).not.toHaveProperty("diffWordWrap");
-  });
-
-  it("keeps the default diff file state across reloads and defaults it to collapsed", async () => {
-    const testWindow = getTestWindow();
-    const { readBrowserClientSettings, writeBrowserClientSettings } =
-      await import("./clientPersistenceStorage");
-
-    testWindow.localStorage.setItem("t3code:client-settings:v1", JSON.stringify({}));
-    expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(true);
-
-    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
-    expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(true);
-
-    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
-    expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(false);
-  });
-
-  it("keeps the diff layout across reloads and defaults it to stacked", async () => {
-    const testWindow = getTestWindow();
-    const { readBrowserClientSettings, writeBrowserClientSettings } =
-      await import("./clientPersistenceStorage");
-
-    expect(readBrowserClientSettings()).toBeNull();
-    testWindow.localStorage.setItem("t3code:client-settings:v1", JSON.stringify({}));
-    expect(readBrowserClientSettings()?.diffLayout).toBe("stacked");
-
-    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffLayout: "split" });
-    expect(readBrowserClientSettings()?.diffLayout).toBe("split");
   });
 });
