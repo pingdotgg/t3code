@@ -844,16 +844,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           return true;
         }
         if (probeEvent._tag === "TimedOut") {
-          yield* stopProbe;
-          // A long suspension leaves the socket suspect even when the network
-          // reports offline, so it is replaced like a silent one.
-          if (longResume) return true;
           if (toleratesMiss) {
             toleratesMiss = false;
+            yield* Fiber.interrupt(probe);
             probe = yield* Effect.forkChild(lease.session.probe);
             deadline = (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(probeTimeout);
             continue;
           }
+          yield* stopProbe;
+          // A long suspension leaves the socket suspect even when the network
+          // reports offline, so it is replaced like a silent one.
+          if (longResume) return true;
           return yield* new ConnectionTransientError({
             reason: "timeout",
             detail: `${target.label} did not respond to a connection health check.`,
