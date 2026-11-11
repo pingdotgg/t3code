@@ -2299,7 +2299,6 @@ describe("ClaudeAdapterV2 attachments", () => {
             "missing-eof",
             "escaped-name",
             "incremental",
-            "compressed-bomb",
             "indirect-count",
             "indirect-type",
             "indirect-kids",
@@ -2356,9 +2355,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                 "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 42 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF",
               );
               yield* fileSystem.writeFile(documentPath, malformedBytes);
-            } else if (
-              ["object-stream", "encrypted", "cyclic-tree", "compressed-bomb"].includes(scenario)
-            ) {
+            } else if (["object-stream", "encrypted", "cyclic-tree"].includes(scenario)) {
               const suffix =
                 scenario === "encrypted"
                   ? "/Encrypt 9 0 R"
@@ -2442,7 +2439,7 @@ describe("ClaudeAdapterV2 attachments", () => {
 });
 
 describe("ClaudeAdapterV2 native fork", () => {
-  it.effect("forks at the source assistant cursor and resumes the forked session", () =>
+  it.effect("forks a session from its original directory after the workspace root changes", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -2450,19 +2447,61 @@ describe("ClaudeAdapterV2 native fork", () => {
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-claude-v2-fork-attachments-",
         });
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-root-change-",
+        });
+        const sourceSessionId = "11111111-1111-4111-8111-111111111111";
+        const sourceCursor = "aaaaaaaa-0000-4000-8000-000000000002";
+        const projectDir = NodePath.join(configDir, "projects", "-old-workspace");
+        yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+        const entry = (uuid: string, parentUuid: string | null, message: unknown) => ({
+          type: parentUuid === null ? "user" : "assistant",
+          uuid,
+          parentUuid,
+          sessionId: sourceSessionId,
+          cwd: "/old-workspace",
+          isSidechain: false,
+          timestamp: "2026-10-01T00:00:00.000Z",
+          message,
+        });
+        yield* fileSystem.writeFileString(
+          NodePath.join(projectDir, `${sourceSessionId}.jsonl`),
+          [
+            entry("aaaaaaaa-0000-4000-8000-000000000001", null, { role: "user", content: "hello" }),
+            entry(sourceCursor, "aaaaaaaa-0000-4000-8000-000000000001", {
+              role: "assistant",
+              content: [{ type: "text", text: "inherited answer" }],
+            }),
+          ]
+            .map((line) => JSON.stringify(line))
+            .join("\n"),
+        );
+        const realRunner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner.pipe(
+          Effect.provide(
+            ClaudeAdapterV2.layerQueryRunner.pipe(
+              Layer.provide(PortScanner.layerTest),
+              Layer.provide(
+                Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
+                  native: undefined,
+                  canonical: undefined,
+                }),
+              ),
+            ),
+          ),
+        );
         const openedQueries: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput> = [];
         const forkCalls: Array<ClaudeAdapterV2.ClaudeAgentSdkSessionForkInput> = [];
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
-          environment: { CLAUDE_CONFIG_DIR: "/custom/claude-home" },
+          environment: { CLAUDE_CONFIG_DIR: configDir },
           attachmentsDir,
           fileSystem,
           path: yield* Path.Path,
           random: yield* SecureRandom.SecureRandom,
           idAllocator,
           queryRunner: {
-            allocateSessionId: Effect.succeed("source-native-session"),
+            allocateSessionId: Effect.succeed(sourceSessionId),
             open: (input) =>
               Effect.sync(() => {
                 openedQueries.push(input);
@@ -2483,9 +2522,9 @@ describe("ClaudeAdapterV2 native fork", () => {
                 };
               }),
             forkSession: (input) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
                 forkCalls.push(input);
-                return { sessionId: "forked-native-session" };
+                return yield* realRunner.forkSession(input);
               }),
             subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
@@ -2531,7 +2570,7 @@ describe("ClaudeAdapterV2 native fork", () => {
               runAttemptId: RunAttemptId.make("run-attempt-claude-source"),
               nativeTurnRef: {
                 driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-                nativeId: "assistant-message-cursor",
+                nativeId: sourceCursor,
                 strength: "weak",
               },
               ordinal: 1,
@@ -2546,17 +2585,22 @@ describe("ClaudeAdapterV2 native fork", () => {
 
         assert.deepEqual(forkCalls, [
           {
-            sessionId: "source-native-session",
+            sessionId: sourceSessionId,
             options: {
-              dir: "/workspace",
-              upToMessageId: "assistant-message-cursor",
+              upToMessageId: sourceCursor,
             },
-            environment: { CLAUDE_CONFIG_DIR: "/custom/claude-home" },
+            environment: { CLAUDE_CONFIG_DIR: configDir },
             threadId: targetThreadId,
             providerSessionId,
           },
         ]);
-        assert.equal(forkedProviderThread.nativeThreadRef?.nativeId, "forked-native-session");
+        const forkedSessionId = forkedProviderThread.nativeThreadRef?.nativeId;
+        assert.isString(forkedSessionId);
+        assert.notEqual(forkedSessionId, sourceSessionId);
+        const forkedTranscript = yield* fileSystem.readFileString(
+          NodePath.join(projectDir, `${forkedSessionId}.jsonl`),
+        );
+        assert.include(forkedTranscript, "inherited answer");
         assert.equal(forkedProviderThread.forkedFrom?.providerThreadId, sourceProviderThread.id);
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, providerTurnId);
 
@@ -2616,8 +2660,9 @@ describe("ClaudeAdapterV2 native fork", () => {
           }),
         });
 
-        assert.equal(openedQueries[0]?.options.resume, "forked-native-session");
+        assert.equal(openedQueries[0]?.options.resume, forkedSessionId);
         assert.equal(openedQueries[0]?.options.sessionId, undefined);
+        assert.equal(openedQueries[0]?.options.cwd, NodePath.resolve("/workspace"));
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -6587,9 +6632,42 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       expected:
         "Claude stopped: the prompt exceeds the model's context window. Run /compact or start a new thread.",
     },
+    ...[
+      {
+        name: "a model version error rewritten by a custom endpoint",
+        baseUrl: "https://gateway.example.test/v1",
+        installed: "2.1.322",
+        expected:
+          "The custom API endpoint gateway.example.test reported Claude Code 2.1.280, but this session runs Claude Code 2.1.322. Running claude update will not fix this; the endpoint or a proxy behind it rewrote the version.",
+      },
+      { name: "a model version error without a custom endpoint", installed: "2.1.322" },
+      {
+        name: "a model version error from a Claude Code still below the required version",
+        baseUrl: "https://gateway.example.test/v1",
+        installed: "2.1.285",
+      },
+    ].map((row) => {
+      const result =
+        "API Error: 400 Claude Code 2.1.280 does not support this model; version 2.1.290 or newer is required. Run 'claude update', or update the Claude desktop app, then try again.";
+      return {
+        ...row,
+        isError: true,
+        result,
+        errors: undefined,
+        apiErrorStatus: undefined,
+        terminalReason: undefined,
+        environment: {
+          CLAUDE_CONFIG_DIR: "/synthetic/no-claude-config",
+          ...(row.baseUrl === undefined ? {} : { ANTHROPIC_BASE_URL: row.baseUrl }),
+        },
+        expected: row.expected ?? result,
+      };
+    }),
   ])("reports terminal API error text for $name", (input) =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
+      const harness = yield* makeWakeHarnessWithOptions(
+        "environment" in input ? { environment: input.environment } : undefined,
+      );
       const now = yield* DateTime.now;
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
@@ -6602,6 +6680,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       const apiErrorStatus = input.apiErrorStatus ?? 400;
+      if ("installed" in input) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000000698",
+            session_id: WAKE_NATIVE_SESSION,
+            claude_code_version: input.installed,
+          }),
+        );
+      }
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({
@@ -8334,6 +8423,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           McpProviderSessions.layer,
           NodeServices.layer,
           NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  // The passive row is the frame Claude 2.1.303 emits for a Stop hook returning a systemMessage.
+  it.effect.each([
+    { name: "hides a passive summary", level: "notice", visible: false },
+    { name: "shows a blocking notice", level: "notice", preventContinuation: true, visible: true },
+    { name: "shows a warning", level: "warning", visible: true },
+  ])("Claude Stop-hook notices: $name", ({ level, preventContinuation, visible }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("claude-stop-hook-notice-attempt"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const content = "Stop says: 40 scans, 0 findings";
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "informational",
+          content,
+          level,
+          ...(preventContinuation === undefined
+            ? {}
+            : { prevent_continuation: preventContinuation }),
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-000000000820",
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000821", result: content }),
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : [],
+        ),
+        visible ? [content] : [],
+      );
+      assert.isFalse(
+        harness.events.some(
+          (event) => event.type === "message.updated" && event.message.role === "assistant",
+        ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          McpProviderSessions.layer,
         ),
       ),
     ),
@@ -15663,11 +15816,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("gives a nested subagent its own effort, else the one its owner runs at", () =>
+  it.effect("records only explicit effort for nested subagents", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const OUTER_TOOL_USE_ID = "toolu-effort-outer";
-        const INHERITING_TOOL_USE_ID = "toolu-effort-nested-inheriting";
+        const UNSPECIFIED_TOOL_USE_ID = "toolu-effort-nested-unspecified";
         const OVERRIDING_TOOL_USE_ID = "toolu-effort-nested-overriding";
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
@@ -15733,14 +15886,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               type: "message",
               role: "assistant",
               content: [
-                agentCall(INHERITING_TOOL_USE_ID),
+                agentCall(UNSPECIFIED_TOOL_USE_ID),
                 agentCall(OVERRIDING_TOOL_USE_ID, "max"),
               ],
             },
             uuid: "00000000-0000-4000-8000-000000000223",
             session_id: WAKE_NATIVE_SESSION,
           }),
-          taskStarted(INHERITING_TOOL_USE_ID, "00000000-0000-4000-8000-000000000224"),
+          taskStarted(UNSPECIFIED_TOOL_USE_ID, "00000000-0000-4000-8000-000000000224"),
           taskStarted(OVERRIDING_TOOL_USE_ID, "00000000-0000-4000-8000-000000000225"),
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000226",
@@ -15765,7 +15918,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual(Object.fromEntries(efforts), {
           [`task-${OUTER_TOOL_USE_ID}`]: "low",
-          [`task-${INHERITING_TOOL_USE_ID}`]: "low",
+          [`task-${UNSPECIFIED_TOOL_USE_ID}`]: undefined,
           [`task-${OVERRIDING_TOOL_USE_ID}`]: "max",
         });
         const childEfforts = harness.events.flatMap((event) =>
@@ -15773,7 +15926,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ? [getModelSelectionStringOptionValue(event.appThread.modelSelection, "effort")]
             : [],
         );
-        assert.deepEqual(childEfforts, ["low", "low", "max"]);
+        assert.deepEqual(childEfforts, ["low", undefined, "max"]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

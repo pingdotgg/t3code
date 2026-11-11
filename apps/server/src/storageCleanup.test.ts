@@ -2107,6 +2107,21 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("skips a stored worktree path whose parent is a regular file", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const legacyRoot = `${fixture.config.worktreesDir}/legacy-root`;
+        yield* fixture.fs.writeFileString(legacyRoot, "");
+        fixture.setThreads([
+          shell({ branch: "feature", worktreePath: `${legacyRoot}/stored-workspace` }),
+        ]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([]);
+        expect(report.counts).toEqual({ removed: 0, kept: 0, failed: 0 });
+      }),
+    ),
+  );
   it.live.each(["before-check", "while-measuring"] as const)(
     "keeps a worktree protected by a missing project root (%s)",
     (timing) =>
@@ -2662,6 +2677,36 @@ describe("storage cleanup reports and local file policies", () => {
         expect(yield* fs.exists(worktree)).toBe(true);
       }),
     ),
+  );
+  it.live.each([
+    ["uncommitted-changes", "untracked", "Local changes exceed the inspection limit"],
+    ["any-local-files", "ignored", "Ignored files exceed the inspection limit"],
+  ] as const)(
+    "keeps a worktree under %s when its %s file listing exceeds the inspection limit",
+    ([policy, kind, reason]) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, setPolicy } = yield* cleanupFixture();
+          setPolicy(policy);
+          const files = Array.from({ length: 3000 }, (_, i) =>
+            kind === "untracked"
+              ? `${worktree}/many/untracked-file-with-a-long-name-${i}.txt`
+              : `${worktree}/many/ignored-directory-with-a-long-name-${i}/.env`,
+          );
+          yield* fs.makeDirectory(`${worktree}/many`);
+          yield* Effect.forEach(
+            files,
+            (file) =>
+              Effect.gen(function* () {
+                if (kind === "ignored") yield* fs.makeDirectory(file.slice(0, -"/.env".length));
+                yield* fs.writeFileString(file, "local\n");
+              }),
+            { concurrency: 64, discard: true },
+          );
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept", reason });
+          expect(yield* fs.exists(files[0]!)).toBe(true);
+        }),
+      ),
   );
   it.live("serializes concurrent requests and returns each run's report", () =>
     runCleanupTest(

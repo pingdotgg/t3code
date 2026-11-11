@@ -13,6 +13,7 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: "project",
         activeThreadEnvironmentId: secondary,
         primaryEnvironmentId: primary,
+        hostEnvironmentId: null,
         remoteOpenMode: "wsl-links",
       }),
     ).toBe(true);
@@ -24,8 +25,29 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: "project",
         activeThreadEnvironmentId: secondary,
         primaryEnvironmentId: primary,
+        hostEnvironmentId: null,
         remoteOpenMode: "local-exec",
       }),
     ).toBe(false);
+  });
+
+  it("shows both local environments when the primary has a separate WSL home", () => {
+    const primaryEnvironmentId = EnvironmentId.make("wsl");
+    const hostEnvironmentId = EnvironmentId.make("host");
+    for (const [activeThreadEnvironmentId, visible] of [
+      [primaryEnvironmentId, true],
+      [hostEnvironmentId, true],
+      [EnvironmentId.make("other"), false],
+    ] as const) {
+      expect(
+        shouldShowOpenInPicker({
+          activeProjectName: "Project",
+          activeThreadEnvironmentId,
+          primaryEnvironmentId,
+          hostEnvironmentId,
+          remoteOpenMode: "local-exec",
+        }),
+      ).toBe(visible);
+    }
   });
 });

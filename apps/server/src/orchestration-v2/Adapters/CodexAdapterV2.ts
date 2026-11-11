@@ -265,6 +265,7 @@ export const CodexProviderCapabilitiesV2 = {
     emitsTurnCompleted: true,
     supportsInterrupt: true,
     supportsActiveSteering: true,
+    activeSteeringDuringCompaction: true,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
@@ -5354,6 +5355,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (settled) {
                 yield* releaseSettledTurnIfIdle(payload.turnId);
               }
+              return;
+            }
+
+            if (payload.item.type === "imageView") {
+              const artifacts = yield* buildDynamicToolArtifacts(context, {
+                type: "dynamicToolCall",
+                id: payload.item.id,
+                tool: "view_image",
+                arguments: { path: payload.item.path },
+                status: "completed",
+              });
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: { ...artifacts.turnItem, viewedImagePath: payload.item.path },
+              });
               return;
             }
 

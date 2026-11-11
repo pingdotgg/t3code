@@ -17,6 +17,7 @@ import { desktopLocalBootstrapsAtom } from "~/connection/useDesktopLocalBootstra
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { environmentPresentations } from "~/state/presentation";
+import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
@@ -58,9 +59,10 @@ export function resolveRemoteOpenState(input: {
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
   readonly wslDistro?: string | null;
+  readonly hostEnvironmentId: string | null;
 }): RemoteOpenState {
   const { target } = input;
-  if (target === null) {
+  if (target === null || target.environmentId === input.hostEnvironmentId) {
     return LOCAL_EXEC;
   }
   if (target._tag === "PrimaryConnectionTarget") {
@@ -144,6 +146,7 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer,
         wslDistro,
+        hostEnvironmentId: get(hostEnvironmentIdAtom),
       }),
       isResolved: true,
     };

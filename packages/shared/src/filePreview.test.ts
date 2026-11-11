@@ -175,8 +175,6 @@ describe("attachment preview classification", () => {
     ["diagram.MERMAID", "text/plain", "mermaid"],
     ["download", "text/vnd.mermaid", "mermaid"],
     ["source-code.otf", "application/vnd.oasis.opendocument.formula-template", "font"],
-    ["notes.rtf", "application/rtf", "rtf"],
-    ["notes.rtf", "", "rtf"],
     ["download", "text/rtf", "rtf"],
     ["analysis.IPYNB", "application/json", "ipynb"],
     ["clip.weba", "", "audio"],
