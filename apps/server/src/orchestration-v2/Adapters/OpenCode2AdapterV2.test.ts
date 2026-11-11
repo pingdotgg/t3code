@@ -142,6 +142,11 @@ const promptAccepted = replyData("session.prompt", {
   delivery: "steer",
 });
 
+const emptyShellInventory: ReadonlyArray<ProviderReplayEntry> = [
+  out("shell.list", "<any>"),
+  reply("shell.list", { location: { directory: WORK }, data: [] }),
+];
+
 const noOpenRequests: ReadonlyArray<ProviderReplayEntry> = [
   out("permission.list", { sessionID: SESSION }),
   replyData("permission.list", []),
@@ -317,7 +322,8 @@ const colorForm = {
 const resumed = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: {
-    readonly version?: "2.2.5";
+    readonly version?: "2.2.1" | "2.2.5" | "2.2.6";
+    readonly shellRecovery?: ReadonlyArray<ProviderReplayEntry>;
     readonly goal?: OrchestrationV2ProviderThread["goal"];
     readonly external?: boolean;
     readonly supervised?: boolean;
@@ -335,9 +341,16 @@ const resumed = (
         out("session.get", { sessionID: SESSION }),
         replyData("session.get", sessionInfo()),
         ...noOpenRequests,
-        ...(options?.version === "2.2.5"
+        ...(options?.version === "2.2.5" || options?.version === "2.2.6"
           ? [out("rpc.call", "<any>"), reply("rpc.call", { output: null })]
           : []),
+        ...(options?.shellRecovery ??
+          (options?.version === undefined
+            ? []
+            : [
+                out("shell.list", "<any>"),
+                reply("shell.list", { location: { directory: WORK }, data: [] }),
+              ])),
         ...withInstructions([
           ...(options?.supervised === true
             ? [
@@ -884,6 +897,193 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       return { attached: Deferred.await(attached), terminal: Fiber.join(terminal) };
     });
+  it.effect.each([false, true, "thread"] as const)(
+    "tracks native background shells through launch, retained output, stop=%s",
+    (stop) =>
+      Effect.gen(function* () {
+        const shellID = "sh_background";
+        const tool = {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant",
+          id: "call-shell",
+        };
+        const gate = makeProviderReplayGate(["shell-exit"]);
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.execution.started", { sessionID: SESSION }),
+            event("session.tool.input.started", { ...tool, name: "shell" }),
+            event("session.tool.called", {
+              ...tool,
+              name: "shell",
+              input: { command: "echo retained", background: true },
+              executed: false,
+            }),
+            event(
+              "session.tool.success",
+              {
+                ...tool,
+                content: [{ type: "text", text: "Launched" }],
+                metadata: { shellID },
+                executed: false,
+              },
+              undefined,
+              2,
+            ),
+            out("shell.output", "<any>"),
+            reply("shell.output", {
+              location: { directory: WORK },
+              data: { output: "retained\n", cursor: 9, size: 9, truncated: false },
+            }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            ...(stop
+              ? []
+              : [event("shell.exited", { id: shellID, exit: 0, status: "exited" }, "shell-exit")]),
+            out("shell.output", "<any>"),
+            reply("shell.output", {
+              location: { directory: WORK },
+              data: { output: "", cursor: 9, size: 9, truncated: false },
+            }),
+            ...(stop
+              ? [
+                  out("shell.remove", { id: shellID, "location[directory]": WORK }),
+                  event("shell.exited", { id: shellID, exit: 143, status: "exited" }),
+                  reply("shell.remove", null),
+                ]
+              : []),
+          ],
+          { replayGate: gate },
+        );
+        const items: Array<import("@t3tools/contracts").OrchestrationV2TurnItem> = [];
+        const terminal = yield* runtime.events.pipe(
+          Stream.tap((e) =>
+            Effect.sync(() => {
+              if (e.type === "turn_item.updated") items.push(e.turnItem);
+            }),
+          ),
+          Stream.filter((e) => e.type === "turn.terminal"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Fiber.join(terminal);
+        yield* Effect.logWarning("shell terminal received");
+        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        const settled = yield* runtime.events.pipe(
+          Stream.tap((e) =>
+            Effect.sync(() => {
+              if (e.type === "turn_item.updated") items.push(e.turnItem);
+            }),
+          ),
+          Stream.filter(
+            (e) =>
+              e.type === "provider_thread.updated" &&
+              e.providerThread.pendingBackgroundTasks?.length === 0,
+          ),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        if (stop === "thread")
+          yield* runtime.interruptTurn({
+            providerThread: thread,
+            providerTurnId: yield* providerTurnId,
+            requestRuntimeRestart: true,
+          });
+        else if (stop) yield* runtime.stopTask!({ providerThread: thread, taskId: shellID });
+        else gate.release("shell-exit");
+        yield* Effect.logWarning("shell settling");
+        yield* Fiber.join(settled);
+        yield* Effect.logWarning("shell settled");
+        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        assert.deepInclude(items.filter((i) => i.type === "command_execution").at(-1), {
+          type: "command_execution",
+          status: stop ? "interrupted" : "completed",
+          output: "retained\n",
+        });
+        assert.isFalse(items.some((i) => i.type === "subagent"));
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["shell", "job", "fallback", "descendant"] as const)(
+    "recovers only owned native shells using %s inventory",
+    (discovery) =>
+      Effect.gen(function* () {
+        const id = "sh_recovered";
+        const info = {
+          id,
+          command: "sleep 600",
+          status: "running",
+          cwd: WORK,
+          shell: "/bin/sh",
+          file: "/remote/output",
+          metadata: { sessionID: SESSION },
+          time: { started: 1 },
+        };
+        const response = (data: unknown) => ({ location: { directory: WORK }, data });
+        const inventory: Array<ProviderReplayEntry> =
+          discovery === "shell"
+            ? []
+            : [
+                out("job.list", { sessionID: SESSION, kind: "shell", descendants: "true" }),
+                reply(
+                  "job.list",
+                  discovery === "fallback"
+                    ? { status: 404, body: {} }
+                    : {
+                        data: [
+                          {
+                            kind: "shell",
+                            shellID: id,
+                            sessionID: discovery === "descendant" ? "ses_descendant" : SESSION,
+                            command: info.command,
+                            status: "running",
+                          },
+                        ],
+                      },
+                ),
+              ];
+        if (discovery === "shell" || discovery === "fallback")
+          inventory.push(
+            out("shell.list", "<any>"),
+            reply(
+              "shell.list",
+              response([info, { ...info, id: "sh_other", metadata: { sessionID: "ses_other" } }]),
+            ),
+          );
+        inventory.push(
+          out("shell.get", { id }),
+          reply("shell.get", response(info)),
+          out("shell.output", { id, cursor: "0" }),
+          reply(
+            "shell.output",
+            response({ output: "retained", cursor: 8, size: 8, truncated: false }),
+          ),
+        );
+        const { runtime, thread } = yield* resumed(
+          [
+            out("shell.output", { id, cursor: "8" }),
+            reply("shell.output", response({ output: "", cursor: 8, size: 8, truncated: false })),
+            out("shell.remove", { id }),
+            reply("shell.remove", null),
+          ],
+          {
+            version: discovery === "shell" ? "2.2.1" : "2.2.6",
+            shellRecovery: inventory,
+            external: true,
+          },
+        );
+        assert.deepEqual(thread.pendingBackgroundTasks, [
+          { taskId: id, kind: "command", description: info.command },
+        ]);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        yield* runtime.stopTask!({ providerThread: thread, taskId: "sh_other" });
+        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        yield* runtime.stopTask!({ providerThread: thread, taskId: id });
+        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps background subagents running when a turn is interrupted to restart it", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -2422,6 +2622,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ...(delivery === "pending"
               ? [out("rpc.call", "<any>"), reply("rpc.call", { output: { unreadable: true } })]
               : []),
+            ...(delivery === "pending" ? emptyShellInventory : []),
             ...reconnect.slice(2),
             ...(delivery === "pending"
               ? [
@@ -5480,6 +5681,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             input: { sessionID: SESSION },
           }),
           reply("rpc.call", { output: nativeGoal("paused") }),
+          ...emptyShellInventory,
         ],
         { version: "2.2.5" },
       );
@@ -5524,6 +5726,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                     ...recovered.slice(0, 2),
                     out("rpc.call", "<any>"),
                     reply("rpc.call", { output: nativeGoal("active") }),
+                    ...emptyShellInventory,
                     ...recovered.slice(2),
                     ...noOpenRequests,
                   ]
@@ -5655,6 +5858,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   ),
                 ]
               : []),
+            ...emptyShellInventory,
             ...reconnect.slice(2),
           ],
           { version: "2.2.5", replayGate: gate },
