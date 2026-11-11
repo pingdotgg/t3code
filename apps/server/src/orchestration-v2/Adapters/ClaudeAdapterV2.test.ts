@@ -10733,6 +10733,91 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each([{ emptyResult: true }, { emptyResult: false }])(
+    "an early wakeup after an idle task notification releases its hold (empty result: $emptyResult)",
+    ({ emptyResult }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-schedule-wakeup-notified"),
+              text: "Run the build in the background and check back in two minutes.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+          for (const frame of scheduleWakeupFrames({
+            toolUseId: "toolu_schedule_wakeup_notified",
+            uuids: ["00000000-0000-4000-8000-000000002601", "00000000-0000-4000-8000-000000002602"],
+            toolInput: { delaySeconds: 120, prompt: "check the build", reason: "fallback" },
+            scheduledFor: DateTime.toEpochMillis(now) + 120_000,
+          })) {
+            yield* Queue.offer(harness.sdkMessages, frame);
+          }
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* harness.awaitTerminal(1);
+
+          yield* TestClock.adjust("10 seconds");
+          yield* harness.offerAndWait(wakeNotification);
+          if (emptyResult) {
+            yield* harness.offerAndWait(
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000002603",
+                result: "",
+                numTurns: 0,
+                origin: { kind: "task-notification" },
+                terminalReason: null,
+              }),
+            );
+          }
+
+          yield* TestClock.adjust("80 seconds");
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* harness.awaitContinuation(1);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-schedule-wakeup-notified-2"),
+              text: "check the build",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000002604",
+              text: "Built.",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000002605", result: "Built." }),
+          );
+          yield* harness.awaitTerminal(2);
+          assert.equal(harness.terminalEvents()[1]?.status, "completed");
+          assert.isFalse(backgroundWorkHoldsCompletion(publishedRoster(harness)));
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   it.effect("a failed turn on a live Claude process keeps the pending wakeup's hold", () =>
     Effect.scoped(
       Effect.gen(function* () {

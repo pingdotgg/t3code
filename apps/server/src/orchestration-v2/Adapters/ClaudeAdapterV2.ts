@@ -5367,37 +5367,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // mode change; replacing the process cancels it, and that clears this record too.
         const scheduleWakeupCalls = new Set<string>();
         const scheduledWakeupsByNativeThread = new Map<string, number>();
-        const notifiedWhileIdleNativeThreads = new Set<string>();
+        // Native threads whose current turn Claude started by itself inside the early-fire margin.
+        const possibleEarlyWakeNativeThreads = new Set<string>();
         const trackClaudeScheduledWakeup = Effect.fnUntraced(function* (
           nativeThreadId: string,
           message: SDKMessage,
         ) {
-          if (message.type === "system" && message.subtype === "task_notification") {
-            if ((yield* Ref.get(activeTurn)) === null) {
-              notifiedWhileIdleNativeThreads.add(nativeThreadId);
-            }
-            return;
-          }
-          // An empty notification turn is often followed by the real one, so only a result
-          // that did work ends the notification's claim on the next idle turn.
-          if (
-            message.type === "result" &&
-            !(isClaudeTaskNotificationOriginResult(message) && message.num_turns === 0)
-          ) {
-            notifiedWhileIdleNativeThreads.delete(nativeThreadId);
-            return;
-          }
           if (isClaudeTurnStartMessage(message)) {
             const scheduledFor = scheduledWakeupsByNativeThread.get(nativeThreadId);
             if (scheduledFor === undefined) return;
-            // Only a turn Claude starts by itself, with no task notification before it, can be
-            // the early-jittered wake; anything else leaves the wakeup pending until scheduledFor.
-            const earliestWake =
+            const now = DateTime.toEpochMillis(yield* DateTime.now);
+            if (now >= scheduledFor) {
+              scheduledWakeupsByNativeThread.delete(nativeThreadId);
+            } else if (
               (yield* Ref.get(activeTurn)) === null &&
-              !notifiedWhileIdleNativeThreads.has(nativeThreadId)
-                ? scheduledFor - CLAUDE_SCHEDULED_WAKEUP_EARLY_FIRE_MARGIN_MS
-                : scheduledFor;
-            if (DateTime.toEpochMillis(yield* DateTime.now) >= earliestWake) {
+              now >= scheduledFor - CLAUDE_SCHEDULED_WAKEUP_EARLY_FIRE_MARGIN_MS
+            ) {
+              possibleEarlyWakeNativeThreads.add(nativeThreadId);
+            }
+            return;
+          }
+          // A task notification also starts a turn by itself, so an early turn is the wake only
+          // when its result is not a task notification's.
+          if (message.type === "result") {
+            if (
+              possibleEarlyWakeNativeThreads.delete(nativeThreadId) &&
+              !isClaudeTaskNotificationOriginResult(message)
+            ) {
               scheduledWakeupsByNativeThread.delete(nativeThreadId);
             }
             return;
@@ -5417,6 +5413,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : undefined;
           // stop:true reports scheduledFor 0. A failed call also clears: losing the hold early
           // is recoverable, a hold that outlives its wakeup is not.
+          possibleEarlyWakeNativeThreads.delete(nativeThreadId);
           if (typeof scheduledFor === "number" && scheduledFor > 0) {
             scheduledWakeupsByNativeThread.set(nativeThreadId, scheduledFor);
           } else {
@@ -6022,7 +6019,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             bufferedTaskNotificationIds.has(taskId),
           );
           scheduledWakeupsByNativeThread.delete(nativeThreadId);
-          notifiedWhileIdleNativeThreads.delete(nativeThreadId);
+          possibleEarlyWakeNativeThreads.delete(nativeThreadId);
           yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
           yield* clearNativeThreadTaskIdSet(
             wakeEligibleBackgroundTasksByNativeThread,
