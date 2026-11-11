@@ -6287,7 +6287,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect.each([
     ["server", modelSelection],
     ["provider", modelSelection],
-    ["provider", { ...modelSelection, instanceId: alternateInstanceId }],
   ] as const)(
     "delivers a queued monitor update from %s after conversation selection %j",
     ([creationSource, currentSelection]) =>
@@ -6400,7 +6399,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
   it.effect.each([
     { ...modelSelection, model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] },
-    { instanceId: alternateInstanceId, model: "gpt-5.5" },
   ])(
     "starts a queued delegated completion on a selection set while it waited: %j",
     (newerSelection) =>

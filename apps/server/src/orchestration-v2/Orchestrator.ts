@@ -124,6 +124,7 @@ import {
   cancelledBeforeStart,
   continuationFailedBeforePrompt,
   continuationStartRetryDelayMs,
+  delegatedTaskResultRun,
   isRestartContinuationSource,
   runOutcome,
 } from "./RestartBackgroundNote.ts";
@@ -291,6 +292,15 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
   }
 }
 
+export class OrchestratorProviderSelectionBusyError extends Schema.TaggedError<OrchestratorProviderSelectionBusyError>()(
+  "OrchestratorProviderSelectionBusyError",
+  { commandId: CommandId, threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} has an active turn. Wait for it to finish, then retry the provider selection change.`;
+  }
+}
+
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 
 /** The ceiling refusal under however many dispatch errors wrapped it on the way out. */
@@ -355,6 +365,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
+  OrchestratorProviderSelectionBusyError,
   OrchestratorRuntimeModeAboveCeilingError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
@@ -3832,12 +3843,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
-            return yield* providerSwitchService
+            const plan = yield* providerSwitchService
               .plan({
                 projection: providerContext!,
                 targetModelSelection: command.modelSelection,
               })
               .pipe(mapDispatchError(command));
+            if (plan.instanceChanged || plan.releaseProviderSessionIds.length > 0) {
+              const projection = yield* loadProjectionForCommand(command, ["runs"], {
+                turnItemTypes: [],
+              });
+              if (projection.runs.some(isActiveRun)) {
+                return yield* new OrchestratorProviderSelectionBusyError({
+                  commandId: command.commandId,
+                  threadId: command.threadId,
+                });
+              }
+            }
+            return plan;
           })
         : null;
 
@@ -6013,8 +6036,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
 
-    const continuedTaskId = projection.runs.find(
-      (run) => run.id === command.restartContinuationOfRunId,
+    // A run the thread queues for itself continues the task of the run that sent it.
+    const continuedTaskId = projection.runs.find((run) =>
+      command.restartContinuationOfRunId === undefined
+        ? command.senderThreadId === command.threadId && isActiveRun(run)
+        : run.id === command.restartContinuationOfRunId,
     )?.delegatedTaskId;
 
     if (projection.thread.settledOverride !== null) {
@@ -13007,7 +13033,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? options.task.id === forkedFrom.nodeId
             ? options.resultRun
             : undefined
-          : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+          : delegatedTaskResultRun(taskRuns, options.task.id);
       if (childRun === undefined) return;
       const outcome = runOutcome(childRun);
       const terminalStatus = delegatedTaskTerminalStatus(outcome);
@@ -14521,7 +14547,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       if (taskId !== undefined) {
         const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
-        const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+        const run = delegatedTaskResultRun(runs, taskId);
         if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
         return yield* childAwaitsRestartContinuation(runs, run);
       }
