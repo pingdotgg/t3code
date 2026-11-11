@@ -1262,15 +1262,14 @@ const make = Effect.gen(function* () {
         providerThread.appThreadId === input.threadId ? [providerThread.id] : [],
       );
       // Settling the target can promote a queued follow-up onto the same session; that run is
-      // not Force stop's to end.
+      // not Force stop's to end. An unreadable thread counts as one, so its session is kept.
       const throughRunOrdinal = target?.ordinal ?? 0;
-      const laterRunActive = orchestrator
-        .getThreadRecords(input.threadId, ["runs"])
-        .pipe(
-          Effect.map(({ runs }) =>
-            runs.some((run) => run.ordinal > throughRunOrdinal && isActiveRun(run)),
-          ),
-        );
+      const laterRunActive = orchestrator.getThreadRecords(input.threadId, ["runs"]).pipe(
+        Effect.map(({ runs }) =>
+          runs.some((run) => run.ordinal > throughRunOrdinal && isActiveRun(run)),
+        ),
+        Effect.orElseSucceed(() => true),
+      );
       const detach = (providerSessionId: ProviderSessionId) =>
         sessions
           .detach({ providerSessionId, threadId: input.threadId, detail: FORCE_STOP_REASON })
@@ -1310,7 +1309,7 @@ const make = Effect.gen(function* () {
             ownProviderThreadIds,
             throughRunOrdinal,
             // A promoted follow-up may not have marked its turn busy yet.
-            keepIf: laterRunActive.pipe(Effect.orElseSucceed(() => true)),
+            keepIf: laterRunActive,
             reason: "manual_shutdown",
             detail: FORCE_STOP_REASON,
           })
