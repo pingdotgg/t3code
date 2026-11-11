@@ -34,11 +34,14 @@ export interface ReferenceFetchResult {
   readonly pageCount?: number;
   readonly pages?: ReadonlyArray<{ readonly page: number; readonly text: string }>;
   readonly images?: ReadonlyArray<ReferenceImage>;
+  readonly skippedImages?: number;
 }
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 const MAX_PDF_IMAGE_PIXELS = 16 * 1024 * 1024;
+const MAX_PDF_TOTAL_PIXELS = 64 * 1024 * 1024;
+const MAX_PDF_IMAGE_OPS_PER_PAGE = 8;
 const PDF_TIMEOUT_MS = 30_000;
 
 const validateUrl = (raw: string | URL) => {
@@ -173,6 +176,23 @@ const imageToPng = (image: { width: number; height: number; kind: number; data: 
   return { data: encodeGrayscalePng(pixels, width, height).toString("base64"), width, height };
 };
 
+const estimatePdfImages = (bytes: Uint8Array) => {
+  const source = Buffer.from(bytes).toString("latin1");
+  let count = 0;
+  let pixels = 0;
+  for (const dictionary of source.matchAll(
+    /<<[\s\S]{0,2500}?\/Subtype\s*\/Image[\s\S]{0,2500}?>>/g,
+  )) {
+    const width = Number(dictionary[0].match(/\/Width\s+(\d+)/)?.[1] ?? 0);
+    const height = Number(dictionary[0].match(/\/Height\s+(\d+)/)?.[1] ?? 0);
+    if (width > 0 && height > 0) {
+      count += 1;
+      pixels += width * height;
+    }
+  }
+  return { count, pixels };
+};
+
 export const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<number>) => {
   // @ts-expect-error pdfjs-dist ships no types for its worker module.
   await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
@@ -185,6 +205,11 @@ export const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<num
   const pages: { page: number; text: string }[] = [];
   const images: ReferenceImage[] = [];
   let textRemaining = 20_000;
+  let remainingPixels = MAX_PDF_TOTAL_PIXELS;
+  let skippedImages = 0;
+  const estimated = estimatePdfImages(bytes);
+  const skipPdfImages =
+    estimated.count > MAX_PDF_IMAGE_OPS_PER_PAGE || estimated.pixels > MAX_PDF_TOTAL_PIXELS;
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const page = await document.getPage(pageNumber);
     const content = await page.getTextContent();
@@ -197,43 +222,63 @@ export const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<num
       .slice(0, textRemaining);
     textRemaining -= pageText.length;
     pages.push({ page: pageNumber, text: pageText });
+    if (skipPdfImages) {
+      skippedImages += estimated.count;
+      continue;
+    }
     const ops = await page.getOperatorList();
     const candidates = ops.fnArray
       .map((fn: number, i: number) => ({ fn, args: ops.argsArray[i] }))
       .filter((x: { fn: number }) => x.fn === pdfjs.OPS.paintImageXObject);
     let largest: { width: number; height: number; kind: number; data: Uint8Array } | undefined;
-    for (const candidate of candidates) {
+    for (const [candidateIndex, candidate] of candidates.entries()) {
+      if (candidateIndex >= MAX_PDF_IMAGE_OPS_PER_PAGE) {
+        skippedImages += candidates.length - candidateIndex;
+        break;
+      }
       const id = candidate.args[0];
       const objects = String(id).startsWith("g_") ? page.commonObjs : page.objs;
       const image = await new Promise<any>((resolve) => objects.get(id, resolve));
-      if (image && (!largest || image.width * image.height > largest.width * largest.height))
-        largest = image;
+      if (!image) continue;
+      const pixels = image.width * image.height;
+      if (pixels > remainingPixels) {
+        skippedImages += 1;
+        continue;
+      }
+      if (!largest || pixels > largest.width * largest.height) largest = image;
     }
     if (largest) {
       const png = imageToPng(largest);
       images.push({ type: "image", mimeType: "image/png", ...png });
+      remainingPixels -= largest.width * largest.height;
     }
   }
   const destroy = Reflect.get(document, "destroy");
   if (typeof destroy === "function") await destroy.call(document);
-  return { pageCount: document.numPages, pages, images };
+  return {
+    pageCount: document.numPages,
+    pages,
+    images,
+    ...(skippedImages ? { skippedImages } : {}),
+  };
 };
 
-const extractPdfWithTimeout = (bytes: Uint8Array, requested: ReadonlyArray<number>) =>
-  Promise.race([
-    extractPdf(bytes, requested),
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error("PDF extraction exceeded the 30 second limit.")),
-        PDF_TIMEOUT_MS,
-      ),
-    ),
-  ]);
+const extractPdfWithTimeout = (bytes: Uint8Array, requested: ReadonlyArray<number>) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("PDF extraction exceeded the 30 second limit.")),
+      PDF_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([extractPdf(bytes, requested), timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+};
 
 export const fetchCourseReference = Effect.fn("course.fetchReference")(function* (input: {
   readonly url: string;
   readonly pages?: ReadonlyArray<number>;
-  readonly courseId?: string | null;
   readonly fetchImpl?: typeof fetch;
   readonly lookup?: typeof NodeDnsPromises.lookup;
   readonly audit?: DownloadAuditContext;
@@ -282,6 +327,8 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
         }
         if (!response) throw new Error("No response.");
         body = await readBody(response);
+        if (response.status < 200 || response.status >= 300)
+          throw new Error(`HTTP ${response.status}`);
         const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
         if (
           contentType.includes("pdf") ||

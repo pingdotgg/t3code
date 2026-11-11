@@ -145,6 +145,32 @@ describe("CourseService", () => {
     ),
   );
 
+  it.effect("carries each pset reference by title when psets reorder", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const source = {
+          kind: "ocw" as const,
+          title: "Reordered psets",
+          source: "source",
+          units: [{ title: "Week", section: "Week" }],
+          problemSets: [
+            { title: "Pset A", section: "Week", text: "A" },
+            { title: "Pset B", section: "Week", text: "B" },
+          ],
+        };
+        const course = yield* service.add({ lessonThreadId: threadId, ingested: source });
+        const refs = [{ label: "B scan", url: "https://example.com/b", answers: "B" }];
+        yield* service.update({ courseId: course.id, pset: 2, references: refs });
+        yield* service.add({
+          lessonThreadId: threadId,
+          ingested: { ...source, problemSets: [source.problemSets[1]!, source.problemSets[0]!] },
+        });
+        const result = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
+        assert.deepStrictEqual(result.problemSets[0]?.references, refs);
+      }),
+    ),
+  );
+
   it.effect("returns only the transcript window", () =>
     withService((service) =>
       Effect.gen(function* () {

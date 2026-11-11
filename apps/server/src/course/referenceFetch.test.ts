@@ -31,6 +31,26 @@ describe("course reference fetch", () => {
     }),
   );
 
+  it.effect.each(["text/html", "application/pdf"])("rejects final 404 %s", (contentType) =>
+    Effect.gen(function* () {
+      const failure = yield* fetchCourseReference({
+        url:
+          contentType === "application/pdf"
+            ? "https://example.com/missing.pdf"
+            : "https://example.com/",
+        lookup,
+        fetchImpl: () =>
+          Promise.resolve(
+            new Response(contentType === "application/pdf" ? "%PDF-" : "missing", {
+              status: 404,
+              headers: { "content-type": contentType },
+            }),
+          ),
+      }).pipe(Effect.flip);
+      assert.include(failure.message, "HTTP 404");
+    }),
+  );
+
   it.effect.each(["shared.com", "zero.com"])("rejects special resolved address %s", (host) =>
     Effect.gen(function* () {
       const blocked = yield* fetchCourseReference({
@@ -105,6 +125,12 @@ describe("course reference fetch", () => {
     const png = encodeGrayscalePng(new Uint8Array([0, 127, 255, 64]), 2, 2);
     assert.deepStrictEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
     assert.strictEqual(Buffer.from(png).readUInt32BE(16), 2);
+    assert.strictEqual(Buffer.from(png).readUInt32BE(20), 2);
+  });
+
+  it("encodes non-square grayscale PNG dimensions", () => {
+    const png = encodeGrayscalePng(new Uint8Array([0, 127, 255, 64, 32, 16]), 3, 2);
+    assert.strictEqual(Buffer.from(png).readUInt32BE(16), 3);
     assert.strictEqual(Buffer.from(png).readUInt32BE(20), 2);
   });
 
