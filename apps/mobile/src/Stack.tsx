@@ -44,7 +44,6 @@ import {
 } from "./components/RenderErrorBoundary";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
 import { useClientFocusNavigation } from "./features/client-focus/useClientFocusNavigation";
-import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
@@ -93,7 +92,6 @@ import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppea
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
-import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
@@ -342,22 +340,12 @@ const SETTINGS_SCREENS = {
     linking: "settings/usage",
     options: settingsPage("Usage"),
   }),
-  SettingsAuth: createNativeStackScreen({
-    screen: SettingsAuthRouteScreen,
-    linking: "settings/auth",
-    options: { headerShown: false, presentation: "modal" },
-  }),
-  SettingsWaitlist: createNativeStackScreen({
-    screen: SettingsAuthRouteScreen,
-    linking: "settings/waitlist",
-    options: { headerShown: false, presentation: "modal" },
-  }),
 };
 
 // iOS 26 header morphing requires one UINavigationBar; nested stacks make the whole screen slide.
 const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
 
-export function workspaceLocationFromState(state: NavigationState) {
+function workspaceLocationFromState(state: NavigationState) {
   const routes = state.routes.filter((route) => !isWorkspaceOverlayRoute(route.name));
   const effectiveState =
     routes.length > 0 && routes.length !== state.routes.length
@@ -709,16 +697,6 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: SettingsLegalRouteScreen,
       linking: "settings/legal",
       options: modalRoute({ header: "solid", title: "Legal" }),
-    }),
-    ConnectOnboarding: createNativeStackScreen({
-      screen: ConnectOnboardingRouteScreen,
-      linking: "connect-onboarding",
-      options: sheetRoute({
-        title: "Set up T3 Connect",
-        header: "solid",
-        detent: 0.6,
-        androidMaxDetent: 0.95,
-      }),
     }),
     Connections: createNativeStackScreen({
       screen: ConnectionsRouteScreen,

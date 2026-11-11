@@ -133,7 +133,7 @@ export function ConnectionEnvironmentRow(props: {
               {props.environment.environmentLabel}
             </Text>
           </View>
-          {!props.environment.isRelayManaged && props.environment.displayUrl.trim() ? (
+          {props.environment.displayUrl.trim() ? (
             <Text className="text-xs text-foreground-muted" numberOfLines={1}>
               {props.environment.displayUrl}
             </Text>
@@ -225,47 +225,37 @@ export function ConnectionEnvironmentRow(props: {
               }
             />
           ) : null}
-          {props.environment.isRelayManaged ? (
-            <Text className="text-sm text-foreground-muted">
-              Managed by T3 Connect. Tunnel details update automatically.
-            </Text>
-          ) : (
-            <>
-              <ConnectionFormField
-                label="Label"
-                autoCapitalize="words"
-                autoCorrect={false}
-                placeholder="My MacBook"
-                value={label}
-                onChangeText={setLabel}
-              />
+          <ConnectionFormField
+            label="Label"
+            autoCapitalize="words"
+            autoCorrect={false}
+            placeholder="My MacBook"
+            value={label}
+            onChangeText={setLabel}
+          />
 
-              <ConnectionFormField
-                label="URL"
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                placeholder="192.168.1.100:8080"
-                value={url}
-                onChangeText={setUrl}
-              />
-            </>
-          )}
+          <ConnectionFormField
+            label="URL"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            placeholder="192.168.1.100:8080"
+            value={url}
+            onChangeText={setUrl}
+          />
 
           {Platform.OS === "android" ? (
             <View className="flex-row items-center justify-end gap-2">
-              {props.environment.isRelayManaged ? null : (
-                <View className="flex-1">
-                  <Button
-                    label="Save"
-                    tone="primary"
-                    fullWidth
-                    onPress={() => {
-                      void handleSave();
-                    }}
-                  />
-                </View>
-              )}
+              <View className="flex-1">
+                <Button
+                  label="Save"
+                  tone="primary"
+                  fullWidth
+                  onPress={() => {
+                    void handleSave();
+                  }}
+                />
+              </View>
               <IconButton
                 accessibilityLabel="Reconnect environment"
                 icon="arrow.clockwise"
@@ -282,22 +272,20 @@ export function ConnectionEnvironmentRow(props: {
             </View>
           ) : (
             <View className="flex-row justify-end gap-2">
-              {props.environment.isRelayManaged ? null : (
-                <Pressable
-                  className="min-h-[42px] flex-1 flex-row items-center justify-center gap-1.5 rounded-[14px] bg-primary px-3.5 py-2.5 active:opacity-70"
-                  onPress={handleSave}
-                >
-                  <SymbolView
-                    name="checkmark"
-                    size={13}
-                    tintColorClassName="accent-primary-foreground"
-                    type="monochrome"
-                  />
-                  <Text className="text-xs font-t3-bold tracking-[0.8px] uppercase text-primary-foreground">
-                    Save
-                  </Text>
-                </Pressable>
-              )}
+              <Pressable
+                className="min-h-[42px] flex-1 flex-row items-center justify-center gap-1.5 rounded-[14px] bg-primary px-3.5 py-2.5 active:opacity-70"
+                onPress={handleSave}
+              >
+                <SymbolView
+                  name="checkmark"
+                  size={13}
+                  tintColorClassName="accent-primary-foreground"
+                  type="monochrome"
+                />
+                <Text className="text-xs font-t3-bold tracking-[0.8px] uppercase text-primary-foreground">
+                  Save
+                </Text>
+              </Pressable>
 
               <Pressable
                 accessibilityRole="button"

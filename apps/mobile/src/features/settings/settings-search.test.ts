@@ -6,10 +6,7 @@ const SECTIONS = [
   { rows: [{ id: "usage", label: "Usage" }] },
   {
     title: "Connections",
-    rows: [
-      { id: "account", label: "T3 Account" },
-      { id: "SettingsEnvironments", label: "Environments" },
-    ],
+    rows: [{ id: "SettingsEnvironments", label: "Environments" }],
   },
   {
     title: "Interface",

@@ -454,13 +454,7 @@ function MachineRow(props: {
   readonly onPress: () => void;
 }) {
   const { machine } = props;
-  const status = machine.linked
-    ? "Linked"
-    : machine.connected
-      ? null
-      : machine.connectOnly
-        ? "T3 Connect"
-        : "Not connected";
+  const status = machine.linked ? "Linked" : machine.connected ? null : "Not connected";
   return (
     <Pressable
       accessibilityRole="radio"

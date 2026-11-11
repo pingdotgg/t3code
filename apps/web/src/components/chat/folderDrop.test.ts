@@ -1,8 +1,4 @@
-import {
-  BearerConnectionTarget,
-  RelayConnectionTarget,
-  SshConnectionTarget,
-} from "@t3tools/client-runtime/connection";
+import { BearerConnectionTarget, SshConnectionTarget } from "@t3tools/client-runtime/connection";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -60,17 +56,6 @@ describe("folderDropTarget", () => {
         connection: {
           target: new SshConnectionTarget({ ...base, connectionId: "ssh-1" }),
           httpBaseUrl: "http://127.0.0.1:41000",
-        },
-      },
-      "remote",
-    ],
-    [
-      "a relay connection",
-      {
-        ...thinClient,
-        connection: {
-          target: new RelayConnectionTarget(base),
-          httpBaseUrl: "https://relay.t3.codes",
         },
       },
       "remote",

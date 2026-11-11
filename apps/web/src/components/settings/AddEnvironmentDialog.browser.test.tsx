@@ -32,10 +32,6 @@ vi.mock(import("~/state/query"), async (original) => ({
     refresh: mocks.refresh,
   })) as never,
 }));
-vi.mock(import("~/state/environments"), async (original) => ({
-  ...(await original()),
-  useRelayEnvironmentDiscovery: (() => ({ environments: new Map() })) as never,
-}));
 vi.mock(import("~/state/server"), async (original) => ({
   ...(await original()),
   primaryServerKeybindingsAtom: Atom.make([]) as never,

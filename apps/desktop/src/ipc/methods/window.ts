@@ -18,7 +18,6 @@ import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeOS from "node:os";
-import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
@@ -29,7 +28,6 @@ import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfig
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
-import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
@@ -148,29 +146,6 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
     yield* electronWindow.reveal(window.value);
   }),
 });
-
-/**
- * Relay traces leave the machine, so a policy with `telemetry: false`, or one that cannot be read,
- * stops them. Read once here: a sync IPC handler cannot wait on the filesystem.
- */
-export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.installRelayTelemetry")(
-  function* () {
-    const ipc = yield* DesktopIpc.DesktopIpc;
-    const enabled =
-      isRelayTracingEnabled(yield* HostProcess.Environment) &&
-      (yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
-        Effect.map((found) => found?.document.limits?.telemetry !== false),
-        Effect.orElseSucceed(() => false),
-      ));
-    yield* ipc.handleSync(
-      DesktopIpc.makeSyncIpcMethod({
-        channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
-        result: Schema.Boolean,
-        handler: () => Effect.succeed(enabled),
-      }),
-    );
-  },
-);
 
 export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,

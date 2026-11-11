@@ -81,7 +81,6 @@ import {
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   replaceComposerDraftAttachments,
-  removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
   updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
@@ -260,12 +259,6 @@ export async function completeQueuedMessageDelivery(
     queuedMessage.messageId,
   );
   try {
-    await removeDeliveredCloudQueuedMessage(queuedMessage).catch((error) => {
-      console.warn("[thread-outbox] could not update sign-out snapshot after delivery", {
-        messageId: queuedMessage.messageId,
-        error,
-      });
-    });
     // Editors can acquire entries during startTurn without bumping revisions; CAS alone would lose unsaved edits.
     if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
       return "edited";
@@ -305,12 +298,6 @@ export async function removeAcknowledgedExistingThreadMessage(
   acknowledgedMessageIds: Set<MessageId>,
 ): Promise<boolean> {
   try {
-    await removeDeliveredCloudQueuedMessage(queuedMessage).catch((error) => {
-      console.warn("[thread-outbox] could not update sign-out snapshot after delivery", {
-        messageId: queuedMessage.messageId,
-        error,
-      });
-    });
     const removed = await removeThreadOutboxMessage(queuedMessage);
     if (removed) {
       acknowledgedMessageIds.delete(queuedMessage.messageId);

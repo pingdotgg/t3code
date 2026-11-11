@@ -92,8 +92,6 @@ function deviceConnectionText(environment: McpGrantEnvironmentRow): string {
         return "Connection timed out: check the remote server and connection route.";
       case "network":
         return "Network unavailable: check network connectivity.";
-      case "relay-unavailable":
-        return "Relay unavailable: check T3 Connect in Settings → Connections.";
       case "endpoint-unavailable":
       case "remote-unavailable":
         return "Remote unavailable: check the remote server and connection route.";
@@ -698,7 +696,7 @@ export function McpGatewaySettings() {
       />
       <SettingsRow
         title="External MCP hosts"
-        description="For assistants outside T3 Code, merge this configuration into their MCP settings on this computer, preserving existing servers, then reconnect the assistant. For OpenCode, use the OpenCode configuration in ~/.config/opencode/opencode.jsonc. The copied configuration includes your bridge token."
+        description="Merge this into the MCP settings of assistants outside T3 Code on this computer, keeping existing servers, then reconnect. OpenCode uses ~/.config/opencode/opencode.jsonc. Includes your bridge token."
         status={
           launch === null
             ? "Available in the installed desktop app."
@@ -733,7 +731,7 @@ export function McpGatewaySettings() {
       </SettingsRow>
       <SettingsRow
         title="Companion endpoint"
-        description="The desktop starts the companion when enabled. Managed agents reach it through their T3 environment connection, including remote and relay connections. External MCP hosts can use the configuration above."
+        description="The desktop starts the companion when enabled. Managed agents reach it through their T3 environment connection, including remote connections. External MCP hosts can use the configuration above."
         status={`ws://127.0.0.1:${getMcpGatewayPort()}`}
       />
     </>

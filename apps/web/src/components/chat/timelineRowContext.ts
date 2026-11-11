@@ -13,12 +13,9 @@ import {
   type ServerProviderSkill,
   type RunId,
   ThreadId,
-  type TurnItemId,
 } from "@t3tools/contracts";
-import type { AsyncResult, Atom } from "effect/reactivity";
-import type { CommandOutputView } from "@t3tools/client-runtime/state/command-output";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
-import { createContext, type MouseEvent, type ReactNode } from "react";
+import { createContext, type MouseEvent } from "react";
 import { type LegendListRef } from "@legendapp/list/react";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import type { PendingApproval } from "../../session-logic";
@@ -27,20 +24,7 @@ import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { type AssistantCitationTarget } from "./AssistantCitationSource";
 import { type MessagesTimelineRow, type WorkGroupScrollAnchor } from "./MessagesTimeline.logic";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
-import type { TurnItemDetailSource } from "../../state/queries";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
-
-/**
- * Where an expanded row reads an item's detail and a command's output. The owner's rows read them
- * from the environment; the guest page reads them through its own routes.
- */
-export interface TurnItemSource {
-  readonly detail: TurnItemDetailSource;
-  readonly commandOutput: (target: {
-    readonly threadId: ThreadId;
-    readonly itemId: TurnItemId;
-  }) => Atom.Atom<AsyncResult.AsyncResult<CommandOutputView, unknown>>;
-}
 
 export interface TimelineRowSharedState {
   pendingApprovals: ReadonlyMap<RuntimeRequestId, PendingApproval>;
@@ -71,13 +55,6 @@ export interface TimelineRowSharedState {
   onOpenToolDiff: ((target: ToolCallDiffTarget) => void) | undefined;
   /** Unset where there is no diff to open, so the timeline shows no "Open diff" button. */
   onOpenTurnDiff: ((runId: RunId, filePath?: string) => void) | undefined;
-  /**
-   * Draws a published HTML visual. Unset, the row loads it from the environment; the guest page
-   * loads it through its own route.
-   */
-  renderHtmlRender: ((row: Extract<TimelineRow, { kind: "html-render" }>) => ReactNode) | undefined;
-  /** Unset, expanded rows read detail and command output from the environment. */
-  turnItemSource: TurnItemSource | undefined;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   workflowOpening: WorkflowOpening | null;
   /** Absent hides "Fork from this response", as in the guest view. */

@@ -1,5 +1,6 @@
 import {
-  putRemoteDpopTokenInCatalog,
+  clearConnectOnlyEnvironments,
+  type ConnectOnlyEnvironment,
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
@@ -8,7 +9,6 @@ import {
   replaceCatalogValue,
   Persistence,
 } from "@t3tools/client-runtime/platform";
-import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
   ConnectionTransientError,
   CredentialStore,
@@ -22,6 +22,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as CatalogStore from "./catalog-store";
+
+export class ConnectOnlyNotice extends Context.Service<
+  ConnectOnlyNotice,
+  { readonly take: Effect.Effect<ReadonlyArray<ConnectOnlyEnvironment>> }
+>()("@t3tools/mobile/connection/storage/ConnectOnlyNotice") {}
 
 function targetPersistenceError(
   operation:
@@ -138,32 +143,27 @@ export const layer = Layer.effectContext(
           ),
         })),
     });
-    const remoteTokenStore = TokenStore.make({
-      get: (environmentId) =>
-        catalog.read.pipe(
-          Effect.map((document) =>
-            Option.fromUndefinedOr(
-              document.remoteDpopTokens.find((token) => token.environmentId === environmentId),
-            ),
+    const connectOnlyNotice = ConnectOnlyNotice.of({
+      take: catalog.read.pipe(
+        Effect.flatMap((document) => {
+          const environments = document.connectOnlyEnvironments ?? [];
+          return environments.length === 0
+            ? Effect.succeed(environments)
+            : catalog.update(clearConnectOnlyEnvironments).pipe(Effect.as(environments));
+        }),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not read the T3 Connect removal notice.", { cause }).pipe(
+            Effect.as([]),
           ),
         ),
-      put: (token) => catalog.update((document) => putRemoteDpopTokenInCatalog(document, token)),
-      remove: (environmentId) =>
-        catalog.update((document) => ({
-          ...document,
-          remoteDpopTokens: removeCatalogValue(
-            document.remoteDpopTokens,
-            (value) => value.environmentId,
-            environmentId,
-          ),
-        })),
+      ),
     });
     return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(
       Context.add(PullRequestRoutingPermissions, githubRoutingPermissions),
       Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
-      Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
+      Context.add(ConnectOnlyNotice, connectOnlyNotice),
     );
   }),
 );

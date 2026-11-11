@@ -4,7 +4,6 @@ import type { SettingsPageTarget } from "./components/settings-page-targets";
 
 /** What each page holds besides its row's label, so search finds a setting by its own name. */
 const SETTINGS_SEARCH_TERMS = {
-  account: ["sign in", "sign out", "login", "clerk", "connect"],
   SettingsEnvironments: [
     "servers",
     "connections",
@@ -122,7 +121,7 @@ const SETTINGS_SEARCH_TERMS = {
     "terms",
     "open source licenses",
   ],
-} satisfies Partial<Record<SettingsPageTarget | "account", readonly string[]>>;
+} satisfies Partial<Record<SettingsPageTarget, readonly string[]>>;
 const termsById: ReadonlyMap<string, readonly string[]> = new Map(
   Object.entries(SETTINGS_SEARCH_TERMS),
 );

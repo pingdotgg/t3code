@@ -1,13 +1,14 @@
 import {
+  clearConnectOnlyEnvironments,
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
+  type ConnectOnlyEnvironment,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
   ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
   StoredOrchestrationShellSnapshot,
   StoredOrchestrationThreadSnapshot,
   decodeOrDiscardOrchestrationCache,
-  putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
@@ -17,7 +18,6 @@ import {
   Persistence,
   makeStoredShellSnapshotEncoder,
 } from "@t3tools/client-runtime/platform";
-import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
   ConnectionTransientError,
   ConnectionBlockedError,
@@ -41,6 +41,12 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
+
+/** Environments dropped from the catalog because T3 Connect was their only route; read once. */
+export class ConnectOnlyNotice extends Context.Service<
+  ConnectOnlyNotice,
+  { readonly take: Effect.Effect<ReadonlyArray<ConnectOnlyEnvironment>> }
+>()("@t3tools/web/connection/storage/ConnectOnlyNotice") {}
 
 const DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 5;
@@ -813,25 +819,20 @@ export const layer = Layer.effectContext(
           ),
         })),
     });
-    const remoteTokenStore = TokenStore.make({
-      get: (environmentId) =>
-        catalog.read.pipe(
-          Effect.map((document) =>
-            Option.fromUndefinedOr(
-              document.remoteDpopTokens.find((token) => token.environmentId === environmentId),
-            ),
+    const connectOnlyNotice = ConnectOnlyNotice.of({
+      take: catalog.read.pipe(
+        Effect.flatMap((document) => {
+          const environments = document.connectOnlyEnvironments ?? [];
+          return environments.length === 0
+            ? Effect.succeed(environments)
+            : catalog.update(clearConnectOnlyEnvironments).pipe(Effect.as(environments));
+        }),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not read the T3 Connect removal notice.", { cause }).pipe(
+            Effect.as([]),
           ),
         ),
-      put: (token) => catalog.update((document) => putRemoteDpopTokenInCatalog(document, token)),
-      remove: (environmentId) =>
-        catalog.update((document) => ({
-          ...document,
-          remoteDpopTokens: removeCatalogValue(
-            document.remoteDpopTokens,
-            (value) => value.environmentId,
-            environmentId,
-          ),
-        })),
+      ),
     });
     const cacheStore = Persistence.EnvironmentCacheStore.of({
       loadShell: Effect.fn("Persistence.EnvironmentCacheStore.loadShell")(function (environmentId) {
@@ -1103,7 +1104,7 @@ export const layer = Layer.effectContext(
       Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
-      Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
+      Context.add(ConnectOnlyNotice, connectOnlyNotice),
       Context.add(Persistence.EnvironmentCacheStore, cacheStore),
       Context.add(EnvironmentQueryStore, queryStore),
     );

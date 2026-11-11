@@ -47,7 +47,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
   pullRequestReference: Schema.optional(Schema.String),
 });
 
-export const QueuedThreadMessageSchema = Schema.Struct({
+const QueuedThreadMessageSchema = Schema.Struct({
   schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION, 4]),
   environmentId: EnvironmentId,
   threadId: ThreadId,

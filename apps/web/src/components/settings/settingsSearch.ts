@@ -59,14 +59,12 @@ export interface SettingsSearchItem {
   readonly windowsOnly?: boolean;
   readonly releaseChannelOnly?: boolean;
   readonly secretsFeatureOnly?: boolean;
-  readonly cloudOnly?: boolean;
   readonly environmentOnly?: boolean;
   readonly providerSettingsOnly?: boolean;
   readonly localBackendManagementOnly?: boolean;
   readonly localEnvironmentOnly?: boolean;
   readonly primaryEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
-  readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
@@ -81,7 +79,6 @@ type AutoSettlementCapability =
 
 export interface SettingsSearchAvailability {
   readonly localEnvironmentDisabled?: boolean;
-  readonly hasCloudPublicConfig: boolean;
   readonly hasEnvironment: boolean;
   readonly hasProviderSettingsEnvironment: boolean;
   readonly canManageLocalBackend: boolean;
@@ -89,7 +86,6 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly hasThreadAutoSettleFinishedChildren?: boolean;
   readonly hasThreadAutoArchive?: boolean;
-  readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
@@ -492,13 +488,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "hide tool calls commands edits searches work log activity quiet chat zen final answers only",
     ],
-  },
-  {
-    id: "guest-links",
-    title: "Guest links",
-    to: "/settings/labs",
-    scope: "environment",
-    searchTerms: ["beta share guest invite link teammate watch t3 connect tunnel"],
   },
   {
     id: "linked-environments-beta",
@@ -1279,35 +1268,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     wslAvailableOnly: true,
   },
   {
-    id: "t3-connect",
-    localEnvironmentOnly: true,
-    title: "T3 Connect",
-    to: "/settings/connections",
-    targetId: "connections-environment",
-    searchTerms: ["managed tunnel cloud other devices remote tunnels limit t3 chat"],
-    desktopOnly: true,
-    cloudOnly: true,
-  },
-  {
-    id: "hold-webhooks-while-offline",
-    localEnvironmentOnly: true,
-    title: "Hold webhooks while offline",
-    to: "/settings/connections",
-    targetId: "connections-environment",
-    searchTerms: ["webhook automations offline queue mailbox t3 connect"],
-    cloudOnly: true,
-    managedTunnelOnly: true,
-  },
-  {
-    id: "publish-agent-activity",
-    localEnvironmentOnly: true,
-    title: "Publish agent activity",
-    to: "/settings/connections",
-    targetId: "connections-environment",
-    searchTerms: ["mobile push notifications live activities cloud tunnel"],
-    cloudOnly: true,
-  },
-  {
     id: "connections-environment",
     title: "This machine",
     to: "/settings/connections",
@@ -1327,7 +1287,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "remote-environments",
     title: "Environments",
     to: "/settings/connections",
-    searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+    searchTerms: ["add pair backend host code ssh config agent tailscale tailnet saved"],
   },
   {
     id: "mcp-gateway",
@@ -1527,7 +1487,6 @@ export function filterAvailableSettingsSearchItems(
   const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
   return items.filter(
     (item) =>
-      (!item.cloudOnly || availability.hasCloudPublicConfig) &&
       (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
       (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
@@ -1540,7 +1499,6 @@ export function filterAvailableSettingsSearchItems(
         availability.hasThreadAutoSettleFinishedChildren === true) &&
       (item.requiresCapability !== "threadAutoArchive" ||
         availability.hasThreadAutoArchive === true) &&
-      (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&

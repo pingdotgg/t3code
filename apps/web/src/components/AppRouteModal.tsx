@@ -29,7 +29,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   return (
     <DialogPrimitive.Root
       open={open}
-      // Portaled layers outside this tree (toasts, Clerk, confirm dialogs) are not backdrop presses.
+      // Portaled layers outside this tree (toasts, confirm dialogs) are not backdrop presses.
       disablePointerDismissal
       onOpenChange={(nextOpen) => {
         if (nextOpen) return;

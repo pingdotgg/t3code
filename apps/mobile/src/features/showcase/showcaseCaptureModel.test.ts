@@ -14,18 +14,16 @@ const ready: ShowcaseReadinessInput = {
   hasFixture: true,
   orientationSettled: true,
   themeApplied: true,
-  agentActivityStaged: false,
   themeId: "t3-code",
   renderSignal: null,
   renderReports: 0,
 };
 
 describe("showcaseSceneOnScreen", () => {
-  it("treats the threads list as the agent activity scene only when that scene is requested", () => {
-    expect(showcaseSceneOnScreen("agent-activity", "/")).toBe("agent-activity");
-    expect(showcaseSceneOnScreen("threads", "/")).toBe("threads");
-    expect(showcaseSceneOnScreen("agent-activity", "/threads/env/thread")).toBe("thread");
-    expect(showcaseSceneOnScreen(null, "/threads/env/thread/review?x=1")).toBe("review");
+  it("reads the scene from the route", () => {
+    expect(showcaseSceneOnScreen("/")).toBe("threads");
+    expect(showcaseSceneOnScreen("/threads/env/thread")).toBe("thread");
+    expect(showcaseSceneOnScreen("/threads/env/thread/review?x=1")).toBe("review");
   });
 });
 
@@ -58,16 +56,6 @@ describe("showcaseReadinessKey", () => {
     expect(showcaseReadinessKey({ ...ready, hasFixture: false })).toBeNull();
     expect(showcaseReadinessKey({ ...ready, orientationSettled: false })).toBeNull();
     expect(showcaseReadinessKey({ ...ready, themeApplied: false })).toBeNull();
-  });
-
-  it("waits for agent activity to be staged", () => {
-    const agentActivity = {
-      ...ready,
-      scene: "agent-activity",
-      requestedScene: "agent-activity",
-    } as const;
-    expect(showcaseReadinessKey(agentActivity)).toBeNull();
-    expect(showcaseReadinessKey({ ...agentActivity, agentActivityStaged: true })).not.toBeNull();
   });
 
   it("waits for review to report a draw in the current theme, and changes key when it redraws", () => {

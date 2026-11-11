@@ -10,12 +10,12 @@ import {
 type RootParams = ReactNavigation.RootParamList;
 
 /** Settings routes that open as modals over whatever is on screen, not as Settings pages. */
-const SETTINGS_MODAL_ROUTES = new Set(["SettingsLegal", "SettingsAuth", "SettingsWaitlist"]);
+const SETTINGS_MODAL_ROUTES = new Set(["SettingsLegal"]);
 
 /** Root routes that make up the Settings tab: its list and the pages it opens. */
 export type SettingsRouteName = Exclude<
   Extract<keyof RootParams, `Settings${string}`>,
-  "SettingsLegal" | "SettingsAuth" | "SettingsWaitlist"
+  "SettingsLegal"
 >;
 
 /** A page in the Settings tab's detail column. */

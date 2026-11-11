@@ -1,8 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ManagedPolicyLimits } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
@@ -24,15 +22,11 @@ import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfig
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
-import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import * as IpcChannels from "../channels.ts";
-import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   revealWindow,
   getLocalEnvironmentBootstraps,
-  installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
@@ -212,58 +206,6 @@ describe("getLocalEnvironmentBootstraps", () => {
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(bootstrapsLayer([stoppedInstance])));
   });
-});
-
-describe("installRelayTelemetryEnabled", () => {
-  // The renderer reads this over sync IPC, so the answer must not wait on the filesystem.
-  const relayTelemetryEnabled = (
-    env: NodeJS.ProcessEnv,
-    policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
-  ) =>
-    Effect.gen(function* () {
-      const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
-      const ipcMain: DesktopIpc.DesktopIpcMain = {
-        removeHandler: () => undefined,
-        handle: () => undefined,
-        removeAllListeners: (channel) => void listeners.delete(channel),
-        on: (channel, listener) => void listeners.set(channel, listener),
-      };
-      yield* installRelayTelemetryEnabled().pipe(
-        Effect.provideService(HostProcess.Environment, env),
-        Effect.provide(
-          Layer.mergeAll(DesktopIpc.layer(ipcMain), DesktopManagedPolicy.layerTest(policy)),
-        ),
-      );
-      const event = { returnValue: undefined as unknown };
-      listeners.get(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL)?.(event as never);
-      return event.returnValue;
-    }).pipe(Effect.scoped);
-
-  it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
-    Effect.gen(function* () {
-      assert.isFalse(yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }));
-      assert.isTrue(yield* relayTelemetryEnabled({}));
-    }),
-  );
-
-  it.effect("turns relay tracing off when the managed policy turns telemetry off", () =>
-    Effect.gen(function* () {
-      const policy = (limits: ManagedPolicyLimits) => ({
-        schemaVersion: 1 as const,
-        organization: "Example Corp",
-        limits,
-      });
-      assert.isFalse(yield* relayTelemetryEnabled({}, policy({ telemetry: false })));
-      assert.isTrue(yield* relayTelemetryEnabled({}, policy({ webhookTasks: false })));
-      // A policy that cannot be read fails closed.
-      assert.isFalse(
-        yield* relayTelemetryEnabled(
-          {},
-          new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" }),
-        ),
-      );
-    }),
-  );
 });
 
 describe("revealWindow", () => {

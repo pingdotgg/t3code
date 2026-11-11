@@ -16,9 +16,8 @@ This app has three variants:
 
 Run commands from `apps/mobile`.
 
-T3 Connect is optional and disabled in a fresh clone. Public configuration belongs in the
-repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
-[`../../.env.example`](../../.env.example).
+Public configuration belongs in the repository-root `.env` or `.env.local`, not an
+`apps/mobile/.env` file. See [`../../.env.example`](../../.env.example).
 
 ## Development
 
@@ -80,8 +79,8 @@ project. pnpm gives each patch hash a new package path; Pods can otherwise keep 
 previous directory.
 
 If your Xcode account only has a Personal Team, use a bundle identifier you control and opt into the
-reduced-capability local build. Personal Team builds omit the widget and share extensions, push
-entitlement, and native Sign in with Apple entitlement; builds without this opt-in are unchanged.
+reduced-capability local build. Personal Team builds omit the widget and share extensions and the
+native Sign in with Apple entitlement; builds without this opt-in are unchanged.
 
 ```bash
 T3CODE_IOS_PERSONAL_TEAM=1 \
@@ -132,9 +131,8 @@ and `.preview` suffixes for the corresponding variants. Release builds use Apple
 provisioning; the upstream Apple team and App Store Connect app binding are removed. TestFlight
 submission requires your own App Store Connect app record.
 
-Personal builds disable Clerk, Google sign-in, cloud accounts, and account-based T3 Connect.
-They use the existing server's direct pairing and persist its credential in SecureStore. No
-Clerk/relay environment variables are required, and inherited cloud config is ignored.
+The app pairs directly with a server, over your network or Tailscale, and persists its
+credential in SecureStore. It has no accounts, relay, or push notifications.
 
 For a standalone TestFlight app with embedded JavaScript and no Metro dependency:
 

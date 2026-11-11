@@ -27,7 +27,6 @@ import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPa
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ShellCommandBlock } from "./ShellCommandBlock";
-import type { TurnItemSource } from "./timelineRowContext";
 
 interface V2ItemInspectorProps {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
@@ -36,7 +35,6 @@ interface V2ItemInspectorProps {
   readonly workspaceRoot?: string | undefined;
   readonly onOpenToolDiff?: ((target: ToolCallDiffTarget) => void) | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
-  readonly source?: TurnItemSource | undefined;
 }
 
 function SyntaxTokens({
@@ -95,7 +93,6 @@ function StructuredValue({
 function useFetchedTurnItem(
   projectedItem: OrchestrationV2ProjectedTurnItem,
   environmentId: EnvironmentId,
-  source: TurnItemSource | undefined,
   skip = false,
 ) {
   const wireItem = projectedItem.item;
@@ -109,7 +106,6 @@ function useFetchedTurnItem(
           revision: turnItemDetailRevision(wireItem),
         }
       : null,
-    source?.detail,
   );
   const fetchedItem = detail.data?.item;
   const item = fetchedItem?.type === wireItem.type ? fetchedItem : wireItem;
@@ -170,9 +166,8 @@ export function FetchedToolOutput(props: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly environmentId: EnvironmentId;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
-  readonly source?: TurnItemSource | undefined;
 }) {
-  const { output } = useFetchedTurnItem(props.projectedItem, props.environmentId, props.source);
+  const { output } = useFetchedTurnItem(props.projectedItem, props.environmentId);
   return (
     <div className={cn("mt-1.5 space-y-1.5", monoClassName)}>
       <ToolOutputImages {...output} onImageExpand={props.onImageExpand} />
@@ -225,16 +220,10 @@ function ToolCallBody(
 
 export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspectorProps) {
   // Command rows stream their output, including the final output, from the server.
-  const environmentStreamsOutput = useCommandOutputStreaming(props.environmentId);
   const streamsOutput =
-    (props.source !== undefined || environmentStreamsOutput) &&
+    useCommandOutputStreaming(props.environmentId) &&
     props.projectedItem.item.type === "command_execution";
-  const fetched = useFetchedTurnItem(
-    props.projectedItem,
-    props.environmentId,
-    props.source,
-    streamsOutput,
-  );
+  const fetched = useFetchedTurnItem(props.projectedItem, props.environmentId, streamsOutput);
   const item = fetched.item;
   const outputState = fetched.output;
   return (
@@ -265,7 +254,6 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
                 environmentId={props.environmentId}
                 threadId={props.projectedItem.sourceThreadId}
                 itemId={props.projectedItem.sourceItemId}
-                source={props.source?.commandOutput}
               />
             ) : undefined
           }

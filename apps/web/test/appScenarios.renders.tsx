@@ -150,9 +150,8 @@ async function report(
 }
 
 // A first mount loads lazy route chunks, fonts and the connection at varying times. The diff
-// panel and settings load more chunks on first open (the T3 Connect sidebar, the terminal
-// preview's renderer), which can land after a window has gone quiet, so the warm-up opens
-// each once and lets it settle.
+// panel and settings load more chunks on first open (the terminal preview's renderer), which
+// can land after a window has gone quiet, so the warm-up opens each once and lets it settle.
 it("warm up", async () => {
   using _clock = frozenClock();
   const { screen, router } = await openThread(WARM);

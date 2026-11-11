@@ -24,7 +24,7 @@ export function configureSharedEncryptionIdentity(input: {
   }
 }
 
-export const usesAgentsStorageCompatibility = () =>
+const usesAgentsStorageCompatibility = () =>
   brand === "agents" && !process.env.VITE_DEV_SERVER_URL?.trim();
 
 export const usesSharedEncryptionIdentity = () =>
@@ -99,7 +99,7 @@ export function prepareSharedSafeStorage(): boolean {
 // A burst of catalog/auth reads must not open multiple Keychain prompts. Keep
 // failures for this launch as well; restart retries after the OS keyring is unlocked.
 const legacyDecryptions = new Map<string, Promise<string>>();
-export function decryptLegacyAgentsString(value: Uint8Array): Promise<string> {
+function decryptLegacyAgentsString(value: Uint8Array): Promise<string> {
   const key = NodeCrypto.createHash("sha256").update(value).digest("hex");
   const cached = legacyDecryptions.get(key);
   if (cached) return cached;
