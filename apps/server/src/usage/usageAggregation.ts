@@ -129,10 +129,50 @@ export interface AggregateResult {
   readonly outOfWindow: number;
 }
 
+/**
+ * Partial copies share a billed message's key: keep each token channel's maximum and the larger
+ * reported cost, and the first copy's time, model, session and speed so it stays in its bucket.
+ */
+export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRecord {
+  const a = held.totals;
+  const b = copy.totals;
+  const reportedCostUsd =
+    held.reportedCostUsd === null || copy.reportedCostUsd === null
+      ? (held.reportedCostUsd ?? copy.reportedCostUsd)
+      : Math.max(held.reportedCostUsd, copy.reportedCostUsd);
+  if (
+    b.uncachedInputTokens <= a.uncachedInputTokens &&
+    b.cachedInputTokens <= a.cachedInputTokens &&
+    b.cacheCreationTokens <= a.cacheCreationTokens &&
+    b.outputTokens <= a.outputTokens &&
+    b.reasoningTokens <= a.reasoningTokens &&
+    reportedCostUsd === held.reportedCostUsd
+  ) {
+    return held;
+  }
+  return {
+    ...held,
+    totals: {
+      uncachedInputTokens: Math.max(a.uncachedInputTokens, b.uncachedInputTokens),
+      cachedInputTokens: Math.max(a.cachedInputTokens, b.cachedInputTokens),
+      cacheCreationTokens: Math.max(a.cacheCreationTokens, b.cacheCreationTokens),
+      outputTokens: Math.max(a.outputTokens, b.outputTokens),
+      reasoningTokens: Math.max(a.reasoningTokens, b.reasoningTokens),
+    },
+    reportedCostUsd,
+  };
+}
+
+interface Contribution {
+  record: UsageRecord;
+  /** Null when the first copy fell outside the window. */
+  readonly bucket: MutableBucket | null;
+}
+
 /** Deduplicates across the whole scan; Claude copies records into resumed/forked transcripts. */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
-  readonly #seen = new Set<string>();
+  readonly #seen = new Map<string, Contribution>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
@@ -167,20 +207,33 @@ export class UsageAggregator {
     if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) {
+      const held = this.#seen.get(record.dedupeKey);
+      if (held !== undefined) {
         this.#duplicatesDropped += 1;
+        if (held.bucket !== null) held.record = mergeUsageCopies(held.record, record);
         return false;
       }
-      this.#seen.add(record.dedupeKey);
     }
 
+    const bucket = this.#placeInWindow(record, sourcePath ?? "");
+    if (record.dedupeKey !== null) this.#seen.set(record.dedupeKey, { record, bucket });
+    if (bucket === null) {
+      this.#outOfWindow += 1;
+      return false;
+    }
+    // Keyed usage is counted in finish(), once all its copies are merged.
+    if (record.dedupeKey === null) this.#accumulate(bucket, record);
+    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
+    return true;
+  }
+
+  #placeInWindow(record: UsageRecord, source: string): MutableBucket | null {
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
         record.timestampMs >= this.#hourlyWindow.untilTimeMs)
     ) {
-      this.#outOfWindow += 1;
-      return false;
+      return null;
     }
 
     const day = this.#toDay(record.timestampMs);
@@ -188,16 +241,17 @@ export class UsageAggregator {
       this.#hourlyWindow === null &&
       (day < this.#options.sinceDay || day > this.#options.untilDay)
     ) {
-      this.#outOfWindow += 1;
-      return false;
+      return null;
     }
 
     const hourIndex =
       this.#hourlyWindow === null
         ? -1
         : Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS);
-    const bucket = this.#bucketFor(day, hourIndex, record.provider, record.model, sourcePath ?? "");
+    return this.#bucketFor(day, hourIndex, record.provider, record.model, source);
+  }
 
+  #accumulate(bucket: MutableBucket, record: UsageRecord): void {
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
     const totals = bucket.totals;
@@ -231,8 +285,6 @@ export class UsageAggregator {
     bucket.records += 1;
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
-    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
-    return true;
   }
 
   // Aliases use the target's rate, replacing provider-specific rateModel.
@@ -288,6 +340,10 @@ export class UsageAggregator {
   }
 
   finish(): AggregateResult {
+    for (const { record, bucket } of this.#seen.values()) {
+      if (bucket !== null) this.#accumulate(bucket, record);
+    }
+    this.#seen.clear();
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
       const [day = "", hourStart = "", provider = "", model = "", sourcePath = ""] =
