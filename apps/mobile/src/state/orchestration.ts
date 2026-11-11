@@ -3,7 +3,6 @@ import { createOrchestrationEnvironmentAtoms } from "@t3tools/client-runtime/sta
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentShell } from "./shell";
 import { recordReviewTurnDiffAnswer } from "./reviewTurnDiffs";
-import { environmentShell } from "./shell";
 
 export const orchestrationEnvironment = createOrchestrationEnvironmentAtoms(connectionAtomRuntime, {
   shellState: environmentShell.stateValueAtom,
