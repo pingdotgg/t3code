@@ -144,10 +144,17 @@ function serializeListItem(
 }
 
 function serializeList(list: Element, ordered: boolean, inTableCell: boolean): string {
-  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10) || 1;
+  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10);
   const items = [...list.children].filter((child) => child.tagName === "LI");
   if (items.length === 0) return "";
-  return `${items.map((item, index) => serializeListItem(item, ordered, start + index, inTableCell)).join("\n")}\n\n`;
+  let next = Number.isNaN(start) ? 1 : start;
+  return `${items
+    .map((item) => {
+      const value = Number.parseInt(item.getAttribute("value") ?? "", 10);
+      if (ordered && !Number.isNaN(value)) next = value;
+      return serializeListItem(item, ordered, next++, inTableCell);
+    })
+    .join("\n")}\n\n`;
 }
 
 function serializeBlockquote(quote: Element, inTableCell: boolean): string {
