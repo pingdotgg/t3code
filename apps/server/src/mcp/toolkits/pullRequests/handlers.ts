@@ -284,7 +284,6 @@ const make = Effect.gen(function* () {
       host: target.host,
       repository: target.repository,
       number: target.number,
-      webUrl: null,
     });
     const url = PullRequestService.withoutUrlCredentials(detail.url);
     return { url, repositoryWebUrl: url };

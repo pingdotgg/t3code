@@ -497,8 +497,8 @@ describe("pull request toolkit handlers", () => {
       const watched = yield* harness.call("watch_pull_request", target);
       expect([linked.url, watched.url]).toEqual([url, url]);
       expect(yield* Ref.get(harness.detailRequests)).toEqual([
-        { projectId: PROJECT_ID, host: "code.example", ...target, webUrl: null },
-        { projectId: PROJECT_ID, host: "code.example", ...target, webUrl: null },
+        { projectId: PROJECT_ID, host: "code.example", ...target },
+        { projectId: PROJECT_ID, host: "code.example", ...target },
       ]);
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.link", ...target, url, repositoryWebUrl: url },
