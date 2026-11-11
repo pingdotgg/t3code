@@ -1,4 +1,4 @@
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -8,10 +8,10 @@ export const make = Effect.fn("ProviderCredentialStore.make")(function* (
   bindingId: string,
 ) {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   // Hash the tuple so arbitrary bindings cannot escape or exceed a filename.
-  const bindingHash = yield* crypto
-    .digest("SHA-256", new TextEncoder().encode(`${driver.length}:${driver}${bindingId}`))
+  const bindingHash = yield* digest
+    .digest(Digest.sha256, new TextEncoder().encode(`${driver.length}:${driver}${bindingId}`))
     .pipe(Effect.map(Hex.encode), Effect.orDie);
   const key = `provider-auth-${bindingHash}`;
   return {
