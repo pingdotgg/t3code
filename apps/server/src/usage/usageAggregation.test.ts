@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { ProjectId } from "@t3tools/contracts";
 
-import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import { mergeUsageCopies, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
@@ -21,6 +21,7 @@ const rates: RateTable = new Map([
         cacheCreationCostPerToken: 2.5e-5,
       },
       ultrafast: null,
+      contextTiers: [],
     },
   ],
 ]);
@@ -87,17 +88,68 @@ describe("UsageAggregator", () => {
     expect(bucket).not.toHaveProperty("ultrafastCostUsd");
   });
 
-  it("keeps only the first record for a repeated dedupe key", () => {
+  it("merges partial copies of a key by channel maximum in the first copy's bucket", () => {
+    const zeroTotals = {
+      uncachedInputTokens: 0,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    };
+    const partial = record({
+      dedupeKey: "msg_1:",
+      speed: "fast",
+      reportedCostUsd: 1,
+      totals: { ...record().totals, cachedInputTokens: 1200, outputTokens: 3, reasoningTokens: 5 },
+    });
+    const complete = record({
+      dedupeKey: "msg_1:",
+      model: "claude-fable-5[1m]",
+      timestampMs: Date.parse("2026-08-08T12:00:00Z"),
+      sessionId: "session-fork",
+      reportedCostUsd: 2,
+      totals: {
+        uncachedInputTokens: 2,
+        cachedInputTokens: 1000,
+        cacheCreationTokens: 40,
+        outputTokens: 264,
+        reasoningTokens: 135,
+      },
+    });
+    const zero = { ...partial, totals: zeroTotals, reportedCostUsd: null };
+    const merged = {
+      reportedCostUsd: 2,
+      totals: { ...complete.totals, uncachedInputTokens: 100, cachedInputTokens: 1200 },
+    };
+
+    for (const copies of [
+      [zero, partial, complete, complete],
+      [complete, partial, zero, zero],
+    ]) {
+      const aggregator = new UsageAggregator({
+        timeZone: "UTC",
+        sinceDay: "2026-08-01",
+        untilDay: "2026-08-31",
+        rates,
+      });
+      copies.forEach((copy, index) => aggregator.add(copy, `${index}.jsonl`));
+      const result = aggregator.finish();
+      const expected = aggregate([{ ...copies[0]!, ...merged }]).buckets[0];
+
+      expect(result.duplicatesDropped).toBe(3);
+      expect(result.buckets).toEqual([{ ...expected, sourcePath: "0.jsonl" }]);
+    }
+  });
+
+  it("does not count a key whose first copy fell outside the window", () => {
     const result = aggregate([
-      record({ dedupeKey: "msg_1:" }),
-      record({ dedupeKey: "msg_1:" }),
-      record({ dedupeKey: "msg_1:" }),
+      record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-07-01T12:00:00Z") }),
+      record({ dedupeKey: "msg_1:", totals: { ...record().totals, outputTokens: 500 } }),
     ]);
 
-    expect(result.duplicatesDropped).toBe(2);
-    expect(result.buckets).toHaveLength(1);
-    expect(result.buckets[0]?.records).toBe(1);
-    expect(result.buckets[0]?.totals.outputTokens).toBe(50);
+    expect(result.duplicatesDropped).toBe(1);
+    expect(result.outOfWindow).toBe(1);
+    expect(result.buckets).toHaveLength(0);
   });
 
   it("buckets by the day in the requested time zone", () => {
@@ -218,16 +270,37 @@ describe("UsageAggregator", () => {
       untilDay: "2026-08-31",
       rates,
       modelFilter: { exclude: [{ model: "claude-opus-5" }] },
-      attributeProject: (item) => (item.sessionId === "session-a" ? ProjectId.make("p1") : null),
+      attributeProject: (item, transcriptPath) =>
+        item.sessionId === "session-a" && transcriptPath === "/first.jsonl"
+          ? ProjectId.make("p1")
+          : null,
     });
-    aggregator.add(record({ dedupeKey: "msg_1:" }), "/claude");
-    aggregator.add(record({ dedupeKey: "msg_1:" }), "/claude");
-    aggregator.add(record({ timestampMs: Date.parse("2026-07-01T00:00:00Z") }), "/claude");
-    aggregator.add(record({ model: "claude-opus-5" }), "/claude");
+    const partial = record({
+      dedupeKey: "msg_1:",
+      totals: { ...record().totals, outputTokens: 3 },
+    });
+    const complete = record({
+      dedupeKey: "msg_1:",
+      sessionId: "session-b",
+      totals: { ...record().totals, outputTokens: 264 },
+    });
+    aggregator.add(partial, "/claude", "/first.jsonl");
+    aggregator.add(complete, "/fork", "/other.jsonl");
+    aggregator.add(
+      record({ timestampMs: Date.parse("2026-07-01T00:00:00Z") }),
+      "/claude",
+      "/first.jsonl",
+    );
+    aggregator.add(record({ model: "claude-opus-5" }), "/claude", "/first.jsonl");
     aggregator.add(record({ sessionId: "session-b", model: "kimi-k3" }), "/claude");
-    aggregator.add(record({ timestampMs: Date.parse("2026-08-09T00:00:00Z") }), "/claude");
+    const later = record({ timestampMs: Date.parse("2026-08-09T00:00:00Z") });
+    aggregator.add(later, "/claude", "/first.jsonl");
     const result = aggregator.finish();
-    const singleCost = aggregate([record()]).buckets[0]!.costUsd;
+    const merged = mergeUsageCopies(partial, complete);
+    const projectCost = aggregate([merged, later]).buckets.reduce(
+      (sum, bucket) => sum + bucket.costUsd,
+      0,
+    );
 
     expect(result.projectTotals).toEqual([
       {
@@ -238,10 +311,10 @@ describe("UsageAggregator", () => {
           uncachedInputTokens: 200,
           cachedInputTokens: 2000,
           cacheCreationTokens: 20,
-          outputTokens: 100,
+          outputTokens: 314,
           reasoningTokens: 0,
         },
-        costUsd: expect.closeTo(2 * singleCost, 9),
+        costUsd: expect.closeTo(projectCost, 9),
         records: 2,
         unpricedRecords: 0,
         sessions: 1,
@@ -257,7 +330,7 @@ describe("UsageAggregator", () => {
       },
     ]);
     const bucketCost = result.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0);
-    expect(bucketCost).toBeCloseTo(2 * singleCost, 9);
+    expect(bucketCost).toBeCloseTo(projectCost, 9);
     expect(aggregate([record()]).projectTotals).toBeUndefined();
   });
 });
