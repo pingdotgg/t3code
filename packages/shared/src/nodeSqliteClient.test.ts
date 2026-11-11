@@ -142,6 +142,23 @@ layer("NodeSqliteClient", (it) => {
 
 const largeText = "x".repeat(64 * 1024 + 1);
 
+it.effect("a rowid above 2^53 does not leave a transaction open", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE big (id INTEGER PRIMARY KEY, name TEXT)`;
+    yield* sql`INSERT INTO big (id, name) VALUES (246166233861328896, 'first')`;
+    // BEGIN reports the connection's last insert rowid; a failure to convert it must not
+    // read as a failed BEGIN, or the open transaction is never rolled back.
+    yield* sql.withTransaction(sql`INSERT INTO big (name) VALUES ('second')`);
+    yield* sql.withTransaction(sql`UPDATE big SET name = 'third' WHERE name = 'second'`);
+    const rows = yield* sql<{ name: string }>`SELECT name FROM big ORDER BY id`;
+    assert.deepStrictEqual(
+      rows.map((row) => row.name),
+      ["first", "third"],
+    );
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
 it.effect("reads integers on the values path as the caller asked, cached or not", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
