@@ -1260,6 +1260,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             Effect.gen(function* () {
               const { state } = yield* SynchronizedRef.get(stateRef);
               if (
+                !state.agentAccessEnabled ||
                 !state.sessions.some(
                   (live) =>
                     live.threadId === target.threadId &&

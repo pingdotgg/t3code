@@ -416,7 +416,7 @@ it.effect.each([false, true])("keeps a failed launcher close retryable (timeout:
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        ServerSettings.layerTest({ enableDeviceSupport: true }),
+        ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-close-retry-" }),
         NodeCrypto.layer,
         NetService.layer,
@@ -1237,7 +1237,7 @@ it.effect.each(["shutdown", "close"] as const)(
         }),
         platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
         ensureReady: () => Effect.succeed(ready),
-        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+        ensureAgentReady: () => Effect.succeed({ ...ready, agentDevice: null }),
         current: Effect.succeed(ready),
         stopAgent: Effect.void,
         stop: Effect.void,
@@ -1396,19 +1396,6 @@ it.effect.each(["shutdown", "close"] as const)(
       expect((yield* service.state).sessions).toEqual([]);
       expect(launchers).toEqual(new Set());
       yield* bind(input);
-      yield* service.configure({ agentAccessEnabled: false });
-      expect((yield* service.state).sessions).toHaveLength(1);
-      expect(launchers).toEqual(new Set());
-      releaseError = new DeviceOperationError({
-        operation: "close",
-        reason: "command_failed",
-        cause: new Error("Agent daemon was stopped"),
-      });
-      if (operation === "shutdown") yield* service.shutdown(input);
-      else yield* service.close({ threadId });
-      expect((yield* service.state).sessions).toEqual([]);
-      releaseError = undefined;
-      yield* bind(input);
       failingLauncher = undefined;
       releaseError = new DeviceOperationError({
         operation: "close",
@@ -1460,7 +1447,31 @@ it.effect.each(["shutdown", "close"] as const)(
         expect((yield* service.state).sessions).toEqual([]);
         expect(launchers).toEqual(new Set());
       }
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+      pauseBind = null;
+      pauseRelease = null;
+      releaseError = undefined;
+      yield* bind(input);
+      yield* service.configure({ agentAccessEnabled: false });
+      expect((yield* service.state).sessions).toHaveLength(1);
+      expect(launchers).toEqual(new Set());
+      expect(yield* service.agentLauncher({ ...target(threadId), targetArgs: [] })).toEqual(
+        Option.none(),
+      );
+      releaseError = new DeviceOperationError({
+        operation: "close",
+        reason: "command_failed",
+        cause: new Error("Agent daemon was stopped"),
+      });
+      if (operation === "shutdown") yield* service.shutdown(input);
+      else yield* service.close({ threadId });
+      expect((yield* service.state).sessions).toEqual([]);
+      releaseError = undefined;
+    }).pipe(
+      Effect.provide(
+        ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
+      ),
+      Effect.scoped,
+    ),
 );
 
 it.effect("leaves a session its host leases to every thread open when one thread closes", () =>
