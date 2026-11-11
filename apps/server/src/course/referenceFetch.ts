@@ -117,21 +117,13 @@ const driveRewrite = (url: URL) => {
   return new URL(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(match[1]!)}`);
 };
 
-const crc32 = (bytes: Uint8Array) => {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-};
 const chunk = (name: string, body: Uint8Array) => {
   const type = Buffer.from(name);
   const out = Buffer.alloc(12 + body.length);
   out.writeUInt32BE(body.length, 0);
   type.copy(out, 4);
   Buffer.from(body).copy(out, 8);
-  out.writeUInt32BE(crc32(Buffer.concat([type, Buffer.from(body)])), body.length + 8);
+  out.writeUInt32BE(NodeZlib.crc32(Buffer.concat([type, Buffer.from(body)])), body.length + 8);
   return out;
 };
 export const encodeGrayscalePng = (pixels: Uint8Array, width: number, height: number) => {
@@ -192,18 +184,19 @@ export const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<num
   }).promise;
   const pages: { page: number; text: string }[] = [];
   const images: ReferenceImage[] = [];
+  let textRemaining = 20_000;
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const page = await document.getPage(pageNumber);
     const content = await page.getTextContent();
-    pages.push({
-      page: pageNumber,
-      text: content.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim(),
-    });
     if (!requested.includes(pageNumber)) continue;
+    const pageText = content.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, textRemaining);
+    textRemaining -= pageText.length;
+    pages.push({ page: pageNumber, text: pageText });
     const ops = await page.getOperatorList();
     const candidates = ops.fnArray
       .map((fn: number, i: number) => ({ fn, args: ops.argsArray[i] }))
@@ -315,13 +308,18 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
           .slice(0, 20_000);
         const links = [...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
           .slice(0, 300)
-          .map((match) => ({
-            href: new URL(match[1]!, url).toString(),
-            text: match[2]!
-              .replace(/<[^>]+>/g, "")
-              .replace(/\s+/g, " ")
-              .trim(),
-          }));
+          .map((match) =>
+            URL.canParse(match[1]!, url)
+              ? {
+                  href: new URL(match[1]!, url).toString(),
+                  text: match[2]!
+                    .replace(/<[^>]+>/g, "")
+                    .replace(/\s+/g, " ")
+                    .trim(),
+                }
+              : undefined,
+          )
+          .filter((link): link is { href: string; text: string } => link !== undefined);
         return { url: url.toString(), ...(title ? { title } : {}), text, links };
       } catch (cause) {
         failure = cause;

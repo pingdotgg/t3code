@@ -23,12 +23,13 @@ export interface DownloadAuditAttempt {
   readonly blocked?: string;
   readonly error?: string;
 }
-const SECRET = /token|key|sig|secret|pass|auth|session|code|cred|jwt/i;
+const SECRET = /token|key|sig|secret|pass|pw|pwd|auth|session|code|cred|jwt|access/i;
 const redactUrl = (raw: string) => {
   try {
     const url = new URL(raw);
     url.username = "";
     url.password = "";
+    url.hash = "";
     for (const key of url.searchParams.keys())
       if (SECRET.test(key)) url.searchParams.set(key, "REDACTED");
     return url.toString();
