@@ -415,11 +415,7 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
-  /**
-   * The pull request a checkout prepared this draft for, and the branch it checked out. Linked to
-   * the thread when the draft becomes one while still on that branch (see
-   * `checkoutPullRequestUrlToLink`).
-   */
+  /** Linked to the thread when the draft is sent on this branch. */
   checkoutPullRequest?: DraftCheckoutPullRequest;
   promotedTo?: ScopedThreadRef | null;
 }

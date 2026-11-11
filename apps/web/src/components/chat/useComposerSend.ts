@@ -249,8 +249,6 @@ interface ComposerSendInput {
   }) => Promise<AtomCommandResult<void, unknown>>;
   /** Links a checked-out pull request to its thread; best effort, failures only logged. */
   readonly linkCheckoutPullRequest: (threadRef: ScopedThreadRef, url: string) => void;
-  /** Draft threads whose send already read the draft (see `checkoutLandedOnSentDraft`). */
-  readonly sentDraftThreadIds: { readonly current: Set<ThreadId> };
 }
 
 /**
@@ -331,7 +329,6 @@ export function useComposerSend(input: ComposerSendInput) {
     handleNewThreadInActiveProject,
     persistThreadSettingsForNextTurn,
     linkCheckoutPullRequest,
-    sentDraftThreadIds,
   } = input;
   const linkedEnvironments = useLinkedEnvironments(environmentId);
   const handleNewThread = useNewThreadHandler();
@@ -1236,16 +1233,13 @@ export function useComposerSend(input: ComposerSendInput) {
         submissionIntent === "background" && isLocalDraftThread
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
-      // Read the live session just before dispatch: a checkout can record its pull request
-      // while this send awaits, and the draft is finalized away once the thread exists.
+      // Read the live session, not the render snapshot: the draft is finalized away once the
+      // thread exists.
       const checkoutPullRequestUrl = isLocalDraftThread
         ? checkoutPullRequestUrlToLink(
             draftId === null ? null : useComposerDraftStore.getState().getDraftSession(draftId),
           )
         : null;
-      // Recorded together with the read above, so a checkout finishing on either side of it is
-      // linked exactly once: by this send, or by the checkout after it.
-      if (isLocalDraftThread) sentDraftThreadIds.current.add(threadIdForSend);
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
       const startPromise = startThreadTurn({
         environmentId,
@@ -1298,8 +1292,6 @@ export function useComposerSend(input: ComposerSendInput) {
       const startResult = await startPromise;
       if (startResult._tag === "Failure") {
         failure = startResult;
-        // The draft is still a draft; its next send reads it again.
-        sentDraftThreadIds.current.delete(threadIdForSend);
       } else {
         turnStartSucceeded = true;
         if (checkoutPullRequestUrl) {

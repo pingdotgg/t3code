@@ -1212,17 +1212,12 @@ export default function ChatView(props: ChatViewProps) {
   });
 
   const pullRequestLinking = usePullRequestLinking(environmentId);
-  // Links the pull request a checkout prepared to the thread it landed on, the same way the Link
-  // pull request dialog does. Best effort: the thread already exists, so a failure is only logged.
-  // Stable identity: a pending shell link can fire after this view unmounts.
+  // Best effort: the thread already exists, so a failed link is only logged.
   const linkCheckoutPullRequest = useStableCallback((threadRef: ScopedThreadRef, url: string) => {
     pullRequestLinking.changeLink(threadRef, url, true).catch((error: unknown) => {
       console.warn("Failed to link the checked-out pull request to its thread.", error);
     });
   });
-  // Draft threads whose send already read the draft (see `checkoutLandedOnSentDraft`). The ref is
-  // passed, not the Set, so the value is not read during render.
-  const sentDraftThreadIdsRef = useRef(new Set<ThreadId>());
   const { handlePreparedPullRequestThreadStable, openPullRequestDialogStable } =
     usePullRequestDraftThread({
       routeKind,
@@ -1233,9 +1228,6 @@ export default function ChatView(props: ChatViewProps) {
       activeThreadKey,
       isServerThread,
       canCheckoutPullRequestIntoThread,
-      environmentId,
-      linkCheckoutPullRequest,
-      sentDraftThreadIds: sentDraftThreadIdsRef,
     });
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
@@ -2962,7 +2954,6 @@ export default function ChatView(props: ChatViewProps) {
     handleNewThreadInActiveProject,
     persistThreadSettingsForNextTurn,
     linkCheckoutPullRequest,
-    sentDraftThreadIds: sentDraftThreadIdsRef,
   });
 
   const onWorktreeSetupWorkLocally = () => {

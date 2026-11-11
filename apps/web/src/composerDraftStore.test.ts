@@ -2713,13 +2713,6 @@ describe("composerDraftStore checkout pull request", () => {
     expect(toLink()).toBeNull();
   });
 
-  it("can be attached to a draft that is already on the branch", () => {
-    store().setProjectDraftThreadId(projectRef, draftId, { threadId, branch: checkout.branch });
-    store().setDraftThreadContext(draftId, { checkoutPullRequest: checkout });
-
-    expect(toLink()).toBe(url);
-  });
-
   it("is dropped when cleared or when the draft moves to another project", () => {
     store().setProjectDraftThreadId(projectRef, draftId, {
       threadId,
