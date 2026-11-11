@@ -5,41 +5,9 @@
 
 static const char *scenario;
 
-/* KWallet, through Secret Service, stores the key as server=<folder>,
- * user=<entry> with no application attribute. Pairs follow Chromium's
- * freedesktop_secret_key_provider.h branding. */
-static const char *const kwallet_items[][3] = {
-    {"chrome", "Chrome Keys", "Chrome Safe Storage"},
-    {"chromium", "Chromium Keys", "Chromium Safe Storage"},
-};
-
-static SecretItem *kwallet_item(const char *value, guint64 modified) {
-    SecretItem *item = g_object_new(SECRET_TYPE_ITEM, NULL);
-    g_object_set_data(G_OBJECT(item), "value", (gpointer)value);
-    g_object_set_data(G_OBJECT(item), "modified", GSIZE_TO_POINTER(modified));
-    return item;
-}
-
-/* A migrated wallet returns its stale item before the key Chromium rewrote. */
-static GList *search_kwallet(GHashTable *attributes, SecretSearchFlags flags) {
-    const char *server = g_hash_table_lookup(attributes, "server");
-    const char *user = g_hash_table_lookup(attributes, "user");
-    for (gsize i = 0; i < G_N_ELEMENTS(kwallet_items); i++) {
-        if (g_strcmp0(server, kwallet_items[i][1]) == 0 && g_strcmp0(user, kwallet_items[i][2]) == 0) {
-            scenario = "kwallet";
-            GList *items = g_list_append(NULL, kwallet_item("stale", 1));
-            /* Like libsecret, return only the first match unless asked for all. */
-            if (!(flags & SECRET_SEARCH_ALL)) return items;
-            return g_list_append(items, kwallet_item("live \xc3\xa9\xe2\x82\xac", 2));
-        }
-    }
-    return NULL;
-}
-
 GList *__wrap_secret_service_search_sync(SecretService *service, const SecretSchema *schema,
                                        GHashTable *attributes, SecretSearchFlags flags,
                                        GCancellable *cancellable, GError **error) {
-    if (!g_hash_table_contains(attributes, "application")) return search_kwallet(attributes, flags);
     g_assert_null(service);
     g_assert_null(cancellable);
     g_assert_cmpstr(schema->name, ==, "chrome_libsecret_os_crypt_password_v2");
@@ -47,9 +15,9 @@ GList *__wrap_secret_service_search_sync(SecretService *service, const SecretSch
     g_assert_cmpint(flags, ==, SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS);
     g_assert_cmpuint(g_hash_table_size(attributes), ==, 1);
     scenario = g_intern_string(g_hash_table_lookup(attributes, "application"));
-    if (strcmp(scenario, "missing") == 0) return NULL;
-    for (gsize i = 0; i < G_N_ELEMENTS(kwallet_items); i++) {
-        if (strcmp(scenario, kwallet_items[i][0]) == 0) return NULL;
+    if (strcmp(scenario, "missing") == 0 || strcmp(scenario, "chrome") == 0 ||
+        strcmp(scenario, "chromium") == 0) {
+        return NULL;
     }
     if (strcmp(scenario, "cancelled") == 0) {
         g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED, "cancelled");
@@ -71,17 +39,77 @@ gboolean __wrap_secret_item_get_locked(SecretItem *item) {
     return strcmp(scenario, "locked") == 0;
 }
 
-guint64 __wrap_secret_item_get_modified(SecretItem *item) {
-    g_assert_true(SECRET_IS_ITEM(item));
-    return GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(item), "modified"));
-}
-
 SecretValue *__wrap_secret_item_get_secret(SecretItem *item) {
     g_assert_true(SECRET_IS_ITEM(item));
-    const char *kwallet_value = g_object_get_data(G_OBJECT(item), "value");
-    if (kwallet_value != NULL) return secret_value_new(kwallet_value, -1, "text/plain");
     if (strcmp(scenario, "unloaded") == 0) return NULL;
     if (strcmp(scenario, "empty") == 0) return secret_value_new("", 0, "text/plain");
     const char value[] = "secret\0with whitespace \t\r\n";
     return secret_value_new(value, sizeof(value) - 1, "application/octet-stream");
+}
+
+/* Stands in for kwalletd6. T3_TEST_KWALLET picks its state; unset is a wallet
+ * holding both browsers' keys. */
+GDBusConnection *__wrap_g_bus_get_sync(GBusType type, GCancellable *cancellable, GError **error) {
+    g_assert_cmpint(type, ==, G_BUS_TYPE_SESSION);
+    g_assert_null(cancellable);
+    g_assert_nonnull(error);
+    return (GDBusConnection *)g_object_new(G_TYPE_OBJECT, NULL);
+}
+
+GVariant *__wrap_g_dbus_connection_call_sync(GDBusConnection *bus, const gchar *name,
+                                             const gchar *path, const gchar *interface,
+                                             const gchar *method, GVariant *args,
+                                             const GVariantType *reply_type, GDBusCallFlags flags,
+                                             gint timeout, GCancellable *cancellable,
+                                             GError **error) {
+    g_assert_nonnull(bus);
+    g_assert_cmpstr(name, ==, "org.kde.kwalletd6");
+    g_assert_cmpstr(path, ==, "/modules/kwalletd6");
+    g_assert_cmpstr(interface, ==, "org.kde.KWallet");
+    g_assert_cmpint(flags, ==, G_DBUS_CALL_FLAGS_NONE);
+    g_assert_null(cancellable);
+    const char *wallet = g_getenv("T3_TEST_KWALLET");
+    if (wallet == NULL) wallet = "";
+    if (args != NULL) g_variant_ref_sink(args);
+    GVariant *reply = NULL;
+    if (strcmp(wallet, "absent") == 0) {
+        g_set_error_literal(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN, "absent");
+    } else if (strcmp(method, "isEnabled") == 0) {
+        reply = g_variant_new("(b)", strcmp(wallet, "disabled") != 0);
+    } else if (strcmp(method, "networkWallet") == 0) {
+        reply = g_variant_new("(s)", "kdewallet");
+    } else if (strcmp(method, "open") == 0) {
+        const gchar *opened = NULL;
+        gint64 window = -1;
+        g_variant_get(args, "(&sx&s)", &opened, &window, NULL);
+        g_assert_cmpstr(opened, ==, "kdewallet");
+        g_assert_cmpint(window, ==, 0);
+        g_assert_cmpint(timeout, ==, G_MAXINT);
+        reply = g_variant_new("(i)", strcmp(wallet, "cancelled") == 0 ? -1 : 7);
+    } else if (strcmp(method, "hasFolder") == 0) {
+        gint32 handle = -1;
+        const gchar *folder = NULL;
+        g_variant_get(args, "(i&s&s)", &handle, &folder, NULL);
+        g_assert_cmpint(handle, ==, 7);
+        reply = g_variant_new("(b)", strcmp(wallet, "no-folder") != 0);
+    } else if (strcmp(method, "readPassword") == 0) {
+        gint32 handle = -1;
+        const gchar *folder = NULL, *entry = NULL;
+        g_variant_get(args, "(i&s&s&s)", &handle, &folder, &entry, NULL);
+        g_assert_cmpint(handle, ==, 7);
+        const char *value = "";
+        if (strcmp(folder, "Chrome Keys") == 0 && strcmp(entry, "Chrome Safe Storage") == 0) {
+            value = "chrome \xc3\xa9\xe2\x82\xac";
+        } else if (strcmp(folder, "Chromium Keys") == 0 &&
+                   strcmp(entry, "Chromium Safe Storage") == 0) {
+            value = "chromium \xc3\xa9\xe2\x82\xac";
+        }
+        reply = g_variant_new("(s)", value);
+    } else {
+        g_assert_cmpstr(method, ==, "close");
+        reply = g_variant_new("(i)", 0);
+    }
+    if (args != NULL) g_variant_unref(args);
+    if (reply != NULL) g_assert_true(g_variant_is_of_type(reply, reply_type));
+    return reply;
 }
