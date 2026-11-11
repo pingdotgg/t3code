@@ -4,14 +4,35 @@ A [stable launcher](../../apps/server/src/serviceLauncher.ts) owns the runtime
 selected by systemd or launchd. It is the only runtime writer of durable service
 state. Server children request updates over inherited IPC; they never rewrite
 their service definition or select their own replacement. Local service commands
-may replace the launcher and state while the service is stopped. Foreground CLI
-processes do not self-update.
+may replace the launcher and state, optionally deferring the restart. Foreground
+CLI processes do not self-update.
+
+Both writers serialize state and unit writes through
+[file leases](../../apps/server/src/cloud/serviceSelectionLock.ts). The installer
+takes the state lease before the unit lease; the launcher never holds both, so a
+unit failure cannot block a durable commit. Manager stop/start commands run outside
+both leases, since stopping a launcher that waits on a lease would deadlock. A
+running launcher refuses further updates once a local command changes its selection.
 
 Exact-version installs keep restarts independent of npm cache eviction or a moving
 release tag. Installation and preflight happen in staging before publishing an
 immutable runtime. Preflight checks the launcher protocol because a target that
-needs new rollback guarantees cannot safely run under an older launcher. Upgrading
-that launcher requires a local service update.
+needs new rollback guarantees cannot safely run under an older launcher. A remote
+update replaces only the child, so upgrading the launcher requires a local service
+update with a restart.
+
+After a commit or rollback the launcher points the unit at the selected runtime and
+reloads the manager, so the next service start runs that version's launcher; the
+protocol check is what makes that safe. Each start after a finished update retries this, because
+a previous reload may have failed, and leaves a unit naming a newer runtime or another
+T3 home alone. Until a deferred local upgrade restarts, systemd (before daemon-reload)
+can respawn the old launcher, which the new runtime refuses to run under.
+
+launchd instead starts a [copy](../../apps/server/src/cloud/stableLauncher.ts) of the
+selected runtime's executable at a fixed path, because TCC keys a launch agent's
+privacy grants to its program path. Installs and the launcher replace that copy by
+rename under the unit lease rather than rewriting the plist, so a running launcher
+keeps its old inode.
 
 ## Commit boundary
 

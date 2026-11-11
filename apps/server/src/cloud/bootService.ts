@@ -16,6 +16,8 @@ import * as Schema from "effect/Schema";
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
+import { publishStableLauncher, stableLauncherPaths } from "./stableLauncher.ts";
 import {
   ensurePinnedRuntimeInstalled,
   launcherOwnsVersionsDir,
@@ -23,17 +25,23 @@ import {
   pinnedRuntimePaths,
   pinnedRuntimeVersionsDir,
   PinnedRuntimeInstallError,
-  type PinnedRuntimePaths,
 } from "./pinnedRuntime.ts";
 import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
+  SERVICE_UNIT_ENV,
   compareExactServiceVersions,
+  serviceUnitBaseDirOf as bootServiceBaseDirOf,
   parseServiceState,
   serviceStateActiveVersion,
   serviceStateHasPendingUpdate,
   type ServiceState,
+} from "./serviceProtocol.ts";
+
+export {
+  serviceUnitBaseDirOf as bootServiceBaseDirOf,
+  serviceUnitProgramOf as bootServiceProgramOf,
 } from "./serviceProtocol.ts";
 
 const BOOT_SERVICE_NAME = "t3code";
@@ -42,7 +50,6 @@ export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // (com.t3tools.t3code), so launchd and TCC records never collide.
 export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
-const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
@@ -55,32 +62,6 @@ function quoteSystemdValue(value: string): string {
   return /[\s"'\\]/.test(escaped)
     ? `"${escaped.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
     : escaped;
-}
-
-const unquoteSystemdValue = (raw: string) =>
-  (raw.startsWith('"') && raw.endsWith('"')
-    ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
-    : raw
-  ).replaceAll("%%", "%");
-
-const unescapeXmlText = (value: string) =>
-  value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
-
-export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
-  if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
-  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
-  return plist === undefined ? undefined : unescapeXmlText(plist);
-}
-
-/** The executable an installed unit or plist starts: the launcher's runtime. */
-export function bootServiceProgramOf(contents: string): string | undefined {
-  const systemd = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(contents)?.[1];
-  if (systemd !== undefined) return unquoteSystemdValue(systemd);
-  const plist = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/.exec(
-    contents,
-  )?.[1];
-  return plist === undefined ? undefined : unescapeXmlText(plist);
 }
 
 export interface BootServicePlan {
@@ -105,7 +86,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
-    `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
+    `Environment=${SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
@@ -163,7 +144,7 @@ export function renderBootServicePlist(
     `    <string>${escapeXmlText(options.environmentPath)}</string>`,
     `    <key>T3CODE_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
-    `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
+    `    <key>${SERVICE_UNIT_ENV}</key>`,
     `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
     `  </dict>`,
     `  <key>WorkingDirectory</key>`,
@@ -211,8 +192,6 @@ export interface BootServiceManager {
   readonly handoff?: ReadonlyArray<BootServiceStep>;
   readonly deactivate: ReadonlyArray<BootServiceStep>;
   readonly finalize: ReadonlyArray<BootServiceStep>;
-  /** The unit starts a copy of the runtime kept here instead of its versioned directory. */
-  readonly launcherDir?: string;
 }
 
 function systemdManager(input: {
@@ -288,7 +267,6 @@ function systemdManager(input: {
 function launchdManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
-  readonly baseDir: string;
   readonly uid: number;
   readonly environmentPath: string;
 }): BootServiceManager {
@@ -351,15 +329,12 @@ function launchdManager(input: {
       },
     ],
     finalize: [],
-    // TCC keys the launch agent's privacy grants to its program path, so it must not change.
-    launcherDir: input.path.join(input.baseDir, "runtime", "launcher"),
   };
 }
 
 function selectBootServiceManager(input: {
   readonly platform: NodeJS.Platform;
   readonly homeDir: string;
-  readonly baseDir: string;
   readonly xdgConfigHome: string;
   readonly systemdUnitDir: string | undefined;
   readonly uid: number | undefined;
@@ -387,7 +362,6 @@ function selectBootServiceManager(input: {
     return launchdManager({
       path: input.path,
       homeDir: input.homeDir,
-      baseDir: input.baseDir,
       uid: input.uid,
       environmentPath: input.environmentPath,
     });
@@ -504,9 +478,12 @@ export class BootServicePrerequisiteError extends Schema.TaggedError<BootService
 
 export class BootServiceUpdatePendingError extends Schema.TaggedError<BootServiceUpdatePendingError>()(
   "BootServiceUpdatePendingError",
-  {},
+  { recoveryCommand: Schema.optional(Schema.String) },
 ) {
   override get message(): string {
+    if (this.recoveryCommand !== undefined) {
+      return `A remote server update is still pending, but its service definition is missing. With the service stopped, run this on the server machine: ${this.recoveryCommand}\nWait for the update to finish or roll back, stop the foreground launcher with Ctrl-C, then retry the install.`;
+    }
     return "A remote server update is still pending. Wait for it to finish, then retry.";
   }
 }
@@ -614,7 +591,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
   const runningInsideService =
-    (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
+    (yield* Config.String(SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
     BOOT_SERVICE_UNIT_FILE;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -653,7 +630,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const detectedManager = selectBootServiceManager({
     platform,
     homeDir,
-    baseDir: input.baseDir,
     xdgConfigHome,
     systemdUnitDir,
     uid,
@@ -664,15 +640,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
-  const launcherDir = detectedManager?.launcherDir;
-  const launcherPaths: PinnedRuntimePaths =
-    launcherDir === undefined
-      ? runtimePaths
-      : {
-          versionDir: launcherDir,
-          entryPath: path.join(launcherDir, path.basename(runtimePaths.entryPath)),
-          sentinelPath: path.join(launcherDir, path.basename(runtimePaths.sentinelPath)),
-        };
+  const launcherPaths =
+    detectedManager?.kind === "launchd" ? stableLauncherPaths(input.baseDir) : runtimePaths;
   const otherBaseDirOf = (unit: string) => {
     const installedBaseDir = bootServiceBaseDirOf(unit);
     return installedBaseDir !== undefined &&
@@ -705,35 +674,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     logPath,
     unitPath,
   };
-
-  // cp -c clones on APFS and copies all bytes where cloning is unsupported; copyFile never clones.
-  const copyLauncher = (source: string, destination: string) =>
-    runner
-      .run({ command: "cp", args: ["-c", "-p", source, destination], timeout: Duration.minutes(1) })
-      .pipe(
-        Effect.filterOrFail((result) => result.code === 0),
-        Effect.catch(() => fs.copyFile(source, destination)),
-      );
-  // `__service-launcher` loads only Node built-ins, so the executable alone is the launcher.
-  // Each file is renamed over its predecessor: the program path never goes missing, even if the
-  // process dies mid-publish, and a running launcher keeps its old inode instead of being written into.
-  const publishLauncher = Effect.fn("cloud.boot_service.publish_launcher")(function* () {
-    yield* fs.makeDirectory(launcherPaths.versionDir, { recursive: true });
-    const staging = yield* fs.makeTempDirectory({
-      directory: launcherPaths.versionDir,
-      prefix: ".staging-",
-    });
-    yield* Effect.gen(function* () {
-      const entry = path.join(staging, path.basename(launcherPaths.entryPath));
-      const sentinel = path.join(staging, path.basename(launcherPaths.sentinelPath));
-      yield* copyLauncher(runtimePaths.entryPath, entry);
-      yield* fs.writeFileString(sentinel, `${input.cliVersion}\n`);
-      yield* fs.rename(entry, launcherPaths.entryPath);
-      yield* fs.rename(sentinel, launcherPaths.sentinelPath);
-    }).pipe(
-      Effect.ensuring(fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)),
-    );
-  });
 
   const requireManager = Effect.suspend(() =>
     detectedManager === undefined
@@ -846,6 +786,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (remaining[0]) return yield* new BootServicePrerequisiteError({ problem: remaining[0] });
   });
 
+  const withSelectionLock = <A, E, R>(selectionPath: string, operation: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.tryPromise({
+        try: () => acquireServiceSelectionLock(selectionPath),
+        catch: (cause) => new BootServiceInstallError({ cause }),
+      }),
+      () => operation,
+      (release) => Effect.sync(release),
+    );
+
   const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
     readonly allowDowngrade?: boolean;
     readonly start?: boolean;
@@ -923,8 +873,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    // With start=false, changing startup-only files is safe except during a remote update,
-    // when the launcher also writes its state file.
+    // Stop outside the selection lock: the launcher may be waiting to acquire it.
     const start = options?.start !== false;
     if (installed && start && runningInsideService && manager.kind === "systemd") {
       // Stopping the unit from inside it kills this process before the start.
@@ -937,7 +886,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         // Transient properties reach systemd literally, unlike unit-file specifiers.
         `--property=StandardOutput=append:${logPath}`,
         `--property=StandardError=append:${logPath}`,
-        `--setenv=${BOOT_SERVICE_UNIT_ENV}=`,
+        `--setenv=${SERVICE_UNIT_ENV}=`,
         runtimePaths.entryPath,
         "service",
         "install",
@@ -952,59 +901,90 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* runSteps(manager.stop);
     }
 
-    yield* Effect.gen(function* () {
-      if (installed) {
-        const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
-        if (Option.isSome(previousStateText)) {
-          if (serviceStateHasPendingUpdate(previousStateText.value)) {
-            return yield* new BootServiceUpdatePendingError();
+    // State first, then unit. The launcher acquires only one at a time, and a
+    // failure to lock the unit must never prevent its durable update commit.
+    yield* withSelectionLock(
+      statePath,
+      withSelectionLock(
+        unitPath,
+        Effect.gen(function* () {
+          const currentlyInstalled = yield* fs.exists(unitPath);
+          const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
+          if (Option.isSome(previousStateText)) {
+            const installedVersion = serviceStateActiveVersion(previousStateText.value);
+            if (serviceStateHasPendingUpdate(previousStateText.value)) {
+              const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
+              return yield* new BootServiceUpdatePendingError(
+                !currentlyInstalled && installedVersion !== undefined
+                  ? {
+                      recoveryCommand: `T3CODE_HOME=${quote(input.baseDir)} ${quote(pinnedRuntimePaths(path, input.baseDir, installedVersion, platform).entryPath)} __service-launcher`,
+                    }
+                  : {},
+              );
+            }
+            // Read the final version after stopping the launcher; a remote update may finish after the status check.
+            if (
+              installedVersion !== undefined &&
+              options?.allowDowngrade !== true &&
+              compareExactServiceVersions(input.cliVersion, installedVersion) < 0
+            ) {
+              return yield* new BootServiceDowngradeRefusedError({
+                installedVersion,
+                targetVersion: input.cliVersion,
+              });
+            }
           }
-          // Read the final version after stopping the launcher; a remote update may finish after the status check.
-          const installedVersion = serviceStateActiveVersion(previousStateText.value);
-          if (
-            installedVersion !== undefined &&
-            options?.allowDowngrade !== true &&
-            compareExactServiceVersions(input.cliVersion, installedVersion) < 0
-          ) {
-            return yield* new BootServiceDowngradeRefusedError({
-              installedVersion,
-              targetVersion: input.cliVersion,
+          yield* fs
+            .makeDirectory(path.dirname(unitPath), { recursive: true })
+            .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+          // Files can match the new version even when activation fails; keep that install retryable.
+          yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
+          yield* writeDurably(
+            statePath,
+            // @effect-diagnostics-next-line globalJsonInEffect:off - fixed launcher-owned document.
+            `${JSON.stringify(
+              {
+                protocol: SERVICE_LAUNCHER_PROTOCOL,
+                activeVersion: input.cliVersion,
+              } satisfies ServiceState,
+              null,
+              2,
+            )}\n`,
+          );
+          if (!start && (currentlyInstalled || Option.isSome(previousStateText))) {
+            const written = yield* fs.readFileString(statePath);
+            if (serviceStateActiveVersion(written) !== input.cliVersion) {
+              return yield* new BootServiceUpdatePendingError();
+            }
+          }
+          if (manager.kind === "launchd") {
+            yield* Effect.tryPromise({
+              try: () =>
+                publishStableLauncher(input.baseDir, runtimePaths.entryPath, input.cliVersion),
+              catch: (cause) => new BootServiceInstallError({ cause }),
             });
           }
-        }
-      }
-      yield* fs
-        .makeDirectory(path.dirname(unitPath), { recursive: true })
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      // Files can match the new version even when activation fails; keep that install retryable.
-      yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
-      yield* writeDurably(
-        statePath,
-        // @effect-diagnostics-next-line globalJsonInEffect:off - fixed launcher-owned document.
-        `${JSON.stringify(
-          {
-            protocol: SERVICE_LAUNCHER_PROTOCOL,
-            activeVersion: input.cliVersion,
-          } satisfies ServiceState,
-          null,
-          2,
-        )}\n`,
-      );
-      if (!start && installed) {
-        // A concurrent remote update can overwrite launcher state; detect it before repointing the unit.
-        const written = yield* fs.readFileString(statePath);
-        if (serviceStateActiveVersion(written) !== input.cliVersion) {
-          return yield* new BootServiceUpdatePendingError();
-        }
-      }
-      if (manager.launcherDir !== undefined) yield* publishLauncher();
-      yield* writeDurably(unitPath, manager.render(plan));
-
-      if (start) {
-        yield* runSteps(manager.activate);
-        yield* fs.remove(restartPendingPath, { force: true });
-      }
-    }).pipe(
+          yield* writeDurably(unitPath, manager.render(plan));
+        }),
+      ),
+    ).pipe(
+      Effect.andThen(
+        Effect.gen(function* () {
+          if (start) {
+            yield* runSteps(manager.activate);
+            yield* withSelectionLock(
+              statePath,
+              Effect.gen(function* () {
+                // A concurrent deferred install may now be waiting for a newer restart.
+                const selected = parseServiceState(yield* fs.readFileString(statePath));
+                if (selected?.activeVersion === input.cliVersion && selected.update === undefined) {
+                  yield* fs.remove(restartPendingPath, { force: true });
+                }
+              }),
+            );
+          }
+        }),
+      ),
       Effect.mapError((cause) =>
         cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
       ),
@@ -1105,9 +1085,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     yield* runSteps(manager.deactivate);
     yield* fs.remove(unitPath).pipe(
       Effect.andThen(
-        manager.launcherDir === undefined
-          ? Effect.void
-          : fs.remove(manager.launcherDir, { recursive: true, force: true }),
+        manager.kind === "launchd"
+          ? fs.remove(stableLauncherPaths(input.baseDir).directory, {
+              recursive: true,
+              force: true,
+            })
+          : Effect.void,
       ),
       Effect.mapError((cause) => new BootServiceInstallError({ cause })),
     );
@@ -1122,7 +1105,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!(yield* fs.exists(unitPath))) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const runtimeCurrent = (paths: PinnedRuntimePaths) =>
+    const isCurrent = (paths: { readonly entryPath: string; readonly sentinelPath: string }) =>
       Effect.all([
         fs.exists(paths.entryPath),
         fs.readFileString(paths.sentinelPath).pipe(Effect.option),
@@ -1134,8 +1117,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       );
     const [unit, runtimeIsCurrent, launcherIsCurrent, stateText] = yield* Effect.all([
       fs.readFileString(unitPath),
-      runtimeCurrent(runtimePaths),
-      runtimeCurrent(launcherPaths),
+      isCurrent(runtimePaths),
+      isCurrent(launcherPaths),
       fs.readFileString(statePath).pipe(Effect.option),
     ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;

@@ -286,6 +286,7 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
 
 const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
+const VIEWED_IMAGE_GAP = 8;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
 const ASSISTANT_ROW_HORIZONTAL_PADDING = 3.5;
 // Virtualization remounts old rows; only newly created content should replay an entrance.
@@ -1719,6 +1720,19 @@ function renderFeedEntry(
         frameWidth={props.contentWidth}
         iconColor={iconSubtleColor}
       />
+    );
+  }
+
+  if (entry.type === "viewed-images") {
+    const thumbnailWidth = Math.floor((props.contentWidth - VIEWED_IMAGE_GAP) / 2);
+    return (
+      <View className="flex-row flex-wrap pb-2" style={{ gap: VIEWED_IMAGE_GAP }}>
+        {entry.paths.map((path) => (
+          <View key={path} style={{ width: thumbnailWidth }}>
+            {props.renderViewedImage({ href: path, alt: null, title: null })}
+          </View>
+        ))}
+      </View>
     );
   }
 
