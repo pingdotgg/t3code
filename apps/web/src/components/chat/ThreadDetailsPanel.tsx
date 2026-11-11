@@ -80,7 +80,7 @@ interface ThreadDetailsPanelProps extends Pick<
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
   usage: ThreadDetailsUsageInput;
   onCompactContext?: () => void;
-  compactDisabled?: boolean;
+  compactUnavailableReason?: string | null;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -247,7 +247,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     <ThreadDetailsContext
                       usage={props.usage.contextWindow}
                       onCompact={props.onCompactContext}
-                      compactDisabled={props.compactDisabled}
+                      compactUnavailableReason={props.compactUnavailableReason}
                     />
                   ) : null}
                 </section>
