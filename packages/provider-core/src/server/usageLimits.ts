@@ -53,11 +53,9 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  // Recorded even without a grant, so a probe that started before the block cannot grant over it.
-  const revokesCredits =
-    update.continuesOnCredits === false &&
-    previous !== undefined &&
-    previous.continuesOnCredits !== false;
+  // Every block is recorded with its own time, even without a grant to revoke, so a probe that
+  // started before it cannot grant over it.
+  const revokesCredits = update.continuesOnCredits === false && previous !== undefined;
   if (
     (update.windows.length === 0 && !revokesCredits) ||
     previous?.unavailable?.reason === "unsupported"

@@ -110,8 +110,15 @@ describe("applyUsageLimitsUpdate", () => {
         probed: { ...published, continuesOnCredits: true },
       })?.continuesOnCredits,
     ).toBe(false);
-    const alreadyRevoked = { ...published, continuesOnCredits: false };
-    expect(revoke(alreadyRevoked)).toBe(alreadyRevoked);
+    // A repeated block moves the revocation's time past a probe that started in between.
+    const repeated = revoke({ ...published, continuesOnCredits: false });
+    expect(repeated).toEqual(revoked);
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: repeated,
+        probed: { ...published, checkedAt: "2026-09-03T12:00:01.000Z", continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(false);
   });
 });
 
