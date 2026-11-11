@@ -77,7 +77,6 @@ const createRun = Effect.fn(function* (
   threadId: ThreadId,
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
-  extra: Partial<OrchestrationV2Run> = {},
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -102,7 +101,6 @@ const createRun = Effect.fn(function* (
       completedAt: ["completed", "rolled_back", "failed"].includes(status) ? old : null,
       checkpointId: null,
       contextHandoffId: null,
-      ...extra,
     },
   });
   return runId;
@@ -419,43 +417,44 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
   }).pipe(Effect.provide(layerSql)),
 );
 
-it.effect("sql: a run failed by a permission denial stays out of auto-settlement", () =>
+it.effect("sql: a run with a permission denial notice stays out of auto-settlement", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
-    const failRun = Effect.fn(function* (name: string, code: string) {
+    const noticeRun = Effect.fn(function* (name: string, nativeId: string) {
       const threadId = yield* createThread(name);
-      const runId = yield* createRun(threadId, "failed");
+      const runId = yield* createRun(threadId);
       yield* store.apply({
-        id: EventId.make(`event:error:${runId}`),
+        id: EventId.make(`event:notice:${runId}`),
         type: "turn-item.updated",
         threadId,
         occurredAt: old,
         payload: {
-          id: TurnItemId.make(`error:${runId}`),
+          id: TurnItemId.make(`notice:${runId}`),
           threadId,
           runId,
           nodeId: null,
           providerThreadId: null,
           providerTurnId: null,
-          nativeItemRef: null,
+          nativeItemRef: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            nativeId,
+            strength: "weak",
+          },
           parentItemId: null,
           ordinal: 1,
-          type: "error",
-          status: "failed",
+          type: "system_notice",
+          status: "completed",
           title: null,
+          message: name,
           startedAt: old,
           completedAt: old,
           updatedAt: old,
-          failure: { class: "permission_error", message: name, code, retryable: false },
         },
       });
       return threadId;
     });
-    const denied = yield* failRun("denied", "permission_denied");
-    const unrelated = yield* failRun("unrelated", "other_failure");
-    // A message sent during the denied run queues behind it and is held when it fails.
-    const deniedWithHeldSuccessor = yield* failRun("denied-held", "permission_denied");
-    yield* createRun(deniedWithHeldSuccessor, "queued", 2, { queueHeld: true });
+    const denied = yield* noticeRun("denied", "permission-denials:turn-1");
+    const unrelated = yield* noticeRun("unrelated", "other-notice:turn-1");
 
     const candidates = yield* store.getSettlementCandidates();
     const resolve = (threadId: ThreadId, merged: boolean) =>
@@ -468,7 +467,6 @@ it.effect("sql: a run failed by a permission denial stays out of auto-settlement
       });
     for (const merged of [false, true]) {
       assert.isNull(resolve(denied, merged));
-      assert.isNull(resolve(deniedWithHeldSuccessor, merged));
       assert.equal(DateTime.formatIso(resolve(unrelated, merged)!), DateTime.formatIso(old));
     }
   }).pipe(Effect.provide(layerSql)),

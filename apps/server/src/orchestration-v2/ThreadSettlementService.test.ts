@@ -278,36 +278,21 @@ describe("resolveAutoSettlementAt", () => {
     ).toBeNull();
   });
 
-  it("keeps a thread a permission denial failed until the user acts on it", () => {
-    const failed = shell({
-      status: "failed",
-      latestRunId: RunId.make("run-1"),
-      latestUserMessageAt: at(-4 * DAY_MS),
-      latestRunCompletedAt: at(-4 * DAY_MS),
-      lastErrorCode: "other_failure",
-    });
+  it("keeps a thread whose latest run had a permission denial until the user acts", () => {
     const input = {
-      thread: failed,
+      thread: {
+        ...shell({ latestUserMessageAt: at(-4 * DAY_MS) }),
+        latestRunPermissionDenied: true,
+      },
       pullRequest: { state: "merged" as const, mergedAt: DateTime.formatIso(at(-1)) },
       nowMs: NOW_MS,
       autoSettleAfterDays: 2,
       autoSettleOnMerge: true,
       autoSettleKeepPullRequests: false,
     };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-4 * DAY_MS));
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({ ...input, pullRequest: null }),
-    ).toEqual(at(-4 * DAY_MS));
-    const denied = { ...failed, lastErrorCode: "permission_denied" };
-    expect(
-      ThreadSettlementService.resolveAutoSettlementAt({ ...input, thread: denied }),
-    ).toBeNull();
-    expect(
-      ThreadSettlementService.resolveAutoSettlementAt({
-        ...input,
-        thread: denied,
-        pullRequest: null,
-      }),
     ).toBeNull();
   });
 
