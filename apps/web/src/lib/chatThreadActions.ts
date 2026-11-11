@@ -9,11 +9,12 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
-  type ProviderInteractionMode,
   type RuntimeMode,
   type ScopedProjectRef,
+  type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
@@ -25,7 +26,7 @@ import {
   type DraftId,
   type DraftThreadEnvMode,
 } from "../composerDraftStore";
-import { DEFAULT_INTERACTION_MODE } from "../types";
+import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
 
 type ComposerModelSelectionState = Pick<
   ComposerThreadDraftState,
@@ -66,26 +67,50 @@ export function resolveNewDraftStartFromOrigin(input: {
 /**
  * What a new thread in a project starts with when the draft has no pick of its
  * own: a setting configured on the project itself wins, then the project's
- * last user-used settings, then environment defaults.
+ * last user-used settings, then environment defaults. Only defaults give way
+ * to the usage-limit fallback; a model the user last ran here is their pick.
  */
 export function resolveNewThreadDefaults(input: {
+  readonly projectId: ProjectId;
   readonly projectSettings: ResolvedProjectSettings;
   readonly lastUsed: ProjectLastUsedSettings | null;
+  readonly serverSettings: ServerSettings | undefined;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly hasStickyProvider: boolean;
+  readonly now: number;
 }): {
   readonly modelSelection: ModelSelection | null;
   readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode;
 } {
   const { settings, sources } = input.projectSettings;
+  const runtimeMode =
+    (sources.defaultRuntimeMode === "environment" ? input.lastUsed?.runtimeMode : null) ??
+    settings.defaultRuntimeMode;
+  const projectSelection =
+    sources.defaultModelSelection === "environment" ? null : settings.defaultModelSelection;
+  if (!projectSelection && input.lastUsed) {
+    return { modelSelection: input.lastUsed.modelSelection, runtimeMode };
+  }
+  const defaultSelection = settings.defaultModelSelection ?? null;
+  const resolution = resolveNewThreadModelSelection({
+    defaultSelection:
+      defaultSelection ??
+      (input.hasStickyProvider || !input.serverSettings
+        ? null
+        : resolveProjectDefaultProviderModelSelection(
+            input.providers,
+            input.serverSettings,
+            input.projectId,
+          )),
+    fallbackSelection: input.serverSettings?.fallbackModelSelection ?? null,
+    providers: input.providers,
+    ...(input.serverSettings ? { settings: input.serverSettings } : {}),
+    projectId: input.projectId,
+    now: input.now,
+  });
   return {
-    modelSelection:
-      (sources.defaultModelSelection === "environment" ? null : settings.defaultModelSelection) ??
-      input.lastUsed?.modelSelection ??
-      settings.defaultModelSelection,
-    runtimeMode:
-      (sources.defaultRuntimeMode === "environment" ? input.lastUsed?.runtimeMode : null) ??
-      settings.defaultRuntimeMode,
-    interactionMode: input.lastUsed?.interactionMode ?? DEFAULT_INTERACTION_MODE,
+    modelSelection: resolution.fallback ? resolution.selection : defaultSelection,
+    runtimeMode,
   };
 }
 
@@ -100,7 +125,8 @@ export function retargetDraftToProject(input: {
   readonly draftId: DraftId;
   readonly projectRef: ScopedProjectRef;
   readonly project: LegacyProjectSettingsFields | null;
-  readonly environmentSettings: ServerSettings | null | undefined;
+  readonly environmentSettings: ServerSettings | undefined;
+  readonly providers: ReadonlyArray<ServerProvider>;
   readonly threads: ReadonlyArray<ProjectLastUsedSettingsThread>;
   readonly logicalProjectKey: string | null;
   readonly routing?: {
@@ -112,17 +138,21 @@ export function retargetDraftToProject(input: {
 }): void {
   const store = useComposerDraftStore.getState();
   const defaults = resolveNewThreadDefaults({
+    projectId: input.projectRef.projectId,
     projectSettings: resolveProjectSettings(
       input.environmentSettings ?? DEFAULT_SERVER_SETTINGS,
       input.projectRef.projectId,
       input.project,
     ),
     lastUsed: resolveProjectLastUsedSettings(input.threads, input.projectRef),
+    serverSettings: input.environmentSettings,
+    providers: input.providers,
+    hasStickyProvider: store.stickyActiveProvider !== null,
+    now: Date.now(),
   });
   const context = {
     ...input.routing,
     runtimeMode: defaults.runtimeMode,
-    interactionMode: defaults.interactionMode,
   };
   if (input.logicalProjectKey === null) {
     store.setDraftThreadContext(input.draftId, { projectRef: input.projectRef, ...context });

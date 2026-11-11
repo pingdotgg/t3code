@@ -2,14 +2,13 @@ import type {
   EnvironmentId,
   ModelSelection,
   ProjectId,
-  ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "./models.ts";
 
 export type ProjectLastUsedSettingsThread = Pick<
   EnvironmentThreadShell,
-  "environmentId" | "projectId" | "modelSelection" | "runtimeMode" | "interactionMode" | "updatedAt"
+  "environmentId" | "projectId" | "modelSelection" | "runtimeMode" | "updatedAt"
 > & {
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly lineage?: Pick<EnvironmentThreadShell["lineage"], "relationshipToParent">;
@@ -18,7 +17,6 @@ export type ProjectLastUsedSettingsThread = Pick<
 export interface ProjectLastUsedSettings {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode;
 }
 
 /**
@@ -61,6 +59,5 @@ export function resolveProjectLastUsedSettings(
     : {
         modelSelection: latest.modelSelection,
         runtimeMode: latest.runtimeMode,
-        interactionMode: latest.interactionMode,
       };
 }

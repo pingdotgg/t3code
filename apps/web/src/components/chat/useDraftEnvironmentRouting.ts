@@ -15,7 +15,7 @@ import { toastManager } from "../ui/toast";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
-} from "../../logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { type EnvironmentPresentation, useEnvironmentProviders } from "../../state/environments";
 import { readThreadShells, useProjects } from "../../state/entities";
@@ -109,6 +109,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     loadBalancingCandidates,
     loadBalancingSettings.loadBalancingWeights,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the resolved load-balanced environment into the draft store once the async pick settles
   useEffect(() => {
     if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
     const target = logicalProjectEnvironments.find(
@@ -124,6 +125,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
             project.environmentId === target.environmentId && project.id === target.projectId,
         ) ?? null,
       environmentSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
+      providers: providersByEnvironment.get(target.environmentId) ?? [],
       threads: readThreadShells(),
       logicalProjectKey: null,
       routing: { environmentSelection: "auto", loadBalancedEnvironmentId: target.environmentId },
@@ -137,6 +139,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     logicalProjectEnvironments,
     allProjects,
     environmentById,
+    providersByEnvironment,
     sendInFlightRef,
   ]);
   const onAutoEnvironment = () => {
@@ -179,10 +182,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     readonly scope: string;
   } | null>(null);
   const environmentChangeScopeRef = useRef("");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the current change scope into a ref that async environment switches compare against
   useLayoutEffect(() => {
     environmentChangeScopeRef.current = environmentChangeScope;
   });
   // Leaving the scope, or unmounting, abandons a change still in flight.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons an in-flight environment change when the draft or project scope changes or unmounts
   useLayoutEffect(
     () => () => {
       if (environmentChangeRef.current?.scope === environmentChangeScope) {
@@ -231,6 +236,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         projectRef: scopeProjectRef(target.environmentId, project.id),
         project,
         environmentSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
+        providers: providersByEnvironment.get(target.environmentId) ?? [],
+      providers: providersByEnvironment.get(target.environmentId) ?? [],
         threads: readThreadShells(),
         logicalProjectKey: activeProjectIsScratch
           ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)

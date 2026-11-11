@@ -1,5 +1,5 @@
+import * as Railway from "@alchemy.run/railway";
 import * as Alchemy from "alchemy";
-import * as Railway from "alchemy/Railway";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(

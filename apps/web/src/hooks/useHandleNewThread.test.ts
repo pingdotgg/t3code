@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { RuntimeMode } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, RuntimeMode } from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => {
   let completeProjectFileRead: (value: null) => void = () => undefined;
@@ -12,15 +12,14 @@ const testState = vi.hoisted(() => {
     defaultModelSelection: null,
     defaultRuntimeMode: "full-access" as RuntimeMode,
   };
-  let threadShells: ReadonlyArray<Record<string, unknown>> = [];
-  let routeTarget: unknown = null;
-  let runtimeModeSource: "environment" | "project" = "environment";
   let storedDraft: {
     readonly draftId: string;
     readonly environmentId: string;
     readonly promotedTo: null;
     readonly threadId: string;
   } | null = null;
+  let openDraftRoute: { readonly kind: "draft"; readonly draftId: string } | null = null;
+  let draftsWithUserText = new Set<string>();
   const router = {
     state: {
       location: { href: "/" },
@@ -31,15 +30,26 @@ const testState = vi.hoisted(() => {
     }),
   };
   const draftStore = {
-    getComposerDraft: vi.fn((): Record<string, unknown> => ({})),
+    getComposerDraft: vi.fn((draftId: string) => ({ draftId })),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
-    getDraftSession: vi.fn(() => null),
+    getDraftSession: vi.fn(() =>
+      openDraftRoute === null
+        ? null
+        : {
+            logicalProjectKey: "remote-project",
+            promotedTo: null,
+            threadId: "thread-open",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+    ),
     getDraftThread: vi.fn(() => null),
     applyStickyState: vi.fn(),
     setDraftThreadContext: vi.fn(),
     setLogicalProjectDraftThreadId: vi.fn(),
     setModelSelection: vi.fn(),
-    setRuntimeMode: vi.fn(),
+    setPrompt: vi.fn(),
   };
 
   return {
@@ -51,23 +61,6 @@ const testState = vi.hoisted(() => {
     get projectRemoved() {
       return projectRemoved;
     },
-    get threadShells() {
-      return threadShells;
-    },
-    get routeTarget() {
-      return routeTarget;
-    },
-    get runtimeModeSource() {
-      return runtimeModeSource;
-    },
-    configureProjectRuntimeMode(mode: RuntimeMode) {
-      targetSettings = { ...targetSettings, defaultRuntimeMode: mode };
-      runtimeModeSource = "project";
-    },
-    viewing(nextRouteTarget: unknown, nextThreadShells: ReadonlyArray<Record<string, unknown>>) {
-      routeTarget = nextRouteTarget;
-      threadShells = nextThreadShells;
-    },
     get connectedEnvironmentIds() {
       return connectedEnvironmentIds;
     },
@@ -76,6 +69,17 @@ const testState = vi.hoisted(() => {
     },
     removeProject() {
       projectRemoved = true;
+    },
+    hasUserText: (draft: { readonly draftId?: string } | null | undefined) =>
+      draft?.draftId !== undefined && draftsWithUserText.has(draft.draftId),
+    giveUserText(draftId: string) {
+      draftsWithUserText = new Set([...draftsWithUserText, draftId]);
+    },
+    get openDraftRoute() {
+      return openDraftRoute;
+    },
+    openEmptyDraft(draftId: string) {
+      openDraftRoute = { kind: "draft", draftId };
     },
     get targetSettings() {
       return targetSettings;
@@ -88,11 +92,10 @@ const testState = vi.hoisted(() => {
       },
     ) {
       storedDraft = nextStoredDraft;
+      openDraftRoute = null;
+      draftsWithUserText = new Set();
       projectRemoved = false;
       connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
-      threadShells = [];
-      routeTarget = null;
-      runtimeModeSource = "environment";
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
@@ -103,10 +106,7 @@ const testState = vi.hoisted(() => {
       router.navigate.mockClear();
       draftStore.setDraftThreadContext.mockClear();
       draftStore.setLogicalProjectDraftThreadId.mockClear();
-      draftStore.setModelSelection.mockClear();
-      draftStore.setRuntimeMode.mockClear();
-      draftStore.getComposerDraft.mockReset();
-      draftStore.getComposerDraft.mockReturnValue({});
+      draftStore.setPrompt.mockClear();
       projectFileRead = new Promise<null>((resolve) => {
         completeProjectFileRead = resolve;
       });
@@ -145,7 +145,8 @@ vi.mock("@effect/atom-react", () => ({
       : testServerConfigs(),
 }));
 vi.mock("@t3tools/client-runtime/environment", () => ({
-  scopedProjectKey: () => "remote-project",
+  scopedProjectKey: (ref: { environmentId: string; projectId: string }) =>
+    `${ref.environmentId}:${ref.projectId}`,
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
@@ -168,11 +169,7 @@ vi.mock("@t3tools/shared/projectSettings", () => ({
             defaultThreadEnvMode:
               settings.defaultThreadEnvMode ?? projectFile?.defaultThreadEnvMode ?? "local",
           },
-    sources: {
-      defaultModelSelection: "environment",
-      defaultThreadEnvMode: "environment",
-      defaultRuntimeMode: testState.runtimeModeSource,
-    },
+    sources: { defaultModelSelection: "environment", defaultThreadEnvMode: "environment" },
     overrides: {},
   }),
   resolveNewThreadEnvMode: (input: {
@@ -187,13 +184,16 @@ vi.mock("react", () => ({
   useCallback: <T>(callback: T) => callback,
   useMemo: <T>(factory: () => T) => factory(),
 }));
-vi.mock("../components/Sidebar.logic", () => ({ orderItemsByPreferredIds: () => [] }));
+vi.mock("../components/Sidebar.logic", () => ({
+  orderItemsByPreferredIds: ({ items }: { items: unknown[] }) => items,
+}));
 vi.mock("../composerDraftStore", () => {
   const useComposerDraftStore = Object.assign(() => null, {
     getState: () => testState.draftStore,
   });
   return {
-    composerDraftHasUserContent: () => false,
+    composerDraftHasUserContent: (draft: { readonly draftId?: string } | null | undefined) =>
+      testState.hasUserText(draft),
     markPromotedDraftThreadByRef: vi.fn(),
     useComposerDraftStore,
   };
@@ -201,7 +201,9 @@ vi.mock("../composerDraftStore", () => {
 vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/chatThreadActions")>()),
   hasExplicitComposerModelSelection: () => false,
+  resolveNewThreadModelSelectionOverride: () => null,
 }));
+vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: () => null }));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFile: () => testState.projectFileRead,
 }));
@@ -209,7 +211,7 @@ vi.mock("../lib/utils", () => ({
   newDraftId: () => "draft-delayed",
   newThreadId: () => "thread-delayed",
 }));
-vi.mock("../logicalProject", () => ({
+vi.mock("@t3tools/client-runtime/state/project-grouping", () => ({
   deriveLogicalProjectKeyFromSettings: () => "remote-project",
   getProjectOrderKey: () => "remote-project",
   selectProjectGroupingSettings: () => ({}),
@@ -225,13 +227,14 @@ vi.mock("../state/entities", () => {
   return {
     readProject: () => (testState.projectRemoved ? null : project),
     readProjects: () => (testState.projectRemoved ? [] : [project]),
-    readThreadShell: (ref: { readonly threadId: string }) =>
-      testState.threadShells.find((thread) => thread.id === ref.threadId) ?? null,
-    readThreadShells: () => testState.threadShells,
+    readThreadShell: () => null,
+    readThreadShells: () => [],
     useProjects: () => [],
     useThread: () => null,
   };
 });
+vi.mock("../state/projects", () => ({ defaultProjectFallbackReadyAtom: () => true }));
+vi.mock("../state/olderSettledShelf", () => ({ readUnloadedThreadCount: () => 0 }));
 vi.mock("../state/presentation", () => ({
   environmentSummaries: { connectedEnvironmentIdsAtom: "connected-environment-ids" },
 }));
@@ -239,14 +242,16 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
-vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => testState.routeTarget }));
+vi.mock("../threadRoutes", () => ({
+  resolveThreadRouteTarget: () => testState.openDraftRoute,
+}));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
 }));
-vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
+vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
 
-import { useNewThreadHandler } from "./useHandleNewThread";
+import { resolveDefaultProjectRef, useNewThreadHandler } from "./useHandleNewThread";
 
 describe.each([
   ["new", null],
@@ -277,6 +282,25 @@ describe.each([
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
 
+  it("sets the prompt before the draft shows", async () => {
+    testState.reset(draft);
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { prompt: "Read the playbook. " },
+    );
+
+    testState.completeProjectFileRead(null);
+    const opened = await pendingOpen;
+
+    expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
+      opened?.draftId,
+      "Read the playbook. ",
+    );
+    expect(testState.draftStore.setPrompt.mock.invocationCallOrder[0]).toBeLessThan(
+      testState.router.navigate.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
   it("abandons a delayed draft open when the project is removed meanwhile", async () => {
     testState.reset(draft);
     const pendingOpen = useNewThreadHandler()(
@@ -291,254 +315,47 @@ describe.each([
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
-
-  it("seeds the draft with the target project's last-used settings, not its workspace", async () => {
-    testState.reset(draft);
-    const lastUsedSelection = {
-      instanceId: "codex",
-      model: "gpt-6.1-sol",
-      options: [{ id: "reasoningEffort", value: "high" }],
-    };
-    testState.viewing(null, [
-      {
-        id: "thread-last-used",
-        environmentId: "environment-ssh",
-        projectId: "project-remote",
-        modelSelection: lastUsedSelection,
-        runtimeMode: "auto",
-        interactionMode: "plan",
-        branch: "feature/last-used",
-        worktreePath: "/remote/project/.worktrees/last-used",
-        updatedAt: "2026-10-21T10:00:00.000Z",
-      },
-    ]);
-    const pendingOpen = useNewThreadHandler()({
-      environmentId: "environment-ssh",
-      projectId: "project-remote",
-    } as never);
-    testState.completeProjectFileRead(null);
-    await pendingOpen;
-
-    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenLastCalledWith(
-      "remote-project",
-      expect.anything(),
-      expect.any(String),
-      expect.objectContaining({
-        runtimeMode: "auto",
-        interactionMode: "plan",
-        branch: null,
-        worktreePath: null,
-        envMode: "local",
-      }),
-    );
-    expect(testState.draftStore.setModelSelection).toHaveBeenLastCalledWith(
-      expect.any(String),
-      lastUsedSelection,
-      expect.anything(),
-    );
-  });
-
-  it("does not carry the viewed thread's settings into a different project", async () => {
-    testState.reset(draft);
-    testState.viewing(
-      {
-        kind: "server",
-        threadRef: { environmentId: "environment-primary", threadId: "thread-other-project" },
-      },
-      [
-        {
-          id: "thread-other-project",
-          environmentId: "environment-primary",
-          projectId: "project-other",
-          modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5", options: [] },
-          runtimeMode: "approval-required",
-          interactionMode: "plan",
-          branch: null,
-          worktreePath: null,
-          updatedAt: "2026-10-21T10:00:00.000Z",
-        },
-      ],
-    );
-    const pendingOpen = useNewThreadHandler()({
-      environmentId: "environment-ssh",
-      projectId: "project-remote",
-    } as never);
-    testState.completeProjectFileRead(null);
-    await pendingOpen;
-
-    expect(testState.draftStore.setModelSelection).not.toHaveBeenCalled();
-    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({ interactionMode: "plan" }),
-    );
-  });
-  it("prefers the project's last user-used thread over the viewed one", async () => {
-    testState.reset(draft);
-    const sameProjectThread = {
-      environmentId: "environment-ssh",
-      projectId: "project-remote",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-    };
-    const userSelection = { instanceId: "codex", model: "gpt-6.1-sol", options: [] };
-    const viewed = (threadId: string) => ({
-      kind: "server",
-      threadRef: { environmentId: "environment-ssh", threadId },
-    });
-    const threads = [
-      {
-        ...sameProjectThread,
-        id: "thread-subagent",
-        modelSelection: { instanceId: "codex", model: "gpt-6.1-mini", options: [] },
-        runtimeMode: "full-access",
-        lineage: { relationshipToParent: "subagent" },
-        updatedAt: "2026-10-21T12:00:00.000Z",
-        latestUserAuthoredMessageAt: null,
-      },
-      {
-        ...sameProjectThread,
-        id: "thread-older",
-        modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5", options: [] },
-        runtimeMode: "approval-required",
-        updatedAt: "2026-10-20T10:00:00.000Z",
-        latestUserAuthoredMessageAt: "2026-10-20T10:00:00.000Z",
-      },
-      {
-        ...sameProjectThread,
-        id: "thread-user",
-        modelSelection: userSelection,
-        runtimeMode: "auto",
-        updatedAt: "2026-10-21T10:00:00.000Z",
-        latestUserAuthoredMessageAt: "2026-10-21T10:00:00.000Z",
-      },
-    ];
-
-    for (const threadId of ["thread-subagent", "thread-older"]) {
-      testState.reset(draft);
-      testState.viewing(viewed(threadId), threads);
-      const pendingOpen = useNewThreadHandler()({
-        environmentId: "environment-ssh",
-        projectId: "project-remote",
-      } as never);
-      testState.completeProjectFileRead(null);
-      await pendingOpen;
-
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenLastCalledWith(
-        "remote-project",
-        expect.anything(),
-        expect.any(String),
-        expect.objectContaining({ runtimeMode: "auto" }),
-      );
-      expect(testState.draftStore.setModelSelection).toHaveBeenLastCalledWith(
-        expect.any(String),
-        userSelection,
-        expect.anything(),
-      );
-    }
-  });
-});
-
-describe("useNewThreadHandler runtime mode precedence", () => {
-  const lastUsedThread = {
-    id: "thread-last-used",
-    environmentId: "environment-ssh",
-    projectId: "project-remote",
-    modelSelection: { instanceId: "codex", model: "gpt-6.1-sol", options: [] },
-    runtimeMode: "auto",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    updatedAt: "2026-10-21T10:00:00.000Z",
-  };
-  const openTarget = async () => {
-    const pendingOpen = useNewThreadHandler()({
-      environmentId: "environment-ssh",
-      projectId: "project-remote",
-    } as never);
-    testState.completeProjectFileRead(null);
-    await pendingOpen;
-  };
-
-  const reusableDraft = {
-    draftId: "draft-existing",
-    environmentId: "environment-ssh",
-    promotedTo: null,
-    threadId: "thread-existing",
-  };
-  // Composer state holds only modes the user picked; an inherited one written
-  // there would outrank every later default.
-  const lastSessionRuntimeMode = () => {
-    expect(testState.draftStore.setRuntimeMode).not.toHaveBeenCalled();
-    return testState.draftStore.setLogicalProjectDraftThreadId.mock.lastCall?.[3]?.runtimeMode;
-  };
-
-  it("lets a project-configured runtime mode win over the last used one", async () => {
-    testState.reset(null);
-    testState.configureProjectRuntimeMode("approval-required");
-    testState.viewing(null, [lastUsedThread]);
-    await openTarget();
-
-    expect(lastSessionRuntimeMode()).toBe("approval-required");
-  });
-
-  // The composer shows the draft session's mode until the user picks one, so
-  // reopening an untouched draft must refresh it rather than keep the mode it
-  // inherited the first time.
-  it.each([
-    ["from elsewhere", null],
-    ["while it is open", { kind: "draft", draftId: "draft-existing" }],
-  ])("refreshes a reused draft's inherited runtime mode when opened %s", async (_, route) => {
-    testState.reset(reusableDraft);
-    testState.viewing(route, [lastUsedThread]);
-    await openTarget();
-    expect(lastSessionRuntimeMode()).toBe("auto");
-
-    testState.reset(reusableDraft);
-    testState.viewing(route, [
-      lastUsedThread,
-      {
-        ...lastUsedThread,
-        id: "thread-newer",
-        runtimeMode: "approval-required",
-        updatedAt: "2026-10-22T10:00:00.000Z",
-      },
-    ]);
-    await openTarget();
-    expect(lastSessionRuntimeMode()).toBe("approval-required");
-
-    testState.reset(reusableDraft);
-    testState.configureProjectRuntimeMode("full-access");
-    testState.viewing(route, [lastUsedThread]);
-    await openTarget();
-    expect(lastSessionRuntimeMode()).toBe("full-access");
-  });
-
-  // The store keeps a session's interaction mode when none is passed, so a
-  // reused draft must be told the default to drop a Plan it inherited.
-  it("resets a reused draft's inherited Plan when the project has no history", async () => {
-    testState.reset(reusableDraft);
-    testState.viewing(null, []);
-    await openTarget();
-
-    expect(testState.draftStore.setLogicalProjectDraftThreadId.mock.lastCall?.[3]).toMatchObject({
-      interactionMode: "default",
-    });
-  });
-
-  it("leaves a runtime mode the user picked in a reused draft's composer alone", async () => {
-    testState.reset(reusableDraft);
-    testState.draftStore.getComposerDraft.mockReturnValue({ runtimeMode: "approval-required" });
-    testState.viewing(null, [lastUsedThread]);
-    await openTarget();
-
-    expect(testState.draftStore.setRuntimeMode).not.toHaveBeenCalled();
-  });
 });
 
 describe("useNewThreadHandler", () => {
+  it("keeps the text of a draft that gained some while it waited", async () => {
+    testState.reset(null);
+    const raced = {
+      draftId: "draft-raced",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-raced",
+    };
+    testState.draftStore.getDraftSessionByLogicalProjectKey
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(raced as never);
+    testState.giveUserText("draft-raced");
+
+    const opened = await useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { prompt: "Read the playbook. " },
+    );
+
+    expect(opened?.draftId).toBe("draft-raced");
+    expect(testState.draftStore.setPrompt).not.toHaveBeenCalled();
+  });
+
+  it("seeds the prompt into the empty draft that is already open", async () => {
+    testState.reset(null);
+    testState.openEmptyDraft("draft-open");
+
+    const opened = await useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { prompt: "Read the playbook. " },
+    );
+
+    expect(opened?.draftId).toBe("draft-open");
+    expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
+      "draft-open",
+      "Read the playbook. ",
+    );
+  });
+
   it("opens the draft without waiting on a project file from an offline machine", async () => {
     testState.reset(null, { envMode: null, startFromOrigin: false });
     testState.disconnect("environment-ssh");
@@ -550,5 +367,41 @@ describe("useNewThreadHandler", () => {
 
     expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
     expect(testState.router.navigate).toHaveBeenCalledOnce();
+  });
+});
+
+describe("default project selection", () => {
+  it("prefers the last used project in its environment and falls back when unavailable", () => {
+    const projects = [
+      { id: "project", environmentId: "first", workspaceRoot: "/first" },
+      { id: "project", environmentId: "last-used", workspaceRoot: "/last-used" },
+    ].map((project) => ({
+      ...project,
+      id: project.id as ProjectId,
+      environmentId: project.environmentId as EnvironmentId,
+      title: project.environmentId,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-11-09T00:00:00.000Z",
+      updatedAt: "2026-11-09T00:00:00.000Z",
+    }));
+    expect(resolveDefaultProjectRef(projects, [], "last-used:project")).toEqual({
+      environmentId: "last-used",
+      projectId: "project",
+    });
+    expect(
+      resolveDefaultProjectRef(projects.slice(0, 1), [], "last-used:project", false),
+    ).toBeNull();
+    expect(resolveDefaultProjectRef(projects.slice(0, 1), [], "last-used:project")).toEqual({
+      environmentId: "first",
+      projectId: "project",
+    });
+    expect(
+      resolveDefaultProjectRef(
+        [projects[0]!, { ...projects[1]!, archivedAt: "2026-11-09T00:00:00.000Z" }],
+        [],
+        "last-used:project",
+      ),
+    ).toEqual({ environmentId: "first", projectId: "project" });
   });
 });

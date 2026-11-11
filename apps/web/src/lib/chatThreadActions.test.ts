@@ -29,7 +29,6 @@ const lastUsed = {
     options: [{ id: "reasoningEffort", value: "high" }],
   },
   runtimeMode: "auto",
-  interactionMode: "plan",
 } as const;
 
 function settingsFor(overrides: Partial<ServerSettings> = {}) {
@@ -44,20 +43,32 @@ function settingsFor(overrides: Partial<ServerSettings> = {}) {
   );
 }
 
+const resolveDefaults = (
+  projectSettings: ReturnType<typeof settingsFor>,
+  last: typeof lastUsed | null,
+) =>
+  resolveNewThreadDefaults({
+    projectId,
+    projectSettings,
+    lastUsed: last,
+    serverSettings: undefined,
+    providers: [],
+    hasStickyProvider: false,
+    now: 0,
+  });
+
 describe("resolveNewThreadDefaults", () => {
   it("prefers the project's last-used settings over environment defaults", () => {
-    expect(resolveNewThreadDefaults({ projectSettings: settingsFor(), lastUsed })).toEqual({
+    expect(resolveDefaults(settingsFor(), lastUsed)).toEqual({
       modelSelection: lastUsed.modelSelection,
       runtimeMode: "auto",
-      interactionMode: "plan",
     });
   });
 
   it("falls back to environment defaults for a project nobody has used", () => {
-    expect(resolveNewThreadDefaults({ projectSettings: settingsFor(), lastUsed: null })).toEqual({
+    expect(resolveDefaults(settingsFor(), null)).toEqual({
       modelSelection: ENVIRONMENT_DEFAULT,
       runtimeMode: "approval-required",
-      interactionMode: "default",
     });
   });
 
@@ -68,10 +79,9 @@ describe("resolveNewThreadDefaults", () => {
       },
     });
 
-    expect(resolveNewThreadDefaults({ projectSettings, lastUsed })).toEqual({
+    expect(resolveDefaults(projectSettings, lastUsed)).toEqual({
       modelSelection: PROJECT_DEFAULT,
       runtimeMode: "full-access",
-      interactionMode: "plan",
     });
   });
 });
@@ -109,7 +119,6 @@ describe("retargetDraftToProject", () => {
     store().setProjectDraftThreadId(sourceRef, draftId, {
       threadId: ThreadId.make("thread-retarget"),
       runtimeMode: "full-access",
-      interactionMode: "plan",
     });
     store().setModelSelection(draftId, lastUsed.modelSelection, { replaceOptions: true });
     store().setPrompt(draftId, "keep this");
@@ -125,6 +134,7 @@ describe("retargetDraftToProject", () => {
         defaultModelSelection: ENVIRONMENT_DEFAULT,
         defaultRuntimeMode: "approval-required",
       },
+      providers: [],
       threads: [],
       logicalProjectKey: null,
       refreshModel: true,
@@ -135,14 +145,13 @@ describe("retargetDraftToProject", () => {
     ["a machine switch", { routing: manualRouting }],
     ["automatic routing", { routing: autoRouting, refreshModel: false }],
     ["a project pick", { logicalProjectKey: "project-b" }],
-  ])("drops the source's inherited modes on %s to an unused project", (_, overrides) => {
+  ])("drops the source's inherited runtime mode on %s to an unused project", (_, overrides) => {
     retarget(overrides);
 
     expect(session()).toMatchObject({
       environmentId: destinationRef.environmentId,
       projectId: destinationRef.projectId,
       runtimeMode: "approval-required",
-      interactionMode: "default",
     });
     expect(composer()?.prompt).toBe("keep this");
   });
@@ -155,7 +164,6 @@ describe("retargetDraftToProject", () => {
           ...destinationRef,
           modelSelection: PROJECT_DEFAULT,
           runtimeMode: "approval-required",
-          interactionMode: "default",
           updatedAt: "2026-10-21T10:00:00.000Z",
           latestUserAuthoredMessageAt: "2026-10-21T10:00:00.000Z",
         },
@@ -166,13 +174,12 @@ describe("retargetDraftToProject", () => {
     expect(selection("codex")).toEqual(PROJECT_DEFAULT);
   });
 
-  it("leaves modes and a model the user picked in the composer alone", () => {
+  it("leaves a runtime mode and model the user picked in the composer alone", () => {
     store().setRuntimeMode(draftId, "full-access");
-    store().setInteractionMode(draftId, "plan");
     store().setModelSelection(draftId, PROJECT_DEFAULT, { explicit: true });
     retarget();
 
-    expect(composer()).toMatchObject({ runtimeMode: "full-access", interactionMode: "plan" });
+    expect(composer()).toMatchObject({ runtimeMode: "full-access" });
     expect(selection("codex")).toEqual(PROJECT_DEFAULT);
   });
 

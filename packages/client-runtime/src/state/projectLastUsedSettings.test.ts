@@ -18,7 +18,6 @@ function thread(
     projectId,
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model },
     runtimeMode: "full-access",
-    interactionMode: "default",
     updatedAt: "2026-10-01T00:00:00.000Z",
     ...overrides,
   };
@@ -34,7 +33,6 @@ describe("resolveProjectLastUsedSettings", () => {
         }),
         thread("written-recently", {
           runtimeMode: "auto",
-          interactionMode: "plan",
           latestUserAuthoredMessageAt: "2026-10-03T00:00:00.000Z",
         }),
       ],
@@ -44,7 +42,6 @@ describe("resolveProjectLastUsedSettings", () => {
     expect(settings).toEqual({
       modelSelection: { instanceId: "codex", model: "written-recently" },
       runtimeMode: "auto",
-      interactionMode: "plan",
     });
   });
 

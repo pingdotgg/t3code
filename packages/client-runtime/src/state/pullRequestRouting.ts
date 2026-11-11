@@ -18,9 +18,9 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
-  GitHubRoutingPermissions,
-  gitHubRoutingConnectionKey,
-} from "../connection/githubRoutingPermissions.ts";
+  PullRequestRoutingPermissions,
+  pullRequestRoutingConnectionKey,
+} from "../connection/pullRequestRoutingPermissions.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import * as ConnectionProfileStore from "../connection/profileStore.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -171,7 +171,7 @@ const routingAllowed = Effect.fn("PullRequestRouting.allowed")(function* (
     destination.unsupportedReason !== undefined
   )
     return false;
-  const permissions = yield* GitHubRoutingPermissions;
+  const permissions = yield* PullRequestRoutingPermissions;
   const source = yield* permissions.get(origin);
   const target = yield* permissions.get(destination);
   const allowed = write
@@ -185,8 +185,9 @@ const routingAllowed = Effect.fn("PullRequestRouting.allowed")(function* (
     const profile = yield* profiles.value
       .get(entry.target.connectionId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
-    const key = gitHubRoutingConnectionKey(entry);
-    if (key === null || key !== gitHubRoutingConnectionKey({ ...entry, profile })) return false;
+    const key = pullRequestRoutingConnectionKey(entry);
+    if (key === null || key !== pullRequestRoutingConnectionKey({ ...entry, profile }))
+      return false;
   }
   return true;
 });
@@ -354,7 +355,8 @@ export function createPullRequestRouter() {
           identityProbe,
         )
       : identityProbe;
-    if (identity === null || identity.provider !== "github") return yield* finish(source);
+    // The source server answers only for a host whose account it can verify.
+    if (identity === null) return yield* finish(source);
 
     const routedInput = {
       ...input,
@@ -437,7 +439,7 @@ export function createPullRequestRouter() {
             );
           if (
             alternate === null ||
-            alternate.provider !== "github" ||
+            alternate.provider !== identity.provider ||
             alternate.host.toLowerCase() !== identity.host.toLowerCase() ||
             alternate.accountId !== identity.accountId
           ) {
