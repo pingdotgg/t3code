@@ -194,11 +194,9 @@ that exists nowhere on disk, with AWS credentials stripped from the
 environment and `CI=1` set so the placeholder Cloudflare env credentials are
 accepted.
 
-It also requires a **built workspace** (`pnpm build`). The MicroVM binding
-pulls `@alchemy.run/floci` into the Worker bundle, and the Worker bundler
-resolves that workspace package through its `import` condition — i.e.
-`packages/floci/lib`. On an unbuilt tree the MicroVM Worker boots with
-`No such module "@alchemy.run/floci"`.
+The MicroVM binding pulls the floci manager (`@alchemy.run/aws/Local/Floci`)
+into the Worker bundle; it resolves from the workspace's AWS sources, so no
+build step is needed for it.
 
 ```sh
 bun test                    # from examples/dev-stress
