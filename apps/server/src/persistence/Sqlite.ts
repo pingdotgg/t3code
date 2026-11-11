@@ -56,7 +56,7 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
       readerWorker: true,
       // Run writes off the event loop so slow statements and transactions cannot stall clients.
       writerWorker: true,
-      // Keeps checkpoint fsyncs off the event loop if the writer has to fall back to the main thread.
+      // Bounds WAL growth while readers pin snapshots, in the writer worker or on a main-thread fallback.
       checkpointWorker: true,
       spanAttributes: {
         "db.name": path.basename(dbPath),

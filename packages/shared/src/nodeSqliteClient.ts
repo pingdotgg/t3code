@@ -37,7 +37,7 @@ export interface SqliteClientConfig {
   readonly readerWorker?: boolean | undefined;
   /** Ignored for in-memory databases. Falls back to the main thread when the worker cannot start. */
   readonly writerWorker?: boolean | undefined;
-  /** Ignored for in-memory databases and when the writer runs in a worker, which checkpoints off the event loop itself. */
+  /** Ignored for in-memory databases. Bounds WAL growth; a writer worker enforces it in the worker itself. */
   readonly checkpointWorker?: boolean | undefined;
 }
 
