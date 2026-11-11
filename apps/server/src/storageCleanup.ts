@@ -702,9 +702,11 @@ const make = Effect.gen(function* () {
       { concurrency: 16 },
     );
     const files = [];
+    // Without core.symlinks a tracked link is a regular file holding its target, compared unfiltered.
+    const linkFiles = [];
     for (const entry of onDisk) {
       if (entry === null) continue;
-      if (entry.type === "File" && entry.mode !== "120000") files.push(entry);
+      if (entry.type === "File") (entry.mode === "120000" ? linkFiles : files).push(entry);
       else if (!("target" in entry) || entry.mode !== "120000") return reason(entry.file);
       // Hashing a link's path would hash the file it points to.
       else if (
@@ -712,12 +714,18 @@ const make = Effect.gen(function* () {
       )
         return reason(entry.file);
     }
-    if (files.length === 0) return null;
-    const worktreeIds = (yield* inspect(
-      ["hash-object", "--stdin-paths"],
-      files.map(({ file }) => `${file}\n`).join(""),
-    )).stdout.split("\n");
-    const changed = files.find(({ id }, i) => worktreeIds[i] !== id);
+    const hashPaths = (entries: ReadonlyArray<{ readonly file: string }>, flags: string[]) =>
+      entries.length === 0
+        ? Effect.succeed([])
+        : inspect(
+            ["hash-object", ...flags, "--stdin-paths"],
+            entries.map(({ file }) => `${file}\n`).join(""),
+          ).pipe(Effect.map((result) => result.stdout.split("\n")));
+    const worktreeIds = yield* hashPaths(files, []);
+    const linkIds = yield* hashPaths(linkFiles, ["--no-filters"]);
+    const changed =
+      files.find(({ id }, i) => worktreeIds[i] !== id) ??
+      linkFiles.find(({ id }, i) => linkIds[i] !== id);
     return changed === undefined ? null : reason(changed.file);
   });
 
