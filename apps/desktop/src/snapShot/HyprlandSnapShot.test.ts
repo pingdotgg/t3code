@@ -18,6 +18,7 @@ import {
   hyprlandCaptureExecutable,
   hyprlandCaptureShortcut,
 } from "./HyprlandSnapShot.ts";
+import { CaptureSetupRequiredError } from "./linuxCaptureSession.ts";
 
 let directory: string;
 let paths: { bundle: string; dataHome: string };
@@ -85,6 +86,20 @@ it("updates explicitly and removes only its helper", async () => {
   await setup.perform("remove-hyprland-helper");
   expect((await setup.state()).status).toBe("not-installed");
   expect(await NodeFSP.readFile(unrelated, "utf8")).toBe("keep");
+});
+it("updates a helper left stale by an app update before capturing", async () => {
+  await setup.perform("install-hyprland-helper");
+  await NodeFSP.writeFile(paths.bundle, "update");
+  const result = await captureHyprlandWindow(paths);
+  expect(result.png).toEqual(png);
+  expect(await NodeFSP.readFile(hyprlandCaptureExecutable(paths), "utf8")).toBe("update");
+  result.feedback?.close();
+});
+it("leaves first-time installation to explicit setup", async () => {
+  await expect(captureHyprlandWindow(paths)).rejects.toBeInstanceOf(CaptureSetupRequiredError);
+  await expect(NodeFSP.stat(hyprlandCaptureExecutable(paths))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });
 it("does not overwrite a linked executable", async () => {
   const executable = hyprlandCaptureExecutable(paths);
