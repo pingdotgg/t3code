@@ -520,7 +520,7 @@ describe("probeAcpRegistryWorkspaceForCwd", () => {
     }),
   );
 
-  it.effect("treats an empty workspace advertisement as not pending", () =>
+  it.effect("keeps the machine commands when the workspace probe advertises none", () =>
     Effect.gen(function* () {
       const workspace = yield* probeAcpRegistryWorkspaceForCwd(
         { ...workspaceInput, machineSnapshot: probedMachineSnapshot },
@@ -541,7 +541,7 @@ describe("probeAcpRegistryWorkspaceForCwd", () => {
           }),
       );
 
-      expect(workspace.slashCommands).toEqual([]);
+      expect(workspace.slashCommands).toEqual([{ name: "review" }]);
       expect(workspace.slashCommandsPending).toBeUndefined();
     }),
   );

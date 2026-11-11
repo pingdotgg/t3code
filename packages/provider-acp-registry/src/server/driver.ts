@@ -461,14 +461,12 @@ export const probeAcpRegistryWorkspaceForCwd = Effect.fn("AcpRegistryDriver.prob
         environment: input.environment,
       }),
     );
-    return Result.isSuccess(probed)
-      ? {
-          ...machineSnapshot,
-          slashCommands: probed.success.slashCommands,
-          skills: probed.success.skills,
-          slashCommandsPending: probed.success.slashCommands.length > 0 ? false : undefined,
-        }
-      : { ...machineSnapshot, slashCommandsPending: true };
+    if (Result.isFailure(probed)) return { ...machineSnapshot, slashCommandsPending: true };
+    const { slashCommands, skills } = probed.success;
+    // Agents may advertise only after the probe's grace period; keep the machine
+    // snapshot's commands, which carry what live sessions have advertised.
+    if (slashCommands.length === 0 && skills.length === 0) return machineSnapshot;
+    return { ...machineSnapshot, slashCommands, skills, slashCommandsPending: false };
   },
 );
 
