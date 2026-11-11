@@ -10,6 +10,31 @@ import {
   type OfficeWorkerRequest,
 } from "./officePreviewProtocol";
 
+// Word limits, measured against the @betteroffice/docx engine, which lays out in its own worker.
+export const WORD_LIMITS = {
+  /** document.xml read and kept, about 700 pages of prose; the engine opens it in about 1 s. */
+  bodyBytes: 4 * 1024 * 1024,
+  bodyElements: 50_000,
+  bodyTags: 1_000_000,
+  /** A table is laid out in one go: 100,000 tags is a 4,000-row table, about 2 s. */
+  elementTags: 100_000,
+  /** Line breaking grows with the square of a paragraph's text: 40K characters take about 2 s. */
+  paragraphText: 128 * 1024,
+  styles: 8_192,
+  styleBytes: 16 * 1024 * 1024,
+  styleUnits: 400_000,
+  styleVisits: 131_072,
+  stylePropertyVisits: 2_000_000,
+  numberingReferences: 20_000,
+  numberingBytes: 32 * 1024 * 1024,
+  numberingMarkup: 400_000,
+  auxiliaryPartBytes: 8 * 1024 * 1024,
+  auxiliaryMarkup: 1_000_000,
+  /** Body, styles, lists and notes, with headers and footers counted once per page. */
+  expandedBytes: 64 * 1024 * 1024,
+  expandedMarkup: 4_000_000,
+};
+
 function xmlParser() {
   const parser = new SaxesParser({ xmlns: true });
   parser.on("doctype", () => {
@@ -143,27 +168,41 @@ function wordDocuments(
   let elementTags = 0;
   let batchTags = 0;
   let elements = 0;
+  // The text each open paragraph lays out (its w:t runs); a nested paragraph counts apart.
+  const paragraphText: number[] = [];
+  let inText = false;
   let truncated = incomplete;
   const limit = Symbol("Word preview limit");
+  const countText = (text: string) => {
+    if (!inText || paragraphText.length === 0) return;
+    const length = paragraphText.at(-1)! + text.length;
+    if (length > WORD_LIMITS.paragraphText) throw limit;
+    paragraphText[paragraphText.length - 1] = length;
+  };
+  parser.on("text", countText);
+  parser.on("cdata", countText);
   parser.on("opentag", (tag) => {
     names.push(tag.name);
+    if (prefix && tag.local === "p") paragraphText.push(0);
+    if (tag.local === "t") inText = true;
     if (names.length === 2 && tag.local === "body") {
       prefix = xml.slice(0, parser.position).replace(/\/>$/, ">");
       suffix = `</${tag.name}></${names[0]}>`;
       boundary = batchStart = parser.position;
     } else if (prefix && names.length > 2) {
-      if (names.length === 3 && ++elements > 5_000) throw limit;
+      if (names.length === 3 && ++elements > WORD_LIMITS.bodyElements) throw limit;
       tags++;
       elementTags++;
       batchTags++;
-      if (tags > 100_000 || elementTags > 2_000 || parser.position - boundary > 128 * 1024)
-        throw limit;
+      if (tags > WORD_LIMITS.bodyTags || elementTags > WORD_LIMITS.elementTags) throw limit;
     }
     if (names.length > 64) throw limit;
   });
   parser.on("closetag", (tag) => {
+    if (prefix && tag.local === "p") paragraphText.pop();
+    if (tag.local === "t") inText = false;
     if (prefix && names.length === 3 && tag.local !== "sectPr") {
-      if (parser.position - prefix.length > 3 * 1024 * 1024) throw limit;
+      if (parser.position - prefix.length > WORD_LIMITS.bodyBytes) throw limit;
       boundary = parser.position;
       elementTags = 0;
       if (batchTags >= 500) {
@@ -177,7 +216,6 @@ function wordDocuments(
   try {
     for (let offset = 0; offset < xml.length; offset += 16 * 1024) {
       parser.write(xml.slice(offset, offset + 16 * 1024));
-      if (prefix && parser.position - boundary > 128 * 1024) throw limit;
     }
     if (!incomplete) parser.close();
   } catch (cause) {
@@ -195,7 +233,7 @@ function wordDocuments(
     const document = prefix + batch.content + (section?.xml ?? "") + suffix;
     length += batch.content.length;
     markup += batch.content.match(/<(?![!?/])/g)?.length ?? 0;
-    if (length > 3 * 1024 * 1024 || markup > 100_000) {
+    if (length > WORD_LIMITS.bodyBytes || markup > WORD_LIMITS.bodyTags) {
       truncated = true;
       break;
     }
@@ -617,9 +655,6 @@ function wordPartTypes() {
 
 // Bound inherited style and numbering expansion before the engine loads it.
 // Picture bullets can duplicate embedded images, so omit those definitions.
-const WORD_STYLE_MAX_BYTES = 1024 * 1024;
-const WORD_STYLE_MAX_UNITS = 20_000;
-
 function wordXmlCost(xml: string, roles: Set<string> | undefined) {
   const parser = xmlParser();
   let depth = 0;
@@ -648,7 +683,7 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
       Object.values(tag.attributes).find((a) => a.local === name)?.value ?? "";
     names.push(tag.local === "tblStylePr" ? `${tag.local}:${attr("type")}` : tag.local);
     if (roles?.has("styles") && (tag.local === "style" || tag.local === "docDefaults")) {
-      if (++styleCount > 1_024 || attr("styleId").length > 256) throw limit;
+      if (++styleCount > WORD_LIMITS.styles || attr("styleId").length > 256) throw limit;
       style = { id: attr("styleId"), properties: new Map(), base: "", linked: "" };
     }
     if (style) {
@@ -659,7 +694,7 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
         const size = new TextEncoder().encode(
           xml.slice(xml.lastIndexOf("<", parser.position - 1), parser.position),
         ).length;
-        if (++ownUnits > WORD_STYLE_MAX_UNITS) throw limit;
+        if (++ownUnits > WORD_LIMITS.styleUnits) throw limit;
         style.properties.set(key, size);
       }
     }
@@ -671,7 +706,7 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
           markup: markup - 1,
         };
       if (tag.local === "num") {
-        if (references.length >= 2_000) throw limit;
+        if (references.length >= WORD_LIMITS.numberingReferences) throw limit;
         reference = { id: "", selector: attr("numId").length + 32 };
         references.push(reference);
       }
@@ -731,16 +766,16 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
       ]) {
         const seen = new Set<string>();
         for (let node = root; node; node = node.parent) {
-          if (++visited > 8_192) return exceeded;
+          if (++visited > WORD_LIMITS.styleVisits) return exceeded;
           for (const [key, size] of node.properties) {
-            if (++propertyVisits > 100_000) return exceeded;
+            if (++propertyVisits > WORD_LIMITS.stylePropertyVisits) return exceeded;
             if (seen.has(key)) continue;
             // Latent styles never enter properties. Charge each own property
             // once per resolved style, including linked and default selectors.
             const copies = id ? 1 : 2;
             bytes += (size * 2 + id.length + 32) * copies;
             expandedMarkup += copies;
-            if (bytes > WORD_STYLE_MAX_BYTES || expandedMarkup > WORD_STYLE_MAX_UNITS)
+            if (bytes > WORD_LIMITS.styleBytes || expandedMarkup > WORD_LIMITS.styleUnits)
               return exceeded;
             seen.add(key);
           }
@@ -756,7 +791,8 @@ function wordXmlCost(xml: string, roles: Set<string> | undefined) {
       if (!cost) continue;
       bytes += cost.bytes * 2 + cost.markup * ref.selector;
       markup += cost.markup;
-      if (bytes > 128 * 1024 || markup > 2_000) return exceeded;
+      if (bytes > WORD_LIMITS.numberingBytes || markup > WORD_LIMITS.numberingMarkup)
+        return exceeded;
     }
   }
   return { bytes, markup, pictures };
@@ -851,7 +887,7 @@ async function wordExpansion(
       let expanded = memo.get(key);
       if (!expanded) {
         expandedXmlBytes += node.xml.length * 2;
-        if (expandedXmlBytes > 3 * 1024 * 1024) {
+        if (expandedXmlBytes > WORD_LIMITS.expandedBytes) {
           cost.bytes = Infinity;
           break;
         }
@@ -901,7 +937,9 @@ async function wordExpansion(
     markup += cost.markup;
   }
   const overBudget =
-    bytes > 3 * 1024 * 1024 || markup > 100_000 || media > OFFICE_PREVIEW_MAX_BYTES;
+    bytes > WORD_LIMITS.expandedBytes ||
+    markup > WORD_LIMITS.expandedMarkup ||
+    media > OFFICE_PREVIEW_MAX_BYTES;
   const truncated = (used.size > 0 && overBudget) || bytes === Infinity;
   const omitted = new Set([...optional].filter((path) => truncated || !used.has(path)));
   for (const path of omitted) archive.remove(path);
@@ -1014,7 +1052,10 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
           // stay small before the engine parses it.
           if (input.kind === "docx" && !document && !media) {
             for (const byte of chunk) if (byte === 0x3c) wordAuxiliaryMarkup++;
-            if (length > 1024 * 1024 || wordAuxiliaryMarkup > 50_000) {
+            if (
+              length > WORD_LIMITS.auxiliaryPartBytes ||
+              wordAuxiliaryMarkup > WORD_LIMITS.auxiliaryMarkup
+            ) {
               stream.pause();
               reject(
                 new Error("Preview limited: this Word document has too much auxiliary markup."),
@@ -1058,8 +1099,9 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
       if (
         (roles?.has("numbering") && cost.pictures) ||
         (roles?.has("styles") &&
-          (cost.bytes > WORD_STYLE_MAX_BYTES || cost.markup > WORD_STYLE_MAX_UNITS)) ||
-        (roles?.has("numbering") && (cost.bytes > 128 * 1024 || cost.markup > 2_000))
+          (cost.bytes > WORD_LIMITS.styleBytes || cost.markup > WORD_LIMITS.styleUnits)) ||
+        (roles?.has("numbering") &&
+          (cost.bytes > WORD_LIMITS.numberingBytes || cost.markup > WORD_LIMITS.numberingMarkup))
       ) {
         wordInputTruncated = true;
         continue;
@@ -1098,8 +1140,8 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
       const images = extra.media;
       const batchImages = new Set(extra.images);
       if (
-        bytes + cost.bytes > 3 * 1024 * 1024 ||
-        markup + cost.markup > 100_000 ||
+        bytes + cost.bytes > WORD_LIMITS.expandedBytes ||
+        markup + cost.markup > WORD_LIMITS.expandedMarkup ||
         mediaBytes + images > OFFICE_PREVIEW_MAX_BYTES
       )
         break;
