@@ -1189,6 +1189,38 @@ process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.dat
     }),
   );
 
+  it.effect("leaves a pending update alone when stopped while it starts up", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-startup-stop-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      // Recovery would roll this back: the target runtime is missing.
+      const pending = {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.0.0",
+        update: {
+          id: "update-1",
+          fromVersion: "1.0.0",
+          targetVersion: "1.1.0",
+          dbPath: path.join(root, "userdata", "state.sqlite"),
+          status: "pending",
+        },
+      } as const;
+      yield* Effect.promise(() => writeServiceState(statePath, pending));
+      const lockPath = serviceLauncherLockPath(root);
+      const launcher = new Launcher(root, pending, { lockPath });
+
+      const running = launcher.run();
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+
+      // The lock is released only once the launcher is done with the home.
+      assert.isFalse(yield* Effect.promise(() => serviceLauncherIsRunning(lockPath)));
+      assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), pending);
+    }),
+  );
+
   it.effect("records no update when the server exits during the backup check", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

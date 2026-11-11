@@ -765,12 +765,15 @@ export class Launcher {
       try {
         // The launcher that held the lock may have moved the state since main read it.
         if (lock !== undefined) this.#state = await readServiceState(this.#statePath);
-        // A stop that arrived while waiting for the lock leaves nothing to start.
-        if (lock !== undefined || this.#lockPath === undefined)
-          this.#enqueue(() => this.#recover());
+        // A stop that arrived before this point leaves nothing to start or recover.
+        if (!this.#stopRequested) this.#enqueue(() => this.#recover());
         await this.#completion.promise;
       } finally {
-        lock?.close();
+        if (lock !== undefined) {
+          // Releasing the lock says this launcher is done with the home.
+          await this.#transitions.catch(() => undefined);
+          lock.close();
+        }
       }
     } finally {
       process.off("SIGTERM", onSigterm);
