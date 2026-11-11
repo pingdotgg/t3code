@@ -239,7 +239,6 @@ function PanelCloseAction() {
     pullRequestsSurfaceAvailable: false,
     gitCwd: null,
     activeProjectCwd: null,
-    explicitDiffOpenRef: { current: null },
     onDiffPanelOpen: undefined,
     closeRightPanelSurface: () => {},
   });
