@@ -5,7 +5,6 @@ import { assert, beforeEach, expect, it, vi } from "vite-plus/test";
 const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }));
 
 vi.mock("node:child_process", () => ({ execFile: execFileMock }));
-vi.mock("../electron/WindowsForeground.ts", () => ({ loadWindowsForegroundApi: vi.fn() }));
 
 import { activeWindow } from "./ActiveWindow.ts";
 
