@@ -582,6 +582,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request-link.sync":
     case "thread.pull-request.watch":
     case "thread.pull-request-watch.sync":
+    case "thread.pull-request-watch.checks-reopen":
     case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
     case "thread.project.adopt-folder":
@@ -745,9 +746,13 @@ function syncedPullRequestWatch(
   if (command.checksPendingBefore === undefined || existing?.checksPending !== undefined) {
     return command.watch;
   }
-  const { checksPending: _oldHead, ...watch } = command.watch;
-  return watch;
+  return withoutChecksAnswer(command.watch);
 }
+
+const withoutChecksAnswer = ({
+  checksPending: _answer,
+  ...watch
+}: ThreadPullRequestWatch): ThreadPullRequestWatch => watch;
 
 function legacyPullRequestLink(
   thread: OrchestrationV2AppThread,
@@ -3486,6 +3491,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.pull-request-link.sync"
           | "thread.pull-request.watch"
           | "thread.pull-request-watch.sync"
+          | "thread.pull-request-watch.checks-reopen"
           | "thread.pull-request.sync"
           | "thread.title.regeneration.complete"
           | "thread.runtime-mode.set"
@@ -4236,6 +4242,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: command.type === "thread.pull-request-link.sync" ? thread.updatedAt : now,
           };
         }
+        case "thread.pull-request-watch.checks-reopen": {
+          const linked = threadPullRequestsOf(thread);
+          if (!linked.some((link) => link.watch?.checksPending === false)) return thread;
+          return {
+            ...thread,
+            pullRequests: linked.map((link) =>
+              link.watch?.checksPending === false
+                ? { ...link, watch: withoutChecksAnswer(link.watch) }
+                : link,
+            ),
+          };
+        }
         case "thread.pull-request.watch":
         case "thread.pull-request-watch.sync": {
           const key = normalizeThreadPullRequestKey(command);
@@ -4381,6 +4399,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    if (command.type === "thread.pull-request-watch.checks-reopen") {
+      if (updatedThread === thread) return;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.pull-request-synced",
+        threadId: command.threadId,
+        providerInstanceId: updatedThread.providerInstanceId,
+        occurredAt: now,
+        payload: updatedThread,
+      });
+      return;
+    }
     if (
       command.type === "thread.pull-request-link.sync" ||
       command.type === "thread.pull-request-watch.sync"
@@ -13660,6 +13692,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.interaction-mode.set":
       case "thread.model-selection.set":
       case "provider.switch":
+        yield* dispatchThreadMutation(command, events, effects);
+        break;
+      case "thread.pull-request-watch.checks-reopen":
         yield* dispatchThreadMutation(command, events, effects);
         break;
       case "thread.pull-request-watch.sync":

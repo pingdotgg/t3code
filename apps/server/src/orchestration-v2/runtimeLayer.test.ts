@@ -3650,18 +3650,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* TestClock.adjust("10 minutes");
         const inFlight = yield* reactor.sweep.pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(started);
-        const watched = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
-        assert.isDefined(watched);
-        const { checksPending: _answer, ...cleared } = watched!;
         yield* orchestrator.dispatch({
-          type: "thread.pull-request-watch.sync",
+          type: "thread.pull-request-watch.checks-reopen",
           commandId: CommandId.make("pr-watch-quiet-push"),
           threadId,
-          host: "github.com",
-          repository: "pingdotgg/t3code",
-          number: 17,
-          startedAt: cleared.startedAt,
-          watch: cleared,
         });
         gate = null;
         yield* Deferred.succeed(release, undefined);

@@ -687,26 +687,16 @@ export const make = Effect.gen(function* () {
     function* (threadId: ThreadId, item: CommandExecution) {
       if (isOrchestrationV2WorkActive(item.status) || !isPushCommand(item.input)) return;
       const threads = yield* projections.getThreadsWithPullRequests(threadId);
-      yield* Effect.forEach(
-        threads.flatMap((thread) =>
-          visibleThreadPullRequests(thread.pullRequests ?? []).flatMap(({ watch, ...link }) =>
-            watch?.checksPending === false ? [{ link, watch }] : [],
-          ),
-        ),
-        ({ link, watch: { checksPending: _answer, ...watch } }) =>
-          engine.dispatch({
-            type: "thread.pull-request-watch.sync",
-            // Stable per command, so a repeated settlement clears an answer read since only once.
-            commandId: CommandId.make(
-              `server:pr-push-checks:${threadId}:${item.id}:${threadPullRequestKeyOf(link)}`,
-            ),
-            threadId,
-            ...normalizeThreadPullRequestKey(link),
-            startedAt: watch.startedAt,
-            watch,
-          }),
-        { discard: true },
+      const released = threads.some((thread) =>
+        (thread.pullRequests ?? []).some((link) => link.watch?.checksPending === false),
       );
+      if (!released) return;
+      yield* engine.dispatch({
+        type: "thread.pull-request-watch.checks-reopen",
+        // Stable per command, so a repeated settlement clears an answer read since only once.
+        commandId: CommandId.make(`server:pr-push-checks:${threadId}:${item.id}`),
+        threadId,
+      });
     },
     (effect, threadId) =>
       effect.pipe(

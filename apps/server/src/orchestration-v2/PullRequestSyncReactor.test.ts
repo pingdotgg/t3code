@@ -52,9 +52,9 @@ type SyncCommand = Extract<
   { readonly type: "thread.pull-request-link.sync" }
 >;
 type LinkCommand = Extract<OrchestrationCommand, { readonly type: "thread.pull-request.link" }>;
-type WatchSyncCommand = Extract<
+type ChecksReopenCommand = Extract<
   OrchestrationV2InternalCommand,
-  { readonly type: "thread.pull-request-watch.sync" }
+  { readonly type: "thread.pull-request-watch.checks-reopen" }
 >;
 
 const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
@@ -185,7 +185,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const shellSnapshotReads = yield* Ref.make(0);
   const syncCommands = yield* Ref.make<ReadonlyArray<SyncCommand>>([]);
   const linkCommands = yield* Ref.make<ReadonlyArray<LinkCommand>>([]);
-  const watchCommands = yield* Queue.unbounded<WatchSyncCommand>();
+  const reopenCommands = yield* Queue.unbounded<ChecksReopenCommand>();
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
@@ -220,8 +220,10 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
         Effect.as({ sequence: 1, storedEvents: [] }),
       );
     }
-    if (command.type === "thread.pull-request-watch.sync") {
-      return Queue.offer(watchCommands, command).pipe(Effect.as({ sequence: 1, storedEvents: [] }));
+    if (command.type === "thread.pull-request-watch.checks-reopen") {
+      return Queue.offer(reopenCommands, command).pipe(
+        Effect.as({ sequence: 1, storedEvents: [] }),
+      );
     }
     return Effect.die(new Error(`Unexpected command: ${command.type}`));
   };
@@ -283,7 +285,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     shellSnapshotReads,
     syncCommands,
     linkCommands,
-    watchCommands,
+    reopenCommands,
     summaryCalls,
     stackCalls,
     domainEvents,
@@ -1586,7 +1588,7 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
-  it.effect("clears a watch's finished checks when its thread's agent pushes", () =>
+  it.effect("reopens a released watch's checks when its thread's agent pushes", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -1606,6 +1608,10 @@ describe("PullRequestSyncReactor", () => {
             makeThread("agent", {
               pullRequests: [
                 makeLink(7, { state: "open" }, { watch: { ...watch, checksPending: false } }),
+              ],
+            }),
+            makeThread("waiting", {
+              pullRequests: [
                 makeLink(8, { state: "open" }, { watch: { ...watch, checksPending: true } }),
               ],
             }),
@@ -1617,19 +1623,16 @@ describe("PullRequestSyncReactor", () => {
           const agent = ThreadId.make("agent");
           yield* Queue.offerAll(fixture.domainEvents, [
             commandRan(agent, "git status && echo 'then git push'", undefined, "status"),
+            // A watch still waiting on its checks has no answer to forget.
+            commandRan(ThreadId.make("waiting"), "git push", undefined, "waiting-push"),
             commandRan(agent, "cd app && git -C . push --force-with-lease", undefined, "push"),
             commandRan(agent, '/bin/zsh -lc "gh stack submit --auto"', undefined, "stack"),
           ]);
-          // #8 still waits on its checks, so only #7 forgets its answer, once per push.
           for (const item of ["push", "stack"]) {
-            const command = yield* Queue.take(fixture.watchCommands);
+            const command = yield* Queue.take(fixture.reopenCommands);
             assert.deepStrictEqual(
-              [command.commandId, command.number, command.watch],
-              [
-                `server:pr-push-checks:agent:item:agent:${item}:github.com/owner/repository#7`,
-                7,
-                watch,
-              ],
+              [command.threadId, command.commandId],
+              [agent, `server:pr-push-checks:agent:item:agent:${item}`],
             );
           }
         }).pipe(Effect.provide(fixture.layer));

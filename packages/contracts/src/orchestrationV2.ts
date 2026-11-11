@@ -3448,6 +3448,15 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     projectId: ProjectId,
   }),
+  /**
+   * After a push, the thread's watches forget that every check had finished, since the push can
+   * start new ones. Applied to the watches as they are then, so no earlier read can overwrite them.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.pull-request-watch.checks-reopen"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,
