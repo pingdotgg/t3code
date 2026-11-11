@@ -1557,10 +1557,10 @@ export default function GitActionsControl({
         </p>
       )}
       {isCleanAndBehind && (
-          <p className="px-2 py-1.5 text-xs text-warning-foreground">
-            Behind upstream. Pull/rebase first.
-          </p>
-        )}
+        <p className="px-2 py-1.5 text-xs text-warning-foreground">
+          Behind upstream. Pull/rebase first.
+        </p>
+      )}
       {gitStatusError && (
         <p className="px-2 py-1.5 text-xs text-destructive-foreground">{gitStatusError}</p>
       )}
