@@ -119,22 +119,25 @@ export const CURSOR_USAGE_WINDOWS = [
   {
     id: "totalPercentUsed",
     label: "Overall",
-    description: "Combined usage across both allowances, not a third quota.",
+    description: "Total usage reported by Cursor.",
   },
   {
     id: "autoPercentUsed",
     label: "Cursor Models",
-    description: "Grok and Composer use this first. Auto can use either pool.",
+    description: "Usage allowance for Grok and Composer.",
   },
   {
     id: "apiPercentUsed",
     label: "Other Models",
-    description: "Claude, GPT, and Gemini use this pool. Grok and Composer fall back here.",
+    description: "Usage allowance for third-party models such as Claude, GPT, and Gemini.",
   },
 ] as const;
 
-export function cursorUsageWindowDetails(id: string) {
-  return CURSOR_USAGE_WINDOWS.find((window) => window.id === id);
+export function cursorUsageWindowDetails(id: string, windowCount: number) {
+  const details = CURSOR_USAGE_WINDOWS.find((window) => window.id === id);
+  return details && windowCount === 1
+    ? { ...details, label: null, description: undefined }
+    : details;
 }
 
 function cursorUsageWindowRank(id: string): number {

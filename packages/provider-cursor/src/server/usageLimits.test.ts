@@ -43,6 +43,32 @@ describe("Cursor usage limits", () => {
   });
 
   it("does not invent unused allowance for absent buckets", () => {
+    for (const planUsage of [
+      { totalPercentUsed: 14, autoPercentUsed: 14 },
+      { totalPercentUsed: 14, autoPercentUsed: 14, apiPercentUsed: NaN },
+    ]) {
+      expect(cursorUsageResponseToLimits({ planUsage }, checkedAt).windows).toEqual([
+        { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 14 },
+      ]);
+    }
+    expect(
+      cursorUsageResponseToLimits(
+        { planUsage: { totalPercentUsed: 14, apiPercentUsed: 14 } },
+        checkedAt,
+      ).windows,
+    ).toEqual([{ id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 14 }]);
+    expect(
+      cursorUsageResponseToLimits(
+        { planUsage: { totalPercentUsed: 14, autoPercentUsed: 20 } },
+        checkedAt,
+      ).windows,
+    ).toHaveLength(2);
+    expect(
+      cursorUsageResponseToLimits(
+        { planUsage: { totalPercentUsed: 14, autoPercentUsed: 14, apiPercentUsed: 14 } },
+        checkedAt,
+      ).windows,
+    ).toHaveLength(3);
     expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt).unavailable?.reason).toBe(
       "unsupported",
     );

@@ -50,8 +50,13 @@ export function cursorUsageResponseToLimits(
       });
     }
   }
-  return windows.length > 0
-    ? makeUsageLimits({ checkedAt, windows })
+  const total = windows.find((window) => window.id === "totalPercentUsed");
+  const pools = windows.filter((window) => window.id !== "totalPercentUsed");
+  // Single-pool accounts can report the same allowance as both a pool and the total.
+  const visibleWindows =
+    pools.length === 1 && total?.usedPercent === pools[0]?.usedPercent ? pools : windows;
+  return visibleWindows.length > 0
+    ? makeUsageLimits({ checkedAt, windows: visibleWindows })
     : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
 }
 
