@@ -621,14 +621,31 @@ describe("releaseManagedTunnelOnShutdown", () => {
   });
 
   it.effect.each([
-    { name: "replaces a revoked link to another account", revoked: true, startup: false },
-    { name: "rejects switching an active link to another account", revoked: false, startup: false },
+    {
+      name: "replaces a revoked link to another account",
+      revoked: true,
+      startup: false,
+      cloudUserId: "user-456",
+    },
+    {
+      name: "replaces a revoked link to the same account",
+      revoked: true,
+      startup: false,
+      cloudUserId: "user-123",
+    },
+    {
+      name: "rejects switching an active link to another account",
+      revoked: false,
+      startup: false,
+      cloudUserId: "user-456",
+    },
     {
       name: "keeps a revoked link when startup links another account",
       revoked: true,
       startup: true,
+      cloudUserId: "user-456",
     },
-  ])("$name", ({ revoked, startup }) => {
+  ])("$name", ({ revoked, startup, cloudUserId }) => {
     const { store, values } = makeMemorySecretStore([
       [RELAY_URL_SECRET, "https://relay.example.test"],
       [CLOUD_LINKED_USER_ID, "user-123"],
@@ -648,7 +665,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
         } else {
           yield* link.applyRelayConfig({
             relayUrl: "https://relay.example.test",
-            cloudUserId: "user-456",
+            cloudUserId,
             environmentCredential: "fresh-credential",
             cloudMintPublicKey,
             endpointRuntime: null,
@@ -669,12 +686,12 @@ describe("releaseManagedTunnelOnShutdown", () => {
         expect(yield* link.linkState()).toMatchObject({
           linked: true,
           linkRevoked: false,
-          cloudUserId: "user-456",
+          cloudUserId,
         });
         expect(new TextDecoder().decode(values.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET))).toBe(
           "fresh-credential",
         );
-        expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(false);
+        expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(cloudUserId === "user-123");
       } else {
         expect(Option.getOrThrow(result)).toBeInstanceOf(CloudLink.CloudLinkAccountMismatchError);
         expect(yield* link.linkState()).toMatchObject({

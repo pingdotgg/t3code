@@ -772,16 +772,22 @@ const make = Effect.gen(function* () {
       }
       // Only an explicit link replaces a revoked one: a clock-skew 401 can mark a live link revoked.
       if (options?.replaceRevokedLink === true) {
-        const previousUserId = yield* secrets.get(CLOUD_LINKED_USER_ID);
-        const dropped = yield* dropRevokedCloudLink.pipe(withSecrets);
-        // The CLI token still belongs to the old account, so it must stop managing this link.
+        const [revoked, previousUserId] = yield* Effect.all([
+          secrets.get(CLOUD_LINK_REVOKED),
+          secrets.get(CLOUD_LINKED_USER_ID),
+        ]);
+        // The CLI token may belong to the old account. Release it before the drop so a failed
+        // write leaves the revoked mark for a retry; a partial drop can leave no user id.
         if (
-          dropped &&
-          Option.isSome(previousUserId) &&
-          bytesToString(previousUserId.value) !== payload.cloudUserId
+          Option.isSome(revoked) &&
+          Option.match(previousUserId, {
+            onNone: () => true,
+            onSome: (userId) => bytesToString(userId) !== payload.cloudUserId,
+          })
         ) {
           yield* setCliDesiredCloudLink(false).pipe(withSecrets);
         }
+        yield* dropRevokedCloudLink.pipe(withSecrets);
       }
       yield* validateLinkedCloudUser(payload.cloudUserId);
       const endpointRuntimeJson = payload.endpointRuntime
