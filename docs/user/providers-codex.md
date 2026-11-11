@@ -81,8 +81,9 @@ not move the conversation into a separate Codex home.
 If the account is missing from the picker, compare the home paths in provider
 settings. If two instances show the same unexpected account or models, check their
 reported accounts, refresh provider status, and confirm the second instance has
-its own shadow path and login. A shadow-home conflict usually means the directory
-contains a copied Codex setup. Use a fresh shadow directory and sign in again.
+its own shadow path and login. When the shadow directory has its own copy of a
+shared file, T3 Code moves that copy into the directory's `.t3-shadow-conflicts`
+folder and links the shared one in its place.
 
 ## Answer questions while Codex works
 
