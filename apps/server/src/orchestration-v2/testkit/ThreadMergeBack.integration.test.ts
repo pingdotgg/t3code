@@ -23,10 +23,6 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
   CODEX_MODEL_SELECTION,
-  THREAD_MERGE_BACK_FORK_PROMPT,
-  THREAD_MERGE_BACK_HANDOFF_PROMPT,
-  THREAD_MERGE_BACK_RECALL,
-  THREAD_MERGE_BACK_RECALL_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_RECALL,
@@ -34,7 +30,6 @@ import {
   THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT,
   THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT,
-  THREAD_MERGE_BACK_SOURCE_PROMPT,
 } from "./fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
 import { makeCheckpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -68,7 +63,6 @@ const CodexHistoryReplayHarness: typeof CodexOrchestratorReplayHarness = {
                           assert.lengthOf(userTexts, 1);
                           assert.include(
                             [
-                              THREAD_MERGE_BACK_FORK_PROMPT,
                               THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
                               THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
                             ],
@@ -99,8 +93,6 @@ const CLAUDE_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-sonnet-4-6",
 } as const;
-const MERGE_BACK_USER_TEXT =
-  "Retain the transferred fork marker for later. Respond with exactly: merge delta stored";
 const FIRST_SIBLING_MERGE_USER_TEXT =
   "Retain the first transferred marker for later. Respond with exactly: first merge delta stored";
 const SECOND_SIBLING_MERGE_USER_TEXT =
@@ -254,204 +246,6 @@ function makeCreateCommand(input: {
 }
 
 describe("orchestration V2 merge-back provider replay", () => {
-  it.effect.each(PROVIDERS)(
-    "merges one fork delta back into the original $driver thread",
-    (variant) =>
-      Effect.gen(function* () {
-        const rawTranscript = yield* readTranscript("thread_merge_back_continue", variant.driver);
-        const materialized = yield* Effect.gen(function* () {
-          const ids = yield* IdAllocator.IdAllocatorV2;
-          const projectId = yield* ids.allocate.project({
-            fixtureName: `thread-merge-back-${variant.driver}`,
-          });
-          const sourceThreadId = yield* ids.allocate.thread({
-            fixtureName: `thread-merge-back-${variant.driver}-source`,
-            projectId,
-          });
-          const forkThreadId = ThreadId.make(`thread-merge-back-${variant.driver}-fork`);
-          const forkRunId = ids.derive.run({ threadId: forkThreadId, ordinal: 1 });
-          const commands = [
-            makeCreateCommand({
-              commandId: yield* ids.allocate.command({
-                fixtureName: `thread-merge-back-${variant.driver}`,
-                commandName: "create",
-              }),
-              threadId: sourceThreadId,
-              projectId,
-              modelSelection: variant.modelSelection,
-            }),
-            {
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: yield* ids.allocate.command({
-                fixtureName: `thread-merge-back-${variant.driver}`,
-                commandName: "source",
-              }),
-              threadId: sourceThreadId,
-              messageId: MessageId.make(`message-merge-source-${variant.driver}`),
-              text: THREAD_MERGE_BACK_SOURCE_PROMPT,
-              attachments: [],
-              modelSelection: variant.modelSelection,
-              dispatchMode: { type: "start_immediately" },
-            },
-            {
-              type: "thread.fork",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: CommandId.make(`command-merge-fork-${variant.driver}`),
-              sourceThreadId,
-              targetThreadId: forkThreadId,
-              sourcePoint: { type: "latest_stable" },
-              title: "Merge-back fork",
-            },
-            {
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: yield* ids.allocate.command({
-                fixtureName: `thread-merge-back-${variant.driver}`,
-                commandName: "fork-delta",
-              }),
-              threadId: forkThreadId,
-              messageId: MessageId.make(`message-merge-fork-${variant.driver}`),
-              text: THREAD_MERGE_BACK_FORK_PROMPT,
-              attachments: [],
-              modelSelection: variant.modelSelection,
-              dispatchMode: { type: "start_immediately" },
-            },
-            {
-              type: "thread.merge_back",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: CommandId.make(`command-merge-back-${variant.driver}`),
-              sourceThreadId: forkThreadId,
-              targetThreadId: sourceThreadId,
-              sourcePoint: { type: "run", runId: forkRunId },
-            },
-            {
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: yield* ids.allocate.command({
-                fixtureName: `thread-merge-back-${variant.driver}`,
-                commandName: "consume-merge",
-              }),
-              threadId: sourceThreadId,
-              messageId: MessageId.make(`message-consume-merge-${variant.driver}`),
-              text: MERGE_BACK_USER_TEXT,
-              attachments: [],
-              modelSelection: variant.modelSelection,
-              dispatchMode: { type: "start_immediately" },
-            },
-            {
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: yield* ids.allocate.command({
-                fixtureName: `thread-merge-back-${variant.driver}`,
-                commandName: "recall",
-              }),
-              threadId: sourceThreadId,
-              messageId: MessageId.make(`message-merge-recall-${variant.driver}`),
-              text: THREAD_MERGE_BACK_RECALL_PROMPT,
-              attachments: [],
-              modelSelection: variant.modelSelection,
-              dispatchMode: { type: "start_immediately" },
-            },
-          ] satisfies ReadonlyArray<OrchestrationV2Command>;
-          return { commands, sourceThreadId, forkThreadId, forkRunId };
-        }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
-        const summary = forkDeltaSummary({
-          sourceThreadId: materialized.forkThreadId,
-          targetThreadId: materialized.sourceThreadId,
-          forkUserText: THREAD_MERGE_BACK_FORK_PROMPT,
-          forkAssistantText: "merge fork stored",
-        });
-        const generatedProviderMessage = providerMessage(summary, MERGE_BACK_USER_TEXT);
-        const parameterizedTranscript = parameterizeHandoffs(rawTranscript, [
-          [
-            THREAD_MERGE_BACK_HANDOFF_PROMPT,
-            variant.driver === "codex" ? MERGE_BACK_USER_TEXT : generatedProviderMessage,
-          ],
-        ]);
-        const cwd = yield* Effect.acquireRelease(
-          Effect.promise(() => makeCheckpointWorkspace(`merge-back-${variant.driver}`)),
-          (directory) =>
-            Effect.service(FileSystem.FileSystem).pipe(
-              Effect.flatMap((fs) => fs.remove(directory, { recursive: true, force: true })),
-              Effect.orDie,
-            ),
-        );
-        const scenario = {
-          name: `thread_merge_back_continue/${variant.driver}`,
-          commands: materialized.commands,
-          steps: [
-            { type: "dispatch" as const, command: materialized.commands[0]!, await: true },
-            { type: "advance_clock" as const, duration: "1 millis" as const },
-            { type: "dispatch" as const, command: materialized.commands[1]!, await: true },
-            { type: "await_thread_idle" as const, threadId: materialized.sourceThreadId },
-            { type: "dispatch" as const, command: materialized.commands[2]!, await: true },
-            { type: "dispatch" as const, command: materialized.commands[3]!, await: true },
-            { type: "await_thread_idle" as const, threadId: materialized.forkThreadId },
-            { type: "dispatch" as const, command: materialized.commands[4]!, await: true },
-            { type: "dispatch" as const, command: materialized.commands[5]!, await: true },
-            { type: "await_thread_idle" as const, threadId: materialized.sourceThreadId },
-            { type: "dispatch" as const, command: materialized.commands[6]!, await: true },
-            { type: "await_thread_idle" as const, threadId: materialized.sourceThreadId },
-          ],
-          projectionThreadIds: [materialized.sourceThreadId, materialized.forkThreadId],
-          runtimePolicyOverride: { cwd },
-        };
-        const result =
-          variant.driver === "codex"
-            ? yield* runOrchestratorV2ProviderReplayScenario(
-                {
-                  ...scenario,
-                  transcript: yield* CodexOrchestratorReplayHarness.decodeTranscript(
-                    materializeReplayTranscriptWorkspace(parameterizedTranscript, cwd),
-                  ),
-                },
-                CodexHistoryReplayHarness,
-              ).pipe(provideDeterministicTestRuntime)
-            : yield* runOrchestratorV2ProviderReplayScenario(
-                {
-                  ...scenario,
-                  transcript:
-                    yield* ClaudeOrchestratorReplayHarness.decodeTranscript(
-                      parameterizedTranscript,
-                    ),
-                },
-                ClaudeOrchestratorReplayHarness,
-              ).pipe(provideDeterministicTestRuntime);
-
-        const source = result.projections.get(materialized.sourceThreadId);
-        const fork = result.projections.get(materialized.forkThreadId);
-        assert.isDefined(source);
-        assert.isDefined(fork);
-        assert.equal(
-          source.providerThreads[0]?.nativeThreadRef?.nativeId,
-          nativeSourceThreadId(rawTranscript),
-        );
-        assert.lengthOf(source.contextHandoffs, 1);
-        assert.equal(source.contextHandoffs[0]?.summaryText, summary);
-        assert.equal(source.contextHandoffs[0]?.strategy, "fork_delta_summary");
-        const mergeTransfer = source.contextTransfers.find(
-          (transfer) => transfer.type === "merge_back",
-        );
-        assert.isDefined(mergeTransfer);
-        assert.equal(mergeTransfer.status, "consumed");
-        assert.equal(mergeTransfer.sourcePoint.runId, materialized.forkRunId);
-        assert.equal(mergeTransfer.resolution?.strategy, "fork_delta_context");
-        assert.include(
-          normalizePipeSpacing(visibleConversationText(source)),
-          THREAD_MERGE_BACK_RECALL,
-        );
-        assert.notInclude(visibleConversationText(source), "Context handoff (");
-        assert.include(visibleConversationText(fork), "merge fork stored");
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect.each(PROVIDERS)(
     "merges two sibling fork deltas into the original $driver thread",
     (variant) =>

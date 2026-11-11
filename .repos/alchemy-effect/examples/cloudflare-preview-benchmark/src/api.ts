@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -49,9 +49,7 @@ export default Cloudflare.Worker(
         return HttpServerResponse.text("Not found", { status: 404 });
       }).pipe(
         Effect.catchTag(["R2Error", "NamespaceError"], (error) =>
-          Effect.succeed(
-            HttpServerResponse.text(error.message, { status: 500 }),
-          ),
+          Effect.succeed(HttpServerResponse.text(error.message, { status: 500 })),
         ),
       ),
     };

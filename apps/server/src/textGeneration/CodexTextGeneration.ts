@@ -24,15 +24,17 @@ import {
   normalizeCliError,
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
-import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import {
+  codexModelFamily,
+  getModelSelectionStringOptionValue,
+  readCustomModelEntries,
+} from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
-// Plugins and apps bring MCP servers of their own; the user's are listed and
-// turned off by name below. These follow the user's launch args, so they win
-// over a `-c features.plugins=true` there, which `--disable plugins` does not.
+// Plugins/apps add MCP servers; use trailing config overrides because --disable loses to user -c flags.
 const CODEX_NO_PLUGIN_ARGS = [
   "--config",
   "features.plugins=false",
@@ -44,10 +46,7 @@ const CodexMcpServers = Schema.fromJsonString(
 );
 const decodeCodexMcpServers = Schema.decodeEffect(CodexMcpServers);
 
-/**
- * `mcp_servers={}` merges into the user's servers rather than replacing them,
- * so each is named; quoting the name keeps one with a dot a single key.
- */
+// mcp_servers={} merges instead of replacing; disable named entries and quote dotted names.
 const codexMcpServersOff = (names: ReadonlyArray<string>): string | null =>
   names.length === 0
     ? null
@@ -85,13 +84,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     );
 
   const removeTempFileDir = (filePath: string): Effect.Effect<void, never> =>
-    fileSystem
-      .remove(path.dirname(filePath), { recursive: true })
-      .pipe(Effect.catch(() => Effect.void));
+    fileSystem.remove(path.dirname(filePath), { recursive: true }).pipe(Effect.ignore);
 
-  // Deliberately unscoped: text generation runs from background fibers whose
-  // ambient scope may already be closed (a closed scope reaps the temp
-  // directory the moment it is created).
+  // Background fibers may inherit closed scopes that immediately reap temp files; write unscoped.
   const writeTempFile = (
     operation: string,
     prefix: string,
@@ -178,6 +173,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           env: input.env,
           cwd: input.cwd,
           shell: spawnCommand.shell,
+          forceKillAfter: "1 second",
         }),
       );
       const [stdout, , exitCode] = yield* Effect.all(
@@ -253,17 +249,32 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const effectiveEnvironment = resolved?.environment ?? resolvedEnvironment;
       const models = yield* getModels;
       const requestedModel = modelSelection.model;
-      const model =
+      const listed = models.filter((candidate) => !candidate.isCustom);
+      // An unlisted slug is one this account can't run, e.g. gpt-6-luna on a ChatGPT login.
+      const requestedFamily = codexModelFamily(requestedModel);
+      const matchedModel =
         models.find((candidate) => candidate.slug === requestedModel)?.slug ??
-        models.find(
-          (candidate) => !candidate.isCustom && codexModelFamily(candidate.slug) === requestedModel,
+        // Managed snapshots omit configured custom models; send those as requested.
+        readCustomModelEntries(codexConfig.customModels).find(
+          (entry) => entry.slug === requestedModel,
         )?.slug ??
+        listed.find((candidate) => codexModelFamily(candidate.slug) === requestedFamily)?.slug;
+      const model =
+        matchedModel ??
+        listed.find((candidate) => candidate.isDefault)?.slug ??
+        listed.find((candidate) => !candidate.isLegacy)?.slug ??
+        listed[0]?.slug ??
         requestedModel;
+      // The selection's options were chosen for the requested model and may not fit a fallback.
+      const fellBack = matchedModel === undefined && model !== requestedModel;
       const launchArgs = resolveCodexLaunchArgs(effectiveConfig.launchArgs, effectiveEnvironment);
       const reasoningEffort =
-        getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
+        (fellBack
+          ? undefined
+          : getModelSelectionStringOptionValue(modelSelection, "reasoningEffort")) ??
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
-      const serviceTier = resolved ? undefined : getCodexServiceTierOptionValue(modelSelection);
+      const serviceTier =
+        resolved || fellBack ? undefined : getCodexServiceTierOptionValue(modelSelection);
       const binary = effectiveConfig.binaryPath || "codex";
       const env = {
         ...effectiveEnvironment,
@@ -289,9 +300,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         [
           "exec",
           ...execLaunchArgs,
-          // Text generation needs only the prompt. A user's MCP server would
-          // otherwise start and could act on it, as Claude's --strict-mcp-config
-          // prevents for Claude.
+          // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
           ...(mcpServersOff ? ["--config", mcpServersOff] : []),
           "--ephemeral",
@@ -319,6 +328,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
         },
+        forceKillAfter: "1 second",
       });
 
       const child = yield* commandSpawner
