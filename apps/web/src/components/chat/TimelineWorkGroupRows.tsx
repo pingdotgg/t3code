@@ -852,7 +852,7 @@ function WorkingWindowText({
     item.projectedItemId,
   );
   const text = liveText ?? item.message.text;
-  const textRef = useCarriedTextFade(item.message.id);
+  const textRef = useCarriedTextFade(item.message.id, Boolean(item.message.streaming));
   if (text.trim().length === 0) return null;
   return (
     <div ref={textRef} className="min-w-0 px-1 py-2">
