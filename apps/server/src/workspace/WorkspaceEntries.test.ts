@@ -438,20 +438,13 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ git: true });
         yield* writeTextFile(cwd, ".gitignore", "*.secret\n");
-        const folders = Array.from(
-          { length: 205 },
-          (_, index) => `folder-${String(index + 1).padStart(3, "0")}`,
-        );
-        // A tracked file keeps each folder from collapsing into one wholly ignored entry.
-        for (const folder of folders) {
-          yield* writeTextFile(cwd, `${folder}/anchor.txt`, "a");
-          yield* writeTextFile(cwd, `${folder}/local.secret`, "s");
+        for (let index = 1; index <= 205; index += 1) {
+          yield* writeTextFile(cwd, `file-${String(index).padStart(3, "0")}.secret`, "s");
         }
-        yield* git(cwd, ["add", "."]);
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        expect(yield* workspaceEntries.listIgnoredFiles({ cwd, query: "folder-205" })).toEqual({
-          files: [{ path: "folder-205/local.secret", byteLength: 1 }],
+        expect(yield* workspaceEntries.listIgnoredFiles({ cwd, query: "FILE-205" })).toEqual({
+          files: [{ path: "file-205.secret", byteLength: 1 }],
           truncated: false,
         });
       }),
