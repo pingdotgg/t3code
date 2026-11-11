@@ -6,6 +6,7 @@ import {
   CommandId,
   EventId,
   MessageId,
+  type ModelSelection,
   NodeId,
   type OrchestrationV2Run,
   ProjectId,
@@ -653,7 +654,10 @@ const parentScope: McpInvocationContext.McpInvocationScope = {
 };
 
 /** The laptop's parent thread, mid-turn when its agent delegates. */
-const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
+const seedParent = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  parentModelSelection: ModelSelection = modelSelection,
+) =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const providerThreadId = ProviderThreadId.make("provider-thread:laptop-parent");
@@ -665,7 +669,7 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
       threadId: parentThreadId,
       projectId: ProjectId.make("project:laptop"),
       title: "Laptop parent",
-      modelSelection,
+      modelSelection: parentModelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
@@ -739,7 +743,7 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
             threadId: parentThreadId,
             ordinal: 1,
             providerInstanceId: instanceId,
-            modelSelection,
+            modelSelection: parentModelSelection,
             providerThreadId,
             userMessageId: MessageId.make("message:seed-user:laptop-parent"),
             rootNodeId: parentRootNode,
@@ -1100,16 +1104,21 @@ it.effect("a task named only by environment inherits the parent's model, within 
       const a = yield* makeLaptop(database, offers);
       // The parent runs with full access; the link allows less.
       yield* linkTo(a.links, b, "auto-accept-edits");
-      yield* seedParent(a);
+      const reasoning = { id: "reasoningEffort", value: "high" };
+      yield* seedParent(a, {
+        ...modelSelection,
+        options: [reasoning, { id: "cyberAccessProgram", value: "daybreakBlue" }],
+      });
 
       const result = yield* a.call("delegate_task", {
         task: "Run the suite on the box.",
         target: { environmentId: box.environmentId },
       });
       expect(result.isError, JSON.stringify(result.content)).toBe(false);
-      // The parent's model, and the link's modes rather than the parent's.
+      // The parent's model and options, but not its cyber access program, which
+      // stays on this machine; and the link's modes rather than the parent's.
       expect(yield* Ref.get(thread.launchedWith)).toEqual({
-        modelSelection,
+        modelSelection: { ...modelSelection, options: [reasoning] },
         runtimeMode: "auto-accept-edits",
         interactionMode: "default",
       });

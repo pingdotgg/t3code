@@ -242,11 +242,9 @@ describe("CodexAdapterV2 runtime policy", () => {
           defaultCyberAccessProgram,
         });
 
-      // Custom models have no catalog entry, so Codex keeps its own treatment.
+      // Custom models have no catalog default.
       assert.notProperty(yield* build(), "cyberAccessProgram");
-      assert.equal((yield* build(undefined, "standard")).cyberAccessProgram, "standard");
-      assert.equal((yield* build("automatic", "standard")).cyberAccessProgram, "standard");
-      assert.equal((yield* build("daybreakBlue", "standard")).cyberAccessProgram, "daybreakBlue");
+      assert.equal((yield* build(undefined, "daybreakBlue")).cyberAccessProgram, "daybreakBlue");
       assert.equal((yield* build("standard", "daybreakBlue")).cyberAccessProgram, "standard");
     }),
   );
@@ -2501,91 +2499,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("sends the selected cyber access program on the wire", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const nativeThreadId = "cyber-thread";
-        const nativeTurnId = "cyber-turn";
-        const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "review" });
-        const transcript = makeCodexReplayTranscript({
-          scenario: "cyber-access-program",
-          entries: [
-            ...entries.slice(0, 5),
-            {
-              type: "expect_outbound",
-              label: "turn/start",
-              frame: {
-                id: 3,
-                method: "turn/start",
-                params: {
-                  threadId: nativeThreadId,
-                  input: [{ type: "text", text: "review" }],
-                  cwd: "/workspace",
-                  model: "gpt-5.4",
-                  approvalPolicy: "never",
-                  approvalsReviewer: "user",
-                  sandboxPolicy: { type: "dangerFullAccess" },
-                  summary: "detailed",
-                  cyberAccessProgram: "daybreakBlue",
-                  collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
-                },
-              },
-            },
-            ...entries.slice(6),
-            {
-              type: "emit_inbound",
-              label: "done",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-                },
-              },
-            },
-          ],
-        });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        yield* harness.runtime.startTurn({
-          ...makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("cyber-attempt"),
-            text: "review",
-          }),
-          modelSelection: {
-            ...CODEX_TEST_MODEL_SELECTION,
-            options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
-          },
-        });
-        yield* harness.firstTerminal;
-        assert.equal(harness.terminalEvents()[0]?.status, "completed");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      ),
-    ),
-  );
-
   it.effect("preserves T3 context on the wire and restores it after compaction", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = "context-thread";
         const nativeTurnId = "context-turn";
+        // An explicit Standard must reach Codex, or Codex falls back to Daybreak.
+        const modelSelection = {
+          ...CODEX_TEST_MODEL_SELECTION,
+          options: [{ id: "cyberAccessProgram", value: "standard" }],
+        };
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId,
           codexInput: [{ type: "text", text: "work" }],
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          modelSelection,
           hasT3Mcp: true,
         });
+        assert.equal(params.cyberAccessProgram, "standard");
         assert.include(
           params.additionalContext?.t3_code_orchestration_01?.value ?? "",
           "delegate_task",
@@ -2674,15 +2605,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           authorizationHeader: "Bearer test",
           browserToolsAvailable: true,
         });
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now: yield* DateTime.now,
             attemptId: RunAttemptId.make("context-attempt"),
             text: "work",
           }),
-        );
+          modelSelection,
+        });
         yield* harness.firstTerminal;
         yield* Deferred.await(restoreRequested);
         assert.equal(harness.terminalEvents()[0]?.status, "completed");

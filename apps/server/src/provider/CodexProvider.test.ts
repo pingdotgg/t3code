@@ -1,15 +1,7 @@
 import { assert, it } from "@effect/vitest";
-import {
-  buildExplicitProviderOptionSelectionsFromDescriptors,
-  getProviderOptionDescriptors,
-} from "@t3tools/shared/model";
 
 import {
-  appendCustomCodexModels,
   applyPreferredCodexDefaultModel,
-  applyConfiguredCodexCyberAccess,
-  codexApiKeyCyberAccessProgramsDisabled,
-  codexDefaultCyberAccessProgram,
   codexRoutesSpendNativeQuota,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
@@ -24,6 +16,7 @@ it("maps current Codex model capability fields", () => {
     id: "gpt-test",
     isDefault: true,
     model: "gpt-test",
+    availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
     defaultServiceTier: "flex",
     serviceTiers: [
       {
@@ -72,6 +65,16 @@ it("maps current Codex model capability fields", () => {
         },
       ],
       currentValue: "flex",
+    },
+    {
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      options: [
+        { id: "standard", label: "Standard", isDefault: true },
+        { id: "daybreakBlue", label: "Daybreak Blue" },
+      ],
+      currentValue: "standard",
     },
   ]);
 });
@@ -164,137 +167,6 @@ it("ignores custom models that shadow a preferred slug", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
-});
-
-it("defaults cyber access to Standard when the catalog offers it", () => {
-  const model = {
-    additionalSpeedTiers: [],
-    defaultReasoningEffort: "medium",
-    description: "Test model",
-    displayName: "GPT Test",
-    hidden: false,
-    id: "gpt-test",
-    isDefault: true,
-    model: "gpt-test",
-    supportedReasoningEfforts: [],
-  };
-  const cyber = (programs?: ReadonlyArray<"standard" | "daybreakBlue">) =>
-    mapCodexModelCapabilities({
-      ...model,
-      ...(programs ? { availableAccessPrograms: { cyber: [...programs] } } : {}),
-    }).optionDescriptors?.[0];
-
-  assert.strictEqual(cyber(), undefined);
-  assert.deepStrictEqual(cyber(["standard", "daybreakBlue"]), {
-    id: "cyberAccessProgram",
-    label: "Cyber Access",
-    type: "select",
-    options: [
-      { id: "standard", label: "Standard", isDefault: true },
-      { id: "daybreakBlue", label: "Daybreak Blue" },
-    ],
-    currentValue: "standard",
-  });
-  assert.deepInclude(cyber(["standard"]), { currentValue: "standard" });
-  const daybreakOnly = cyber(["daybreakBlue"]);
-  assert.deepInclude(daybreakOnly, {
-    options: [
-      { id: "standard", label: "Standard" },
-      { id: "daybreakBlue", label: "Daybreak Blue", isDefault: true },
-    ],
-    currentValue: "daybreakBlue",
-  });
-  // Clients normalize selections against these descriptors before dispatch.
-  const selections = [{ id: "cyberAccessProgram", value: "standard" }];
-  assert.deepStrictEqual(
-    buildExplicitProviderOptionSelectionsFromDescriptors(
-      getProviderOptionDescriptors({
-        caps: { optionDescriptors: daybreakOnly ? [daybreakOnly] : [] },
-        selections,
-      }),
-      selections,
-    ),
-    selections,
-  );
-});
-
-it("follows Codex's daybreak setting for the default program", () => {
-  const capabilities = (cyber: ReadonlyArray<"standard" | "daybreakBlue">) =>
-    mapCodexModelCapabilities({
-      additionalSpeedTiers: [],
-      availableAccessPrograms: { cyber: [...cyber] },
-      defaultReasoningEffort: "medium",
-      description: "Test model",
-      displayName: "GPT Test",
-      hidden: false,
-      id: "gpt-test",
-      isDefault: true,
-      model: "gpt-test",
-      supportedReasoningEfforts: [],
-    });
-  const models = [
-    {
-      slug: "both",
-      name: "Both",
-      isCustom: false,
-      capabilities: capabilities(["standard", "daybreakBlue"]),
-    },
-    {
-      slug: "standard",
-      name: "Standard",
-      isCustom: false,
-      capabilities: capabilities(["standard"]),
-    },
-  ];
-
-  const on = applyConfiguredCodexCyberAccess(models, {
-    daybreakEnabled: true,
-    apiKeyProgramsDisabled: false,
-  });
-  assert.strictEqual(codexDefaultCyberAccessProgram(on, "both"), "daybreakBlue");
-  assert.strictEqual(codexDefaultCyberAccessProgram(on, "standard"), "standard");
-
-  const disabled = applyConfiguredCodexCyberAccess(models, {
-    daybreakEnabled: false,
-    apiKeyProgramsDisabled: true,
-  });
-  assert.strictEqual(codexDefaultCyberAccessProgram(disabled, "both"), undefined);
-});
-
-it("treats an unread config as disabling API-key cyber access programs", () => {
-  const apiKey = { type: "apiKey" } as const;
-  const chatgpt = { type: "chatgpt", email: "a@example.com", planType: "pro" } as const;
-  const off = { features: { api_key_cyber_access_programs: false } };
-  assert.isTrue(codexApiKeyCyberAccessProgramsDisabled(apiKey, undefined));
-  assert.isTrue(codexApiKeyCyberAccessProgramsDisabled(apiKey, off));
-  assert.isFalse(codexApiKeyCyberAccessProgramsDisabled(apiKey, {}));
-  assert.isFalse(codexApiKeyCyberAccessProgramsDisabled(chatgpt, undefined));
-});
-
-it("keeps Daybreak access off custom models that borrow built-in options", () => {
-  const capabilities = mapCodexModelCapabilities({
-    additionalSpeedTiers: [],
-    availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
-    defaultReasoningEffort: "medium",
-    description: "Test model",
-    displayName: "GPT Test",
-    hidden: false,
-    id: "gpt-test",
-    isDefault: true,
-    model: "gpt-test",
-    supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Medium" }],
-  });
-  const models = appendCustomCodexModels(
-    [{ slug: "gpt-test", name: "GPT Test", isCustom: false, capabilities }],
-    [{ slug: "my-model" }],
-  );
-
-  const optionIds = (slug: string) =>
-    models
-      .find((model) => model.slug === slug)
-      ?.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id);
-  assert.deepStrictEqual(optionIds("gpt-test"), ["reasoningEffort", "cyberAccessProgram"]);
-  assert.deepStrictEqual(optionIds("my-model"), ["reasoningEffort"]);
 });
 
 it("reports native quota only for an OpenAI login on a native route", () => {
