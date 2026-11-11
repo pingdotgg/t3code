@@ -2,6 +2,7 @@ import {
   type ClaudeSettings,
   type ModelCapabilities,
   type ServerProvider,
+  type ServerProviderModel,
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -31,13 +33,18 @@ import {
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
-  parseGenericCliVersion,
+  parseCliVersionResult,
   providerModelsFromSettings,
+  providerProbeEnvironment,
   spawnAndCollect,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
-import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
+import {
+  claudeSignedOutMessage,
+  hasClaudeManagedMcpConfig,
+  makeClaudeEnvironment,
+} from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills, readClaudeSettingsEnv } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
@@ -53,11 +60,25 @@ import {
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
   resolveClaudeUpdateRequiredModels,
+  withUltracodeToggle,
 } from "./ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
+
+function claudeProviderModels(
+  builtInModels: ReadonlyArray<ServerProviderModel>,
+  customModels: ClaudeSettings["customModels"],
+): ReadonlyArray<ServerProviderModel> {
+  return providerModelsFromSettings(
+    builtInModels,
+    customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  ).map((model) =>
+    model.isCustom ? { ...model, capabilities: withUltracodeToggle(model.capabilities) } : model,
+  );
+}
 
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
@@ -216,7 +237,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     mcpServers: {},
     ...(input.managedMcpConfig ? {} : { strictMcpConfig: true }),
     env: {
-      ...input.environment,
+      ...providerProbeEnvironment(input.environment),
       // Disable claude.ai MCP separately; it is discovered outside filesystem config.
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
       // Skipping this avoids a Windows tasklist | findstr process tree on every refresh.
@@ -335,6 +356,15 @@ function claudeGatewayDiscoveryGraceMs(environment: Readonly<Record<string, unkn
   return Number.isFinite(configured) && configured > 0 ? configured : 3_000;
 }
 
+class ClaudeCapabilitiesProbeSdkError extends Schema.TaggedError<ClaudeCapabilitiesProbeSdkError>()(
+  "ClaudeCapabilitiesProbeSdkError",
+  { operation: Schema.Literals(["initialize", "usage"]), cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Claude capability probe ${this.operation} failed.`;
+  }
+}
+
 /** A never-yielding prompt allows local initialization IPC without sending an Anthropic request. */
 const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
@@ -360,22 +390,25 @@ const probeClaudeCapabilities = (
           ...(yield* readClaudeSettingsEnv(claudeSettings, cwd, claudeEnvironment)),
         })
       : 0;
-    return yield* Effect.tryPromise(async () => {
-      const q = claudeQuery({
-        // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API
-        prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
-          await waitForAbortSignal(abort.signal);
-        })(),
-        options: buildClaudeCapabilitiesProbeQueryOptions({
-          executablePath,
-          abortController: abort,
-          environment: claudeEnvironment,
-          cwd,
-          managedMcpConfig,
-        }),
-      });
-      const init = await q.initializationResult();
-      return { q, init, graceMs };
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const q = claudeQuery({
+          // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API
+          prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
+            await waitForAbortSignal(abort.signal);
+          })(),
+          options: buildClaudeCapabilitiesProbeQueryOptions({
+            executablePath,
+            abortController: abort,
+            environment: claudeEnvironment,
+            cwd,
+            managedMcpConfig,
+          }),
+        });
+        const init = await q.initializationResult();
+        return { q, init, graceMs };
+      },
+      catch: (cause) => new ClaudeCapabilitiesProbeSdkError({ operation: "initialize", cause }),
     });
   }).pipe(
     Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),
@@ -386,9 +419,13 @@ const probeClaudeCapabilities = (
         // `behaviors`: with a few GB of transcripts it outlasts the deadline.
         const usageCheckedAt = DateTime.formatIso(yield* DateTime.now);
         const usageResult = includeUsage
-          ? yield* Effect.tryPromise(() =>
-              q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
-            ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
+          ? yield* Effect.tryPromise({
+              try: () =>
+                q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
+                  skipBehaviors: true,
+                }),
+              catch: (cause) => new ClaudeCapabilitiesProbeSdkError({ operation: "usage", cause }),
+            }).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
           : undefined;
         const usage =
           usageResult && Result.isSuccess(usageResult)
@@ -496,10 +533,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const allModels = providerModelsFromSettings(
+  const allModels = claudeProviderModels(
     modelCatalog.models.map((entry) => entry.model),
     claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
 
   if (!claudeSettings.enabled) {
@@ -521,7 +557,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const versionProbe = yield* runClaudeCommand(
     claudeSettings,
     ["--version"],
-    resolvedEnvironment,
+    providerProbeEnvironment(resolvedEnvironment),
     cwd,
   ).pipe(Effect.timeoutOption(CLAUDE_VERSION_CHECK_TIMEOUT_MS), Effect.result);
 
@@ -565,7 +601,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const version = versionProbe.success.value;
-  const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
+  const parsedVersion = parseCliVersionResult(version);
   if (version.code !== 0) {
     yield* Effect.logWarning("Claude Agent CLI version probe exited with a non-zero status.", {
       exitCode: version.code,
@@ -597,13 +633,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
-  const models = providerModelsFromSettings(
+  const models = claudeProviderModels(
     [
       ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
       ...claudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
     ],
     claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
@@ -643,6 +678,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     endpoint.hostname !== "" &&
     endpoint.hostname !== "api.anthropic.com";
   if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
+    const path = yield* Path.Path;
+    const configDir = (yield* makeClaudeEnvironment(claudeSettings, resolvedEnvironment))
+      .CLAUDE_CONFIG_DIR;
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
@@ -656,7 +694,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "error",
         auth: { status: "unauthenticated" },
-        message: "Claude Code is not authenticated. Run `claude auth login` and try again.",
+        message:
+          configDir === undefined
+            ? "Claude Code is not authenticated. Run `claude auth login` and try again."
+            : claudeSignedOutMessage({ configDir, cwd: path.resolve(cwd ?? ".") }),
       },
     });
   }
@@ -720,10 +761,9 @@ export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingCl
     modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
   ): Effect.fn.Return<ServerProviderDraft> {
     const checkedAt = yield* nowIso;
-    const models = providerModelsFromSettings(
+    const models = claudeProviderModels(
       modelCatalog.models.map((entry) => entry.model),
       claudeSettings.customModels,
-      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );
 
     if (!claudeSettings.enabled) {
