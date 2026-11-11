@@ -65,7 +65,7 @@ function RecordingStatus(props: { level: number; recordingLimitSeconds?: number 
           ? ` / ${formatElapsed(props.recordingLimitSeconds)}`
           : ""}
       </span>
-      <div className="me-1.5 flex w-16 min-w-0 shrink">
+      <div className="me-1.5 flex w-16 min-w-0 shrink grow">
         <VoiceWaveform level={props.level} />
       </div>
     </>
