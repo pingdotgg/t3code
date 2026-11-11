@@ -33,7 +33,11 @@ it("drops JSON noise, merges tagged unions, and keeps null where it is required"
       target: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["url", "number"] },
+          kind: {
+            type: "string",
+            enum: ["url", "number"],
+            description: "`url` requires `url`. `number` requires `number`.",
+          },
           url: { type: "string" },
           number: { type: "integer" },
         },
