@@ -740,9 +740,17 @@ function PullRequestCodeTab({
       </div>
     );
 
+  // A stale mark means the file changed since it was viewed, so it opens like any other file.
+  const foldsAsViewed = (path: string) =>
+    filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+      const collapsed = isFileDiffCollapsed(
+        fileKey,
+        effectiveFoldOverride,
+        toggledFiles,
+        foldsAsViewed(path),
+      );
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
         : "";
@@ -802,7 +810,7 @@ function PullRequestCodeTab({
     setToggledFiles((current) =>
       range.reduce(
         (next, file) =>
-          toggleFileDiffFoldForViewed(file.fileKey, viewed, effectiveFoldOverride, next),
+          toggleFileDiffFoldForViewed(file.fileKey, viewed, effectiveFoldOverride, next, viewed),
         current,
       ),
     );
@@ -820,7 +828,13 @@ function PullRequestCodeTab({
     // Unfold only: a second reveal before the unfold renders must not fold the file again.
     if (item.collapsed === true) {
       setToggledFiles((current) =>
-        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+        toggleFileDiffFoldForViewed(
+          item.id,
+          false,
+          effectiveFoldOverride,
+          current,
+          foldsAsViewed(path),
+        ),
       );
     }
     if (range) setSelectedLines({ id: item.id, range });
@@ -970,10 +984,18 @@ function PullRequestCodeTab({
     onLineSelectionEnd: beginComment,
     onPostRender: codeViewReveal.flush,
     // Find may repeat requests before render; only unfold, never toggle.
-    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
+    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) => {
+      const path = annotatedFiles.find((file) => file.fileKey === item.id)?.path;
       setToggledFiles((current) =>
-        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
-      ),
+        toggleFileDiffFoldForViewed(
+          item.id,
+          false,
+          effectiveFoldOverride,
+          current,
+          path !== undefined && foldsAsViewed(path),
+        ),
+      );
+    },
   };
 
   const runThreadCommand = async (

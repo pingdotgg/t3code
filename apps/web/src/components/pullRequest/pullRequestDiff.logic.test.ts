@@ -47,12 +47,26 @@ describe("isFileDiffCollapsed", () => {
     expect(isFileDiffCollapsed("b.ts", null, toggled)).toBe(true);
     expect(isFileDiffCollapsed("c.ts", null, toggled)).toBe(false);
   });
+
+  it("folds a file marked Viewed when the Code tab mounts again with no fold choices", () => {
+    expect(isFileDiffCollapsed("a.ts", "expanded", new Set(), true)).toBe(true);
+    expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]), true)).toBe(false);
+    expect(isFileDiffCollapsed("a.ts", "expanded", new Set(), false)).toBe(false);
+  });
 });
 
 describe("toggleFileDiffFoldForViewed", () => {
   it("moves against whatever the toolbar last asked for", () => {
     expect([...toggleFileDiffFoldForViewed("a.ts", true, "expanded", new Set())]).toEqual(["a.ts"]);
     expect(toggleFileDiffFoldForViewed("a.ts", false, "expanded", new Set()).size).toBe(0);
+  });
+
+  it("measures a viewed file against its folded default", () => {
+    expect(toggleFileDiffFoldForViewed("a.ts", true, "expanded", new Set(), true).size).toBe(0);
+    // Unfolding a viewed file, as a reveal does, needs a toggle.
+    expect([...toggleFileDiffFoldForViewed("a.ts", false, "expanded", new Set(), true)]).toEqual([
+      "a.ts",
+    ]);
   });
 });
 
