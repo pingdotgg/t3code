@@ -1270,3 +1270,12 @@ describe("resolveAutomaticEnvironment", () => {
     ).toBe(expected);
   });
 });
+
+describe("promptHasFileReferences", () => {
+  it.each([".env", "notes", "pages/[id].tsx", "file]", "C:\\work\\a (1).md"])(
+    "counts a composer link to %s",
+    (path) => {
+      expect(promptHasFileReferences(`See ${serializeComposerFileLink(path)} now`)).toBe(true);
+    },
+  );
+});

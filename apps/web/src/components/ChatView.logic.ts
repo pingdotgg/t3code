@@ -11,7 +11,6 @@ import {
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Option from "effect/Option";
-import { extractMarkdownLinkHrefs, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
 import type { SetStateAction } from "react";
 import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@t3tools/shared/model";
 import { getProviderModelCapabilities } from "../providerModels";
@@ -1519,8 +1518,16 @@ export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | nu
   return available;
 }
 
+// Matches serializeComposerFileLink's output: its destination is an encoded path, never a URL.
+// Two-letter minimum scheme keeps `C:%5C...` Windows paths counted as files.
+const COMPOSER_LINK_DESTINATION = /\]\(([^()\s]+)\)/g;
+const URL_SCHEME = /^[a-z][a-z\d+.-]+:/i;
+
 export function promptHasFileReferences(prompt: string): boolean {
-  return extractMarkdownLinkHrefs(prompt).some((href) => parseMarkdownFileLink(href) !== null);
+  for (const [, destination] of prompt.matchAll(COMPOSER_LINK_DESTINATION)) {
+    if (destination && !URL_SCHEME.test(destination)) return true;
+  }
+  return false;
 }
 
 export function resolveAutomaticEnvironment(input: {
