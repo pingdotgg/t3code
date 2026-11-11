@@ -3693,7 +3693,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("promotes short post-card text before html_preview to lesson reasoning", () =>
+  it.effect.each([
+    {
+      name: "separate frames",
+      postText: "The picture isn't right yet. I'm fixing the geometry before continuing.",
+      expected: [
+        ["assistant_message", "Let's test the idea."],
+        ["reasoning", "The picture isn't right yet. I'm fixing the geometry before continuing."],
+      ],
+    },
+    {
+      name: "uncovered 151-character caption stays visible",
+      postText: "x".repeat(151),
+      expected: [
+        ["assistant_message", "Let's test the idea."],
+        ["assistant_message", "x".repeat(151)],
+      ],
+    },
+    {
+      name: "combined text card and preview frame",
+      combined: true,
+      expected: [["assistant_message", "Let's test the idea."]],
+    },
+  ] as const)("lesson card text before html_preview ($name)", ({ postText, combined, expected }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       yield* harness.runtime.startTurn(
@@ -3701,7 +3723,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           threadId: harness.threadId,
           providerThread: harness.providerThread,
           now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("post-card-html-preview-attempt"),
+          attemptId: RunAttemptId.make(
+            `card-html-preview-${combined === true ? "combined" : postText}`,
+          ),
           text: "Teach me",
           attachments: [],
           lesson: true,
@@ -3715,27 +3739,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           parent_tool_use_id: null,
           message: { id: uuid, model: "claude-sonnet-5-5", content },
         });
-      for (const frame of [
-        snapshot("post-card-root", [{ type: "text", text: "Let's test the idea." }]),
-        snapshot("post-card-card", [
-          {
-            type: "tool_use",
-            id: "post-card-quiz",
-            name: "mcp__t3-code__quiz_card",
-            input: { reply: "What angle do you see?" },
-          },
-        ]),
-        snapshot("post-card-check", [
-          {
-            type: "text",
-            text: "The picture isn't right yet. I'm fixing the geometry before continuing.",
-          },
-        ]),
-        snapshot("post-card-preview", [
-          { type: "tool_use", id: "post-card-html", name: "mcp__t3-code__html_preview", input: {} },
-        ]),
-        makeResultFrame({ uuid: "post-card-result", result: "" }),
-      ]) {
+      const card = {
+        type: "tool_use",
+        id: "post-card-quiz",
+        name: "mcp__t3-code__quiz_card",
+        input: { reply: "What angle do you see?" },
+      };
+      const preview = {
+        type: "tool_use",
+        id: "post-card-html",
+        name: "mcp__t3-code__html_preview",
+        input: {},
+      };
+      const frames =
+        combined === true
+          ? [
+              snapshot("combined-card-frame", [
+                { type: "text", text: "Let's test the idea." },
+                card,
+                preview,
+              ]),
+            ]
+          : [
+              snapshot("post-card-root", [{ type: "text", text: "Let's test the idea." }]),
+              snapshot("pre-card-preview", [preview]),
+              snapshot("post-card-card", [card]),
+              snapshot("post-card-check", [{ type: "text", text: postText! }]),
+              snapshot("post-card-preview", [preview]),
+            ];
+      for (const frame of [...frames, makeResultFrame({ uuid: "post-card-result", result: "" })]) {
         yield* Queue.offer(harness.sdkMessages, frame);
       }
       yield* harness.awaitTerminal(1);
@@ -3746,64 +3778,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           : [],
       );
       assert.deepEqual(
-        items.map((item) => [item.type, item.text]),
-        [
-          ["assistant_message", "Let's test the idea."],
-          ["reasoning", "The picture isn't right yet. I'm fixing the geometry before continuing."],
-        ],
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-        ),
-      ),
-    ),
-  );
-
-  it.effect("keeps short pre-card text before html_preview visible", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("pre-card-html-preview-attempt"),
-          text: "Teach me",
-          attachments: [],
-          lesson: true,
-        }),
-      );
-      const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
-        claudeSdkFrame({
-          type: "assistant",
-          uuid,
-          session_id: WAKE_NATIVE_SESSION,
-          parent_tool_use_id: null,
-          message: { id: uuid, model: "claude-sonnet-5-5", content },
-        });
-      for (const frame of [
-        snapshot("pre-card-text", [{ type: "text", text: "I am checking the setup first." }]),
-        snapshot("pre-card-preview", [
-          { type: "tool_use", id: "pre-card-html", name: "mcp__t3-code__html_preview", input: {} },
-        ]),
-        makeResultFrame({ uuid: "pre-card-result", result: "" }),
-      ]) {
-        yield* Queue.offer(harness.sdkMessages, frame);
-      }
-      yield* harness.awaitTerminal(1);
-      assert.deepEqual(
-        harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
-            ? [event.turnItem.text]
-            : [],
-        ),
-        ["I am checking the setup first."],
+        items.map((item) => [item.type, item.text] as const),
+        expected as ReadonlyArray<readonly [string, string]>,
       );
     }).pipe(
       Effect.scoped,
