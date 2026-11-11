@@ -129,6 +129,7 @@ describe("preview IPC methods", () => {
           subscribeStateChanges: listen,
           subscribeRecordingInputs: listen,
           subscribePointerEvents: listen,
+          subscribeFindResults: listen,
           subscribeOpenLinks: (listener: (event: unknown) => Effect.Effect<void>) => {
             openLink = listener;
             return Effect.void;
