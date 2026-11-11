@@ -72,7 +72,7 @@ function toolInputSummary(input: unknown): string {
     text = String(input);
   }
   if (text.length <= 4_000) return text;
-  const hash = NodeCrypto.createHash("sha256").update(text).digest("hex");
+  const hash = NodeCrypto.createHash("sha256").update(text, "utf16le").digest("hex");
   return text.slice(0, 4_000) + "\\n... " + (text.length - 4_000) +
     " more characters not shown (sha256 " + hash + ")";
 }
