@@ -223,7 +223,7 @@ const readKeychainLogin = Effect.fn("claudeResetCredits.readKeychainLogin")(
   Effect.orElseSucceed(() => undefined),
 );
 
-/** customConfigDir is the CLAUDE_CONFIG_DIR Claude runs with, if any. */
+/** customConfigDir is the dir Claude keys its Keychain entry on, if any. */
 const readAccessToken = Effect.fn("claudeResetCredits.readAccessToken")(function* (
   configDir: string,
   customConfigDir: string | undefined,

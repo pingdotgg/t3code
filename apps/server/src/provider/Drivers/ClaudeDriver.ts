@@ -138,6 +138,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       : processEnv.CLAUDE_CONFIG_DIR?.trim()
         ? processEnv.CLAUDE_CONFIG_DIR
         : undefined;
+    // Claude keeps its login under CLAUDE_SECURESTORAGE_CONFIG_DIR when set, even to "".
+    const secureStorageDir = processEnv.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+    const credentialsDir =
+      secureStorageDir === undefined
+        ? configDir
+        : secureStorageDir || path.join(yield* HostProcess.HomeDirectory, ".claude");
+    const keychainConfigDir =
+      secureStorageDir === undefined ? customConfigDir : secureStorageDir || undefined;
     const accountConfigPath = yield* ClaudeResetCredits.claudeAccountConfigPath(
       customConfigDir === undefined ? undefined : configDir,
     );
@@ -251,7 +259,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, customConfigDir, version).pipe(
+                ClaudeResetCredits.readClaudeResetCredits(
+                  credentialsDir,
+                  keychainConfigDir,
+                  version,
+                ).pipe(
                   Effect.provideService(HttpClient.HttpClient, httpClient),
                   Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -329,8 +341,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           configDir,
           (requestId) =>
             ClaudeResetCredits.consumeClaudeResetCredit({
-              configDir,
-              customConfigDir,
+              configDir: credentialsDir,
+              customConfigDir: keychainConfigDir,
               accountConfigPath,
               version,
               grantId,
