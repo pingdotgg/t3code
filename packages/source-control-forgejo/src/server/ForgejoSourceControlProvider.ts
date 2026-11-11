@@ -1,5 +1,8 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -18,6 +21,8 @@ import {
 import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullRequests.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
+const REPOSITORY_SCAN_TTL = Duration.minutes(5);
+const REPOSITORY_SCAN_CAPACITY = 32;
 
 export const discovery = {
   type: "cli",
@@ -292,6 +297,46 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
+  const listPullsPage = (
+    input: ForgejoCli.ForgejoRepositoryInput,
+    repository: string,
+    state: string,
+    page: number,
+    head?: string,
+  ) =>
+    request(
+      {
+        ...input,
+        path: `${repositoryPath(repository)}/pulls?state=${state}${head === undefined ? "" : `&head=${encodeURIComponent(head)}`}&sort=recentupdate&limit=50&page=${page}`,
+      },
+      Schema.Array(ForgejoPullRequestSchema),
+    );
+  const scanTargets = new Map<
+    string,
+    {
+      readonly input: ForgejoCli.ForgejoRepositoryInput;
+      readonly repository: string;
+      readonly state: string;
+    }
+  >();
+  // An updated pull request sorts onto each lookup's fresh first page, so a reused scan rarely misses a change.
+  const repositoryScans = yield* Cache.makeWith(
+    (key: string) =>
+      Effect.gen(function* () {
+        const target = scanTargets.get(key);
+        if (!target) return yield* Effect.die(new Error(`No Forgejo scan target for ${key}`));
+        const pulls: Array<typeof ForgejoPullRequestSchema.Type> = [];
+        for (let page = 1; ; page++) {
+          const items = yield* listPullsPage(target.input, target.repository, target.state, page);
+          if (items.length === 0) return pulls;
+          pulls.push(...items);
+        }
+      }),
+    {
+      capacity: REPOSITORY_SCAN_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? REPOSITORY_SCAN_TTL : Duration.zero),
+    },
+  );
   const mapError = (operation: string, cwd: string) =>
     Effect.mapError(
       (cause: unknown) =>
@@ -332,17 +377,14 @@ export const make = Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);
         const source = SourceControlProvider.sourceControlRefFromInput(input);
         const branch = SourceControlProvider.sourceBranch(input);
-        const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
-        for (let page = 1; results.length < limit; page++) {
-          const items = yield* request(
-            {
-              ...input,
-              path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&head=${encodeURIComponent(branch)}&sort=recentupdate&limit=50&page=${page}`,
-            },
-            Schema.Array(ForgejoPullRequestSchema),
-          );
+        const state = input.state === "merged" ? "closed" : input.state;
+        const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
+        const seen = new Set<number>();
+        const collect = (items: ReadonlyArray<typeof ForgejoPullRequestSchema.Type>) => {
           for (const item of items) {
+            if (seen.has(item.number)) continue;
+            seen.add(item.number);
             const normalized = toForgejoChangeRequest(item);
             if (
               normalized.headRefName !== branch ||
@@ -352,12 +394,22 @@ export const make = Effect.gen(function* () {
               continue;
             if (input.state === "all" || normalized.state === input.state) results.push(normalized);
           }
-          // Older Forgejo ignores `head`; reading on would scan every pull request in the repository.
-          if (
-            items.length === 0 ||
-            items.some((item) => item.head.ref !== branch && item.head.label !== branch)
-          )
-            break;
+        };
+        let items = yield* listPullsPage(input, repo.repository, state, 1, branch);
+        collect(items);
+        const headIgnored = items.some(
+          (item) => item.head.ref !== branch && item.head.label !== branch,
+        );
+        if (headIgnored && results.length < limit) {
+          // Forgejo ignores `head`, so branches share one full scan instead of each paging through every pull request.
+          const key = [repo.baseUrl, repo.login, repo.repository, state].join("\n");
+          scanTargets.set(key, { input, repository: repo.repository, state });
+          collect(yield* Cache.get(repositoryScans, key));
+        } else {
+          for (let page = 2; items.length > 0 && results.length < limit; page++) {
+            items = yield* listPullsPage(input, repo.repository, state, page, branch);
+            collect(items);
+          }
         }
         return results.slice(0, limit);
       },

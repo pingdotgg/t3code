@@ -1032,59 +1032,59 @@ it.effect("finds a merged Forgejo pull request whose head branch was deleted", (
   ),
 );
 
-it.effect("reads one page when Forgejo ignores the head filter", () => {
-  const pages: Array<string | null> = [];
-  return Effect.gen(function* () {
-    const provider = yield* ForgejoSourceControlProvider.make;
-    const found = yield* provider.listChangeRequests({
-      cwd: "/repo",
-      headSelector: "feature",
-      state: "all",
-      limit: 20,
-    });
-    assert.deepStrictEqual(
-      found.map((pr) => pr.number),
-      [3],
-    );
-    assert.deepStrictEqual(pages, ["1"]);
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
-        TestSourceControlHost.layer({ process: {} }),
-        Layer.mock(ForgejoCli.ForgejoCli)({
-          resolveRepository: () =>
-            Effect.succeed({
-              login: "work",
-              repository: "maria/project",
-              baseUrl: "https://forgejo.test",
-            }),
-          api: (input) => {
-            const repo = { full_name: "maria/project", owner: { login: "maria" } };
-            const pr = (number: number, branch: string) => ({
-              number,
-              title: `PR ${number}`,
-              html_url: `https://forgejo.test/maria/project/pulls/${number}`,
-              state: "open",
-              merged: false,
-              base: { ref: "main", label: "main", sha: "base", repo },
-              head: { ref: branch, label: branch, sha: "head", repo },
-            });
-            const page = new URLSearchParams(input.path.split("?")[1]).get("page");
-            pages.push(page);
-            return encodeJsonEffect(
-              page === "1"
-                ? [pr(4, "other"), pr(3, "feature")]
-                : page === "2"
-                  ? [pr(1, "feature")]
-                  : [],
-            ).pipe(Effect.orDie, Effect.map(processOutput));
-          },
-        }),
+it.effect(
+  "shares one repository scan between branch lookups when Forgejo ignores the head filter",
+  () => {
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      const provider = yield* ForgejoSourceControlProvider.make;
+      const lookup = (headSelector: string) =>
+        provider
+          .listChangeRequests({ cwd: "/repo", headSelector, state: "all", limit: 20 })
+          .pipe(Effect.map((found) => found.map((pr) => pr.number)));
+      assert.deepStrictEqual(yield* lookup("feature"), [3, 1]);
+      assert.deepStrictEqual(yield* lookup("other"), [4, 2]);
+      assert.deepStrictEqual(requests, ["feature:1", ":1", ":2", ":3", "other:1"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+          TestSourceControlHost.layer({ process: {} }),
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            resolveRepository: () =>
+              Effect.succeed({
+                login: "work",
+                repository: "maria/project",
+                baseUrl: "https://forgejo.test",
+              }),
+            api: (input) => {
+              const repo = { full_name: "maria/project", owner: { login: "maria" } };
+              const pr = (number: number, branch: string) => ({
+                number,
+                title: `PR ${number}`,
+                html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+                state: "open",
+                merged: false,
+                base: { ref: "main", label: "main", sha: "base", repo },
+                head: { ref: branch, label: branch, sha: "head", repo },
+              });
+              const query = new URLSearchParams(input.path.split("?")[1]);
+              const page = query.get("page");
+              requests.push(`${query.get("head") ?? ""}:${page}`);
+              return encodeJsonEffect(
+                page === "1"
+                  ? [pr(4, "other"), pr(3, "feature")]
+                  : page === "2"
+                    ? [pr(2, "other"), pr(1, "feature")]
+                    : [],
+              ).pipe(Effect.orDie, Effect.map(processOutput));
+            },
+          }),
+        ),
       ),
-    ),
-  );
-});
+    );
+  },
+);
 
 it.effect(
   "loads Forgejo reactions on comments, reviews and inline threads and resolves review mutations",
