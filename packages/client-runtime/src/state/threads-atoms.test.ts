@@ -1,8 +1,15 @@
 import {
   EnvironmentId,
   EventId,
+  MessageId,
+  NodeId,
   ORCHESTRATION_V2_WS_METHODS,
+  ProviderInstanceId,
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
   TurnItemId,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadDetailSnapshot,
@@ -30,13 +37,30 @@ import {
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
+import {
+  decodeStoredThreadSnapshot,
+  makeStoredThreadSnapshotEncoder,
+} from "../platform/threadCacheEncoding.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
-import { createEnvironmentThreadStateAtoms, type EnvironmentThreadState } from "./threads.ts";
+import { derivePendingThreadRequests } from "./threadRequests.ts";
+import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
+import {
+  createEnvironmentThreadStateAtoms,
+  type EnvironmentThreadState,
+  type LeftThreadRetention,
+} from "./threads.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+
+const encodeCompactRecord = makeStoredThreadSnapshotEncoder({
+  format: "compact",
+  yieldToHost: Effect.void,
+});
+const encodeStoredThreadSnapshot = (stored: Parameters<typeof encodeCompactRecord>[0]) =>
+  encodeCompactRecord(stored).pipe(Effect.map(Option.getOrThrow));
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -54,8 +78,21 @@ const SNAPSHOT: OrchestrationV2ThreadDetailSnapshot = { snapshotSequence: 7, pro
 const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?: {
   readonly snapshot?: OrchestrationV2ThreadDetailSnapshot;
   readonly socketSnapshot?: false;
+  /** Serves each thread its own projection and keeps saved threads, like the real cache. */
+  readonly projectionFor?: (threadId: ThreadId) => OrchestrationV2ThreadProjection;
+  readonly leftThreads?: LeftThreadRetention;
+  /** Saves as the real cache does, so a reopened thread has been through its record format. */
+  readonly throughCacheRecord?: boolean;
+  /** Runs before each save, to hold one back or fail it. */
+  readonly beforeSave?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
 }) {
+  const savedThreads = new Map<ThreadId, OrchestrationV2ThreadDetailSnapshot>();
+  // Offered once a thread state's scope has run all its finalizers.
+  const threadScopesClosed = yield* Queue.unbounded<void>();
   const subscriptions = yield* Queue.unbounded<{
+    readonly threadId: ThreadId;
     readonly afterSequence: number | undefined;
     readonly events: Queue.Queue<OrchestrationV2ThreadStreamItem>;
     readonly closed: Deferred.Deferred<void>;
@@ -71,7 +108,10 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
   let opened = 0;
   let active = 0;
   const client = {
-    [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: { readonly afterSequence?: number }) =>
+    [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: {
+      readonly threadId: ThreadId;
+      readonly afterSequence?: number;
+    }) =>
       Stream.unwrap(
         Effect.gen(function* () {
           const events = yield* Queue.unbounded<OrchestrationV2ThreadStreamItem>();
@@ -86,10 +126,21 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
                 active -= 1;
               }).pipe(Effect.andThen(Deferred.succeed(closed, undefined))),
           );
-          yield* Queue.offer(subscriptions, { afterSequence: input.afterSequence, events, closed });
+          yield* Queue.offer(subscriptions, {
+            threadId: input.threadId,
+            afterSequence: input.afterSequence,
+            events,
+            closed,
+          });
           // Like a paging server, a fresh subscribe opens with the bounded snapshot.
           if (input.afterSequence === undefined && options?.socketSnapshot !== false) {
-            yield* Queue.offer(events, { kind: "snapshot", ...snapshot });
+            yield* Queue.offer(events, {
+              kind: "snapshot",
+              ...snapshot,
+              ...(options?.projectionFor
+                ? { projection: options.projectionFor(input.threadId) }
+                : {}),
+            });
           }
           return Stream.fromQueue(events);
         }),
@@ -125,6 +176,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     disconnect: Effect.void,
     retryNow: Effect.void,
   });
+  // Each change replaces the environment's entry, like learning a route, which restarts its streams.
+  const environmentEntry = yield* SubscriptionRef.make(0);
   const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
     entries: yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(
       new Map(),
@@ -147,8 +200,22 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
       Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     runStream: (_environmentId, stream) =>
       Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-    followStream: (_environmentId, stream) =>
-      Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    followStream: (_environmentId, stream) => {
+      const follow = Stream.provideService(
+        stream,
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisor,
+      ).pipe(Stream.ensuring(Queue.offer(threadScopesClosed, undefined)));
+      return options?.leftThreads === undefined
+        ? follow
+        : Stream.concat(
+            Stream.fromEffect(SubscriptionRef.get(environmentEntry)),
+            SubscriptionRef.changes(environmentEntry),
+          ).pipe(
+            Stream.changes,
+            Stream.switchMap(() => follow),
+          );
+    },
   });
   const historyController = yield* Effect.service(
     ThreadHistoryController.ThreadHistoryController,
@@ -173,13 +240,33 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
         Persistence.EnvironmentCacheStore.of({
           loadShell: () => Effect.succeedNone,
           saveShell: () => Effect.void,
-          loadThread: () =>
+          loadThread: (_environmentId, threadId) =>
             Effect.sync(() => {
               diskLoads += 1;
-              return Option.none();
+              return Option.fromUndefinedOr(savedThreads.get(threadId));
             }),
-          saveThread: () => Effect.void,
-          removeThread: () => Effect.void,
+          saveThread: (_environmentId, saved) =>
+            (options?.beforeSave?.(saved.projection.thread.id) ?? Effect.void).pipe(
+              Effect.andThen(
+                options?.throughCacheRecord === true
+                  ? encodeStoredThreadSnapshot({
+                      environmentId: TARGET.environmentId,
+                      threadId: saved.projection.thread.id,
+                      snapshot: saved,
+                    }).pipe(Effect.flatMap(decodeStoredThreadSnapshot), Effect.orDie)
+                  : Effect.succeed({ snapshot: saved }),
+              ),
+              Effect.tap(({ snapshot: stored }) =>
+                Effect.sync(() => {
+                  if (options?.projectionFor) savedThreads.set(stored.projection.thread.id, stored);
+                }),
+              ),
+              Effect.asVoid,
+            ),
+          removeThread: (_environmentId, threadId) =>
+            Effect.sync(() => {
+              savedThreads.delete(threadId);
+            }),
           loadServerConfig: () => Effect.succeedNone,
           saveServerConfig: () => Effect.void,
           loadVcsRefs: () => Effect.succeedNone,
@@ -192,12 +279,14 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
       Layer.succeed(
         ThreadSnapshotLoader.ThreadSnapshotLoader,
         ThreadSnapshotLoader.ThreadSnapshotLoader.of({
-          load: () =>
+          load: (_prepared, threadId) =>
             Effect.sync(() => {
               httpLoads += 1;
               return {
                 _tag: "present" as const,
-                snapshot,
+                snapshot: options?.projectionFor
+                  ? { ...snapshot, projection: options.projectionFor(threadId) }
+                  : snapshot,
                 ...(snapshot.historyCursor === undefined
                   ? {}
                   : {
@@ -213,7 +302,10 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
       ),
     ),
   );
-  const raw = createEnvironmentThreadStateAtoms(runtime);
+  const raw = createEnvironmentThreadStateAtoms(
+    runtime,
+    options?.leftThreads && { leftThreads: options.leftThreads },
+  );
   const details = createEnvironmentThreadDetailAtoms(raw.stateAtom);
   const ref = { environmentId: TARGET.environmentId, threadId: THREAD_ID };
   const stateAtom = details.stateAtom(ref);
@@ -232,6 +324,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     ref,
     subscriptions,
     olderLoads,
+    threadScopesClosed,
+    restartEnvironment: SubscriptionRef.update(environmentEntry, (entry) => entry + 1),
     loadEarlier: () => historyController.loadEarlier(TARGET.environmentId, THREAD_ID),
     counts: () => ({ httpLoads, diskLoads, opened, active }),
   };
@@ -449,3 +543,512 @@ it.effect("keeps snapshot boundaries and completion markers ordered inside a rep
     yield* Deferred.await(next.closed);
   }),
 );
+
+describe("left threads", () => {
+  type Harness = Effect.Success<ReturnType<typeof makeHarness>>;
+  const LEFT = Array.from({ length: 6 }, (_, index) => ThreadId.make(`left-${index}`));
+  const BODY = 10_000;
+  // Three left threads of BODY fit, besides the one just left; four do not.
+  const MAX_BYTES = 35_000;
+  const at = THREAD.thread.createdAt;
+  const RUNNING: OrchestrationV2Run = {
+    id: RunId.make("left-run"),
+    threadId: LEFT[0]!,
+    ordinal: 1,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    providerThreadId: null,
+    userMessageId: MessageId.make("left-message"),
+    rootNodeId: null,
+    activeAttemptId: null,
+    status: "running",
+    requestedAt: at,
+    startedAt: at,
+    completedAt: null,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  const itemIdOf = (threadId: ThreadId) => TurnItemId.make(`${threadId}-notice`);
+  const itemsFor = (threadId: ThreadId, bytes: number) => {
+    const item = {
+      id: itemIdOf(threadId),
+      type: "system_notice" as const,
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed" as const,
+      title: null,
+      message: "x".repeat(bytes),
+      startedAt: at,
+      completedAt: at,
+      updatedAt: at,
+    };
+    return {
+      turnItems: [item],
+      visibleTurnItems: [
+        {
+          position: 0,
+          visibility: "local" as const,
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          item,
+        },
+      ],
+    };
+  };
+  const projectionFor =
+    (options?: {
+      readonly running?: ReadonlySet<ThreadId>;
+      readonly bytes?: (threadId: ThreadId) => number;
+    }) =>
+    (threadId: ThreadId): OrchestrationV2ThreadProjection => ({
+      ...THREAD,
+      ...itemsFor(threadId, options?.bytes?.(threadId) ?? BODY),
+      thread: { ...THREAD.thread, id: threadId },
+      runs: options?.running?.has(threadId) ? [{ ...RUNNING, threadId }] : [],
+    });
+  const event = (threadId: ThreadId, deleted: boolean): OrchestrationV2ThreadStreamItem => {
+    const payload = { ...THREAD.thread, id: threadId, title: `Visited ${threadId}` };
+    const common = { id: EventId.make(`left-${threadId}`), threadId, occurredAt: at };
+    return {
+      kind: "event",
+      sequence: 8,
+      event: deleted
+        ? { ...common, type: "thread.deleted", payload: { ...payload, deletedAt: at } }
+        : { ...common, type: "thread.metadata-updated", payload },
+    };
+  };
+  const refOf = (threadId: ThreadId) => ({ environmentId: TARGET.environmentId, threadId });
+  const atomOf = (h: Harness, threadId: ThreadId) => h.details.stateAtom(refOf(threadId));
+  const budget = (released: ThreadId[], maxBytes = MAX_BYTES): LeftThreadRetention => ({
+    maxBytes,
+    onRelease: (thread) => released.push(thread.threadId),
+  });
+
+  /** Opens the thread, retitles it at sequence 8 (or deletes it), and returns how to leave it. */
+  const open = Effect.fn("TestThreadAtoms.open")(function* (
+    h: Harness,
+    threadId: ThreadId,
+    options?: { readonly deleted?: boolean; readonly secondary?: boolean },
+  ) {
+    const deleted = options?.deleted === true;
+    const atom = atomOf(h, threadId);
+    if (options?.secondary !== true) h.rawAtoms.markThreadVisited(refOf(threadId));
+    const unmount = h.registry.mount(atom);
+    const subscription = yield* Queue.take(h.subscriptions);
+    expect(subscription.threadId).toBe(threadId);
+    yield* Queue.offerAll(subscription.events, [
+      event(threadId, deleted),
+      { kind: "synchronized" },
+    ]);
+    yield* observeState(h.registry, atom, (state) =>
+      deleted
+        ? state.status === "deleted"
+        : state.status === "live" &&
+          Option.getOrNull(state.data)?.thread.title !== THREAD.thread.title,
+    );
+    return { unmount, subscription };
+  });
+
+  const visit = Effect.fn("TestThreadAtoms.visit")(function* (
+    h: Harness,
+    threadId: ThreadId,
+    options?: { readonly deleted?: boolean; readonly secondary?: boolean },
+  ) {
+    const { unmount } = yield* open(h, threadId, options);
+    unmount();
+    yield* Queue.take(h.threadScopesClosed);
+  });
+
+  /** Reopens a left thread and reports whether it came from memory. */
+  const reopen = Effect.fn("TestThreadAtoms.reopen")(function* (h: Harness, threadId: ThreadId) {
+    const diskLoads = h.counts().diskLoads;
+    const atom = atomOf(h, threadId);
+    h.rawAtoms.markThreadVisited(refOf(threadId));
+    const unmount = h.registry.mount(atom);
+    const subscription = yield* Queue.take(h.subscriptions);
+    const warm = h.counts().diskLoads === diskLoads;
+    const state = yield* observeState(h.registry, atom, (value) => Option.isSome(value.data));
+    unmount();
+    yield* Queue.take(h.threadScopesClosed);
+    return { warm, state, afterSequence: subscription.afterSequence };
+  });
+
+  it.effect("keeps left threads within the budget warm and reopens others from the cache", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const h = yield* makeHarness({
+        projectionFor: projectionFor(),
+        leftThreads: budget(released),
+      });
+      for (const threadId of LEFT.slice(0, 5)) yield* visit(h, threadId);
+      expect(released).toEqual([LEFT[0]]);
+      // Reopening refreshes a thread's place, so the next visit drops left-2 rather than left-1.
+      expect((yield* reopen(h, LEFT[1]!)).warm).toBe(true);
+      yield* visit(h, LEFT[5]!);
+      expect(released).toEqual([LEFT[0], LEFT[2]]);
+      const httpLoads = h.counts().httpLoads;
+      const reopened = yield* reopen(h, LEFT[0]!);
+      expect(reopened.warm).toBe(false);
+      const projection = Option.getOrThrow(reopened.state.data);
+      expect(projection.thread.title).toBe(`Visited ${LEFT[0]}`);
+      expect(projection.turnItems.map((item) => item.id)).toEqual([itemIdOf(LEFT[0]!)]);
+      expect(projection.visibleTurnItems.map((row) => row.sourceItemId)).toEqual([
+        itemIdOf(LEFT[0]!),
+      ]);
+      expect(reopened.afterSequence).toBe(8);
+      expect(h.counts().httpLoads).toBe(httpLoads);
+    }),
+  );
+
+  it.effect("drops a heavy left thread and keeps the small ones warm", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const heavy = LEFT[4]!;
+      const h = yield* makeHarness({
+        projectionFor: projectionFor({
+          bytes: (threadId) => (threadId === heavy ? 40_000 : 1_000),
+        }),
+        leftThreads: budget(released),
+      });
+      for (const threadId of LEFT.slice(0, 5)) yield* visit(h, threadId);
+      // Just left, so it does not count: nothing is dropped to make room for it.
+      expect(released).toEqual([]);
+      yield* visit(h, LEFT[5]!);
+      expect(released).toEqual([heavy]);
+      for (const threadId of LEFT.slice(0, 4)) {
+        expect((yield* reopen(h, threadId)).warm).toBe(true);
+      }
+    }),
+  );
+
+  it.effect("stays warm going back and forth between two threads over the budget", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const h = yield* makeHarness({
+        projectionFor: projectionFor(),
+        leftThreads: budget(released, 0),
+      });
+      yield* visit(h, LEFT[0]!);
+      yield* visit(h, LEFT[1]!);
+      expect(released).toEqual([LEFT[0]]);
+      yield* visit(h, LEFT[0]!);
+      expect((yield* reopen(h, LEFT[0]!)).warm).toBe(true);
+      expect((yield* reopen(h, LEFT[0]!)).warm).toBe(true);
+    }),
+  );
+
+  it.effect("does not let threads the user never navigated to crowd out left threads", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const h = yield* makeHarness({
+        projectionFor: projectionFor(),
+        leftThreads: budget(released, 0),
+      });
+      yield* visit(h, LEFT[0]!);
+      // A side chat, a fork source, a cited thread: all mount the same state atom.
+      for (const threadId of LEFT.slice(1)) yield* visit(h, threadId, { secondary: true });
+      expect(released).toEqual([]);
+      expect((yield* reopen(h, LEFT[0]!)).warm).toBe(true);
+      expect((yield* reopen(h, LEFT[1]!)).warm).toBe(true);
+    }),
+  );
+
+  it.effect("keeps threads with unfinished runs outside the budget", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const running = new Set(LEFT.slice(0, 3));
+      const h = yield* makeHarness({
+        projectionFor: projectionFor({ running }),
+        leftThreads: budget(released, 15_000),
+      });
+      for (const threadId of LEFT.slice(0, 4)) yield* visit(h, threadId);
+      // One settled thread fits, besides the one just left, whatever the running ones hold.
+      yield* visit(h, LEFT[4]!);
+      expect(released).toEqual([]);
+      yield* visit(h, LEFT[5]!);
+      expect(released).toEqual([LEFT[3]]);
+      const first = yield* reopen(h, LEFT[0]!);
+      expect(first.warm).toBe(true);
+      expect(Option.getOrThrow(first.state.data).runs[0]?.status).toBe("running");
+    }),
+  );
+
+  describe("with a pending question", () => {
+    const QUESTION = {
+      id: RuntimeRequestId.make("left-question"),
+      nodeId: NodeId.make("left-question-node"),
+      providerTurnId: null,
+      nativeRequestRef: null,
+      kind: "user_input" as const,
+      status: "pending" as const,
+      responseCapability: { type: "message" as const },
+      createdAt: at,
+      resolvedAt: null,
+    };
+    // As the server sends one that a run has pushed out of the window: after the window's items.
+    const withQuestion = (threadId: ThreadId): OrchestrationV2ThreadProjection => {
+      const projection = projectionFor()(threadId);
+      const { message: _message, ...notice } = itemsFor(threadId, 0).turnItems[0]!;
+      return {
+        ...projection,
+        runtimeRequests: [QUESTION],
+        turnItems: [
+          ...projection.turnItems,
+          {
+            ...notice,
+            id: TurnItemId.make(`${threadId}-question`),
+            nodeId: QUESTION.nodeId,
+            ordinal: 0,
+            status: "running",
+            completedAt: null,
+            type: "user_input_request",
+            requestId: QUESTION.id,
+            questions: [{ id: "scope", header: "Scope", question: "Which scope?", options: [] }],
+          },
+        ],
+      };
+    };
+    const questionsOf = (state: {
+      readonly data: Option.Option<OrchestrationV2ThreadProjection>;
+    }) =>
+      derivePendingThreadRequests(Option.getOrThrow(state.data)).userInputs.map(
+        (input) => input.requestId,
+      );
+
+    it.effect("stays outside the budget, even with no unfinished run", () =>
+      Effect.gen(function* () {
+        const released: ThreadId[] = [];
+        const asking = LEFT[0]!;
+        const h = yield* makeHarness({
+          projectionFor: (threadId) =>
+            threadId === asking ? withQuestion(threadId) : projectionFor()(threadId),
+          leftThreads: budget(released, 0),
+        });
+        for (const threadId of LEFT.slice(0, 3)) yield* visit(h, threadId);
+        expect(released).toEqual([LEFT[1]]);
+        const reopened = yield* reopen(h, asking);
+        expect(reopened.warm).toBe(true);
+        expect(questionsOf(reopened.state)).toEqual([QUESTION.id]);
+      }),
+    );
+
+    it.effect("is still answerable when the idle TTL released its thread", () =>
+      Effect.gen(function* () {
+        const released: ThreadId[] = [];
+        const h = yield* makeHarness({
+          projectionFor: withQuestion,
+          throughCacheRecord: true,
+          leftThreads: budget(released),
+        });
+        const { unmount } = yield* open(h, LEFT[0]!);
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        unmount();
+        yield* Queue.take(h.threadScopesClosed);
+        for (let round = 0; round < 3; round++) {
+          vi.advanceTimersByTime(THREAD_SNAPSHOT_IDLE_TTL_MS + 1_000);
+          yield* Effect.yieldNow;
+        }
+        expect(released).toEqual([LEFT[0]]);
+        vi.useRealTimers();
+        const httpLoads = h.counts().httpLoads;
+        const reopened = yield* reopen(h, LEFT[0]!);
+        expect(reopened.warm).toBe(false);
+        expect(reopened.afterSequence).toBe(8);
+        expect(h.counts().httpLoads).toBe(httpLoads);
+        expect(questionsOf(reopened.state)).toEqual([QUESTION.id]);
+      }),
+    );
+  });
+
+  it.effect("keeps a deleted thread deleted after it is left", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const h = yield* makeHarness({
+        projectionFor: projectionFor(),
+        leftThreads: budget(released, 0),
+      });
+      yield* visit(h, LEFT[0]!, { deleted: true });
+      for (const threadId of LEFT.slice(1)) yield* visit(h, threadId);
+      expect(released).not.toContain(LEFT[0]);
+      const diskLoads = h.counts().diskLoads;
+      const atom = atomOf(h, LEFT[0]!);
+      const unmount = h.registry.mount(atom);
+      yield* observeState(h.registry, atom, (state) => state.status === "deleted");
+      expect(h.counts().diskLoads).toBe(diskLoads);
+      expect(yield* Queue.size(h.subscriptions)).toBe(0);
+      unmount();
+      yield* Queue.take(h.threadScopesClosed);
+    }),
+  );
+
+  it.effect("leaves an open thread and the left threads alone when its environment restarts", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const h = yield* makeHarness({
+        projectionFor: projectionFor(),
+        leftThreads: budget(released, 0),
+      });
+      yield* visit(h, LEFT[0]!);
+      const { unmount } = yield* open(h, LEFT[1]!);
+      const before = currentThread(h.registry, atomOf(h, LEFT[1]!));
+      const diskLoads = h.counts().diskLoads;
+      yield* h.restartEnvironment;
+      yield* Queue.take(h.threadScopesClosed);
+      const resumed = yield* Queue.take(h.subscriptions);
+      expect(resumed.threadId).toBe(LEFT[1]);
+      expect(resumed.afterSequence).toBe(8);
+      expect(h.counts().diskLoads).toBe(diskLoads);
+      expect(currentThread(h.registry, atomOf(h, LEFT[1]!))).toBe(before);
+      expect(released).toEqual([]);
+      unmount();
+      yield* Queue.take(h.threadScopesClosed);
+      // Leaving it for real is what pushes the older thread out.
+      expect(released).toEqual([LEFT[0]]);
+    }),
+  );
+
+  it.effect("reopens a released expanded thread from its saved window", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const h = yield* makeHarness({
+        snapshot: { ...SNAPSHOT, historyCursor: "older-1", hasMoreHistory: true },
+        projectionFor: projectionFor(),
+        leftThreads: budget(released, 0),
+      });
+      h.rawAtoms.markThreadVisited(h.ref);
+      const unmount = h.registry.mount(h.stateAtom);
+      const subscription = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(subscription.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      const loading = yield* h.loadEarlier().pipe(Effect.forkScoped);
+      const request = yield* Queue.take(h.olderLoads);
+      const older = itemsFor(THREAD_ID, 10).visibleTurnItems[0]!;
+      const olderItem = { ...older.item, id: TurnItemId.make("older-item") };
+      yield* Deferred.succeed(request.response, {
+        snapshotSequence: 7,
+        items: [{ ...older, sourceItemId: olderItem.id, item: olderItem }],
+        nextCursor: null,
+        hasMoreHistory: false,
+      });
+      expect(yield* Fiber.join(loading)).toEqual({ _tag: "loaded" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.history.expanded);
+      unmount();
+      yield* Queue.take(h.threadScopesClosed);
+
+      yield* visit(h, LEFT[0]!);
+      expect(released).toEqual([THREAD_ID]);
+      const httpLoads = h.counts().httpLoads;
+      const reopened = yield* reopen(h, THREAD_ID);
+      expect(reopened.warm).toBe(false);
+      expect(reopened.state.history).toMatchObject({
+        expanded: false,
+        historyCursor: "older-1",
+        hasMoreHistory: true,
+      });
+      expect(
+        Option.getOrThrow(reopened.state.data).visibleTurnItems.map((row) => row.sourceItemId),
+      ).toEqual([itemIdOf(THREAD_ID)]);
+      expect(h.counts().httpLoads).toBe(httpLoads);
+    }),
+  );
+
+  it.effect("keeps a thread in memory when its final save failed", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const h = yield* makeHarness({
+        projectionFor: projectionFor(),
+        leftThreads: budget(released, 0),
+        beforeSave: (threadId) =>
+          threadId === LEFT[0]
+            ? Effect.fail(
+                new Persistence.ConnectionPersistenceError({
+                  operation: "save-thread",
+                  message: "quota",
+                }),
+              )
+            : Effect.void,
+      });
+      for (const threadId of LEFT.slice(0, 3)) yield* visit(h, threadId);
+      expect(released).toEqual([LEFT[1]]);
+      const kept = yield* reopen(h, LEFT[0]!);
+      expect(kept.warm).toBe(true);
+      expect(Option.getOrThrow(kept.state.data).thread.title).toBe(`Visited ${LEFT[0]}`);
+    }),
+  );
+
+  it.effect("releases a left thread only after its final save finished", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const releases = yield* Queue.unbounded<void>();
+      const saving = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      const h = yield* makeHarness({
+        projectionFor: projectionFor(),
+        leftThreads: {
+          maxBytes: 0,
+          onRelease: (thread) => {
+            released.push(thread.threadId);
+            Queue.offerUnsafe(releases, undefined);
+          },
+        },
+        beforeSave: (threadId) =>
+          threadId === LEFT[0]
+            ? Deferred.succeed(saving, undefined).pipe(Effect.andThen(Deferred.await(gate)))
+            : Effect.void,
+      });
+      const { unmount } = yield* open(h, LEFT[0]!);
+      unmount();
+      yield* Deferred.await(saving);
+      // The stream's ensuring runs ahead of the scope's finalizers, so this one is already there.
+      yield* Queue.take(h.threadScopesClosed);
+      for (const threadId of LEFT.slice(1, 3)) yield* visit(h, threadId);
+      // left-0 is still saving, so it is not in the budget yet.
+      expect(released).toEqual([LEFT[1]]);
+      yield* Deferred.succeed(gate, undefined);
+      // left-1's release is already queued; the finished save causes the next one.
+      yield* Queue.take(releases);
+      yield* Queue.take(releases);
+      expect(released).toEqual([LEFT[1], LEFT[2]]);
+      yield* visit(h, LEFT[3]!);
+      expect(released).toEqual([LEFT[1], LEFT[2], LEFT[0]]);
+      const reopened = yield* reopen(h, LEFT[0]!);
+      expect(reopened.warm).toBe(false);
+      expect(Option.getOrThrow(reopened.state.data).thread.title).toBe(`Visited ${LEFT[0]}`);
+    }),
+  );
+
+  it.effect("reports a thread released by the idle TTL, visited or not", () =>
+    Effect.gen(function* () {
+      const released: ThreadId[] = [];
+      const h = yield* makeHarness({
+        projectionFor: projectionFor(),
+        leftThreads: budget(released),
+      });
+      const { unmount } = yield* open(h, LEFT[0]!, { secondary: true });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      unmount();
+      yield* Queue.take(h.threadScopesClosed);
+      expect(released).toEqual([]);
+      // The derived atoms go first, on the registry's default TTL, and let go of the resume atom.
+      for (let round = 0; round < 3; round++) {
+        vi.advanceTimersByTime(THREAD_SNAPSHOT_IDLE_TTL_MS + 1_000);
+        yield* Effect.yieldNow;
+      }
+      expect(released).toEqual([LEFT[0]]);
+    }),
+  );
+
+  it.effect("keeps every left thread until the TTL without a budget", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ projectionFor: projectionFor() });
+      for (const threadId of LEFT) yield* visit(h, threadId);
+      for (const threadId of LEFT) expect((yield* reopen(h, threadId)).warm).toBe(true);
+    }),
+  );
+});

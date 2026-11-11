@@ -29,6 +29,34 @@ interface RevealState {
 }
 
 /**
+ * Out of the hook, so the listener it keeps for as long as the container lives cannot pin a render
+ * of the timeline, and the entries of whichever thread that render showed.
+ */
+function trackPagingPosition(
+  container: HTMLElement,
+  stateRef: RefObject<RevealState>,
+  readInputs: () => RevealInputs,
+): () => void {
+  const onScroll = () => {
+    const state = stateRef.current;
+    const position = state.pagingPosition;
+    const range = state.activeRange;
+    if (
+      !position ||
+      position.entries !== readInputs().entries ||
+      !range?.startContainer.isConnected
+    )
+      return;
+    const rect = range.getBoundingClientRect();
+    const viewport = container.getBoundingClientRect();
+    if (rect.bottom < viewport.top || rect.top > viewport.bottom) state.pagingPosition = null;
+    else position.top = rect.top;
+  };
+  container.addEventListener("scroll", onScroll, { passive: true });
+  return () => container.removeEventListener("scroll", onScroll);
+}
+
+/**
  * Brings the active match into view. Async continuations re-enter with the
  * inputs current by then, and stop once the match changes or the list unmounts.
  */
@@ -58,6 +86,7 @@ function revealThreadFindMatch(
     state.settledMatch = null;
     state.revealedMatch = null;
     state.pagingPosition = null;
+    state.positionedEntries = null;
     return;
   }
   const list = listRef.current;
@@ -229,23 +258,7 @@ export function useThreadFindNavigation({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches a scroll listener to the timeline container to track the active match position
   useEffect(() => {
     if (!container) return;
-    const onScroll = () => {
-      const state = stateRef.current;
-      const position = state.pagingPosition;
-      const range = state.activeRange;
-      if (
-        !position ||
-        position.entries !== readInputs().entries ||
-        !range?.startContainer.isConnected
-      )
-        return;
-      const rect = range.getBoundingClientRect();
-      const viewport = container.getBoundingClientRect();
-      if (rect.bottom < viewport.top || rect.top > viewport.bottom) state.pagingPosition = null;
-      else position.top = rect.top;
-    };
-    container.addEventListener("scroll", onScroll, { passive: true });
-    return () => container.removeEventListener("scroll", onScroll);
+    return trackPagingPosition(container, stateRef, readInputs);
   }, [container]);
   const requestedPagesRef = useRef<{ key: string | null; pages: Set<string> }>({
     key: null,

@@ -56,16 +56,25 @@ interface TimelineFollowVisit {
  * current visit, so a thread switch leaves the old one behind instead of
  * resetting it.
  */
+// Out here so the debouncer it keeps cannot pin a render of the hook, and the timeline of whichever
+// thread that render showed.
 function createVisitScrollState(
   visit: TimelineFollowVisit,
-  showScrollToBottom: (visit: TimelineFollowVisit) => void,
+  stateRef: { readonly current: { readonly visit: TimelineFollowVisit } | null },
+  setPill: (pill: { readonly visit: TimelineFollowVisit; readonly show: boolean }) => void,
 ) {
   return {
     visit,
     // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
     // thread switches. LegendList fires scroll events with isAtEnd=false while
     // initialScrollAtEnd is settling; hiding is always immediate.
-    showScrollDebouncer: new Debouncer(() => showScrollToBottom(visit), { wait: 150 }),
+    showScrollDebouncer: new Debouncer(
+      () => {
+        // A debounce that outlived its visit must not overwrite the current one's pill.
+        if (stateRef.current?.visit === visit) setPill({ visit, show: true });
+      },
+      { wait: 150 },
+    ),
     positionedAnchor: null as MessageId | null,
     settledAnchor: null as MessageId | null,
     releaseAnchorScrollHold: null as (() => void) | null,
@@ -221,11 +230,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   /** Only from handlers: the bookkeeping of the visit they run in. */
   const visitScroll = () => {
     if (visitScrollRef.current?.visit !== visit) {
-      visitScrollRef.current = createVisitScrollState(visit, (shownVisit) => {
-        // A debounce that outlived its visit must not overwrite the current one's pill.
-        if (visitScrollRef.current?.visit === shownVisit)
-          setPill({ visit: shownVisit, show: true });
-      });
+      visitScrollRef.current = createVisitScrollState(visit, visitScrollRef, setPill);
     }
     return visitScrollRef.current;
   };
