@@ -126,11 +126,14 @@ function sweepStep(pr) {
 // CONTRIBUTING.md leaves a PR to maintainers once an exempt login has commented or reviewed.
 // `after` narrows that to activity later than a triage notice: the notice itself is posted from a
 // maintainer account, and counting it would exempt every PR triage ever asks to close.
-function maintainerOn(activity, exemptions, after = 0) {
+function maintainerOn(activity, exemptions, after) {
   for (const node of [...activity.comments.nodes, ...activity.reviews.nodes]) {
     const login = node.author?.login;
-    const at = Date.parse(node.createdAt ?? node.submittedAt ?? "");
-    if (login && exemptions.has(login.toLowerCase()) && !(at <= after)) return login;
+    if (!login || !exemptions.has(login.toLowerCase())) continue;
+    // A review that was never submitted has no time, so it cannot be "after" anything.
+    if (after === undefined || Date.parse(node.createdAt ?? node.submittedAt ?? "") > after) {
+      return login;
+    }
   }
   return undefined;
 }
@@ -163,9 +166,12 @@ function answeredSince(detail, since, step) {
   const pushedAt = Date.parse(detail.commits.nodes[0]?.commit.committedDate ?? "");
   if (pushedAt > since && pushedAt <= Date.now()) return true;
   if (step !== "closing-window") return false;
-  const author = detail.author?.login;
+  // A deleted account has no login; two of them must not read as the same person.
+  const author = detail.author?.login?.toLowerCase();
+  if (!author) return false;
   return detail.recentComments.nodes.some(
-    (comment) => comment.author?.login === author && Date.parse(comment.createdAt) > since,
+    (comment) =>
+      comment.author?.login?.toLowerCase() === author && Date.parse(comment.createdAt) > since,
   );
 }
 
@@ -387,7 +393,7 @@ async function enforceOpenLimit({ github, context, core, dryRun }) {
   // Someone else reopening a PR is a maintainer overriding the limit. Read it from the PR, not the
   // event: an "opened" job can still be waiting when the override happens.
   const reopenedBy = current.timelineItems.nodes[0]?.actor?.login;
-  if (reopenedBy && reopenedBy !== author) return;
+  if (reopenedBy && reopenedBy.toLowerCase() !== author.toLowerCase()) return;
   // A new PR counts only the older ones, so two opened together cannot close each other.
   const reopened = context.payload.action === "reopened";
   const others = search.nodes.filter(

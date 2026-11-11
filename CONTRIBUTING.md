@@ -169,11 +169,12 @@ conflict window does not start, and stops, once someone in
 
 Automated triage leaves a PR open for maintainer decision if someone in the trusted
 [TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td) list has commented or submitted a review,
-including on an earlier head, or if `triage:keep-open` is present. This protection does not imply
-eligibility or review approval.
+including on an earlier head, or if `triage:keep-open` is present. Comments that triage itself
+posted, such as an earlier notice, do not count, even when they came from a maintainer's account.
+This protection does not imply eligibility or review approval.
 
 A policy-based closure starts with a notice. Triage posts the explanation and applies
-`triage:closing`, and the PR closes 72 hours later. A reply or a push from the author within that time
+`triage:closing`, and the PR closes 72 hours later. A reply from the author or a push to the PR within that time
 removes the label and sends the PR back to triage, which reassesses it with the new evidence. A
 comment or review from a maintainer after the notice also stops the close.
 

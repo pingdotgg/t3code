@@ -111,6 +111,8 @@ trusted policy and reassess changed submission evidence; neither example grants 
 
 Do not automatically close a PR if a maintainer in the trusted `TRIAGE_EXEMPTIONS.td` list has
 commented or submitted a review, including on earlier heads, or if `triage:keep-open` is present.
+Comments that triage itself posted, such as an earlier notice or question, are not maintainer
+involvement, even when they were posted from a maintainer's account on that maintainer's behalf.
 Leave protected PRs open for maintainer decision. This does not grant an author exemption,
 eligibility, or review approval.
 
@@ -130,7 +132,7 @@ comment text but do not write to GitHub. Keep the eligibility finding separate f
   (`gh variable get PR_LIMITS_ENFORCE -R pingdotgg/t3code`). When it is `true`, apply
   `triage:closing`, verify that the explanation and the label are present, and do not close the PR
   yourself: [pr-limits.yml](../../../.github/workflows/pr-limits.yml) closes it 72 hours after the
-  label. A reply or a push from the author removes the label first; treat that as new evidence,
+  label. An author reply or a push to the PR removes the label first; treat that as new evidence,
   reassess, and apply the label again only if the finding still holds. When the variable is unset
   or has any other value, nothing would close a labeled PR: close it yourself and verify that the
   explanation is present and the PR is closed. If the variable cannot be read, report the closure
