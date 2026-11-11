@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - synchronous fixture writer used from plain and Effect tests alike.
+// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off - synchronous fixture writer used from plain and Effect tests alike.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 

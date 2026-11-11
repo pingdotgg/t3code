@@ -412,8 +412,9 @@ know renders as a label that opens nothing. Older `t3-thread://v1/<threadId>`
 links name no environment: clients resolve them in the message's environment,
 then by a unique match in another enabled environment. An outside OAuth client,
 one that is not a linked environment, cannot render `t3-thread://` links, so it
-gets a web URL on the origin it reached, `<origin>/<environmentId>/<threadId>`,
-for threads in this environment.
+gets the link Copy thread copies, `https://app.t3.codes/threads/<environmentId>/<threadId>`
+on the server's `T3CODE_HOSTED_APP_URL`, for threads in this environment. The
+hosted app offers the desktop app, the mobile app, or itself.
 
 List and read results report `snoozed` and `snoozedUntil`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
@@ -444,7 +445,12 @@ Sends a message to any ordinary or delegated thread in the environment:
 - `queue` creates a separate follow-up run after active work;
 - `steer` requires a steerable active provider turn; and
 - `restart` requires an active provider turn and uses the orchestrator's
-  interrupt-and-restart path.
+  interrupt-and-restart path. On a provider that can stop a turn and queue
+  messages but not restart a turn with new input, it stops the turn and queues
+  the message ahead of other queued messages; an unheld delegated-task result
+  that survives the stop still runs first. It is rejected when neither path
+  applies: the provider cannot stop a turn, Stop has already reached the turn,
+  or the turn or the new message is `/compact` or `/logout`.
 
 The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
