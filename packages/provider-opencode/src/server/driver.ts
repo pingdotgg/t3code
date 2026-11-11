@@ -80,6 +80,13 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   );
 }
 
+function openCodeNativeHome(commandPath: string): string | null {
+  const slashed = commandPath.replaceAll("\\", "/");
+  const match = /\/\.opencode\/bin\/opencode(?:\.exe)?$/i.exec(slashed);
+  if (!match) return null;
+  return match.index === 0 ? "/" : slashed.slice(0, match.index);
+}
+
 /** Update only within the installed package generation; 2.x converts the shared database in place. */
 export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"]) =>
   makePackageManagedProviderMaintenanceResolver({
@@ -92,6 +99,13 @@ export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"]) =>
       args: ["upgrade", "--method", "curl"],
       isCommandPath: isOpenCodeNativeCommandPath,
       requiresCommandPath: true,
+      // The curl installer writes to `$HOME/.opencode/bin`, so point HOME at the install it replaces.
+      env: (context) => {
+        const home =
+          openCodeNativeHome(context.realCommandPath) ??
+          openCodeNativeHome(context.resolvedCommandPath);
+        return home ? { HOME: home } : {};
+      },
     },
     // mise's `opencode` follows releases into 2.x, so it would upgrade 1.x across that line.
     mise: { tool: "opencode", upgrade: generation === "v2" },
