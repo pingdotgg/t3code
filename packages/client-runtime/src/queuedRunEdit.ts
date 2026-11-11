@@ -61,6 +61,17 @@ export function resolveQueuedEditExit(input: {
   return input.threadDraftEmpty ? "kept" : "discarded";
 }
 
+/**
+ * Why a queued message can't be opened in the composer now, or null when it
+ * can. An open question takes the composer over for its answer, so an edit
+ * begun then would happen out of sight and could be sent before it is seen.
+ */
+export function queuedRunEditBlockedReason(input: {
+  readonly openQuestionCount: number;
+}): string | null {
+  return input.openQuestionCount > 0 ? "Answer the question to edit queued messages" : null;
+}
+
 interface ExitWatch<E> {
   readonly runs: QueuedRunsAtom;
   readonly runId: RunId;
@@ -69,10 +80,9 @@ interface ExitWatch<E> {
 }
 
 /**
- * Settles a save started with `startSave`. Returns false, changing nothing,
- * when the edit the save started from was ended or begun again meanwhile; the
- * caller must then leave the edit's drafts alone. Otherwise success ends the
- * edit and failure resumes its exit watch.
+ * Settles a save from `startSave`. False, changing nothing, when the edit was
+ * ended or begun again meanwhile. Success ends the edit; failure resumes its
+ * exit watch and returns whether the edit survived it.
  */
 export type FinishQueuedRunEditSave = (succeeded: boolean) => boolean;
 
@@ -141,7 +151,6 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
     if (watch === undefined) return;
     unsubscribe(watch);
     watches.delete(threadKey);
-    setSaving(threadKey, false);
   };
 
   return {
@@ -178,24 +187,29 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
     },
     /**
      * Claims the open edit for a save, or returns null when there is no edit
-     * or a save already holds it. The exit watch pauses so the save's result
-     * decides the edit's fate.
+     * or a save is in flight. The exit watch pauses so the save's result decides
+     * the edit's fate. The claim outlives the edit: the server orders saves by
+     * arrival, so an overlapping older save could overwrite a newer one.
      */
     startSave(threadKey: string): FinishQueuedRunEditSave | null {
       const watch = watches.get(threadKey);
       if (watch === undefined || threadKey in registry.get(savingAtom)) return null;
       setSaving(threadKey, true);
       unsubscribe(watch);
+      let settled = false;
       return (succeeded) => {
+        if (!settled) {
+          settled = true;
+          setSaving(threadKey, false);
+        }
         if (watches.get(threadKey) !== watch) return false;
         if (succeeded) {
           stopWatch(threadKey);
           write(threadKey, null);
-        } else {
-          setSaving(threadKey, false);
-          subscribe(threadKey, watch);
+          return true;
         }
-        return true;
+        subscribe(threadKey, watch);
+        return watches.get(threadKey) === watch;
       };
     },
   };

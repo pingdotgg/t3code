@@ -150,7 +150,7 @@ const make = Effect.gen(function* () {
           Stream.runHead,
           Effect.as(Option.none()),
         );
-        return yield* Effect.raceFirst(effect.pipe(Effect.map(Option.some)), foregroundStarted);
+        return yield* Effect.raceFirst(effect.pipe(Effect.asSome), foregroundStarted);
       }),
     );
 

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "@effect/vitest";
 import * as NodeFs from "node:fs";
 import * as NodeNet from "node:net";
+import { describe, expect, it } from "@effect/vitest";
 import {
   closeLoopbackUnixSockets,
   CONTAINER_LOOPBACK_ALIAS,
@@ -21,20 +21,12 @@ describe("DockerLoopback", () => {
   });
 
   it("extracts ports from URL, DSN, and prisma+postgres shapes", () => {
-    expect(
-      loopbackPortsFromEnvValue("postgres://postgres@127.0.0.1:5432/db"),
-    ).toEqual([5432]);
-    expect(
-      loopbackPortsFromEnvValue(
-        "prisma+postgres://localhost:51216/?api_key=test",
-      ),
-    ).toEqual([51216]);
-    expect(
-      loopbackPortsFromEnvValue("http://host.docker.localhost:42117/hello"),
-    ).toEqual([42117]);
-    expect(
-      loopbackPortsFromEnvValue("host=127.0.0.1 port=5432 sslmode=disable"),
-    ).toEqual([5432]);
+    expect(loopbackPortsFromEnvValue("postgres://postgres@127.0.0.1:5432/db")).toEqual([5432]);
+    expect(loopbackPortsFromEnvValue("prisma+postgres://localhost:51216/?api_key=test")).toEqual([
+      51216,
+    ]);
+    expect(loopbackPortsFromEnvValue("http://host.docker.localhost:42117/hello")).toEqual([42117]);
+    expect(loopbackPortsFromEnvValue("host=127.0.0.1 port=5432 sslmode=disable")).toEqual([5432]);
   });
 
   it("does not extract ports from Neon or PlanetScale URLs", () => {
@@ -55,8 +47,7 @@ describe("DockerLoopback", () => {
       loopbackPortsFromEnv({
         DATABASE_URL: "postgres://postgres@127.0.0.1:5432/db",
         PPG_URL: "prisma+postgres://localhost:51216/?api_key=test",
-        NEON_URL:
-          "postgres://x@ep-cool-name.us-east-1.aws.neon.tech/neondb?sslmode=require",
+        NEON_URL: "postgres://x@ep-cool-name.us-east-1.aws.neon.tech/neondb?sslmode=require",
       }).sort((a, b) => a - b),
     ).toEqual([5432, 51216]);
   });
