@@ -17,7 +17,7 @@ fi
 if [ -n "$JAVA_HOME" ]; then export PATH="$JAVA_HOME/bin:$PATH"; fi
 `;
 
-/** Node runs this on the host. All paths it returns belong to that host. */
+/** Runs on the host and returns host-local paths. */
 export const remoteDeviceScript = (
   owner: string,
   mode: "probe" | "start" | "agent-start" | "stop-agent" | "stop",
@@ -151,34 +151,55 @@ async function install(name, version, entry) {
   const hubFile = path.join(state, 'hub.json');
   const daemonFile = path.join(state, 'daemon.json');
   const agentFile = path.join(state, 'agent.json');
+  const stopAgent = () => {
+    const entry = read(agentFile)?.entryPath || path.join(root, 'tools', 'agent-device@' + agentVersion, 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
+    if (fs.existsSync(entry)) return run(process.execPath, [entry, 'daemon', 'stop', '--state-dir', state]).status === 0;
+    // A running daemon outlives its deleted CLI, so without one only a recorded pid that is gone counts as stopped.
+    const pid = read(daemonFile)?.pid;
+    return Number.isSafeInteger(pid) && pid > 0 && !maintenanceAlive(pid);
+  };
   if (mode === 'stop' || mode === 'stop-agent') {
     const hub = read(hubFile);
     if (mode === 'stop' && hub && hub.owner === owner) {
       stopHub(hub);
       fs.rmSync(hubFile, { force: true });
     }
-    const entry = read(agentFile)?.entryPath || path.join(root, 'tools', 'agent-device@' + agentVersion, 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
-    if (fs.existsSync(entry)) run(process.execPath, [entry, 'daemon', 'stop', '--state-dir', state]);
+    stopAgent();
     return;
+  }
+  // A start without agent tools means the server holds no claims, so a daemon still here is
+  // orphaned. Agent access was turned off while the tunnel was down, or a server crashed.
+  // Close skips the release when start returns no endpoint, so the claims must end here.
+  if (mode === 'start' && read(daemonFile)) {
+    if (!stopAgent()) throw Error('Could not stop the agent-device daemon in ' + state);
+    fs.rmSync(daemonFile, { force: true });
   }
   if (!ios && !android) throw Error(platforms.map(p => p.reason).join(' '));
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
   const hubEntry = await install('expo-device-hub', hubVersion, 'dist/server/cli.mjs');
   // Only a Mac can list Apple simulators. Recording the filter replaces hubs started without it.
   const hubPlatform = process.platform === 'darwin' ? undefined : 'android';
+  const cameraArgs = android ? ['front', 'back'].flatMap(facing => {
+    const emulator = process.env.ANDROID_HOME ? path.join(process.env.ANDROID_HOME, 'emulator', 'emulator') : 'emulator';
+    const help = run(emulator, ['-help-camera-' + facing], { timeout: 5000 });
+    const text = (help.stdout || '') + '\n' + (help.stderr || '');
+    // The hub's imagefile camera mode is not supported by every installed SDK emulator.
+    return help.status === 0 && /\bemulated\b/.test(text) && !/\bimagefile\b/.test(text) ? ['-camera-' + facing, 'emulated'] : [];
+  }) : [];
+  const emulatorExtraArgs = [cameraArgs.join(' '), process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS].filter(Boolean).join(' ');
   let hub = read(hubFile);
-  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || !await healthy(hub.port, '/readyz')) {
+  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || hub.emulatorExtraArgs !== emulatorExtraArgs || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
     for (let attempt = 0; attempt < 5; attempt++) {
       const hubPort = await port();
       const log = fs.openSync(path.join(state, 'hub.log'), 'a');
       const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device', ...(hubPlatform ? ['--platform', hubPlatform] : [])], {
-        cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+        cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: emulatorExtraArgs, FORCE_COLOR: '0', NO_COLOR: '1' },
       });
       try { await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
       finally { fs.closeSync(log); }
       child.unref();
-      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry, platform: hubPlatform };
+      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry, platform: hubPlatform, emulatorExtraArgs };
       write(hubFile, hub);
       const deadline = Date.now() + 30000;
       let listening = false;

@@ -1,0 +1,33 @@
+{
+  "name": "cloudflare-foldkit-ssg",
+  "version": "0.0.0",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-foldkit-ssg"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "build": "vite build",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test test/integ.test.ts"
+  },
+  "dependencies": {
+    "effect": "catalog:",
+    "foldkit": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
+    "@foldkit/vite-plugin": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:node24",
+    "alchemy": "workspace:*",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}
