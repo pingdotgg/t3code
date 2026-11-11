@@ -368,6 +368,8 @@ public actor EnvironmentAPI {
         )
     }
 
+    /// `path` is percent-encoded: callers escape dynamic segments themselves so
+    /// an ID containing `%` or `/` stays one literal segment.
     func authorized<Result: Decodable & Sendable>(
         environment: Environment,
         path: String,
@@ -504,7 +506,7 @@ public actor EnvironmentAPI {
         headers: [String: String] = [:]
     ) -> URLRequest {
         var request = URLRequest(
-            url: endpoint(environment.httpBaseURL, path: path, queryItems: queryItems)
+            url: endpoint(environment.httpBaseURL, percentEncodedPath: path, queryItems: queryItems)
         )
         request.httpMethod = method
         request.httpBody = body
@@ -719,6 +721,14 @@ public struct AuthOtherClientSessionsRevokeResult: Codable, Equatable, Sendable 
 func endpoint(_ baseURL: URL, path: String, queryItems: [URLQueryItem] = []) -> URL {
     var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
     components.path = path
+    components.queryItems = queryItems.isEmpty ? nil : queryItems
+    components.fragment = nil
+    return components.url!
+}
+
+func endpoint(_ baseURL: URL, percentEncodedPath: String, queryItems: [URLQueryItem] = []) -> URL {
+    var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+    components.percentEncodedPath = percentEncodedPath
     components.queryItems = queryItems.isEmpty ? nil : queryItems
     components.fragment = nil
     return components.url!

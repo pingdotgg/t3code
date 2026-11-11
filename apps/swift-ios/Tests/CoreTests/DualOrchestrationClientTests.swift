@@ -94,6 +94,18 @@ final class V2OrchestrationClientTests: XCTestCase {
         XCTAssertEqual(history.value(forHTTPHeaderField: "x-t3-orchestration-protocol"), "2")
     }
 
+    func testThreadReadEncodesLiteralPercentInThreadIDOnce() async throws {
+        let transport = try V2ClientHTTPTransport()
+        let client = makeClient(transport: transport)
+        _ = try? await client.threadSnapshot(id: "thread:delegated-task:command%3Amcp%3Aissue-17643")
+        let requests = await transport.requests
+        let read = try XCTUnwrap(requests.last { $0.url?.path.hasSuffix("/bounded") == true })
+        XCTAssertEqual(
+            URLComponents(url: try XCTUnwrap(read.url), resolvingAgainstBaseURL: false)?.percentEncodedPath,
+            "/api/orchestration/threads/thread:delegated-task:command%253Amcp%253Aissue-17643/bounded"
+        )
+    }
+
     func testV2ConnectionSendsCanonicalLaunchCommand() async throws {
         let transport = try V2ClientHTTPTransport()
         let socket = V2ClientCommandSocket()
