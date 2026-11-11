@@ -1,4 +1,5 @@
 import {
+  ASSISTANT_CITATION_MAX_COMMENT_LENGTH,
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   type EnvironmentId,
   type MessageId,
@@ -51,6 +52,10 @@ export function citeAssistantText(
     initialValue: "",
     confirmText: "Cite",
     onConfirm: (comment) => {
+      if (comment.trim().length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH) {
+        Dialog.alert("Comment is too long", "Shorten the comment and cite again.");
+        return;
+      }
       const before = insertion.text.slice(0, insertion.start);
       const lead = before.length > 0 && !/\s$/.test(before) ? " " : "";
       insertComposerDraftText(
