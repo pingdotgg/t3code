@@ -2952,17 +2952,12 @@ describe("UsageService", () => {
           );
           yield* upgraded.awaitPersisted;
           assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v13.json");
-          const cacheFiles = yield* Effect.promise(() => NodeFSP.readdir(stateDir));
-          assert.strictEqual(
-            (
-              decodeUnknownJsonString(
-                yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
-              ) as { version: number }
-            ).version,
-            version,
+          assert.deepStrictEqual(
+            (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
+              .filter((name) => name.startsWith("usage-scan-cache"))
+              .toSorted(),
+            [SCAN_CACHE_FILE_NAME, `${SCAN_CACHE_FILE_NAME}.active`],
           );
-          assert.strictEqual(cacheFiles.includes(`${SCAN_CACHE_FILE_NAME}.stale`), false);
-          assert.strictEqual(cacheFiles.includes(`${SCAN_CACHE_FILE_NAME}.active`), true);
         }).pipe(
           Effect.provide(
             layerService({

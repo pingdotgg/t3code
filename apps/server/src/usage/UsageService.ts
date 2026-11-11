@@ -184,9 +184,6 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
-  const legacyScanCachePaths = LEGACY_SCAN_CACHE_FILE_NAMES.map((name) =>
-    path.join(config.stateDir, name),
-  );
   const writeCacheFile = (filePath: string, contents: string | Iterable<string>) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -410,10 +407,9 @@ export const make = Effect.gen(function* () {
           Effect.catchCause(() => Effect.succeed(null)),
         );
       let document = yield* readDocument(scanCachePath);
-      for (const legacyPath of legacyScanCachePaths) {
+      for (const fileName of LEGACY_SCAN_CACHE_FILE_NAMES) {
         if (document !== null) break;
-        document = yield* readDocument(legacyPath);
-        // Write the migrated cache to its own file on the next scan.
+        document = yield* readDocument(path.join(config.stateDir, fileName));
         cacheDirty = document !== null;
       }
       if (document === null) return;
@@ -432,10 +428,13 @@ export const make = Effect.gen(function* () {
   // Serialize writes so concurrently finished window scans cannot overwrite newer snapshots.
   const persistLock = yield* Semaphore.make(1);
 
-  // Temp folders an aborted write left behind are removed once idle for an hour,
-  // while versioned cache files remain for older servers sharing this state directory.
-  let staleTempDirectoriesRemoved = false;
-  const removeStaleCacheTempDirectories = Effect.gen(function* () {
+  // The saved cache supersedes older versions. Temp folders an aborted write left behind are
+  // removed once idle for an hour, so a write in progress from another server survives.
+  let supersededFilesRemoved = false;
+  const removeSupersededCacheFiles = Effect.gen(function* () {
+    for (const fileName of LEGACY_SCAN_CACHE_FILE_NAMES) {
+      yield* fileSystem.remove(path.join(config.stateDir, fileName)).pipe(Effect.ignore);
+    }
     const tempPrefixes = [SCAN_CACHE_FILE_NAME, ...LEGACY_SCAN_CACHE_FILE_NAMES].map(
       (fileName) => `${fileName}.`,
     );
@@ -465,9 +464,9 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((contents) => writeCacheFile(scanCachePath, contents)),
         Effect.andThen(
           Effect.suspend(() => {
-            if (staleTempDirectoriesRemoved) return Effect.void;
-            staleTempDirectoriesRemoved = true;
-            return removeStaleCacheTempDirectories;
+            if (supersededFilesRemoved) return Effect.void;
+            supersededFilesRemoved = true;
+            return removeSupersededCacheFiles;
           }),
         ),
         Effect.catchCause(() =>

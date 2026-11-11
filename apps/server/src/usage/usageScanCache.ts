@@ -14,10 +14,9 @@ const USAGE_SCAN_CACHE_VERSION = 13 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
- * Each cache version writes its own file in the state directory. An older
- * server sharing that directory cannot read a newer cache and would replace
- * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * When its own file is missing, a server reads the newest legacy file once.
+ * An older server sharing that directory cannot read a newer cache and would
+ * replace it, dropping saved usage for deleted transcripts. Separate files keep
+ * the newer one; older files are removed once it is saved.
  */
 export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v13.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
