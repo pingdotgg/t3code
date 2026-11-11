@@ -9,6 +9,7 @@ import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thre
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
   deriveProviderSubagentStatus,
+  deriveProviderExtensionStatuses,
   deriveResumableRunId,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
@@ -22,10 +23,11 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  orchestrationV2WorktreePending,
   type EnvironmentId,
   type ModelSelection,
-  type ProviderInteractionMode,
-  type ServerProvider,
+  type RuntimeMode,
+  type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 
@@ -45,7 +47,6 @@ import {
   describeUnavailableModelSelection,
   isModelSelectionUnavailable,
 } from "../lib/modelOptions";
-import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -59,12 +60,12 @@ import {
   selectPendingAcknowledgedMessages,
 } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
-import { appAtomRegistry } from "../state/atom-registry";
+import { appAtomRegistry } from "./atom-registry";
 import { pendingThreadCreationMessage } from "./pending-thread-creation";
 import {
   composerAttachmentUploadBlockReason,
   composerAttachmentUploadsAtom,
-} from "../state/composer-attachment-uploads";
+} from "./composer-attachment-uploads";
 import {
   appendComposerDraftAttachments,
   insertComposerDraftContext,
@@ -78,11 +79,10 @@ import {
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
   setFreshSessionPending,
-  updateComposerDraftSettings,
   useComposerDraft,
   useComposerDraftSettings,
 } from "./use-composer-drafts";
-import { isClearComposerCommand } from "@t3tools/shared/composerTrigger";
+import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import {
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
@@ -103,13 +103,13 @@ import {
   startQueuedRunEditSave,
   useQueuedRunEdit,
 } from "./queued-run-edit";
-import { setPendingConnectionError } from "../state/use-remote-environment-registry";
+import { setPendingConnectionError } from "./use-remote-environment-registry";
 import { clearThreadComposerError, setThreadComposerError } from "./thread-composer-error";
 import {
   useSelectedThreadProjection,
   useSelectedThreadVisibleTurnItems,
-} from "../state/use-thread-detail";
-import { useThreadSelection } from "../state/use-thread-selection";
+} from "./use-thread-detail";
+import { useThreadSelection } from "./use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
@@ -177,22 +177,14 @@ export function useThreadDraftForThread(input: {
   };
 }
 
-/** A provider without the interaction-mode toggle runs in the default mode. */
-export function updateThreadDraftModelSelection(
-  threadKey: string,
-  value: ModelSelection,
-  providers: ReadonlyArray<ServerProvider>,
-): void {
-  const provider = providers.find((candidate) => candidate.instanceId === value.instanceId);
-  updateComposerDraftSettings(threadKey, {
-    modelSelection: value,
-    ...(provider?.showInteractionModeToggle === false
-      ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
-      : {}),
-  });
-}
-
-export function useThreadComposerState() {
+export function useThreadComposerState(input: {
+  /** Forks the thread into a side chat that gets `prompt`; resolves false when it did not start. */
+  readonly startSideChat: (
+    source: ScopedThreadRef,
+    prompt: string,
+    settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
+  ) => Promise<boolean>;
+}) {
   const {
     selectedThread: selectedThreadShell,
     selectedThreadCreation,
@@ -216,6 +208,7 @@ export function useThreadComposerState() {
   });
   const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
   const savingQueuedEditRef = useRef(false);
+  const startingSideChatRef = useRef(false);
 
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
@@ -316,15 +309,8 @@ export function useThreadComposerState() {
     serverConfig?.providers ?? [],
   );
   const runtimeMode = selectedDraft.runtimeMode ?? selectedThread?.runtimeMode ?? null;
-  const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
-    (provider) => provider.instanceId === modelSelection?.instanceId,
-  );
-  const interactionMode = selectedThread
-    ? resolveProviderInteractionMode(
-        selectedProvider,
-        selectedDraft.interactionMode ?? selectedThread.interactionMode,
-      )
-    : null;
+  // Plan mode is not offered to users; every send runs in build mode.
+  const interactionMode = selectedThread ? DEFAULT_PROVIDER_INTERACTION_MODE : null;
   const canSwitchThreadProvider = threadAllowsProviderSwitch({
     thread: selectedThreadShell,
     projection: selectedThreadProjection?.projection,
@@ -557,6 +543,60 @@ export function useThreadComposerState() {
     if (text.length === 0 && attachments.length === 0) {
       return null;
     }
+    const modelSelection = draft.modelSelection ?? thread.modelSelection;
+    const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+    const modelUnavailable =
+      selectedEnvironmentRuntime?.connectionState === "connected" &&
+      isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId);
+    const alertModelUnavailable = () => {
+      const { title, detail } = describeUnavailableModelSelection(
+        serverConfig,
+        modelSelection,
+        thread.projectId,
+      );
+      Dialog.alert(title, detail);
+    };
+    // A redirect's text answers its approval, so `/side` there is that text, not the command.
+    const sideChatCommand = beforeDispatch === undefined ? parseSideChatCommand(text) : null;
+    if (sideChatCommand) {
+      if (sideChatUnavailableReason !== null) {
+        Dialog.alert("Side chat not started", sideChatUnavailableReason);
+      } else if (attachments.length > 0 || (draft.context?.records.length ?? 0) > 0) {
+        Dialog.alert(
+          "Side chats take text only",
+          "Remove the attachments and context, then send it again.",
+        );
+      } else if (sideChatCommand.prompt.length === 0) {
+        Dialog.alert("Ask a side question", "Type the question after /side, then send it.");
+      } else if (modelUnavailable) {
+        alertModelUnavailable();
+      } else if (!startingSideChatRef.current) {
+        startingSideChatRef.current = true;
+        const started = await input
+          .startSideChat(
+            { environmentId: thread.environmentId, threadId: thread.id },
+            sideChatCommand.prompt,
+            {
+              runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+              modelSelection,
+            },
+          )
+          .finally(() => {
+            startingSideChatRef.current = false;
+          });
+        // Clear only what was sent; the draft may have changed while the side chat started.
+        const current = getComposerDraftSnapshot(threadKey);
+        if (
+          started &&
+          current.text === draft.text &&
+          current.attachments.length === 0 &&
+          (current.context?.records.length ?? 0) === 0
+        ) {
+          clearComposerDraftContent(threadKey);
+        }
+      }
+      return null;
+    }
     // A redirect's text answers its approval, so /clear there is that text, not the command.
     if (
       beforeDispatch === undefined &&
@@ -585,18 +625,8 @@ export function useThreadComposerState() {
       return null;
     }
 
-    const modelSelection = draft.modelSelection ?? thread.modelSelection;
-    const serverConfig = selectedEnvironmentRuntime?.serverConfig;
-    if (
-      selectedEnvironmentRuntime?.connectionState === "connected" &&
-      isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId)
-    ) {
-      const { title, detail } = describeUnavailableModelSelection(
-        serverConfig,
-        modelSelection,
-        thread.projectId,
-      );
-      Dialog.alert(title, detail);
+    if (modelUnavailable) {
+      alertModelUnavailable();
       return null;
     }
     const provider = serverConfig?.providers.find(
@@ -725,10 +755,7 @@ export function useThreadComposerState() {
       context: draft.context,
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: resolveProviderInteractionMode(
-        provider,
-        draft.interactionMode ?? thread.interactionMode,
-      ),
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       ...(compactBeforeSend
         ? { compactBeforeSend, dispatchMode: "queue" as const }
         : followUpDispatchMode === null
@@ -759,6 +786,32 @@ export function useThreadComposerState() {
     return messageId;
   };
 
+  // Side chats do not nest or start from subagents, and need a server that forks them.
+  const sideChatUnavailableReason = (() => {
+    const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+    if (selectedThreadShell?.lineage.sideChat === true)
+      return "Side chats cannot start side chats.";
+    if (selectedThreadShell?.lineage.relationshipToParent === "subagent") {
+      return "Subagent threads cannot start side chats.";
+    }
+    if (!selectedThreadShell || !serverConfig) {
+      return "Side chats are not ready yet. Try again in a moment.";
+    }
+    if (serverConfig.environment.capabilities.sideChats !== true) {
+      return "Update this environment's T3 Code server to use side chats.";
+    }
+    if (selectedThreadCreation !== null) return "Side chats start after the first message.";
+    if (
+      orchestrationV2WorktreePending(
+        selectedThreadShell.worktreePath ?? null,
+        selectedThreadProjection?.projection.runs ?? [],
+      )
+    ) {
+      return "Available once the thread's worktree is set up.";
+    }
+    return null;
+  })();
+
   const onChangeDraftMessage = (value: string) => {
     if (!selectedThreadShell) {
       return;
@@ -783,20 +836,6 @@ export function useThreadComposerState() {
     removeComposerDraftAttachment(threadKey, imageId);
   };
 
-  const onUpdateInteractionMode = (value: ProviderInteractionMode) => {
-    if (!selectedThreadKey) {
-      return;
-    }
-    const modelSelection =
-      getComposerDraftSnapshot(selectedThreadKey).modelSelection ?? selectedThread?.modelSelection;
-    const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
-      (candidate) => candidate.instanceId === modelSelection?.instanceId,
-    );
-    updateComposerDraftSettings(selectedThreadKey, {
-      interactionMode: resolveProviderInteractionMode(provider, value),
-    });
-  };
-
   return {
     feedbackSubmissions,
     dismissFeedback,
@@ -807,6 +846,9 @@ export function useThreadComposerState() {
     dispatchingQueuedMessageId,
     activeWorkStartedAt,
     runlessWorkActive,
+    extensionStatuses: deriveProviderExtensionStatuses(
+      selectedThreadProjection?.projection ?? null,
+    ),
     providerSubagentStatus,
     isCompacting,
     composerDraftKey,
@@ -832,6 +874,6 @@ export function useThreadComposerState() {
     onNativePasteText,
     onRemoveDraftImage,
     onSendMessage,
-    onUpdateInteractionMode,
+    sideChatUnavailableReason,
   };
 }
