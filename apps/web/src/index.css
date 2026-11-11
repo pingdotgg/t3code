@@ -1933,13 +1933,10 @@ code {
   list-style-type: disc;
 }
 
-/* list-style-position: outside paints the marker past the padding box, so the
-   gutter must fit a single-digit marker like `1. `, which takes 3ch in a
-   monospace font. CSS cannot measure the marker, so proportional fonts get the
-   same 3ch. ChatMarkdown's `ol` renderer widens it (via inline style) for lists
-   whose widest marker has multiple characters. Setting it here also resets a
-   nested ol without its own widened marker so it doesn't inherit the outer
-   one; `ch` resolves against each list's own font. */
+/* Outside markers paint past the padding box, so the gutter must fit `1. `
+   (3ch in a monospace font; CSS can't measure it, so every font gets 3ch).
+   ChatMarkdown widens it inline for multi-digit markers; setting it here stops
+   a nested ol inheriting that. `ch` resolves against each list's own font. */
 :is(.chat-markdown, .composer-tiptap) ol {
   --list-gutter: max(1.25rem, 3ch);
   padding-inline-start: var(--list-gutter, 1.25rem);
