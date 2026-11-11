@@ -37,6 +37,9 @@ maintainers' test train: its builds can be broken and are never offered as
 updates, so the installer and `t3 update` ask for confirmation before
 installing one.
 
+A downgrade checks that the target release can read your data before switching
+the launcher or service. Releases too old to perform this check are refused.
+
 `t3 uninstall` removes the background service, the `t3` launcher, and the
 downloaded versions after showing you the list and asking once. Your projects,
 threads, and settings under `~/.t3/userdata` are kept, along with `service.env`

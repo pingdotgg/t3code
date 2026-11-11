@@ -34,7 +34,12 @@ import {
   recordPinnedRuntimeLauncher,
   windowsShimTarget,
 } from "../cloud/pinnedRuntime.ts";
-import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
+import {
+  compareExactServiceVersions,
+  isExactServiceVersion,
+  SERVICE_LAUNCHER_PROTOCOL,
+} from "../cloud/serviceProtocol.ts";
+import { decodeServicePreflightResult } from "../cloud/servicePreflight.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -58,6 +63,7 @@ const ReleaseIndex = Schema.Array(
   }),
 );
 const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
+const decodePreflightJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
 const RELEASE_INDEX_MAX_PAGES = 10;
@@ -251,7 +257,7 @@ const updateFlags = {
     Flag.optional,
   ),
   allowDowngrade: Flag.Boolean("allow-downgrade").pipe(
-    Flag.withDescription("Allow moving to an older version than the one running."),
+    Flag.withDescription("Allow moving to an older version that can read this home's database."),
     Flag.withDefault(false),
   ),
   yes: Flag.Boolean("yes").pipe(
@@ -283,6 +289,7 @@ export const updateCommand = Command.make("update", {
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       return yield* runUpdate({
         baseDir: config.baseDir,
+        dbPath: config.dbPath,
         logsDir: config.logsDir,
         serverRuntimeStatePath: config.serverRuntimeStatePath,
         channel: Option.getOrUndefined(flags.channel),
@@ -348,6 +355,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
 
 export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   readonly baseDir: string;
+  readonly dbPath: string;
   readonly logsDir: string;
   readonly serverRuntimeStatePath: string;
   readonly channel: CliReleaseChannel | undefined;
@@ -446,7 +454,8 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     );
     return;
   }
-  if (!input.allowDowngrade && compareExactServiceVersions(targetVersion, newestInstalled) < 0) {
+  const isDowngrade = compareExactServiceVersions(targetVersion, newestInstalled) < 0;
+  if (!input.allowDowngrade && isDowngrade) {
     return yield* new CliUpdateError({
       reason: `t3@${targetVersion} is older than the installed ${newestInstalled}. Pass --allow-downgrade to install it anyway.`,
     });
@@ -540,6 +549,47 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       ),
     ),
   );
+
+  if (isDowngrade) {
+    const checked = yield* runner
+      .run({
+        command: pinnedRuntimeCommand(runtime).command,
+        args: [
+          ...pinnedRuntimeCommand(runtime).args,
+          "__service-preflight",
+          "--database-path",
+          input.dbPath,
+          "--launcher-protocol",
+          String(SERVICE_LAUNCHER_PROTOCOL),
+        ],
+        timeout: Duration.seconds(30),
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PinnedRuntimeInstallError({ step: "checking downgrade compatibility", cause }),
+        ),
+      );
+    if (checked.code !== 0 || checked.timedOut || checked.stdoutTruncated) {
+      return yield* new PinnedRuntimeInstallError({
+        step: "checking downgrade compatibility",
+        exitCode: Number(checked.code),
+      });
+    }
+    const parsed = yield* decodePreflightJson(checked.stdout).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PinnedRuntimeInstallError({ step: "decoding downgrade compatibility", cause }),
+      ),
+    );
+    const preflight = decodeServicePreflightResult(parsed);
+    if (preflight === undefined || preflight.version !== targetVersion) {
+      return yield* new PinnedRuntimeInstallError({ step: "verifying downgrade compatibility" });
+    }
+    if (preflight.status === "blocked") {
+      return yield* new CliUpdateError({ reason: preflight.reason });
+    }
+  }
 
   const launchedAs = (yield* HostProcess.IsExecutable) ? yield* resolveLauncherPath : undefined;
   const repointed = yield* repointLauncher({
