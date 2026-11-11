@@ -581,9 +581,12 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         DAEMON_RECOVERY_STOP_TIMEOUT,
       ).pipe(Effect.result);
       if (stopped._tag === "Failure" || stopped.success.timedOut || stopped.success.code !== 0) {
-        yield* Effect.logWarning("Could not stop an unresponsive agent-device daemon", {
-          cause: stopped._tag === "Failure" ? stopped.failure : stopped.success,
-        });
+        yield* Effect.logWarning(
+          "Could not stop an unresponsive agent-device daemon",
+          stopped._tag === "Failure"
+            ? { cause: stopped.failure }
+            : { code: stopped.success.code, timedOut: stopped.success.timedOut },
+        );
       }
       yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
     }
