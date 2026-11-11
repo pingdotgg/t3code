@@ -57,6 +57,11 @@ See the [mobile README](../../apps/mobile/README.md) for native builds and Metro
 Flags go directly after the task name, for example `vp run dev --home-dir /tmp/t3code-dev`.
 Add `--browser` to open a browser automatically.
 
+To stop a worktree's dev stack when its thread settles, import the **Dev** action from
+`t3.json` in Settings > Projects > Actions and start it through the action menu or its
+keybinding. Its `stopOnSettle` option lets T3 stop the terminal and its child processes.
+Running `vp run dev` through an agent's own shell tool does not attach it to this lifecycle.
+
 ### State and ports
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
@@ -85,6 +90,34 @@ To add a scenario, point a `SCENARIOS` entry at a generic ACP replay fixture
 (`registry_transcript.ndjson`) or a file in [dev-replay](../../apps/server/scripts/dev-replay).
 The agent replays session updates, permission requests, and questions. It drops session setup
 and vendor frames, so Grok and fx recordings lose their vendor-only behavior.
+
+### Profiling dev startup
+
+Run `vp run profile:startup` to capture the first 20 seconds of inherited Node processes under
+`.t3/startup-profiles/<timestamp>`. Workers that execute the preload get separate profiles.
+It starts the normal dev runner and accepts its flags.
+Stop it with Ctrl+C after the capture. Set `T3CODE_STARTUP_PROFILE_DIR` to choose another output
+directory. Profiling adds overhead, so compare readiness with an ordinary `vp run dev` run.
+
+Open a `.cpuprofile` in Chrome DevTools' Performance panel for sampled function stacks and source
+lines. Each `.modules.json` is a Chrome trace containing timed module resolution, loading,
+synchronous subprocess calls, and startup measures. Per-file records include importer URLs,
+source loading, preparation, recursive dependency linking, and top-level evaluation. Preparation
+uses synchronous loader boundaries; linking includes dependencies, and CommonJS evaluation can
+include nested `require` calls. Some ESM/CommonJS interop reports a combined stage. `.process.json` records the process, Node version, and capture window.
+The server's nested Effect and SQL spans remain in `.t3/userdata/logs/server.trace.ndjson`.
+
+The preload temporarily adds module-body timing markers and uses one automatic debugger pause
+to instrument the live Node loader. The launcher adds `--no-node-snapshot` to inherited
+`NODE_OPTIONS` because Node 26's snapshotted loader cannot accept that breakpoint. Include the
+same flag when using the preload directly. This disables Node's built-in startup snapshot,
+can change compilation-cache hits, and adds overhead.
+Treat per-file captures as diagnostic runs; use uninstrumented runs for baseline startup latency.
+The first entry module can compile before loader instrumentation is installed.
+
+A fresh process still uses filesystem, Node compilation, provider, and Vite dependency caches.
+Measure a missing Vite dependency cache separately from a restart with an existing database.
+Neither the Vite ready message nor the HTTP listener proves that a browser has rendered the app.
 
 ### Sharing and remote debugging
 
@@ -167,7 +200,8 @@ of the affected packages and their dependents, and the test files beside the cha
 runs the checks that read other files: the agent context budget when the server is affected, and
 React Compiler coverage for only the changed web and mobile files. It maps
 files to packages with [ci-changes.cjs](../../.github/scripts/ci-changes.cjs), as CI does. It
-compares against the merge base with `origin/main`, or with a ref you pass. CI still runs the full
+compares against the closest merge base with any remote's `main`, so a fork whose `main` lags
+upstream still compares against upstream, or with a ref you pass. CI still runs the full
 test suites and the jobs the summary lists, so a local pass does not promise a green CI run.
 
 The steps run side by side, as many at once as the machine allows: one per two cores and per 6 GiB
@@ -191,9 +225,11 @@ In `apps/web`, a test that renders React or touches the DOM is named `*.browser.
 and runs in headless Chromium with the React Compiler on, like the app. There is no jsdom; other
 `*.test.ts` files run in Node.
 
-TypeScript workspaces typecheck with `tsc`. The `typescript` catalog entry is
-`@tsc-rs/typescript`, the tsc-rs drop-in, with Effect diagnostics, quick fixes, and
-refactors built in. VS Code uses it through `js/ts.tsdk.path` in `.vscode/settings.json`.
+TypeScript workspaces typecheck with `effect-tsgo tsrs --noEmit` from `@effect/tsgo`: the
+[tsrs](https://github.com/oxc-project/tsrs) checker with Effect diagnostics, quick fixes, and
+refactors built in. Only `apps/marketing` installs `typescript`, for Astro. VS Code's TypeScript 7
+extension starts the same checker through `.vscode/tsdk/tsgo` (`js/ts.tsdk.path`), a POSIX
+script, so on Windows open the workspace through WSL.
 
 Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 [ci.yml](../../.github/workflows/ci.yml) for its current jobs.
@@ -202,7 +238,7 @@ Windows investigation while that suite is not a required gate.
 
 ### Unused code
 
-`vp run knip:check` checks unused files and dependencies across the repo, then
+`vp run knip:check` checks unused files and dependencies across the repo and, at the same time,
 unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
 `packages/`. CI enforces both checks.
 Exported types and Effect schemas are allowed without consumers. The schema preprocessor
@@ -228,32 +264,68 @@ vp run dist:desktop:linux
 vp run dist:desktop:win
 ```
 
+`dist:desktop:linux` targets x64. For a native Linux ARM64 build, run:
+
+```sh
+vp run dist:desktop:artifact --platform linux --target AppImage --arch arm64
+```
+
 DMGs default to the host architecture. Use `--arch` to choose another target and `--keep-stage`
 to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
 
+### Prepared server bytecode
+
+Native macOS and Windows desktop artifact builds, and native Linux x64 and ARM64 builds, generate server
+bytecode with the packaged Electron executable, after ASAR creation and before signing. Generation imports the CLI and server
+module declarations without launching server services; worker-only modules compile normally.
+AppImage backends use temporary links for each mount and remove them on normal exit. Later launches
+reclaim abandoned cache directories whose links point to gone mounts; AppImage main-process caching
+stays disabled. macOS x64 builds on ARM64 hosts run the packaged x64 Electron
+under Rosetta to generate the cache. Other cross-platform and cross-architecture builds skip
+generation explicitly. CLI, SEA and WSL runtimes keep their existing behavior.
+
+Electron's Node 24 cache has no read-only option and includes the producer UID in its directory
+name. The backend links individual prepared files into its writable cache with keys for the
+installed module paths. Node replaces files atomically, so regeneration cannot write through those
+links into signed resources. Windows uses hard links and falls back to normal caching when volumes
+differ or resource permissions prevent linking. Protected installations therefore may not reuse
+prepared bytecode. No cache bytes are copied during startup.
+
+The key calculation follows Node's internal portable ESM format. Generation checks that the
+packaged engine produced the expected CLI and server entries and fails the build if that format changes.
+The manifest also checks Electron, Node, OS, architecture and V8's flags-sensitive version tag.
+Missing or rejected entries compile from the shipped JavaScript. Prepared backends skip the
+explicit startup flush; Node can persist missing entries on normal exit. The writable fallback
+keeps the explicit flush needed when Windows force-kills the backend.
+
 ### Linux AppImage prerequisites
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
-Rust, C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+Bytecode preparation also runs packaged Electron and requires GTK, NSS, ALSA, and GBM runtime libraries.
+Install Rust 1.95 or newer through [rustup](https://rust-lang.org/install), using the stable
+toolchain as release CI does.
 
-Ubuntu and Debian:
+Ubuntu 24.04 and Debian 13:
 
 ```sh
 sudo apt-get update
-sudo apt-get install cargo rustc build-essential libsecret-1-dev pkg-config imagemagick
+sudo apt-get install build-essential libsecret-1-dev pkg-config imagemagick libgtk-3-0t64 libnss3 libasound2t64 libgbm1
 ```
+
+On Ubuntu 22.04 and Debian 12, use `libgtk-3-0` and `libasound2` instead of the `t64` packages.
 
 Fedora:
 
 ```sh
-sudo dnf install rust cargo gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick
+sudo dnf install gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick gtk3 nss alsa-lib mesa-libgbm
 ```
 
 Arch Linux:
 
 ```sh
-sudo pacman -S rust base-devel libsecret pkgconf imagemagick
+sudo pacman -S base-devel libsecret pkgconf imagemagick gtk3 nss alsa-lib mesa
 ```
 
 The C toolchain, pkg-config, and libsecret headers are also needed for Linux desktop development.
