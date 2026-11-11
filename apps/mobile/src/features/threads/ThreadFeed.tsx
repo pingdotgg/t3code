@@ -2254,8 +2254,8 @@ function renderFeedEntry(
             <AssistantMarkdownContent
               markdown={renderedText}
               environmentId={props.environmentId}
-              citeThreadId={isUser ? undefined : props.threadId}
-              citeMessageId={isUser ? undefined : message.id}
+              citeThreadId={message.role === "assistant" ? props.threadId : undefined}
+              citeMessageId={message.role === "assistant" ? message.id : undefined}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
