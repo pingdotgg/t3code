@@ -77,6 +77,7 @@ import {
   TailnetDeviceClientCredential,
   TailnetDeviceClientCredentialRequest,
   TailnetDevicesSyncPayload,
+  TailnetJoinRequest,
   TailnetDevicesUnauthorizedError,
   TailnetGrant,
   TailnetGrantResult,
@@ -811,14 +812,20 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
 /**
- * Linking one owner's tailnet devices. `request`, `confirm` and `grant` carry
- * no credential: each side proves the other through Tailscale before trusting
- * it. `sync` needs a session this environment issued to the calling device.
+ * The owner's network of machines. `request`, `join`, `confirm` and `grant` carry no
+ * credential: each side proves the other through Tailscale and its own roster before trusting
+ * it. `sync` and `clientCredential` need a member session this environment issued.
  */
 class EnvironmentTailnetDevicesHttpApi extends HttpApiGroup.make("tailnetDevices")
   .add(
     HttpApiEndpoint.post("request", "/api/tailnet-devices/request", {
       payload: TailnetLinkRequest,
+      success: TailnetLinkResult,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("join", "/api/tailnet-devices/join", {
+      payload: TailnetJoinRequest,
       success: TailnetLinkResult,
     }),
   )

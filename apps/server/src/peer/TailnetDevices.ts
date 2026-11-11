@@ -2,30 +2,28 @@ import {
   AuthAccessReadScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
-  type AuthGrantScope,
+  type AuthEnvironmentScope,
+  AuthGrantScope,
   type AuthMcpClientAccess,
   AuthOrchestrationReadScope,
-  AuthRelayReadScope,
   AuthStandardClientScopes,
   type EnvironmentId,
   type ExecutionEnvironmentDescriptor,
+  type NetworkMember,
   type PeerLink,
-  TAILNET_DEVICE_CAPABILITY,
   type TailnetChallengeConfirm,
   type TailnetDevice,
   type TailnetDeviceClientCredential,
   type TailnetDeviceClientCredentialRequest,
   type TailnetDeviceAccess,
-  type DevicePolicyEntry,
   type TailnetDeviceDescriptor,
   TailnetDevicesError,
   type TailnetDevicesSnapshot,
-  TailnetDevicesSettings,
   type TailnetDevicesSyncPayload,
   TailnetDevicesUnauthorizedError,
-  type TailnetDevicesUpdateSettingsInput,
   type TailnetGrant,
   type TailnetGrantResult,
+  type TailnetJoinRequest,
   type TailnetLinkRefusal,
   type TailnetLinkRequest,
   type TailnetLinkResult,
@@ -54,7 +52,7 @@ import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "../environment/DirectEndpoints.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as DevicePolicy from "./DevicePolicy.ts";
+import * as Membership from "./Membership.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as TailnetIdentity from "./TailnetIdentity.ts";
 
@@ -76,16 +74,17 @@ const TAILNET_POLL_INTERVAL = Duration.minutes(1);
 /** A device answered a scan this recently, so it counts as online. */
 const ONLINE_WINDOW = Duration.minutes(15);
 
-/** Tailscale says the node belongs to this node's user, untagged, and holds the capability when it is required. */
-const isMyDevice = (
-  whois: TailnetWhois,
-  tailnet: Tailnet,
-  settings: Pick<TailnetDevicesSettings, "requireCapability">,
-): boolean =>
+/**
+ * Tailscale says the node belongs to this node's user, untagged, with a stable node id to bind.
+ * That proves which machine answers, never what it may do: the roster decides that.
+ */
+const isMyNode = (whois: TailnetWhois, tailnet: Tailnet): whois is TailnetWhois & {
+  readonly nodeId: string;
+} =>
+  whois.nodeId !== null &&
   whois.userId !== null &&
   whois.userId === tailnet.self.userId &&
-  whois.tags.length === 0 &&
-  (!settings.requireCapability || whois.capabilities.includes(TAILNET_DEVICE_CAPABILITY));
+  whois.tags.length === 0;
 
 interface PendingChallenge {
   readonly issuer: EnvironmentId;
@@ -99,6 +98,7 @@ interface ProvenDevice {
   readonly origin: string;
   readonly descriptor: ExecutionEnvironmentDescriptor;
   readonly nodeName: string;
+  readonly nodeId: string;
 }
 
 interface DeviceRow {
@@ -115,6 +115,9 @@ const encodeUrls = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema
 const REFUSAL_MESSAGES: Record<TailnetLinkRefusal, string> = {
   disabled: "Linking tailnet devices is off on that machine.",
   not_my_device: "Tailscale does not say that machine is one of your devices.",
+  not_member: "This machine is not in that machine's network.",
+  node_mismatch: "That machine's network knows this one as another Tailscale node.",
+  other_network: "That machine already belongs to another network.",
   revoked: "That machine revoked this one.",
   wrong_issuer: "That address answered as another machine.",
   unreachable: "That machine could not reach this one back over Tailscale.",
@@ -142,8 +145,12 @@ const clientScopesFor = (access: AuthMcpClientAccess): ReadonlyArray<AuthGrantSc
         AuthFilesystemReadScope,
         AuthDiagnosticsReadScope,
         AuthAccessReadScope,
-        AuthRelayReadScope,
       ];
+
+const isGrantScope = Schema.is(AuthGrantScope);
+
+/** A zero stamp loses to every real write, so a seed only fills a gap. */
+const seedStamp = (node: EnvironmentId) => ({ wallMs: 0, counter: 0, node });
 
 const storageError = (cause: unknown) =>
   new TailnetDevicesError({
@@ -153,46 +160,54 @@ const storageError = (cause: unknown) =>
   });
 
 /**
- * One owner's T3 servers on their tailnet, linked both ways without a pairing
- * code. Each side proves the other through Tailscale before giving or using
- * access: the issuer whoises the address it dials, never an inbound header or
- * source address, and the token only travels to that address.
+ * The owner's network of T3 servers on their tailnet. Membership is explicit: a machine joins
+ * only when a full-access member adds it, and same account is never permission. Each side proves
+ * the other before giving or using access: the side granting it whoises the address it dials
+ * (never an inbound header or source address), checks the node against the roster, and the token
+ * only travels to that address.
  */
 export class TailnetDevices extends Context.Service<
   TailnetDevices,
   {
-    readonly settings: Effect.Effect<TailnetDevicesSettings>;
-    readonly updateSettings: (
-      input: TailnetDevicesUpdateSettingsInput,
-    ) => Effect.Effect<TailnetDevicesSettings, TailnetDevicesError>;
     readonly list: Effect.Effect<TailnetDevicesSnapshot, TailnetDevicesError>;
     /**
-     * Sets what a device may do on every one of my devices. `revoked` ends its
-     * sessions and refuses its handshakes; any other level restores it.
+     * Adds a machine found on the tailnet to the whole network at `access`, after Tailscale proves
+     * it is one of the owner's nodes. Only a full-access member, or a machine starting a network,
+     * may add one. The machine joins unless it already belongs to another network or refused this
+     * one.
+     */
+    readonly admit: (
+      environmentId: EnvironmentId,
+      access: AuthMcpClientAccess,
+    ) => Effect.Effect<NetworkMember, TailnetDevicesError>;
+    /**
+     * Sets what a member may do on every machine in the network. `revoked` ends its sessions and
+     * refuses its handshakes; any other level restores it. Only a full-access member may.
      */
     readonly setAccess: (
       environmentId: EnvironmentId,
       access: TailnetDeviceAccess,
-    ) => Effect.Effect<DevicePolicyEntry, TailnetDevicesError>;
+    ) => Effect.Effect<NetworkMember, TailnetDevicesError>;
     /**
-     * Links a device directly when Tailscale proves it is one of mine, from its
-     * id (found on the tailnet or named by a linked device) or an address.
-     * Nothing when it is not one, so the caller can fall back to a pairing code.
+     * Links a member directly, from its id or an address. Nothing for a machine that is not a
+     * member here, so the caller can fall back to a pairing code.
      */
     readonly linkIfMine: (target: {
       readonly environmentId?: EnvironmentId;
       readonly url?: string;
     }) => Effect.Effect<Option.Option<PeerLink>>;
     /**
-     * A one-time pairing credential for my app on another of my devices, asked
-     * for over this device's session there, so the app connects without a code.
+     * A one-time pairing credential on another member for the app that asked, so it connects
+     * without a code. It never exceeds `caller.scopes`, the app's own grant here.
      */
     readonly openDevice: (
       environmentId: EnvironmentId,
+      caller: { readonly scopes: ReadonlyArray<AuthEnvironmentScope> },
     ) => Effect.Effect<TailnetDeviceClientCredential, TailnetDevicesError>;
-    /** Runs the handshake again for a device's link, as when its token stops working. */
+    /** Runs the handshake again for a member's link, as when its token stops working. */
     readonly refresh: (environmentId: EnvironmentId) => Effect.Effect<void>;
     readonly handleRequest: (request: TailnetLinkRequest) => Effect.Effect<TailnetLinkResult>;
+    readonly handleJoin: (request: TailnetJoinRequest) => Effect.Effect<TailnetLinkResult>;
     readonly handleConfirm: (confirm: TailnetChallengeConfirm) => Effect.Effect<TailnetGrantResult>;
     readonly handleGrant: (grant: TailnetGrant) => Effect.Effect<TailnetGrantResult>;
     readonly handleSync: (
@@ -203,7 +218,7 @@ export class TailnetDevices extends Context.Service<
       request: HttpServerRequest.HttpServerRequest,
       payload: TailnetDeviceClientCredentialRequest,
     ) => Effect.Effect<TailnetDeviceClientCredential, TailnetDevicesUnauthorizedError>;
-    /** Finds and links devices on the tailnet once, and refreshes and syncs existing links. */
+    /** Records the owner's T3 servers on the tailnet, and renews and syncs members' links. */
     readonly scan: Effect.Effect<void>;
     /** Scans at startup, every ten minutes and when the tailnet's devices change. */
     readonly start: Effect.Effect<void, never, Scope.Scope>;
@@ -219,15 +234,13 @@ const make = Effect.gen(function* () {
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const links = yield* PeerLinks.PeerLinks;
   const identity = yield* TailnetIdentity.TailnetIdentity;
-  const policy = yield* DevicePolicy.DevicePolicy;
+  const membership = yield* Membership.Membership;
   const sessions = yield* SessionStore.SessionStore;
   const { devUrl } = yield* ServerConfig.ServerConfig;
   const pending = yield* Ref.make<ReadonlyMap<string, PendingChallenge>>(new Map());
   const handshakes = yield* Semaphore.make(HANDSHAKE_CONCURRENCY);
 
-  const settings = policy.settings;
-
-  /** Pushes this device's policy and settings to every linked device right away. */
+  /** Pushes the roster to every linked member right away. */
   const push = Effect.gen(function* () {
     const current = yield* links.stored.pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
@@ -237,19 +250,30 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const updateSettings: TailnetDevices["Service"]["updateSettings"] = Effect.fn(
-    "TailnetDevices.updateSettings",
-  )(function* (input) {
-    const next = yield* policy.updateSettings(input);
-    yield* push;
-    return next;
-  });
-
-  /** Ends everything a revoked device holds here, and stops using its link. */
+  /** Ends everything a revoked machine holds here, and stops using its link. */
   const cutOff = Effect.fn("TailnetDevices.cutOff")(function* (environmentId: EnvironmentId) {
     yield* sessions.revokeByPeerEnvironment(environmentId);
     yield* links.unlink(environmentId);
   }, Effect.mapError(storageError));
+
+  /**
+   * Linked environments is on, and this is not a dev server: each worktree has a fresh
+   * environment that must never join the owner's network.
+   */
+  const enabled = links.enabled.pipe(Effect.map((linksOn) => devUrl === undefined && linksOn));
+
+  /** Only a full-access member changes the roster; a machine with no network may start one. */
+  const requireAdmin = Effect.fn("TailnetDevices.requireAdmin")(function* () {
+    const self = yield* environment.getEnvironmentId;
+    const roster = yield* membership.members;
+    if (roster.length === 0) return;
+    const own = yield* membership.accessOf(self);
+    if (Option.isSome(own) && own.value === "full-access") return;
+    return yield* new TailnetDevicesError({
+      reason: "forbidden",
+      message: "Only a machine with full access in the network can change it.",
+    });
+  });
 
   const setAccess: TailnetDevices["Service"]["setAccess"] = Effect.fn("TailnetDevices.setAccess")(
     function* (environmentId, access) {
@@ -259,19 +283,19 @@ const make = Effect.gen(function* () {
           message: "A machine cannot change its own access.",
         });
       }
-      const entry = yield* policy.set(environmentId, access);
+      yield* requireAdmin();
+      const existing = yield* membership.member(environmentId);
+      if (Option.isNone(existing)) {
+        return yield* new TailnetDevicesError({
+          reason: "unknown_device",
+          message: "That machine is not in the network. Add it first.",
+        });
+      }
+      const entry = yield* membership.put({ ...existing.value, access });
       if (access === "revoked") yield* cutOff(environmentId);
       yield* push;
       return entry;
     },
-  );
-
-  /**
-   * Linked environments is on, and so is linking tailnet devices automatically. Never on a dev
-   * server: each worktree has a fresh environment that would join every one of my devices.
-   */
-  const enabled = Effect.all([links.enabled, settings]).pipe(
-    Effect.map(([linksOn, current]) => devUrl === undefined && linksOn && current.autoLink),
   );
 
   const readDevices = sql<DeviceRow>`SELECT * FROM tailnet_devices`.pipe(
@@ -302,7 +326,7 @@ const make = Effect.gen(function* () {
       Effect.ignore,
     );
 
-  /** Hints from another device only add addresses; what was seen here stays. */
+  /** Hints from another member only add addresses; what was seen here stays. */
   const addHint = (device: TailnetDeviceDescriptor) =>
     sql<DeviceRow>`SELECT * FROM tailnet_devices WHERE environment_id = ${device.environmentId}`.pipe(
       Effect.flatMap((rows) =>
@@ -321,7 +345,7 @@ const make = Effect.gen(function* () {
       Effect.ignore,
     );
 
-  /** This environment as another device should reach it: its tailnet addresses only. */
+  /** This environment as another machine should reach it: its tailnet addresses only. */
   const selfDescriptor = Effect.gen(function* () {
     const descriptor = yield* environment.getDescriptor;
     const endpoints = yield* directEndpoints.resolve();
@@ -344,28 +368,33 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * The first of `urls` that Tailscale proves belongs to one of my devices and
-   * answers as `environmentId`. Otherwise the most telling reason it was not.
+   * The first of `urls` that Tailscale proves is one of the owner's nodes and answers as
+   * `environmentId`. When the roster binds that machine to a node, only that node counts.
+   * Otherwise the most telling reason none did.
    */
   const prove = Effect.fn("TailnetDevices.prove")(function* (
     urls: ReadonlyArray<string>,
     environmentId: EnvironmentId,
     tailnet: Tailnet,
-    current: TailnetDevicesSettings,
+    boundNodeId: string | null,
   ) {
     let refusal: TailnetLinkRefusal = "not_my_device";
     for (const url of urls.slice(0, MAX_REQUESTER_URLS)) {
       const target = identity.locate(url, tailnet);
       if (Option.isNone(target)) continue;
       const whois = yield* identity.whois(target.value.address);
-      if (Option.isNone(whois) || !isMyDevice(whois.value, tailnet, current)) continue;
+      if (Option.isNone(whois) || !isMyNode(whois.value, tailnet)) continue;
+      if (boundNodeId !== null && whois.value.nodeId !== boundNodeId) {
+        refusal = "node_mismatch";
+        continue;
+      }
       const descriptor = yield* describe(target.value.origin, DESCRIBE_TIMEOUT);
       if (Option.isNone(descriptor)) {
-        refusal = "unreachable";
+        if (refusal !== "node_mismatch") refusal = "unreachable";
         continue;
       }
       if (descriptor.value.environmentId !== environmentId) {
-        refusal = "descriptor_mismatch";
+        if (refusal !== "node_mismatch") refusal = "descriptor_mismatch";
         continue;
       }
       return {
@@ -374,15 +403,77 @@ const make = Effect.gen(function* () {
           origin: target.value.origin,
           descriptor: descriptor.value,
           nodeName: whois.value.nodeName,
+          nodeId: whois.value.nodeId,
         } satisfies ProvenDevice,
       };
     }
     return { _tag: "refused" as const, reason: refusal };
   });
 
+  const boundNodeOf = (environmentId: EnvironmentId) =>
+    membership.member(environmentId).pipe(
+      Effect.map((found) => (Option.isSome(found) ? found.value.nodeId : null)),
+      Effect.orElseSucceed(() => null),
+    );
+
   const newChallenge = random.randomBytes(32).pipe(Effect.map(Base64Url.encode), Effect.orDie);
 
-  /** Asks a device to link this environment, after proving it is one of mine. */
+  const holdChallenge = Effect.fn("TailnetDevices.holdChallenge")(function* (
+    issuer: EnvironmentId,
+    proven: ProvenDevice,
+  ) {
+    const challenge = yield* newChallenge;
+    const expiresAtMs = (yield* Clock.currentTimeMillis) + Duration.toMillis(CHALLENGE_TTL);
+    yield* Ref.update(pending, (current) =>
+      new Map(current).set(challenge, {
+        issuer,
+        origin: proven.origin,
+        label: proven.descriptor.label,
+        expiresAtMs,
+      }),
+    );
+    return challenge;
+  });
+
+  const dropChallenge = (challenge: string) =>
+    Ref.update(pending, (current) => {
+      const next = new Map(current);
+      next.delete(challenge);
+      return next;
+    });
+
+  /** Proves a machine through Tailscale and the roster's node binding, for this side's request. */
+  const proveTarget = Effect.fn("TailnetDevices.proveTarget")(function* (
+    device: TailnetDeviceDescriptor,
+  ) {
+    const tailnet = yield* identity.read;
+    if (Option.isNone(tailnet)) {
+      return yield* unreachable("Tailscale is not running on this machine.");
+    }
+    const proof = yield* prove(
+      device.urls,
+      device.environmentId,
+      tailnet.value,
+      yield* boundNodeOf(device.environmentId),
+    );
+    if (proof._tag === "refused") {
+      return yield* new TailnetDevicesError({
+        reason:
+          proof.reason === "not_my_device" || proof.reason === "node_mismatch"
+            ? "forbidden"
+            : "unreachable",
+        message:
+          proof.reason === "not_my_device"
+            ? `Tailscale does not say ${device.label} is one of your devices.`
+            : proof.reason === "node_mismatch"
+              ? `${device.label} answered from a different Tailscale node than the one in the network.`
+              : `${device.label} did not answer over Tailscale.`,
+      });
+    }
+    return proof.device;
+  });
+
+  /** Asks a member to link this environment, after proving it is that member. */
   const requestLink = Effect.fn("TailnetDevices.requestLink")(function* (
     device: TailnetDeviceDescriptor,
   ) {
@@ -390,28 +481,14 @@ const make = Effect.gen(function* () {
     if (device.environmentId === self.environmentId) {
       return yield* new TailnetDevicesError({ reason: "self", message: "That is this machine." });
     }
-    if ((yield* policy.accessFor(device.environmentId)) === "revoked") {
+    const access = yield* membership.accessOf(device.environmentId);
+    if (Option.isSome(access) && access.value === "revoked") {
       return yield* new TailnetDevicesError({
         reason: "revoked",
         message: `${device.label} is revoked. Restore it to link it again.`,
       });
     }
-    const tailnet = yield* identity.read;
-    if (Option.isNone(tailnet)) {
-      return yield* unreachable("Tailscale is not running on this machine.");
-    }
-    const current = yield* settings;
-    const proof = yield* prove(device.urls, device.environmentId, tailnet.value, current);
-    if (proof._tag === "refused") {
-      return yield* new TailnetDevicesError({
-        reason: proof.reason === "not_my_device" ? "forbidden" : "unreachable",
-        message:
-          proof.reason === "not_my_device"
-            ? `Tailscale does not say ${device.label} is one of your devices.`
-            : `${device.label} did not answer over Tailscale.`,
-      });
-    }
-    const issuer = proof.device;
+    const issuer = yield* proveTarget(device);
     if (!PeerLinks.linkLimitsHold(issuer.descriptor)) {
       return yield* unreachable(
         `${issuer.descriptor.label} runs a T3 Code version that cannot link automatically. Update it.`,
@@ -422,16 +499,7 @@ const make = Effect.gen(function* () {
         "This machine has no tailnet address another device can reach. Turn on Tailscale Serve.",
       );
     }
-    const challenge = yield* newChallenge;
-    const expiresAtMs = (yield* Clock.currentTimeMillis) + Duration.toMillis(CHALLENGE_TTL);
-    yield* Ref.update(pending, (current) =>
-      new Map(current).set(challenge, {
-        issuer: device.environmentId,
-        origin: issuer.origin,
-        label: issuer.descriptor.label,
-        expiresAtMs,
-      }),
-    );
+    const challenge = yield* holdChallenge(device.environmentId, issuer);
     const result = yield* clientFor(issuer.origin).pipe(
       Effect.flatMap((client) =>
         client.tailnetDevices.request({
@@ -442,13 +510,7 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) =>
         unreachable(`${issuer.descriptor.label} stopped answering while linking.`, cause),
       ),
-      Effect.ensuring(
-        Ref.update(pending, (current) => {
-          const next = new Map(current);
-          next.delete(challenge);
-          return next;
-        }),
-      ),
+      Effect.ensuring(dropChallenge(challenge)),
     );
     if (result.outcome === "refused") {
       return yield* new TailnetDevicesError({
@@ -456,6 +518,7 @@ const make = Effect.gen(function* () {
         message: `${issuer.descriptor.label} refused: ${REFUSAL_MESSAGES[result.reason]}`,
       });
     }
+    yield* membership.bindNode(device.environmentId, issuer.nodeId).pipe(Effect.ignore);
     yield* upsertDevice(
       {
         environmentId: device.environmentId,
@@ -545,6 +608,30 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** Proves a caller dialled back from its own claimed addresses, for this side's grant. */
+  const proveCaller = Effect.fn("TailnetDevices.proveCaller")(function* (
+    caller: TailnetDeviceDescriptor,
+  ) {
+    const tailnet = yield* identity.read;
+    if (Option.isNone(tailnet)) return { _tag: "refused" as const, reason: "unreachable" as const };
+    return yield* prove(
+      caller.urls,
+      caller.environmentId,
+      tailnet.value,
+      yield* boundNodeOf(caller.environmentId),
+    );
+  });
+
+  /** Asks the caller's proven address whether `challenge` is its own, pending for this side. */
+  const confirmAt = (device: ProvenDevice, challenge: string, self: TailnetDeviceDescriptor) =>
+    clientFor(device.origin).pipe(
+      Effect.flatMap((client) =>
+        client.tailnetDevices.confirm({ payload: { challenge, issuer: self } }),
+      ),
+      Effect.timeout(DESCRIBE_TIMEOUT),
+      Effect.option,
+    );
+
   const handleRequest: TailnetDevices["Service"]["handleRequest"] = Effect.fn(
     "TailnetDevices.handleRequest",
   )(
@@ -558,26 +645,24 @@ const make = Effect.gen(function* () {
       ) {
         return yield* refuse("wrong_issuer", requester);
       }
-      const access = yield* policy.accessFor(requester.environmentId);
-      if (access === "revoked") return yield* refuse("revoked", requester);
-      const tailnet = yield* identity.read;
-      if (Option.isNone(tailnet)) return yield* refuse("unreachable", requester);
-      const current = yield* settings;
-      const proof = yield* prove(requester.urls, requester.environmentId, tailnet.value, current);
+      const access = yield* membership.accessOf(requester.environmentId);
+      if (Option.isNone(access)) return yield* refuse("not_member", requester);
+      if (access.value === "revoked") return yield* refuse("revoked", requester);
+      const proof = yield* proveCaller(requester);
       if (proof._tag === "refused") return yield* refuse(proof.reason, requester);
       const device = proof.device;
       const client = yield* clientFor(device.origin).pipe(Effect.orDie);
       // Nothing is minted until the address's owner says the challenge is its own.
-      const confirmed = yield* client.tailnetDevices
-        .confirm({ payload: { challenge: request.challenge, issuer: self } })
-        .pipe(Effect.timeout(DESCRIBE_TIMEOUT), Effect.option);
+      const confirmed = yield* confirmAt(device, request.challenge, self);
       if (Option.isNone(confirmed)) return yield* refuse("unreachable", requester);
       if (!confirmed.value.accepted) return yield* refuse("grant_rejected", requester);
+      yield* membership.bindNode(requester.environmentId, device.nodeId).pipe(Effect.ignore);
       const issued = yield* auth
         .issueMcpClientSession({
           label: `T3 Code · ${device.descriptor.label}`,
-          access,
+          access: access.value,
           peerLink: true,
+          member: true,
           peerEnvironmentId: requester.environmentId,
           client: { deviceType: "bot" },
         })
@@ -589,7 +674,7 @@ const make = Effect.gen(function* () {
             challenge: request.challenge,
             issuer: self,
             token: issued.value.token,
-            access,
+            access: access.value,
             expiresAt: DateTime.toUtc(issued.value.expiresAt),
           },
         })
@@ -652,12 +737,14 @@ const make = Effect.gen(function* () {
     return {
       from: yield* selfDescriptor,
       devices: yield* knownDescriptors,
-      policy: yield* policy.entries.pipe(Effect.orElseSucceed(() => [])),
-      settings: yield* settings,
+      members: yield* membership.members.pipe(Effect.orElseSucceed(() => [])),
     } satisfies TailnetDevicesSyncPayload;
   });
 
-  /** Takes a linked device's hints and replica; a device it revoked is cut off here too. */
+  /**
+   * Takes a member's hints and roster. Roster writes count only from a sender that is a
+   * full-access member here; a member it revoked is cut off here too.
+   */
   const mergeSync = Effect.fn("TailnetDevices.mergeSync")(function* (
     payload: TailnetDevicesSyncPayload,
     sender: EnvironmentId,
@@ -668,43 +755,57 @@ const make = Effect.gen(function* () {
       addHint,
       { discard: true },
     );
-    const revoked = yield* policy.merge(sender, payload);
+    const access = yield* membership.accessOf(sender);
+    if (Option.isNone(access) || access.value !== "full-access") return;
+    const revoked = yield* membership.merge(sender, payload.members);
     yield* Effect.forEach(revoked, cutOff, { discard: true });
   });
 
-  const handleSync: TailnetDevices["Service"]["handleSync"] = Effect.fn(
-    "TailnetDevices.handleSync",
-  )(function* (request, payload) {
-    yield* authenticateDevice(request, payload.from.environmentId);
-    yield* mergeSync(payload, payload.from.environmentId).pipe(
-      Effect.tapError((cause) => Effect.logWarning("Could not merge a device's sync", { cause })),
-      Effect.ignore,
-    );
-    return yield* syncPayload;
-  });
-
-  /** The device session a linked device holds here, by the id it claims. */
-  const authenticateDevice = Effect.fn("TailnetDevices.authenticateDevice")(function* (
+  /** The member session a machine holds here; a pairing-code link is never one. */
+  const authenticateMember = Effect.fn("TailnetDevices.authenticateMember")(function* (
     request: HttpServerRequest.HttpServerRequest,
     claimed: EnvironmentId,
   ) {
     const caller = yield* auth.authenticateMcpClient(request).pipe(Effect.option);
-    if (Option.isNone(caller) || caller.value.peerEnvironmentId !== claimed) {
+    if (
+      Option.isNone(caller) ||
+      !caller.value.member ||
+      caller.value.peerEnvironmentId !== claimed
+    ) {
       return yield* new TailnetDevicesUnauthorizedError({
-        message: "This needs the session this machine issued to the calling device.",
+        message: "This needs the member session this machine issued to the calling machine.",
       });
     }
     return caller.value;
   });
 
+  const handleSync: TailnetDevices["Service"]["handleSync"] = Effect.fn(
+    "TailnetDevices.handleSync",
+  )(function* (request, payload) {
+    yield* authenticateMember(request, payload.from.environmentId);
+    yield* mergeSync(payload, payload.from.environmentId).pipe(
+      Effect.tapError((cause) => Effect.logWarning("Could not merge a member's sync", { cause })),
+      Effect.ignore,
+    );
+    return yield* syncPayload;
+  });
+
   const handleClientCredential: TailnetDevices["Service"]["handleClientCredential"] = Effect.fn(
     "TailnetDevices.handleClientCredential",
   )(function* (request, payload) {
-    const caller = yield* authenticateDevice(request, payload.from);
+    const caller = yield* authenticateMember(request, payload.from);
     const self = yield* selfDescriptor;
+    // The asking app's own grant, within what the asking machine may do here.
+    const allowed = new Set<AuthGrantScope>(clientScopesFor(caller.access));
+    const scopes = payload.scopes.filter((scope) => allowed.has(scope));
+    if (scopes.length === 0) {
+      return yield* new TailnetDevicesUnauthorizedError({
+        message: "The app that asked holds nothing this machine could grant.",
+      });
+    }
     const issued = yield* auth
       .issuePairingCredential({
-        scopes: clientScopesFor(caller.access),
+        scopes,
         label: `Opened from ${caller.label.replace(/^T3 Code · /u, "")}`,
       })
       .pipe(Effect.orDie);
@@ -718,7 +819,7 @@ const make = Effect.gen(function* () {
 
   const openDevice: TailnetDevices["Service"]["openDevice"] = Effect.fn(
     "TailnetDevices.openDevice",
-  )(function* (environmentId) {
+  )(function* (environmentId, caller) {
     const self = yield* environment.getEnvironmentId;
     if (environmentId === self) {
       return yield* new TailnetDevicesError({
@@ -726,7 +827,8 @@ const make = Effect.gen(function* () {
         message: "This machine is already the one you are using.",
       });
     }
-    if ((yield* policy.accessFor(environmentId)) === "revoked") {
+    const access = yield* membership.accessOf(environmentId);
+    if (Option.isSome(access) && access.value === "revoked") {
       return yield* new TailnetDevicesError({
         reason: "revoked",
         message: "That device is revoked. Restore it to open it.",
@@ -740,7 +842,9 @@ const make = Effect.gen(function* () {
       );
       return yield* PeerLinks.peerApiClient(authorized, resolved.url).pipe(
         Effect.flatMap((client) =>
-          client.tailnetDevices.clientCredential({ payload: { from: self } }),
+          client.tailnetDevices.clientCredential({
+            payload: { from: self, scopes: caller.scopes.filter(isGrantScope) },
+          }),
         ),
         Effect.timeout(DESCRIBE_TIMEOUT),
       );
@@ -766,19 +870,10 @@ const make = Effect.gen(function* () {
     return credential;
   });
 
-  /** Exchanges device hints with a linked device; a refused token starts a new handshake. */
+  /** Exchanges the roster and hints with a linked member; a refused token starts a new handshake. */
   const syncWith = Effect.fn("TailnetDevices.syncWith")(
     function* (link: PeerLink) {
-      const resolved = yield* links.resolve(link.environmentId);
-      const authorized = HttpClient.mapRequest(
-        httpClient,
-        HttpClientRequest.bearerToken(resolved.token),
-      );
-      const payload = yield* syncPayload;
-      const answer = yield* PeerLinks.peerApiClient(authorized, resolved.url).pipe(
-        Effect.flatMap((client) => client.tailnetDevices.sync({ payload })),
-        Effect.timeout(DESCRIBE_TIMEOUT),
-      );
+      const answer = yield* fetchSync(link.environmentId);
       yield* mergeSync(answer, link.environmentId);
     },
     (effect, link) =>
@@ -793,6 +888,21 @@ const make = Effect.gen(function* () {
         Effect.ignore,
       ),
   );
+
+  const fetchSync = Effect.fn("TailnetDevices.fetchSync")(function* (
+    environmentId: EnvironmentId,
+  ) {
+    const resolved = yield* links.resolve(environmentId);
+    const authorized = HttpClient.mapRequest(
+      httpClient,
+      HttpClientRequest.bearerToken(resolved.token),
+    );
+    const payload = yield* syncPayload;
+    return yield* PeerLinks.peerApiClient(authorized, resolved.url).pipe(
+      Effect.flatMap((client) => client.tailnetDevices.sync({ payload })),
+      Effect.timeout(DESCRIBE_TIMEOUT),
+    );
+  });
 
   const descriptorFor = Effect.fn("TailnetDevices.descriptorFor")(function* (
     environmentId: EnvironmentId,
@@ -813,6 +923,8 @@ const make = Effect.gen(function* () {
   const refresh: TailnetDevices["Service"]["refresh"] = Effect.fn("TailnetDevices.refresh")(
     function* (environmentId) {
       if (!(yield* enabled)) return;
+      const access = yield* membership.accessOf(environmentId);
+      if (Option.isNone(access) || access.value === "revoked") return;
       const device = yield* descriptorFor(environmentId);
       if (Option.isNone(device)) return;
       yield* requestLink(device.value);
@@ -826,32 +938,208 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  const admit: TailnetDevices["Service"]["admit"] = Effect.fn("TailnetDevices.admit")(
+    function* (environmentId, access) {
+      if (!(yield* enabled)) {
+        return yield* new TailnetDevicesError({
+          reason: "forbidden",
+          message: "Linked environments is off on this machine.",
+        });
+      }
+      const self = yield* selfDescriptor;
+      if (environmentId === self.environmentId) {
+        return yield* new TailnetDevicesError({ reason: "self", message: "That is this machine." });
+      }
+      yield* requireAdmin();
+      const device = yield* descriptorFor(environmentId);
+      if (Option.isNone(device)) {
+        return yield* new TailnetDevicesError({
+          reason: "unknown_device",
+          message: "That machine has not been found on your tailnet.",
+        });
+      }
+      // An explicit add may rebind a machine that moved to a new node, so the old binding is not
+      // required here; Tailscale must still prove the owner's node answers as that machine.
+      const tailnet = yield* identity.read;
+      if (Option.isNone(tailnet)) {
+        return yield* unreachable("Tailscale is not running on this machine.");
+      }
+      const proof = yield* prove(device.value.urls, environmentId, tailnet.value, null);
+      if (proof._tag === "refused") {
+        return yield* new TailnetDevicesError({
+          reason: proof.reason === "not_my_device" ? "forbidden" : "unreachable",
+          message:
+            proof.reason === "not_my_device"
+              ? `Tailscale does not say ${device.value.label} is one of your devices.`
+              : `${device.value.label} did not answer over Tailscale.`,
+        });
+      }
+      const target = proof.device;
+      const previous = yield* membership.member(environmentId);
+      if ((yield* membership.members).length === 0) {
+        // Starting a network: this machine is its first full-access member.
+        yield* membership.put({
+          environmentId: self.environmentId,
+          label: self.label,
+          nodeId: tailnet.value.self.nodeId,
+          access: "full-access",
+        });
+      }
+      const entry = yield* membership.put({
+        environmentId,
+        label: target.descriptor.label,
+        nodeId: target.nodeId,
+        access,
+      });
+      yield* upsertDevice(
+        { environmentId, label: target.descriptor.label, urls: [target.origin] },
+        { tailnetName: target.nodeName, at: yield* DateTime.now },
+      );
+      const challenge = yield* holdChallenge(environmentId, target);
+      const joined = yield* clientFor(target.origin).pipe(
+        Effect.flatMap((client) =>
+          client.tailnetDevices.join({
+            payload: { admitter: self, memberEnvironmentId: environmentId, challenge },
+          }),
+        ),
+        Effect.timeout(REQUEST_TIMEOUT),
+        Effect.mapError((cause) =>
+          unreachable(`${target.descriptor.label} stopped answering while joining.`, cause),
+        ),
+        Effect.ensuring(dropChallenge(challenge)),
+        Effect.tapError(() => (Option.isNone(previous) ? membership.forget(environmentId) : Effect.void)),
+      );
+      if (joined.outcome === "refused") {
+        // The machine kept its own choice; a new entry it declined is not shared.
+        if (Option.isNone(previous)) yield* membership.forget(environmentId);
+        return yield* new TailnetDevicesError({
+          reason: joined.reason === "revoked" ? "revoked" : "forbidden",
+          message: `${target.descriptor.label} did not join: ${REFUSAL_MESSAGES[joined.reason]}`,
+        });
+      }
+      if (!(yield* hasUsableLink(environmentId))) {
+        yield* requestLink({
+          environmentId,
+          label: target.descriptor.label,
+          urls: [target.origin],
+        });
+      }
+      yield* push;
+      return entry;
+    },
+  );
+
+  const handleJoin: TailnetDevices["Service"]["handleJoin"] = Effect.fn(
+    "TailnetDevices.handleJoin",
+  )(
+    function* (request) {
+      const admitter = request.admitter;
+      if (!(yield* enabled)) return yield* refuse("disabled", admitter);
+      const self = yield* selfDescriptor;
+      if (
+        request.memberEnvironmentId !== self.environmentId ||
+        admitter.environmentId === self.environmentId
+      ) {
+        return yield* refuse("wrong_issuer", admitter);
+      }
+      // A machine that refused the admitter, or belongs to a network it is not an admin of,
+      // keeps its own choice: same account is not consent.
+      const roster = yield* membership.members.pipe(Effect.orElseSucceed(() => []));
+      const admitterAccess = yield* membership.accessOf(admitter.environmentId);
+      if (Option.isSome(admitterAccess) && admitterAccess.value === "revoked") {
+        return yield* refuse("revoked", admitter);
+      }
+      const others = roster.filter((member) => member.environmentId !== self.environmentId);
+      if (
+        others.length > 0 &&
+        (Option.isNone(admitterAccess) || admitterAccess.value !== "full-access")
+      ) {
+        return yield* refuse("other_network", admitter);
+      }
+      const proof = yield* proveCaller(admitter);
+      if (proof._tag === "refused") return yield* refuse(proof.reason, admitter);
+      const confirmed = yield* confirmAt(proof.device, request.challenge, self);
+      if (Option.isNone(confirmed)) return yield* refuse("unreachable", admitter);
+      if (!confirmed.value.accepted) return yield* refuse("grant_rejected", admitter);
+      if (others.length > 0) return { outcome: "granted" } satisfies TailnetLinkResult;
+      // The admitter is proven; take its roster, which must name this machine on its own node.
+      const tailnet = yield* identity.read;
+      const ownNode = Option.isSome(tailnet) ? tailnet.value.self.nodeId : null;
+      const adopted = yield* Effect.gen(function* () {
+        // Seeded first so the admitter's handshake below finds itself a member.
+        yield* membership.adopt([
+          {
+            environmentId: admitter.environmentId,
+            label: proof.device.descriptor.label,
+            nodeId: proof.device.nodeId,
+            access: "full-access",
+            updatedAt: seedStamp(admitter.environmentId),
+          },
+        ]);
+        yield* requestLink({
+          environmentId: admitter.environmentId,
+          label: proof.device.descriptor.label,
+          urls: [proof.device.origin],
+        });
+        const offered = yield* fetchSync(admitter.environmentId);
+        const mine = offered.members.find((member) => member.environmentId === self.environmentId);
+        if (
+          mine === undefined ||
+          mine.access === "revoked" ||
+          (mine.nodeId !== null && ownNode !== null && mine.nodeId !== ownNode)
+        ) {
+          return false;
+        }
+        yield* membership.adopt(offered.members);
+        return true;
+      }).pipe(
+        Effect.tapError((cause) => Effect.logInfo("Could not join a network", { cause })),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!adopted) {
+        // Nothing was joined, so the admitter is not trusted here after all.
+        yield* membership.forget(admitter.environmentId).pipe(Effect.ignore);
+        yield* links.unlink(admitter.environmentId).pipe(Effect.ignore);
+        yield* sessions.revokeByPeerEnvironment(admitter.environmentId).pipe(Effect.ignore);
+        return yield* refuse("grant_rejected", admitter);
+      }
+      return { outcome: "granted" } satisfies TailnetLinkResult;
+    },
+    Effect.timeoutOption(HANDSHAKE_TIMEOUT),
+    Effect.map(
+      Option.getOrElse((): TailnetLinkResult => ({ outcome: "refused", reason: "unreachable" })),
+    ),
+  );
+
   const linkIfMine: TailnetDevices["Service"]["linkIfMine"] = Effect.fn(
     "TailnetDevices.linkIfMine",
   )(
     function* (target) {
       if (!(yield* enabled)) return Option.none<PeerLink>();
+      let device: Option.Option<TailnetDeviceDescriptor>;
       if (target.environmentId !== undefined) {
-        const device = yield* descriptorFor(target.environmentId);
-        if (Option.isNone(device)) return Option.none<PeerLink>();
-        return Option.some(yield* requestLink(device.value));
-      }
-      if (target.url === undefined) return Option.none<PeerLink>();
-      const tailnet = yield* identity.read;
-      if (Option.isNone(tailnet)) return Option.none<PeerLink>();
-      const located = identity.locate(target.url, tailnet.value);
-      if (Option.isNone(located)) return Option.none<PeerLink>();
-      const descriptor = yield* describe(located.value.origin, DESCRIBE_TIMEOUT);
-      if (Option.isNone(descriptor)) return Option.none<PeerLink>();
-      return Option.some(
-        yield* requestLink({
+        device = yield* descriptorFor(target.environmentId);
+      } else {
+        if (target.url === undefined) return Option.none<PeerLink>();
+        const tailnet = yield* identity.read;
+        if (Option.isNone(tailnet)) return Option.none<PeerLink>();
+        const located = identity.locate(target.url, tailnet.value);
+        if (Option.isNone(located)) return Option.none<PeerLink>();
+        const descriptor = yield* describe(located.value.origin, DESCRIBE_TIMEOUT);
+        if (Option.isNone(descriptor)) return Option.none<PeerLink>();
+        device = Option.some({
           environmentId: descriptor.value.environmentId,
           label: descriptor.value.label,
           urls: [located.value.origin],
-        }),
-      );
+        });
+      }
+      if (Option.isNone(device)) return Option.none<PeerLink>();
+      const access = yield* membership.accessOf(device.value.environmentId);
+      // Only members link without a code; anything else is the user's call on a card.
+      if (Option.isNone(access) || access.value === "revoked") return Option.none<PeerLink>();
+      return Option.some(yield* requestLink(device.value));
     },
-    // Not one of mine, or not answering: the caller offers the pairing-code card instead.
+    // Not a member, or not answering: the caller offers the pairing-code card instead.
     Effect.tapError((cause) => Effect.logInfo("Direct tailnet link failed", { cause })),
     Effect.orElseSucceed(() => Option.none<PeerLink>()),
   );
@@ -873,6 +1161,24 @@ const make = Effect.gen(function* () {
             ),
       ),
     );
+
+  /** A machine upgraded from the device policy is a full-access member until a real write says otherwise. */
+  const seedSelf = Effect.gen(function* () {
+    const roster = yield* membership.members;
+    const self = yield* selfDescriptor;
+    if (roster.length === 0 || roster.some((member) => member.environmentId === self.environmentId)) {
+      return;
+    }
+    yield* membership.adopt([
+      {
+        environmentId: self.environmentId,
+        label: self.label,
+        nodeId: null,
+        access: "full-access",
+        updatedAt: seedStamp(self.environmentId),
+      },
+    ]);
+  }).pipe(Effect.ignore);
 
   const scan: TailnetDevices["Service"]["scan"] = Effect.gen(function* () {
     if (!(yield* enabled)) return;
@@ -898,7 +1204,8 @@ const make = Effect.gen(function* () {
         !linkedNodes.has(peer.nodeName),
     );
     const now = yield* DateTime.now;
-    const found = yield* Effect.forEach(
+    // Found machines are only listed, for the owner to add; nothing links to them.
+    yield* Effect.forEach(
       candidates,
       (peer) =>
         probe(identity.probeUrls(peer)).pipe(
@@ -915,28 +1222,21 @@ const make = Effect.gen(function* () {
                 ),
           ),
         ),
-      { concurrency: PROBE_CONCURRENCY },
+      { concurrency: PROBE_CONCURRENCY, discard: true },
     );
-    const toLink = new Set(
-      found.flatMap((answer) =>
-        Option.isSome(answer) && answer.value.descriptor.environmentId !== self
-          ? [answer.value.descriptor.environmentId]
-          : [],
-      ),
-    );
-    // Gossip first: a linked device may know addresses the scan cannot guess.
+    // Gossip first: a linked member may know addresses the scan cannot guess.
     const current = yield* links.stored.pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
       current.filter((link) => link.origin === "tailnet"),
       syncWith,
       { concurrency: PROBE_CONCURRENCY, discard: true },
     );
-    for (const device of yield* knownDescriptors) {
-      if (device.environmentId !== self) toLink.add(device.environmentId);
-    }
+    const roster = yield* membership.members.pipe(Effect.orElseSucceed(() => []));
     // Probing and gossip can take a while; a pairing that ran out meanwhile has expired.
     const checkedAt = yield* DateTime.now;
-    for (const environmentId of toLink) {
+    for (const member of roster) {
+      const environmentId = member.environmentId;
+      if (environmentId === self || member.access === "revoked") continue;
       const link = current.find((candidate) => candidate.environmentId === environmentId);
       // A pairing-code link is the user's choice; only tailnet links are made or renewed here.
       if (
@@ -947,12 +1247,12 @@ const make = Effect.gen(function* () {
         continue;
       }
       if (yield* hasUsableLink(environmentId)) continue;
-      if ((yield* policy.accessFor(environmentId)) === "revoked") continue;
       yield* refresh(environmentId);
     }
   }).pipe(Effect.withSpan("TailnetDevices.scan"));
 
   const start: TailnetDevices["Service"]["start"] = Effect.gen(function* () {
+    yield* seedSelf;
     const signatureOf = (tailnet: Option.Option<Tailnet>) =>
       Option.isNone(tailnet)
         ? ""
@@ -982,13 +1282,14 @@ const make = Effect.gen(function* () {
 
   const list: TailnetDevices["Service"]["list"] = Effect.gen(function* () {
     const self = yield* selfDescriptor;
-    const current = yield* settings;
     const rows = yield* readDevices;
     const linked = yield* links.list.pipe(Effect.mapError(storageError));
     const incoming = yield* auth.listSessions().pipe(Effect.mapError(storageError));
-    const entries = yield* policy.entries;
+    const roster = yield* membership.members;
+    const localLimits = yield* membership.limits;
     const now = yield* DateTime.now;
     const ids = new Set<string>([
+      ...roster.map((member) => member.environmentId),
       ...rows.map((row) => row.environment_id),
       ...linked.map((link) => link.environmentId),
       ...incoming.flatMap((session) =>
@@ -1001,7 +1302,8 @@ const make = Effect.gen(function* () {
       const environmentId = id as EnvironmentId;
       const row = rows.find((candidate) => candidate.environment_id === id);
       const link = linked.find((candidate) => candidate.environmentId === id);
-      const entry = entries.find((candidate) => candidate.environmentId === id);
+      const member = roster.find((candidate) => candidate.environmentId === id) ?? null;
+      const localLimit = localLimits.get(environmentId) ?? null;
       const lastSeenAt = row?.last_seen_at == null ? null : DateTime.makeUnsafe(row.last_seen_at);
       const seenRecently =
         lastSeenAt !== null &&
@@ -1010,12 +1312,21 @@ const make = Effect.gen(function* () {
           DateTime.subtract(now, { milliseconds: Duration.toMillis(ONLINE_WINDOW) }),
         );
       const label =
+        member?.label ??
         link?.label ??
         row?.label ??
         incoming
           .find((session) => session.peerEnvironmentId === id)
           ?.client.label?.replace(/^T3 Code · /u, "") ??
         id;
+      const access: TailnetDeviceAccess | null =
+        member === null
+          ? link?.origin === "paired"
+            ? link.access
+            : null
+          : member.access === "revoked" || localLimit === null
+            ? member.access
+            : Membership.narrowerAccess(member.access, localLimit);
       devices.push({
         environmentId,
         label,
@@ -1025,13 +1336,14 @@ const make = Effect.gen(function* () {
             ? []
             : yield* decodeUrls(row.urls_json).pipe(Effect.orElseSucceed(() => []))),
         status:
-          entry?.access === "revoked"
+          member?.access === "revoked"
             ? "revoked"
             : link?.status === "reachable" || seenRecently
               ? "online"
               : "offline",
-        access: entry?.access ?? (link?.origin === "paired" ? link.access : current.defaultAccess),
-        policy: entry ?? null,
+        access,
+        member,
+        localLimit,
         outgoing: link?.origin ?? null,
         incoming: incoming.some((session) => session.peerEnvironmentId === id),
         tailnetName: row?.tailnet_name ?? null,
@@ -1040,20 +1352,20 @@ const make = Effect.gen(function* () {
     }
     return {
       self,
-      settings: current,
+      selfMember: roster.find((member) => member.environmentId === self.environmentId) ?? null,
       devices: devices.toSorted((a, b) => a.label.localeCompare(b.label)),
     } satisfies TailnetDevicesSnapshot;
   }).pipe(Effect.withSpan("TailnetDevices.list"));
 
   return TailnetDevices.of({
-    settings,
-    updateSettings,
     list,
+    admit,
     setAccess,
     linkIfMine,
     openDevice,
     refresh,
     handleRequest,
+    handleJoin,
     handleConfirm,
     handleGrant,
     handleSync,

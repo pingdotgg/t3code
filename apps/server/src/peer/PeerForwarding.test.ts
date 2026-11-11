@@ -3,7 +3,6 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  DEFAULT_TAILNET_DEVICES_SETTINGS,
   EnvironmentId,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
@@ -286,7 +285,7 @@ const makeLaptop = Effect.gen(function* () {
   const layerDevices = Layer.mock(TailnetDevices.TailnetDevices)({
     list: Effect.succeed({
       self: { environmentId: laptop.environmentId, label: laptop.label, urls: [] },
-      settings: DEFAULT_TAILNET_DEVICES_SETTINGS,
+      selfMember: null,
       devices: [
         {
           environmentId: desk,
@@ -294,7 +293,8 @@ const makeLaptop = Effect.gen(function* () {
           urls: [],
           status: "revoked",
           access: "revoked",
-          policy: null,
+          member: null,
+          localLimit: null,
           outgoing: null,
           incoming: false,
           tailnetName: "desk",
@@ -306,9 +306,10 @@ const makeLaptop = Effect.gen(function* () {
       Ref.update(accessSet, (seen) => [...seen, [environmentId, access] as const]).pipe(
         Effect.as({
           environmentId,
+          label: "Desk",
+          nodeId: null,
           access,
           updatedAt: { wallMs: 1, counter: 0, node: laptop.environmentId },
-          updatedBy: laptop.environmentId,
         }),
       ),
   });

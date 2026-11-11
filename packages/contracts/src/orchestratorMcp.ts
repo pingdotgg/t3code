@@ -776,8 +776,8 @@ export const OrchestratorMcpTailnetDevice = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
   status: TailnetDeviceStatus,
-  /** What it may do on the user's machines; revoked: cut off everywhere. */
-  access: TailnetDeviceAccess,
+  /** What it may do here; revoked: cut off everywhere; null: not in the user's network. */
+  access: Schema.NullOr(TailnetDeviceAccess),
   /** This environment links to it, and how; null: not linked from here. */
   outgoing: Schema.NullOr(PeerLinkOrigin),
   /** It holds a live session here. */

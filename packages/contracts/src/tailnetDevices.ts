@@ -1,17 +1,14 @@
 import * as Schema from "effect/Schema";
 
-import { AuthMcpClientAccess } from "./auth.ts";
+import { AuthGrantScope, AuthMcpClientAccess } from "./auth.ts";
 import { EnvironmentId, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
- * Tailnet devices are one owner's T3 servers on their tailnet, linked automatically. Another server
- * is "my device" when Tailscale says its node is untagged and owned by the same
- * user. The side that grants access proves that by dialling the requester back,
- * so no inbound header or source address is ever trusted.
+ * The owner's network of T3 servers on their tailnet. Membership is an explicit roster every
+ * member replicates; Tailscale only proves which node answers an address, never what it may do.
+ * The side that grants access dials the other back, so no inbound header or source address is
+ * ever trusted.
  */
-
-/** The Tailscale app capability that, when required, marks a node as one of my devices. */
-export const TAILNET_DEVICE_CAPABILITY = "t3.codes/device";
 
 /** A hybrid logical clock stamp. Replicated writes merge last-writer-wins by it. */
 export const TailnetHlc = Schema.Struct({
@@ -22,40 +19,20 @@ export const TailnetHlc = Schema.Struct({
 });
 export type TailnetHlc = typeof TailnetHlc.Type;
 
-/** What a device may do here. `revoked` is a tombstone: no sessions, no handshakes. */
+/** What a member may do here. `revoked` is a tombstone: no sessions, no handshakes. */
 export const TailnetDeviceAccess = Schema.Literals([...AuthMcpClientAccess.literals, "revoked"]);
 export type TailnetDeviceAccess = typeof TailnetDeviceAccess.Type;
 
-export const DevicePolicyEntry = Schema.Struct({
+/** One machine in the roster. Every member holds the same roster, merged by `updatedAt`. */
+export const NetworkMember = Schema.Struct({
   environmentId: EnvironmentId,
+  label: Schema.String,
+  /** Tailscale's stable node id. Null until the first handshake after an upgrade binds it. */
+  nodeId: Schema.NullOr(TrimmedNonEmptyString),
   access: TailnetDeviceAccess,
   updatedAt: TailnetHlc,
-  /** The device whose user made the change. */
-  updatedBy: EnvironmentId,
 });
-export type DevicePolicyEntry = typeof DevicePolicyEntry.Type;
-
-/** Settings shared by all my tailnet devices, replicated like the policy. */
-export const TailnetDevicesSettings = Schema.Struct({
-  /** Link my tailnet devices automatically. */
-  autoLink: Schema.Boolean,
-  /** The access a newly found device gets until someone changes it. */
-  defaultAccess: AuthMcpClientAccess,
-  /** Only nodes granted the `t3.codes/device` capability count as my devices. */
-  requireCapability: Schema.Boolean,
-  /** Absent until someone first changes a setting. */
-  updatedAt: Schema.NullOr(TailnetHlc),
-  updatedBy: Schema.NullOr(EnvironmentId),
-});
-export type TailnetDevicesSettings = typeof TailnetDevicesSettings.Type;
-
-export const DEFAULT_TAILNET_DEVICES_SETTINGS: TailnetDevicesSettings = {
-  autoLink: true,
-  defaultAccess: "full-access",
-  requireCapability: false,
-  updatedAt: null,
-  updatedBy: null,
-};
+export type NetworkMember = typeof NetworkMember.Type;
 
 /** How this environment's outgoing link to a peer was made. */
 export const PeerLinkOrigin = Schema.Literals(["tailnet", "paired"]);
@@ -89,6 +66,12 @@ export type TailnetLinkRequest = typeof TailnetLinkRequest.Type;
 export const TailnetLinkRefusal = Schema.Literals([
   "disabled",
   "not_my_device",
+  /** Not in the roster here: same account is not permission. */
+  "not_member",
+  /** In the roster, but bound to another Tailscale node. */
+  "node_mismatch",
+  /** Already a member of another network, which joining would merge. */
+  "other_network",
   "revoked",
   "wrong_issuer",
   "unreachable",
@@ -103,6 +86,18 @@ export const TailnetLinkResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("refused"), reason: TailnetLinkRefusal }),
 ]);
 export type TailnetLinkResult = typeof TailnetLinkResult.Type;
+
+/**
+ * Admitter to a machine it just added to the network: "join". The machine dials the admitter
+ * back, confirms the challenge there, and only then takes the roster it is offered.
+ */
+export const TailnetJoinRequest = Schema.Struct({
+  admitter: TailnetDeviceDescriptor,
+  /** The machine the admitter means; another environment refuses. */
+  memberEnvironmentId: EnvironmentId,
+  challenge: TailnetChallenge,
+});
+export type TailnetJoinRequest = typeof TailnetJoinRequest.Type;
 
 /**
  * Issuer to requester, before minting anything: is this challenge yours, and
@@ -128,14 +123,13 @@ export const TailnetGrantResult = Schema.Struct({ accepted: Schema.Boolean });
 export type TailnetGrantResult = typeof TailnetGrantResult.Type;
 
 /**
- * Exchanged over a tailnet device session: device hints (each still proven by its own
- * handshake), the policy and the settings. Each side merges what it receives.
+ * Exchanged over a member session: the roster and address hints (each still proven by its own
+ * handshake). A receiver takes roster writes only from a sender that is full access there.
  */
 export const TailnetDevicesSyncPayload = Schema.Struct({
   from: TailnetDeviceDescriptor,
   devices: Schema.Array(TailnetDeviceDescriptor),
-  policy: Schema.Array(DevicePolicyEntry),
-  settings: TailnetDevicesSettings,
+  members: Schema.Array(NetworkMember),
 });
 export type TailnetDevicesSyncPayload = typeof TailnetDevicesSyncPayload.Type;
 
@@ -148,20 +142,29 @@ export const TailnetDeviceClientCredential = Schema.Struct({
 });
 export type TailnetDeviceClientCredential = typeof TailnetDeviceClientCredential.Type;
 
-/** Server to one of my devices, over its device session: a credential for my app. */
-export const TailnetDeviceClientCredentialRequest = Schema.Struct({ from: EnvironmentId });
+/**
+ * Server to another member, over its member session: a credential for the app that asked. The
+ * credential never exceeds `scopes`, the asking app's own grant on the server relaying it.
+ */
+export const TailnetDeviceClientCredentialRequest = Schema.Struct({
+  from: EnvironmentId,
+  scopes: Schema.Array(AuthGrantScope),
+});
 export type TailnetDeviceClientCredentialRequest = typeof TailnetDeviceClientCredentialRequest.Type;
 
 export const TailnetDeviceStatus = Schema.Literals(["online", "offline", "revoked"]);
 export type TailnetDeviceStatus = typeof TailnetDeviceStatus.Type;
 
-/** One of my devices as this environment sees it, merging tailnet devices and paired links. */
+/** A machine as this environment sees it, merging the roster, tailnet finds and paired links. */
 export const TailnetDevice = Schema.Struct({
   ...TailnetDeviceDescriptor.fields,
   status: TailnetDeviceStatus,
-  /** The policy's access, or the default when nobody set one. */
-  access: TailnetDeviceAccess,
-  policy: Schema.NullOr(DevicePolicyEntry),
+  /** Its access here: the roster's, narrowed by this machine's limit; a paired link's otherwise. */
+  access: Schema.NullOr(TailnetDeviceAccess),
+  /** Its roster entry. Null for a machine that is not in the network. */
+  member: Schema.NullOr(NetworkMember),
+  /** A narrower limit this machine alone keeps for it. */
+  localLimit: Schema.NullOr(AuthMcpClientAccess),
   /** This environment holds a link to the device, and how it was made. */
   outgoing: Schema.NullOr(PeerLinkOrigin),
   /** The device holds a live session here. */
@@ -174,7 +177,8 @@ export type TailnetDevice = typeof TailnetDevice.Type;
 
 export const TailnetDevicesSnapshot = Schema.Struct({
   self: TailnetDeviceDescriptor,
-  settings: TailnetDevicesSettings,
+  /** This machine's own roster entry. Null until it creates or joins a network. */
+  selfMember: Schema.NullOr(NetworkMember),
   devices: Schema.Array(TailnetDevice),
 });
 export type TailnetDevicesSnapshot = typeof TailnetDevicesSnapshot.Type;
@@ -186,12 +190,12 @@ export const TailnetDeviceSetAccessInput = Schema.Struct({
 });
 export type TailnetDeviceSetAccessInput = typeof TailnetDeviceSetAccessInput.Type;
 
-export const TailnetDevicesUpdateSettingsInput = Schema.Struct({
-  autoLink: Schema.optionalKey(Schema.Boolean),
-  defaultAccess: Schema.optionalKey(AuthMcpClientAccess),
-  requireCapability: Schema.optionalKey(Schema.Boolean),
+/** Adds a machine found on the tailnet to the whole network, at `access`. */
+export const TailnetDeviceAdmitInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  access: AuthMcpClientAccess,
 });
-export type TailnetDevicesUpdateSettingsInput = typeof TailnetDevicesUpdateSettingsInput.Type;
+export type TailnetDeviceAdmitInput = typeof TailnetDeviceAdmitInput.Type;
 
 export const TailnetDeviceOpenInput = Schema.Struct({ environmentId: EnvironmentId });
 export type TailnetDeviceOpenInput = typeof TailnetDeviceOpenInput.Type;

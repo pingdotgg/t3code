@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthOrchestrationReadScope,
@@ -12,7 +13,6 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
-  TAILNET_DEVICE_CAPABILITY,
 } from "@t3tools/contracts";
 import type { Tailnet, TailnetPeer, TailnetWhois } from "@t3tools/tailscale";
 import * as Clock from "effect/Clock";
@@ -24,6 +24,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -39,8 +40,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerHttp from "../http.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as DevicePolicy from "./DevicePolicy.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as Membership from "./Membership.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf } from "./PeerLinks.testkit.ts";
 import * as TailnetDevices from "./TailnetDevices.ts";
@@ -74,6 +75,7 @@ const makeTailnet = Effect.gen(function* () {
         Effect.map((listed) =>
           Option.some<Tailnet>({
             self: {
+              nodeId: null,
               userId: selfUserId,
               magicDnsName: null,
               tailnetAddresses: [],
@@ -109,6 +111,7 @@ const makeTailnet = Effect.gen(function* () {
       return new Map(nodes).set(origin, {
         address,
         whois: {
+          nodeId: `nNode${nodes.size + 1}CNTRL`,
           userId: OWNER,
           loginName: "owner@example.com",
           nodeName: `node-${nodes.size + 1}`,
@@ -124,6 +127,7 @@ const makeTailnet = Effect.gen(function* () {
       ...listed,
       {
         peer: {
+          nodeId: null,
           nodeName,
           magicDnsName: null,
           tailnetAddresses: [],
@@ -135,16 +139,25 @@ const makeTailnet = Effect.gen(function* () {
         probe,
       },
     ]);
-  return { identityFor, join, announce };
+  /** Tailscale's name for the node serving `origin`. */
+  const nameOf = (origin: string) => Ref.getUnsafe(byOrigin).get(origin)?.whois.nodeName ?? origin;
+  return { identityFor, join, announce, nameOf };
 });
 
 type FakeTailnet = Effect.Success<typeof makeTailnet>;
+
+interface DeviceOptions {
+  readonly userId?: string;
+  readonly devUrl?: URL;
+  /** Linked environments is off on this machine. */
+  readonly linksOff?: boolean;
+}
 
 /** One T3 server on the tailnet: its own database, auth and links, answering on a socket of its own. */
 const serveDevice = (
   descriptor: ExecutionEnvironmentDescriptor,
   tailnet: FakeTailnet,
-  options: { readonly userId?: string; readonly devUrl?: URL } = {},
+  options: DeviceOptions = {},
 ) =>
   Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
     Effect.flatMap((server) =>
@@ -155,7 +168,7 @@ const serveDevice = (
 const serveDeviceOn = (
   descriptor: ExecutionEnvironmentDescriptor,
   tailnet: FakeTailnet,
-  options: { readonly userId?: string; readonly devUrl?: URL } = {},
+  options: DeviceOptions = {},
 ) =>
   Effect.gen(function* () {
     const url = yield* Ref.make("http://127.0.0.1:0");
@@ -178,7 +191,9 @@ const serveDeviceOn = (
           }),
         ),
       ),
-      Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
+      Layer.provideMerge(
+        ServerSettings.layerTest({ linkedEnvironmentsEnabled: options.linksOff !== true }),
+      ),
       Layer.provideMerge(Sqlite.layerMemory),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provideMerge(ServerEnvironment.layerIdentity),
@@ -236,7 +251,7 @@ const serveDeviceOn = (
       descriptor,
       devices: Context.get(context, TailnetDevices.TailnetDevices),
       links: Context.get(context, PeerLinks.PeerLinks),
-      policy: Context.get(context, DevicePolicy.DevicePolicy),
+      membership: Context.get(context, Membership.Membership),
       /** What this device lets a caller holding `token` do, as its /mcp would see it. */
       authenticate: (token: string) =>
         auth.authenticateMcpClient(
@@ -245,6 +260,15 @@ const serveDeviceOn = (
           ),
         ),
       settings: Context.get(context, ServerSettings.ServerSettingsService),
+      /** A session like the one a pairing-code link gets: the client names its own environment. */
+      issueLinkSession: (peerEnvironmentId: string, access: "read-only" | "full-access") =>
+        auth.issueMcpClientSession({
+          label: "T3 Code · Paired",
+          access,
+          peerLink: true,
+          peerEnvironmentId: EnvironmentId.make(peerEnvironmentId),
+          client: { deviceType: "bot" },
+        }),
       /** One-time pairing credentials this device issued, with their scopes. */
       pairingLinks: auth.listPairingLinks(),
       /** Grants delivered to this device, each carrying a token. */
@@ -285,8 +309,58 @@ const requestAs = (
     });
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
-describe("tailnet device handshake", () => {
-  it.live("links both ways from one request between two of my devices", () =>
+type Device = Effect.Success<ReturnType<typeof serveDevice>>;
+
+/** Lets `device` find `other` on the tailnet, as a scan would, so it can be added. */
+const find = (tailnet: FakeTailnet, device: Device, other: Device, nodeName: string) =>
+  Effect.gen(function* () {
+    yield* tailnet.announce(nodeName, () => [other.url]);
+    yield* device.devices.scan;
+  });
+
+/** `admitter` adds `member` to its network; both must already be on the tailnet. */
+const admit = (
+  tailnet: FakeTailnet,
+  admitter: Device,
+  member: Device,
+  access: "full-access" | "read-only" = "full-access",
+) =>
+  Effect.gen(function* () {
+    yield* find(tailnet, admitter, member, tailnet.nameOf(member.url));
+    return yield* admitter.devices.admit(member.descriptor.environmentId, access);
+  });
+
+/** Puts `member` straight into `device`'s roster, as if a sync had brought it. */
+const knowsMember = (device: Device, member: Device | string, nodeId: string | null = null) =>
+  device.membership.adopt([
+    {
+      environmentId: EnvironmentId.make(
+        typeof member === "string" ? member : member.descriptor.environmentId,
+      ),
+      label: "Member",
+      nodeId,
+      access: "full-access",
+      updatedAt: { wallMs: 1, counter: 0, node: device.descriptor.environmentId },
+    },
+  ]);
+
+/** Sends a sync to a device as whoever holds `token`. */
+const syncAs = (
+  device: { readonly url: string },
+  token: string,
+  payload: Parameters<TailnetDevices.TailnetDevices["Service"]["handleSync"]>[1],
+) =>
+  Effect.gen(function* () {
+    const authorized = HttpClient.mapRequest(
+      yield* HttpClient.HttpClient,
+      HttpClientRequest.bearerToken(token),
+    );
+    const client = yield* PeerLinks.peerApiClient(authorized, device.url);
+    return yield* client.tailnetDevices.sync({ payload });
+  }).pipe(Effect.provide(FetchHttpClient.layer));
+
+describe("adding a machine to the network", () => {
+  it.live("adds a found machine and links both ways", () =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;
       const a = yield* serveDevice(laptop, tailnet);
@@ -294,10 +368,10 @@ describe("tailnet device handshake", () => {
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url);
 
-      const linked = yield* a.devices.linkIfMine({ url: b.url });
+      yield* admit(tailnet, a, b);
 
-      expect(Option.map(linked, (link) => [link.environmentId, link.origin])).toEqual(
-        Option.some([studio.environmentId, "tailnet"]),
+      expect(Option.map(yield* a.links.get(studio.environmentId), (link) => link.origin)).toEqual(
+        Option.some("tailnet"),
       );
       const back = yield* b.links.get(laptop.environmentId);
       expect(Option.map(back, (link) => [link.origin, link.urls])).toEqual(
@@ -310,6 +384,20 @@ describe("tailnet device handshake", () => {
       expect((yield* b.issued).map((session) => session.peerEnvironmentId)).toEqual([
         laptop.environmentId,
       ]);
+      // Both hold the same roster, each member bound to its own node.
+      const rosterOf = (device: Device) =>
+        device.membership.members.pipe(
+          Effect.map((members) =>
+            members
+              .map((member) => [member.environmentId, member.access, member.nodeId !== null])
+              .toSorted(),
+          ),
+        );
+      expect(yield* rosterOf(b)).toEqual(yield* rosterOf(a));
+      expect(yield* rosterOf(a)).toEqual([
+        [laptop.environmentId, "full-access", true],
+        [studio.environmentId, "full-access", true],
+      ]);
       expect(
         (yield* a.devices.list).devices.map((device) => [
           device.environmentId,
@@ -320,9 +408,111 @@ describe("tailnet device handshake", () => {
     }),
   );
 
+  it.live("lists a machine found on the tailnet without linking it", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+
+      yield* find(tailnet, a, b, "studio");
+      yield* a.devices.scan;
+
+      expect(yield* a.links.get(studio.environmentId)).toEqual(Option.none());
+      expect(yield* a.devices.linkIfMine({ url: b.url })).toEqual(Option.none());
+      expect(yield* Ref.get(b.grants)).toBe(0);
+      expect(yield* b.issued).toEqual([]);
+      const found = (yield* a.devices.list).devices.find(
+        (device) => device.environmentId === studio.environmentId,
+      );
+      expect([found?.member, found?.access, found?.outgoing]).toEqual([null, null, null]);
+    }),
+  );
+
+  it.live("a machine in another network keeps its own and does not join", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      const c = yield* serveDevice(box, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* tailnet.join(c.url);
+      yield* admit(tailnet, b, c);
+
+      const refused = yield* admit(tailnet, a, c).pipe(Effect.flip);
+
+      expect(refused).toMatchObject({ reason: "forbidden" });
+      expect(yield* a.membership.member(box.environmentId)).toEqual(Option.none());
+      expect(yield* c.membership.member(laptop.environmentId)).toEqual(Option.none());
+      expect(yield* c.links.get(laptop.environmentId)).toEqual(Option.none());
+    }),
+  );
+
+  it.live("a machine added on one member is linked from every member after a scan", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      const c = yield* serveDevice(box, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* tailnet.join(c.url);
+      yield* admit(tailnet, a, b);
+      yield* admit(tailnet, b, c);
+      expect(yield* a.links.get(box.environmentId)).toEqual(Option.none());
+
+      // The scan's probes find nothing new; only the studio knows the box.
+      yield* a.devices.scan;
+
+      const linked = yield* a.links.get(box.environmentId);
+      expect(Option.map(linked, (link) => [link.origin, link.urls])).toEqual(
+        Option.some(["tailnet", [c.url]]),
+      );
+      expect(Option.isSome(yield* c.links.get(laptop.environmentId))).toBe(true);
+    }),
+  );
+
+  // A dev server's fresh environment would otherwise join every one of the developer's machines.
+  it.live.each([
+    { name: "Linked environments is off there", linksOff: true, dev: false },
+    { name: "it runs as a dev server", linksOff: false, dev: true },
+  ])("a machine joins nothing while $name", ({ linksOff, dev }) =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet, {
+        linksOff,
+        ...(dev ? { devUrl: new URL("http://127.0.0.1:5733") } : {}),
+      });
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* knowsMember(b, a);
+
+      expect(yield* admit(tailnet, a, b).pipe(Effect.flip)).toMatchObject({ reason: "forbidden" });
+      expect(yield* requestAs(b, { environmentId: laptop.environmentId, urls: [a.url] })).toEqual({
+        outcome: "refused",
+        reason: "disabled",
+      });
+      expect(yield* b.devices.linkIfMine({ url: a.url })).toEqual(Option.none());
+      expect(yield* Ref.get(a.grants)).toBe(0);
+      expect(yield* Ref.get(b.grants)).toBe(0);
+      expect(yield* a.issued).toEqual([]);
+      expect(yield* b.issued).toEqual([]);
+      expect(yield* b.membership.member(laptop.environmentId).pipe(Effect.map(Option.isSome))).toBe(
+        true,
+      );
+      expect(yield* a.membership.member(studio.environmentId)).toEqual(Option.none());
+    }),
+  );
+});
+
+describe("tailnet device handshake", () => {
   it.live.each([
     { name: "same user but tagged", whois: { tags: ["tag:server"] }, joins: true },
     { name: "another user", whois: { userId: "2002" }, joins: true },
+    { name: "a node without a stable id", whois: { nodeId: null }, joins: true },
     { name: "a non-tailnet address", whois: {}, joins: false },
   ])("refuses $name without sending a token", ({ whois, joins }) =>
     Effect.gen(function* () {
@@ -331,6 +521,7 @@ describe("tailnet device handshake", () => {
       const requester = yield* serveDevice(laptop, tailnet);
       yield* tailnet.join(issuer.url);
       if (joins) yield* tailnet.join(requester.url, whois);
+      yield* knowsMember(issuer, requester);
 
       const result = yield* requestAs(issuer, {
         environmentId: laptop.environmentId,
@@ -343,6 +534,25 @@ describe("tailnet device handshake", () => {
     }),
   );
 
+  it.live("refuses a same-user machine that is not in the network", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const issuer = yield* serveDevice(studio, tailnet);
+      const requester = yield* serveDevice(laptop, tailnet);
+      yield* tailnet.join(issuer.url);
+      yield* tailnet.join(requester.url);
+
+      const result = yield* requestAs(issuer, {
+        environmentId: laptop.environmentId,
+        urls: [requester.url],
+      });
+
+      expect(result).toEqual({ outcome: "refused", reason: "not_member" });
+      expect(yield* Ref.get(requester.grants)).toBe(0);
+      expect(yield* issuer.issued).toEqual([]);
+    }),
+  );
+
   it.live("refuses a forged request naming a real device's address without sending a token", () =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;
@@ -350,6 +560,7 @@ describe("tailnet device handshake", () => {
       const victim = yield* serveDevice(laptop, tailnet);
       yield* tailnet.join(issuer.url);
       yield* tailnet.join(victim.url);
+      yield* knowsMember(issuer, victim);
 
       // Anyone can claim the laptop's identity and address; the laptop has no pending challenge.
       const result = yield* requestAs(issuer, {
@@ -371,6 +582,7 @@ describe("tailnet device handshake", () => {
       const requester = yield* serveDevice(laptop, tailnet);
       yield* tailnet.join(issuer.url);
       yield* tailnet.join(requester.url);
+      yield* knowsMember(issuer, "env-impostor");
 
       const result = yield* requestAs(issuer, {
         environmentId: "env-impostor",
@@ -382,87 +594,9 @@ describe("tailnet device handshake", () => {
       expect(yield* issuer.issued).toEqual([]);
     }),
   );
-
-  it.live("counts only nodes with the device capability when it is required", () =>
-    Effect.gen(function* () {
-      const tailnet = yield* makeTailnet;
-      const a = yield* serveDevice(laptop, tailnet);
-      const b = yield* serveDevice(studio, tailnet);
-      const c = yield* serveDevice(descriptorOf("env-phone", "Phone"), tailnet);
-      yield* tailnet.join(a.url, { capabilities: [TAILNET_DEVICE_CAPABILITY] });
-      yield* tailnet.join(b.url, { capabilities: [TAILNET_DEVICE_CAPABILITY] });
-      yield* tailnet.join(c.url);
-      yield* b.devices.updateSettings({ requireCapability: true });
-
-      expect(yield* requestAs(b, { environmentId: "env-phone", urls: [c.url] })).toEqual({
-        outcome: "refused",
-        reason: "not_my_device",
-      });
-      expect(yield* Ref.get(c.grants)).toBe(0);
-
-      const linked = yield* a.devices.linkIfMine({ url: b.url });
-      expect(Option.map(linked, (link) => link.environmentId)).toEqual(
-        Option.some(studio.environmentId),
-      );
-    }),
-  );
-
-  it.live("links a device another device found, once they sync", () =>
-    Effect.gen(function* () {
-      const tailnet = yield* makeTailnet;
-      const a = yield* serveDevice(laptop, tailnet);
-      const b = yield* serveDevice(studio, tailnet);
-      const c = yield* serveDevice(descriptorOf("env-box", "Box"), tailnet);
-      yield* tailnet.join(a.url);
-      yield* tailnet.join(b.url);
-      yield* tailnet.join(c.url);
-      yield* a.devices.linkIfMine({ url: b.url });
-      yield* b.devices.linkIfMine({ url: c.url });
-      expect(yield* a.links.get(EnvironmentId.make("env-box"))).toEqual(Option.none());
-
-      // The scan's probes find nothing; only the studio knows the box.
-      yield* a.devices.scan;
-
-      const linked = yield* a.links.get(EnvironmentId.make("env-box"));
-      expect(Option.map(linked, (link) => [link.origin, link.urls])).toEqual(
-        Option.some(["tailnet", [c.url]]),
-      );
-      expect(Option.isSome(yield* c.links.get(laptop.environmentId))).toBe(true);
-    }),
-  );
-
-  // A dev server's fresh environment would otherwise join every one of the developer's devices.
-  it.live.each([
-    { name: "linking tailnet devices is off", off: true, dev: false },
-    { name: "it runs as a dev server", off: false, dev: true },
-  ])("refuses every request while $name", ({ off, dev }) =>
-    Effect.gen(function* () {
-      const tailnet = yield* makeTailnet;
-      const a = yield* serveDevice(laptop, tailnet);
-      const b = yield* serveDevice(
-        studio,
-        tailnet,
-        dev ? { devUrl: new URL("http://127.0.0.1:5733") } : {},
-      );
-      yield* tailnet.join(a.url);
-      yield* tailnet.join(b.url);
-      if (off) yield* b.devices.updateSettings({ autoLink: false });
-
-      expect(yield* requestAs(b, { environmentId: laptop.environmentId, urls: [a.url] })).toEqual({
-        outcome: "refused",
-        reason: "disabled",
-      });
-      expect(yield* a.devices.linkIfMine({ url: b.url })).toEqual(Option.none());
-      expect(yield* b.devices.linkIfMine({ url: a.url })).toEqual(Option.none());
-      expect(yield* Ref.get(a.grants)).toBe(0);
-      expect(yield* Ref.get(b.grants)).toBe(0);
-      expect(yield* a.issued).toEqual([]);
-      expect(yield* b.issued).toEqual([]);
-    }),
-  );
 });
 
-/** Laptop, studio and box, every pair linked both ways. */
+/** Laptop, studio and box in one network, every pair linked both ways. */
 const threeDevices = Effect.gen(function* () {
   const tailnet = yield* makeTailnet;
   const a = yield* serveDevice(laptop, tailnet);
@@ -471,9 +605,9 @@ const threeDevices = Effect.gen(function* () {
   yield* tailnet.join(a.url);
   yield* tailnet.join(b.url);
   yield* tailnet.join(c.url);
-  yield* a.devices.linkIfMine({ url: b.url });
-  yield* a.devices.linkIfMine({ url: c.url });
-  yield* b.devices.linkIfMine({ url: c.url });
+  yield* admit(tailnet, a, b);
+  yield* admit(tailnet, a, c);
+  yield* b.devices.scan;
   return { a, b, c };
 });
 
@@ -488,14 +622,15 @@ describe("tailnet scan", () => {
       const b = yield* serveDevice(studio, tailnet);
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url);
-      yield* a.devices.linkIfMine({ url: b.url });
+      yield* tailnet.join(b.url);
+      yield* admit(tailnet, a, b);
 
       yield* Ref.set(b.descriptorReads, 0);
       yield* a.devices.scan;
       expect(yield* Ref.get(b.descriptorReads)).toBe(1);
 
       yield* Ref.set(b.descriptorReads, 0);
-      yield* a.devices.updateSettings({ defaultAccess: "auto" });
+      yield* a.devices.setAccess(studio.environmentId, "auto");
       expect(yield* Ref.get(b.descriptorReads)).toBe(1);
     }),
   );
@@ -507,7 +642,7 @@ describe("tailnet scan", () => {
       const b = yield* serveDevice(studio, tailnet);
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url, { nodeName: "studio" });
-      yield* a.devices.linkIfMine({ url: b.url });
+      yield* admit(tailnet, a, b);
       // The user paired the studio by code too, and that pairing runs out in a minute.
       const linked = Option.getOrThrow(yield* a.links.get(studio.environmentId));
       yield* a.links.store(
@@ -532,7 +667,7 @@ describe("tailnet scan", () => {
           () => live.currentTimeNanosUnsafe() + BigInt(skewMs) * 1_000_000n,
         ),
       };
-      yield* tailnet.announce("studio", () => {
+      yield* tailnet.announce("studio-again", () => {
         skewMs = 2 * 60_000;
         return [b.url];
       });
@@ -554,7 +689,7 @@ describe("tailnet device access", () => {
       const b = yield* serveDevice(studio, tailnet);
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url);
-      yield* a.devices.linkIfMine({ url: b.url });
+      yield* admit(tailnet, a, b);
       const { token } = yield* b.links.resolve(laptop.environmentId);
       expect((yield* a.authenticate(token)).access).toBe("full-access");
 
@@ -572,7 +707,9 @@ describe("tailnet device access", () => {
       yield* a.devices.setAccess(box.environmentId, "revoked");
 
       for (const device of [a, b]) {
-        expect(yield* device.policy.accessFor(box.environmentId)).toBe("revoked");
+        expect(yield* device.membership.accessOf(box.environmentId)).toEqual(
+          Option.some("revoked"),
+        );
         expect(
           (yield* device.issued).filter((session) => session.peerEnvironmentId === "env-box"),
         ).toEqual([]);
@@ -593,40 +730,59 @@ describe("tailnet device access", () => {
     }),
   );
 
-  it.live("a revoked device cannot restore itself, directly or relayed", () =>
+  it.live("a revoked machine cannot restore itself", () =>
     Effect.gen(function* () {
-      const { a, b } = yield* threeDevices;
+      const { a, b, c } = yield* threeDevices;
+      const { token } = yield* c.links.resolve(studio.environmentId);
       yield* a.devices.setAccess(box.environmentId, "revoked");
-      const settings = yield* b.policy.settings;
       const selfRestore = {
         environmentId: box.environmentId,
+        label: "Box",
+        nodeId: null,
         access: "full-access" as const,
         updatedAt: { wallMs: Number.MAX_SAFE_INTEGER, counter: 0, node: box.environmentId },
-        updatedBy: box.environmentId,
       };
 
-      yield* b.policy.merge(box.environmentId, { policy: [selfRestore], settings });
-      yield* b.policy.merge(laptop.environmentId, { policy: [selfRestore], settings });
+      const refused = yield* syncAs(b, token, {
+        from: { environmentId: box.environmentId, label: "Box", urls: [c.url] },
+        devices: [],
+        members: [selfRestore],
+      }).pipe(Effect.flip);
       expect(
         yield* b.devices.setAccess(studio.environmentId, "full-access").pipe(Effect.flip),
       ).toMatchObject({ reason: "self" });
 
-      expect(yield* b.policy.accessFor(box.environmentId)).toBe("revoked");
+      expect(refused._tag).toBe("TailnetDevicesUnauthorizedError");
+      expect(yield* b.membership.accessOf(box.environmentId)).toEqual(Option.some("revoked"));
     }),
   );
 
-  it.live("ignores policy from a device below full access", () =>
+  it.live("a machine below full access can neither change the roster nor be followed", () =>
     Effect.gen(function* () {
       const { a, b } = yield* threeDevices;
       yield* b.devices.setAccess(laptop.environmentId, "read-only");
-      const settings = yield* b.policy.settings;
 
-      yield* a.devices.setAccess(box.environmentId, "revoked");
-
-      expect(yield* b.policy.accessFor(box.environmentId)).toBe("full-access");
+      // The laptop learned it was narrowed, so it refuses to change anything itself.
       expect(
-        yield* b.policy.merge(laptop.environmentId, { policy: yield* a.policy.entries, settings }),
-      ).toEqual([]);
+        yield* a.devices.setAccess(box.environmentId, "revoked").pipe(Effect.flip),
+      ).toMatchObject({ reason: "forbidden" });
+      // And a write it relays anyway is ignored.
+      const { token } = yield* a.links.resolve(studio.environmentId);
+      yield* syncAs(b, token, {
+        from: { environmentId: laptop.environmentId, label: "Laptop", urls: [a.url] },
+        devices: [],
+        members: [
+          {
+            environmentId: box.environmentId,
+            label: "Box",
+            nodeId: null,
+            access: "revoked",
+            updatedAt: { wallMs: Number.MAX_SAFE_INTEGER, counter: 0, node: studio.environmentId },
+          },
+        ],
+      });
+
+      expect(yield* b.membership.accessOf(box.environmentId)).toEqual(Option.some("full-access"));
     }),
   );
 
@@ -637,12 +793,74 @@ describe("tailnet device access", () => {
 
       yield* b.devices.setAccess(box.environmentId, "full-access");
 
-      expect(yield* a.policy.accessFor(box.environmentId)).toBe("full-access");
+      expect(yield* a.membership.accessOf(box.environmentId)).toEqual(Option.some("full-access"));
       const linked = yield* c.devices.linkIfMine({ url: a.url });
       expect(Option.map(linked, (link) => link.environmentId)).toEqual(
         Option.some(laptop.environmentId),
       );
       expect(Option.isSome(yield* a.links.get(box.environmentId))).toBe(true);
+    }),
+  );
+});
+
+describe("tailnet device authority", () => {
+  it.live("refuses a same-user node answering as a linked device from another node", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* admit(tailnet, a, b);
+      // Another of the owner's nodes, running a server that claims to be the studio.
+      const impostor = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(impostor.url);
+      yield* knowsMember(impostor, a);
+
+      yield* impostor.devices.linkIfMine({ url: a.url });
+
+      expect(yield* Ref.get(impostor.grants)).toBe(0);
+      expect(
+        (yield* a.issued).filter((session) => session.peerEnvironmentId === studio.environmentId),
+      ).toHaveLength(1);
+      expect(Option.map(yield* a.links.get(studio.environmentId), (link) => link.urls)).toEqual(
+        Option.some([b.url]),
+      );
+    }),
+  );
+
+  it.live("a pairing-code link session cannot write device access, whatever id it claims", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* admit(tailnet, a, b);
+      // A full-access pairing-code link, naming a real member.
+      const paired = yield* b.issueLinkSession(laptop.environmentId, "full-access");
+
+      const forged = yield* syncAs(b, paired.token, {
+        from: { environmentId: laptop.environmentId, label: "Laptop", urls: [] },
+        devices: [],
+        members: [
+          {
+            environmentId: laptop.environmentId,
+            label: "Laptop",
+            nodeId: null,
+            access: "revoked",
+            updatedAt: { wallMs: Number.MAX_SAFE_INTEGER, counter: 0, node: studio.environmentId },
+          },
+        ],
+      }).pipe(Effect.flip);
+
+      expect(forged._tag).toBe("TailnetDevicesUnauthorizedError");
+      expect(yield* b.membership.accessOf(laptop.environmentId)).toEqual(
+        Option.some("full-access"),
+      );
+      expect(
+        (yield* b.issued).filter((session) => session.peerEnvironmentId === laptop.environmentId),
+      ).toHaveLength(2);
     }),
   );
 });
@@ -655,12 +873,14 @@ describe("opening a device from the app", () => {
       const b = yield* serveDevice(studio, tailnet);
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url);
-      yield* a.devices.linkIfMine({ url: b.url });
+      yield* admit(tailnet, a, b);
+      const app = { scopes: AuthStandardClientScopes };
 
-      const full = yield* a.devices.openDevice(studio.environmentId);
+      const full = yield* a.devices.openDevice(studio.environmentId, app);
       expect([full.environmentId, full.urls]).toEqual([studio.environmentId, [b.url]]);
+      yield* a.devices.setAccess(laptop.environmentId, "read-only").pipe(Effect.ignore);
       yield* b.devices.setAccess(laptop.environmentId, "read-only");
-      yield* a.devices.openDevice(studio.environmentId);
+      yield* a.devices.openDevice(studio.environmentId, app);
 
       expect((yield* b.pairingLinks).map((link) => link.permissions?.toSorted())).toEqual([
         [
@@ -668,34 +888,62 @@ describe("opening a device from the app", () => {
           AuthDiagnosticsReadScope,
           AuthFilesystemReadScope,
           AuthOrchestrationReadScope,
-          AuthRelayReadScope,
         ].toSorted(),
         [...AuthStandardClientScopes].toSorted(),
       ]);
     }),
   );
 
-  it.live("gets nothing from a device that revoked it, nor without its device session", () =>
+  it.live("caps an app credential at the scopes of the app that asked", () =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;
       const a = yield* serveDevice(laptop, tailnet);
       const b = yield* serveDevice(studio, tailnet);
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url);
-      yield* a.devices.linkIfMine({ url: b.url });
+      yield* admit(tailnet, a, b);
+      const narrow = [AuthOrchestrationReadScope, AuthAccessReadScope, AuthAccessWriteScope];
+
+      yield* a.devices.openDevice(studio.environmentId, { scopes: narrow });
+
+      const minted = (yield* b.pairingLinks).flatMap((link) => link.permissions ?? []);
+      expect(minted.length).toBeGreaterThan(0);
+      expect(minted.every((scope) => (narrow as ReadonlyArray<string>).includes(scope))).toBe(true);
+    }),
+  );
+
+  it.live("gets nothing from a device that revoked it, nor without its member session", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* admit(tailnet, a, b);
+      const paired = yield* b.issueLinkSession(laptop.environmentId, "full-access");
       yield* b.devices.setAccess(laptop.environmentId, "revoked");
 
-      const refused = yield* a.devices.openDevice(studio.environmentId).pipe(Effect.flip);
-      // Anyone can claim to be a device; without its session the device mints nothing.
-      const forged = yield* Effect.gen(function* () {
-        const client = yield* PeerLinks.peerApiClient(yield* HttpClient.HttpClient, b.url);
-        return yield* client.tailnetDevices.clientCredential({
-          payload: { from: laptop.environmentId },
-        });
-      }).pipe(Effect.flip, Effect.provide(FetchHttpClient.layer));
+      const refused = yield* a.devices
+        .openDevice(studio.environmentId, { scopes: AuthStandardClientScopes })
+        .pipe(Effect.flip);
+      // Anyone can claim to be a device, even holding a pairing-code link; nothing is minted.
+      const claimed = (token?: string) =>
+        Effect.gen(function* () {
+          const base = yield* HttpClient.HttpClient;
+          const client = yield* PeerLinks.peerApiClient(
+            token === undefined
+              ? base
+              : HttpClient.mapRequest(base, HttpClientRequest.bearerToken(token)),
+            b.url,
+          );
+          return yield* client.tailnetDevices.clientCredential({
+            payload: { from: laptop.environmentId, scopes: AuthStandardClientScopes },
+          });
+        }).pipe(Effect.flip, Effect.provide(FetchHttpClient.layer));
 
       expect(refused._tag).toBe("TailnetDevicesError");
-      expect(forged._tag).toBe("TailnetDevicesUnauthorizedError");
+      expect((yield* claimed())._tag).toBe("TailnetDevicesUnauthorizedError");
+      expect((yield* claimed(paired.token))._tag).toBe("TailnetDevicesUnauthorizedError");
       expect(yield* b.pairingLinks).toEqual([]);
     }),
   );
@@ -704,6 +952,7 @@ describe("opening a device from the app", () => {
 describe("locating a tailnet target", () => {
   const tailnet: Tailnet = {
     self: {
+      nodeId: "nLaptopCNTRL",
       userId: OWNER,
       magicDnsName: "laptop.tail.ts.net",
       tailnetAddresses: [],
@@ -711,6 +960,7 @@ describe("locating a tailnet target", () => {
     },
     peers: [
       {
+        nodeId: "nStudioCNTRL",
         nodeName: "studio",
         magicDnsName: "studio.tail.ts.net",
         tailnetAddresses: ["100.64.0.7", "fd7a:115c:a1e0::7"],
@@ -746,6 +996,7 @@ describe("locating a tailnet target", () => {
 
 describe("tailnet scan probe addresses", () => {
   const peer = (os: string | null) => ({
+    nodeId: "nNodeCNTRL",
     nodeName: "node",
     magicDnsName: "node.tail.ts.net",
     tailnetAddresses: ["100.64.0.7"],

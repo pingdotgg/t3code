@@ -43,9 +43,8 @@ import {
   TailnetDevicesError,
   TailnetDeviceOpenInput,
   TailnetDeviceSetAccessInput,
-  TailnetDevicesSettings,
-  TailnetDevicesUpdateSettingsInput,
-  DevicePolicyEntry,
+  TailnetDeviceAdmitInput,
+  NetworkMember,
 } from "./tailnetDevices.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -581,7 +580,7 @@ export const WS_METHODS = {
   peerLinksAnswerRequest: "peerLinks.answerRequest",
   tailnetDevicesList: "tailnetDevices.list",
   tailnetDevicesSetAccess: "tailnetDevices.setAccess",
-  tailnetDevicesUpdateSettings: "tailnetDevices.updateSettings",
+  tailnetDevicesAdmit: "tailnetDevices.admit",
   tailnetDevicesOpenDevice: "tailnetDevices.openDevice",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -936,13 +935,14 @@ const WsTailnetDevicesListRpc = Rpc.make(WS_METHODS.tailnetDevicesList, {
 
 const WsTailnetDevicesSetAccessRpc = Rpc.make(WS_METHODS.tailnetDevicesSetAccess, {
   payload: TailnetDeviceSetAccessInput,
-  success: DevicePolicyEntry,
+  success: NetworkMember,
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
 });
 
-const WsTailnetDevicesUpdateSettingsRpc = Rpc.make(WS_METHODS.tailnetDevicesUpdateSettings, {
-  payload: TailnetDevicesUpdateSettingsInput,
-  success: TailnetDevicesSettings,
+/** Adds a machine Tailscale proves is the owner's to the whole network. */
+const WsTailnetDevicesAdmitRpc = Rpc.make(WS_METHODS.tailnetDevicesAdmit, {
+  payload: TailnetDeviceAdmitInput,
+  success: NetworkMember,
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
 });
 
@@ -2341,7 +2341,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksListRpc,
   WsTailnetDevicesListRpc,
   WsTailnetDevicesSetAccessRpc,
-  WsTailnetDevicesUpdateSettingsRpc,
+  WsTailnetDevicesAdmitRpc,
   WsTailnetDevicesOpenDeviceRpc,
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,

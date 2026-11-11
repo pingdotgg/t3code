@@ -42,7 +42,7 @@ import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
-import * as DevicePolicy from "../peer/DevicePolicy.ts";
+import * as Membership from "../peer/Membership.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -86,8 +86,10 @@ export interface McpClientSession {
   readonly access: AuthMcpClientAccess;
   /** Another T3 Code environment's link, whose work here stays within it. */
   readonly peerLink: boolean;
-  /** That environment, when it said which one it is. */
+  /** That environment, when it said which one it is. Proven only for a member session. */
   readonly peerEnvironmentId: EnvironmentId | undefined;
+  /** Minted by the tailnet handshake for a roster member, not by a pairing code. */
+  readonly member: boolean;
 }
 
 export interface AuthenticatedSession {
@@ -477,6 +479,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly peerLink: boolean;
+      readonly member?: boolean;
       readonly peerEnvironmentId?: EnvironmentId;
       readonly client: AuthClientMetadata;
     }) => Effect.Effect<
@@ -647,7 +650,7 @@ export const make = Effect.gen(function* () {
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
-  const devicePolicy = yield* DevicePolicy.DevicePolicy;
+  const membership = yield* Membership.Membership;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const digest = yield* Digest.Digest;
   const descriptor = yield* policy.getDescriptor();
@@ -1263,14 +1266,22 @@ export const make = Effect.gen(function* () {
             : "read-only",
           peerLink: session.peerLink === true,
           peerEnvironmentId: session.peerEnvironmentId,
+          member: session.member === true,
         };
         if (session.peerEnvironmentId === undefined) return Effect.succeed(client);
-        // The device's current policy narrows what its token was issued with, on every request.
-        return devicePolicy.entryAccess(session.peerEnvironmentId).pipe(
-          Effect.flatMap((entry) =>
-            Option.isNone(entry)
-              ? Effect.succeed(client)
-              : entry.value === "revoked"
+        // The roster narrows what the token was issued with, on every request. A member session
+        // whose machine left the roster has nothing left; a paired link is only ever narrowed.
+        return membership.accessOf(session.peerEnvironmentId).pipe(
+          Effect.flatMap((access) =>
+            Option.isNone(access)
+              ? client.member
+                ? Effect.fail(
+                    new ServerAuthInvalidCredentialError({
+                      diagnostic: "This machine is no longer in the network.",
+                    }),
+                  )
+                : Effect.succeed(client)
+              : access.value === "revoked"
                 ? Effect.fail(
                     new ServerAuthInvalidCredentialError({
                       diagnostic: "This device's access was revoked.",
@@ -1278,7 +1289,7 @@ export const make = Effect.gen(function* () {
                   )
                 : Effect.succeed({
                     ...client,
-                    access: DevicePolicy.narrowerAccess(client.access, entry.value),
+                    access: Membership.narrowerAccess(client.access, access.value),
                   }),
           ),
         );
@@ -1296,6 +1307,7 @@ export const make = Effect.gen(function* () {
         ttl: MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         peerLink: input.peerLink,
+        ...(input.member === true ? { member: true } : {}),
         ...(input.peerEnvironmentId === undefined
           ? {}
           : { peerEnvironmentId: input.peerEnvironmentId }),
@@ -1437,7 +1449,7 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
 });
 
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
-  Layer.provideMerge(DevicePolicy.layer),
+  Layer.provideMerge(Membership.layer),
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
