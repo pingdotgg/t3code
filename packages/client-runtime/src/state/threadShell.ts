@@ -208,6 +208,9 @@ export function createEnvironmentThreadShellAtoms(input: {
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
   readonly shellStatusAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellStatus>;
+  readonly removedAtAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<ReadonlyMap<ThreadId, number>>;
   /** Tags whose threads display lists leave out; null while the filter is off. */
   readonly hiddenThreadTagsAtom: (
     environmentId: EnvironmentId,
@@ -681,6 +684,7 @@ export function createEnvironmentThreadShellAtoms(input: {
         const awaitingParent =
           parentThread === undefined &&
           get(input.shellStatusAtom(parent.environmentId)) !== "live" &&
+          !get(input.removedAtAtom(parent.environmentId)).has(parent.threadId) &&
           thread.status === "completed" &&
           thread.activeRunId === null &&
           !isLiveSubagentShell(thread) &&

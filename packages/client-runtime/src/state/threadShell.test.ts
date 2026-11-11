@@ -48,15 +48,20 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
   const shellStatusAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<EnvironmentShellStatus>("live"),
   );
+  const removedAtAtom = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make<ReadonlyMap<ThreadId, number>>(new Map()),
+  );
   return {
     registry: AtomRegistry.make(),
     snapshotAtom,
     catalogValueAtom,
     shellStatusAtom,
+    removedAtAtom,
     threads: createEnvironmentThreadShellAtoms({
       catalogValueAtom,
       snapshotAtom,
       shellStatusAtom,
+      removedAtAtom,
       hiddenThreadTagsAtom: () => Atom.make(null),
     }),
   };
@@ -410,10 +415,8 @@ describe("v2 thread shell lists", () => {
   });
 
   it("keeps quiet completed tasks grouped while their missing parent's shell is unavailable", () => {
-    const { registry, threads, snapshotAtom, catalogValueAtom, shellStatusAtom } = makeHarness([
-      environmentId,
-      remoteEnvironmentId,
-    ]);
+    const { registry, threads, snapshotAtom, catalogValueAtom, shellStatusAtom, removedAtAtom } =
+      makeHarness([environmentId, remoteEnvironmentId]);
     const parent = { ...v2ThreadShell, settledOverride: "settled" as const, settledAt: v2Now };
     const task: OrchestrationV2ThreadShell = {
       ...v2ThreadShell,
@@ -499,11 +502,25 @@ describe("v2 thread shell lists", () => {
     expect(listed()).toEqual([parent.id]);
     registry.set(shellStatusAtom(environmentId), "cached");
     expect(listed()).toEqual([parent.id]);
-    registry.set(snapshotAtom(environmentId), {
-      ...v2ShellSnapshot,
-      threads: [{ ...parent, archivedAt: v2Now }],
-    });
-    expect(listed()).toEqual([task.id]);
+    for (const event of [
+      {
+        kind: "thread.updated",
+        location: "archive",
+        sequence: 1,
+        thread: { ...parent, archivedAt: v2Now },
+      },
+      { kind: "thread.removed", location: "active", sequence: 1, threadId: parent.id },
+    ] as const) {
+      registry.set(shellStatusAtom(environmentId), "live");
+      registry.set(
+        snapshotAtom(environmentId),
+        applyShellStreamEvent({ ...v2ShellSnapshot, threads: [parent] }, event),
+      );
+      registry.set(removedAtAtom(environmentId), new Map([[parent.id, 1]]));
+      registry.set(shellStatusAtom(environmentId), "cached");
+      expect(listed()).toEqual([task.id]);
+    }
+    registry.set(removedAtAtom(environmentId), new Map());
     registry.set(snapshotAtom(environmentId), null);
     expect(listed()).toEqual([]);
     const catalog = registry.get(catalogValueAtom);
