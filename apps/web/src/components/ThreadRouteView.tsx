@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
+import { PaneContext, type PaneContextValue } from "./panes/PaneContext";
 import { SidebarInset } from "./ui/sidebar";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -48,15 +49,17 @@ function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean
 /**
  * Unkeyed so navigating between server threads reuses one ChatView. Rendered by the `_chat`
  * layout, since an element only survives a route swap when the same parent renders it. Draft
- * promotion runs in the draft store; this only follows the redirect it leaves behind.
- * `background` keeps the thread mounted, inert and in place under Settings or Usage.
+ * promotion runs in the draft store. `background` keeps the thread mounted and inert under
+ * Settings or Usage; `pane` renders one split-view cell whose missing thread closes the pane.
  */
 export function ThreadRouteView({
   target,
   background = false,
+  pane,
 }: {
   target: ThreadRouteTarget;
   background?: boolean;
+  pane?: { context: PaneContextValue; onMissing: () => void };
 }) {
   const navigate = useNavigate();
   const draftId = target.kind === "draft" ? target.draftId : null;
@@ -148,11 +151,24 @@ export function ThreadRouteView({
     if (renderState === "missing") {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(target.threadRef);
-      if (environmentHasAnyThreads && !background) {
+      if (pane) {
+        pane.onMissing();
+      } else if (environmentHasAnyThreads && !background) {
         void navigate({ to: "/", replace: true });
       }
     }
-  }, [background, bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
+  }, [
+    background,
+    bootstrapComplete,
+    environmentHasAnyThreads,
+    navigate,
+    pane,
+    renderState,
+    target,
+  ]);
+
+  // A pane never navigates the route away from its siblings; it closes itself.
+  const leave = pane ? <PaneLeave onLeave={pane.onMissing} /> : <Navigate to="/" replace />;
 
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;
@@ -209,10 +225,10 @@ export function ThreadRouteView({
       redirect = <Navigate to="/" replace />;
     }
   } else if (hiddenByTagFilter) {
-    redirect = <Navigate to="/" replace />;
+    redirect = leave;
   } else if (offShellBlocked) {
     // Before the shell bootstraps, a listed visible thread can still look off-shell.
-    if (bootstrapComplete && unlistedThread !== null) redirect = <Navigate to="/" replace />;
+    if (bootstrapComplete && unlistedThread !== null) redirect = leave;
   } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
     view = (
       <ChatView
@@ -221,6 +237,17 @@ export function ThreadRouteView({
         threadId={target.threadRef.threadId}
         routeKind="server"
       />
+    );
+  }
+
+  if (pane) {
+    return (
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <PaneContext value={pane.context}>
+          <BackgroundThreadContext value={!pane.context.focused}>{view}</BackgroundThreadContext>
+        </PaneContext>
+        {redirect}
+      </div>
     );
   }
 
@@ -233,4 +260,12 @@ export function ThreadRouteView({
       {background ? null : redirect}
     </SidebarInset>
   );
+}
+
+function PaneLeave({ onLeave }: { onLeave: () => void }) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the pane once its thread is hidden or gone; there is no event to hang this on
+  useEffect(() => {
+    onLeave();
+  }, [onLeave]);
+  return null;
 }

@@ -172,6 +172,7 @@ import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
+import { canAddPane, openThreadInPane } from "./panes/paneActions";
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
@@ -2634,6 +2635,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
               ),
+              canOpenInPane: canAddPane(routeThreadRef, threadRef),
               branch: thread.branch ?? null,
               // An archived project is not a filter choice.
               projectFilter:
@@ -2682,6 +2684,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "open-in-pane":
+            openThreadInPane(routeThreadRef, threadRef, (ref) => {
+              void navigateToThread(ref);
+            });
+            return;
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKeys(
