@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.copyFile cannot request an exclusive copy.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewAnnotationVoiceEventSchema,
@@ -48,6 +50,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -2019,8 +2022,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
-    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () =>
-      wc.loadURL(url),
+    let unloadPrevented = false;
+    const onPreventUnload = () => {
+      unloadPrevented = true;
+    };
+    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () => {
+      wc.on("will-prevent-unload", onPreventUnload);
+      return wc.loadURL(url);
+    }).pipe(
+      // Blocked unloads and superseding navigations both reject with ERR_ABORTED.
+      Effect.catchIf(
+        (error) =>
+          !unloadPrevented &&
+          Predicate.hasProperty(error.cause, "errno") &&
+          error.cause.errno === -3,
+        () => Effect.void,
+      ),
+      Effect.ensuring(Effect.sync(() => wc.off("will-prevent-unload", onPreventUnload))),
     );
   });
 
@@ -3841,7 +3859,18 @@ export const make = Effect.gen(function* PreviewManagerMake() {
         attempt === 0 ? `${stem}${extension}` : `${stem} (${attempt})${extension}`,
       );
       if (yield* fileSystem.exists(target)) continue;
-      yield* fileSystem.copyFile(source, target);
+      const copied = yield* Effect.tryPromise({
+        try: () => NodeFSP.copyFile(source, target, NodeFSP.constants.COPYFILE_EXCL),
+        catch: (cause) => new PreviewOperationError({ operation: "copyToDownloads", cause }),
+      }).pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (error) =>
+            error.cause instanceof Error && "code" in error.cause && error.cause.code === "EEXIST",
+          () => Effect.succeed(false),
+        ),
+      );
+      if (!copied) continue;
       shell.showItemInFolder(target);
       return;
     }

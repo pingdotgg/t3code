@@ -76,7 +76,6 @@ function setup() {
   useDiffPanelStore.setState({
     byThreadKey: {},
     branchBaseRefByThreadKey: {},
-    keepSelectionOnOpenThreadKey: null,
   });
   useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
 }
@@ -85,6 +84,8 @@ it.each([
   ["shiftKey", commitUrl],
   ["altKey", commitUrl],
   ["shiftKey", pullRequestCommitUrl],
+  ["shiftKey", `${pullRequestCommitUrl}#diff-abcR5`],
+  ["altKey", `${pullRequestCommitUrl}#diff-abcR5`],
 ] as const)("keeps %s clicks on %s native", async (modifier, url) => {
   setup();
   await using screen = await render(
@@ -155,6 +156,4 @@ it("opens an available commit in the closed Diff pane without the pane resetting
       [scopedThreadKey(threadRef)]: { kind: "commit", sha, baseRef: null },
     }),
   );
-  // ChatView resets a pane opened without an explicit request to Changes unless this is set.
-  expect(useDiffPanelStore.getState().consumeKeepSelectionOnOpen(threadRef)).toBe(true);
 });
