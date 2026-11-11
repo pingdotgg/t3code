@@ -2,6 +2,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 import {
   parseGitRemoteHost,
@@ -209,28 +210,30 @@ export const makeDiscovery = Effect.gen(function* () {
           maxOutputBytes: 8_000,
           appendTruncationMarker: true,
         })
-        .pipe(Effect.catchIf(isMissingExecutable, () => Effect.void));
-      if (config === undefined) return null;
-      if (config.exitCode === 0) {
-        const host = normalizeGitLabHost(context.provider.name);
-        if (host !== null && normalizeGitLabHost(config.stdout) === host) {
-          return {
-            kind: discovery.kind,
-            name: "GitLab Self-Hosted",
-            baseUrl: context.provider.baseUrl,
-          };
-        }
-
-        // Token-only logins can omit api_host, and separate API hosts need auth-status discovery.
-        const verdict = yield* refineUnknownRemoteProvider({
-          specs: [discovery],
-          process,
-          cwd,
-          context,
-        });
-        if (verdict.settled) return verdict.provider;
+        .pipe(Effect.result);
+      if (Result.isFailure(config) && isMissingExecutable(config.failure)) return null;
+      const host = normalizeGitLabHost(context.provider.name);
+      if (
+        Result.isSuccess(config) &&
+        config.success.exitCode === 0 &&
+        host !== null &&
+        normalizeGitLabHost(config.success.stdout) === host
+      ) {
+        return {
+          kind: discovery.kind,
+          name: "GitLab Self-Hosted",
+          baseUrl: context.provider.baseUrl,
+        };
       }
 
+      // Token-only logins can omit api_host, and separate API hosts need auth-status discovery.
+      const verdict = yield* refineUnknownRemoteProvider({
+        specs: [discovery],
+        process,
+        cwd,
+        context,
+      });
+      if (verdict.settled) return verdict.provider;
       return yield* new SourceControlProviderError({
         provider: discovery.kind,
         operation: "refineUnknownRemote",

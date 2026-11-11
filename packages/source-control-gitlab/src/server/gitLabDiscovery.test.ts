@@ -6,7 +6,8 @@ import {
   probeSourceControlProvider,
   refineUnknownRemoteProvider,
 } from "@t3tools/source-control-core/server/discovery";
-import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { layer, processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -158,5 +159,86 @@ self-hosted.example.test
     assert.deepStrictEqual(asked, [["glab", "auth", "status", "--hostname", scenario.host]]);
     assert.strictEqual(verdict.provider?.kind, "gitlab");
     assert.strictEqual(verdict.settled, true);
+  }),
+);
+
+function refineWithLocalConfig(input: {
+  readonly remoteUrl: string;
+  readonly run: SourceControlHost.SourceControlHost["Service"]["process"]["run"];
+}) {
+  return Effect.gen(function* () {
+    const spec = yield* GitLabSourceControlProvider.makeDiscovery;
+    const remote = parseGitRemoteHost(input.remoteUrl);
+    assert.ok(remote);
+    return yield* refineUnknownRemoteProvider({
+      specs: [spec],
+      process: { run: input.run },
+      cwd: "/repo",
+      context: {
+        provider: unknownRemoteProvider(remote),
+        remoteName: "origin",
+        remoteUrl: input.remoteUrl,
+      },
+    });
+  }).pipe(Effect.provide(layer({ process: { run: input.run } })));
+}
+
+// `glab auth status` calls the host's API, so an offline host is found only through local config.
+it.effect("claims a remote from glab's local config without asking its API", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const verdict = yield* refineWithLocalConfig({
+      remoteUrl: "git@Self-Hosted.Example.Test:group/project.git",
+      run: ({ command, args }) => {
+        asked.push([command, ...args]);
+        return Effect.succeed(processOutput("https://self-hosted.example.test/\n"));
+      },
+    });
+    assert.strictEqual(verdict.provider?.kind, "gitlab");
+    assert.strictEqual(verdict.provider?.baseUrl, "https://self-hosted.example.test");
+    assert.deepStrictEqual(asked, [
+      ["glab", "config", "get", "api_host", "--host", "Self-Hosted.Example.Test"],
+    ]);
+  }),
+);
+
+it.effect.each([
+  { label: "empty", stdout: "", signedIn: true },
+  { label: "a separate API host", stdout: "api.example.test:8443\n", signedIn: true },
+  { label: "another port", stdout: "self-hosted.example.test:9443\n", signedIn: false },
+  { label: "unreadable", stdout: "", exitCode: 1, signedIn: false },
+])("falls back to glab auth status when local config is $label", (scenario) =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const verdict = yield* refineWithLocalConfig({
+      remoteUrl: "https://self-hosted.example.test:8443/group/project.git",
+      run: ({ command, args }) => {
+        asked.push([command, ...args]);
+        if (args[0] === "config") {
+          return Effect.succeed(
+            processOutput(scenario.stdout, {
+              exitCode: ChildProcessSpawner.ExitCode(scenario.exitCode ?? 0),
+            }),
+          );
+        }
+        return Effect.succeed(
+          scenario.signedIn
+            ? processOutput(
+                "self-hosted.example.test:8443\n  ✓ Logged in to self-hosted.example.test:8443 as token-user\n",
+              )
+            : processOutput("", {
+                stderr:
+                  "You are not authenticated with glab. Run glab auth login to authenticate.\n",
+                exitCode: ChildProcessSpawner.ExitCode(1),
+              }),
+        );
+      },
+    });
+    assert.strictEqual(verdict.provider?.kind ?? null, scenario.signedIn ? "gitlab" : null);
+    assert.strictEqual(verdict.settled, true);
+    assert.deepStrictEqual(asked, [
+      ["glab", "config", "get", "api_host", "--host", "self-hosted.example.test:8443"],
+      ["glab", "auth", "status", "--hostname", "self-hosted.example.test:8443"],
+    ]);
   }),
 );
