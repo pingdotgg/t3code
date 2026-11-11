@@ -1078,8 +1078,7 @@ describe("DesktopBrowserHost", () => {
       expect(nativeStops(), "stopped the screencast another session still streams").toBe(0);
       debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 1 });
       yield* settle;
-      expect(frames, "sent a stopped session the screencast's frames").toEqual([
-        "t3-preview-page",
+      expect(frames, "sent a stopped or idle session the screencast's frames").toEqual([
         "t3-preview-page-2",
       ]);
 
@@ -1148,7 +1147,7 @@ describe("DesktopBrowserHost", () => {
       frames.length = 0;
       debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 2 });
       yield* settle;
-      expect(frames).toEqual(["t3-preview-page", "t3-preview-page-1", "t3-preview-page-2"]);
+      expect(frames).toEqual(["t3-preview-page-1", "t3-preview-page-2"]);
     }).pipe(Effect.scoped),
   );
 
@@ -1188,6 +1187,36 @@ describe("DesktopBrowserHost", () => {
       expect(answered.toSorted()).toEqual([3, 4, 5, 6]);
       yield* settle;
       expect(nativeStops()).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stops a screencast whose start lands after its session detached", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee({ deferFocus: true });
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+
+      yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      expect(yield* Queue.take(replies)).toBe(1);
+      // The start waits on focus emulation while the viewer closes.
+      yield* raw({ id: 2, method: "Page.startScreencast", sessionId: "t3-preview-page-1" });
+      yield* raw({
+        id: 3,
+        method: "Target.detachFromTarget",
+        params: { sessionId: "t3-preview-page-1" },
+      });
+      expect(yield* Queue.take(replies)).toBe(3);
+      debuggee.settleFocus();
+      yield* settle;
+      debuggee.release();
+      expect(yield* Queue.take(replies)).toBe(2);
+      yield* settle;
+      expect(debuggee.methods.at(-1), "left the late screencast running").toBe(
+        "Page.stopScreencast",
+      );
     }).pipe(Effect.scoped),
   );
 

@@ -368,6 +368,10 @@ export const make = Effect.gen(function* () {
                     if (stream) {
                       stream.pending -= 1;
                       stream.started = true;
+                      // A detach's stop can overtake a start still waiting on focus; nobody owns it now.
+                      if (tab.screencasts.get(owner) !== stream && tab.screencasts.size === 0) {
+                        void debuggee.sendCommand("Page.stopScreencast").catch(() => {});
+                      }
                     }
                     return result;
                   },
@@ -394,9 +398,7 @@ export const make = Effect.gen(function* () {
           detachedOwners.add(owner);
           dropSessionHolds(tab, owner);
         },
-        // Frames stop only for a session that stopped its own stream, not one that never streamed.
-        receivesScreencast: (owner) =>
-          tab.screencasts.has(owner) || owner === undefined || !streamingOwners.has(owner),
+        receivesScreencast: (owner) => tab.screencasts.has(owner),
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")
