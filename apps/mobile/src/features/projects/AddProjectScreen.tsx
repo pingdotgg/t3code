@@ -45,6 +45,7 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
+  ensureBrowseDirectoryPath,
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
@@ -399,7 +400,7 @@ function useBrowsePathInput(
       input: { partialPath: browsePath.directoryPath },
     });
     return AsyncResult.isSuccess(result) && result.value
-      ? getCloneDestinationPath(result.value.parentPath, browsePath.filterQuery)
+      ? `${ensureBrowseDirectoryPath(result.value.parentPath)}${browsePath.filterQuery}`
       : path;
   };
 
