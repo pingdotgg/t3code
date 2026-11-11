@@ -1,0 +1,138 @@
+---
+title: Plain HTTP and OpenAPI
+description: Publish an Api as a plain HTTP JSON API, with an OpenAPI document, from the same Api.
+---
+
+An Api's typed client speaks Effect RPC. A partner, a script or a public API client often wants plain HTTP and JSON instead, with an OpenAPI document to generate its client from. `toHttpApi` from `@alchemy.run/domain/Http` gives you both from the Api you already have: an Effect `HttpApi` group with one endpoint per call the Api serves, the Layer that serves it, and the OpenAPI document of it.
+
+## Publish an Api
+
+```typescript title="packages/server/src/BankHttp.ts"
+import * as DomainHttp from "@alchemy.run/domain/Http";
+import { CustomerApi } from "@bank/domain/CustomerApi.api";
+
+export const BankHttp = DomainHttp.toHttpApi(CustomerApi);
+```
+
+Every call the Api serves becomes an endpoint. The Api is already the list of what a client may reach, so to publish less over HTTP, give HTTP clients their own, smaller Api, as in [Give each kind of client its own Api](/domain/api#give-each-kind-of-client-its-own-api).
+
+`BankHttp` has:
+
+| Field      | Value                                                                              |
+| ---------- | ---------------------------------------------------------------------------------- |
+| `group`    | The `HttpApiGroup`, one endpoint per published call, named after the Api.         |
+| `api`      | An `HttpApi` with only that group.                                                 |
+| `layer`    | The handlers of the group in `api`.                                                |
+| `layerFor` | `layerFor(MyHttpApi)`: the handlers of the group in your own `HttpApi`.            |
+
+## Serve it
+
+Serve it like any Effect `HttpApi`. In a Worker, provide the hosted model and the middleware Layers, as for the Api itself:
+
+```typescript title="packages/server/src/BankWorker.ts"
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as Etag from "effect/http/Etag";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as HttpRouter from "effect/http/HttpRouter";
+import { BankHttp } from "./BankHttp.ts";
+
+export default class BankWorker extends Cloudflare.Worker<BankWorker>()(
+  "BankWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    return {
+      fetch: HttpApiBuilder.layer(BankHttp.api, { openapiPath: "/openapi.json" }).pipe(
+        Layer.provide(BankHttp.layer),
+        Layer.provide([HttpPlatform.layer, Etag.layer]),
+        HttpRouter.toHttpEffect,
+      ),
+    };
+  }).pipe(Effect.provide(BankLive)),
+) {}
+```
+
+`OpenApi.fromApi(BankHttp.api)` gives the same document as `/openapi.json`, to write to a file or check in a test.
+
+To serve the group next to your own endpoints, or under a prefix, add `BankHttp.group` to your own `HttpApi`, and provide `BankHttp.layerFor` with that `HttpApi`:
+
+```typescript
+const PublicApi = HttpApi.make("Public").add(BankHttp.group.prefix("/v1")).add(StatusGroup);
+const handlers = Layer.mergeAll(BankHttp.layerFor(PublicApi), StatusLive);
+```
+
+## Paths and methods
+
+Each published call becomes one endpoint, by one rule:
+
+| Call                           | Endpoint                    | Input                                                    |
+| ------------------------------ | --------------------------- | -------------------------------------------------------- |
+| A command                      | `POST /<Command>`           | A JSON body: `target`, an optional `commandId`, and the input |
+| A view's or aggregate's `get`, a stream's `peek` | `GET /<Name>/{key}`        | `?stream=&version=` (from a receipt) waits for that write |
+| A view's `snapshot`            | `GET /<Name>/{key}/snapshot` | `?stream=&version=` waits for that write               |
+| A view's or stream's `list`    | `GET /<Name>/{key}/list`   | `?order=&take=&after=`                                   |
+| `watch`                        | `GET /<Name>/{key}/watch`  | None. Answers with Server-Sent Events                    |
+| `events`                       | `GET /<Name>/{key}/events` | `?after=` a cursor. Answers with Server-Sent Events      |
+
+A command's body is the same JSON as its RPC payload, and every answer is the same JSON the typed client receives: a command answers with its receipt (`reply`, `stream`, `version`), and a read with the key's state (`null` for a key with nothing in it) or a page. The key of a read is in the path, because a read takes no body. `GET /AccountSummary/c-1-main?stream=…&version=3` reads your own write after a deposit. `stream` and `version` go together.
+
+```shellsession
+$ curl -X POST https://bank.example.com/DepositMoney \
+    -H 'content-type: application/json' -H 'cookie: session=…' \
+    -d '{"target":"c-1-main","input":{"amount":500}}'
+{"reply":{"balance":1500},"stream":"Account/c-1-main","version":3}
+```
+
+## Live reads
+
+`watch` and `events` answer with Server-Sent Events. Each value the typed client would receive is one event, its JSON in `data`: `{ state, cursor }` for `watch`, then one per change, and for `events` each entry, a `CaughtUp` frame, then live entries. A browser reads them with `EventSource`:
+
+```typescript
+const summary = new EventSource(`/AccountSummary/${accountId}/watch`);
+summary.onmessage = (event) => render(JSON.parse(event.data).state);
+```
+
+The response starts once the read has its first value, so a read the middleware or `validate` refuses answers with that failure's status, like any other call. Once the stream is open, a failure ends it with an `effect/http-api/stream/failure` event whose `data` is the typed failure, such as `validate` refusing a change while a client watches.
+
+`events?after=<cursor>` resumes after a cursor from `watch`, `snapshot` or an earlier entry, so a client that reconnects misses nothing.
+
+## Errors
+
+A typed failure answers with its JSON (its `_tag` and data), at the status its schema's `httpApiStatus` annotation gives it, as for any Effect HttpApi error. Declare it on the rejection:
+
+```typescript
+export class NotOwner extends Domain.Rejection("NotOwner", {}, { httpApiStatus: 403 }) {}
+```
+
+A middleware error takes it where you declare it: `error: Unauthenticated.pipe(HttpApiSchema.status(401))`. A failure without one answers with 422: a rejection is a refused request, not a server fault.
+
+Each failure is in the OpenAPI document under its status, with its schema. Input that the call's schema refuses is a 400 before it reaches the model. A failure that the call does not declare is a defect, a 500, as on the Api itself.
+
+## The same checks as the Api
+
+Every call goes through the Api's own handlers, in process, with the HTTP request's headers. So the middleware of what it calls (a session from a cookie or a token), its `validate` and its rejections run exactly as for the typed client. The input is decoded once, by the endpoint, so a transform such as a `DateTimeUtc` field arrives as a date and is not decoded again.
+
+## Limits
+
+A read's `where` filter is not published, since a filter does not fit in a URL. An endpoint's input and answer are the call's own JSON. To shape a public API differently, write your own `HttpApi` group and call the Api's client from its handlers:
+
+```typescript
+const Partner = HttpApi.make("Partner").add(
+  HttpApiGroup.make("accounts").add(
+    HttpApiEndpoint.get("balance", "/balance/:id", {
+      params: { id: AccountId },
+      success: Schema.Struct({ balance: Schema.Number }),
+    }),
+  ),
+);
+
+const PartnerLive = HttpApiBuilder.group(Partner, "accounts", (handlers) =>
+  handlers.handle("balance", ({ params, request }) =>
+    Effect.gen(function* () {
+      const bank = yield* CustomerApi.clientInProcess;
+      // the caller's headers, so the view's middleware sees who is asking
+      const summary = yield* bank.AccountSummary.get(params.id, { headers: request.headers });
+      return { balance: summary?.balance ?? 0 };
+    }).pipe(Effect.scoped, Effect.orDie),
+  ),
+);
+```
