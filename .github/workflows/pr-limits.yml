@@ -34,7 +34,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       # pull_request_target has a write token. Load the script from the default
-      # branch and never run PR code.
+      # branch and never run PR code. Cone mode also checks out the files beside
+      # .github/scripts, which is where TRIAGE_EXEMPTIONS.td lives.
       - name: Checkout trusted scripts
         uses: actions/checkout@v6
         with:
@@ -76,21 +77,18 @@ jobs:
         github.event.comment.user.login == github.event.issue.user.login))
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/github-script@v8
+      - name: Checkout trusted scripts
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+
+      - name: Remove answered labels
+        uses: actions/github-script@v8
         with:
           script: |
-            const number = context.payload.pull_request?.number ?? context.payload.issue.number;
-            const names =
-              context.eventName === "issue_comment"
-                ? ["triage:closing"]
-                : ["needs-rebase", "triage:closing"];
-            for (const name of names) {
-              try {
-                await github.rest.issues.removeLabel({ ...context.repo, issue_number: number, name });
-              } catch (error) {
-                if (error.status !== 404) throw error;
-              }
-            }
+            const limits = require("./.github/scripts/pr-limits.cjs");
+            await limits.clearAnswered({ github, context, core });
 
   sweep:
     name: Close windows

@@ -126,10 +126,15 @@ comment text but do not write to GitHub. Keep the eligibility finding separate f
   This is a routing exception, not a claim that the PR passed eligibility or correctness review.
 - **Closure warranted.** The assessment is complete and establishes a specific policy violation.
   Prepare a clear explanation under [closure and reconsideration](../../../CONTRIBUTING.md#closure-and-reconsideration),
-  post it, and apply `triage:closing`. Verify that the explanation and the label are present. Do not
-  close the PR yourself: [pr-limits.yml](../../../.github/workflows/pr-limits.yml) closes it 72 hours
-  after the label. A reply or a push from the author removes the label first; treat that as new
-  evidence, reassess, and apply the label again only if the finding still holds. The comment
+  post it, then read the repository variable `PR_LIMITS_ENFORCE`
+  (`gh variable get PR_LIMITS_ENFORCE -R pingdotgg/t3code`). When it is `true`, apply
+  `triage:closing`, verify that the explanation and the label are present, and do not close the PR
+  yourself: [pr-limits.yml](../../../.github/workflows/pr-limits.yml) closes it 72 hours after the
+  label. A reply or a push from the author removes the label first; treat that as new evidence,
+  reassess, and apply the label again only if the finding still holds. When the variable is unset
+  or has any other value, nothing would close a labeled PR: close it yourself and verify that the
+  explanation is present and the PR is closed. If the variable cannot be read, report the closure
+  as incomplete. The comment
   must name the violated rule, cite supporting submission evidence, link the maintained guide section,
   and give a concrete remedy. Missing contributor evidence can warrant closure; explain what must be
   established. Missing product approval calls for maintainer discussion, not an agent's product decision.
@@ -176,10 +181,10 @@ description, evidence, approvals, existing triage comments, PR open/closed state
 label when relevant. Reassess changes that could invalidate the finding. Reuse an existing explanation
 only if it still matches the current finding; avoid duplicate comments, closures, or label applications.
 
-For closure, establish that the required explanation is posted before applying `triage:closing`. If
-posting fails or its result is ambiguous, read back the comments before retrying or proceeding. If the
-comment succeeds but labeling fails, preserve the comment and retry only the label after checking
-current state.
+For closure, establish that the required explanation is posted before applying `triage:closing` or
+closing. If posting fails or its result is ambiguous, read back the comments before retrying or
+proceeding. If the comment succeeds but the label or the closure fails, preserve the comment and retry
+only that unfinished step after checking current state.
 Handle a failed or ambiguous label application the same way: inspect labels before any retry. If access
 or state still cannot be verified, report an incomplete action and the step needed to resume. Do not
 retry blindly or claim success for an unverified action.

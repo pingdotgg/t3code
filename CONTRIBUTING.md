@@ -145,9 +145,11 @@ existing review settings. Neither triage nor a Macroscope review authorizes merg
 
 ## Open PR limit and conflict window
 
-Two rules run without triage, in [pr-limits.yml](.github/workflows/pr-limits.yml). Both apply only
-to authors labeled `vouch:unvouched`, and neither applies to a PR labeled `triage:keep-open`. They do
-not assess eligibility.
+Two rules run without triage, in [pr-limits.yml](.github/workflows/pr-limits.yml). Neither applies
+to vouched contributors, to maintainers in [TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td), or to
+a PR labeled `triage:keep-open`. They do not assess eligibility. They and the closure notice below are
+enforced only while the repository variable `PR_LIMITS_ENFORCE` is `true`; until then triage closes
+PRs directly.
 
 A contributor who is not vouched can have 8 open PRs. A further PR is closed when it is opened. Get
 one of the open PRs merged or closed, then open it again. A maintainer who reopens a PR overrides the
@@ -155,7 +157,8 @@ limit for that PR.
 
 <a id="conflict-window"></a>
 
-A PR that conflicts with `main` gets the `needs-rebase` label and a request to rebase. A push removes
+A PR labeled `vouch:unvouched` that conflicts with `main` gets a request to rebase and the
+`needs-rebase` label. A push removes
 the label. A PR that still conflicts 7 days after the request, with no push since, is closed. The
 conflict window does not start, and stops, once someone in
 [TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td) has commented or submitted a review.

@@ -69,7 +69,10 @@ const PR_ACTIVITY_QUERY = `
   }`;
 
 const AUTHOR_OPEN_PRS_QUERY = `
-  query ($q: String!) {
+  query ($q: String!, $owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) { state labels(first: 100) { nodes { name } } }
+    }
     search(query: $q, type: ISSUE, first: 50) {
       nodes { ... on PullRequest { number } }
     }
@@ -127,6 +130,8 @@ function maintainerOn(activity, exemptions) {
 async function findMaintainer(github, repo, number, detail, exemptions, spend) {
   // A finished connection answers its last cursor with an empty page and no cursor; keep the last
   // real one, or the next request would start that connection over from its first page.
+  const author = detail.author?.login;
+  if (author && exemptions.has(author.toLowerCase())) return author;
   const cursors = { comments: null, reviews: null };
   for (let activity = detail; ;) {
     const login = maintainerOn(activity, exemptions);
@@ -144,13 +149,19 @@ async function findMaintainer(github, repo, number, detail, exemptions, spend) {
 // What the author-activity job reacts to, read directly so a late or failed job cannot cost the
 // author their answer: a push answers both windows, a reply answers a triage notice.
 function answeredSince(detail, since, step) {
+  // A committer date is the author's to set; one in the future would answer every later notice.
   const pushedAt = Date.parse(detail.commits.nodes[0]?.commit.committedDate ?? "");
-  if (pushedAt > since) return true;
+  if (pushedAt > since && pushedAt <= Date.now()) return true;
   if (step !== "closing-window") return false;
   const author = detail.author?.login;
   return detail.recentComments.nodes.some(
     (comment) => comment.author?.login === author && Date.parse(comment.createdAt) > since,
   );
+}
+
+// A stride that shares no factor with the list length reaches every starting point in turn.
+function gcd(a, b) {
+  return b === 0 ? a : gcd(b, a % b);
 }
 
 function labeledAt(detail, name) {
@@ -197,9 +208,9 @@ async function sweep({ github, context, core, dryRun }) {
   }
   // Start each day further down the list so the lookup cap cannot starve the same PRs every run.
   const due = openPrs.filter((pr) => sweepStep(pr) !== "skip");
-  const start = due.length
-    ? (Math.floor(Date.now() / DAY_MS) * MAX_LOOKUPS_PER_RUN) % due.length
-    : 0;
+  let stride = MAX_LOOKUPS_PER_RUN;
+  while (due.length > 0 && gcd(stride, due.length) !== 1) stride -= 1;
+  const start = due.length ? (Math.floor(Date.now() / DAY_MS) * stride) % due.length : 0;
   const candidates = [...due.slice(start), ...due.slice(0, start)];
 
   const plan = [];
@@ -340,12 +351,22 @@ async function enforceOpenLimit({ github, context, core, dryRun }) {
     return;
   }
   if (TRUSTED_VOUCH_STATUSES.has(status)) return;
-  if (pr.labels.some((label) => label.name === KEEP_OPEN_LABEL)) return;
+  const exemptions = parseExemptions(fs.readFileSync(EXEMPTIONS_PATH, "utf8"));
+  if (exemptions.has(author.toLowerCase())) return;
   // Someone else reopening a PR is a maintainer overriding the limit.
   if (context.payload.action === "reopened" && context.payload.sender.login !== author) return;
 
   const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open author:${author} sort:created-asc`;
-  const { search } = await github.graphql(AUTHOR_OPEN_PRS_QUERY, { q });
+  const { search, repository } = await github.graphql(AUTHOR_OPEN_PRS_QUERY, {
+    q,
+    owner: context.repo.owner,
+    repo: context.repo.repo,
+    number: pr.number,
+  });
+  // The job can start well after the event, so read the PR as it is now.
+  const current = repository.pullRequest;
+  if (current.state !== "OPEN") return;
+  if (current.labels.nodes.some((label) => label.name === KEEP_OPEN_LABEL)) return;
   // A new PR counts only the older ones, so two opened together cannot close each other.
   const reopened = context.payload.action === "reopened";
   const others = search.nodes.filter(
@@ -373,4 +394,33 @@ async function enforceOpenLimit({ github, context, core, dryRun }) {
   core.info(`PR #${pr.number}: closed, ${author} has ${others} other open PRs.`);
 }
 
-module.exports = { enforceOpenLimit, maintainerOn, parseExemptions, sweep, sweepStep };
+// Runs when the author pushes or replies. The job can start late, after triage has already put a
+// new notice on the PR, so only a label that was there when the author acted counts as answered.
+async function clearAnswered({ github, context, core }) {
+  const { comment, pull_request: pr, issue } = context.payload;
+  const number = (pr ?? issue).number;
+  const actedAt = Date.parse(comment ? comment.created_at : pr.updated_at);
+  const detail = (
+    await github.graphql(PR_DETAIL_QUERY, {
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      number,
+    })
+  ).repository.pullRequest;
+  const present = new Set(detail.labels.nodes.map((label) => label.name));
+  for (const name of comment ? [CLOSING_LABEL] : [REBASE_LABEL, CLOSING_LABEL]) {
+    const since = labeledAt(detail, name);
+    if (!present.has(name) || since === undefined || since > actedAt) continue;
+    await removeLabel(github, context, number, name);
+    core.info(`PR #${number}: removed ${name}.`);
+  }
+}
+
+module.exports = {
+  clearAnswered,
+  enforceOpenLimit,
+  maintainerOn,
+  parseExemptions,
+  sweep,
+  sweepStep,
+};
