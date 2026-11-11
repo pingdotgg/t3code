@@ -119,6 +119,35 @@ describe("createCodeViewFileReveal", () => {
     partial = false;
     reveal.flush();
     expect(view.scrolls).toEqual([{ type: "range", id: "a", range, align: "center" }]);
+
+    // Removed lines always sit in a hunk, and a deleted file has no contents to load.
+    const deleted = viewer(["d"]);
+    const removedRange = { start: 3, end: 4, side: "deletions" } as const;
+    reveal.attach({
+      ...deleted,
+      getInstance: () => ({
+        getRenderedItems: () => [
+          {
+            id: "d",
+            instance: {
+              ...instance,
+              getDiffForSearch: () =>
+                ({
+                  isPartial: true,
+                  hunks: [
+                    { additionStart: 0, additionCount: 0, deletionStart: 1, deletionCount: 8 },
+                  ],
+                }) as never,
+            },
+          },
+        ],
+      }),
+    });
+    reveal.request("d", removedRange);
+    expect(expanded).toHaveLength(1);
+    expect(deleted.scrolls).toEqual([
+      { type: "range", id: "d", range: removedRange, align: "center" },
+    ]);
   });
 
   it("drops a pending reveal when another diff's viewer replaces it, but repositions a range a remount loses", () => {

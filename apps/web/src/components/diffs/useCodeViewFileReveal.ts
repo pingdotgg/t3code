@@ -108,9 +108,19 @@ export function createCodeViewFileReveal() {
         // Wait for the file contents the expander asked for.
         if (pending.loadingFile) return;
         const { expandHunk } = rendered.instance;
-        const opened = [...new Set([startLine, endLine])].map((line) =>
-          expandPartialDiffToLine(diff, line, expandHunk),
-        );
+        // A removed line is always in a hunk, and a deleted file has no contents to load.
+        const removed = (line: number, side: SelectionSide | undefined) =>
+          side === "deletions" &&
+          diff.hunks.some(
+            (hunk) => line >= hunk.deletionStart && line < hunk.deletionStart + hunk.deletionCount,
+          );
+        const outside = [
+          ...new Set([
+            ...(removed(range.start, range.side) ? [] : [startLine]),
+            ...(removed(range.end, range.endSide ?? range.side) ? [] : [endLine]),
+          ]),
+        ];
+        const opened = outside.map((line) => expandPartialDiffToLine(diff, line, expandHunk));
         if (opened.some(Boolean)) {
           pending.loadingFile = true;
           return;
