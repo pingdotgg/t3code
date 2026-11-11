@@ -137,6 +137,19 @@ describe("handoff budget", () => {
     assert.equal(command?.kind, "command_execution");
     assert.include(command!.text, "Exit code: 1");
     assert.include(command!.text, "界".repeat(300));
+    assert.equal(
+      historicalMessage({
+        ...base,
+        type: "file_change",
+        fileName: "src/a.ts",
+        changes: [
+          { operation: "update", path: "src/a.ts" },
+          { operation: "add", path: "src/b.ts" },
+          { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+        ],
+      })?.text,
+      "File change: src/a.ts, src/b.ts, src/new.ts",
+    );
     assert.isNull(
       historicalMessage({
         ...base,

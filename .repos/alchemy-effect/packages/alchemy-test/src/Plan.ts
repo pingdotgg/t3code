@@ -5,10 +5,7 @@ const Branch = Schema.Struct({
   /** Tag expressions are ANDed, just like repeated --tags flags. Empty selects all. */
   tags: Schema.Array(Schema.String),
   concurrency: Schema.optional(
-    Schema.Union([
-      Schema.Int.check(Schema.isGreaterThan(0)),
-      Schema.Literal("unbounded"),
-    ]),
+    Schema.Union([Schema.Int.check(Schema.isGreaterThan(0)), Schema.Literal("unbounded")]),
   ),
 });
 const Plan = Schema.Array(
@@ -20,9 +17,7 @@ export type TestPlan = typeof Plan.Type;
 /** Parse before collection so an invalid plan cannot trigger test imports. */
 export const parsePlan = (json: string): TestPlan => {
   try {
-    const plan = Schema.decodeUnknownSync(Plan, { onExcessProperty: "error" })(
-      JSON.parse(json),
-    );
+    const plan = Schema.decodeUnknownSync(Plan, { onExcessProperty: "error" })(JSON.parse(json));
     for (const phase of plan) {
       for (const branch of Array.isArray(phase) ? phase : [phase]) {
         compileTagsFilter(branch.tags);
@@ -30,18 +25,13 @@ export const parsePlan = (json: string): TestPlan => {
     }
     return plan;
   } catch (cause) {
-    throw new Error(
-      `Invalid --plan: ${cause instanceof Error ? cause.message : String(cause)}`,
-    );
+    throw new Error(`Invalid --plan: ${cause instanceof Error ? cause.message : String(cause)}`);
   }
 };
 
 /** Shared plain/TUI/log representation of a dry-run plan. */
 export const formatPlanPreview = (
-  phases: Extract<
-    import("./Reporter.ts").TestEvent,
-    { _tag: "PlanPreview" }
-  >["phases"],
+  phases: Extract<import("./Reporter.ts").TestEvent, { _tag: "PlanPreview" }>["phases"],
 ): string =>
   [
     "Dry run — no tests or hooks executed",

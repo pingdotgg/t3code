@@ -161,15 +161,12 @@ describe("third-party license generation", () => {
     });
   });
 
-  it("renders generated notices from the ignored SPDX cache", async () => {
+  it("renders generated notices from the committed SPDX templates", async () => {
     const fixture = await createFixture();
-    await writeJson(
-      NodePath.join(fixture.root, ".generated/third-party-licenses/spdx/v3.28.0/MIT.json"),
-      {
-        licenseId: "MIT",
-        licenseText: "MIT License\n\nCopyright (c) <year> <copyright holders>\n\nPermission text",
-      },
-    );
+    await writeJson(NodePath.join(fixture.root, "third-party-licenses/spdx/v3.28.0/MIT.json"), {
+      licenseId: "MIT",
+      licenseText: "MIT License\n\nCopyright (c) <year> <copyright holders>\n\nPermission text",
+    });
     await writeJson(fixture.configFile, {
       customNotices: [
         {
@@ -232,7 +229,6 @@ describe("third-party license generation", () => {
       name: "fixture-app",
       dependencies: { "demo-dependency": "1.2.3", "@types/demo": "1.0.0" },
     });
-    // The DefinitelyTyped shape, and the csstype / undici-types one it pulls in.
     await write("@types/demo", {
       main: "",
       types: "index.d.ts",
@@ -260,7 +256,6 @@ describe("third-party license generation", () => {
   it.each([
     {
       shape: "a JS entry next to its declarations",
-      // The @shikijs/types shape: a types condition next to a real JS entry.
       entry: {
         main: "./dist/index.mjs",
         exports: { ".": { types: "./dist/index.d.mts", import: "./dist/index.mjs" } },
@@ -366,10 +361,7 @@ describe("third-party license generation", () => {
     await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));
     for (const licenseId of ["Apache-2.0", "BSD-3-Clause"]) {
       await writeJson(
-        NodePath.join(
-          fixture.root,
-          `.generated/third-party-licenses/spdx/v3.28.0/${licenseId}.json`,
-        ),
+        NodePath.join(fixture.root, `third-party-licenses/spdx/v3.28.0/${licenseId}.json`),
         { licenseId, licenseText: `${licenseId} terms` },
       );
     }
