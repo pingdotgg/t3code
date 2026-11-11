@@ -39,7 +39,7 @@ const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? che
 function isReviewAcknowledgement(remark: PullRequestComment): boolean {
   return (
     remark.author?.login.toLowerCase() === "coderabbitai[bot]" &&
-    /<!-- This is an auto-generated reply by CodeRabbit -->[\s\S]*?<summary>Actions? performed<\/summary>\s*(?:<dl>\s*<dd>\s*<br>\s*)?(?:Full review|Review) triggered\./.test(
+    /<!-- This is an auto-generated reply by CodeRabbit -->[\s\S]*?<summary>[^\p{L}<]*Actions? performed<\/summary>\s*(?:<dl>\s*<dd>\s*<br>\s*)?(?:Full review|Review) triggered\./u.test(
       remark.body.slice(0, 1_000),
     )
   );

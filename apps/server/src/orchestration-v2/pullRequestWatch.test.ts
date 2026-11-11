@@ -693,9 +693,20 @@ describe("evaluatePullRequestWatch", () => {
   });
 
   it("skips CodeRabbit review acknowledgements and wakes once for their outcome edits", () => {
-    for (const status of ["Review triggered.", "Full review triggered."]) {
+    const current = `<!-- This is an auto-generated reply by CodeRabbit -->
+<details>
+<summary>✅ Actions performed</summary>
+
+Review triggered.
+
+</details>`;
+    for (const acknowledgement of [
+      codeRabbitReply("Review triggered."),
+      codeRabbitReply("Full review triggered."),
+      current,
+    ]) {
       const queued = {
-        ...remark("coderabbitai[bot]", "2026-10-02T12:06:00Z", codeRabbitReply(status)),
+        ...remark("coderabbitai[bot]", "2026-10-02T12:06:00Z", acknowledgement),
         kind: "issue-comment" as const,
         path: null,
       };
