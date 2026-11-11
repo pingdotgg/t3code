@@ -38,6 +38,27 @@ describe("sourceControlClients.parseChangeRequestUrl", () => {
     });
   });
 
+  it("reads a Cursor Origin pull request under Origin's git host, not as GitHub's /pull/", () => {
+    for (const url of [
+      "https://cursor.com/codebase/Acme.Team/Web-App/pull/42",
+      "http://www.cursor.com/codebase/Acme.Team/Web-App/pull/42/files?w=1#diff",
+    ]) {
+      expect(parse(url), url).toEqual({
+        host: "origin.cursor.com",
+        repository: "acme.team/web-app",
+        number: 42,
+      });
+      expect(kindOf(url), url).toBe("cursor-origin");
+    }
+    expect(
+      sourceControlClients.parseChangeRequestUrl("https://cursor.com/codebase/acme/web/pull/42")
+        ?.link.repositoryUrl,
+    ).toBe("https://cursor.com/codebase/acme/web");
+    expect(parse("https://cursor.com/codebase/acme/web")).toBeNull();
+    expect(kindOf("https://www.cursor.com/updates/pull/42")).toBeUndefined();
+    expect(kindOf("https://github.com/acme/web/pull/42")).toBe("github");
+  });
+
   it("reads Forgejo URLs even when the hostname contains github", () => {
     expect(parse("https://github.internal/team/repo/pulls/7")).toEqual({
       host: "github.internal",
@@ -72,6 +93,11 @@ describe("sourceControlClients.parseChangeRequestUrl", () => {
       repository: "team/project",
       number: 9,
     });
+    expect(
+      sourceControlClients.changeRequestUrlFromReferenceAutolink(
+        "https://gitlab.com/team/apps/web/-/merge_requests/42",
+      ),
+    ).toBe("https://gitlab.com/team/apps/web/-/merge_requests/42");
   });
 
   it("reads Bitbucket and both Azure DevOps URL forms", () => {
@@ -249,6 +275,7 @@ describe("sourceControlClients.recognizeRemote", () => {
     expect(kindOfRemote("https://bitbucket.gitlab.example/o/r")).toBe("gitlab");
     expect(kindOfRemote("https://bitbucket.visualstudio.com/p/_git/r")).toBe("azure-devops");
     expect(kindOfRemote("git@git.cafe:pingdotgg/t3code.git")).toBe("gitcafe");
+    expect(kindOfRemote("https://origin.cursor.com/acme/web.git")).toBe("cursor-origin");
   });
 
   it("reads a remote no host claims as an unknown host, and a local path as no host", () => {

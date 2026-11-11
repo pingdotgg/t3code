@@ -387,12 +387,17 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
   );
   const saveRegistration = Effect.fnUntraced(function* (profile: typeof Registration.Type) {
     const saved = yield* readRegistrations;
+    let connectionNumber = saved.profiles.length + 1;
+    while (
+      saved.profiles.some((entry) => entry.connectionLabel === `Connection ${connectionNumber}`)
+    )
+      connectionNumber++;
     profile = {
       ...profile,
       connectionLabel:
         saved.profiles.find((entry) => entry.clientId === profile.clientId)?.connectionLabel ??
         profile.connectionLabel ??
-        `Connection ${saved.profiles.length + 1}`,
+        `Connection ${connectionNumber}`,
     };
     yield* encodeRegistration({
       profiles: [profile, ...saved.profiles.filter((entry) => entry.clientId !== profile.clientId)],
@@ -911,6 +916,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     methods: Effect.gen(function* () {
       const saved = yield* readRegistrations;
       const active = Option.getOrUndefined(yield* read);
+      const sessions = (yield* readSessions).sessions;
       const current = saved.profiles.find(
         (profile) => profile.clientId === (active?.clientId ?? saved.lastClientId),
       );
@@ -933,6 +939,9 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
         },
         ...profiles.slice(0, 30).map((profile) => ({
           id: profileMethodId(profile.clientId),
+          canRemove:
+            profile.subject === undefined &&
+            !sessions.some((session) => session.clientId === profile.clientId),
           name: `${profile.email ?? "ChatGPT account"} · ${profile.connectionLabel}`,
           ...(profile.email ? { accountEmail: profile.email } : {}),
           description: "Reuse this account's original sign-in registration.",
@@ -962,6 +971,45 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
           context.expiresAt,
         ),
       ),
+    removeMethod: Effect.fn("CodexChatGptAuth.removeMethod")(function (methodId) {
+      return lock.withPermit(
+        withSessionLock(
+          Effect.gen(function* () {
+            const saved = yield* readRegistrations;
+            const profile = saved.profiles.find(
+              (entry) => profileMethodId(entry.clientId) === methodId,
+            );
+            if (
+              !profile ||
+              profile.subject !== undefined ||
+              (yield* readSessions).sessions.some(
+                (session) => session.clientId === profile.clientId,
+              )
+            )
+              return yield* failure(
+                "removeMethod",
+                "Only incomplete ChatGPT connections can be removed.",
+              );
+            const profiles = saved.profiles.filter((entry) => entry.clientId !== profile.clientId);
+            yield* encodeRegistration({
+              profiles,
+              lastClientId:
+                saved.lastClientId === profile.clientId
+                  ? (profiles[0]?.clientId ?? null)
+                  : saved.lastClientId,
+            }).pipe(
+              Effect.flatMap((json) => registrationStore.set(new TextEncoder().encode(json))),
+              Effect.mapError(() =>
+                failure(
+                  "removeMethod",
+                  "Could not remove the saved ChatGPT connection. Try again.",
+                ),
+              ),
+            );
+          }),
+        ),
+      );
+    }),
     logout: lock.withPermit(withSessionLock(logout)),
   });
   const reconnectProfile = Effect.fnUntraced(function* (methodId: string) {
