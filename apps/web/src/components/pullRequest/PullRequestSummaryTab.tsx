@@ -166,7 +166,9 @@ function CommentBody({
   comment,
   editing,
   className,
+  revealCount = 0,
 }: {
+  revealCount?: number;
   comment: PullRequestComment;
   editing: CommentEditing;
   className?: string | undefined;
@@ -191,6 +193,7 @@ function CommentBody({
     <div className={cn("flex items-start gap-1", className)}>
       <PullRequestCommentBody
         key={comment.id}
+        revealCount={revealCount}
         className="min-w-0 flex-1"
         text={comment.body}
         cwd={editing.cwd}
@@ -409,8 +412,8 @@ export function PullRequestSummaryTab({
     0,
   );
   // Filter whole conversations before promoting open threads, keeping human replies to bots.
-  const filtered = filterPullRequestConversationItems(items, commentFilter);
-  const filteredItems = items.filter((item) => filtered.includes(item) || itemMatchesLink(item));
+  const filtered = new Set(filterPullRequestConversationItems(items, commentFilter));
+  const filteredItems = items.filter((item) => filtered.has(item) || itemMatchesLink(item));
   const filteredOutCount =
     commentCount -
     filteredItems.reduce(
@@ -433,20 +436,26 @@ export function PullRequestSummaryTab({
     item.kind === "thread" ? !promotedIds.has(item.id) : !pinnedIds.has(item.id),
   );
   // Open threads lead, but share the same mounting budget as the remaining conversation.
-  const visibleOpenThreads = openThreads.filter(
-    (thread, index) =>
-      index < shownConversations || thread.comments.some((comment) => matchesLink(comment.url)),
+  const pagedOpenThreads = openThreads.slice(0, shownConversations);
+  const linkedOpenThread = openThreads.find((thread) =>
+    thread.comments.some((comment) => matchesLink(comment.url)),
   );
-  const { shown: recentItems, hidden: hiddenTalkCount } = pagePullRequestConversationItems(
+  const visibleOpenThreads =
+    linkedOpenThread && !pagedOpenThreads.includes(linkedOpenThread)
+      ? [...pagedOpenThreads, linkedOpenThread]
+      : pagedOpenThreads;
+  const page = pagePullRequestConversationItems(
     talkItems,
-    Math.max(0, shownConversations - visibleOpenThreads.length),
+    Math.max(0, shownConversations - pagedOpenThreads.length),
   );
+  const linkedTalkItem = talkItems.find(itemMatchesLink);
+  const extraLinkedItem =
+    linkedTalkItem && !page.shown.includes(linkedTalkItem) ? linkedTalkItem : null;
+  const recentItems = extraLinkedItem ? [...page.shown, extraLinkedItem] : page.shown;
+  const hiddenTalkCount = page.hidden - (extraLinkedItem ? 1 : 0);
   const hiddenConversationCount = openThreads.length - visibleOpenThreads.length + hiddenTalkCount;
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
-  const visibleItems = orderPullRequestComments(
-    talkItems.filter((item) => recentItems.includes(item) || itemMatchesLink(item)),
-    commentOrder,
-  );
+  const visibleItems = orderPullRequestComments(recentItems, commentOrder);
   const showOldestCommentsButton =
     hiddenConversationCount > 0 ? (
       <Button
@@ -567,8 +576,8 @@ export function PullRequestSummaryTab({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls to a linked section, description or heading once it renders
   useEffect(() => {
     revealSummary();
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- retries once the description markdown renders, including after its editor closes
   }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- retries once the description markdown renders, including after its editor closes
     revealUrl,
     description,
     checksReveals,
@@ -718,7 +727,12 @@ export function PullRequestSummaryTab({
           </div>
         )}
         {body === null && !commentEditing.canEdit(comment) ? null : (
-          <CommentBody className="mt-2 px-3" comment={comment} editing={commentEditing} />
+          <CommentBody
+            revealCount={matchesLink(comment.url) ? (linked?.count ?? 0) : 0}
+            className="mt-2 px-3"
+            comment={comment}
+            editing={commentEditing}
+          />
         )}
         <div className="mt-2 flex px-3">{reactionBarFor(comment)}</div>
         {footer}
@@ -736,7 +750,12 @@ export function PullRequestSummaryTab({
     const hasDetail = body !== null || commentEditing.canEdit(comment) || reactions.length > 0;
     const actor = comment.author;
     return (
-      <div key={`${detail.url}:${comment.id}:${matchesLink(comment.url) ? linked?.count : 0}`} data-pr-link-target={matchesLink(comment.url) || undefined} className="data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-primary/40">
+      <div
+        key={`${detail.url}:${comment.id}:${matchesLink(comment.url) ? linked?.count : 0}`}
+        data-pr-link-target={matchesLink(comment.url) || undefined}
+        tabIndex={matchesLink(comment.url) ? -1 : undefined}
+        className="data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-primary/40"
+      >
         <PullRequestReviewEntry
           defaultOpen={matchesLink(comment.url)}
           actor={actor}
@@ -785,7 +804,11 @@ export function PullRequestSummaryTab({
           {hasDetail ? (
             <>
               {body === null && !commentEditing.canEdit(comment) ? null : (
-                <CommentBody comment={comment} editing={commentEditing} />
+                <CommentBody
+                  revealCount={matchesLink(comment.url) ? (linked?.count ?? 0) : 0}
+                  comment={comment}
+                  editing={commentEditing}
+                />
               )}
               <div className="mt-2 flex">{reactionBarFor(comment)}</div>
             </>
@@ -799,10 +822,9 @@ export function PullRequestSummaryTab({
   const renderThreadCard = (thread: PullRequestConversationThread) => (
     <ReviewThreadCard
       // Named with the pull request too: a thread id is the host's own.
-      key={`${detail.url}:${thread.id}`}
+      key={`${detail.url}:${thread.id}:${thread.comments.some((comment) => matchesLink(comment.url)) ? linked?.count : 0}`}
       standalone
       revealAnchor={linkedAnchor}
-      completionScope={completionScope}
       thread={thread}
       workspaceRoot={detail.workspaceRoot}
       completionScope={completionScope}
@@ -961,6 +983,7 @@ export function PullRequestSummaryTab({
               <PullRequestCommentBody
                 key={detail.url}
                 variant="description"
+                revealCount={descriptionReveals}
                 className="min-w-0 flex-1"
                 text={description.trim().length > 0 ? description : "_No description provided._"}
                 cwd={detail.workspaceRoot}
@@ -1090,6 +1113,11 @@ export function PullRequestSummaryTab({
           </div>
         }
       >
+        {linkedAnchor !== null && revealUrl === undefined && !items.some(itemMatchesLink) ? (
+          <p role="status" className="py-4 text-meta text-muted-foreground">
+            The linked item is not in the loaded activity.
+          </p>
+        ) : null}
         {activityPending ? (
           <PullRequestConversationGhost terminology={terminology} />
         ) : activityError ? (

@@ -332,6 +332,11 @@ export function ReviewThreadCard({
           {comments.map((comment, index) => (
             <article
               key={comment.id}
+              tabIndex={
+                revealAnchor && pullRequestAnchorMatchesUrl(revealAnchor, comment.url)
+                  ? -1
+                  : undefined
+              }
               data-pr-link-target={
                 Boolean(revealAnchor && pullRequestAnchorMatchesUrl(revealAnchor, comment.url)) ||
                 undefined
@@ -369,6 +374,9 @@ export function ReviewThreadCard({
                 <PullRequestCommentBody
                   className="mt-1 min-w-0 text-body"
                   text={comment.body}
+                  revealCount={
+                    revealAnchor && pullRequestAnchorMatchesUrl(revealAnchor, comment.url) ? 1 : 0
+                  }
                   cwd={workspaceRoot}
                   environmentId={environmentId}
                 />
