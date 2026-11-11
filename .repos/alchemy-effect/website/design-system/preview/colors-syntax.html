@@ -43,28 +43,23 @@
     <div class="card">
       <div class="block">
         <span class="c">// github-dark-dimmed</span><br />
-        <span class="k">import</span> * <span class="k">as</span>
-        <span class="v">Cloudflare</span> <span class="k">from</span>
-        <span class="s">"alchemy/Cloudflare"</span>;<br />
+        <span class="k">import</span> * <span class="k">as</span> <span class="v">Cloudflare</span>
+        <span class="k">from</span> <span class="s">"alchemy/Cloudflare"</span>;<br />
         <br />
         <span class="k">const</span> <span class="v">Bucket</span> =
-        <span class="v">Cloudflare</span>.<span class="f">R2Bucket</span>(<span
-          class="s"
+        <span class="v">Cloudflare</span>.<span class="f">R2Bucket</span>(<span class="s"
           >"Bucket"</span
         >);<br />
         <br />
         <span class="k">export default</span>
-        <span class="v">Alchemy</span>.<span class="f">Stack</span>(<span
-          class="s"
-          >"MyApp"</span
-        >, {<br />
-        &nbsp;&nbsp;<span class="v">providers</span>:
-        <span class="v">Cloudflare</span>.<span class="f">providers</span
+        <span class="v">Alchemy</span>.<span class="f">Stack</span>(<span class="s">"MyApp"</span>,
+        {<br />
+        &nbsp;&nbsp;<span class="v">providers</span>: <span class="v">Cloudflare</span>.<span
+          class="f"
+          >providers</span
         >(),<br />
-        }, <span class="v">Effect</span>.<span class="f">gen</span>(<span
-          class="k"
-          >function</span
-        >* () {<br />
+        }, <span class="v">Effect</span>.<span class="f">gen</span>(<span class="k">function</span>*
+        () {<br />
         &nbsp;&nbsp;<span class="k">const</span> <span class="v">bucket</span> =
         <span class="k">yield</span>* <span class="v">Bucket</span>;<br />
         &nbsp;&nbsp;<span class="k">return</span> { <span class="v">url</span>:

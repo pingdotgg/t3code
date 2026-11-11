@@ -1,5 +1,6 @@
 export const CODE_BLOCK_LANGUAGES = [
   { id: "", label: "Plain text" },
+  { id: "asm", label: "Assembly" },
   { id: "bash", label: "Bash" },
   { id: "c", label: "C" },
   { id: "cpp", label: "C++" },
@@ -43,6 +44,7 @@ export const CODE_BLOCK_LANGUAGES = [
 export type CodeBlockLanguage = { readonly id: string; readonly label: string };
 
 const LANGUAGE_ALIASES: Record<string, string> = {
+  assembly: "asm",
   cs: "csharp",
   "c++": "cpp",
   js: "javascript",
@@ -51,6 +53,7 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   py: "python",
   rb: "ruby",
   rs: "rust",
+  s: "asm",
   sh: "bash",
   shell: "bash",
   text: "",

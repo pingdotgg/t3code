@@ -522,7 +522,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   });
 
   const startAgentDeviceDaemon = Effect.fn("LocalDeviceHost.startAgentDeviceDaemon")(function* (
-    agentTool: DeviceToolPaths,
+    agentTool: Pick<DeviceToolPaths, "entryPath">,
     nodePath: string,
   ): Effect.fn.Return<
     DeviceHost.AgentDeviceEndpoint,
@@ -728,7 +728,14 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         DeviceHost.DeviceHostAgentReady
       > {
         const running = yield* ensureHubReady(onPhase);
-        if (running.agentDevice) return { ...toReady(running), agentDevice: running.agentDevice };
+        if (running.agentDevice) {
+          const agentDevice = yield* startAgentDeviceDaemon(
+            running.agentDevice,
+            running.hub.nodePath,
+          );
+          yield* Ref.set(runningRef, { ...running, agentDevice });
+          return { ...toReady(running), agentDevice };
+        }
         const installed = yield* isAgentDeviceInstalled(config.baseDir).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
@@ -799,6 +806,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         timeout: Duration.millis(options?.timeoutMs ?? 20_000),
         timeoutBehavior: "timedOutResult",
         ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
+        ...(options?.maxOutputBytes === undefined
+          ? {}
+          : { maxOutputBytes: options.maxOutputBytes }),
       })
       .pipe(
         Effect.map((result) => ({
@@ -816,9 +826,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       origin: running.hub.origin,
       http: httpClient,
       run,
-      androidAvailable: platformAvailability("android").pipe(
-        Effect.map((availability) => availability.available),
-      ),
+      platformAvailable: (platform) =>
+        platformAvailability(platform).pipe(Effect.map((availability) => availability.available)),
     }),
     nodePath: running.hub.nodePath,
     run,

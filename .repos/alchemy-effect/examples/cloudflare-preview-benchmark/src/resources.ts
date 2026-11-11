@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 // The upload test leaves objects behind; R2 refuses to delete a non-empty
 // bucket, so empty it on destroy (preview stages are disposable).
