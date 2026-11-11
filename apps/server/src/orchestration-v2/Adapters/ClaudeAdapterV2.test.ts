@@ -3165,6 +3165,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
+    readonly offer?: (message: SDKUserMessage) => Effect.Effect<void>;
     readonly promptSuggestions?: boolean;
   }) =>
     Effect.gen(function* () {
@@ -3297,7 +3298,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 offer: (message) =>
                   Effect.sync(() => {
                     offeredMessages.push(message);
-                  }).pipe(Effect.andThen(changes.notify)),
+                  }).pipe(
+                    Effect.andThen(changes.notify),
+                    Effect.andThen(options?.offer?.(message) ?? Effect.void),
+                  ),
                 setModel: (model) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push({ model });
@@ -4972,9 +4976,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("settles a turn whose result echoes only a steer", () =>
+  // Claude can answer a steer while its offer is still being logged.
+  it.effect("settles a turn whose result echoes only a steer before the offer returns", () =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
+      let settleDuringOffer: (message: SDKUserMessage) => Effect.Effect<void> = () => Effect.void;
+      const harness = yield* makeWakeHarnessWithOptions({
+        offer: (message) =>
+          message.priority === "now"
+            ? Effect.suspend(() => settleDuringOffer(message))
+            : Effect.void,
+      });
+      settleDuringOffer = (message) =>
+        harness
+          .offerAndWait(
+            claudeSdkFrame({
+              ...makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000002396",
+                result: "Built.",
+              }),
+              user_message_uuid: message.uuid,
+            }),
+          )
+          .pipe(Effect.andThen(harness.awaitTerminal(1)));
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const attemptId = RunAttemptId.make("attempt-steer-result");
       const input = makeClaudeTestTurnInput({
@@ -5002,13 +5025,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
         },
       });
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000002396", result: "Built." }),
-          user_message_uuid: harness.promptUuid(1),
-        }),
+      assert.deepEqual(
+        harness.events.flatMap((event) => (event.type === "steer.updated" ? [event.status] : [])),
+        ["pending", "completed"],
       );
-      yield* harness.awaitTerminal(1);
     }).pipe(
       Effect.scoped,
       Effect.provide(

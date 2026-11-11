@@ -11811,7 +11811,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
+            // Register before offering: Claude can start the steer and end the turn before offer returns.
+            const messageId = turnInput.message.messageId;
             currentTurn.steerUuids.add(steerUuid);
+            currentTurn.pendingSteers.set(steerUuid, messageId);
+            yield* emitSteerStatus(currentTurn, messageId, "pending");
             yield* Effect.uninterruptibleMask((restore) =>
               restore(
                 existing.query.offer(userMessage, () => {
@@ -11824,9 +11828,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }),
                 ),
               ),
+            ).pipe(
+              Effect.onError(() =>
+                currentTurn.pendingSteers.delete(steerUuid)
+                  ? emitSteerStatus(currentTurn, messageId, "completed")
+                  : Effect.void,
+              ),
             );
-            currentTurn.pendingSteers.set(steerUuid, turnInput.message.messageId);
-            yield* emitSteerStatus(currentTurn, turnInput.message.messageId, "pending");
           },
           (effect, turnInput) =>
             effect.pipe(
