@@ -15,6 +15,7 @@ import * as Tracer from "effect/Tracer";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { beforeEach } from "vite-plus/test";
+import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/model";
 import { settingsSecretLiteral } from "@t3tools/contracts";
 
 import { OpenCodeSettings } from "../settings.ts";
@@ -681,6 +682,52 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
         "build",
       );
+    }),
+  );
+
+  it.effect("keeps Agent without inventing Reasoning for models with no variants", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["opencode"],
+          all: [
+            {
+              id: "opencode",
+              name: "OpenCode Zen",
+              models: {
+                "big-pickle": { id: "big-pickle", name: "Big Pickle", variants: {} },
+                "glm-5": { id: "glm-5", name: "GLM-5" },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [
+          { name: "build", hidden: false, mode: "primary" },
+          { name: "plan", hidden: false, mode: "primary" },
+        ],
+      };
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+      for (const slug of ["opencode/big-pickle", "opencode/glm-5"]) {
+        const model = snapshot.models.find((entry) => entry.slug === slug);
+        NodeAssert.ok(model);
+        const descriptors = model.capabilities?.optionDescriptors;
+        NodeAssert.deepEqual(descriptors, [
+          {
+            id: "agent",
+            label: "Agent",
+            type: "select",
+            options: [
+              { id: "build", label: "Build", isDefault: true },
+              { id: "plan", label: "Plan" },
+            ],
+            currentValue: "build",
+          },
+        ]);
+        NodeAssert.deepEqual(buildProviderOptionSelectionsFromDescriptors(descriptors), [
+          { id: "agent", value: "build" },
+        ]);
+      }
     }),
   );
 
