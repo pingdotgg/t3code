@@ -96,6 +96,7 @@ const CoursePrepareTool = Tool.make("course_prepare", {
     "Prepare selected course units in a background prep thread. It never posts into the lesson thread.",
   parameters: Schema.Struct({
     units: Schema.Array(Schema.Int),
+    solutionLeads: Schema.optional(Schema.Array(Schema.String)),
     courseId: Schema.optional(CourseId),
   }),
   success: Schema.Struct({ started: Schema.Boolean, units: Schema.Array(Schema.Int) }),

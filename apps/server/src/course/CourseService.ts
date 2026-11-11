@@ -683,7 +683,18 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
             };
           }),
         );
-        return { ...attribution, problemSets: result };
+        const needsPublishedSearch =
+          !input.reveal &&
+          selected.some((pset) => !pset.hasSolution && pset.references === undefined);
+        return {
+          ...attribution,
+          problemSets: result,
+          ...(needsPublishedSearch
+            ? {
+                note: "Search once for free published solutions for this course, then call course_prepare with solutionLeads.",
+              }
+            : {}),
+        };
       }),
     );
   });
