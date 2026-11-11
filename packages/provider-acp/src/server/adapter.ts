@@ -1676,10 +1676,21 @@ type PendingRuntimeRequest = {
 interface SnapshotMessageState {
   readonly order: Array<string>;
   readonly messages: Map<string, OrchestrationV2ConversationMessage>;
+  /** Messages loaded from thought chunks; `messages` stores them as assistant text. */
+  readonly reasoningIds: ReadonlySet<OrchestrationV2ConversationMessage["id"]>;
   loadingRole: "user" | "assistant" | "thought" | null;
   loadingMessageId: string | null;
   loadingIndex: number;
 }
+
+const emptySnapshotState = (): SnapshotMessageState => ({
+  order: [],
+  messages: new Map(),
+  reasoningIds: new Set(),
+  loadingRole: null,
+  loadingMessageId: null,
+  loadingIndex: 0,
+});
 
 /** How long a Stop waits for the agent to confirm before the user is offered Force stop. */
 const ACP_STOP_CONFIRM_TIMEOUT_MS = 10_000;
@@ -1998,13 +2009,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           options.testHooks?.onNativeResponseLifecycle ?? (() => Effect.void);
         const nextElicitationOrdinal = yield* Ref.make(0);
         const providerTurns = yield* Ref.make(new Map<string, OrchestrationV2ProviderTurn>());
-        const snapshot = yield* Ref.make<SnapshotMessageState>({
-          order: [],
-          messages: new Map(),
-          loadingRole: null,
-          loadingMessageId: null,
-          loadingIndex: 0,
-        });
+        const snapshot = yield* Ref.make(emptySnapshotState());
         const snapshotReloadRequired = yield* Ref.make(false);
         // Replayed history for the active session must not read as post-turn output.
         const snapshotReloading = yield* Ref.make(false);
@@ -2013,13 +2018,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             Ref.set(promptInstructionStates, new Map()),
             Ref.set(compactionMarkers, new Map()),
             Ref.set(providerTurns, new Map()),
-            Ref.set(snapshot, {
-              order: [],
-              messages: new Map(),
-              loadingRole: null,
-              loadingMessageId: null,
-              loadingIndex: 0,
-            }),
+            Ref.set(snapshot, emptySnapshotState()),
             Ref.set(snapshotReloadRequired, false),
           ],
           { discard: true },
@@ -4617,6 +4616,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return {
                 order: current.order.includes(key) ? current.order : [...current.order, key],
                 messages,
+                reasoningIds:
+                  role === "thought" && !current.reasoningIds.has(messageId)
+                    ? new Set(current.reasoningIds).add(messageId)
+                    : current.reasoningIds,
                 loadingRole: role,
                 loadingMessageId: sourceMessageId ?? (startsNew ? null : current.loadingMessageId),
                 loadingIndex,
@@ -8135,13 +8138,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
-          yield* Ref.set(snapshot, {
-            order: [],
-            messages: new Map(),
-            loadingRole: null,
-            loadingMessageId: null,
-            loadingIndex: 0,
-          });
+          yield* Ref.set(snapshot, emptySnapshotState());
           return true;
         });
 
@@ -8661,7 +8658,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     !restartRequired &&
                     !transportHadOutstandingResponses
                   ) {
-                    yield* runtime.closeSession().pipe(Effect.ignore);
+                    // Finalizers can't be interrupted, so an agent that never
+                    // answers would keep its process and this scope open.
+                    yield* runtime
+                      .closeSession()
+                      .pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
                   }
                 }),
               );
@@ -8819,13 +8820,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     threadInput.providerThread.appThreadId,
                   ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
                   if ((yield* Ref.get(activeSessionId)) !== sessionId || restartAfterInterrupt) {
-                    yield* Ref.set(snapshot, {
-                      order: [],
-                      messages: new Map(),
-                      loadingRole: null,
-                      loadingMessageId: null,
-                      loadingIndex: 0,
-                    });
+                    yield* Ref.set(snapshot, emptySnapshotState());
                     const activated = yield* activateSession(
                       sessionId,
                       threadInput.providerThread.appThreadId,
@@ -9363,13 +9358,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         detail: "ACP driver does not support session/load snapshots",
                       });
                     }
-                    yield* Ref.set(snapshot, {
-                      order: [],
-                      messages: new Map(),
-                      loadingRole: null,
-                      loadingMessageId: null,
-                      loadingIndex: 0,
-                    });
+                    yield* Ref.set(snapshot, emptySnapshotState());
                     const mcpContext = yield* readMcpContext(
                       snapshotInput.providerThread.appThreadId,
                     );
@@ -9402,6 +9391,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       const message = state.messages.get(key);
                       return message === undefined ? [] : [message];
                     }),
+                    reasoningMessageIds: [...state.reasoningIds],
                     runtimeRequests: [],
                     providerPayload: { protocol: ACP_PROTOCOL, sessionId },
                   };
