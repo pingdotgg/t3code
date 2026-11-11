@@ -83,7 +83,7 @@ describe("attachConsoleStdin", () => {
     expect(interactiveStdin()).toBe(42);
   });
 
-  it.each(["pipe", "file"])("preserves redirected %s input", async () => {
+  it.each(["pipe"])("preserves redirected %s input", async () => {
     io.stat.mockReturnValue({ isCharacterDevice: () => false });
     const stdin = process.stdin;
     const { attachConsoleStdin, interactiveStdin } = await import("./consoleStdin.ts");
