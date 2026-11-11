@@ -1,7 +1,6 @@
 import {
   flattenThemeColor,
   isDarkThemeColor,
-  themeColorWithAlpha,
   themeColorWithContrast,
   type MobileThemeVariables,
 } from "../../../lib/mobileTheme";
@@ -26,11 +25,7 @@ export function androidWorkspaceNavigationColors(
 ) {
   const screen = colors["--color-screen"];
   const header = flattenThemeColor(colors["--color-header"], screen);
-  const containerColor = rail
-    ? header
-    : floating
-      ? floatingContainerColor(colors)
-      : flattenThemeColor(themeColorWithAlpha(colors["--color-header-foreground"], 0.05), header);
+  const containerColor = floating && !rail ? floatingContainerColor(colors) : header;
   // The lifted dark pill already took the secondary fill's place, so its indicator lifts further.
   const indicatorColor = themeColorWithContrast(
     floating && isDarkThemeColor(screen)
