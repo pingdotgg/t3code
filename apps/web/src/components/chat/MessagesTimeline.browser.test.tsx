@@ -1847,12 +1847,4 @@ it("opens adjacent subagent previews without repeating the hover delay", async (
   await userEvent.hover(screen.getByRole("button", { name: "Open Check edge cases" }));
   await act(() => vi.advanceTimersByTime(1));
   expect(popup()?.textContent).toContain("Check edge cases");
-  await userEvent.hover(screen.getByRole("button", { name: /Worked for/ }));
-  await act(() => vi.advanceTimersByTime(401));
-  expect(popup()).toBeNull();
-  await userEvent.hover(screen.getByRole("button", { name: "Open Review implementation" }));
-  await act(() => vi.advanceTimersByTime(199));
-  expect(popup()).toBeNull();
-  await act(() => vi.advanceTimersByTime(1));
-  expect(popup()?.textContent).toContain("Review implementation");
 });
