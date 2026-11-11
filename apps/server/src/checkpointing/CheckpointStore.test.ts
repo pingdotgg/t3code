@@ -748,6 +748,43 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("keeps local edits that git switch -m carried to the new branch", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const id = ThreadId.make("checkpoint-switch-merge-local-edits");
+        const refs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(id, 1),
+          toCheckpointRef: checkpointRefForThreadTurn(id, 2),
+        };
+        yield* writeTextFile(NodePath.join(tmp, "f.txt"), "one\ntwo\nthree\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "base"]);
+        yield* git(tmp, ["checkout", "-b", "branch-b"]);
+        yield* writeTextFile(NodePath.join(tmp, "f.txt"), "B one\ntwo\nthree\n");
+        yield* git(tmp, ["commit", "-am", "branch B change"]);
+        yield* git(tmp, ["checkout", "-"]);
+        yield* writeTextFile(NodePath.join(tmp, "f.txt"), "B one\ntwo\nlocal three\n");
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+
+        yield* git(tmp, ["switch", "-m", "branch-b"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.toCheckpointRef,
+          previousCheckpointRef: refs.fromCheckpointRef,
+        });
+
+        expect(yield* checkpointStore.diffCheckpoints({ ...refs, ignoreWhitespace: false })).toBe(
+          "",
+        );
+      }),
+    );
+
     it.effect("keeps a reset's deletions when the turn renames its branch", () =>
       Effect.gen(function* () {
         const turn = yield* captureTurnAcrossHeadMove("checkpoint-rename-reset", (cwd) =>
