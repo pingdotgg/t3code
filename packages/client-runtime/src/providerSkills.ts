@@ -52,14 +52,16 @@ export function getProviderSkillsForSlashMenu(
     : [];
 }
 
+/** Drops native commands that duplicate a skill, whether or not skills are shown in the menu. */
 export function getProviderSlashCommandsForSlashMenu(
   slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
-  visibleSkills: ReadonlyArray<ServerProviderSkill>,
+  skills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSlashCommand[] {
   const skillNames = new Set(
-    visibleSkills.flatMap((skill) =>
-      [skill.name, skill.slashCommandName ?? skill.name].map((name) => name.trim().toLowerCase()),
-    ),
+    skills
+      .filter(isProviderSkillUserInvocable)
+      .flatMap((skill) => [skill.name, skill.slashCommandName ?? skill.name])
+      .map((name) => name.trim().toLowerCase()),
   );
   return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
 }
