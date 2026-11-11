@@ -2097,6 +2097,10 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
         });
+        assert.equal(
+          runtime.providerSession.capabilities.turns.activeSteeringAcceptsAttachments,
+          false,
+        );
         const providerThread = yield* runtime.ensureThread({
           threadId,
           modelSelection,

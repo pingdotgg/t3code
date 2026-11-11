@@ -1153,7 +1153,7 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
   ),
 );
 
-it.effect.each(["complete", "stop-before-decline", "stop-after-decline"] as const)(
+it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued-model"] as const)(
   "persists a declined steer without blocking the worker: %s",
   (timing) =>
     Effect.scoped(
@@ -1194,6 +1194,21 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline"] as cons
             })
             .pipe(Effect.asVoid, Effect.orDie);
           if (timing === "stop-before-decline") beforeDecline = stop;
+          const steerSelection = { ...runSelection, model: "steer-model" };
+          if (timing === "queued-model") {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("queued-model"),
+              threadId,
+              messageId: MessageId.make("message:queued-model"),
+              text: "already queued",
+              attachments: [],
+              modelSelection: composerSelection,
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          }
           const messageId = MessageId.make("message:declined");
           yield* orchestrator.dispatch({
             type: "message.dispatch",
@@ -1202,13 +1217,16 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline"] as cons
             messageId,
             text: "follow up",
             attachments: [],
+            ...(timing === "queued-model" ? { modelSelection: steerSelection } : {}),
             dispatchMode: { type: "steer_active", targetRunId: first.runId },
             createdBy: "user",
             creationSource: "web",
           });
           yield* worker.drain();
           const pending = yield* orchestrator.getThreadProjection(threadId);
-          const queued = pending.runs.find((run) => run.id !== first.runId);
+          const queued = pending.runs.find(
+            (run) => run.userMessageId === messageId && run.id !== first.runId,
+          );
           const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
             CommandId.make("steer"),
           );
@@ -1223,6 +1241,10 @@ it.effect.each(["complete", "stop-before-decline", "stop-after-decline"] as cons
           }
           assert.equal(queued?.status, "queued");
           assert.equal(queued?.userMessageId, messageId);
+          if (timing === "queued-model") {
+            assert.deepEqual(queued?.modelSelection, steerSelection);
+            return;
+          }
           if (timing === "stop-after-decline") {
             yield* stop;
             yield* worker.drain();

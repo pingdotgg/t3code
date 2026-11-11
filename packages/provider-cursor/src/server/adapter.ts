@@ -100,6 +100,7 @@ export const CursorProviderCapabilitiesV2 = {
     // A steer can move a foreground subagent to the background. Mailbox wakes
     // stay queued so a notification does not cut into the live turn.
     activeSteeringInterruptsTools: true,
+    activeSteeringAcceptsAttachments: false,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",

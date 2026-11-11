@@ -5639,6 +5639,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerThreadId: providerThread.id,
             providerTurnId: providerTurn.id,
             messageId: input.messageId,
+            modelSelection: input.modelSelection,
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);

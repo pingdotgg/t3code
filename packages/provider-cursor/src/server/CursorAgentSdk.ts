@@ -584,7 +584,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                 }),
               ),
             ),
-            steer: (text) =>
+            steer: Effect.fn("CursorAgentSdkRun.steer")((text: string) =>
               log({
                 direction: "outgoing",
                 stage: "decoded",
@@ -612,6 +612,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                   }),
                 ),
               ),
+            ),
             cancel: log({
               direction: "outgoing",
               stage: "decoded",
