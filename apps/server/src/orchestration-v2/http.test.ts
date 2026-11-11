@@ -270,8 +270,12 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       sql`replace(payload_json, '"droppedLegacyField":', ${deepField} || '"droppedLegacyField":')`,
     );
     expect((yield* read(thread.id)).status).toBe(200);
-    // Tool output over the limit rejects the export, here in the structured shape tools store.
-    // Its only read is the size.
+    // Tool output over the limit rejects the export, here as the content array a dynamic tool
+    // stores. Its only read is the size.
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool'
+      WHERE turn_item_id = ${commandItemId}
+    `;
     yield* setCommandPayload(sql`json_set(
       replace(payload_json, ${deepField}, ''), '$.output',
       json_array(json_object('type', 'text', 'text', ${fill(PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1)}))
