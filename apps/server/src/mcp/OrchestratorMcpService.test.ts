@@ -303,7 +303,7 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
-  it.effect("tells the parent to end its turn only while its task still runs", () =>
+  it.effect("provides completion notification guidance only while its task still runs", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-next-parent");
       const childThreadId = ThreadId.make("thread:mcp-next-child");
