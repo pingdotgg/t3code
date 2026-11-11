@@ -7,6 +7,8 @@ prefix. Source checkout contents, index, and HEAD must remain unchanged during t
 The `omitted-unit-correction` case supplies a plan missing one unit and checks that the repair covers
 all units while preserving the valid prior message. It reproduces the failed correction path
 reported in November 2026 using synthetic changes.
+The `large-fixture-plan` regression supplies 61 units, including text fixtures and a large source
+file, matching the scale of a November 2026 omission report. Every unit must be assigned once.
 Git staging and commits are covered by the server's GitManager integration tests.
 
 ```sh
@@ -16,11 +18,11 @@ pnpm commit-workflow --model <model> --out runs/commit-plans
 
 Uses the actual Codex text-generation implementation and local login, with an isolated generation
 folder and read-only execution. The model receives the supplied diff, not a task to manipulate Git.
-`--case missing-instructions`, `--case present-instructions`, or `--case omitted-unit-correction`
+`--case missing-instructions`, `--case present-instructions`, `--case omitted-unit-correction`, or `--case large-fixture-plan`
 selects one fixture. Each case defaults
 to three samples; `--samples 1` runs a first check. JSON responses and per-sample grades are retained.
 A case fails when at least half its samples fail. `--baseline` copies earlier JSON results for review;
 compare only runs of the same planner and model.
 
-A full run makes nine paid calls through the local subscription. The CLI does not report per-call
+A full run makes twelve paid calls through the local subscription. The CLI does not report per-call
 cost; the runner reports the call count. Fixtures contain no real project or application state.
