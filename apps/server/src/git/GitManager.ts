@@ -2926,10 +2926,10 @@ export const make = Effect.gen(function* () {
       }
     };
     const pullRequestPort = httpPort(pullRequest.url);
-    const matches = (url: string, key = canonicalKey(url)) => {
+    const matches = (url: string) => {
       const port = httpPort(url);
       return (
-        repositoryKeys.has(key) &&
+        repositoryKeys.has(canonicalKey(url)) &&
         (port === null || pullRequestPort === null || port === pullRequestPort)
       );
     };
@@ -2943,16 +2943,19 @@ export const make = Effect.gen(function* () {
     }) => sourceControlProviders.resolveHandle(input).pipe(Effect.map((handle) => handle.context));
     const servedFromWeb = Effect.fn("GitManager.ensurePullRequestBelongsToCheckout.remote")(
       function* (remoteUrl: string, remoteName: string) {
-        const refined = yield* (
-          provider.refineRepositoryIdentity?.({
-            identity: {
-              canonicalKey: sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl),
-              locator: { source: "git-remote", remoteName, remoteUrl },
-              rootPath: cwd,
-            },
-            resolveContext,
-          }) ?? Effect.succeed(undefined)
-        ).pipe(Effect.orElseSucceed(() => undefined));
+        const refined =
+          provider.refineRepositoryIdentity === undefined
+            ? undefined
+            : yield* provider
+                .refineRepositoryIdentity({
+                  identity: {
+                    canonicalKey: sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl),
+                    locator: { source: "git-remote", remoteName, remoteUrl },
+                    rootPath: cwd,
+                  },
+                  resolveContext,
+                })
+                .pipe(Effect.orElseSucceed(() => undefined));
         if (refined?.webUrl !== undefined) return matches(refined.webUrl);
         const recognized = sourceControlDefinitions.recognizeRemote(remoteUrl);
         if (recognized === null || provider.resolveRemoteWebHost === undefined) return false;
