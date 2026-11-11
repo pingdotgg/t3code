@@ -96,15 +96,20 @@ function DocumentPreview(props: {
       signal: controller.signal,
     };
     const opened = openAttachmentInViewer(input);
-    void opened
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) onOpenError(error);
-      })
-      .finally(() => {
+    void opened.then(
+      () => {
         if (!controller.signal.aborted) onRequestClose();
-      });
+      },
+      (error: unknown) => {
+        if (controller.signal.aborted) return;
+        onOpenError(error);
+        // Session (or a custom onOpenError) owns dismissal after a failed open so a
+        // second close cannot clear a pending error message the first close just set.
+        if (!props.onOpenError) onRequestClose();
+      },
+    );
     return () => controller.abort();
-  }, [uri, name, props.source.mimeType, props.source.kind]);
+  }, [uri, name, props.source.mimeType, props.source.kind, props.onOpenError]);
   return (
     <Modal transparent animationType="fade" onRequestClose={props.onRequestClose}>
       <View className="flex-1 items-center justify-center bg-backdrop p-6">

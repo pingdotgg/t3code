@@ -273,7 +273,7 @@ function ResolvedFilePreviewAttempt(
       return;
     }
     Dialog.alert("Could not open preview", nativeViewerErrorMessage(error), [
-      { text: "Cancel", style: "cancel", onPress: props.onRequestClose },
+      { text: "Cancel", style: "cancel" },
       ...(selected.kind === "document"
         ? [
             {
@@ -295,6 +295,7 @@ function ResolvedFilePreviewAttempt(
           ]
         : []),
     ]);
+    // Close once here; Cancel must not close again (ZipArchive clears a pending error on a second close).
     props.onRequestClose();
   };
   const actionsSource =
