@@ -3395,14 +3395,15 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect.each([
-    { close: true, settled: false, returned: false },
-    { close: false, settled: false, returned: false },
-    { close: true, settled: true, returned: false },
-    { close: false, settled: true, returned: false },
-    { close: false, settled: true, returned: true },
+    { close: true, settled: false, returned: false, continuation: false },
+    { close: false, settled: false, returned: false, continuation: false },
+    { close: true, settled: true, returned: false, continuation: false },
+    { close: false, settled: true, returned: false, continuation: false },
+    { close: false, settled: true, returned: true, continuation: false },
+    { close: false, settled: true, returned: false, continuation: true },
   ])(
-    "stops Copilot work with close=$close and settled=$settled and returned=$returned",
-    ({ close, settled, returned }) =>
+    "stops Copilot work with close=$close, settled=$settled, returned=$returned, continuation=$continuation",
+    ({ close, settled, returned, continuation }) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const path = yield* Path.Path;
@@ -3580,9 +3581,35 @@ describe("AcpAdapterV2", () => {
           assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "completed");
         }
         if (returned) yield* event!({ sessionId: "mock-session-1", type: "assistant.idle" });
+        let stoppedTurnId = running.providerTurn.id;
+        if (continuation) {
+          yield* event!({ sessionId: "mock-session-1", type: "assistant.turn_start" });
+          yield* sessionUpdate!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "wake output" },
+            },
+          });
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          const wake = (yield* runtime.readThreadSnapshot({ providerThread })).providerTurns.at(-1);
+          assert.equal(wake?.status, "running");
+          stoppedTurnId = wake!.id;
+        }
         yield* runtime.interruptTurn({
           providerThread,
-          providerTurnId: running.providerTurn.id,
+          providerTurnId: stoppedTurnId,
           requestRuntimeRestart: true,
         });
         assert.deepEqual(
@@ -3591,7 +3618,7 @@ describe("AcpAdapterV2", () => {
           "Stop must cancel background work after its prompt RPC returns",
         );
         if (returned) assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
-        if (!settled) {
+        if (!settled || continuation) {
           const terminal = (yield* take("turn.terminal"))[0];
           assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "interrupted");
         }
@@ -3603,10 +3630,14 @@ describe("AcpAdapterV2", () => {
             instanceId,
             runtimePolicy,
             now: yield* DateTime.now,
-            ordinal: 2,
+            ordinal: continuation ? 3 : 2,
           }),
         );
-        assert.equal(runtimeCount, 2);
+        assert.equal(
+          runtimeCount,
+          close || settled ? 2 : 1,
+          "only Stop with remaining Copilot work restarts the runtime",
+        );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

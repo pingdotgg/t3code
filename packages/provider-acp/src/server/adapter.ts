@@ -9079,15 +9079,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         );
                         return undefined;
                       }
+                      // A followed continuation has no prompt RPC to settle it, and quarantine drops its idle.
+                      const stopsContinuation =
+                        canFollowForegroundEvents &&
+                        interruptContext?.providerTurnId === turnInput.providerTurnId &&
+                        acpIsProviderContinuationMessage(interruptContext.input.message);
                       if (
                         flavor.followForegroundEvents === true &&
                         !supportsClose &&
-                        interruptContext === null &&
-                        (yield* sessionRuntime.hasPendingBackgroundWork ?? Effect.succeed(false)) &&
-                        turnInput.requestRuntimeRestart === true
+                        turnInput.requestRuntimeRestart === true &&
+                        (stopsContinuation ||
+                          (interruptContext === null &&
+                            (yield* (
+                              sessionRuntime.hasPendingBackgroundWork ?? Effect.succeed(false)
+                            ))))
                       ) {
                         yield* runtimeCallbackPermit.withPermit(
                           Effect.gen(function* () {
+                            const context = yield* Ref.get(activeTurn);
                             const carryover = yield* Ref.get(carryoverSubagents);
                             yield* quarantineStoppedRun();
                             agentWork = null;
@@ -9096,6 +9105,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             yield* cancelPendingRuntimeRequests();
                             yield* terminalizeCarryoverSubagents(carryover);
                             yield* Ref.set(runtimeRestartRequired, true);
+                            if (stopsContinuation && context === interruptContext) {
+                              context.interrupted = true;
+                              yield* finalizeTurn(context, "interrupted");
+                            }
                           }),
                         );
                         yield* runtime.cancel;
@@ -9302,11 +9315,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         if (!settledSoftInterrupt && (yield* promptStillRunsAfterHold(context))) {
                           yield* runtime.cancel;
                         }
-                        if (
-                          restartRuntime &&
-                          (flavor.restartRuntimeAfterInterrupt === true ||
-                            flavor.followForegroundEvents === true)
-                        ) {
+                        if (restartRuntime && flavor.restartRuntimeAfterInterrupt === true) {
                           yield* Ref.set(runtimeRestartRequired, true);
                         }
                       }
