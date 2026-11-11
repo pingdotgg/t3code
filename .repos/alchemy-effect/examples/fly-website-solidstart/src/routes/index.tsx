@@ -4,8 +4,7 @@ import Card from "../components/Card.tsx";
 // Environment values declared in alchemy.run.ts are available on
 // `process.env`.
 export default function Home() {
-  const greeting =
-    (typeof process !== "undefined" && process.env.GREETING) || "Hello!";
+  const greeting = (typeof process !== "undefined" && process.env.GREETING) || "Hello!";
   return (
     <main>
       <h1 class="text-3xl font-bold">{greeting}</h1>

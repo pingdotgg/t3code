@@ -165,7 +165,7 @@ publish `acme/api:v1.4.0` for other systems too. Build it with
 `image`:
 
 ```typescript
-import * as Docker from "alchemy/Docker";
+import * as Docker from "@alchemy.run/docker";
 import * as Config from "effect/Config";
 
 const image = yield* Docker.Image("ApiImage", {

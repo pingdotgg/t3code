@@ -1,6 +1,6 @@
 import * as Alchemy from "alchemy";
 import { adopt } from "alchemy/AdoptPolicy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { retain } from "alchemy/RemovalPolicy";
 import * as Effect from "effect/Effect";
 import * as NodeURL from "node:url";
@@ -33,6 +33,22 @@ export const Artifacts = cacheName.pipe(
         },
       ],
     }).pipe(adopt(true), retain()),
+  ),
+);
+
+// Fingerprint-keyed simulator/emulator dev clients; separate from the 9-day task-cache generations.
+export const NativeClients = cacheName.pipe(
+  Effect.flatMap((name) =>
+    Cloudflare.R2.Bucket("NativeClients", {
+      name: `${name}-native-clients`,
+      lifecycleRules: [
+        {
+          id: "native-client-retention",
+          deleteObjectsTransition: { condition: { type: "Age", maxAge: 30 * 86400 } },
+          abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 86400 } },
+        },
+      ],
+    }).pipe(retain()),
   ),
 );
 
