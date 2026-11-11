@@ -46,6 +46,7 @@ const PR_DETAIL_QUERY = `
       pullRequest(number: $number) {
         state
         mergeable
+        baseRefName
         author { login }
         labels(first: 100) { nodes { name } }
         timelineItems(itemTypes: [LABELED_EVENT], last: 100) {
@@ -308,7 +309,7 @@ async function sweep({ github, context, core, dryRun }) {
         ...context.repo,
         issue_number: number,
         body: [
-          "This PR conflicts with `main`. Rebase it or merge `main` into it and push within 7 days, or it will be closed automatically.",
+          `This PR conflicts with \`${detail.baseRefName}\`. Rebase it or merge \`${detail.baseRefName}\` into it and push within 7 days, or it will be closed automatically.`,
           "",
           `Pushing removes the \`${REBASE_LABEL}\` label and restarts the check. See the [conflict window](${guideLink(context, "conflict-window")}).`,
         ].join("\n"),
@@ -347,7 +348,7 @@ async function sweep({ github, context, core, dryRun }) {
             `To ask for reconsideration, address the notice and comment here, or open a focused replacement PR that links this one. See [closure and reconsideration](${guideLink(context, "closure-and-reconsideration")}).`,
           ].join("\n")
         : [
-            "Closing: this PR still conflicts with `main` 7 days after the rebase request, with no push since.",
+            `Closing: this PR still conflicts with \`${detail.baseRefName}\` 7 days after the rebase request, with no push since.`,
             "",
             `To continue, rebase the branch and open a new PR that links this one. See the [conflict window](${guideLink(context, "conflict-window")}).`,
           ].join("\n"),

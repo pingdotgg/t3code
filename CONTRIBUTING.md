@@ -157,10 +157,9 @@ limit for that PR.
 
 <a id="conflict-window"></a>
 
-A PR labeled `vouch:unvouched` that conflicts with `main` gets a request to rebase and the
-`needs-rebase` label. A push removes
-the label. A PR that still conflicts 7 days after the request, with no push since, is closed. The
-conflict window does not start, and stops, once someone in
+A PR labeled `vouch:unvouched` that conflicts with its base branch gets a request to rebase and the
+`needs-rebase` label. A push removes the label. A PR that still conflicts 7 days after the request,
+with no push since, is closed. The conflict window does not start, and stops, once someone in
 [TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td) has commented or submitted a review.
 
 <a id="closure-and-reconsideration"></a>
