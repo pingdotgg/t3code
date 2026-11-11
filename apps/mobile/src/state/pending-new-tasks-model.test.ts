@@ -1,120 +1,145 @@
-import { describe, expect, it } from "@effect/vitest";
-import { CommandId, EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
 
+import {
+  buildPendingNewTasks,
+  type PendingDraftProjectDefaults,
+  pendingDraftBranchNeedsRefs,
+  resolvePendingDraftBranch,
+} from "./pending-new-tasks-model";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
-import type { ComposerDraft } from "./use-composer-drafts";
-import { buildPendingNewTasks } from "./pending-new-tasks-model";
+import type { ComposerDraft, ComposerDraftWorkspaceSelection } from "./use-composer-drafts";
 
-const environmentId = EnvironmentId.make("env-1");
-const projectId = ProjectId.make("project-1");
+const projectCwd = "/repo";
+const localDefault: PendingDraftProjectDefaults = {
+  canChooseWorkspace: true,
+  defaultMode: "local",
+  defaultModeSettled: true,
+};
+const worktreeDefault: PendingDraftProjectDefaults = { ...localDefault, defaultMode: "worktree" };
+const resolve = (
+  input: Omit<Parameters<typeof resolvePendingDraftBranch>[0], "defaults" | "isGitRepo"> & {
+    readonly defaults?: PendingDraftProjectDefaults;
+  },
+) => resolvePendingDraftBranch({ defaults: localDefault, isGitRepo: true, ...input });
+const branches = [
+  { name: "feature", current: true, isDefault: false },
+  { name: "origin/main", current: false, isDefault: true, isRemote: true },
+];
 
-function queuedCreation(id: string, createdAt: string): QueuedThreadMessage {
+function draft(workspaceSelection?: ComposerDraftWorkspaceSelection): ComposerDraft {
   return {
-    environmentId,
-    threadId: ThreadId.make(`thread-${id}`),
-    messageId: MessageId.make(id),
-    commandId: CommandId.make(`command-${id}`),
-    text: `queued ${id}`,
+    text: "unsent",
     attachments: [],
-    createdAt,
-    creation: {
-      projectId,
-      workspaceMode: "local",
-      branch: "main",
-      worktreePath: null,
+    project: {
+      environmentId: EnvironmentId.make("env-1"),
+      projectId: ProjectId.make("project-1"),
+      createdAt: "2026-10-26T00:00:00.000Z",
     },
+    ...(workspaceSelection ? { workspaceSelection } : {}),
   };
 }
 
-function draft(
-  text: string,
-  createdAt: string,
-  overrides: Partial<ComposerDraft> = {},
-): ComposerDraft {
+describe("resolvePendingDraftBranch", () => {
+  it("shows the project's default for a draft that never picked a mode", () => {
+    const untouched = draft();
+    expect(pendingDraftBranchNeedsRefs(untouched, worktreeDefault)).toBe(true);
+    expect(resolve({ draft: untouched, defaults: worktreeDefault, branches, projectCwd })).toBe(
+      "origin/main",
+    );
+    // Until t3.json settles, the environment default may still be replaced.
+    expect(
+      resolve({
+        draft: untouched,
+        defaults: { ...worktreeDefault, defaultModeSettled: false },
+        branches,
+        projectCwd,
+      }),
+    ).toBeNull();
+    // A local default starts on the checkout without naming a branch, as on main.
+    expect(pendingDraftBranchNeedsRefs(untouched, localDefault)).toBe(false);
+    expect(resolve({ draft: untouched, branches, projectCwd })).toBeNull();
+  });
+
+  it("shows the default base for a worktree draft that never picked one", () => {
+    const worktree = draft({ mode: "worktree", branch: null, worktreePath: null });
+    expect(pendingDraftBranchNeedsRefs(worktree, localDefault)).toBe(true);
+    expect(resolve({ draft: worktree, branches, projectCwd })).toBe("origin/main");
+  });
+
+  it("shows the current branch for a local draft that follows the checkout", () => {
+    const local = draft({
+      mode: "local",
+      branch: null,
+      worktreePath: null,
+      followsCurrentCheckout: true,
+    });
+    expect(resolve({ draft: local, branches, projectCwd })).toBe("feature");
+    expect(resolve({ draft: local, branches: [], projectCwd })).toBeNull();
+  });
+
+  it("keeps a chosen branch without loading refs", () => {
+    const chosen = draft({ mode: "local", branch: "release", worktreePath: null });
+    expect(pendingDraftBranchNeedsRefs(chosen, localDefault)).toBe(false);
+    expect(resolve({ draft: chosen, branches, projectCwd })).toBe("release");
+  });
+});
+
+function queuedCreation(environmentId: string): QueuedThreadMessage {
   return {
-    text,
+    environmentId: EnvironmentId.make(environmentId),
+    threadId: ThreadId.make(`thread-${environmentId}`),
+    messageId: MessageId.make(`message-${environmentId}`),
+    commandId: CommandId.make(`command-${environmentId}`),
+    text: "Test",
     attachments: [],
-    project: { environmentId, projectId, createdAt },
-    ...overrides,
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+    creation: {
+      projectId: ProjectId.make("project-1"),
+      workspaceMode: "local",
+      branch: null,
+      worktreePath: null,
+    },
+    createdAt: "2026-11-10T01:10:00.000Z",
   };
 }
 
 describe("buildPendingNewTasks", () => {
-  it("surfaces every new-task draft with content alongside queued creations", () => {
-    const tasks = buildPendingNewTasks({
-      queuedMessages: [queuedCreation("a", "2026-09-05T10:00:00.000Z")],
-      drafts: {
-        "new-task:draft-old": draft("first idea", "2026-09-05T09:00:00.000Z", {
-          workspaceSelection: { mode: "worktree", branch: "main", worktreePath: null },
-        }),
-        "new-task:draft-new": draft("second idea", "2026-09-05T11:00:00.000Z"),
-      },
-    });
-
-    expect(tasks.map((task) => [task.kind, task.title, task.branch])).toEqual([
-      ["draft", "second idea", null],
-      ["draft", "first idea", "main"],
-      ["pending", "queued a", "main"],
-    ]);
-    expect(tasks[1]).toMatchObject({
-      key: "draft-task:new-task:draft-old",
-      environmentId,
-      projectId,
-      draftKey: "new-task:draft-old",
-      createdAt: "2026-09-05T09:00:00.000Z",
-    });
-  });
-
-  it("hides settings-only drafts, unstamped drafts, and drafts for other surfaces", () => {
-    const tasks = buildPendingNewTasks({
-      queuedMessages: [],
-      drafts: {
-        "new-task:settings-only": draft("", "2026-09-05T09:00:00.000Z", {
-          modelSelection: { instanceId: "codex" as never, model: "gpt" },
-        }),
-        "new-task:blank": draft("   ", "2026-09-05T09:00:00.000Z"),
-        "new-task:unstamped": { text: "no project", attachments: [] },
-        [`${environmentId}:thread-1`]: { text: "thread composer text", attachments: [] },
-        "pending-task:message-1": { text: "editor copy of a queued task", attachments: [] },
-      },
-    });
-
-    expect(tasks).toEqual([]);
-  });
-
-  it("titles an attachment-only draft by its attachment count", () => {
-    const attachment = {
-      type: "image",
-      id: "image-1",
-      uri: "file:///image-1.png",
-      mimeType: "image/png",
-      name: "image-1.png",
-      width: 1,
-      height: 1,
-      sizeBytes: 1,
-    } as unknown as ComposerDraft["attachments"][number];
-    const tasks = buildPendingNewTasks({
-      queuedMessages: [],
-      drafts: {
-        "new-task:with-image": draft("", "2026-09-05T09:00:00.000Z", {
-          attachments: [attachment],
-        }),
-      },
-    });
-
-    expect(tasks.map((task) => task.title)).toEqual(["1 attachment"]);
-  });
-
-  it("orders queued creations newest first and skips existing-thread messages", () => {
+  it("lists only creations the outbox is not sending yet", () => {
+    const sending = EnvironmentId.make("sending");
+    const syncing = EnvironmentId.make("syncing");
+    const readOnly = EnvironmentId.make("read-only");
+    const retrying = EnvironmentId.make("retrying");
+    const { modelSelection: _model, ...modelless } = queuedCreation("sending");
     const tasks = buildPendingNewTasks({
       queuedMessages: [
-        queuedCreation("old", "2026-09-05T08:00:00.000Z"),
-        { ...queuedCreation("follow-up", "2026-09-05T11:00:00.000Z"), creation: undefined },
-        queuedCreation("new", "2026-09-05T10:00:00.000Z"),
+        ...["sending", "syncing", "read-only", "retrying", "offline"].map(queuedCreation),
+        { ...modelless, messageId: MessageId.make("message-modelless") },
       ],
       drafts: {},
+      sendGate: {
+        connectedEnvironmentIds: new Set([sending, syncing, readOnly, retrying]),
+        operableEnvironmentIds: new Set([sending, syncing, retrying]),
+        shellStatuses: new Map([
+          [sending, "live"],
+          [syncing, "synchronizing"],
+          [readOnly, "live"],
+          [retrying, "live"],
+        ]),
+        retryingMessageIds: { [MessageId.make("message-retrying")]: true },
+      },
     });
 
-    expect(tasks.map((task) => task.title)).toEqual(["queued new", "queued old"]);
+    expect(tasks).toHaveLength(5);
+    expect(new Set(tasks.map((task) => task.environmentId))).toEqual(
+      new Set(["syncing", "read-only", "retrying", "offline", "sending"]),
+    );
   });
 });

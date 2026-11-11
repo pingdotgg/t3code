@@ -1,7 +1,6 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   AuthProvidersManageScope,
-  type AuthSessionState,
   type EnvironmentId,
   type ProjectId,
   type ProjectSettingsOverrides,
@@ -73,7 +72,7 @@ export type ProviderEnvironmentAccess =
 
 export type ProviderOperateAccess = "granted" | "denied" | "pending";
 
-function resolveSessionOperateAccess(input: {
+export function resolveRemoteOperateAccess(input: {
   readonly session: SessionGrantInput | null;
   readonly isPending: boolean;
   readonly hasError: boolean;
@@ -83,30 +82,7 @@ function resolveSessionOperateAccess(input: {
   return sessionGrantsScope(input.session, AuthProvidersManageScope) ? "granted" : "denied";
 }
 
-export function resolvePrimaryOperateAccess(input: {
-  readonly isPrimary: boolean;
-  readonly hasDesktopBridge: boolean;
-  readonly session: SessionGrantInput | null;
-  readonly isPending: boolean;
-  readonly hasError: boolean;
-}): ProviderOperateAccess {
-  return resolveSessionOperateAccess(input);
-}
-
-export function resolveRemoteOperateAccess(input: {
-  readonly session: SessionGrantInput | null;
-  readonly isPending: boolean;
-  readonly hasError: boolean;
-}): ProviderOperateAccess {
-  return resolveSessionOperateAccess(input);
-}
-
-/**
- * `providerInstances` is always sent explicitly, even as `{}`, because the
- * server keeps a stored `providerInstances` map when an incoming entry omits
- * the key (so older clients that don't know the field cannot wipe it by editing
- * another setting).
- */
+/** Send providerInstances even when empty; omission preserves the stored map for older clients. */
 
 export function buildProviderInstanceOverridePatch(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,

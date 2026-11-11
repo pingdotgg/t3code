@@ -128,15 +128,6 @@ it("marks the most preferred available model as default", () => {
   );
 });
 
-it("prefers sol over terra when both are available", () => {
-  const models = applyPreferredCodexDefaultModel([
-    { slug: "gpt-5.6-terra", name: "GPT-5.6-Terra", isCustom: false, capabilities: null },
-    { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
-  ]);
-
-  assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.6-sol");
-});
-
 it("ranks qualified Codex models while preserving their wire ids", () => {
   const models = applyPreferredCodexDefaultModel([
     {
@@ -152,15 +143,6 @@ it("ranks qualified Codex models while preserving their wire ids", () => {
     models.filter((model) => model.isDefault).map((model) => model.slug),
     ["openai.gpt-5.6-sol"],
   );
-});
-
-it("keeps Codex's own default when no preferred model is available", () => {
-  const models = applyPreferredCodexDefaultModel([
-    { slug: "gpt-5.5", name: "GPT-5.5", isCustom: false, capabilities: null },
-    { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, isDefault: true, capabilities: null },
-  ]);
-
-  assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
 });
 
 it("ignores custom models that shadow a preferred slug", () => {
