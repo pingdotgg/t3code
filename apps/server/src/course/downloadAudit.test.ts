@@ -27,7 +27,7 @@ describe("course download audit", () => {
         .toString()
         .trim()
         .split("\n")
-        .map(JSON.parse);
+        .map((line) => JSON.parse(line));
       assert.strictEqual(lines.length, 2);
       assert.include(lines[0].url, "token=REDACTED");
       assert.strictEqual(lines[0].status, 200);

@@ -3,10 +3,10 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { encodeGrayscalePng, fetchCourseReference } from "./referenceFetch.ts";
 
-const lookup = async (hostname: string) =>
+const lookup = (async (hostname: string) =>
   hostname === "private.example"
     ? [{ address: "127.0.0.1", family: 4 as const }]
-    : [{ address: "93.184.216.34", family: 4 as const }];
+    : [{ address: "93.184.216.34", family: 4 as const }]) as never;
 
 describe("course reference fetch", () => {
   it.effect("rewrites Drive links before fetching", () =>
@@ -36,10 +36,10 @@ describe("course reference fetch", () => {
       assert.include(blocked.message, "not public");
       const redirected = yield* fetchCourseReference({
         url: "https://example.com/solution.pdf",
-        lookup: async (host) =>
+        lookup: (async (host: string) =>
           host === "169.254.169.254"
             ? [{ address: "169.254.169.254", family: 4 as const }]
-            : lookup(host),
+            : lookup(host)) as never,
         fetchImpl: () =>
           Promise.resolve(
             new Response(null, { status: 302, headers: { location: "http://169.254.169.254/" } }),
