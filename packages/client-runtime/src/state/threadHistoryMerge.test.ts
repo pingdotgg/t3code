@@ -3,14 +3,9 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
-import {
-  applyHistoryPageMeta,
-  clearActiveHistoryLoading,
-  isActiveHistoryRequestCursor,
-  mergeOlderHistoryIntoProjection,
-  shouldShowLoadEarlierControl,
-} from "./threadHistoryMerge.ts";
+import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
+import { derivePendingThreadRequests } from "./threadRequests.ts";
 
 const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 
@@ -70,6 +65,29 @@ describe("threadHistoryMerge", () => {
     expect(complete.visibleTurnItems[1]?.item).toBe(updated.item);
     expect(complete.visibleTurnItems.map((entry) => entry.position)).toEqual([0, 1, 2, 3, 4]);
     expect(new Set(complete.turnItems.map((item) => item.id)).size).toBe(5);
+    const anchorItem = {
+      ...updated.item,
+      deferredWork: { cursor: "work", itemCount: 4, lastOrdinal: 5 },
+    };
+    const deferred = {
+      ...live,
+      turnItems: live.turnItems.map((item) => (item.id === anchorItem.id ? anchorItem : item)),
+      visibleTurnItems: live.visibleTurnItems.map((entry) =>
+        entry.item.id === anchorItem.id ? { ...entry, item: anchorItem } : entry,
+      ),
+    };
+    const loadedWork = mergeOlderHistoryIntoProjection(deferred, [row(1), row(2), row(3)], {
+      anchorId: anchorItem.id,
+      nextCursor: null,
+    });
+    expect(loadedWork.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-1",
+      "item-2",
+      "item-3",
+      "item-4",
+    ]);
+    expect(loadedWork.visibleTurnItems[0]?.item.title).toBe("newer live title");
+    expect(loadedWork.visibleTurnItems[0]?.item.deferredWork).toBeUndefined();
     const hidden = {
       ...partial,
       visibleTurnItems: partial.visibleTurnItems.filter(
@@ -177,87 +195,6 @@ describe("threadHistoryMerge", () => {
     expect(merged.visibleTurnItems).toEqual([]);
   });
 
-  it("marks history expanded after a successful page", () => {
-    const next = applyHistoryPageMeta(
-      {
-        historyCursor: "cursor-a",
-        hasMoreHistory: true,
-        loading: true,
-        error: null,
-        expanded: false,
-        latestLocalTurnOrdinal: 42,
-      },
-      { nextCursor: "cursor-b", hasMoreHistory: true },
-    );
-    expect(next).toEqual({
-      historyCursor: "cursor-b",
-      hasMoreHistory: true,
-      loading: false,
-      error: null,
-      expanded: true,
-      latestLocalTurnOrdinal: 42,
-    });
-  });
-
-  it("only applies history responses for the active request cursor", () => {
-    expect(isActiveHistoryRequestCursor("cursor-a", { historyCursor: "cursor-a" })).toBe(true);
-    expect(isActiveHistoryRequestCursor("cursor-a", { historyCursor: "cursor-b" })).toBe(false);
-    expect(isActiveHistoryRequestCursor("cursor-a", { historyCursor: null })).toBe(false);
-  });
-
-  it("clears loading on interrupt only for the active request cursor", () => {
-    const loading = {
-      historyCursor: "cursor-a",
-      hasMoreHistory: true,
-      loading: true,
-      error: null,
-      expanded: false,
-      latestLocalTurnOrdinal: 10,
-    };
-    expect(clearActiveHistoryLoading("cursor-a", loading)).toEqual({
-      ...loading,
-      loading: false,
-    });
-    expect(
-      clearActiveHistoryLoading("cursor-a", { ...loading, historyCursor: "cursor-b" }),
-    ).toEqual({ ...loading, historyCursor: "cursor-b" });
-    const idle = { ...loading, loading: false };
-    expect(clearActiveHistoryLoading("cursor-a", idle)).toBe(idle);
-  });
-
-  it("shows the load-earlier control when history remains or a local error is set", () => {
-    expect(
-      shouldShowLoadEarlierControl({
-        historyCursor: "c",
-        hasMoreHistory: true,
-        loading: false,
-        error: null,
-        expanded: false,
-        latestLocalTurnOrdinal: null,
-      }),
-    ).toBe(true);
-    expect(
-      shouldShowLoadEarlierControl({
-        historyCursor: null,
-        hasMoreHistory: false,
-        loading: false,
-        error: "Could not load earlier activity.",
-        expanded: true,
-        latestLocalTurnOrdinal: null,
-      }),
-    ).toBe(true);
-    expect(
-      shouldShowLoadEarlierControl({
-        historyCursor: null,
-        hasMoreHistory: false,
-        loading: false,
-        error: null,
-        expanded: false,
-        latestLocalTurnOrdinal: null,
-      }),
-    ).toBe(false);
-  });
-
   it("retains merged older rows when a live turn-item update arrives", () => {
     const recent = [row(2), row(3)];
     const projection = {
@@ -285,6 +222,97 @@ describe("threadHistoryMerge", () => {
     ]);
     expect(next?.visibleTurnItems[3]?.item).toEqual(liveItem);
   });
+
+  // regression: #25806 a pending question card retained outside the window shows when paged in
+  it.each(["completed", "rolled_back"] as const)(
+    "keeps a pending question actionable when paging a %s run",
+    (status) => {
+      const recent = row(5);
+      const runId = "question-run" as never;
+      const nodeId = "question-node" as never;
+      const card = {
+        id: "item-question" as never,
+        type: "user_input_request" as const,
+        threadId: v2ThreadId,
+        runId,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running" as const,
+        title: null,
+        requestId: "request-question" as never,
+        responseMode: "message" as const,
+        questions: [{ id: "scope", header: "Scope", question: "Which scope?", options: [] }],
+        startedAt: NOW,
+        completedAt: null,
+        updatedAt: NOW,
+      };
+      const coldOpen = {
+        ...v2Projection,
+        runs: [
+          {
+            id: runId,
+            threadId: v2ThreadId,
+            ordinal: 1,
+            providerInstanceId: v2Projection.thread.providerInstanceId,
+            modelSelection: v2Projection.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: "question-message" as never,
+            rootNodeId: nodeId,
+            activeAttemptId: null,
+            status,
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+        runtimeRequests: [
+          {
+            id: card.requestId,
+            nodeId,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input" as const,
+            status: "pending" as const,
+            responseCapability: { type: "message" as const },
+            createdAt: NOW,
+            resolvedAt: null,
+          },
+        ],
+        turnItems: [card, recent.item],
+        visibleTurnItems: [{ ...recent, position: 0 }],
+      };
+
+      const merged = mergeOlderHistoryIntoProjection(coldOpen, [
+        { ...row(0), position: 0 },
+        {
+          position: 1,
+          visibility: "local",
+          sourceThreadId: v2ThreadId,
+          sourceItemId: card.id,
+          item: card,
+        },
+      ]);
+
+      expect(merged.visibleTurnItems.map((entry) => String(entry.sourceItemId))).toEqual(
+        status === "rolled_back" ? ["item-0", "item-5"] : ["item-0", "item-question", "item-5"],
+      );
+      expect(merged.turnItems).toContain(card);
+      const pending = derivePendingThreadRequests(merged).userInputs;
+      expect(pending).toEqual(derivePendingThreadRequests(coldOpen).userInputs);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({
+        requestId: card.requestId,
+        dismissible: true,
+        questions: card.questions.map((question) => ({ ...question, multiSelect: false })),
+      });
+    },
+  );
 
   it("keeps a history-page interrupt result visible when its request was retained at cold open", () => {
     const runId = "run-interrupt-cold" as never;
