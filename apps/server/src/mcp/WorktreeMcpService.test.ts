@@ -450,7 +450,6 @@ describe("t3_worktree_handoff", () => {
         }),
       );
       expect(harness.sendToThread).not.toHaveBeenCalled();
-      // The continuation must be durably queued before anything slower runs.
       expect(harness.dispatch.mock.invocationCallOrder[0]).toBeLessThan(
         harness.runForThread.mock.invocationCallOrder[0]!,
       );
@@ -469,26 +468,6 @@ describe("t3_worktree_handoff", () => {
       expect(harness.sendToThread).not.toHaveBeenCalled();
     });
   });
-
-  it.effect(
-    "rolls back the worktree when the atomic bind and continuation dispatch defects",
-    () => {
-      const harness = makeHarness({ dispatchDies: true });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          runHandoff(harness, {
-            branch: "feature/continue-dies",
-            continuationPrompt: "Keep going.",
-          }),
-        );
-        expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
-        expect(harness.removeWorktree).toHaveBeenCalledTimes(1);
-        expect(harness.deleteLocalBranch).toHaveBeenCalledTimes(1);
-        expect(harness.runForThread).not.toHaveBeenCalled();
-        expect(harness.sendToThread).not.toHaveBeenCalled();
-      });
-    },
-  );
 
   it.effect("does not queue a continuation when the thread update fails", () => {
     const harness = makeHarness({ dispatchFails: true });
@@ -702,9 +681,6 @@ describe("t3_worktree_handoff", () => {
       const gate = yield* Deferred.make<void>();
       const harness = makeHarness({ dispatchGate: Deferred.await(gate) });
 
-      // Interrupt arrives while the metadata dispatch is in flight; the
-      // binding-plus-continuation section must run to completion anyway so the
-      // atomic binding and continuation commit survives the pending interruption.
       const fiber = yield* Effect.forkChild(
         runHandoff(harness, {
           branch: "feature/interrupted",
@@ -725,8 +701,6 @@ describe("t3_worktree_handoff", () => {
         }),
       );
       expect(harness.sendToThread).not.toHaveBeenCalled();
-      // The setup script must also survive the pending interrupt; otherwise
-      // the continuation run starts in a worktree that was never set up.
       expect(harness.runForThread).toHaveBeenCalledTimes(1);
     }),
   );

@@ -74,8 +74,7 @@ your default follow-up behavior; add **Shift** to use the opposite action. This
 applies only to multiline messages when you choose the multiline send option.
 
 When an agent moves its thread into a worktree with a continuation message, work resumes
-automatically in that worktree. An explicit Stop or a provider failure pauses queued messages
-until you resume the queue; the messages stay saved.
+automatically in that worktree.
 
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
 the oldest queued message as a steer. This leaves the current draft intact and
