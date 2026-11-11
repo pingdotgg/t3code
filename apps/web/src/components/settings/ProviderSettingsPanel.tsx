@@ -1265,7 +1265,8 @@ function ProviderInstanceRow({
   const allProjects = useProjects();
   const secretSources = useSecretSources(environmentId);
   const acpProjects =
-    mode === "editor" && liveProvider?.driver === "acpRegistry"
+    mode === "editor" &&
+    (liveProvider?.driver === "acpRegistry" || liveProvider?.driver === "claudeAgent")
       ? allProjects.filter((project) => project.environmentId === environmentId)
       : undefined;
   const instance = explicitInstance ?? { driver };
