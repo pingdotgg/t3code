@@ -865,6 +865,7 @@ const make = Effect.gen(function* () {
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),
       dispatchMode,
+      ...(mode === "auto" ? { deliveryIntent: "auto" } : {}),
       createdBy: input.createdBy,
       creationSource: input.creationSource,
     });
