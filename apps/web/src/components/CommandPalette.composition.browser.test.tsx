@@ -8,10 +8,30 @@ import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
-const scopes = vi.hoisted(() => ({ denied: undefined as string | undefined }));
-const setup = (deniedScope?: string) => {
-  scopes.denied = deniedScope;
-};
+const pickerMocks = vi.hoisted(() => ({
+  settings: { preferNativeProjectFolderPicker: false },
+  target: "primary",
+  pickFolder: vi.fn<() => Promise<string | null>>(),
+  command: vi.fn(),
+  deniedScope: undefined as string | undefined,
+}));
+
+function setup({
+  enabled = false,
+  deniedScope,
+}: { enabled?: boolean; deniedScope?: string | undefined } = {}) {
+  if (!Object.getOwnPropertyDescriptor(window, "desktopBridge")) {
+    Object.defineProperty(window, "desktopBridge", { configurable: true, get: () => undefined });
+  }
+  pickerMocks.target = "primary";
+  pickerMocks.deniedScope = deniedScope;
+  pickerMocks.settings.preferNativeProjectFolderPicker = enabled;
+  pickerMocks.pickFolder.mockReset().mockResolvedValue(null);
+  // The add-project destination step starts a clone and follows its project id.
+  pickerMocks.command
+    .mockReset()
+    .mockResolvedValue({ _tag: "Success", value: { projectId: "project-cloned" } });
+}
 
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
@@ -26,7 +46,7 @@ vi.mock("../hooks/useCustomThemes", () => ({ useCustomThemes: () => [] }));
 vi.mock("../hooks/useEnvironmentTheme", () => ({ useEnvironmentThemeDefinitions: () => [] }));
 vi.mock("../hooks/useSettings", async (original) => ({
   ...(await original<typeof import("../hooks/useSettings")>()),
-  useClientSettings: () => DEFAULT_CLIENT_SETTINGS,
+  useClientSettings: () => ({ ...DEFAULT_CLIENT_SETTINGS, ...pickerMocks.settings }),
   useUpdateEnvironmentSettings: () => () => undefined,
 }));
 vi.mock("../hooks/useScratchProject", () => ({
@@ -43,10 +63,11 @@ vi.mock("../hooks/useHandleNewThread", () => ({
   useNewThreadHandler: () => async () => undefined,
 }));
 vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestUrl: () => null }));
-vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
+vi.mock("../connection/useDesktopLocalBootstraps", () => ({
+  useDesktopLocalBootstraps: () => [{ id: "native", httpBaseUrl: "http://desktop-local" }],
+}));
 vi.mock("../state/use-atom-command", () => ({
-  // The add-project destination step starts a clone and follows its project id.
-  useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
+  useAtomCommand: () => pickerMocks.command,
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   useAtomQueryRunner: () => async () => ({ _tag: "Success", value: undefined }),
@@ -56,10 +77,19 @@ vi.mock("../state/environments", async (original) => ({
   useEnvironments: () => ({
     environments: [
       {
-        environmentId: "local",
+        environmentId: pickerMocks.target === "primary" ? "local" : "secondary",
+        displayUrl: "http://desktop-local",
         label: "Local",
         connection: { phase: "connected" },
-        entry: { target: { _tag: "PrimaryConnectionTarget" } },
+        entry: {
+          target:
+            pickerMocks.target === "primary"
+              ? { _tag: "PrimaryConnectionTarget" }
+              : {
+                  _tag: "BearerConnectionTarget",
+                  connectionId: pickerMocks.target === "desktop-local" ? "local:native" : "remote",
+                },
+        },
         serverConfig: {
           environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
           settings: { addProjectBaseDirectory: "/workspace/" },
@@ -92,7 +122,8 @@ vi.mock("../state/queries", async (original) => ({
 }));
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
-  useEnvironmentScope: (_environmentId: unknown, scope: string) => scope !== scopes.denied,
+  useEnvironmentScope: (_environmentId: unknown, scope: string) =>
+    scope !== pickerMocks.deniedScope,
   readEnvironmentScope: () => true,
 }));
 vi.mock("../state/filesystem", async (original) => ({
@@ -143,6 +174,111 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
   });
 });
 
+describe("add-project native folder preference", () => {
+  it.each([false, true])(
+    "uses the built-in browser without a desktop bridge: %s",
+    async (enabled) => {
+      setup({ enabled });
+      using _bridge = vi.spyOn(window, "desktopBridge", "get").mockReturnValue(undefined);
+      await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+      await act(() => openCommandPalette({ open: "add-project" }));
+      await page.getByText("Local folder", { exact: true }).click();
+      await expect.element(page.getByRole("combobox")).toHaveValue("/workspace/");
+      expect(pickerMocks.pickFolder).not.toHaveBeenCalled();
+    },
+  );
+
+  it("adds the native selection to the selected environment", async () => {
+    setup({ enabled: true });
+    pickerMocks.pickFolder.mockResolvedValue("/workspace/native-project");
+    using _bridge = vi.spyOn(window, "desktopBridge", "get").mockReturnValue({
+      pickFolder: pickerMocks.pickFolder,
+      getWslState: async () => null,
+    } as unknown as NonNullable<typeof window.desktopBridge>);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText("Local folder", { exact: true }).click();
+    await vi.waitFor(() =>
+      expect(pickerMocks.command).toHaveBeenCalledWith(
+        expect.objectContaining({
+          environmentId: "local",
+          input: expect.objectContaining({ workspaceRoot: "/workspace/native-project" }),
+        }),
+      ),
+    );
+    expect(pickerMocks.pickFolder).toHaveBeenCalledExactlyOnceWith({ initialPath: "/workspace" });
+    await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+  });
+  it.each(["cancel", "error"] as const)("allows another attempt after %s", async (result) => {
+    setup({ enabled: true });
+    if (result === "error")
+      pickerMocks.pickFolder.mockRejectedValueOnce(new Error("Picker unavailable"));
+    using _bridge = vi.spyOn(window, "desktopBridge", "get").mockReturnValue({
+      pickFolder: pickerMocks.pickFolder,
+      getWslState: async () => null,
+    } as unknown as NonNullable<typeof window.desktopBridge>);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText("Local folder", { exact: true }).click();
+    await vi.waitFor(() => expect(pickerMocks.pickFolder).toHaveBeenCalledOnce());
+    await expect.element(page.getByText("Local folder", { exact: true })).toBeVisible();
+    expect(pickerMocks.command).not.toHaveBeenCalled();
+    await page.getByText("Local folder", { exact: true }).click();
+    await vi.waitFor(() => expect(pickerMocks.pickFolder).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps one picker in flight and restores the built-in browser when disabled", async () => {
+    setup({ enabled: true });
+    let finishPicker!: (path: string | null) => void;
+    pickerMocks.pickFolder.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishPicker = resolve;
+      }),
+    );
+    using _bridge = vi.spyOn(window, "desktopBridge", "get").mockReturnValue({
+      pickFolder: pickerMocks.pickFolder,
+      getWslState: async () => null,
+    } as unknown as NonNullable<typeof window.desktopBridge>);
+    await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText("Local folder", { exact: true }).click();
+    await vi.waitFor(() => expect(pickerMocks.pickFolder).toHaveBeenCalledOnce());
+    await page.getByText("Local folder", { exact: true }).click();
+    expect(pickerMocks.pickFolder).toHaveBeenCalledOnce();
+    await act(() => finishPicker(null));
+    await userEvent.keyboard("{Escape}");
+    pickerMocks.settings.preferNativeProjectFolderPicker = false;
+    await screen.rerender(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText("Local folder", { exact: true }).click();
+    await expect.element(page.getByRole("combobox")).toHaveValue("/workspace/");
+    expect(pickerMocks.pickFolder).toHaveBeenCalledOnce();
+  });
+
+  it.each(["remote", "desktop-local"])("uses the correct picker for %s", async (target) => {
+    setup({ enabled: true });
+    pickerMocks.target = target;
+    using _bridge = vi.spyOn(window, "desktopBridge", "get").mockReturnValue({
+      pickFolder: pickerMocks.pickFolder,
+      getWslState: async () => null,
+    } as unknown as NonNullable<typeof window.desktopBridge>);
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText("Local folder", { exact: true }).click();
+    if (target === "remote") {
+      await expect.element(page.getByRole("combobox")).toHaveValue("/workspace/");
+      expect(pickerMocks.pickFolder).not.toHaveBeenCalled();
+    } else {
+      await vi.waitFor(() =>
+        expect(pickerMocks.pickFolder).toHaveBeenCalledExactlyOnceWith({
+          initialPath: "/workspace",
+          targetEnvironmentId: "native",
+        }),
+      );
+    }
+  });
+});
+
 it.each([
   { step: "folder", source: "Local folder", keys: "", description: /^(?!.*(Ctrl|⌘)).*Add.*Enter/ },
   {
@@ -170,7 +306,7 @@ it.each([
 ])(
   "tells screen readers how to submit the $step step",
   async ({ source, keys, deniedScope, description }) => {
-    setup(deniedScope);
+    setup({ deniedScope });
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     await act(() => openCommandPalette({ open: "add-project" }));
     await page.getByText(source, { exact: true }).click();

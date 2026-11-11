@@ -1008,6 +1008,27 @@ export function GeneralSettingsPanel() {
 
       <SettingsSection id="display" title="Display">
         <SettingsRow
+          {...searchableSetting("native-project-folder-picker")}
+          description="Open the system folder picker when you select Local folder. Available for local desktop environments."
+          resetAction={
+            settings.preferNativeProjectFolderPicker ? (
+              <SettingResetButton
+                label="native folder picker"
+                onClick={() => updateSettings({ preferNativeProjectFolderPicker: false })}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.preferNativeProjectFolderPicker}
+              onCheckedChange={(checked) =>
+                updateSettings({ preferNativeProjectFolderPicker: Boolean(checked) })
+              }
+              aria-label="Use native folder picker"
+            />
+          }
+        />
+        <SettingsRow
           {...searchableSetting("time-format")}
           description="System default follows your browser or OS clock preference."
           resetAction={
