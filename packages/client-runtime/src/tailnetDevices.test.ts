@@ -128,7 +128,7 @@ const view = (
     hosts,
     savedEnvironmentIds: new Set(
       [...memberStatuses]
-        .filter(([, { status }]) => status === "open" || status === "reopen")
+        .filter(([, { status }]) => status !== "unopened")
         .map(([environmentId]) => environmentId),
     ),
     memberStatuses,
@@ -138,11 +138,15 @@ const memberStatus = (
   environmentId: EnvironmentId,
   status: NetworkMemberStatus,
   sessionExpiresAt?: number,
+  left = false,
 ) =>
   [
     environmentId,
     {
-      record: sessionExpiresAt === undefined ? {} : { sessionExpiresAt },
+      record: {
+        ...(sessionExpiresAt === undefined ? {} : { sessionExpiresAt }),
+        ...(left ? { left: true as const } : {}),
+      },
       status,
     },
   ] as const;
@@ -340,7 +344,6 @@ describe("machineControls", () => {
       promote: false,
       readd: false,
       readdVia: null,
-      reopenBlocked: false,
       needsReadd: false,
       left: false,
       forgetHosts: [studio],
@@ -385,7 +388,6 @@ describe("machineControls", () => {
       promote: false,
       readd: true,
       readdVia: studio,
-      reopenBlocked: false,
       needsReadd: true,
       left: false,
       forgetHosts: [studio],
@@ -488,28 +490,20 @@ describe("machineControls", () => {
     // Saved with a session that still works: nothing to open. Expired or cut: open again.
     expect(opened({}, new Map([memberStatus(laptop, "open")]))[0]).toBe(false);
     expect(opened({}, new Map([memberStatus(laptop, "reopen")]))[0]).toBe(true);
-    // Expired with no connected host that may open it: no Open, and the row says what will help.
-    const [stranded] = view(
-      [host(studio, { devices: [target], mayWrite: false })],
-      studio,
-      new Map([memberStatus(laptop, "reopen")]),
-    );
-    const strandedRow = stranded?.machines.find((row) => row.entry.environmentId === laptop);
-    if (stranded === undefined || strandedRow === undefined) throw new Error("missing row");
-    expect(machineControls(strandedRow, stranded)).toMatchObject({
-      open: false,
-      reopenBlocked: true,
-    });
-    expect(
-      machineControls(
-        strandedRow,
-        view(
-          [host(studio, { devices: [target] })],
-          studio,
-          new Map([memberStatus(laptop, "reopen")]),
-        )[0] ?? stranded,
-      ),
-    ).toMatchObject({ open: true, reopenBlocked: false });
+    // Refused with nothing here to reopen it, whether or not it left: no Open, pair by code.
+    for (const left of [false, true]) {
+      const [refused] = view(
+        [host(studio, { devices: [target] })],
+        studio,
+        new Map([memberStatus(laptop, "refused", undefined, left)]),
+      );
+      const row = refused?.machines.find((candidate) => candidate.entry.environmentId === laptop);
+      if (refused === undefined || row === undefined) throw new Error("missing row");
+      expect([row.entry.inApp, machineControls(row, refused).open]).toEqual([
+        { kind: "refused", left },
+        false,
+      ]);
+    }
     // An app of the network needs only orchestration:read, and is capped by its own level.
     expect(opened({ mayWrite: false, callerAppId: "app-phone", apps: [app("read-only")] })).toEqual(
       [true, "read-only"],

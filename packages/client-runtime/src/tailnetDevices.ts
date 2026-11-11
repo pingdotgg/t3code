@@ -40,18 +40,19 @@ export interface DeviceNetworkHost {
 export type DeviceNetworkMemberStatuses = ReadonlyMap<
   EnvironmentId,
   {
-    readonly record: Pick<NetworkMemberRecord, "sessionExpiresAt">;
+    readonly record: Pick<NetworkMemberRecord, "sessionExpiresAt" | "left">;
     readonly status: NetworkMemberStatus;
   }
 >;
 
 /**
- * How this app holds a machine: open; saved but its session expired or was cut, so Open again;
- * or left the network by its own act, kept until its session ends and never renewed.
+ * How this app holds a machine: open; its session refused, with a connected host that can open
+ * it again or none; or left the network by its own act, kept until its session ends.
  */
 export type InApp =
   | { readonly kind: "open" }
   | { readonly kind: "reopen" }
+  | { readonly kind: "refused"; readonly left: boolean }
   | { readonly kind: "left"; readonly until: DateTime.Utc | null };
 
 /** One environment of a machine, merged from what every host in the group says about it. */
@@ -130,6 +131,7 @@ const inAppOf = (
     return { kind: "left", until: until === undefined ? null : DateTime.makeUnsafe(until) };
   }
   if (held?.status === "reopen") return { kind: "reopen" };
+  if (held?.status === "refused") return { kind: "refused", left: held.record.left === true };
   return saved.has(environmentId) ? { kind: "open" } : null;
 };
 
@@ -424,8 +426,6 @@ export function deviceNetworkView(input: {
 
 export interface MachineControls {
   readonly open: boolean;
-  /** Its session here ended and no connected host may open it again. */
-  readonly reopenBlocked: boolean;
   /** Narrow or widen it on every machine, through the authority. */
   readonly changeAccess: boolean;
   readonly revoke: boolean;
@@ -488,16 +488,16 @@ export function machineControls(
         : (writers(group.hosts).find((host) => host.environmentId !== entry.environmentId)
             ?.environmentId ?? null)
       : null;
-  const opensHere = entry.inApp === null || entry.inApp.kind === "reopen";
-  const hasOpener = openers(group.hosts).length > 0;
+  // The roster decides "reopen" (a connected host can open it) and "refused" (none can).
+  const opensHere =
+    entry.inApp === null ? openers(group.hosts).length > 0 : entry.inApp.kind === "reopen";
   const forgetHosts = member
     ? manages
       ? [authority, ...hostsListing(group, entry, null).filter((id) => id !== authority)]
       : []
     : hostsListing(group, entry, authority);
   return {
-    open: live && !entry.isHost && opensHere && hasOpener,
-    reopenBlocked: live && !entry.isHost && entry.inApp?.kind === "reopen" && !hasOpener,
+    open: live && !entry.isHost && opensHere,
     changeAccess: live && manages,
     revoke: live && manages,
     restore: member && !live && !needsReadd && !left && manages,

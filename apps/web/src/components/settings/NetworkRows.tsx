@@ -127,6 +127,11 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
 const formatTime = (time: DateTime.Utc) => timeFormat.format(DateTime.toDate(time));
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+/** Its session here was refused and no connected machine can open it again. */
+const refusedInApp = (left: boolean) =>
+  left
+    ? "Its session in this app has ended. Pair with it by code under Add environment in Environments to use it here; to bring it back to the network, choose Allow joining on it, then Add again"
+    : "Its session in this app ended and no machine connected here can open it again. Pair with it by code under Add environment in Environments, or connect this app to a machine in its network that can open it";
 /** A machine that left keeps this app's session until it ends; it is never renewed. */
 const keptInApp = (until: DateTime.Utc | null, now: DateTime.Utc) =>
   until !== null && !DateTime.isGreaterThan(until, now)
@@ -240,14 +245,15 @@ function machineDetails(
   openHint: ReturnType<typeof openAccessHint>,
   /** Opened in this app and its session there cannot change anything. */
   readOnlyHere: boolean,
-  reopenBlocked: boolean,
 ): ReadonlyArray<string | null> {
   const { entry } = machine;
   if (readd !== null) {
     return [
       readd === "left" && entry.inApp?.kind === "left"
         ? `${LEFT}. ${keptInApp(entry.inApp.until, now)}`
-        : `${readd === "left" ? LEFT : NEEDS_READD}: allow joining on it, then add it again`,
+        : entry.inApp?.kind === "refused"
+          ? `${readd === "left" ? LEFT : NEEDS_READD}. ${refusedInApp(entry.inApp.left)}`
+          : `${readd === "left" ? LEFT : NEEDS_READD}: allow joining on it, then add it again`,
       entry.tailnetName,
     ];
   }
@@ -279,10 +285,10 @@ function machineDetails(
         ? "Read-only in this app"
         : "In this app"
       : entry.inApp?.kind === "reopen"
-        ? reopenBlocked
-          ? "Its session in this app ended. To open it again, connect this app to a machine in its network that can open it, or pair with it by code under Add environment in Environments"
-          : "Its session in this app ended: open it again"
-        : null,
+        ? "Its session in this app ended: open it again"
+        : entry.inApp?.kind === "refused"
+          ? refusedInApp(entry.inApp.left)
+          : null,
     // Only a known limit is shown before opening; the result shows once it is open.
     entry.inApp?.kind !== "open" && !entry.isHost && live && openHint === "read-only"
       ? "Opens read-only"
@@ -392,7 +398,6 @@ export function DeviceMachineRow({
         readdReason,
         openAccessHint(machine, group),
         entry.inApp?.kind === "open" && !operatesHere,
-        controls.reopenBlocked,
       )}
       actions={
         <>
