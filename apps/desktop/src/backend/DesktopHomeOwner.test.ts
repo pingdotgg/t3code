@@ -1,23 +1,31 @@
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopHomeOwner from "./DesktopHomeOwner.ts";
 
-const readOwnerWithRuntimeFile = (contents: string | undefined) =>
+const withTempHome = <A, E>(
+  run: (
+    userdata: string,
+  ) => Effect.Effect<
+    A,
+    E,
+    DesktopEnvironment.DesktopEnvironment | FileSystem.FileSystem | Path.Path
+  >,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-desktop-home-owner-" });
-    if (contents !== undefined) {
-      yield* fs.makeDirectory(`${home}/userdata`, { recursive: true });
-      yield* fs.writeFileString(`${home}/userdata/server-runtime.json`, contents);
-    }
-    return yield* DesktopHomeOwner.readLiveHomeOwner().pipe(
+    yield* fs.makeDirectory(`${home}/userdata`, { recursive: true });
+    return yield* run(`${home}/userdata`).pipe(
       Effect.provide(
         DesktopEnvironment.layer({
           dirname: "/repo/apps/desktop/src",
@@ -37,6 +45,19 @@ const readOwnerWithRuntimeFile = (contents: string | undefined) =>
       ),
     );
   }).pipe(Effect.provide(NodeServices.layer));
+
+const readOwnerWithRuntimeFile = (contents: string | undefined) =>
+  withTempHome((userdata) =>
+    Effect.gen(function* () {
+      if (contents !== undefined) {
+        yield* (yield* FileSystem.FileSystem).writeFileString(
+          `${userdata}/server-runtime.json`,
+          contents,
+        );
+      }
+      return yield* DesktopHomeOwner.readLiveHomeOwner();
+    }),
+  );
 
 describe("DesktopHomeOwner.readLiveHomeOwner", () => {
   it.effect("reports a live server recorded in server-runtime.json", () =>
@@ -70,5 +91,20 @@ describe("DesktopHomeOwner.readLiveHomeOwner", () => {
         Option.isNone(yield* readOwnerWithRuntimeFile(JSON.stringify({ pid: 0, port: 3790 }))),
       );
     }),
+  );
+});
+
+describe("DesktopHomeOwner.isHomeOwnershipLocked", () => {
+  it.effect("reports the ownership lock only while a server holds it", () =>
+    withTempHome((userdata) =>
+      Effect.gen(function* () {
+        assert.isFalse(yield* DesktopHomeOwner.isHomeOwnershipLocked());
+        const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+        lock.exec("BEGIN EXCLUSIVE;");
+        assert.isTrue(yield* DesktopHomeOwner.isHomeOwnershipLocked());
+        lock.close();
+        assert.isFalse(yield* DesktopHomeOwner.isHomeOwnershipLocked());
+      }),
+    ),
   );
 });

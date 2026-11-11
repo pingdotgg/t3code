@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Probes the server's native SQLite ownership lock.
+import * as NodeSqlite from "node:sqlite";
+
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -28,7 +31,34 @@ const isProcessAlive = (pid: number): boolean => {
   }
 };
 
-/** The live server recorded as owning the desktop's T3 home. Only call once the ownership lock refused a backend: a live PID alone may be reused. */
+/**
+ * Whether a server holds the T3 home's ownership lock (an exclusive transaction on
+ * `server-owner.sqlite`). A read-only read is refused with SQLITE_BUSY only while it is held.
+ */
+export const isHomeOwnershipLocked = Effect.fn("DesktopHomeOwner.isHomeOwnershipLocked")(
+  function* () {
+    const path = yield* Path.Path;
+    const { stateDir } = yield* DesktopEnvironment.DesktopEnvironment;
+    const lockPath = path.join(stateDir, "server-owner.sqlite");
+    return yield* Effect.sync(() => {
+      try {
+        const db = new NodeSqlite.DatabaseSync(lockPath, { readOnly: true });
+        try {
+          db.exec("PRAGMA busy_timeout = 0");
+          db.prepare("SELECT count(*) FROM sqlite_master").get();
+          return false;
+        } finally {
+          db.close();
+        }
+      } catch (cause) {
+        // Anything but SQLITE_BUSY (a missing file included) leaves the decision to the backend.
+        return cause instanceof Error && "errcode" in cause && cause.errcode === 5;
+      }
+    });
+  },
+);
+
+/** The live server recorded as owning the desktop's T3 home. Only call once the ownership lock is known held: a live PID alone may be reused. */
 export const readLiveHomeOwner = Effect.fn("DesktopHomeOwner.readLiveHomeOwner")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -52,7 +82,7 @@ export const homeOwnedMessage = (owner: Option.Option<HomeOwner>): string =>
       const version = owner.serverVersion ? `, version ${owner.serverVersion}` : "";
       const stop = owner.serviceManaged
         ? "Stop it with `t3 service uninstall`, passing `--base-dir` with this T3 home"
-        : "Stop that server";
-      return `${kind} is using this T3 home (PID ${owner.pid}, port ${owner.port}${version}). ${stop}, then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.`;
+        : "If a T3 Code app on another machine started it over SSH, that app restarts it: remove or disconnect that SSH environment there, or quit that app. Then stop the server";
+      return `${kind} is using this T3 home (PID ${owner.pid}, port ${owner.port}${version}). ${stop}, and reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.`;
     },
   });
