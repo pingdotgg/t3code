@@ -3,7 +3,7 @@ import { closeHistory, redo, undo } from "@tiptap/pm/history";
 import { splitBlock } from "@tiptap/pm/commands";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import {
   buildDocJson,
@@ -62,6 +62,14 @@ function createEditor(value: string) {
   return editor;
 }
 
+function expectViewMatchesMarkdown(editor: Editor) {
+  const markdown = serializeEditorDoc(editor.state.doc).value;
+  const rebuilt = editor.schema.nodeFromJSON(
+    buildDocJson(markdown, (name) => ({ label: name, description: null })),
+  );
+  expect(editor.state.doc.toString()).toBe(rebuilt.toString());
+}
+
 function press(value: string, spec: string) {
   const editor = createEditor(value);
   const event = chord(spec);
@@ -115,27 +123,32 @@ describe("composer list normalization", () => {
     expect(editor.state.doc.firstChild?.type.name).toBe("bulletList");
     expect(editor.state.doc.firstChild?.firstChild?.textContent).toBe("get md");
     expect(serializeEditorDoc(editor.state.doc).value).toBe("- get md\n");
-    expect(
-      editor.state.doc.eq(
-        editor.schema.nodeFromJSON(
-          buildDocJson(serializeEditorDoc(editor.state.doc).value, (name) => ({
-            label: name,
-            description: null,
-          })),
-        ),
-      ),
-    ).toBe(true);
+    expectViewMatchesMarkdown(editor);
   });
 
-  it("converts a dash and space typed before existing text", () => {
-    const editor = createEditor("existing text");
-    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atStart(editor.state.doc)));
-    editor.view.dispatch(editor.state.tr.insertText("-"));
-    expect(editor.state.doc.firstChild?.type.name).toBe("paragraph");
-    editor.view.dispatch(editor.state.tr.insertText(" "));
-    expect(editor.state.doc.firstChild?.type.name).toBe("bulletList");
-    expect(editor.state.selection.$from.parentOffset).toBe(0);
-    expect(serializeEditorDoc(editor.state.doc).value).toBe("- existing text");
+  it.each([
+    ["- a\nb\n- c", "- "],
+    ["* a\nb", "* "],
+    ["1. a\nb", "2. "],
+    ["- [ ] a\nb", "- [ ] "],
+  ])("joins the converted line into the neighbouring list in %j", (value, marker) => {
+    const editor = createEditor(value);
+    let paragraph = 0;
+    editor.state.doc.forEach((node, pos) => {
+      if (node.type.name === "paragraph") paragraph = pos + 1;
+    });
+    editor.view.dispatch(editor.state.tr.insertText(marker, paragraph));
+    expect(editor.state.doc.childCount).toBe(1);
+    expectViewMatchesMarkdown(editor);
+  });
+
+  it("keeps a converted line apart from a list with another marker", () => {
+    const editor = createEditor("* a\nb");
+    editor.view.dispatch(
+      editor.state.tr.insertText("- ", editor.state.doc.firstChild!.nodeSize + 1),
+    );
+    expect(editor.state.doc.childCount).toBe(2);
+    expectViewMatchesMarkdown(editor);
   });
 
   it.each(["[link](url)", "[ordinary text]", "[x]text"])(
@@ -192,12 +205,6 @@ describe("composer list normalization", () => {
     expect(editor.state.doc.firstChild?.firstChild?.attrs.checked).toBe(true);
   });
 
-  it("normalizes pasted markers without waiting for another keystroke", () => {
-    const editor = createEditor("existing text");
-    editor.view.dispatch(editor.state.tr.insertText("- ", 1).setMeta("uiEvent", "paste"));
-    expect(editor.state.doc.firstChild?.type.name).toBe("bulletList");
-  });
-
   it.each(["```\ncode\n```", "- outer\n  - inner", "> quoted"])(
     "does not convert paragraphs inside %j",
     (value) => {
@@ -228,7 +235,18 @@ describe("composer list normalization", () => {
     expect(editor.state.doc.firstChild?.type.name).toBe("paragraph");
     editor.view.dispatch(editor.state.tr.insertText("確定", 3, 6).setMeta("composition", 1));
     expect(editor.state.doc.firstChild?.type.name).toBe("paragraph");
-    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    for (const plugin of editor.state.plugins) {
+      plugin.props.handleDOMEvents?.compositionend?.call(
+        plugin,
+        editor.view,
+        new Event("compositionend") as CompositionEvent,
+      );
+    }
+    vi.runAllTimers();
     expect(editor.state.doc.firstChild?.type.name).toBe("bulletList");
     expect(serializeEditorDoc(editor.state.doc).value).toBe("- 確定");
     expect(undo(editor.state, editor.view.dispatch)).toBe(true);

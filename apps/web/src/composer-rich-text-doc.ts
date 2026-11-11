@@ -29,7 +29,7 @@ import {
   mergeAttributes,
 } from "@tiptap/core";
 import { isHistoryTransaction } from "@tiptap/pm/history";
-import { findWrapping } from "@tiptap/pm/transform";
+import { canJoin, findWrapping } from "@tiptap/pm/transform";
 import { BulletList, ListItem, OrderedList } from "@tiptap/extension-list";
 import { Strike, inputRegex as strikeInputRegex } from "@tiptap/extension-strike";
 import { TaskItem } from "@tiptap/extension-task-item";
@@ -629,6 +629,19 @@ function listNormalizationPlugin(isComposing: () => boolean) {
   const key = new PluginKey("composerListNormalization");
   return new Plugin({
     key,
+    props: {
+      handleDOMEvents: {
+        // ProseMirror tags the DOM flush after compositionend as composition, so nothing else would normalize.
+        compositionend(view) {
+          setTimeout(() => {
+            if (!view.isDestroyed && !view.composing && pending.size > 0) {
+              view.dispatch(view.state.tr);
+            }
+          });
+          return false;
+        },
+      },
+    },
     appendTransaction(transactions, oldState, state) {
       if (transactions.some(isHistoryTransaction)) {
         pending.clear();
@@ -711,11 +724,31 @@ function listNormalizationPlugin(isComposing: () => boolean) {
             : { indent: prefix.indent, marker: prefix.marker, space: prefix.space },
         );
         tr.delete(pos + 3, pos + 3 + markerLength);
+        joinCompatibleLists(tr, pos + tr.doc.nodeAt(pos)!.nodeSize);
+        joinCompatibleLists(tr, pos);
       }
       pending = new Set([...pending].map((pos) => tr.mapping.map(pos, 1)));
       return tr.docChanged ? tr : null;
     },
   });
+}
+
+/** Rebuilding from Markdown merges adjacent lists of one type whose markers share a delimiter. */
+function joinCompatibleLists(tr: Transaction, pos: number): void {
+  const $pos = tr.doc.resolve(pos);
+  const before = $pos.nodeBefore;
+  const after = $pos.nodeAfter;
+  const delimiter = (list: ProseMirrorNode) =>
+    String(list.firstChild?.attrs.marker ?? "").slice(-1);
+  if (
+    before &&
+    after &&
+    before.type === after.type &&
+    delimiter(before) === delimiter(after) &&
+    canJoin(tr.doc, pos)
+  ) {
+    tr.join(pos);
+  }
 }
 
 function listKey(prefix: ListLinePrefix): string {
