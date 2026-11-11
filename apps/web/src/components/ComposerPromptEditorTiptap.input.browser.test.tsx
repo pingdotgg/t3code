@@ -345,12 +345,13 @@ it("pastes arithmetic stars verbatim and still styles pasted markdown", async ()
 it("parses markdown dropped from outside, keeps dropped arithmetic verbatim, and focuses", async () => {
   await using screen = await mountEditor("", true, []);
   const { editor } = screen;
-  const drop = async (text: string) => {
+  const drop = async (text: string, html?: string) => {
     await act(async () => {
       editor.commands.clearContent();
       editor.view.dom.blur();
       const dataTransfer = new DataTransfer();
       dataTransfer.setData("text/plain", text);
+      if (html) dataTransfer.setData("text/html", html);
       const { left, top } = editor.view.coordsAtPos(1);
       editor.view.dom.dispatchEvent(
         new DragEvent("drop", {
@@ -367,6 +368,8 @@ it("parses markdown dropped from outside, keeps dropped arithmetic verbatim, and
   expect(serializeEditorDoc(editor.state.doc).value).toBe("a **bold** and *soft* word");
   expect(editor.state.doc.textContent).toBe("a bold and soft word");
   expect(editor.view.hasFocus()).toBe(true);
+  await drop("bold", "<p><strong>bold</strong></p>");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("**bold**");
   const code = "signal = (7 * 2**3 * 5)**4";
   await drop(code);
   expect(serializeEditorDoc(editor.state.doc).value).toBe(code);

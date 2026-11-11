@@ -1469,7 +1469,8 @@ function ComposerPromptEditorTiptapInner(
         handleDrop: (view, event, _slice, moved) => {
           const data = event.dataTransfer;
           if (moved || view.dragging || !data || data.files.length > 0) return false;
-          if (!data.getData("text/plain")) return false;
+          // ProseMirror already parses an HTML drop into marks; only plain-text drops need Markdown parsing.
+          if (!data.getData("text/plain") || data.getData("text/html")) return false;
           const target = view.posAtCoords({ left: event.clientX, top: event.clientY });
           if (!target) return false;
           view.dispatch(
