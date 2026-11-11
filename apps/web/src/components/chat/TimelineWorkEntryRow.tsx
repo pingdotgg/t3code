@@ -390,7 +390,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     workEntry.projectedItem !== undefined &&
     turnItemNeedsDetailFetch(workEntry.projectedItem.item);
   const canExpandProjectedItem =
-    todoSteps.length === 0 &&
+    (todoSteps.length === 0 ||
+      (workEntry.projectedItem !== undefined &&
+        turnItemNeedsDetailFetch(workEntry.projectedItem.item))) &&
     (plainOutput !== undefined
       ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
       : workEntry.projectedItem === undefined

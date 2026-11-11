@@ -2072,3 +2072,42 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     .element(screen.getByRole("button", { name: "Open the current tab", exact: true }))
     .toBeVisible();
 });
+
+it("shows a Grok todo_write tool's steps and keeps its omitted output expandable", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const [prompt, source, reply] = [3, 4, 5].map((index) => fixture.visibleTurnItems[index]!);
+  if (source?.item.type !== "dynamic_tool" || reply?.item.type !== "assistant_message") {
+    throw new Error("Expected fixture tool and reply");
+  }
+  const entries = deriveTimelineEntriesFromVisibleTurnItems({
+    visibleTurnItems: [
+      prompt!,
+      {
+        ...source,
+        item: {
+          ...source.item,
+          title: "Updating plan",
+          toolName: "todo_write",
+          input: {
+            variant: "TodoWrite",
+            merge: false,
+            todos: [{ id: "1", content: "Reinstall the CLI", status: "in_progress" }],
+          },
+          output: undefined,
+          outputOmitted: true,
+        },
+      },
+      { ...reply, item: { ...reply.item, text: "Done", streaming: false, status: "completed" } },
+    ],
+    optimisticMessages: [],
+  });
+  await using screen = await renderTimeline(entries);
+  const heading = screen.getByRole("button", { name: /^Worked for/ });
+  await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
+  await heading.click();
+
+  const row = screen.getByRole("button", { name: "Updating plan" });
+  await expect.element(row).toHaveAttribute("aria-expanded", "false");
+  await expect.element(screen.getByText("In progress: Reinstall the CLI")).toBeVisible();
+});
