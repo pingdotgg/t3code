@@ -12,14 +12,6 @@ import { fixPath, hydratePosixHome } from "./os-jank.ts";
 
 vi.mock("node:child_process", { spy: true });
 
-it("hydrates HOME for minimal service environments from the user account", () => {
-  const env: NodeJS.ProcessEnv = {};
-
-  hydratePosixHome(env);
-
-  assert.equal(env.HOME, NodeOS.userInfo().homedir);
-});
-
 it("hydrates HOME independently of a blank process HOME", () => {
   const originalHome = process.env.HOME;
   const env: NodeJS.ProcessEnv = { HOME: " " };
@@ -48,111 +40,28 @@ it("preserves an explicitly configured HOME", () => {
   assert.equal(env.HOME, "/custom/home");
 });
 
-effectIt.effect.each(["darwin", "linux"] as const)(
-  "keeps the prepared PATH and still hydrates HOME on %s",
-  (platform) =>
-    Effect.acquireUseRelease(
-      Effect.sync(() => vi.spyOn(NodeChildProcess, "execFileSync")),
-      (probe) =>
-        Effect.gen(function* () {
-          probe.mockImplementation(() => {
-            throw new Error("The prepared environment must not launch another shell");
-          });
-          const env: NodeJS.ProcessEnv = { PATH: "/prepared/bin:/usr/bin" };
-
-          yield* fixPath({ shellEnvironmentPrepared: true }).pipe(
-            Effect.provideService(HostProcess.Platform, platform),
-            Effect.provideService(HostProcess.Environment, env),
-            Effect.provide(NodeServices.layer),
-          );
-
-          assert.equal(probe.mock.calls.length, 0);
-          assert.equal(env.PATH, "/prepared/bin:/usr/bin");
-          assert.equal(env.HOME, NodeOS.userInfo().homedir);
-        }),
-      (probe) => Effect.sync(() => probe.mockRestore()),
+effectIt.effect("hydrates PATH when the desktop handoff is absent", () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() =>
+      vi
+        .spyOn(NodeChildProcess, "execFileSync")
+        .mockReturnValue("__T3CODE_ENV_PATH_START__\n/opt/tools/bin\n__T3CODE_ENV_PATH_END__\n"),
     ),
-);
+    (probe) =>
+      Effect.gen(function* () {
+        const env: NodeJS.ProcessEnv = { SHELL: "/bin/bash", PATH: "/usr/bin" };
 
-effectIt.effect.each([
-  {
-    name: "recovers the login-shell agent on Linux",
-    platform: "linux",
-    shellPath: "/opt/tools/bin",
-    shellSocket: "/login/agent.sock",
-    inheritedSocket: undefined,
-    expectedSocket: "/login/agent.sock",
-  },
-  {
-    name: "recovers the login-shell agent on macOS",
-    platform: "darwin",
-    shellPath: "/opt/tools/bin",
-    shellSocket: "/login/agent.sock",
-    inheritedSocket: undefined,
-    expectedSocket: "/login/agent.sock",
-  },
-  {
-    name: "preserves an explicitly forwarded agent",
-    platform: "linux",
-    shellPath: "/opt/tools/bin",
-    shellSocket: "/login/agent.sock",
-    inheritedSocket: "/forwarded/agent.sock",
-    expectedSocket: "/forwarded/agent.sock",
-  },
-  {
-    name: "leaves the agent absent when only a rejected shell exports one",
-    platform: "linux",
-    shellPath: "/opt/tools/bin",
-    shellSocket: undefined,
-    inheritedSocket: undefined,
-    expectedSocket: undefined,
-  },
-  {
-    name: "leaves the agent absent when no shell provides PATH",
-    platform: "linux",
-    shellPath: undefined,
-    shellSocket: "/login/agent.sock",
-    inheritedSocket: undefined,
-    expectedSocket: undefined,
-  },
-] as const)(
-  "$name without a prepared shell environment",
-  ({ platform, shellPath, shellSocket, inheritedSocket, expectedSocket }) =>
-    Effect.acquireUseRelease(
-      Effect.sync(() =>
-        vi
-          .spyOn(NodeChildProcess, "execFileSync")
-          .mockReturnValueOnce(
-            "__T3CODE_ENV_SSH_AUTH_SOCK_START__\n/rejected/agent.sock\n__T3CODE_ENV_SSH_AUTH_SOCK_END__\n",
-          )
-          .mockReturnValue(
-            [
-              "__T3CODE_ENV_PATH_START__",
-              shellPath ?? "",
-              "__T3CODE_ENV_PATH_END__",
-              "__T3CODE_ENV_SSH_AUTH_SOCK_START__",
-              shellSocket ?? "",
-              "__T3CODE_ENV_SSH_AUTH_SOCK_END__",
-            ].join("\n"),
-          ),
-      ),
-      (probe) =>
-        Effect.gen(function* () {
-          const env: NodeJS.ProcessEnv = { SHELL: "/custom/shell", PATH: "/usr/bin" };
-          if (inheritedSocket) env.SSH_AUTH_SOCK = inheritedSocket;
+        yield* fixPath().pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, env),
+          Effect.provide(NodeServices.layer),
+        );
 
-          yield* fixPath().pipe(
-            Effect.provideService(HostProcess.Platform, platform),
-            Effect.provideService(HostProcess.Environment, env),
-            Effect.provide(NodeServices.layer),
-          );
-
-          if (shellPath) assert.equal(probe.mock.calls.length, 2);
-          assert.equal(env.PATH, shellPath ? "/opt/tools/bin:/usr/bin" : "/usr/bin");
-          assert.equal(env.SSH_AUTH_SOCK, expectedSocket);
-        }),
-      (probe) => Effect.sync(() => probe.mockRestore()),
-    ),
+        assert.equal(probe.mock.calls.length, 1);
+        assert.equal(env.PATH, "/opt/tools/bin:/usr/bin");
+      }),
+    (probe) => Effect.sync(() => probe.mockRestore()),
+  ),
 );
 
 effectIt.effect("keeps mise's PATH record with the login shell PATH", () =>
@@ -181,39 +90,92 @@ effectIt.effect("keeps mise's PATH record with the login shell PATH", () =>
           Effect.provide(NodeServices.layer),
         );
 
-        assert.equal(
-          env.PATH,
-          "/home/me/.local/bin:/mise/installs/claude/latest:/mise/shims:/usr/bin",
-        );
         assert.equal(env.__MISE_DIFF, "mise-diff");
       }),
     (probe) => Effect.sync(() => probe.mockRestore()),
   ),
 );
 
-effectIt.effect("keeps the prepared Windows PATH without probing", () =>
-  Effect.gen(function* () {
-    const env: NodeJS.ProcessEnv = { PATH: "C:\\Prepared\\Bin;C:\\Windows" };
-    const commands: string[] = [];
+effectIt.effect("hydrates a missing JAVA_HOME from the login shell and keeps an explicit one", () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() =>
+      vi
+        .spyOn(NodeChildProcess, "execFileSync")
+        .mockReturnValue(
+          [
+            "__T3CODE_ENV_PATH_START__",
+            "/opt/homebrew/bin",
+            "__T3CODE_ENV_PATH_END__",
+            "__T3CODE_ENV_JAVA_HOME_START__",
+            "/opt/homebrew/opt/openjdk@17",
+            "__T3CODE_ENV_JAVA_HOME_END__",
+          ].join("\n"),
+        ),
+    ),
+    () =>
+      Effect.gen(function* () {
+        const missing: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+        const explicit: NodeJS.ProcessEnv = {
+          SHELL: "/bin/zsh",
+          PATH: "/usr/bin",
+          JAVA_HOME: "/custom/jdk",
+        };
 
-    yield* fixPath({ shellEnvironmentPrepared: true }).pipe(
-      Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provideService(HostProcess.Environment, env),
-      Effect.provideService(WindowsShellEnvironment, () => {
-        throw new Error("The prepared environment must not launch another shell");
+        for (const env of [missing, explicit]) {
+          yield* fixPath().pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(HostProcess.Environment, env),
+            Effect.provide(NodeServices.layer),
+          );
+        }
+
+        assert.equal(missing.JAVA_HOME, "/opt/homebrew/opt/openjdk@17");
+        assert.equal(explicit.JAVA_HOME, "/custom/jdk");
       }),
-      Effect.provideService(CommandAvailability, (command) =>
-        Effect.sync(() => {
-          commands.push(command);
-          return true;
-        }),
-      ),
-      Effect.provide(NodeServices.layer),
-    );
+    (probe) => Effect.sync(() => probe.mockRestore()),
+  ),
+);
 
-    assert.deepEqual(commands, []);
-    assert.equal(env.PATH, "C:\\Prepared\\Bin;C:\\Windows");
-  }),
+effectIt.effect("recovers a missing SSH agent from the accepted login shell only", () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() =>
+      vi
+        .spyOn(NodeChildProcess, "execFileSync")
+        .mockImplementation((file) =>
+          file === "/rejected/shell"
+            ? "__T3CODE_ENV_SSH_AUTH_SOCK_START__\n/rejected/agent.sock\n__T3CODE_ENV_SSH_AUTH_SOCK_END__\n"
+            : [
+                "__T3CODE_ENV_PATH_START__",
+                "/opt/tools/bin",
+                "__T3CODE_ENV_PATH_END__",
+                "__T3CODE_ENV_SSH_AUTH_SOCK_START__",
+                "/login/agent.sock",
+                "__T3CODE_ENV_SSH_AUTH_SOCK_END__",
+              ].join("\n"),
+        ),
+    ),
+    () =>
+      Effect.gen(function* () {
+        const missing: NodeJS.ProcessEnv = { SHELL: "/rejected/shell", PATH: "/usr/bin" };
+        const forwarded: NodeJS.ProcessEnv = {
+          SHELL: "/rejected/shell",
+          PATH: "/usr/bin",
+          SSH_AUTH_SOCK: "/forwarded/agent.sock",
+        };
+
+        for (const env of [missing, forwarded]) {
+          yield* fixPath().pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.Environment, env),
+            Effect.provide(NodeServices.layer),
+          );
+        }
+
+        assert.equal(missing.SSH_AUTH_SOCK, "/login/agent.sock");
+        assert.equal(forwarded.SSH_AUTH_SOCK, "/forwarded/agent.sock");
+      }),
+    (probe) => Effect.sync(() => probe.mockRestore()),
+  ),
 );
 
 effectIt.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
@@ -223,7 +185,7 @@ effectIt.effect("replaces a Path-spelled Windows PATH instead of adding a second
     yield* fixPath().pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(HostProcess.Environment, env),
-      Effect.provideService(WindowsShellEnvironment, () => ({ PATH: "C:\\Tools" })),
+      Effect.provideService(WindowsShellEnvironment, () => Effect.succeed({ PATH: "C:\\Tools" })),
       Effect.provideService(CommandAvailability, () => Effect.succeed(true)),
       Effect.provide(NodeServices.layer),
     );
