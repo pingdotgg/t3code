@@ -761,7 +761,6 @@ it.effect.each([
       Layer.provide(
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           isLive: () => Effect.succeed(true),
-          releaseFinishedDelegate: () => Effect.void,
           otherWorkingThreads: () => Effect.succeed(others.map((id) => ThreadId.make(id))),
           releaseUnlessBusy: () =>
             Effect.sync(() => teardowns.push("release")).pipe(

@@ -13166,25 +13166,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: resultTransfer,
         },
       ];
-      // A finished delegate is rarely resumed, so its provider process need not idle for the full
-      // timeout. The session manager releases it only if nothing can resume it by then.
-      const releaseCommandId = CommandId.make(
-        `command:system:release-finished-delegate:${childRun.id}`,
-      );
-      yield* writeSystemEvents(
-        completionEvents,
-        terminalStatus === "completed"
-          ? [
-              {
-                id: `effect:${releaseCommandId}:provider-session.release-finished-delegate`,
-                commandId: releaseCommandId,
-                threadId: childThreadId,
-                request: { type: "provider-session.release-finished-delegate" },
-              } satisfies PendingOrchestrationEffectV2,
-            ]
-          : [],
-        { updateDelegatedCompletionOnly: true },
-      );
+      yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
 
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
@@ -14313,6 +14295,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             stored.event.payload.status === "rolled_back"),
       ),
       Stream.runForEach(handleRunUpdate),
+      Effect.forkScoped,
+    );
+
+  // A finished delegate is rarely resumed, so its process need not idle for the full timeout. The
+  // session manager re-checks that nothing can resume it. Not an outbox effect: older servers
+  // cannot decode new effect types, and a lost process holds no session to release anyway.
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" })
+    .pipe(
+      Stream.filterMap((stored) =>
+        stored.event.type === "subagent.updated" &&
+        stored.event.payload.status === "completed" &&
+        stored.event.payload.childThreadId !== null
+          ? Result.succeed(stored.event.payload.childThreadId)
+          : Result.failVoid,
+      ),
+      Stream.runForEach((threadId) =>
+        providerSessions.releaseFinishedDelegate({ threadId }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to release a finished delegate's session", {
+              threadId,
+              cause,
+            }),
+          ),
+        ),
+      ),
       Effect.forkScoped,
     );
 

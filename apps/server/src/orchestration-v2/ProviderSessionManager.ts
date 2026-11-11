@@ -2685,7 +2685,9 @@ export const layerWithOptions = (
               );
             if (!finished) return;
             for (const entry of owned) {
-              if (entry.busyTurns.size > 0) continue;
+              // A runtime that cannot reload its native conversation keeps it for the idle window.
+              if (entry.busyTurns.size > 0 || entry.runtime.canResumeAfterRestart === false)
+                continue;
               const pending =
                 entry.runtime.hasPendingBackgroundWork === undefined
                   ? false

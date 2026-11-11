@@ -434,6 +434,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+    readonly canResumeAfterRestart?: boolean;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
@@ -533,6 +534,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
+          ...(options.canResumeAfterRestart === undefined
+            ? {}
+            : { canResumeAfterRestart: options.canResumeAfterRestart }),
           ...(options.hasPendingBackgroundWorkForThread === undefined
             ? {}
             : {
@@ -596,6 +600,7 @@ function layerTest(input: {
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+  readonly canResumeAfterRestart?: boolean;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
@@ -628,6 +633,9 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+      ...(input.canResumeAfterRestart === undefined
+        ? {}
+        : { canResumeAfterRestart: input.canResumeAfterRestart }),
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
@@ -4583,6 +4591,7 @@ const runFinishedDelegateScenario = (input: {
   readonly delegated: boolean;
   readonly runs: ReadonlyArray<"completed" | "queued" | "held" | "running">;
   readonly hasPendingBackgroundWork?: boolean;
+  readonly canResumeAfterRestart?: boolean;
 }) =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -4657,6 +4666,9 @@ const runFinishedDelegateScenario = (input: {
           ...(input.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: Effect.succeed(input.hasPendingBackgroundWork) }),
+          ...(input.canResumeAfterRestart === undefined
+            ? {}
+            : { canResumeAfterRestart: input.canResumeAfterRestart }),
         }),
       ),
     );
@@ -4680,6 +4692,7 @@ it.effect.each<{
   readonly delegated: boolean;
   readonly runs: ReadonlyArray<"completed" | "queued" | "held" | "running">;
   readonly hasPendingBackgroundWork?: boolean;
+  readonly canResumeAfterRestart?: boolean;
 }>([
   { name: "an ordinary thread", delegated: false, runs: ["completed"] },
   { name: "a delegated child whose run is still running", delegated: true, runs: ["running"] },
@@ -4699,15 +4712,15 @@ it.effect.each<{
     runs: ["completed"],
     hasPendingBackgroundWork: true,
   },
+  {
+    name: "a delegated child whose runtime cannot resume its conversation",
+    delegated: true,
+    runs: ["completed"],
+    canResumeAfterRestart: false,
+  },
 ])("ProviderSessionManagerV2 keeps the session of $name", (scenario) =>
   Effect.gen(function* () {
-    const result = yield* runFinishedDelegateScenario({
-      delegated: scenario.delegated,
-      runs: scenario.runs,
-      ...(scenario.hasPendingBackgroundWork === undefined
-        ? {}
-        : { hasPendingBackgroundWork: scenario.hasPendingBackgroundWork }),
-    });
+    const result = yield* runFinishedDelegateScenario(scenario);
     assert.isFalse(result.released);
     assert.isTrue(result.live);
     assert.equal(result.openCount, 1);
