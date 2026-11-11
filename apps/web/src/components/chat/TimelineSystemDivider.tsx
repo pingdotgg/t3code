@@ -17,7 +17,12 @@ export function TimelineSystemDivider(props: {
   const Icon = props.icon;
   const content = (
     <>
-      <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap align-baseline font-medium">
+      <span
+        className={cn(
+          "inline-flex items-center gap-1.5 align-baseline font-medium",
+          props.wrapDetail && "shrink-0 whitespace-nowrap",
+        )}
+      >
         {Icon ? <Icon className="size-3 shrink-0 self-center" /> : null}
         {props.label}
       </span>
