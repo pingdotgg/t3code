@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
-import type { ConnectionAttemptError } from "../connection/model.ts";
+import type { ConnectionAttemptError, SupervisorConnectionState } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import {
   type EnvironmentRpcInput,
@@ -91,6 +91,7 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends Omit<
   readonly execute: (
     input: Input,
     emit: (value: A) => Effect.Effect<void>,
+    previous: Option.Option<A>,
   ) => Effect.Effect<A, E, R>;
   readonly persistence?: QueryPersistence<A>;
   readonly staleTimeMs?: number;
@@ -101,7 +102,19 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends Omit<
     readonly input: Input;
   }) => Atom.Atom<unknown> | undefined;
   readonly isFinal?: (value: A) => boolean;
+  /**
+   * Runs where each server answer lands, before readers see it, so derived records (summaries,
+   * snapshots, watches) come from the producer instead of from components watching the data.
+   * Cached and emitted provisional values are not answers.
+   */
+  readonly onAnswer?: QueryAnswerHandler<Input, A>;
 }
+
+export type QueryAnswerHandler<Input, A> = (
+  target: { readonly environmentId: EnvironmentIdType; readonly input: Input },
+  value: A,
+  registry: AtomRegistry.AtomRegistry,
+) => Effect.Effect<void>;
 
 interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
   readonly sensitiveInput?: boolean;
@@ -109,6 +122,8 @@ interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
   readonly subscribe: (input: Input) => Stream.Stream<A, E, R>;
   readonly completeWhen?: (value: A) => boolean;
   readonly idleTtlMs?: number;
+  /** Keeps a completed value this long after its last reader leaves, so reopening skips a resubscribe. */
+  readonly completedTtlMs?: number;
 }
 
 export type SettledAsyncResult<A, E> = AsyncResult.Success<A, E> | AsyncResult.Failure<A, E>;
@@ -361,7 +376,7 @@ export async function settleAsyncResult<A, E>(
   }
 }
 
-export async function executeAtomCommand<A, E>(
+async function executeAtomCommand<A, E>(
   execute: () => Promise<Exit.Exit<A, E>>,
   options: AtomCommandOptions = {},
   reporter: AtomCommandReporter = console,
@@ -464,7 +479,11 @@ export async function settlePromise<A>(
   }
 }
 
-export function environmentRpcKey<Input>(target: {
+/** Where a query's answer is persisted, so an action's reply can be saved where a read would be. */
+export const queryPersistenceKey = (label: string, input: unknown): string =>
+  JSON.stringify([label, input]);
+
+function environmentRpcKey<Input>(target: {
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }): string {
@@ -546,7 +565,94 @@ const refreshEveryUntilFinal =
  * reader of only this skips the refetches that changed nothing.
  */
 export const selectEnvironmentQueryData = <A, E>(result: AsyncResult.AsyncResult<A, E>): A | null =>
-  Option.getOrNull(AsyncResult.value(result));
+  AsyncResult.getOrElse(result, () => null);
+
+type EnvironmentConnection = readonly [
+  SupervisorConnectionState,
+  Option.Option<RpcSession.RpcSession>,
+];
+
+const connectionAtomsByRuntime = new WeakMap<
+  object,
+  (
+    environmentId: EnvironmentIdType,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentConnection | null>>
+>();
+
+/**
+ * One connection atom per environment for every query on a runtime, so a reader of the session
+ * generation and a query it re-runs see the same connection change at once.
+ */
+function environmentConnectionAtoms<R, ER>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+) {
+  const existing = connectionAtomsByRuntime.get(runtime);
+  if (existing !== undefined) return existing;
+  const family = Atom.family((environmentId: EnvironmentIdType) =>
+    runtime.atom(
+      followStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) =>
+              SubscriptionRef.changes(supervisor.state).pipe(
+                Stream.zipLatest(SubscriptionRef.changes(supervisor.session)),
+              ),
+            ),
+          ),
+        ),
+      ),
+      { initialValue: null },
+    ),
+  ) as (
+    environmentId: EnvironmentIdType,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentConnection | null>>;
+  connectionAtomsByRuntime.set(runtime, family);
+  return family;
+}
+
+const sessionGenerationAtomsByRuntime = new WeakMap<
+  object,
+  (environmentId: EnvironmentIdType) => Atom.Atom<number>
+>();
+
+/**
+ * Counts established sessions; it changes only when a new one comes up, so failed one-shot reads
+ * can watch it to run again. Keyed on the session object because the supervisor's `generation`
+ * restarts when the registry installs a new supervisor (re-pairing, route edits).
+ */
+export function environmentSessionGenerationAtom<R, ER>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  environmentId: EnvironmentIdType,
+): Atom.Atom<number> {
+  let family = sessionGenerationAtomsByRuntime.get(runtime);
+  if (family === undefined) {
+    const connectionAtom = environmentConnectionAtoms(runtime);
+    const sessionsSeen = Atom.family((id: EnvironmentIdType) =>
+      Atom.make(
+        (get): { readonly session: RpcSession.RpcSession | null; readonly count: number } => {
+          const previous = Option.getOrElse(
+            get.self<{ readonly session: RpcSession.RpcSession | null; readonly count: number }>(),
+            () => ({ session: null, count: 0 }),
+          );
+          const connection = AsyncResult.getOrElse(get(connectionAtom(id)), () => null);
+          if (connection === null || connection[0].phase !== "connected") return previous;
+          const session = Option.getOrNull(connection[1]);
+          return session === null || session === previous.session
+            ? previous
+            : { session, count: previous.count + 1 };
+        },
+      ),
+    );
+    family = Atom.family((id: EnvironmentIdType) =>
+      Atom.make((get) => get(sessionsSeen(id)).count).pipe(
+        Atom.withLabel(`environment-session-generation:${id}`),
+      ),
+    );
+    sessionGenerationAtomsByRuntime.set(runtime, family);
+  }
+  return family(environmentId);
+}
 
 export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
@@ -563,23 +669,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
-  const connectionAtom = Atom.family((environmentId: EnvironmentIdType) =>
-    runtime.atom(
-      followStreamInEnvironment(
-        environmentId,
-        Stream.unwrap(
-          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
-            Effect.map((supervisor) =>
-              SubscriptionRef.changes(supervisor.state).pipe(
-                Stream.zipLatest(SubscriptionRef.changes(supervisor.session)),
-              ),
-            ),
-          ),
-        ),
-      ),
-      { initialValue: null },
-    ),
-  );
+  const connectionAtom = environmentConnectionAtoms(runtime);
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
@@ -591,8 +681,9 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         | EnvironmentRegistry.EnvironmentNotRegisteredError
         | EnvironmentRpcUnavailableError
       >((get) => {
-        const connection = Option.getOrNull(
-          AsyncResult.value(get(connectionAtom(target.environmentId))),
+        const connection = AsyncResult.getOrElse(
+          get(connectionAtom(target.environmentId)),
+          () => null,
         );
         // A refetch that returns equal content keeps the previous value's
         // references, so readers of the data skip re-rendering on idle polls.
@@ -629,13 +720,31 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
                 ? runInEnvironment(
                     target.environmentId,
                     options
-                      .execute(target.input, emit)
+                      .execute(
+                        target.input,
+                        emit,
+                        Option.flatMap(
+                          get.self<AsyncResult.AsyncResult<A, unknown>>(),
+                          AsyncResult.value,
+                        ),
+                      )
                       .pipe(pendingOnceSessionReplaced(session.value)),
                   )
                 : Effect.never;
             case "connecting":
             case "backoff":
-              return Effect.never;
+              // A retry can take minutes. A query with an answer keeps showing it while it
+              // waits; one with nothing to show reports the failure the retry is recovering
+              // from, so its reader stops loading, and re-runs when the connection settles.
+              return connectionState.lastFailure !== null &&
+                Option.isNone(
+                  Option.flatMap(
+                    get.self<AsyncResult.AsyncResult<A, unknown>>(),
+                    AsyncResult.value,
+                  ),
+                )
+                ? Effect.fail(connectionState.lastFailure)
+                : Effect.never;
             case "available":
             case "offline":
             case "blocked":
@@ -652,9 +761,17 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
               );
           }
         };
-        if (!options.persistence) return execute().pipe(Effect.map(share));
+        const onAnswer = options.onAnswer;
+        const answer = () =>
+          onAnswer === undefined
+            ? execute().pipe(Effect.map(share))
+            : execute().pipe(
+                Effect.map(share),
+                Effect.tap((value) => onAnswer(target, value, get.registry)),
+              );
+        if (!options.persistence) return answer();
         const persistence = options.persistence;
-        const cacheKey = JSON.stringify([options.label, target.input]);
+        const cacheKey = queryPersistenceKey(options.label, target.input);
         const previous = Option.flatMap(
           get.self<AsyncResult.AsyncResult<A, unknown>>(),
           AsyncResult.value,
@@ -670,9 +787,12 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
             return cached.value;
           }
           if (Option.isNone(previous) && Option.isSome(cached)) yield* emit(cached.value);
-          return yield* execute().pipe(
-            Effect.map(share),
-            Effect.tap((value) => persistence.save(target.environmentId, cacheKey, value)),
+          // Readers must not wait on the disk: web saves one IndexedDB row per listed PR's stats.
+          // The save ends with the query, so a removed environment's cache stays cleared.
+          return yield* answer().pipe(
+            Effect.tap((value) =>
+              persistence.save(target.environmentId, cacheKey, value).pipe(Effect.forkScoped),
+            ),
           );
         });
       })
@@ -708,7 +828,12 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
     EnvironmentSupervisor.EnvironmentSupervisor | R
   >,
 ) {
-  const family = Atom.family((key: string) => {
+  const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
+  const label = (key: string) =>
+    options.sensitiveInput
+      ? `${options.label}:${parseEnvironmentRpcKey<Input>(key).environmentId}`
+      : `${options.label}:${key}`;
+  const live = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     return runtime
       .atom(
@@ -716,15 +841,31 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
           followStreamInEnvironment(target.environmentId, options.subscribe(target.input)),
         ).pipe(options.completeWhen ? Stream.takeUntil(options.completeWhen) : (stream) => stream),
       )
-      .pipe(
-        Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
-        Atom.withLabel(
-          options.sensitiveInput
-            ? `${options.label}:${target.environmentId}`
-            : `${options.label}:${key}`,
-        ),
-      );
+      .pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(label(key)));
   });
+  const { completeWhen, completedTtlMs } = options;
+  if (completeWhen === undefined || completedTtlMs === undefined) {
+    return (target: { readonly environmentId: EnvironmentIdType; readonly input: Input }) =>
+      live(environmentRpcKey(target));
+  }
+  const completed = Atom.family((key: string) =>
+    Atom.make(Option.none<A>()).pipe(
+      Atom.setIdleTTL(completedTtlMs),
+      Atom.withLabel(`${label(key)}:completed`),
+    ),
+  );
+  // Reading `completed` first drops the live subscription once its value is final.
+  const family = Atom.family((key: string) =>
+    Atom.make((get) => {
+      const done = get(completed(key));
+      if (Option.isSome(done)) return AsyncResult.success(done.value);
+      const result = get(live(key));
+      if (AsyncResult.isSuccess(result) && !result.waiting && completeWhen(result.value)) {
+        get.set(completed(key), Option.some(result.value));
+      }
+      return result;
+    }).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(label(key))),
+  );
   return (target: { readonly environmentId: EnvironmentIdType; readonly input: Input }) =>
     family(environmentRpcKey(target));
 }
@@ -762,6 +903,7 @@ export function createEnvironmentRpcQueryAtomFamily<
     readonly execute?: (
       input: EnvironmentRpcInput<TTag>,
       emit: (value: EnvironmentRpcSuccess<TTag>) => Effect.Effect<void>,
+      previous: Option.Option<EnvironmentRpcSuccess<TTag>>,
     ) => Effect.Effect<
       EnvironmentRpcSuccess<TTag>,
       EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
@@ -776,6 +918,7 @@ export function createEnvironmentRpcQueryAtomFamily<
       readonly input: EnvironmentRpcInput<TTag>;
     }) => Atom.Atom<unknown> | undefined;
     readonly isFinal?: (value: EnvironmentRpcSuccess<TTag>) => boolean;
+    readonly onAnswer?: QueryAnswerHandler<EnvironmentRpcInput<TTag>, EnvironmentRpcSuccess<TTag>>;
   },
 ) {
   return createEnvironmentQueryAtomFamily(runtime, {
@@ -788,10 +931,12 @@ export function createEnvironmentRpcQueryAtomFamily<
       : { refreshIntervalMs: options.refreshIntervalMs }),
     ...(options.refreshTrigger === undefined ? {} : { refreshTrigger: options.refreshTrigger }),
     ...(options.isFinal === undefined ? {} : { isFinal: options.isFinal }),
+    ...(options.onAnswer === undefined ? {} : { onAnswer: options.onAnswer }),
     execute: (
       input: EnvironmentRpcInput<TTag>,
       emit: (value: EnvironmentRpcSuccess<TTag>) => Effect.Effect<void>,
-    ) => options.execute?.(input, emit) ?? request(options.tag, input),
+      previous: Option.Option<EnvironmentRpcSuccess<TTag>>,
+    ) => options.execute?.(input, emit, previous) ?? request(options.tag, input),
   });
 }
 
@@ -807,6 +952,7 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
     readonly tag: TTag;
     readonly idleTtlMs?: number;
     readonly completeWhen?: (value: B) => boolean;
+    readonly completedTtlMs?: number;
     readonly transform?: (
       stream: Stream.Stream<
         EnvironmentRpcStreamValue<TTag>,
@@ -823,6 +969,7 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
   return createEnvironmentSubscriptionAtomFamily(runtime, {
     label: options.label,
     ...(options.completeWhen === undefined ? {} : { completeWhen: options.completeWhen }),
+    ...(options.completedTtlMs === undefined ? {} : { completedTtlMs: options.completedTtlMs }),
     ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
     subscribe: (input: EnvironmentRpcInput<TTag>) => {
       const stream = subscribe(options.tag, input);
@@ -842,11 +989,20 @@ export function createEnvironmentRpcCommand<
   ER,
   TTag extends EnvironmentUnaryRpcTag,
   Input extends EnvironmentRpcInput<TTag> = EnvironmentRpcInput<TTag>,
+  Started = undefined,
 >(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
   options: {
     readonly label: string;
     readonly tag: TTag;
+    /** Runs once authorized, as the request starts; what it returns reaches `onSuccess`. */
+    readonly onStart?: (
+      target: {
+        readonly environmentId: EnvironmentIdType;
+        readonly input: NoInfer<Input>;
+      },
+      registry: AtomRegistry.AtomRegistry,
+    ) => Started;
     readonly execute?: (
       input: Input,
     ) => Effect.Effect<
@@ -866,6 +1022,7 @@ export function createEnvironmentRpcCommand<
       },
       registry: AtomRegistry.AtomRegistry,
       result: EnvironmentRpcSuccess<TTag>,
+      started: Started | undefined,
     ) => Effect.Effect<void, never, R>;
     readonly onSettled?: (
       target: {
@@ -886,15 +1043,21 @@ export function createEnvironmentRpcCommand<
         environmentId,
         input,
       };
+      let started: Started | undefined;
       // Routing requires consent on the origin as well as the actual destination.
       // The transport check below deliberately checks the destination again.
       return permissions.authorize(registry, environmentId, input).pipe(
-        Effect.andThen(() => options.execute?.(input) ?? requestGuarded(options.tag, input)),
+        Effect.andThen(() => {
+          started = options.onStart?.(target, registry);
+          return options.execute?.(input) ?? requestGuarded(options.tag, input);
+        }),
         Effect.provideService(RpcPermissionGuard, {
           authorize: (id, method, payload) =>
             createCommandPermissions(runtime, method).authorize(registry, id, payload),
         }),
-        Effect.tap((result) => options.onSuccess?.(target, registry, result) ?? Effect.void),
+        Effect.tap(
+          (result) => options.onSuccess?.(target, registry, result, started) ?? Effect.void,
+        ),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );
     },

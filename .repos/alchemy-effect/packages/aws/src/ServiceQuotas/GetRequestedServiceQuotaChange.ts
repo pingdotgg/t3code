@@ -1,0 +1,41 @@
+import type * as servicequotas from "@distilled.cloud/aws/service-quotas";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `servicequotas:GetRequestedServiceQuotaChange` — read
+ * the status of a quota increase request from inside a Function (e.g. to
+ * poll a request submitted with
+ * {@link RequestServiceQuotaIncrease | RequestServiceQuotaIncrease}).
+ *
+ * ### Quota Increase Requests
+ * **Example:** Poll a quota increase request
+ * ```typescript
+ * // init
+ * const getRequestedServiceQuotaChange =
+ *   yield* AWS.ServiceQuotas.GetRequestedServiceQuotaChange();
+ *
+ * // runtime
+ * const { RequestedQuota } = yield* getRequestedServiceQuotaChange({
+ *   RequestId: requestId,
+ * });
+ * const status = RequestedQuota?.Status; // PENDING | APPROVED | ...
+ * ```
+ *
+ * @binding
+ */
+export interface GetRequestedServiceQuotaChange extends Binding.Service<
+  GetRequestedServiceQuotaChange,
+  "AWS.ServiceQuotas.GetRequestedServiceQuotaChange",
+  () => Effect.Effect<
+    (
+      request: servicequotas.GetRequestedServiceQuotaChangeRequest,
+    ) => Effect.Effect<
+      servicequotas.GetRequestedServiceQuotaChangeResponse,
+      servicequotas.GetRequestedServiceQuotaChangeError
+    >
+  >
+> {}
+export const GetRequestedServiceQuotaChange = Binding.Service<GetRequestedServiceQuotaChange>(
+  "AWS.ServiceQuotas.GetRequestedServiceQuotaChange",
+);
