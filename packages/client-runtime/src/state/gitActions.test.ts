@@ -48,9 +48,9 @@ describe("git action copy", () => {
     expect(resolveQuickAction(status({ aheadCount: 1 }), false).label).toBe("Push & create PR");
     expect(resolveQuickAction(status({ pr: openPr }), false).label).toBe("View PR");
     const [, , prItem] = buildMenuItems(status(), false);
-    expect(prItem?.label).toBe("Commit, push & create PR");
+    expect(prItem?.label).toBe("Create PR");
     expect(buildMenuItems(status(), false).find((item) => item.id === "commit")?.disabled).toBe(
-      false,
+      true,
     );
     expect(
       getGitActionDisabledReason({
@@ -94,6 +94,13 @@ describe("git action copy", () => {
       action: "commit_push",
       label: "Commit & push",
     });
+    const emptyDefault = buildMenuItems(
+      status({ refName: "development", isDefaultRef: true, aheadCount: 0, aheadOfDefaultCount: 0 }),
+      false,
+    );
+    for (const id of ["branch", "push", "pr"]) {
+      expect(emptyDefault.find((item) => item.id === id)?.disabled).toBe(true);
+    }
     for (const refName of [null, "main"]) {
       const items = buildMenuItems(
         status({

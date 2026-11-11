@@ -303,6 +303,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             !canWriteSourceControl ||
             busy ||
             !isRepo ||
+            !gitStatus.data?.hasWorkingTreeChanges ||
             ((!gitStatus.data?.refName || isDefaultRef) && !canChangeThreadBranch)
           }
           onPress={() =>

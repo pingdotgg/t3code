@@ -192,12 +192,14 @@ export function buildMenuItems(
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
   const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
+  const hasFeatureChanges =
+    hasChanges || (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0 || !hasBranch;
   const canPushWithoutUpstream = hasPrimaryRemote && !gitStatus.hasUpstream;
-  const canCommit = !isBusy;
+  const canCommit = !isBusy && hasChanges;
   const canPush =
     !isBusy &&
     hasPrimaryRemote &&
-    (needsFeatureBranch || gitStatus.aheadCount > 0 || hasChanges) &&
+    (needsFeatureBranch ? hasFeatureChanges : gitStatus.aheadCount > 0 || hasChanges) &&
     (needsFeatureBranch ||
       (isBehind
         ? !hasChanges && gitStatus.hasUpstream
@@ -214,7 +216,7 @@ export function buildMenuItems(
         {
           id: "branch",
           label: "Create feature branch",
-          disabled: isBusy,
+          disabled: isBusy || !hasFeatureChanges,
           icon: "branch",
           kind: "run_action",
           action: "create_branch",

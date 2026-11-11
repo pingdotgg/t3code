@@ -456,8 +456,23 @@ describe("when: HEAD is detached and there are no local changes", () => {
         );
         assert.equal(items[0]?.id, "branch");
         assert.isFalse(items[0]?.disabled);
-        assert.isFalse(items.find((item) => item.id === "commit")?.disabled);
-        assert.isFalse(items.find((item) => item.id === "commit_dialog")?.disabled);
+        const emptyDefault = buildMenuItems(
+          status({
+            refName: "development",
+            isDefaultRef: true,
+            aheadCount: 0,
+            aheadOfDefaultCount: 0,
+          }),
+          false,
+        );
+        for (const id of ["branch", "push", "pr"]) {
+          assert.isTrue(emptyDefault.find((item) => item.id === id)?.disabled);
+        }
+        assert.equal(items.find((item) => item.id === "commit")?.disabled, !hasWorkingTreeChanges);
+        assert.equal(
+          items.find((item) => item.id === "commit_dialog")?.disabled,
+          !hasWorkingTreeChanges,
+        );
         for (const id of ["push", "pr"]) {
           assert.deepInclude(
             items.find((item) => item.id === id),
@@ -507,10 +522,11 @@ describe("commit menu actions", () => {
     }
   });
 
-  it("disables both actions only while busy, including clean worktrees", () => {
+  it("disables both actions while busy or when the worktree is clean", () => {
     for (const { hasWorkingTreeChanges, isBusy } of [
       { hasWorkingTreeChanges: true, isBusy: true },
       { hasWorkingTreeChanges: false, isBusy: true },
+      { hasWorkingTreeChanges: false, isBusy: false },
     ]) {
       const items = buildMenuItems(status({ hasWorkingTreeChanges }), isBusy);
       assert.isTrue(items.find((item) => item.id === "commit")?.disabled);
