@@ -70,6 +70,7 @@ it.layer(
     Layer.succeed(SecretResolver.SecretResolver, {
       read: () => Effect.succeed([]),
       invalidate: () => Effect.void,
+      label: (provider) => Effect.succeed(provider),
     }),
   ),
 )("bundled skill installation", (it) => {
@@ -428,6 +429,7 @@ it.layer(
                         ),
                       ),
                     invalidate: () => Effect.void,
+                    label: (provider) => Effect.succeed(provider),
                   }),
                 ),
                 Layer.provide(
