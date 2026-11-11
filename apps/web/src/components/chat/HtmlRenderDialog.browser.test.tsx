@@ -44,6 +44,14 @@ it("fits the frame to the page's height and scrolls only the card", async () => 
   await page.viewport(1280, 800);
   await using _screen = await render(dialog);
   const { frame, card } = frameAndCard();
+  await vi.waitFor(() => {
+    expect(
+      frame
+        .closest('[role="dialog"]')!
+        .getAnimations()
+        .some((animation) => animation.playState === "running"),
+    ).toBe(false);
+  });
   await reportHeight(frame, 300);
   expect(frame.getBoundingClientRect().height).toBe(300);
   expect(card.scrollHeight).toBe(card.clientHeight);
@@ -57,6 +65,14 @@ it("zooms by reflowing the page to the card's width instead of overflowing it", 
   await page.viewport(1280, 800);
   await using _screen = await render(dialog);
   const { frame, card } = frameAndCard();
+  await vi.waitFor(() => {
+    expect(
+      frame
+        .closest('[role="dialog"]')!
+        .getAnimations()
+        .some((animation) => animation.playState === "running"),
+    ).toBe(false);
+  });
   await reportHeight(frame, 300);
   const contentWidth = frame.getBoundingClientRect().width;
   for (let step = 0; step < 4; step += 1) {
