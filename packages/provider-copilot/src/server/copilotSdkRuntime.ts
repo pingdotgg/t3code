@@ -391,13 +391,15 @@ function definedEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   );
 }
 
+export const isWindowsShim = (command: string) => /\.(?:cmd|bat|ps1)$/i.test(command);
+
 /** The SDK starts the CLI without a shell, so npm's shim has to become the binary behind it. */
 export function copilotWindowsExecutable(
   command: string,
   arch: string,
   exists: (path: string) => boolean = NodeFS.existsSync,
 ) {
-  if (!/\.(?:cmd|bat|ps1)$/i.test(command)) return command;
+  if (!isWindowsShim(command)) return command;
   const directory = command.slice(0, Math.max(command.lastIndexOf("\\"), command.lastIndexOf("/")));
   // Global npm puts the shim next to `node_modules`; a project install puts it in `.bin`.
   const packageRoot = /\.bin$/i.test(directory)

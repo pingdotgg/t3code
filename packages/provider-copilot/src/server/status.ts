@@ -32,6 +32,7 @@ import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 import type { GitHubCopilotSettings } from "../settings.ts";
 import {
   copilotLaunchCommand,
+  isWindowsShim,
   makeCopilotSdkClient,
   type CopilotSdkClient,
   type CopilotSdkCommand,
@@ -238,9 +239,10 @@ export const checkGitHubCopilotProviderStatus = Effect.fn("checkGitHubCopilotPro
 
     // The SDK only checks that the file exists, so it never searches PATH itself.
     const resolved = yield* resolveCommandPath(command, { env: environment });
+    const launch = yield* copilotLaunchCommand(resolved ?? command);
     const account = yield* readGitHubCopilotAccount(
       makeClient({
-        command: yield* copilotLaunchCommand(resolved ?? command),
+        command: launch,
         args: [],
         env: environment,
       }),
@@ -251,7 +253,10 @@ export const checkGitHubCopilotProviderStatus = Effect.fn("checkGitHubCopilotPro
         version,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Could not read your GitHub Copilot account from the CLI.",
+        // The SDK cannot spawn a shim, so an unresolved one fails here while `--version` worked.
+        message: isWindowsShim(launch)
+          ? `Could not find copilot.exe behind ${launch}. Set Binary path in the provider settings to copilot.exe.`
+          : "Could not read your GitHub Copilot account from the CLI.",
       });
     }
     const { auth, models, commands } = account.success.value;
