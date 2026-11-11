@@ -301,7 +301,10 @@ export const OpenCodeDriver: ProviderDriver<
           ? probeOpenCodeBinary(
               effectiveConfig.binaryPath,
               providerProbeEnvironment(processEnv),
-            ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime))
+            ).pipe(
+              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+              Effect.catch(() => runtimeProbe.get),
+            )
           : runtimeProbe.get,
       ),
     );
@@ -427,7 +430,7 @@ export const OpenCodeDriver: ProviderDriver<
                 providerProbeEnvironment(processEnv),
               ).pipe(
                 Effect.map((probed) => probed.version),
-                Effect.orElseSucceed(() => null),
+                Effect.orElseSucceed(() => undefined),
               )
             : Effect.void,
         provider: checkOpenCodeProviderStatus(

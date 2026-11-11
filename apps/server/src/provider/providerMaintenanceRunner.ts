@@ -594,7 +594,6 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                     ? verifiedProvider.installedVersion
                     : verifiedProvider.version;
                 return (
-                  verifiedProvider.installedVersion === null ||
                   !isStillInstalled(verifiedProvider) ||
                   (verifiedProvider.status === "error" &&
                     (verifiedProvider.auth.status !== "unauthenticated" ||

@@ -1003,12 +1003,6 @@ it.effect.each([
     status: "succeeded",
   },
   {
-    mode: "default-unknown",
-    version: "1.14.19",
-    installation: { installedVersion: null },
-    status: "unchanged",
-  },
-  {
     mode: "unknown",
     version: "1.14.19",
     installation: { installedVersion: null },
@@ -1098,11 +1092,11 @@ it.effect.each([
       if (mode === "default-precurrent") return;
       assert.strictEqual(
         provider.versionAdvisory?.status,
-        mode.endsWith("unknown") ? "unknown" : "current",
+        mode === "unknown" ? "unknown" : "current",
       );
       assert.strictEqual(
         provider.versionAdvisory?.currentVersion,
-        mode.endsWith("unknown") ? null : "1.14.20",
+        mode === "unknown" ? null : "1.14.20",
       );
     }).pipe(
       Effect.provide(

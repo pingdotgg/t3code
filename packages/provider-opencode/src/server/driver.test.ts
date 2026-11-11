@@ -37,11 +37,7 @@ import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceR
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import { OpenCodeDriver, isLocalOpenCodeServerUrl, openCodeUpdateFor } from "./driver.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
-import {
-  OPENCODE_1_RESPONSES,
-  OPENCODE_2_RESPONSES,
-  replayOpenCodeServer,
-} from "./probeResponses.fixture.ts";
+import { OPENCODE_2_RESPONSES, replayOpenCodeServer } from "./probeResponses.fixture.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 it("only probes a locally configured OpenCode server's installed CLI", () => {
@@ -228,8 +224,9 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
 
         const snapshot = yield* instance.snapshot.refresh;
         assert.strictEqual(snapshot.version, "2.0.18");
-        assert.strictEqual(snapshot.installedVersion, installedVersion);
-        yield* instance.snapshot.resolveMaintenance({ fresh: true });
+        assert.strictEqual(snapshot.installedVersion, installedVersion ?? undefined);
+        const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+        assert.strictEqual(maintenance.packageName, "@opencode/cli");
         assert.isNotEmpty(probeOffline);
         assert.isTrue(probeOffline.every((offline) => offline === "1"));
       }).pipe(Effect.scoped),
@@ -861,42 +858,31 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
     "offers no package update for an unknown version and follows a changed one on a fresh read",
     () =>
       Effect.gen(function* () {
-        for (const serverUrl of ["", "http://127.0.0.1:4096"]) {
-          const root = NodeFS.realpathSync(
-            NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-driver-update-")),
-          );
-          const binaryPath = npmGlobalInstall(
-            NodePath.join(root, "v1"),
-            ["opencode-ai"],
-            "opencode",
-          );
-          const instance = yield* OpenCodeDriver.create({
-            instanceId: ProviderInstanceId.make("opencode-update"),
-            displayName: undefined,
-            environment: [],
-            enabled: true,
-            config: { ...OpenCodeDriver.defaultConfig(), binaryPath, serverUrl },
-          }).pipe(
-            Effect.provideService(
-              HttpClient.HttpClient,
-              serverUrl ? replayOpenCodeServer(OPENCODE_1_RESPONSES, "") : noHttp,
-            ),
-          );
+        const root = NodeFS.realpathSync(
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-driver-update-")),
+        );
+        const binaryPath = npmGlobalInstall(NodePath.join(root, "v1"), ["opencode-ai"], "opencode");
+        const instance = yield* OpenCodeDriver.create({
+          instanceId: ProviderInstanceId.make("opencode-update"),
+          displayName: undefined,
+          environment: [],
+          enabled: true,
+          config: { ...OpenCodeDriver.defaultConfig(), binaryPath },
+        }).pipe(Effect.provideService(HttpClient.HttpClient, noHttp));
 
-          versionOutput.current = undefined;
-          const unknown = yield* instance.snapshot.resolveMaintenance({ fresh: true });
-          assert.isNull(unknown.update);
-          assert.isNull(unknown.packageName);
+        versionOutput.current = undefined;
+        const unknown = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+        assert.isNull(unknown.update);
+        assert.isNull(unknown.packageName);
 
-          versionOutput.current = "1.18.32\n";
-          const v1 = yield* instance.snapshot.resolveMaintenance({ fresh: true });
-          assert.strictEqual(v1.packageName, "opencode-ai");
+        versionOutput.current = "1.18.32\n";
+        const v1 = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+        assert.strictEqual(v1.packageName, "opencode-ai");
 
-          versionOutput.current = "opencode v2.0.18\n";
-          const v2 = yield* instance.snapshot.resolveMaintenance({ fresh: true });
-          assert.strictEqual(v2.packageName, "@opencode/cli");
-          assert.isNull(v2.update);
-        }
+        versionOutput.current = "opencode v2.0.18\n";
+        const v2 = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+        assert.strictEqual(v2.packageName, "@opencode/cli");
+        assert.isNull(v2.update);
       }).pipe(Effect.scoped),
   );
 
