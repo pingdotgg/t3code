@@ -1819,13 +1819,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     refName: string,
   ) {
+    // A configured remote that was since removed or renamed is ignored, as status ignores it.
+    const remoteNames: ReadonlyArray<string> = yield* listRemoteNames(cwd).pipe(
+      Effect.orElseSucceed(() => []),
+    );
     const branchPushRemote = yield* runGitStdout(
       "GitVcsDriver.resolvePushRemoteName.branchPushRemote",
       cwd,
       ["config", "--get", `branch.${refName}.pushRemote`],
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
-    if (branchPushRemote.length > 0) {
+    if (remoteNames.includes(branchPushRemote)) {
       return branchPushRemote;
     }
 
@@ -1835,15 +1839,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["config", "--get", "remote.pushDefault"],
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
-    if (pushDefaultRemote.length > 0) {
+    if (remoteNames.includes(pushDefaultRemote)) {
       return pushDefaultRemote;
     }
 
     // With several remotes and no `origin`, the first remote is a guess: clients ask the
     // user (`pushRemoteChoices`) and pass the pick as `remoteName` instead.
-    const remoteNames: ReadonlyArray<string> = yield* listRemoteNames(cwd).pipe(
-      Effect.orElseSucceed(() => []),
-    );
     if (remoteNames.length > 1 && !remoteNames.includes("origin")) {
       return yield* new GitCommandError({
         ...gitCommandContext({
@@ -1899,8 +1900,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => ""),
     );
     return (
-      branchPushRemote ||
-      defaultPushRemote ||
+      (remoteNames.includes(branchPushRemote) ? branchPushRemote : undefined) ??
+      defaultPushRemote ??
       (remoteNames.includes("origin") ? "origin" : undefined)
     );
   });
@@ -2864,6 +2865,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const remoteNames = yield* requireRemote(cwd, remoteName, "GitVcsDriver.setPushRemote", [
       "config",
     ]);
+    const branchExists = yield* executeGit(
+      "GitVcsDriver.setPushRemote.branchExists",
+      cwd,
+      ["show-ref", "--verify", "--quiet", `refs/heads/${refName}`],
+      { allowNonZeroExit: true },
+    ).pipe(Effect.map((result) => result.exitCode === 0));
+    if (!branchExists) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({ operation: "GitVcsDriver.setPushRemote", cwd, args: ["config"] }),
+        detail: `Branch '${refName}' does not exist.`,
+      });
+    }
     yield* writeConfigValue({ cwd, key: `branch.${refName}.pushRemote`, value: remoteName });
 
     const upstreamRef = yield* runGitStdout(

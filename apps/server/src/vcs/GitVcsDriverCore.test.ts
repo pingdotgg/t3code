@@ -6832,9 +6832,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       Effect.gen(function* () {
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const { cwd } = yield* makeForkWorkflowRepo;
+        // A push remote that was since removed is no choice at all.
+        yield* git(cwd, ["config", "branch.feature/remote.pushRemote", "removed"]);
 
         const status = yield* driver.statusDetailsLocal(cwd);
         assert.deepEqual(status.pushRemoteChoices, ["fork", "upstream"]);
+        assert.isUndefined(status.pushRemote);
         const refused = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
         assert.include(refused.message, "Choose which remote");
 
@@ -6918,6 +6921,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           .setPushRemote({ cwd, refName, remoteName: "missing" })
           .pipe(Effect.flip);
         assert.include(unknown.message, "missing");
+        const unknownBranch = yield* driver
+          .setPushRemote({ cwd, refName: "feature/renamed", remoteName: "fork" })
+          .pipe(Effect.flip);
+        assert.include(unknownBranch.message, "does not exist");
+        assert.equal(
+          yield* git(cwd, ["config", "--get-regexp", "^branch\\.feature/renamed\\."]).pipe(
+            Effect.orElseSucceed(() => ""),
+          ),
+          "",
+        );
       }),
     );
   });
