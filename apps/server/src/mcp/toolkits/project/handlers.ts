@@ -250,6 +250,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           // Kept only alongside linkOrigin: thread.create drops it otherwise.
           ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
         }).pipe(
+          // A retry replays with defaults resolved differently, so bind the arguments as sent.
+          Effect.provideService(ThreadLaunch.LaunchRequest, { commandId, intent: input }),
           Effect.mapError((error) => {
             if (error._tag === "AttachmentClaimError") {
               return new OrchestratorMcpFailure({

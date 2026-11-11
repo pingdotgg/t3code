@@ -220,6 +220,7 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
       message: "Uploaded attachments need a thread id at launch.",
     });
   }
+  const request = yield* ThreadLaunch.LaunchRequest;
   const claimed = yield* AttachmentClaims.claimPendingAttachments({
     threadId: input.threadId,
     attachments: input.initialMessage.attachments,
@@ -243,7 +244,10 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
     })
     .pipe(
       // Claims allocate new attachment ids on every attempt; bind the request before remapping them.
-      Effect.provideService(ThreadLaunch.LaunchRequest, input),
+      Effect.provideService(
+        ThreadLaunch.LaunchRequest,
+        request?.commandId === input.commandId ? request : ThreadLaunch.launchRequestFor(input),
+      ),
       Effect.tap((result) =>
         releaseUnusedClaims(
           claimed.claimedPaths,

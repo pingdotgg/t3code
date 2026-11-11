@@ -48,6 +48,7 @@ const clientLaunchHarness = (input: {
   /** Where Settings saves a project's model; the legacy project field stays null. */
   readonly overrideModel?: ModelSelection;
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
+  readonly launchRequests?: Array<unknown>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
   readonly hostedAppUrl?: string;
@@ -112,26 +113,25 @@ const clientLaunchHarness = (input: {
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
       checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
-      launch: (launch) => {
+      launch: Effect.fnUntraced(function* (launch) {
         input.launched.push(launch);
+        input.launchRequests?.push((yield* ThreadLaunch.LaunchRequest)?.intent);
         if (input.refusedByCeiling) {
-          return Effect.fail(
-            new ThreadLaunch.ThreadLaunchError({
-              operation: "create-thread",
+          return yield* new ThreadLaunch.ThreadLaunchError({
+            operation: "create-thread",
+            commandId: launch.commandId,
+            projectId: launch.projectId,
+            cause: new OrchestratorRuntimeModeAboveCeilingError({
               commandId: launch.commandId,
-              projectId: launch.projectId,
-              cause: new OrchestratorRuntimeModeAboveCeilingError({
-                commandId: launch.commandId,
-                threadId: launch.threadId ?? ThreadId.make("thread:refused"),
-                refused: "mode",
-                runtimeMode: launch.runtimeMode,
-                maxRuntimeMode: "approval-required",
-                organization: "Example Corp",
-              }),
+              threadId: launch.threadId ?? ThreadId.make("thread:refused"),
+              refused: "mode",
+              runtimeMode: launch.runtimeMode,
+              maxRuntimeMode: "approval-required",
+              organization: "Example Corp",
             }),
-          );
+          });
         }
-        return Effect.succeed({
+        return {
           threadId: launch.threadId,
           projection: {
             thread: {
@@ -143,8 +143,8 @@ const clientLaunchHarness = (input: {
             runs: [],
           },
           resumed: false,
-        } as unknown as ThreadLaunch.ThreadLaunchResult);
-      },
+        } as unknown as ThreadLaunch.ThreadLaunchResult;
+      }),
     }),
     Layer.mock(Project.ProjectService)({
       getById: (id) =>
@@ -329,6 +329,55 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
 
     const offered = yield* launchPi("approval-required");
     expect(offered.launched[0]?.runtimeMode).toBe("approval-required");
+  }),
+);
+
+it.effect("a keyed launch binds its arguments as sent, not the modes resolved for them", () =>
+  Effect.gen(function* () {
+    // Pi offers no Auto: the first launch steps down, while its replay keeps the caller's mode.
+    const pi = ProviderInstanceId.make("pi");
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const launchRequests: Array<unknown> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      launchRequests,
+      providers: [
+        {
+          instanceId: pi,
+          driver: ProviderDriverKind.make("pi"),
+          enabled: true,
+          installed: true,
+          status: "ready",
+          version: null,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+          supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
+        },
+      ],
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launch = toolkit
+      .handle("t3_thread_launch", {
+        projectId,
+        title: "Fix",
+        modelSelection: { instanceId: pi, model: "pi-model" },
+        clientRequestId: "fix-1",
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    yield* launch;
+    yield* launch;
+    expect(launched.map((input) => input.runtimeMode)).toEqual(["auto-accept-edits", "auto"]);
+    expect(launchRequests[0]).toMatchObject({ clientRequestId: "fix-1" });
+    expect(launchRequests[1]).toEqual(launchRequests[0]);
   }),
 );
 

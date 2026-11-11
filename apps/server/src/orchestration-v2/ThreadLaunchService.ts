@@ -108,14 +108,22 @@ export interface ThreadLaunchInput {
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
 }
 
-export const LaunchRequest = Context.Reference<ThreadLaunchInput | undefined>(
-  "t3/orchestration-v2/ThreadLaunchService/LaunchRequest",
-  { defaultValue: () => undefined },
-);
+// The caller's own arguments for a keyed launch. Fields the server derives, such as
+// defaults and step-downs, can resolve differently when the same request is retried.
+export const LaunchRequest = Context.Reference<
+  { readonly commandId: CommandId; readonly intent: unknown } | undefined
+>("t3/orchestration-v2/ThreadLaunchService/LaunchRequest", { defaultValue: () => undefined });
 
-const launchIntentFingerprint = Effect.fnUntraced(function* (input: ThreadLaunchInput) {
+export const launchRequestFor = (input: ThreadLaunchInput) => {
+  const { commandId, threadId: _threadId, ...intent } = input;
+  return { commandId, intent };
+};
+
+const launchIntentFingerprint = Effect.fnUntraced(function* (
+  input: ThreadLaunchInput,
+  intent: unknown,
+) {
   const digest = yield* Digest.Digest;
-  const { commandId: _, threadId: _threadId, ...intent } = input;
   return yield* digest
     .digest(Digest.sha256, new TextEncoder().encode(stableStringify(intent)))
     .pipe(
@@ -992,7 +1000,8 @@ const make = Effect.gen(function* () {
               });
         const request = yield* LaunchRequest;
         const fingerprint = yield* launchIntentFingerprint(
-          request?.commandId === input.commandId ? request : input,
+          input,
+          (request?.commandId === input.commandId ? request : launchRequestFor(input)).intent,
         ).pipe(Effect.provideService(Digest.Digest, digest));
         const claimed = yield* claimDispatch.pipe(
           Effect.provideService(CommandReceiptStore.LaunchIntent, {
