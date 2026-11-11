@@ -75,6 +75,7 @@ async function persist() {
 export function usePullRequestReviewDraft(params: PullRequestParams) {
   const snapshot = useAtomValue(state);
   const key = pullRequestReviewKey(params);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads review drafts from disk and persists them when AppState leaves active and on unmount
   useEffect(() => {
     void load();
     const listener = AppState.addEventListener("change", (phase) => {

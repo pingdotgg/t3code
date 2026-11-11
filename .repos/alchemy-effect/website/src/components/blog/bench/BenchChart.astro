@@ -1,0 +1,220 @@
+---
+/**
+ * `<BenchChart />` — one chart from the distilled benchmark dashboard,
+ * rendered at build time from a data snapshot (`data.json`, written by
+ * `distilled-bench-dashboard/scripts/export-blog.mjs`).
+ *
+ * Usage in MDX:
+ *   <BenchChart chart="bundle" />
+ */
+import data from "./data.json";
+import { fmtBytes, fmtUs, lineChart, type Point, type Ref } from "./lineChart.ts";
+
+type ChartId = "bundle" | "speed" | "memory" | "providerHeap" | "experiments";
+
+interface Props {
+  chart: ChartId;
+  /** Draw the official SDKs as dashed reference lines. */
+  official?: boolean;
+}
+
+interface Series {
+  points: Point[];
+  second?: (number | null)[];
+  refs?: Ref[];
+}
+
+const CHARTS: Record<ChartId, { title: string; sub: string; how: string; series: Series; format: (n: number) => string }> = {
+  bundle: {
+    title: "Bundle size",
+    sub: "median per program · lower is better",
+    how: "Minified rolldown bundle of a program that sets up auth and calls 1 operation, gzip -9.",
+    series: data.bundle as Series,
+    format: fmtBytes,
+  },
+  speed: {
+    title: "Runtime speed",
+    sub: "median per program · lower is better",
+    how: "Added latency: p50 of a call against a mocked HTTP response minus p50 of a bare mocked round trip.",
+    series: data.speed as Series,
+    format: fmtUs,
+  },
+  memory: {
+    title: "Runtime memory",
+    sub: "median per program · lower is better",
+    how: "Import heap: V8 heapUsed after importing the SDK modules, minus before (fresh Node, Effect preloaded).",
+    series: data.memory as Series,
+    format: fmtBytes,
+  },
+  providerHeap: {
+    title: "Heap, provider imported",
+    sub: "total over all providers · lower is better",
+    how: "Retained V8 heap after importing every service module of each provider in a fresh Node process.",
+    series: data.providerHeap as Series,
+    format: fmtBytes,
+  },
+  experiments: {
+    title: "Bundle size",
+    sub: `median over the ${data.experiments.programs} programs every experiment ran · lower is better`,
+    how: "Each experiment is a flat line across the commit timeline.",
+    series: data.experiments.bundle as Series,
+    format: fmtBytes,
+  },
+};
+
+const { chart, official = false } = Astro.props;
+const c = CHARTS[chart];
+const { legend, svg } = lineChart(c.series.points, {
+  format: c.format,
+  branchLabel: "this work",
+  second: c.series.second ? { label: "strict", values: c.series.second } : undefined,
+  refs: official ? c.series.refs : c.series.refs?.filter((r) => r.kind !== "official"),
+});
+---
+
+<figure class="bench" data-nosnippet>
+  <figcaption class="bench__head">
+    <span class="bench__title">{c.title}</span>
+    <span class="bench__sub"> · {c.sub}</span>
+    <span class="bench__how">{c.how}</span>
+  </figcaption>
+  <Fragment set:html={legend} />
+  <Fragment set:html={svg} />
+</figure>
+
+<style>
+  .bench {
+    margin: 2rem 0;
+    padding: 1.1rem 1.1rem 0.6rem;
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 12px;
+  }
+
+  .bench__head {
+    margin-bottom: 0.5rem;
+    line-height: 1.4;
+  }
+
+  .bench__title {
+    font-weight: 700;
+    color: var(--alc-fg-1);
+  }
+
+  .bench__sub {
+    color: var(--alc-fg-4);
+  }
+
+  .bench__how {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.8rem;
+    color: var(--alc-fg-4);
+  }
+
+  .bench :global(.bench-legend) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.9rem;
+    margin: 0 0 0.25rem;
+    font-size: 0.78rem;
+    color: var(--alc-fg-3);
+  }
+
+  .bench :global(.bench-legend span) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .bench :global(svg.sw) {
+    width: 26px;
+    height: 8px;
+    overflow: visible;
+  }
+
+  .bench :global(.bench-svg) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .bench :global(.bench-svg text) {
+    fill: var(--alc-fg-4);
+    font: 12.5px var(--alc-font-mono);
+  }
+
+  .bench :global(.grid-line) {
+    stroke: var(--alc-hairline-2);
+  }
+
+  .bench :global(.branch-zone) {
+    fill: var(--alc-accent-12);
+  }
+
+  .bench :global(.bench-svg .zone-label) {
+    fill: var(--alc-accent-text);
+  }
+
+  .bench :global(.series) {
+    fill: none;
+    stroke: var(--alc-fg-1);
+    stroke-width: 2.5;
+    stroke-linejoin: round;
+  }
+
+  .bench :global(.series.strict) {
+    stroke: var(--alc-info);
+    stroke-width: 2;
+    stroke-dasharray: 0.1 4.5;
+    stroke-linecap: round;
+  }
+
+  .bench :global(.dot) {
+    fill: var(--alc-hairline-3);
+    stroke: var(--alc-bg-elev-1);
+    stroke-width: 1.5;
+  }
+
+  .bench :global(.dot.good) {
+    fill: var(--alc-accent);
+  }
+
+  .bench :global(.dot.bad) {
+    fill: var(--alc-danger);
+  }
+
+  .bench :global(.dot.strict) {
+    fill: var(--alc-bg-elev-1);
+    stroke: var(--alc-info);
+  }
+
+  .bench :global(.ref) {
+    stroke-width: 1.75;
+    stroke-dasharray: 9 5;
+  }
+
+  .bench :global(.ref.official) {
+    stroke-width: 2;
+    stroke-dasharray: 12 4 2 4;
+  }
+
+  .bench :global(.bench-svg .ref-label) {
+    font-weight: 600;
+    paint-order: stroke;
+    stroke: var(--alc-bg-elev-1);
+    stroke-width: 3px;
+  }
+
+  .bench :global(.bench-svg .end-label) {
+    fill: var(--alc-fg-1);
+    font-weight: 600;
+    paint-order: stroke;
+    stroke: var(--alc-bg-elev-1);
+    stroke-width: 3px;
+  }
+
+  .bench :global(.bench-svg .end-label.strict) {
+    fill: var(--alc-info);
+  }
+</style>

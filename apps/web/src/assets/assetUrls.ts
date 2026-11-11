@@ -4,10 +4,11 @@ import {
   assetUrlStateFromResult,
   blockedAssetUrlState,
   EMPTY_ASSET_URL_ATOM,
+  makeRevisionedAssetUrlFamily,
   resolveAssetUrl,
 } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 
 import { assetEnvironment } from "~/state/assets";
@@ -19,16 +20,25 @@ export { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 
 export type AssetUrlState = RuntimeAssetUrlState & { readonly waiting?: boolean };
 
+const revisionedAssetUrl = makeRevisionedAssetUrlFamily(assetEnvironment.createUrl);
+
+/**
+ * Pass `revision` for a workspace file whose bytes can change under the same
+ * path; each new revision gets a freshly minted URL.
+ */
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  revision?: string | null,
 ): AssetUrlState {
   const blocked = blockedAssetUrlState(resource, useFilesystemReadAccess(environmentId));
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
     blocked !== null || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
-      : assetEnvironment.createUrl({ environmentId, input: { resource } }),
+      : revision === undefined
+        ? assetEnvironment.createUrl({ environmentId, input: { resource } })
+        : revisionedAssetUrl({ environmentId, input: { resource }, revision }),
   );
   if (blocked !== null) return blocked;
   return {
@@ -96,6 +106,7 @@ function isFileResource(resource: AssetResource): boolean {
   return (
     resource._tag === "workspace-file" ||
     resource._tag === "media-file" ||
-    resource._tag === "draft-workspace-file"
+    resource._tag === "draft-workspace-file" ||
+    (resource._tag === "native-app-icon" && resource.app._tag === "app-path")
   );
 }
