@@ -171,16 +171,15 @@ describe("remoteFallbackEditors", () => {
     expect(remoteFallbackEditors(identity)).toEqual([]);
   });
 
-  it.each([
-    {
-      device: "Mac",
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-      platform: "MacIntel",
-      maxTouchPoints: 0,
-    },
-  ])("keeps the VS Code fallback for remote links on $device", ({ device: _, ...identity }) => {
-    expect(remoteFallbackEditors(identity)).toEqual(["vscode"]);
+  it("keeps the VS Code fallback for remote links on a Mac", () => {
+    expect(
+      remoteFallbackEditors({
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        platform: "MacIntel",
+        maxTouchPoints: 0,
+      }),
+    ).toEqual(["vscode"]);
   });
 });
 
