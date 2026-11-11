@@ -115,6 +115,10 @@ describe("Cursor account history", () => {
           reasoningTokens: 0,
         });
         assert.strictEqual(result.records[0]?.reportedCostUsd, 0.25);
+        assert.strictEqual(
+          result.records[0]?.dedupeKey,
+          "cursor-account:2188c26da759c4fae3aa0252fc6d725eff0922ef0b022551e6f0987d02bfab33:3149aaf8419ad6b66ef7330853d8fe85e6f2e9876e2ad5e85f88bee8c8d6d133:0",
+        );
         assert.isFalse(result.accountKey?.includes("demo") ?? true);
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
@@ -209,7 +213,8 @@ describe("Cursor account history", () => {
           model: "gpt-5",
           tokenUsage: { inputTokens: 10, outputTokens: 5, totalCents: 1 },
         });
-        for (const total of [2000, 2001]) {
+        for (const total of [2000, 2001, undefined]) {
+          const expectedCount = total ?? 2001;
           let requests = 0;
           const result = yield* readAccountUsage(credential, 0, 1781000000000, async () => {
             requests++;
@@ -219,19 +224,33 @@ describe("Cursor account history", () => {
                 requests === 1
                   ? Array.from({ length: 1000 }, (_, index) => event(index))
                   : requests === 2
-                    ? Array.from({ length: 1000 }, (_, index) => event(999 + index))
+                    ? Array.from({ length: 1000 }, (_, index) => {
+                        const row = event(999 + index);
+                        return {
+                          tokenUsage: {
+                            totalCents: row.tokenUsage.totalCents,
+                            outputTokens: row.tokenUsage.outputTokens,
+                            inputTokens: row.tokenUsage.inputTokens,
+                          },
+                          model: row.model,
+                          timestamp: row.timestamp,
+                        };
+                      })
                     : [event(1999)],
             });
           });
           assert.isNull(result.error);
-          assert.strictEqual(result.records.length, total);
+          assert.strictEqual(result.records.length, expectedCount);
           assert.strictEqual(requests, 3);
           assert.strictEqual(result.records.at(-1)?.timestampMs, 1780000001999);
           assert.strictEqual(
             result.records.filter((record) => record.timestampMs === 1780000000999).length,
             total === 2000 ? 1 : 2,
           );
-          assert.strictEqual(new Set(result.records.map((record) => record.dedupeKey)).size, total);
+          assert.strictEqual(
+            new Set(result.records.map((record) => record.dedupeKey)).size,
+            expectedCount,
+          );
         }
         let requests = 0;
         const inconsistent = yield* readAccountUsage(credential, 0, 1781000000000, async () => {
