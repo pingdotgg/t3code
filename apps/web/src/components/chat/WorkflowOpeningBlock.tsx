@@ -23,7 +23,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
 import { findRevealRef } from "./markdownFindContext";
-import { FOLDED_HEIGHT_REM, useTallEnoughToFold } from "./useTallEnoughToFold";
+import { useTallEnoughToFold } from "./useTallEnoughToFold";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { EnvironmentSubagentAvatar } from "./V2LifecycleRow";
 
@@ -210,16 +210,12 @@ function WorkflowScript(props: { readonly script: string }) {
     <div>
       <div
         ref={revealRef}
-        className={cn("relative", folded && "overflow-hidden")}
+        className={cn("relative", folded && "max-h-44 overflow-hidden")}
         data-thread-find-text="true"
         data-thread-find-fold={folded ? "" : undefined}
         style={
           folded
-            ? {
-                maxHeight: `${FOLDED_HEIGHT_REM}rem`,
-                WebkitMaskImage: FOLDED_SCRIPT_MASK,
-                maskImage: FOLDED_SCRIPT_MASK,
-              }
+            ? { WebkitMaskImage: FOLDED_SCRIPT_MASK, maskImage: FOLDED_SCRIPT_MASK }
             : undefined
         }
       >

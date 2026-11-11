@@ -2,7 +2,8 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 import { observeResize } from "~/lib/observeResize";
 
-export const FOLDED_HEIGHT_REM = 11;
+// The folds clip with `max-h-44`, which is 11rem.
+const FOLDED_HEIGHT_REM = 11;
 
 /**
  * Put `ref` on the unclipped content inside a fold. `tallEnough` is true when that content is at
