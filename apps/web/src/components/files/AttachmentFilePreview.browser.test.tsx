@@ -482,6 +482,7 @@ describe("bounded binary previews", () => {
   });
 });
 import { OFFICE_PREVIEW_MAX_COLUMNS, type OfficeWorkerResult } from "./officePreviewProtocol";
+import { WORD_LIMITS } from "./officeArchive";
 
 describe("large text preview recovery", () => {
   it("retains the workspace viewer across URL renewals and reloads revisions and manual refreshes", async () => {
@@ -1190,7 +1191,7 @@ it.each([
     : scenario === "runs"
       ? `<w:p>${"<w:r><w:t>x</w:t></w:r>".repeat(50_001)}</w:p>`
       : scenario === "tables"
-        ? "<w:tbl/>".repeat(50_001)
+        ? "<w:tbl/>".repeat(2 * WORD_LIMITS.bodyElements)
         : scenario === "XML bytes"
           ? `<w:p><w:r><w:t>${"x".repeat(2 * 1024 * 1024)}</w:t></w:r></w:p>`
           : "<w:p/>";
@@ -1203,7 +1204,7 @@ it.each([
   if (scenario === "auxiliary XML" || scenario === "renamed XML")
     archive.file(
       scenario === "renamed XML" ? "word/footnotes.dat" : "word/footnotes.xml",
-      `<w:footnotes>${"<w:p/>".repeat(50_001)}</w:footnotes>`,
+      `<w:footnotes>${"<w:p/>".repeat(WORD_LIMITS.auxiliaryMarkup + 1)}</w:footnotes>`,
     );
   const file = await archive.generateAsync({ type: "blob", compression: "DEFLATE" });
   const src = URL.createObjectURL(file);
@@ -1254,8 +1255,8 @@ it.each([
           );
         }
         expect(markup.length).toBeLessThan(body.length);
-        expect(markup.length).toBeLessThanOrEqual(3 * 1024 * 1024);
-        expect(markup.match(/<(?![!?/])/g)!.length).toBeLessThanOrEqual(100_000);
+        expect(markup.length).toBeLessThanOrEqual(WORD_LIMITS.bodyBytes);
+        expect(markup.match(/<(?![!?/])/g)!.length).toBeLessThanOrEqual(WORD_LIMITS.bodyTags);
       }
     } finally {
       worker.terminate();
@@ -1286,15 +1287,15 @@ it.each([
   );
   archive.file(
     "word/_rels/document.xml.rels",
-    `<Relationships>${scenario === "content type" ? "" : `<Relationship Id="style" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="${path.slice(5)}"/>`}${scenario === "metadata type" ? "<unused/>".repeat(50_001) : ""}</Relationships>`,
+    `<Relationships>${scenario === "content type" ? "" : `<Relationship Id="style" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="${path.slice(5)}"/>`}${scenario === "metadata type" ? "<unused/>".repeat(WORD_LIMITS.auxiliaryMarkup + 1) : ""}</Relationships>`,
   );
   archive.file(
     path,
     scenario === "relationship bytes"
-      ? `<styles>${"x".repeat(1024 * 1024)}</styles>`
+      ? `<styles>${"x".repeat(WORD_LIMITS.auxiliaryPartBytes)}</styles>`
       : scenario === "deep XML"
         ? `${"<styles>".repeat(65)}${"</styles>".repeat(65)}`
-        : `<styles>${"<style/>".repeat(50_001)}</styles>`,
+        : `<styles>${"<style/>".repeat(WORD_LIMITS.auxiliaryMarkup + 1)}</styles>`,
   );
   const bytes = await archive.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
   const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
@@ -1348,11 +1349,12 @@ async function expandedWordFixture(role: (typeof EXPANDED_WORD_ROLES)[number]) {
     '<Relationships><Relationship Id="doc" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
   );
   const text = (value: string) => `<w:p><w:r><w:t>${value}</w:t></w:r></w:p>`;
-  // Each copy of the 2,000-paragraph payload costs 8,000 markup units, so 20
-  // references (or pages) exceed the 100,000-unit expansion budget.
+  // Each copy of the 2,000-paragraph payload costs 6,000 markup units, so enough
+  // references (or pages) exceed the expansion budget.
+  const copies = Math.ceil(WORD_LIMITS.expandedMarkup / 6_000) + 1;
   archive.file(
     "word/document.xml",
-    `<w:document xmlns:w="${ns}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${text("body retained")}${Array.from({ length: 20 }, () => `<w:p><w:r><w:footnoteReference w:id="1"/><w:endnoteReference w:id="1"/><w:commentReference w:id="1"/><w:br w:type="page"/></w:r></w:p>`).join("")}<w:sectPr><w:headerReference w:type="default" r:id="aux"/><w:footerReference w:type="default" r:id="aux"/></w:sectPr></w:body></w:document>`,
+    `<w:document xmlns:w="${ns}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${text("body retained")}${Array.from({ length: copies }, () => `<w:p><w:r><w:footnoteReference w:id="1"/><w:endnoteReference w:id="1"/><w:commentReference w:id="1"/><w:br w:type="page"/></w:r></w:p>`).join("")}<w:sectPr><w:headerReference w:type="default" r:id="aux"/><w:footerReference w:type="default" r:id="aux"/></w:sectPr></w:body></w:document>`,
   );
   archive.file(
     "word/_rels/document.xml.rels",
@@ -1360,23 +1362,25 @@ async function expandedWordFixture(role: (typeof EXPANDED_WORD_ROLES)[number]) {
   );
   const xml =
     role === "style chain" || role === "style count" || role === "style visits"
-      ? `<w:styles xmlns:w="${ns}">${Array.from({ length: role === "style count" ? 3_000 : 1_000 }, (_, i) => `<w:style w:styleId="s${i}" w:type="paragraph">${i ? `<w:basedOn w:val="s${role === "style visits" && i >= 30 ? 29 : i - 1}"/>` : ""}<w:pPr><w:spacing w:after="120"/></w:pPr></w:style>`).join("")}</w:styles>`
+      ? `<w:styles xmlns:w="${ns}">${Array.from({ length: role === "style count" ? WORD_LIMITS.styles + 1 : role === "style visits" ? Math.ceil(WORD_LIMITS.styleVisits / 30) + 1 : 1_000 }, (_, i) => `<w:style w:styleId="s${i}" w:type="paragraph">${i ? `<w:basedOn w:val="s${role === "style visits" && i >= 30 ? 29 : i - 1}"/>` : ""}<w:pPr><w:spacing w:after="120"/></w:pPr></w:style>`).join("")}</w:styles>`
       : role === "styles"
         ? `<w:styles xmlns:w="${ns}">${Array.from({ length: 100 }, (_, i) => `<w:style w:styleId="${"s".repeat(2_000)}${i}" w:type="paragraph"><w:basedOn w:val="s0"/><w:pPr><w:spacing w:after="120"/></w:pPr></w:style>`).join("")}</w:styles>`
         : role.includes("numbering")
-          ? `<w:numbering xmlns:w="${ns}">${role === "picture numbering" ? '<w:numPicBullet w:numPicBulletId="1"/>' : ""}<w:abstractNum w:abstractNumId="1">${Array.from({ length: 9 }, (_, i) => `<w:lvl w:ilvl="${i}"><w:lvlText w:val="%1."/></w:lvl>`).join("")}</w:abstractNum>${Array.from({ length: 100 }, (_, i) => `<w:num w:numId="${i}"><w:abstractNumId w:val="1"/></w:num>`).join("")}</w:numbering>`
+          ? `<w:numbering xmlns:w="${ns}">${role === "picture numbering" ? '<w:numPicBullet w:numPicBulletId="1"/>' : ""}<w:abstractNum w:abstractNumId="1">${Array.from({ length: 9 }, (_, i) => `<w:lvl w:ilvl="${i}"><w:lvlText w:val="%1."/></w:lvl>`).join("")}</w:abstractNum>${Array.from({ length: WORD_LIMITS.numberingReferences + 1 }, (_, i) => `<w:num w:numId="${i}"><w:abstractNumId w:val="1"/></w:num>`).join("")}</w:numbering>`
           : role === "header" || role === "footer"
             ? `<w:${role === "header" ? "hdr" : "ftr"} xmlns:w="${ns}">${text("omitted payload").repeat(2_000)}</w:${role === "header" ? "hdr" : "ftr"}>`
             : `<w:${role} xmlns:w="${ns}"><w:${role.slice(0, -1)} w:id="1">${text("omitted payload").repeat(2_000)}</w:${role.slice(0, -1)}></w:${role}>`;
   archive.file("word/media/aux.xml", xml);
   if (role === "note roots") {
+    // Each note's XML repeats the 32 KB root, which the expansion budget charges twice.
+    const notes = Math.ceil(WORD_LIMITS.expandedBytes / 64_000) + 1;
     archive.file(
       "word/document.xml",
-      `<w:document xmlns:w="${ns}"><w:body>${text("body retained")}${Array.from({ length: 200 }, (_, id) => `<w:p><w:r><w:footnoteReference w:id="${id}"/></w:r></w:p>`).join("")}</w:body></w:document>`,
+      `<w:document xmlns:w="${ns}"><w:body>${text("body retained")}${Array.from({ length: notes }, (_, id) => `<w:p><w:r><w:footnoteReference w:id="${id}"/></w:r></w:p>`).join("")}</w:body></w:document>`,
     );
     archive.file(
       "word/media/aux.xml",
-      `<w:footnotes xmlns:w="${ns}" padding="${"x".repeat(32_000)}">${Array.from({ length: 200 }, (_, id) => `<w:footnote w:id="${id}">${text("omitted payload")}</w:footnote>`).join("")}</w:footnotes>`,
+      `<w:footnotes xmlns:w="${ns}" padding="${"x".repeat(32_000)}">${Array.from({ length: notes }, (_, id) => `<w:footnote w:id="${id}">${text("omitted payload")}</w:footnote>`).join("")}</w:footnotes>`,
     );
   }
   return archive.generateAsync({ type: "blob", compression: "DEFLATE" });
@@ -1401,7 +1405,7 @@ it.each(EXPANDED_WORD_ROLES)(
             (sum, [chunk]) => sum + (typeof chunk === "string" ? chunk.length : 0),
             0,
           ),
-        ).toBeLessThan(4 * 1024 * 1024);
+        ).toBeLessThan(WORD_LIMITS.expandedBytes + 4 * 1024 * 1024);
       const bounded = await JSZip.loadAsync(prepared.bytes);
       const markup = await bounded.file("word/document.xml")!.async("string");
       expect(markup).toContain("body retained");
@@ -1622,7 +1626,8 @@ it.each([false, true])(
   },
 );
 
-it.each([1, 145])(
+// A body just over the read limit once each paragraph repeats its text this often.
+it.each([1, Math.ceil(WORD_LIMITS.bodyBytes / 5_000 / 4)])(
   "counts shared Word settings once with %s text repetitions",
   async (repetitions) => {
     const { default: JSZip } = await import("jszip");
@@ -1658,7 +1663,8 @@ it.each([1, 145])(
       const document = await bounded.file("word/document.xml")!.async("string");
       const retainedSettings = await bounded.file("word/settings.xml")!.async("string");
       expect(document.match(/<w:p>/g)!.length).toBeGreaterThan(100);
-      expect(document.length + retainedSettings.length).toBeLessThanOrEqual(3 * 1024 * 1024);
+      expect(document.length).toBeLessThanOrEqual(WORD_LIMITS.bodyBytes);
+      expect(retainedSettings).toBe(settings);
     } finally {
       worker.terminate();
     }
