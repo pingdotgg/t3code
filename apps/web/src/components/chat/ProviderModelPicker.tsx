@@ -7,9 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { createContext, memo, type ReactNode, useRef, useState } from "react";
 import { Badge } from "../ui/badge";
+import { Kbd } from "../ui/kbd";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -234,7 +236,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const triggerTooltipContent = [
     props.triggerLabel ?? allModelNames ?? triggerLabel,
     props.triggerDetail,
-    activeInstanceLabel,
     shortcutLabel,
   ]
     .filter(Boolean)
@@ -397,7 +398,37 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           ) : (
             <Tooltip>
               <TooltipTrigger render={<span {...triggerTextProps} />}>{triggerText}</TooltipTrigger>
-              <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
+              {activeInstanceLabel && activeEntry ? (
+                // Same card as the agents panel, so the thread's instance reads the same way.
+                <ThreadHoverCardPopup side="top">
+                  <ThreadHoverCard title={props.triggerLabel ?? triggerLabel}>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <ProviderInstanceIcon
+                        driverKind={activeEntry.driverKind}
+                        displayName={activeEntry.displayName}
+                        accentColor={activeEntry.accentColor}
+                        acpRegistryAgentId={activeEntry.acpRegistryAgentId}
+                        acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
+                        showBadge
+                        badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
+                        className="size-4"
+                        iconClassName="size-4"
+                      />
+                      <span className="min-w-0 truncate text-foreground/75">
+                        {activeInstanceLabel}
+                      </span>
+                    </div>
+                    {props.triggerDetail || shortcutLabel ? (
+                      <div className="flex min-w-0 items-center justify-between gap-4">
+                        <span className="min-w-0 truncate">{props.triggerDetail}</span>
+                        {shortcutLabel ? <Kbd>{shortcutLabel}</Kbd> : null}
+                      </div>
+                    ) : null}
+                  </ThreadHoverCard>
+                </ThreadHoverCardPopup>
+              ) : (
+                <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
+              )}
             </Tooltip>
           )}
           {props.triggerSuffix}
