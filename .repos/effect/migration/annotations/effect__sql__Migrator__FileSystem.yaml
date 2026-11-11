@@ -1,0 +1,3 @@
+"@effect/sql/Migrator/FileSystem":
+  replacement: "effect/sql/MigratorFileSystem"
+  note: "Same `(directory)` signature. Import `fromFileSystem` from there; it is not exported from `effect/sql/Migrator` or the `effect/sql` barrel."

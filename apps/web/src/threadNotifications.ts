@@ -41,7 +41,7 @@ let badgeFavicon: HTMLLinkElement | undefined;
 export function setNotificationBadge(count: number) {
   const bridge = window.desktopBridge;
   let image: string | null = null;
-  if (count > 0 && (!bridge || bridge.getClientPlatform?.() === "win32")) {
+  if (count > 0 && (!bridge || bridge.getClientPlatform() === "win32")) {
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 64;
     const context = canvas.getContext("2d");
@@ -77,7 +77,7 @@ export function setNotificationBadge(count: number) {
       originalFavicon = undefined;
     }
   }
-  void bridge?.setNotificationBadge?.({ count, image }).catch(() => undefined);
+  void bridge?.setNotificationBadge({ count, image }).catch(() => undefined);
 }
 
 let audioContext: AudioContext | undefined;
@@ -85,10 +85,31 @@ const buffers = new Map<string, Promise<AudioBuffer>>();
 /** When each sound's current playback ends, on the audio context's clock. */
 const playingUntil = new Map<string, number>();
 
+function loadNotificationBuffer(context: AudioContext, url: string): Promise<AudioBuffer> {
+  let buffer = buffers.get(url);
+  if (!buffer) {
+    buffer = fetch(url)
+      .then((response) => response.arrayBuffer())
+      .then((data) => context.decodeAudioData(data))
+      .catch((error: unknown) => {
+        buffers.delete(url);
+        throw error;
+      });
+    buffers.set(url, buffer);
+  }
+  return buffer;
+}
+
 /** Called from a gesture so browsers allow later background playback. */
 export function unlockNotificationAudio() {
+  const firstUnlock = audioContext === undefined;
   audioContext ??= new AudioContext();
   void audioContext.resume().catch(() => undefined);
+  if (!firstUnlock) return;
+  // Fetch and decode during interaction so the first alert is ready when the thread finishes.
+  for (const url of [completionUrl, inputUrl]) {
+    void loadNotificationBuffer(audioContext, url).catch(() => undefined);
+  }
 }
 
 export async function playNotificationSound(
@@ -99,19 +120,9 @@ export async function playNotificationSound(
   const context = audioContext;
   const url = kind === "completion" ? completionUrl : inputUrl;
   try {
-    let buffer = buffers.get(url);
-    if (!buffer) {
-      buffer = fetch(url)
-        .then((response) => response.arrayBuffer())
-        .then((data) => context.decodeAudioData(data));
-      buffers.set(url, buffer);
-    }
-    const decoded = await buffer;
+    const decoded = await loadNotificationBuffer(context, url);
     if (!shouldPlay() || context.state !== "running") return;
-    // Threads that finish together each ask for this sound, and full-volume copies sum into
-    // clipping. One playback stands for the burst. Checked after the decode, since every caller
-    // in a burst is waiting on it. The other kind keeps its own slot, so an input alert is still
-    // heard over a completion.
+    // Coalesce same-sound bursts after decode to avoid clipping; input and completion alerts keep separate slots.
     if (context.currentTime < (playingUntil.get(url) ?? 0)) return;
     const source = context.createBufferSource();
     source.buffer = decoded;
@@ -119,6 +130,6 @@ export async function playNotificationSound(
     source.start();
     playingUntil.set(url, context.currentTime + decoded.duration);
   } catch {
-    buffers.delete(url);
+    // A failed load is retried on the next alert.
   }
 }
