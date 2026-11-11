@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Prisma from "alchemy/Prisma";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Prisma from "@alchemy.run/prisma";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";
@@ -55,9 +55,7 @@ test(
   Effect.gen(function* () {
     const url = yield* base;
     for (const name of ["Prisma", "Alchemy"]) {
-      const response = yield* Test.getWhenReady(
-        `${url}/api/hello?name=${name}`,
-      );
+      const response = yield* Test.getWhenReady(`${url}/api/hello?name=${name}`);
       expect(response.status).toBe(200);
       expect(yield* response.json).toEqual({
         name,
