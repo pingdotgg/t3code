@@ -1127,6 +1127,18 @@ describe("adding a remark to the chat", () => {
     expect(context?.text).toMatch(/^octocat: One concern remains\.\n\n<details>/u);
   });
 
+  it("keeps a details section that starts open in place", () => {
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark(
+        "c1",
+        `<details open>\n<summary>Finding</summary>\n\nRename x.\n</details>\n\n${"Context. ".repeat(200)}`,
+      ),
+    });
+
+    expect(context?.text).toMatch(/^octocat: <details open>/u);
+  });
+
   it("leaves a details tag shown inside code where it is", () => {
     const body = `\`\`\`html\n<details>\n<summary>Example</summary>\n</details>\n\`\`\`\n${"Explanation. ".repeat(100)}`;
     const context = buildPullRequestCommentContext(pullRequest, {

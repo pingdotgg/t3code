@@ -719,12 +719,14 @@ function visibleTextFirst(body: string): string {
   visit(fromMarkdown(body));
   const shown: string[] = [];
   const folded: string[] = [];
-  let depth = 0;
+  // Whether each open section starts collapsed; `<details open>` reads as visible text.
+  const sections: boolean[] = [];
   for (const [index, line] of body.split("\n").entries()) {
     const inCode = codeLines.has(index + 1);
-    if (!inCode && /^\s*<details[\s>]/iu.test(line)) depth += 1;
-    (depth > 0 ? folded : shown).push(line);
-    if (!inCode && depth > 0 && /<\/details>\s*$/iu.test(line)) depth -= 1;
+    const opener = inCode ? null : /^\s*<details(?=[\s>])([^>]*)/iu.exec(line);
+    if (opener) sections.push(!/\bopen\b/iu.test(opener[1] ?? ""));
+    (sections.includes(true) ? folded : shown).push(line);
+    if (!inCode && sections.length > 0 && /<\/details>\s*$/iu.test(line)) sections.pop();
   }
   return folded.length === 0 ? body : [...shown, "", ...folded].join("\n").trim();
 }
