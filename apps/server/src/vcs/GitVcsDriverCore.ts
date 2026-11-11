@@ -2845,6 +2845,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolvePushTarget: GitVcsDriver.GitVcsDriver["Service"]["resolvePushTarget"] = Effect.fn(
     "resolvePushTarget",
   )(function* (cwd, current) {
+    const requestedRemoteName = current.remoteName?.trim();
+    if (requestedRemoteName) {
+      return {
+        remoteName: requestedRemoteName,
+        branchName: yield* resolvePublishBranchName(cwd, current.branch),
+      };
+    }
     const destination = yield* resolvePushDestination(cwd, current.branch, current.hasUpstream);
     return destination
       ? { remoteName: destination.remoteName, branchName: destination.branchName }

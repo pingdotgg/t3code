@@ -351,7 +351,11 @@ export class GitVcsDriver extends Context.Service<
     /** Where `pushCurrentBranch` would push the checked-out branch; null with no remote or when Git picks. */
     readonly resolvePushTarget: (
       cwd: string,
-      current: { readonly branch: string; readonly hasUpstream: boolean },
+      current: {
+        readonly branch: string;
+        readonly hasUpstream: boolean;
+        readonly remoteName?: string | undefined;
+      },
     ) => Effect.Effect<GitPushTarget | null, GitCommandError>;
     readonly readRangeContext: (
       cwd: string,

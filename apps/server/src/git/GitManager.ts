@@ -2330,8 +2330,9 @@ export const make = Effect.gen(function* () {
     cwd: string,
     status: { branch: string; upstreamRef: string | null; hasUpstream: boolean },
     changeRequestLabel: string,
+    pushRemote: string | undefined,
   ) {
-    const target = yield* gitCore.resolvePushTarget(cwd, status);
+    const target = yield* gitCore.resolvePushTarget(cwd, { ...status, remoteName: pushRemote });
     if (!target) return;
     const headContext = yield* resolveBranchHeadContext(cwd, {
       branch: status.branch,
@@ -3333,6 +3334,7 @@ export const make = Effect.gen(function* () {
             input.cwd,
             { ...initialStatus, branch: initialStatus.branch },
             changeRequestTerms.shortLabelWithArticle,
+            input.pushRemote,
           );
         }
 
