@@ -1397,17 +1397,19 @@ const make = Effect.gen(function* () {
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
     if (adoptedPopups.has(popup) || popup.isClosed()) return;
     adoptedPopups.add(popup);
+    const native = opener.desktop !== null;
+    // A native window is the person's; only one the server opened closes with a refused adoption.
+    const refuse = async () => {
+      if (!native) await popup.close().catch(constVoid);
+    };
     const pendingDialog: { current: Dialog | null } = { current: null };
-    if (opener.desktop !== null) {
+    if (native) {
       // Keep native dialogs pending even when this popup never becomes an automation tab.
       popup.on("dialog", (dialog) => {
         pendingDialog.current = dialog;
       });
     }
-    if (opener.closing) {
-      await popup.close().catch(constVoid);
-      return;
-    }
+    if (opener.closing) return refuse();
     const url = popup.url();
 
     const controller = [...opener.viewers].find(
@@ -1428,18 +1430,13 @@ const make = Effect.gen(function* () {
           adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
             page: popup,
             openerTabId: opener.tabId,
-            native: opener.desktop !== null,
-            ...(opener.desktop === null ? {} : { pendingDialog }),
+            native,
+            ...(native ? { pendingDialog } : {}),
           }),
       }),
-    ).then(
-      (tab) => {
-        if (opener.control.agentId === null) controller?.push({ _tag: "popup", tabId: tab.tabId });
-      },
-      async () => {
-        if (opener.desktop === null) await popup.close().catch(constVoid);
-      },
-    );
+    ).then((tab) => {
+      if (opener.control.agentId === null) controller?.push({ _tag: "popup", tabId: tab.tabId });
+    }, refuse);
   };
 
   const ensureTab = (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {

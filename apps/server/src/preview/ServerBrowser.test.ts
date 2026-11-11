@@ -897,6 +897,12 @@ it.effect("an agent's desktop tab's popup windows become its tabs, drawn by the 
       const human = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
       yield* broker.invoke({ scope, tabId: human.tabId, operation: "status", input: {} });
       expect(desktopEndpoints.at(-1)).toEqual({ tabId: human.tabId, popups: false });
+
+      // A window that opens as its opener's tab closes stays the person's.
+      yield* broker.invoke({ scope, tabId: opener.tabId!, operation: "close", input: {} });
+      const lateWindow = makeContext(undefined, "https://example.com/late");
+      openerPage.emit("popup", lateWindow.page);
+      expect(lateWindow.page.close).not.toHaveBeenCalled();
     }),
   ).pipe(Effect.provide(layer)),
 );
