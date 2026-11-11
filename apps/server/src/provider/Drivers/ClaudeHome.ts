@@ -30,17 +30,6 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   return path.resolve(path.join(home, ".claude"));
 });
 
-// The home directory a spawned Claude resolves `~` against: Node reads USERPROFILE on Windows, HOME elsewhere.
-const resolveClaudeChildHome = Effect.fn("resolveClaudeChildHome")(function* (
-  environment: NodeJS.ProcessEnv,
-) {
-  const value =
-    (yield* HostProcess.Platform) === "win32"
-      ? Object.entries(environment).find(([key]) => key.toUpperCase() === "USERPROFILE")?.[1]
-      : environment.HOME;
-  return value?.trim() || (yield* HostProcess.HomeDirectory);
-});
-
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   baseEnv?: NodeJS.ProcessEnv,
@@ -51,12 +40,18 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
   const path = yield* Path.Path;
   const windows = (yield* HostProcess.Platform) === "win32";
-  const defaultHomePath = path.resolve(yield* resolveClaudeChildHome(resolvedBaseEnv), ".claude");
+  const serverHome = yield* HostProcess.HomeDirectory;
+  const defaultHomePath = path.resolve(serverHome, ".claude");
+  // Node reads USERPROFILE on Windows and HOME elsewhere; T3's own Claude state readers use the server home.
+  const childHome = windows
+    ? Object.entries(resolvedBaseEnv).find(([key]) => key.toUpperCase() === "USERPROFILE")?.[1]
+    : resolvedBaseEnv.HOME;
   // Claude Code picks its Keychain item and `.claude.json` by whether CLAUDE_CONFIG_DIR is set, not by value.
   if (
-    windows
+    (childHome === undefined || childHome === serverHome) &&
+    (windows
       ? resolvedHomePath.toLowerCase() === defaultHomePath.toLowerCase()
-      : resolvedHomePath === defaultHomePath
+      : resolvedHomePath === defaultHomePath)
   ) {
     return Object.fromEntries(
       Object.entries(resolvedBaseEnv).filter(
@@ -78,7 +73,7 @@ export const resolveClaudeAccountConfigPath = Effect.fn("resolveClaudeAccountCon
     const environment = yield* makeClaudeEnvironment(config, baseEnv);
     const directory = environment.CLAUDE_CONFIG_DIR?.trim()
       ? yield* resolveClaudeHomePath(config, environment)
-      : yield* resolveClaudeChildHome(environment);
+      : yield* HostProcess.HomeDirectory;
     return path.join(directory, ".claude.json");
   },
 );

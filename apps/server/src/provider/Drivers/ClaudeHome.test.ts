@@ -69,32 +69,29 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
-    it.effect("compares against the child's home, not the server's", () =>
+    it.effect("keeps CLAUDE_CONFIG_DIR when the instance moves the child's home", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        const environment = yield* makeClaudeEnvironment(
-          { homePath: "~/.claude" },
-          { HOME: "/accounts/shell" },
-        );
-        expect(environment.CLAUDE_CONFIG_DIR).toBe(path.resolve(NodeOS.homedir(), ".claude"));
+        const serverClaudeHome = path.resolve(NodeOS.homedir(), ".claude");
+        for (const HOME of ["/accounts/shell", `${NodeOS.homedir()} `]) {
+          const environment = yield* makeClaudeEnvironment({ homePath: "~/.claude" }, { HOME });
+          expect(environment.CLAUDE_CONFIG_DIR).toBe(serverClaudeHome);
+        }
         // Windows resolves Claude's default home from USERPROFILE, not HOME.
         const windowsEnv = yield* makeClaudeEnvironment(
           { homePath: "~/.claude" },
           { UserProfile: "/accounts/windows" },
         ).pipe(Effect.provideService(HostProcess.Platform, "win32"));
-        expect(windowsEnv.CLAUDE_CONFIG_DIR).toBe(path.resolve(NodeOS.homedir(), ".claude"));
-        expect(
-          yield* resolveClaudeAccountConfigPath(
-            { homePath: "/accounts/shell/.claude" },
-            { HOME: "/accounts/shell" },
-          ),
-        ).toBe("/accounts/shell/.claude.json");
-        // Unix env names are case-sensitive: a lowercase `home` is not the child's HOME.
-        const unixEnv = yield* makeClaudeEnvironment(
-          { homePath: "/accounts/profile/.claude" },
-          { home: "/accounts/profile", HOME: "/accounts/actual" },
+        expect(windowsEnv.CLAUDE_CONFIG_DIR).toBe(serverClaudeHome);
+        // T3 reads Claude's sessions and tasks from CLAUDE_CONFIG_DIR or the server home, never the child's HOME.
+        const config = { homePath: "/accounts/alt/.claude" };
+        const altEnv = { HOME: "/accounts/alt" };
+        expect((yield* makeClaudeEnvironment(config, altEnv)).CLAUDE_CONFIG_DIR).toBe(
+          "/accounts/alt/.claude",
         );
-        expect(unixEnv.CLAUDE_CONFIG_DIR).toBe("/accounts/profile/.claude");
+        expect(yield* resolveClaudeAccountConfigPath(config, altEnv)).toBe(
+          "/accounts/alt/.claude/.claude.json",
+        );
       }),
     );
 
