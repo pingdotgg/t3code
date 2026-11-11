@@ -7,6 +7,7 @@ import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell
 import type { ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import {
   CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   EnvironmentId,
   IsoDateTime,
   MessageId,
@@ -28,7 +29,6 @@ import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 
 // Keep current writes until a compatible native baseline includes the v4 reader.
 const THREAD_OUTBOX_SCHEMA_VERSION = 3;
@@ -103,6 +103,16 @@ export interface ThreadSettingsSnapshot {
   readonly modelSelection: ModelSelectionType;
   readonly runtimeMode: RuntimeModeType;
   readonly interactionMode: ProviderInteractionModeType;
+}
+
+// Providers without a Build/Plan toggle always run in build mode.
+function resolveProviderInteractionMode(
+  provider: Pick<ServerProvider, "showInteractionModeToggle"> | undefined,
+  interactionMode: ProviderInteractionModeType,
+): ProviderInteractionModeType {
+  return provider?.showInteractionModeToggle === false
+    ? DEFAULT_PROVIDER_INTERACTION_MODE
+    : interactionMode;
 }
 
 export function resolveQueuedThreadSettings(

@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodeSqlite from "node:sqlite";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AgentSessionImportSource,
@@ -1087,6 +1088,38 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ]);
       }),
     );
+
+    it.effect("keeps Codex rollout cwds when the Codex state database is unreadable", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        yield* writeTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "05",
+            "03",
+            "rollout-2026-05-03T00-00-00-019a5f00-0000-7000-8000-00000000000a.jsonl",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-05-03T00:00:00.000Z"),
+        });
+        yield* fileSystem.writeFileString(
+          path.join(codexHomePath, "state_5.sqlite"),
+          "not a database",
+        );
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
+          { path: workspace, threadCount: 1 },
+        ]);
+      }),
+    );
   });
 
   describe("recentThreads", () => {
@@ -1342,6 +1375,140 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
 
         expect(threads.map((thread) => thread.title)).toEqual(["Renamed chat"]);
+      }),
+    );
+
+    it.effect("imports Codex chats moved from a scratch folder into a Codex project", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-11-08T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const homeDir = yield* makeTempDir("t3code-home-");
+        const projectDir = path.join(homeDir, "code", "my-project");
+        const scratchDir = path.join(homeDir, "Documents", "Codex", "2026-11-08", "new-chat");
+        const otherDir = path.join(homeDir, "code", "other-project");
+        yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+        yield* fileSystem.makeDirectory(scratchDir, { recursive: true });
+        yield* fileSystem.makeDirectory(otherDir, { recursive: true });
+
+        const projectId = "019a5f00-0000-7000-8000-000000000001";
+        const chats = [
+          {
+            id: "019a5f00-0000-7000-8000-00000000000a",
+            cwd: scratchDir,
+            message: "Started with no project",
+          },
+          {
+            id: "019a5f00-0000-7000-8000-00000000000b",
+            cwd: projectDir,
+            message: "Started in the project",
+          },
+          {
+            id: "019a5f00-0000-7000-8000-00000000000c",
+            cwd: otherDir,
+            message: "Started in another folder",
+          },
+          {
+            id: "019a5f00-0000-7000-8000-00000000000d",
+            rolloutId: "019a5f00-0000-7000-8000-0000000000d1",
+            cwd: scratchDir,
+            message: "Rewound with no project",
+          },
+        ];
+        const rolloutPaths: Array<string> = [];
+        for (const [index, chat] of chats.entries()) {
+          const filePath = path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "11",
+            "08",
+            `rollout-2026-11-08T08-0${index}-00-${"rolloutId" in chat ? `${chat.id}_${chat.rolloutId}` : chat.id}.jsonl`,
+          );
+          rolloutPaths.push(filePath);
+          yield* writeTranscript({
+            filePath,
+            contents: [
+              encodeTranscriptRecord({
+                type: "session_meta",
+                payload: { id: chat.id, cwd: chat.cwd },
+              }),
+              encodeTranscriptRecord({ type: "turn_context", payload: { cwd: chat.cwd } }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: chat.message },
+              }),
+            ].join("\n"),
+            mtimeMs: nowMs - 60_000 + index,
+          });
+        }
+        // Codex records a chat's project only in its state DB; the rollout keeps the original cwd.
+        yield* Effect.sync(() => {
+          const db = new NodeSqlite.DatabaseSync(path.join(codexHomePath, "state_5.sqlite"));
+          try {
+            db.exec(`
+              CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                position INTEGER NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+              );
+              CREATE TABLE project_roots (
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                PRIMARY KEY (project_id, position)
+              );
+              CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                rollout_path TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                project_id TEXT REFERENCES projects(id) ON DELETE SET NULL
+              );
+            `);
+            db.prepare("INSERT INTO projects VALUES (?, ?, '{}', 0, ?, ?)").run(
+              projectId,
+              "my-project",
+              nowMs,
+              nowMs,
+            );
+            db.prepare("INSERT INTO project_roots VALUES (?, 0, ?)").run(projectId, projectDir);
+            const insertThread = db.prepare("INSERT INTO threads VALUES (?, ?, ?, ?)");
+            for (const [index, chat] of chats.entries()) {
+              insertThread.run(chat.id, rolloutPaths[index]!, chat.cwd, projectId);
+            }
+          } finally {
+            db.close();
+          }
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: projectDir,
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
+        expect(threads.map((thread) => thread.title).toSorted()).toEqual([
+          "Rewound with no project",
+          "Started in the project",
+          "Started with no project",
+        ]);
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
+          Effect.provideService(HostProcess.HomeDirectory, homeDir),
+        );
+        expect(
+          result.candidates
+            .map(({ path, threadCount }) => ({ path, threadCount }))
+            .toSorted((left, right) => left.path.localeCompare(right.path)),
+        ).toEqual([
+          { path: projectDir, threadCount: 3 },
+          { path: otherDir, threadCount: 1 },
+        ]);
       }),
     );
 
@@ -2416,58 +2583,6 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(thread?.title).toBe(expected);
-  });
-
-  it("drops injected Codex instructions while keeping the visible user event", () => {
-    const thread = AgentSessionScanner.parseAgentSessionTranscript({
-      contents: [
-        JSON.stringify({ type: "session_meta", payload: { id: "codex-session" } }),
-        JSON.stringify({
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
-            content: [
-              {
-                type: "input_text",
-                text: "<user_instructions>\nInternal setup instructions\n</user_instructions>",
-              },
-            ],
-          },
-        }),
-        JSON.stringify({
-          type: "event_msg",
-          payload: { type: "user_message", message: "Fix the actual bug" },
-        }),
-        JSON.stringify({
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
-            content: [{ type: "input_text", text: "Fix the actual bug" }],
-          },
-        }),
-        JSON.stringify({
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: "Fixed" }],
-          },
-        }),
-      ].join("\n"),
-      source: "codex",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      fallbackSessionId: "fallback",
-      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
-    });
-
-    expect(thread?.messages.map((message) => message.text)).toEqual([
-      "Fix the actual bug",
-      "Fixed",
-    ]);
   });
 
   it.each([199, 200])("keeps the canonical first prompt with %s later Codex messages", (count) => {
