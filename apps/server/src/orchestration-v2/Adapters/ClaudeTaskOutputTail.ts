@@ -88,7 +88,10 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
       Effect.map((info) => Number(info.size)),
       Effect.orElseSucceed(() => offset),
     );
-    if (size < offset) offset = 0;
+    if (size < offset) {
+      offset = 0;
+      decoder = new TextDecoder("utf-8", { fatal: false });
+    }
     if (size > offset) {
       const start = size - offset > MAX_READ_BYTES ? size - MAX_READ_BYTES : offset;
       const bytes = yield* Effect.scoped(
