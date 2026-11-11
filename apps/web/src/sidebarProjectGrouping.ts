@@ -6,6 +6,7 @@ import type {
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  resolveProjectIconSource,
   resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
@@ -204,6 +205,26 @@ export function buildSidebarProjectSnapshots(input: {
       archived: group.archived,
     };
   });
+}
+
+/** Keyed by `environmentId:projectId`; a project without its own icon shows its group's. */
+export function buildProjectIconSourceByKey(
+  projects: ReadonlyArray<Project>,
+  groups: ReadonlyArray<SidebarProjectSnapshot>,
+): Map<string, Project> {
+  const groupByProjectKey = new Map<string, SidebarProjectSnapshot>(
+    groups.flatMap((group) =>
+      group.memberProjectRefs.map(
+        (ref) => [`${ref.environmentId}:${ref.projectId}`, group] as const,
+      ),
+    ),
+  );
+  return new Map(
+    projects.map((project) => {
+      const key = `${project.environmentId}:${project.id}`;
+      return [key, resolveProjectIconSource<Project>(project, groupByProjectKey.get(key))] as const;
+    }),
+  );
 }
 
 export function buildSidebarProjectPickerEntries(input: {

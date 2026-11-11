@@ -231,6 +231,22 @@ export function deriveProjectGroupLabel(input: {
   return input.representative.title;
 }
 
+type ProjectIconFields = Pick<EnvironmentProject, "projectIcon" | "faviconPath">;
+
+function hasCustomProjectIcon(project: ProjectIconFields): boolean {
+  return project.projectIcon != null || project.faviconPath != null;
+}
+
+/** The project whose icon stands for `project`: its own custom icon, else its group's. */
+export function resolveProjectIconSource<TProject extends ProjectIconFields>(
+  project: TProject,
+  representative: TProject | null | undefined,
+): TProject {
+  return representative && !hasCustomProjectIcon(project) && hasCustomProjectIcon(representative)
+    ? representative
+    : project;
+}
+
 export interface ProjectGroupMember<TProject extends EnvironmentProject = EnvironmentProject> {
   readonly physicalProjectKey: string;
   readonly project: TProject;

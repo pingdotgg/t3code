@@ -571,6 +571,7 @@ type SidebarThreadRowProps = {
   environmentMachine: EnvironmentMachineKind;
   scratchMachineLabel: string | null;
   project: EnvironmentProject | null;
+  projectIcon: ProjectFaviconProject | null;
   projectDisplayName: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
   timestampFormat: TimestampFormat;
@@ -824,7 +825,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const detailsTooltip = (
     <SidebarThreadTooltip
       thread={thread}
-      project={props.project}
+      project={props.projectIcon}
       projectDisplayName={props.projectDisplayName}
       environmentLabel={props.environmentLabel}
       environmentMachine={props.environmentMachine}
@@ -1261,8 +1262,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
                   )}
                 >
-                  {props.project ? (
-                    <ProjectFavicon project={props.project} className="size-4" />
+                  {props.projectIcon ? (
+                    <ProjectFavicon project={props.projectIcon} className="size-4" />
                   ) : null}
                 </span>
               )}
@@ -1448,8 +1449,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project ? (
-                <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+              {props.projectIcon ? (
+                <ProjectFavicon project={props.projectIcon} className="size-4 shrink-0" />
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
@@ -1627,6 +1628,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   isSettled: boolean;
   thread: SidebarThreadSummary;
   project: EnvironmentProject | null;
+  projectIcon: ProjectFaviconProject | null;
   projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
@@ -1745,9 +1747,9 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
             />
           }
         >
-          {props.project ? (
+          {props.projectIcon ? (
             <ProjectFavicon
-              project={props.project}
+              project={props.projectIcon}
               className={cn(
                 "size-4 shrink-0 transition-opacity",
                 props.isSettled &&
@@ -1796,7 +1798,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
         </TooltipTrigger>
         <SidebarThreadTooltip
           thread={thread}
-          project={props.project}
+          project={props.projectIcon}
           projectDisplayName={props.projectDisplayName}
           environmentLabel={props.environmentLabel}
           environmentMachine={props.environmentMachine}

@@ -26,7 +26,7 @@ it("keeps draft previews current through edits, promotion and removal", async ()
     <Profiler id="draft-block" onRender={onRender}>
       <ul>
         <SidebarDraftBlock
-          projectByKey={new Map()}
+          projectIconByKey={new Map()}
           projectDisplayNameByKey={new Map()}
           scopedProjectKeys={null}
           routeDraftId={null}
