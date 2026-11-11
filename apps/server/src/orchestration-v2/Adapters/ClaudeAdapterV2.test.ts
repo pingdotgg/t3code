@@ -3639,6 +3639,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     },
     {
       tool: "mcp__t3-code__question_card",
+      reply: "Which width?",
+      lesson: true,
+      thinking: "Keep the trace 2.5 mm wide; Ohm's law says V = I × R. I'm moving on next.",
+      shownText: "Keep the trace 2.5 mm wide; Ohm's law says V = I × R.",
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Which goes on first?",
+      lesson: true,
+      thinking: "Let's say the pad is at 20 °C.\n\n- Flux\n- Solder\n\nI'll ask which comes first.",
+      shownText: "Let's say the pad is at 20 °C.\n\n- Flux\n- Solder",
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Try it.",
+      lesson: true,
+      heldText: "Melting begins at the solidus.",
+      thinking:
+        "Melting begins at the solidus. Wetting needs the liquidus, so reflow aims 15–30 °C above the liquidus.",
+      shownText: "Wetting needs the liquidus, so reflow aims 15–30 °C above the liquidus.",
+      expected: ["reasoning", "assistant_message", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
       reply: "Try it.",
       lesson: true,
       heldText: "The repo review found three task families.",
@@ -3740,13 +3766,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual([...latest.values()], [...expected]);
         if (shownText !== undefined) {
-          assert.deepEqual(
-            harness.events.flatMap((event) =>
-              event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
-                ? [event.turnItem.text]
-                : [],
-            ),
-            [shownText],
+          assert.equal(
+            harness.events
+              .flatMap((event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+                  ? [event.turnItem.text]
+                  : [],
+              )
+              .at(-1),
+            shownText,
           );
         }
       }).pipe(

@@ -2308,17 +2308,24 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         )
       );
     };
-    const stripLessonNarration = (value: string) => {
-      const sentences = value
-        .trim()
-        .match(/[^.!?]+(?:[.!?](?=\s|$)|$)/gu)
-        ?.map((sentence) => sentence.trim());
-      if (sentences === undefined || sentences.length === 0) return undefined;
-      const narration =
-        /\b(?:I|I['’]m|I['’]ll|I['’]ve|I['’]d|let me|let['’]s|the (?:learner|user|student)|they (?:got|answered|picked|said|chose))\b/iu;
-      const teaching = sentences.filter((sentence) => !narration.test(sentence));
-      return teaching.length === sentences.length ? undefined : teaching.join(" ");
-    };
+    // Mirrors the adapter's stripLessonNarration.
+    const stripLessonNarration = (value: string) =>
+      value
+        .split("\n")
+        .map((line) =>
+          line
+            .split(/(?<=[.!?])\s+/u)
+            .filter(
+              (sentence) =>
+                !/^(?:I(?:['’](?:m|ll|ve|d))?\b|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u.test(
+                  sentence.trimStart(),
+                ),
+            )
+            .join(" "),
+        )
+        .join("\n")
+        .replace(/\n{3,}/gu, "\n\n")
+        .trim();
     const leadRemainder = (use: typeof ToolUse.Type, text: string) => {
       const reply = isRecord(use.input) ? use.input.reply : undefined;
       if (typeof reply !== "string") return undefined;
@@ -2396,12 +2403,13 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         if (isThinking(thinking) && isThinking(response.content[index - 2])) {
           if (lesson) {
             if (!isCard) continue;
-            if (heldBefore && replyCoverage(thinking.thinking, heldBefore) >= 0.6) continue;
-            const remainder = leadRemainder(block, thinking.thinking);
-            const promoted = remainder === undefined ? thinking.thinking : remainder;
-            if (promoted === "") continue;
-            const shown = stripLessonNarration(promoted);
-            if (shown !== "") texts.push(shown ?? promoted);
+            const words = (value: string) => value.replace(/\s+/gu, " ").trim();
+            let lead = thinking.thinking;
+            if (heldBefore && replyCoverage(lead, heldBefore) >= 0.6) continue;
+            if (heldBefore && words(lead).includes(words(heldBefore)))
+              lead = words(lead).replace(words(heldBefore), "").trim();
+            const shown = stripLessonNarration(leadRemainder(block, lead) ?? lead);
+            if (shown !== "") texts.push(shown);
           } else if (!repeats(block, thinking.thinking)) {
             texts.push(thinking.thinking);
           }

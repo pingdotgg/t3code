@@ -2141,16 +2141,21 @@ function isLessonStatusLine(text: string) {
   );
 }
 
-function stripLessonNarration(text: string): string | undefined {
-  const sentences = text
-    .trim()
-    .match(/[^.!?]+(?:[.!?](?=\s|$)|$)/gu)
-    ?.map((sentence) => sentence.trim());
-  if (sentences === undefined || sentences.length === 0) return undefined;
+// Thinking summaries narrate as "I'll…"/"They got it…"; drop those sentences, keep the teaching and its line breaks.
+function stripLessonNarration(text: string) {
   const narration =
-    /\b(?:I|I['’]m|I['’]ll|I['’]ve|I['’]d|let me|let['’]s|the (?:learner|user|student)|they (?:got|answered|picked|said|chose))\b/iu;
-  const teaching = sentences.filter((sentence) => !narration.test(sentence));
-  return teaching.length === sentences.length ? undefined : teaching.join(" ");
+    /^(?:I(?:['’](?:m|ll|ve|d))?\b|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u;
+  return text
+    .split("\n")
+    .map((line) =>
+      line
+        .split(/(?<=[.!?])\s+/u)
+        .filter((sentence) => !narration.test(sentence.trimStart()))
+        .join(" "),
+    )
+    .join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
 }
 
 // In SDK mode, /goal appears only in transcripts: command output names it and Stop hooks report unmet checks.
@@ -9332,20 +9337,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   claudeWritesUpdatesAsThinking(message.message.model)
                 ) {
                   const lessonTurn = isLessonTurn(context.input);
-                  const lessonCard = lessonTurn && isLessonCardTool(block.name);
-                  if (lessonTurn && !lessonCard) continue;
+                  if (lessonTurn && !isLessonCardTool(block.name)) continue;
                   if (cardReplyRepeats(block, update.text)) continue;
-                  if (lessonCard && heldBefore && replyCoverage(update.text, heldBefore) >= 0.6)
-                    continue;
-                  const text = lessonCard ? cardReplyCoversLead(block, update.text) : update.text;
-                  if (text === "") continue;
-                  const promotedText = text ?? update.text;
-                  const shownText = lessonCard ? stripLessonNarration(promotedText) : undefined;
-                  if (shownText === "") continue;
+                  let text = update.text;
+                  if (lessonTurn) {
+                    // Text held before the card was just shown; don't show it again from thinking.
+                    const words = (value: string) => value.replace(/\s+/gu, " ").trim();
+                    if (heldBefore && replyCoverage(text, heldBefore) >= 0.6) continue;
+                    if (heldBefore && words(text).includes(words(heldBefore)))
+                      text = words(text).replace(words(heldBefore), "").trim();
+                    text = stripLessonNarration(cardReplyCoversLead(block, text) ?? text);
+                    if (text === "") continue;
+                  }
                   yield* emitAssistantTextArtifacts({
                     context,
                     nativeItemId: update.itemId,
-                    text: shownText ?? promotedText,
+                    text,
                   });
                 }
                 continue;
