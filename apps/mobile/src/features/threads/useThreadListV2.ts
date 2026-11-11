@@ -61,6 +61,7 @@ export function useThreadListV2(input: {
   readonly pendingOrder: LayoutInput["pendingOrder"];
   readonly shelfPreferencesLoaded: boolean;
   readonly workingShelfEnabled: boolean;
+  readonly inboxOldestFirst: boolean;
   readonly workingShelfExpanded: boolean;
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
@@ -146,6 +147,7 @@ export function useThreadListV2(input: {
         settledLimit: input.settledLimit,
         now: layoutTime,
         workingShelfEnabled,
+        inboxOldestFirst: input.inboxOldestFirst,
         workingShelfExpanded: input.workingShelfExpanded,
         inboxReturnAt: inbox.returnedAt,
         isWorking: inbox.isWorking,
@@ -178,6 +180,7 @@ export function useThreadListV2(input: {
       input.settledLimit,
       layoutTime,
       workingShelfEnabled,
+      input.inboxOldestFirst,
       input.workingShelfExpanded,
       inbox.returnedAt,
       inbox.isWorking,

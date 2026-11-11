@@ -57,6 +57,7 @@ type InboxThreadInput = Pick<
 export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
   threads: readonly T[],
   observedReturnAt?: (thread: T) => number | undefined,
+  oldestFirst = false,
 ): T[] {
   const timestamps = new Map(
     threads.map((thread) => [
@@ -70,7 +71,8 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
       ),
     ]),
   );
-  return sortNewestFirst(threads, timestamps);
+  const newestFirst = sortNewestFirst(threads, timestamps);
+  return oldestFirst ? newestFirst.reverse() : newestFirst;
 }
 
 type WorkingSortInput = Pick<
