@@ -26,11 +26,15 @@ export function isThreadReplayRawPayloadSafe(rawPayloadBytes: number): boolean {
   return rawPayloadBytes <= THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES;
 }
 
-export function threadReplayEncodedBytes(items: ReadonlyArray<unknown>): number {
+export function threadReplayEncodedBytes(
+  items: ReadonlyArray<unknown>,
+  limit: number = THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES,
+): number {
   let total = 0;
   for (const item of items) {
     const encoded = JSON.stringify(item);
     total += Buffer.byteLength(encoded ?? "", "utf8");
+    if (total > limit) break;
   }
   return total;
 }

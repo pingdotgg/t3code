@@ -135,6 +135,19 @@ Only one server can use a T3 home directory at a time. If startup reports that
 another server owns it, stop that server before retrying, or use a separate home
 directory and pair with the running server.
 
+### macOS app does not reopen after an Alpha update
+
+Updating an older **T3 Code (Alpha)** installation can replace it with
+**T3 Code (Beta)** without reopening the app. Open **T3 Code (Beta)** from
+Applications, or run:
+
+```sh
+open "/Applications/T3 Code (Beta).app"
+```
+
+If an old Dock shortcut no longer opens the app, remove it and add the Beta app
+from Applications again.
+
 ## If the desktop app does not start
 
 If the desktop app's server keeps failing at startup, T3 Code shows a "T3 Code
@@ -157,8 +170,11 @@ Machines without npm check the public npm registry directly.
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
-at once. Hover it to see which providers it will update. Providers that only
-offer a manual update command are not included.
+at once. Hover it to see which providers it will update. A provider is left out
+when any of its enabled, outdated instances offers only a manual update command,
+or when its instances use different update commands, such as two instances that
+run different CLI installs. Update those by hand, or point every instance of the
+provider at the same CLI.
 
 After a successful provider CLI update, T3 Code refreshes model discovery for
 every enabled instance of that provider using its own configuration. Connected
