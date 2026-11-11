@@ -100,7 +100,7 @@ const chunk = (name: string, body: Uint8Array) => {
   out.writeUInt32BE(crc32(Buffer.concat([type, Buffer.from(body)])), body.length + 8);
   return out;
 };
-const encodePng = (pixels: Uint8Array, width: number, height: number) => {
+export const encodeGrayscalePng = (pixels: Uint8Array, width: number, height: number) => {
   const rows = Buffer.alloc((width + 1) * height);
   for (let y = 0; y < height; y += 1) {
     rows[y * (width + 1)] = 0;
@@ -144,7 +144,7 @@ const imageToPng = (image: { width: number; height: number; kind: number; data: 
               0.299 * image.data[at]! + 0.587 * image.data[at + 1]! + 0.114 * image.data[at + 2]!,
             );
     }
-  return { data: encodePng(pixels, width, height).toString("base64"), width, height };
+  return { data: encodeGrayscalePng(pixels, width, height).toString("base64"), width, height };
 };
 
 const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<number>) => {
