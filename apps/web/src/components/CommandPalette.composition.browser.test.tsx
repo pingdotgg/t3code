@@ -27,7 +27,10 @@ function setup({
   pickerMocks.deniedScope = deniedScope;
   pickerMocks.settings.preferNativeProjectFolderPicker = enabled;
   pickerMocks.pickFolder.mockReset().mockResolvedValue(null);
-  pickerMocks.command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
+  // The add-project destination step starts a clone and follows its project id.
+  pickerMocks.command
+    .mockReset()
+    .mockResolvedValue({ _tag: "Success", value: { projectId: "project-cloned" } });
 }
 
 vi.mock("@effect/atom-react", async (original) => ({

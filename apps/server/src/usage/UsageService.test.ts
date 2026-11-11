@@ -2587,7 +2587,7 @@ describe("UsageService", () => {
   );
 
   it.live.each([4, 5, 6, 7, 8, 10])(
-    "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
+    "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts, removes the old file",
     (version) =>
       Effect.gen(function* () {
         const { home, settings } = yield* setup;
@@ -2636,7 +2636,7 @@ describe("UsageService", () => {
           yield* first.readSummary(WINDOW);
           yield* first.awaitPersisted;
 
-          const legacy = yield* Effect.promise(async () => {
+          yield* Effect.promise(async () => {
             const livePath = await NodeFSP.realpath(live);
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
               files: Record<string, { r: unknown[][]; mr: number; cs: Record<string, unknown> }>;
@@ -2674,7 +2674,9 @@ describe("UsageService", () => {
               }
             }
             await NodeFSP.rm(deleted);
-            return text;
+            await NodeFSP.mkdir(`${cachePath}.stale`);
+            await NodeFSP.utimes(`${cachePath}.stale`, 0, 0);
+            await NodeFSP.mkdir(`${cachePath}.active`);
           });
 
           const upgraded = yield* UsageService.make;
@@ -2686,9 +2688,11 @@ describe("UsageService", () => {
           );
           yield* upgraded.awaitPersisted;
           assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
-          assert.strictEqual(
-            yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
-            legacy,
+          assert.deepStrictEqual(
+            (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
+              .filter((name) => name.startsWith("usage-scan-cache"))
+              .toSorted(),
+            [SCAN_CACHE_FILE_NAME, `${SCAN_CACHE_FILE_NAME}.active`],
           );
         }).pipe(
           Effect.provide(
