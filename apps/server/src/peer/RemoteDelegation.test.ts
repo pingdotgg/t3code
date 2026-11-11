@@ -23,10 +23,12 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -35,6 +37,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
+import * as DelegationApprovals from "../mcp/DelegationApprovals.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -932,6 +935,118 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+const approvalsOn = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
+  DelegationApprovals.DelegationApprovals.pipe(
+    Effect.provide(
+      DelegationApprovals.layer.pipe(
+        Layer.provide(Layer.succeed(ThreadManagement.ThreadManagementService, laptopEnv.threads)),
+      ),
+    ),
+  );
+
+/** The next delegation card asking the user, after `afterSequence`. */
+const nextCard = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  afterSequence: number,
+) =>
+  laptopEnv.orchestrator
+    .streamStoredEventsFrom({
+      threadId: parentThreadId,
+      afterSequence,
+      eventType: "turn-item.updated",
+    })
+    .pipe(
+      Stream.filterMap((stored) =>
+        stored.event.type === "turn-item.updated" &&
+        stored.event.payload.type === "delegation_approval" &&
+        stored.event.payload.approvalStatus === "pending"
+          ? Result.succeed(stored.event.payload)
+          : Result.failVoid,
+      ),
+      Stream.runHead,
+      Effect.map(Option.getOrThrow),
+    );
+
+it.effect("a task on another model waits for the user's answer before the box launches it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const approvals = yield* approvalsOn(a);
+      const delegate = (clientRequestId: string) =>
+        a.call("delegate_task", {
+          task: "Run the full suite on the box.",
+          target: {
+            environmentId: box.environmentId,
+            providerInstanceId: instanceId,
+            model: "gpt-5.5",
+          },
+          mode: "async",
+          clientRequestId,
+        });
+      const declined = yield* delegate("declined").pipe(Effect.forkChild);
+      const card = yield* nextCard(a, 0);
+      expect(card).toMatchObject({
+        environmentId: box.environmentId,
+        current: modelSelection,
+        proposed: { instanceId, model: "gpt-5.5" },
+      });
+      const snoozedUntil = "2099-07-25T09:00:00.000Z";
+      yield* a.threads.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("command:snooze-delegation"),
+        threadId: parentThreadId,
+        snoozedUntil,
+      });
+      yield* approvals.answer({
+        threadId: parentThreadId,
+        turnItemId: card.id,
+        decision: "decline",
+      });
+      const refused = yield* Fiber.join(declined);
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.content)).toContain("delegation_not_approved");
+      expect(yield* Ref.get(thread.launched)).toBeNull();
+      expect(
+        DateTime.formatIso((yield* a.projections.getThread(parentThreadId)).snoozedUntil!),
+      ).toBe(snoozedUntil);
+      // The first answer stands.
+      const late = yield* approvals
+        .answer({ threadId: parentThreadId, turnItemId: card.id, decision: "approve" })
+        .pipe(Effect.flip);
+      expect(late.reason).toBe("already_answered");
+
+      const sequence = yield* a.threads.getThreadEventSequence(parentThreadId);
+      const approved = yield* delegate("approved").pipe(Effect.forkChild);
+      const second = yield* nextCard(a, sequence);
+      expect(second.id).not.toBe(card.id);
+      expect(yield* Ref.get(thread.launched)).toBeNull();
+      expect((yield* a.projections.getThread(parentThreadId)).snoozedUntil).not.toBeNull();
+      yield* approvals.answer({
+        threadId: parentThreadId,
+        turnItemId: second.id,
+        decision: "approve",
+      });
+      const awake = yield* a.projections.getThread(parentThreadId);
+      expect(awake.snoozedUntil).toBeNull();
+      expect(awake.snoozedAt).toBeNull();
+      const started = yield* Fiber.join(approved);
+      expect(started.isError, JSON.stringify(started.content)).toBe(false);
+      expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toEqual({
+        instanceId,
+        model: "gpt-5.5",
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect.each(["no active parent run", "a newer run owned by another provider"] as const)(
   "preserves remote observation guards with %s",
   (observer) =>
@@ -1126,29 +1241,56 @@ it.effect("a task named only by environment inherits the parent's model, within 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("refuses worktree isolation for a task there before launching anything", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
-      yield* linkTo(a.links, b, "auto");
-      yield* seedParent(a);
+it.effect.each(["worktree isolation", "an archived parent"] as const)(
+  "refuses %s before launching anything",
+  (reason) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "auto");
+        yield* seedParent(a);
 
-      const result = yield* a.call("delegate_task", {
-        task: "Run the suite on the box.",
-        target: { environmentId: box.environmentId },
-        isolation: "worktree",
-      });
-      expect(result.isError).toBe(true);
-      expect(JSON.stringify(result.content)).toContain("isolation");
-      expect(yield* Ref.get(thread.launched)).toBeNull();
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        if (reason === "an archived parent") {
+          yield* a.orchestrator.dispatch({
+            type: "thread.archive",
+            threadId: parentThreadId,
+            commandId: CommandId.make("archive-before-forward"),
+          });
+          const parent = yield* a.projections.getThreadRecords(parentThreadId, ["runs"]);
+          expect(parent.thread.archivedAt).not.toBeNull();
+          expect(parent.runs.find((run) => run.id === parentRunId)?.status).toBe("running");
+          const result = yield* a.remote
+            .delegate(
+              yield* McpInvocationContext.requireThreadScope(parentScope, "delegate_task"),
+              {
+                task: "Run the suite on the box.",
+                target: { environmentId: box.environmentId },
+                modelSelection,
+                parentRunId,
+                mode: "async",
+              },
+            )
+            .pipe(Effect.result);
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) expect(result.failure.code).toBe("parent_not_active");
+        } else {
+          const result = yield* a.call("delegate_task", {
+            task: "Run the suite on the box.",
+            target: { environmentId: box.environmentId },
+            isolation: "worktree",
+          });
+          expect(result.isError).toBe(true);
+          expect(JSON.stringify(result.content)).toContain("isolation");
+        }
+        expect(yield* Ref.get(thread.launched)).toBeNull();
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("follows an open task again after the laptop restarts", () =>

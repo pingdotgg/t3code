@@ -402,6 +402,13 @@ export function isSecretRequestActivityGroup(entry: ThreadFeedActivityGroup): bo
   );
 }
 
+export function isDelegationApprovalActivityGroup(entry: ThreadFeedActivityGroup): boolean {
+  return (
+    entry.activities.length === 1 &&
+    entry.activities[0]?.projectedItem.item.type === "delegation_approval"
+  );
+}
+
 export function isLinkRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return (
     entry.activities.length === 1 && entry.activities[0]?.projectedItem.item.type === "link_request"
@@ -450,7 +457,8 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
     item.type === "system_notice" ||
     item.type === "proposed_plan" ||
     item.type === "secret_request" ||
-    item.type === "link_request"
+    item.type === "link_request" ||
+    item.type === "delegation_approval"
   );
 }
 
@@ -574,6 +582,8 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "lock";
     case "link_request":
       return "globe";
+    case "delegation_approval":
+      return "hammer";
   }
 }
 
@@ -635,6 +645,8 @@ function itemSummary(
       return item.label;
     case "link_request":
       return `Link ${linkRequestTargetName(item)}`;
+    case "delegation_approval":
+      return "Delegate to another model";
     case "dynamic_tool": {
       const classified = classifyToolActivity({
         itemType: "dynamic_tool_call",
@@ -695,6 +707,8 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "secret_request":
     case "link_request":
       return item.reason || null;
+    case "delegation_approval":
+      return item.task || null;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":

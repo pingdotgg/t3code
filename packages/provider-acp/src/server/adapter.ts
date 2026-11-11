@@ -251,6 +251,15 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
   }
 }
 
+class AcpModelOptionError extends Schema.TaggedError<AcpModelOptionError>()(
+  "AcpModelOptionError",
+  {},
+) {
+  override get message(): string {
+    return "The agent did not apply an approved option, so the delegated task did not start.";
+  }
+}
+
 /**
  * Maps one per-turn usage sample (flavors with reportsPerTurnPromptUsage)
  * directly onto TurnTokenUsage: the response's counters already cover exactly
@@ -389,11 +398,11 @@ export interface AcpAdapterV2Flavor {
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<string | undefined, EffectAcpErrors.AcpError>;
   /**
-   * Model-selection option ids `applyModelSelection` sets itself under a
-   * native id, which the generic option loop then skips (Kiro's
-   * `reasoningEffort` is its `effortLevel`).
+   * Model-selection options `applyModelSelection` sets itself, each with the
+   * native config option it writes, which the generic option loop then skips
+   * (Kiro's `reasoningEffort` is its `effortLevel`).
    */
-  readonly ownedModelOptionIds?: ReadonlyArray<string>;
+  readonly ownedModelOptions?: ReadonlyArray<{ readonly id: string; readonly nativeId: string }>;
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
@@ -750,6 +759,9 @@ export const AcpProviderCapabilitiesV2 = {
 } satisfies OrchestrationV2ProviderCapabilities;
 
 const STEER_DELIVERY_BOUND = "2 seconds";
+
+/** Kiro 2.27.0 advertised its model 40-90 ms after the write's result. */
+const LATE_MODEL_OPTION_BOUND = "2 seconds";
 
 /**
  * `session/fork` `_meta` for a fork from `providerTurnId`: none for the session head,
@@ -1942,6 +1954,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionSetup, setup);
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
+        // A session that exposed its model must keep reporting it after reconfiguration.
+        const observableModelSessions = new Set<string>();
+        const configuredNativeModels = new Map<string, string>();
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
@@ -7228,12 +7243,124 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        const modelOptionContext = (
+          modelSelection: ModelSelection,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+          configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+        ) => {
+          // Under a policy ceiling, a mode the user picks applies only when the flavor can place
+          // it under the ceiling; an unknown mode could be the agent's own skip-approval mode.
+          const ceiling = runtimePolicy.maxRuntimeMode;
+          const isModeChoice = (id: string) =>
+            id === ACP_SESSION_MODE_OPTION_ID ||
+            configOptions.some(
+              (option) =>
+                option.id === id &&
+                (option.category === "mode" || option.category === "collaboration_mode"),
+            );
+          const withinCeiling = (selection: { readonly id: string; readonly value: unknown }) => {
+            if (ceiling === undefined || ceiling === "full-access" || !isModeChoice(selection.id)) {
+              return true;
+            }
+            const granted =
+              typeof selection.value === "string"
+                ? flavor.runtimeModeForSessionMode?.(selection.value)
+                : undefined;
+            return granted !== undefined && !isRuntimeModeAbove(granted, ceiling);
+          };
+          const ownedNativeId = (id: string) =>
+            flavor.ownedModelOptions?.find((owned) => owned.id === id)?.nativeId;
+          const aboveCeiling = (modelSelection.options ?? []).filter(
+            (selection) => ownedNativeId(selection.id) === undefined && !withinCeiling(selection),
+          );
+          const requestedSelections = (modelSelection.options ?? []).flatMap((selection) =>
+            aboveCeiling.includes(selection)
+              ? []
+              : [
+                  selection.value === ACP_EMPTY_OPTION_VALUE
+                    ? { ...selection, value: "" }
+                    : selection,
+                ],
+          );
+          const optionSelections = requestedSelections.filter(
+            (selection) => ownedNativeId(selection.id) === undefined,
+          );
+          const availableConfigIds = new Set(configOptions.map((option) => option.id));
+          const hasNativeConfigWithSyntheticModeId = availableConfigIds.has(
+            ACP_SESSION_MODE_OPTION_ID,
+          );
+          const modeSelection = hasNativeConfigWithSyntheticModeId
+            ? undefined
+            : optionSelections.find((selection) => selection.id === ACP_SESSION_MODE_OPTION_ID);
+          const configSelections = hasNativeConfigWithSyntheticModeId
+            ? optionSelections
+            : optionSelections.filter((selection) => selection.id !== ACP_SESSION_MODE_OPTION_ID);
+          return {
+            requestedSelections,
+            aboveCeiling,
+            availableConfigIds,
+            configSelections,
+            modeSelection,
+            ownedNativeId,
+            isModeChoice,
+          };
+        };
+
+        const validateModelOptions = Effect.fn("AcpAdapterV2.validateModelOptions")(function* (
+          modelSelection: ModelSelection,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) {
+          if (runtimePolicy.strictModelOptions !== true) return;
+          const finalOptions = yield* runtime.getConfigOptions;
+          const finalModeId = (yield* runtime.getModeState)?.currentModeId;
+          const { requestedSelections, aboveCeiling, modeSelection, ownedNativeId, isModeChoice } =
+            modelOptionContext(modelSelection, runtimePolicy, finalOptions);
+          // The ceiling keeps these modes from being written, so an approved task cannot run on
+          // them; plan mode replaces any mode, as for the choices checked below.
+          const refused = aboveCeiling[0];
+          if (refused !== undefined && runtimePolicy.interactionMode !== "plan") {
+            return yield* new AcpModelOptionError({});
+          }
+          const sessionId = yield* Ref.get(activeSessionId);
+          const configuredModel =
+            sessionId === null ? undefined : configuredNativeModels.get(sessionId);
+          const currentModel = findModelConfigOption(finalOptions)?.currentValue;
+          if (configuredModel !== undefined && currentModel !== configuredModel) {
+            return yield* new AcpModelSelectionError({
+              model: modelSelection.model,
+              cause:
+                currentModel === undefined
+                  ? `The session no longer reports its model, ${configuredModel}.`
+                  : `The session's model is ${currentModel}, not ${configuredModel}.`,
+            });
+          }
+          for (const selection of requestedSelections) {
+            const nativeId = ownedNativeId(selection.id) ?? selection.id;
+            if (
+              runtimePolicy.interactionMode === "plan" &&
+              isModeChoice(nativeId) &&
+              ownedNativeId(selection.id) === undefined
+            )
+              continue;
+            const current =
+              selection === modeSelection
+                ? finalModeId
+                : finalOptions.find((option) => option.id === nativeId)?.currentValue;
+            if (current !== selection.value) {
+              return yield* new AcpModelOptionError({});
+            }
+          }
+        });
+
         const configureSession = Effect.fnUntraced(function* (
           startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           modelSelection: ModelSelection,
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         ) {
           yield* Ref.set(activeSelection, null);
+          if (findModelConfigOption(yield* runtime.getConfigOptions) !== undefined) {
+            observableModelSessions.add(startResult.sessionId);
+          }
           yield* validateModelSelection(modelSelection);
           const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
           // Invalid params is the agent refusing the value, and the runtime
@@ -7302,43 +7429,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           const configOptions = yield* runtime.getConfigOptions;
-          // Under a policy ceiling, a mode the user picks applies only when the flavor can place
-          // it under the ceiling; an unknown mode could be the agent's own skip-approval mode.
-          const ceiling = runtimePolicy.maxRuntimeMode;
-          const isModeChoice = (id: string) =>
-            id === ACP_SESSION_MODE_OPTION_ID ||
-            configOptions.some(
-              (option) =>
-                option.id === id &&
-                (option.category === "mode" || option.category === "collaboration_mode"),
-            );
-          const withinCeiling = (selection: { readonly id: string; readonly value: unknown }) => {
-            if (ceiling === undefined || ceiling === "full-access" || !isModeChoice(selection.id)) {
-              return true;
-            }
-            const granted =
-              typeof selection.value === "string"
-                ? flavor.runtimeModeForSessionMode?.(selection.value)
-                : undefined;
-            return granted !== undefined && !isRuntimeModeAbove(granted, ceiling);
-          };
-          const optionSelections = (modelSelection.options ?? []).flatMap((selection) => {
-            if (flavor.ownedModelOptionIds?.includes(selection.id) === true) return [];
-            if (!withinCeiling(selection)) return [];
-            return [
-              selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
-            ];
-          });
-          const availableConfigIds = new Set(configOptions.map((option) => option.id));
-          const hasNativeConfigWithSyntheticModeId = availableConfigIds.has(
-            ACP_SESSION_MODE_OPTION_ID,
+          // A flavor's apply step returns the native id it applied, so a reset by its own later
+          // writes is not taken as the expectation.
+          if (findModelConfigOption(configOptions) !== undefined) {
+            observableModelSessions.add(startResult.sessionId);
+          }
+          if (observableModelSessions.has(startResult.sessionId) && appliedModel !== undefined) {
+            configuredNativeModels.set(startResult.sessionId, appliedModel);
+          }
+          const { availableConfigIds, configSelections, modeSelection } = modelOptionContext(
+            modelSelection,
+            runtimePolicy,
+            configOptions,
           );
-          const modeSelection = hasNativeConfigWithSyntheticModeId
-            ? undefined
-            : optionSelections.find((selection) => selection.id === ACP_SESSION_MODE_OPTION_ID);
-          const configSelections = hasNativeConfigWithSyntheticModeId
-            ? optionSelections
-            : optionSelections.filter((selection) => selection.id !== ACP_SESSION_MODE_OPTION_ID);
           // Probe descriptors union models; skip options absent from the live session and use agent defaults.
           const unsupportedConfigIds = configSelections
             .map((selection) => selection.id)
@@ -7468,6 +7571,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nativeBuildConfigurationBySessionId.delete(startResult.sessionId);
             }
           }
+          // A late model advert after the write leaves nothing to check the model against,
+          // so a strict task waits for it rather than start on a model nobody checked.
+          if (
+            runtimePolicy.strictModelOptions === true &&
+            flavor.modelOptionArrivesLate === true &&
+            appliedModel !== undefined &&
+            !observableModelSessions.has(startResult.sessionId)
+          ) {
+            const advertised = yield* runtime.configOptionChanges.pipe(
+              Stream.filter((options) => findModelConfigOption(options) !== undefined),
+              Stream.runHead,
+              Effect.timeoutOption(LATE_MODEL_OPTION_BOUND),
+              Effect.map(Option.flatten),
+            );
+            if (Option.isNone(advertised)) {
+              return yield* new AcpModelSelectionError({
+                model: modelSelection.model,
+                cause: "The session did not report its model.",
+              });
+            }
+            observableModelSessions.add(startResult.sessionId);
+            configuredNativeModels.set(startResult.sessionId, appliedModel);
+          }
+          yield* validateModelOptions(modelSelection, runtimePolicy);
           yield* validateModelSelection(modelSelection);
           yield* (
             flavor.onSessionConfigurationUpdate?.(
@@ -8086,10 +8213,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             } else {
               const configuredSelection = yield* Ref.get(activeSelection);
               const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
+              const optionsChanged = yield* validateModelOptions(
+                turnInput.modelSelection,
+                turnInput.runtimePolicy,
+              ).pipe(
+                Effect.as(false),
+                Effect.catchTags({
+                  AcpModelOptionError: () => Effect.succeed(true),
+                  AcpModelSelectionError: () => Effect.succeed(true),
+                }),
+              );
               if (
                 configuredSelection === null ||
                 !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
-                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode
+                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode ||
+                optionsChanged
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {
@@ -8143,6 +8281,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const promptParts = isContinuationTurn
               ? null
               : yield* resolvePromptParts(turnInput, requestedSessionId);
+            yield* validateModelOptions(turnInput.modelSelection, turnInput.runtimePolicy);
             const startedAt = yield* DateTime.now;
             const nativeTurnId = `${requestedSessionId}:turn:${turnInput.providerTurnOrdinal}`;
             const providerTurnId = deriveProviderTurnId(nativeTurnId);

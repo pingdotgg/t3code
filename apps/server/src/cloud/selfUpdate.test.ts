@@ -17,6 +17,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import { BUILD_MIGRATION_HEAD } from "../persistence/databaseMigrationHead.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
@@ -477,6 +478,9 @@ it("a host crosses tracks only to a release that knows its whole database", () =
   const nightly = "0.1.4-nightly.20261027.3796";
 
   expect(cross(nightly, "0.1.4", 72)).toBeNull();
+  // Stable 0.1.8 and builds through migration 81 cannot decode persisted delegation approval cards.
+  expect(cross(nightly, "0.1.8", 80, BUILD_MIGRATION_HEAD)).toContain("does not support yet");
+  expect(cross(nightly, "0.1.9", 81, BUILD_MIGRATION_HEAD)).toContain("does not support yet");
   // Another client moved this host to a newer Nightly after the switch was planned.
   expect(cross(nightly, "0.1.4", 72, 73)).toContain("does not support yet");
   expect(cross(nightly, "0.1.4", undefined)).toContain("Cannot confirm");

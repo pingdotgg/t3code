@@ -1,4 +1,5 @@
 import {
+  isDelegatedAppThread,
   isRuntimeModeAbove,
   managedRuntimeModeCeilingMessage,
   ModelSelection,
@@ -78,12 +79,16 @@ export class RuntimePolicyV2 extends Context.Service<RuntimePolicyV2, RuntimePol
   "t3/orchestration-v2/RuntimePolicy/RuntimePolicyV2",
 ) {}
 
+const delegatedOptions = (thread: OrchestrationV2AppThread) =>
+  isDelegatedAppThread(thread) ? { strictModelOptions: true } : {};
+
 export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2, {
   resolve: Effect.fn("RuntimePolicyV2.resolve")(function (input) {
     return Effect.succeed({
       runtimeMode: input.thread.runtimeMode,
       interactionMode: input.thread.interactionMode,
       cwd: input.thread.worktreePath,
+      ...delegatedOptions(input.thread),
     });
   }),
 });
@@ -189,6 +194,7 @@ export const layerFromProjectStore: Layer.Layer<
           interactionMode: input.thread.interactionMode,
           cwd,
           ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
+          ...delegatedOptions(input.thread),
         });
       }),
     });

@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   CommandId,
   ContextTransferId,
   EnvironmentId,
@@ -35,6 +36,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -1235,6 +1237,9 @@ describe("OrchestratorMcpService provider resolution", () => {
         id: parentThreadId,
         projectId,
         title: "MCP parent",
+        archivedAt: null,
+        deletedAt: null,
+        updatedAt: DateTime.makeUnsafe("2026-11-11T00:00:00.000Z"),
         createdBy: "user",
         creationSource: "web",
         modelSelection,
@@ -1266,6 +1271,28 @@ describe("OrchestratorMcpService provider resolution", () => {
     runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
+
+  /** A user who approves every delegation card, for tests about which target resolves. */
+  const approvingUser = () => {
+    const cards: Array<unknown> = [];
+    return {
+      getThreadEventSequence: () => Effect.succeed(0),
+      withCards: (projection: OrchestrationV2ThreadProjection) =>
+        ({ ...projection, turnItems: cards }) as OrchestrationV2ThreadProjection,
+      /** Answers a card command; anything else is the test's own. */
+      answers: (command: OrchestrationV2ServerCommand) => {
+        if (command.type !== "delegation_approval.record") return false;
+        cards.push({
+          id: command.turnItemId,
+          type: "delegation_approval",
+          runId: command.runId,
+          proposed: command.proposed,
+          approvalStatus: "approved",
+        });
+        return true;
+      },
+    };
+  };
 
   it.effect.each([
     "parent completion",
@@ -1888,15 +1915,18 @@ describe("OrchestratorMcpService provider resolution", () => {
         completedAt: null,
       };
       let delegated = false;
+      // Another instance is another target, so the user approves it first.
+      const user = approvingUser();
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           hasReceipt: () => Effect.succeed(false),
+          getThreadEventSequence: user.getThreadEventSequence,
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
-                ? parentProjection(delegated ? [task] : [])
+                ? user.withCards(parentProjection(delegated ? [task] : []))
                 : childProjection,
             ),
           isProviderInstanceEnabledForProject: ({ instanceId }) =>
@@ -1911,23 +1941,25 @@ describe("OrchestratorMcpService provider resolution", () => {
                 )
               : Effect.void,
           dispatch: (command) =>
-            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
-              Effect.andThen(
-                Effect.sync(() => {
-                  delegated = true;
-                }),
-              ),
-              Effect.as({
-                sequence: 1,
-                storedEvents: [
-                  {
+            user.answers(command)
+              ? Effect.succeed({ sequence: 1, storedEvents: [] } as never)
+              : Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      delegated = true;
+                    }),
+                  ),
+                  Effect.as({
                     sequence: 1,
-                    commandId: null,
-                    event: { type: "subagent.updated", payload: task },
-                  },
-                ],
-              } as never),
-            ),
+                    storedEvents: [
+                      {
+                        sequence: 1,
+                        commandId: null,
+                        event: { type: "subagent.updated", payload: task },
+                      },
+                    ],
+                  } as never),
+                ),
         }),
         providerRegistryLayer([
           providerSnapshot({
@@ -2363,6 +2395,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         for (const testCase of cases) {
           const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
           let delegated = false;
+          const user = approvingUser();
           const layerDependencies = Layer.mergeAll(
             NodeServices.layer,
             NodeCrypto.layer,
@@ -2370,30 +2403,35 @@ describe("OrchestratorMcpService provider resolution", () => {
               hasReceipt: () => Effect.succeed(false),
               assertProviderInstanceEnabled: () => Effect.void,
               isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+              getThreadEventSequence: user.getThreadEventSequence,
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
-                    ? parentProjection(delegated ? [task] : [], parentModelSelection)
+                    ? user.withCards(
+                        parentProjection(delegated ? [task] : [], parentModelSelection),
+                      )
                     : childProjection,
                 ),
               dispatch: (command) =>
-                Ref.update(dispatched, (commands) => [...commands, command]).pipe(
-                  Effect.andThen(
-                    Effect.sync(() => {
-                      delegated = true;
-                    }),
-                  ),
-                  Effect.as({
-                    sequence: 1,
-                    storedEvents: [
-                      {
+                user.answers(command)
+                  ? Effect.succeed({ sequence: 1, storedEvents: [] } as never)
+                  : Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                      Effect.andThen(
+                        Effect.sync(() => {
+                          delegated = true;
+                        }),
+                      ),
+                      Effect.as({
                         sequence: 1,
-                        commandId: null,
-                        event: { type: "subagent.updated", payload: task },
-                      },
-                    ],
-                  } as never),
-                ),
+                        storedEvents: [
+                          {
+                            sequence: 1,
+                            commandId: null,
+                            event: { type: "subagent.updated", payload: task },
+                          },
+                        ],
+                      } as never),
+                    ),
             }),
             ServerSettings.layerTest(),
             providerRegistryLayer([
@@ -3150,247 +3188,736 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect(
-    "inherits delegated options, merges overrides, and resets on explicit clearing or a new target",
-    () =>
+  describe("delegation targets the user did not choose", () => {
+    const peerId = ProviderInstanceId.make("codex-subscription-2");
+    const remoteEnvironmentId = EnvironmentId.make("environment:mcp-providers-box");
+    const driver = ProviderDriverKind.make("codex");
+    const inherited = {
+      instanceId: codexInstanceId,
+      model: "gpt-5.4",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "serviceTier", value: "priority" },
+      ],
+    } as const;
+    type Decision = "approved" | "declined" | "pending";
+    type Card = {
+      readonly id: string;
+      readonly type: "delegation_approval";
+      readonly runId: RunId;
+      readonly proposed: unknown;
+      readonly environmentId?: EnvironmentId;
+      approvalStatus: "pending" | "approved" | "declined" | "cancelled";
+    };
+
+    /**
+     * Stands in for the user: each new card is answered with `decide`, as the
+     * client's answer would record it, before the waiting call reads it back.
+     * A card left pending is answered later with `answer`, through its stored event.
+     */
+    const harness = (input: {
+      readonly decide: (command: { readonly proposed: unknown }) => Decision;
+      /** The parent's run ends while its card waits. */
+      readonly parentRunEndsOnAsk?: boolean;
+      /** Stop is requested for the parent's run, which stays active, once its card is answered. */
+      readonly parentStopsOnAsk?: boolean;
+      readonly parentClosesOnAsk?: "archived" | "deleted";
+      /** The first card's write commits, then waits for this before it returns. */
+      readonly holdCardWrite?: {
+        readonly committed: Deferred.Deferred<void>;
+        readonly release: Deferred.Deferred<void>;
+      };
+      readonly holdCardClose?: {
+        readonly started: Deferred.Deferred<void>;
+        readonly release: Deferred.Deferred<void>;
+      };
+      readonly cardStreamEnds?: boolean;
+      /** The first card's write fails before it commits. */
+      readonly cardWriteFails?: boolean;
+      /** The user narrows the parent's modes while its card waits. */
+      readonly parentModesNarrowOnAsk?: boolean;
+      /** The thread's selection, as `t3_thread_configure` leaves it, while its run keeps its own. */
+      readonly threadSelection?: Parameters<typeof parentProjection>[1];
+      /** What the parent's thread and run start on, instead of `inherited`. */
+      readonly selection?: Parameters<typeof parentProjection>[1];
+      /** The request was already accepted, so this call replays its receipt. */
+      readonly acceptedReceipt?: boolean;
+    }) =>
       Effect.gen(function* () {
-        const peerId = ProviderInstanceId.make("codex-subscription-2");
-        const driver = ProviderDriverKind.make("codex");
-        const inherited = {
-          instanceId: codexInstanceId,
-          model: "gpt-5.4",
-          options: [
-            { id: "reasoningEffort", value: "high" },
-            { id: "serviceTier", value: "priority" },
-          ],
-        } as const;
-        const override = [{ id: "reasoningEffort", value: "max" }] as const;
-        const cases = [
-          {
-            name: "partial override",
-            target: { options: override },
-            expected: { ...inherited, options: [...override, inherited.options[1]] },
+        const commands: Array<OrchestrationV2ServerCommand> = [];
+        const remoteDelegations: Array<unknown> = [];
+        const cards = new Map<string, Card>();
+        // One entry per call that subscribed to its card's events after its first read.
+        const subscribed = yield* Queue.unbounded<void>();
+        const cardEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+        let parentRunEnded = false;
+        let parentClosed = false;
+        const stopRequests: Array<unknown> = [];
+        let parentModes = {};
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: codexInstanceId,
+          model: inherited.model,
+          status: "running",
+          result: null,
+        };
+        const remoteTask = {
+          ...task,
+          childThreadId: null,
+          remoteChild: {
+            environmentId: remoteEnvironmentId,
+            threadId: ThreadId.make("thread:remote-child"),
+            label: "Providers box",
           },
-          {
-            name: "clear with array",
-            target: { options: [] },
-            expected: { ...inherited, options: [] },
-          },
-          {
-            name: "clear with object",
-            target: { options: {} },
-            expected: { ...inherited, options: [] },
-          },
-          {
-            name: "change model",
-            target: { model: "other-model" },
-            expected: { instanceId: codexInstanceId, model: "other-model" },
-          },
-          {
-            name: "change provider with override",
-            target: { providerInstanceId: peerId, options: { reasoningEffort: "max" } },
-            expected: { instanceId: peerId, model: inherited.model, options: override },
-          },
-          {
-            name: "old Ultracode effort level",
-            target: { model: "ultracode-model", options: { effort: "ultracode" } },
-            expected: {
-              instanceId: codexInstanceId,
-              model: "ultracode-model",
-              options: [
-                { id: "effort", value: "xhigh" },
-                { id: "ultracode", value: true },
+        };
+        const delegations = () =>
+          commands.filter((command) => command.type === "delegated_task.request");
+        const parent = () => {
+          const selection = input.selection ?? inherited;
+          const projection = parentProjection(
+            delegations().length > 0 ? [task] : remoteDelegations.length > 0 ? [remoteTask] : [],
+            selection,
+          );
+          return {
+            ...projection,
+            thread: {
+              ...projection.thread,
+              ...parentModes,
+              ...(parentClosed && input.parentClosesOnAsk === "archived"
+                ? { archivedAt: projection.thread.updatedAt }
+                : {}),
+              ...(parentClosed && input.parentClosesOnAsk === "deleted"
+                ? { deletedAt: projection.thread.updatedAt }
+                : {}),
+              modelSelection: input.threadSelection ?? selection,
+            },
+            runs: projection.runs.map((run) =>
+              parentRunEnded ? { ...run, status: "completed" } : run,
+            ),
+            turnItems: [...cards.values(), ...stopRequests],
+          } as unknown as OrchestrationV2ThreadProjection;
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(input.acceptedReceipt === true),
+            assertProviderInstanceEnabled: () => Effect.void,
+            getThreadEventSequence: () => Effect.succeed(0),
+            streamStoredEventsFrom: (filter) =>
+              filter?.eventType === "turn-item.updated"
+                ? Stream.unwrap(
+                    Queue.offer(subscribed, undefined).pipe(
+                      Effect.as(
+                        input.cardStreamEnds === true ? Stream.empty : Stream.fromQueue(cardEvents),
+                      ),
+                    ),
+                  )
+                : input.cardStreamEnds === true
+                  ? Stream.empty
+                  : Stream.never,
+            getThreadRecords: (threadId) =>
+              Effect.succeed(threadId === parentThreadId ? parent() : childProjection),
+            dispatch: (command) =>
+              Effect.gen(function* () {
+                commands.push(command);
+                if (command.type === "delegation_approval.record") {
+                  const existing = cards.get(command.turnItemId);
+                  if (existing === undefined) {
+                    if (input.cardWriteFails === true) {
+                      return yield* Effect.fail(new Error("simulated card write failure") as never);
+                    }
+                    parentRunEnded = input.parentRunEndsOnAsk === true;
+                    if (input.parentStopsOnAsk === true) {
+                      stopRequests.push({ type: "run_interrupt_request", runId: command.runId });
+                    }
+                    if (input.parentModesNarrowOnAsk === true) {
+                      parentModes = { runtimeMode: "approval-required", interactionMode: "plan" };
+                    }
+                    cards.set(command.turnItemId, {
+                      id: command.turnItemId,
+                      type: "delegation_approval",
+                      runId: command.runId,
+                      proposed: command.proposed,
+                      ...(command.environmentId === undefined
+                        ? {}
+                        : { environmentId: command.environmentId }),
+                      approvalStatus: input.decide(command),
+                    });
+                    parentClosed = input.parentClosesOnAsk !== undefined;
+                    if (input.holdCardWrite !== undefined) {
+                      yield* Deferred.succeed(input.holdCardWrite.committed, undefined);
+                      yield* Deferred.await(input.holdCardWrite.release);
+                    }
+                  } else if (existing.approvalStatus === "pending") {
+                    if (input.holdCardClose !== undefined) {
+                      yield* Deferred.succeed(input.holdCardClose.started, undefined);
+                      yield* Deferred.await(input.holdCardClose.release);
+                    }
+                    existing.approvalStatus = command.approvalStatus;
+                  }
+                  return { sequence: 1, storedEvents: [] } as never;
+                }
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([
+            {
+              ...providerSnapshot({ instanceId: codexInstanceId, driver, model: inherited.model }),
+              models: [
+                ...[inherited.model, "other-model"].map((model) => ({
+                  slug: model,
+                  name: model,
+                  isCustom: false,
+                  capabilities: null,
+                  // The probe marks its current model as the default, which a running task need not be on.
+                  ...(model === "other-model" ? { aliases: [ANTIGRAVITY_DEFAULT_MODEL] } : {}),
+                })),
+                {
+                  slug: "ultracode-model",
+                  name: "ultracode-model",
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "effort",
+                        label: "Reasoning",
+                        type: "select",
+                        options: [
+                          { id: "high", label: "High" },
+                          { id: "xhigh", label: "Extra High" },
+                        ],
+                      },
+                      { id: "ultracode", label: "Ultracode", type: "boolean" },
+                    ],
+                  },
+                },
               ],
             },
-          },
-        ] as const;
-        for (const testCase of cases) {
-          const commands: Array<unknown> = [];
-          const task = {
-            id: taskId,
-            threadId: parentThreadId,
-            origin: "app_owned",
-            childThreadId,
-            providerInstanceId: testCase.expected.instanceId,
-            model: testCase.expected.model,
-            status: "running",
-            result: null,
+            providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
+          ]),
+          adapterRegistryLayer([codexInstanceId, peerId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({
+            delegate: (_scope, delegated) =>
+              Effect.sync(() => {
+                remoteDelegations.push(delegated);
+                return { taskId };
+              }),
+          }),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))),
+        );
+        const approvals = () =>
+          commands.filter((command) => command.type === "delegation_approval.record");
+        const answer = (approvalStatus: "approved" | "declined") =>
+          Effect.forEach(
+            [...cards.values()].filter((card) => card.approvalStatus === "pending"),
+            (card) => {
+              card.approvalStatus = approvalStatus;
+              return Queue.offer(cardEvents, {
+                sequence: commands.length + 1,
+                event: { type: "turn-item.updated", threadId: parentThreadId, payload: card },
+              } as unknown as OrchestrationV2StoredEvent);
+            },
+            { discard: true },
+          );
+        const stop = Effect.gen(function* () {
+          const item = {
+            id: "interrupt:parent",
+            type: "run_interrupt_request",
+            runId: parentRunId,
           };
-          const dependencies = Layer.mergeAll(
-            NodeServices.layer,
-            NodeCrypto.layer,
-            Layer.mock(ThreadManagementService.ThreadManagementService)({
-              hasReceipt: () => Effect.succeed(false),
-              assertProviderInstanceEnabled: () => Effect.void,
-              getThreadRecords: (threadId) =>
-                Effect.succeed(
-                  threadId === parentThreadId
-                    ? parentProjection(commands.length > 0 ? [task] : [], inherited)
-                    : childProjection,
-                ),
-              dispatch: (command) =>
-                Effect.sync(() => {
-                  commands.push(command);
-                  return {
-                    sequence: 1,
-                    storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
-                  } as never;
-                }),
-            }),
-            ServerSettings.layerTest(),
-            providerRegistryLayer([
-              {
-                ...providerSnapshot({
-                  instanceId: codexInstanceId,
-                  driver,
-                  model: inherited.model,
-                }),
-                models: [
-                  ...[inherited.model, "other-model"].map((model) => ({
-                    slug: model,
-                    name: model,
-                    isCustom: false,
-                    capabilities: null,
-                  })),
-                  {
-                    slug: "ultracode-model",
-                    name: "ultracode-model",
-                    isCustom: false,
-                    capabilities: {
-                      optionDescriptors: [
-                        {
-                          id: "effort",
-                          label: "Reasoning",
-                          type: "select",
-                          options: [
-                            { id: "high", label: "High" },
-                            { id: "xhigh", label: "Extra High" },
-                          ],
-                        },
-                        { id: "ultracode", label: "Ultracode", type: "boolean" },
-                      ],
-                    },
-                  },
+          stopRequests.push(item);
+          yield* Queue.offer(cardEvents, {
+            sequence: commands.length + 1,
+            event: { type: "turn-item.updated", threadId: parentThreadId, payload: item },
+          } as unknown as OrchestrationV2StoredEvent);
+        });
+        return {
+          service,
+          commands,
+          delegations,
+          approvals,
+          cards,
+          remoteDelegations,
+          subscribed,
+          answer,
+          stop,
+        };
+      });
+
+    const delegate = (
+      service: OrchestratorMcpService.OrchestratorMcpService["Service"],
+      target: unknown,
+      clientRequestId: string,
+    ) =>
+      Effect.gen(function* () {
+        return yield* service.delegateTask(scope, {
+          task: "Review the change.",
+          ...(target === undefined ? {} : { target: yield* decodeTarget(target) }),
+          mode: "async",
+          clientRequestId,
+        });
+      });
+
+    it.effect(
+      "inherits options, merges overrides, and asks the user before any provider, model or option change",
+      () =>
+        Effect.gen(function* () {
+          const override = [{ id: "reasoningEffort", value: "max" }] as const;
+          const cases = [
+            { name: "omitted target", target: undefined, expected: inherited, asks: false },
+            {
+              name: "inherited options restated in another order",
+              target: { options: [inherited.options[1], inherited.options[0]] },
+              expected: inherited,
+              asks: false,
+            },
+            {
+              name: "partial override",
+              target: { options: override },
+              expected: { ...inherited, options: [...override, inherited.options[1]] },
+              asks: true,
+            },
+            {
+              name: "clear with array",
+              target: { options: [] },
+              expected: { ...inherited, options: [] },
+              asks: true,
+            },
+            {
+              name: "clear with object",
+              target: { options: {} },
+              expected: { ...inherited, options: [] },
+              asks: true,
+            },
+            {
+              name: "change model",
+              target: { model: "other-model" },
+              expected: { instanceId: codexInstanceId, model: "other-model" },
+              asks: true,
+            },
+            {
+              name: "change provider with override",
+              target: { providerInstanceId: peerId, options: { reasoningEffort: "max" } },
+              expected: { instanceId: peerId, model: inherited.model, options: override },
+              asks: true,
+            },
+            {
+              name: "old Ultracode effort level",
+              target: { model: "ultracode-model", options: { effort: "ultracode" } },
+              expected: {
+                instanceId: codexInstanceId,
+                model: "ultracode-model",
+                options: [
+                  { id: "effort", value: "xhigh" },
+                  { id: "ultracode", value: true },
                 ],
               },
-              providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
-            ]),
-            adapterRegistryLayer([codexInstanceId, peerId]),
-            Layer.mock(ProjectService.ProjectService)({}),
-            Layer.mock(SecretRequests.SecretRequests)({}),
-            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-          );
-          yield* Effect.gen(function* () {
-            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+              asks: true,
+            },
+          ] as const;
+          for (const testCase of cases) {
+            const { service, delegations, approvals } = yield* harness({
+              decide: () => "approved",
+            });
             const capabilities = yield* service.capabilities(scope);
             assert.deepEqual(capabilities.inheritedOptions, inherited.options);
-            yield* service.delegateTask(scope, {
-              task: "Review the change.",
-              target: yield* decodeTarget(testCase.target),
-              mode: "async",
-              clientRequestId: testCase.name,
-            });
+            yield* delegate(service, testCase.target, testCase.name);
             assert.deepEqual(
-              (commands[0] as { modelSelection: unknown }).modelSelection,
-              testCase.expected,
+              approvals().map((command) => [command.approvalStatus, command.proposed]),
+              testCase.asks ? [["pending", testCase.expected]] : [],
               testCase.name,
             );
-          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+            assert.deepEqual(
+              delegations().map((command) => command.modelSelection),
+              [testCase.expected],
+              testCase.name,
+            );
+          }
+        }),
+    );
+
+    it.effect(
+      "asks before an omitted target inherits a model the agent set after its run began",
+      () =>
+        Effect.gen(function* () {
+          const configured = {
+            instanceId: codexInstanceId,
+            model: "other-model",
+            options: [{ id: "reasoningEffort", value: "max" }],
+          } as const;
+          for (const target of [undefined, { environmentId: remoteEnvironmentId }]) {
+            const { service, delegations, approvals, remoteDelegations } = yield* harness({
+              decide: () => "declined",
+              threadSelection: configured,
+            });
+            const failure = yield* delegate(service, target, "configured").pipe(Effect.flip);
+            assert.propertyVal(failure, "code", "delegation_not_approved");
+            // Without a target it would ask again, so the refusal does not suggest that.
+            assert.notInclude(failure.message, "without a target");
+            assert.deepEqual(
+              approvals().map(
+                (command) =>
+                  command.type === "delegation_approval.record" && [
+                    command.current,
+                    command.proposed,
+                  ],
+              ),
+              [[inherited, configured]],
+            );
+            assert.deepEqual(delegations(), []);
+            assert.deepEqual(remoteDelegations, []);
+          }
+        }),
+    );
+
+    it.effect("starts no child when the user declines or the parent run ends first", () =>
+      Effect.gen(function* () {
+        for (const setup of [
+          { decide: () => "declined" as const },
+          { decide: () => "pending" as const, parentRunEndsOnAsk: true },
+          // Stop lands after the approval, while the run still waits for its provider to stop.
+          { decide: () => "approved" as const, parentStopsOnAsk: true },
+          {
+            decide: () => "approved" as const,
+            parentStopsOnAsk: true,
+            target: { environmentId: remoteEnvironmentId },
+          },
+          ...(["archived", "deleted"] as const).flatMap((parentClosesOnAsk) => [
+            { decide: (): "approved" => "approved", parentClosesOnAsk },
+            {
+              decide: (): "approved" => "approved",
+              parentClosesOnAsk,
+              target: { environmentId: remoteEnvironmentId },
+            },
+          ]),
+        ]) {
+          const { service, delegations, approvals, remoteDelegations } = yield* harness(setup);
+          const failure = yield* delegate(
+            service,
+            { ...("target" in setup ? setup.target : {}), model: "other-model" },
+            "unapproved",
+          ).pipe(Effect.flip);
+          assert.propertyVal(failure, "code", "delegation_not_approved");
+          assert.deepEqual(delegations(), []);
+          assert.deepEqual(remoteDelegations, []);
+          assert.deepEqual(
+            approvals().map((command) => command.approvalStatus),
+            setup.decide() === "declined" ? ["pending"] : ["pending", "cancelled"],
+          );
+        }
+        for (const target of [
+          { model: "other-model" },
+          { model: "other-model", environmentId: remoteEnvironmentId },
+        ]) {
+          const waiting = yield* harness({ decide: () => "pending" });
+          const call = yield* delegate(waiting.service, target, "stop-while-waiting").pipe(
+            Effect.forkChild,
+          );
+          yield* Queue.take(waiting.subscribed);
+          yield* waiting.stop;
+          const failure = yield* Fiber.join(call).pipe(Effect.flip);
+          assert.propertyVal(failure, "code", "delegation_not_approved");
+          assert.deepEqual(
+            [...waiting.cards.values()].map((card) => card.approvalStatus),
+            ["cancelled"],
+          );
+          assert.deepEqual(waiting.delegations(), []);
+          assert.deepEqual(waiting.remoteDelegations, []);
         }
       }),
-  );
+    );
 
-  it.effect("accepts the inherited options it reports back as a delegate target", () =>
-    Effect.gen(function* () {
-      // t3_thread_launch keeps a model selection as given, so a thread can hold an option its model lacks.
-      const inherited = {
-        instanceId: codexInstanceId,
-        model: "gpt-5.4",
-        options: [
-          { id: "reasoningEffort", value: "low" },
-          { id: "fastMode", value: false },
-        ],
-      } as const;
-      const commands: Array<{ readonly modelSelection?: unknown }> = [];
-      const task = {
-        id: taskId,
-        threadId: parentThreadId,
-        origin: "app_owned",
-        childThreadId,
-        providerInstanceId: codexInstanceId,
-        model: inherited.model,
-        status: "running",
-        result: null,
-      };
-      const dependencies = Layer.mergeAll(
-        NodeServices.layer,
-        NodeCrypto.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
-          assertProviderInstanceEnabled: () => Effect.void,
-          getThreadRecords: (threadId) =>
-            Effect.succeed(
-              threadId === parentThreadId
-                ? parentProjection(commands.length > 0 ? [task] : [], inherited)
-                : childProjection,
+    it.effect("a child approved after the parent's modes narrowed runs at the narrower modes", () =>
+      Effect.gen(function* () {
+        const inheriting = yield* harness({
+          decide: () => "approved",
+          parentModesNarrowOnAsk: true,
+        });
+        yield* delegate(inheriting.service, { model: "other-model" }, "narrowed-inherited");
+        assert.deepEqual(
+          inheriting
+            .delegations()
+            .map(
+              (command) =>
+                command.type === "delegated_task.request" && [
+                  command.runtimeMode,
+                  command.interactionMode,
+                ],
             ),
-          dispatch: (command) =>
-            Effect.sync(() => {
-              commands.push(command as { readonly modelSelection?: unknown });
-              return {
-                sequence: 1,
-                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
-              } as never;
-            }),
-        }),
-        ServerSettings.layerTest(),
-        providerRegistryLayer([
-          {
-            ...providerSnapshot({
-              instanceId: codexInstanceId,
-              driver: ProviderDriverKind.make("codex"),
-            }),
-            models: [
-              {
-                slug: inherited.model,
-                name: inherited.model,
-                isCustom: false,
-                capabilities: {
-                  optionDescriptors: [
-                    {
-                      id: "reasoningEffort",
-                      label: "Reasoning",
-                      type: "select",
-                      options: [{ id: "low", label: "Low" }],
-                    },
+          [["approval-required", "plan"]],
+        );
+        const explicit = yield* harness({ decide: () => "approved", parentModesNarrowOnAsk: true });
+        const failure = yield* explicit.service
+          .delegateTask(scope, {
+            task: "Review the change.",
+            target: yield* decodeTarget({ model: "other-model" }),
+            runtimeMode: "full-access",
+            mode: "async",
+            clientRequestId: "narrowed-explicit",
+          })
+          .pipe(Effect.flip);
+        assert.propertyVal(failure, "code", "runtime_mode_escalation_denied");
+        assert.deepEqual(explicit.delegations(), []);
+      }),
+    );
+
+    it.effect("an approval covers only the exact target it showed the user", () =>
+      Effect.gen(function* () {
+        const { service, delegations, cards, subscribed, answer } = yield* harness({
+          decide: () => "pending",
+        });
+        const approved = yield* delegate(service, { model: "other-model" }, "same-key").pipe(
+          Effect.forkChild,
+        );
+        // The answer lands after the call's first read, so only its stored event can start the task.
+        yield* Effect.raceFirst(Queue.take(subscribed), Fiber.await(approved));
+        assert.deepEqual(delegations(), []);
+        yield* answer("approved");
+        yield* Fiber.join(approved);
+        // The same request key with another target needs its own answer.
+        const changed = yield* delegate(
+          service,
+          { model: "other-model", options: { reasoningEffort: "max" } },
+          "same-key",
+        ).pipe(Effect.forkChild);
+        // The call waits on its own card; abandoning it closes that card unanswered.
+        yield* Effect.raceFirst(Queue.take(subscribed), Fiber.await(changed));
+        yield* Fiber.interrupt(changed);
+        assert.equal(delegations().length, 1);
+        assert.deepEqual(
+          [...cards.values()].map((card) => card.approvalStatus),
+          ["approved", "cancelled"],
+        );
+
+        // Abandoned once its card is written but before it starts waiting, it still closes the card.
+        const holdCardWrite = {
+          committed: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        const held = yield* harness({ decide: () => "pending", holdCardWrite });
+        const writing = yield* delegate(held.service, { model: "other-model" }, "held").pipe(
+          Effect.forkChild,
+        );
+        yield* Deferred.await(holdCardWrite.committed);
+        const interrupting = yield* Fiber.interrupt(writing).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(holdCardWrite.release, undefined);
+        yield* Fiber.join(interrupting);
+        assert.deepEqual(
+          [...held.cards.values()].map((card) => card.approvalStatus),
+          ["cancelled"],
+        );
+        const holdCardClose = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        const ended = yield* harness({
+          decide: () => "pending",
+          holdCardClose,
+          cardStreamEnds: true,
+        });
+        const closing = yield* delegate(ended.service, { model: "other-model" }, "ended").pipe(
+          Effect.forkChild,
+        );
+        yield* Deferred.await(holdCardClose.started);
+        const interruptingClose = yield* Fiber.interrupt(closing).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(holdCardClose.release, undefined);
+        yield* Fiber.join(interruptingClose);
+        assert.deepEqual(
+          [...ended.cards.values()].map((card) => card.approvalStatus),
+          ["cancelled"],
+        );
+        assert.deepEqual(ended.delegations(), []);
+        // A write that never committed leaves no card for a close to create.
+        const failed = yield* harness({ decide: () => "pending", cardWriteFails: true });
+        const refused = yield* delegate(failed.service, { model: "other-model" }, "failed").pipe(
+          Effect.flip,
+        );
+        assert.propertyVal(refused, "code", "orchestration_error");
+        assert.deepEqual(
+          failed.approvals().map((command) => command.approvalStatus),
+          ["pending"],
+        );
+        assert.deepEqual(failed.delegations(), []);
+      }),
+    );
+
+    it.effect(
+      "asks before a linked environment runs a changed target, and refuses an unpinned default",
+      () =>
+        Effect.gen(function* () {
+          const proposed = { instanceId: codexInstanceId, model: "other-model", options: [] };
+          for (const decision of ["declined", "approved"] as const) {
+            const { service, approvals, remoteDelegations } = yield* harness({
+              decide: () => decision,
+            });
+            const result = yield* delegate(
+              service,
+              { environmentId: remoteEnvironmentId, model: "other-model", options: [] },
+              `remote-${decision}`,
+            ).pipe(Effect.result);
+            assert.deepEqual(
+              approvals().map(
+                (command) =>
+                  command.type === "delegation_approval.record" && [
+                    command.environmentId,
+                    command.proposed,
                   ],
-                },
-              },
+              ),
+              [[remoteEnvironmentId, proposed]],
+            );
+            // An approved task goes there with the exact selection the card showed.
+            assert.deepEqual(
+              remoteDelegations.map(
+                (delegated) => (delegated as { modelSelection: unknown }).modelSelection,
+              ),
+              decision === "approved" ? [proposed] : [],
+            );
+            assert.isTrue(
+              decision === "approved" ? Result.isSuccess(result) : Result.isFailure(result),
+            );
+          }
+          // The inherited target goes there without a card.
+          const { service, approvals, remoteDelegations } = yield* harness({
+            decide: () => "pending",
+          });
+          yield* delegate(service, { environmentId: remoteEnvironmentId }, "remote-inherited");
+          assert.deepEqual(approvals(), []);
+          assert.equal(remoteDelegations.length, 1);
+
+          // The receiver resolves this default when the task starts, so no card can name it.
+          const unresolved = { instanceId: codexInstanceId, model: ANTIGRAVITY_DEFAULT_MODEL };
+          for (const [selection, target, code] of [
+            [unresolved, { environmentId: remoteEnvironmentId }, "target_required"],
+            [
+              inherited,
+              { environmentId: remoteEnvironmentId, model: ANTIGRAVITY_DEFAULT_MODEL },
+              "target_required",
             ],
-          },
-        ]),
-        adapterRegistryLayer([codexInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-      );
-      yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const { inheritedOptions } = yield* service.capabilities(scope);
-        yield* service.delegateTask(scope, {
-          task: "Review the change.",
-          target: yield* decodeTarget({ options: inheritedOptions }),
-          mode: "async",
-        });
-        assert.deepEqual(commands[0]?.modelSelection, {
-          ...inherited,
-          options: [inherited.options[0]],
-        });
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
-    }),
-  );
+            // A local child resolves it again when it starts, so inheriting it is refused too.
+            [unresolved, undefined, "target_required"],
+            [inherited, { model: ANTIGRAVITY_DEFAULT_MODEL }, "model_unavailable"],
+          ] as const) {
+            const run = yield* harness({ decide: () => "approved", selection });
+            const refused = yield* delegate(run.service, target, "unresolved-default").pipe(
+              Effect.flip,
+            );
+            assert.propertyVal(refused, "code", code);
+            assert.deepEqual(run.approvals(), []);
+            assert.deepEqual(run.remoteDelegations, []);
+            assert.deepEqual(run.delegations(), []);
+          }
+          // A request accepted before this check replays its receipt instead of failing.
+          const replayed = yield* harness({
+            decide: () => "approved",
+            selection: unresolved,
+            acceptedReceipt: true,
+          });
+          yield* delegate(replayed.service, undefined, "accepted-default");
+          assert.deepEqual(
+            replayed.delegations().map((command) => command.modelSelection.model),
+            [ANTIGRAVITY_DEFAULT_MODEL],
+          );
+          // A parent on that default names no model a concrete target matches, so the user is asked.
+          const concrete = yield* harness({ decide: () => "approved", selection: unresolved });
+          yield* delegate(
+            concrete.service,
+            { environmentId: remoteEnvironmentId, model: "other-model" },
+            "remote-concrete",
+          ).pipe(Effect.result);
+          const concreteProposed = { instanceId: codexInstanceId, model: "other-model" };
+          assert.deepEqual(
+            concrete
+              .approvals()
+              .map(
+                (command) =>
+                  command.type === "delegation_approval.record" && [
+                    command.current,
+                    command.proposed,
+                  ],
+              ),
+            [[unresolved, concreteProposed]],
+          );
+          assert.deepEqual(
+            concrete.remoteDelegations.map(
+              (delegated) => (delegated as { modelSelection: unknown }).modelSelection,
+            ),
+            [concreteProposed],
+          );
+        }),
+    );
+
+    it.effect(
+      "asks before a child drops an option its catalog no longer lists, and accepts the options it reports",
+      () =>
+        Effect.gen(function* () {
+          // t3_thread_launch keeps a selection as given, and a refreshed catalog can drop an option a run applied.
+          const selection = {
+            instanceId: codexInstanceId,
+            model: "ultracode-model",
+            options: [
+              { id: "effort", value: "high" },
+              { id: "fastMode", value: false },
+            ],
+          } as const;
+          const listed = { ...selection, options: [selection.options[0]] };
+          for (const reported of [false, true]) {
+            for (const decision of ["approved", "declined"] as const) {
+              const { service, approvals, delegations } = yield* harness({
+                decide: () => decision,
+                selection,
+              });
+              const { inheritedOptions } = yield* service.capabilities(scope);
+              assert.deepEqual(inheritedOptions, listed.options);
+              const result = yield* delegate(
+                service,
+                reported ? { options: inheritedOptions } : undefined,
+                `unlisted-${reported}-${decision}`,
+              ).pipe(Effect.result);
+              if (decision === "declined") {
+                assert.isTrue(Result.isFailure(result));
+                if (Result.isFailure(result)) {
+                  assert.propertyVal(result.failure, "code", "delegation_not_approved");
+                  assert.notInclude(result.failure.message, "without a target");
+                }
+              } else {
+                assert.isTrue(Result.isSuccess(result));
+              }
+              assert.deepEqual(
+                approvals().map(
+                  (command) =>
+                    command.type === "delegation_approval.record" && [
+                      command.current,
+                      command.proposed,
+                    ],
+                ),
+                [[selection, listed]],
+              );
+              assert.deepEqual(
+                delegations().map((command) => command.modelSelection),
+                decision === "approved" ? [listed] : [],
+              );
+            }
+          }
+        }),
+    );
+  });
 
   describe("resolveRuntimeMode", () => {
     const muse = {

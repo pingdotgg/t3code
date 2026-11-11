@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   type ManagedPolicySummary,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -22,6 +23,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
 const projectId = ProjectId.make("project:runtime-policy");
+const parentId = ThreadId.make("thread:runtime-policy-parent");
 const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = {
   instanceId: providerInstanceId,
@@ -154,6 +156,37 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(yield* modeFor(grokInstanceId, "auto"), "auto");
       assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
       assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
+    }),
+  );
+
+  it.effect("holds a delegated task, here or from a linked environment, to its options", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const thread = makeThread({ now: yield* DateTime.now, worktreePath: null });
+      const strict = (delegation: Partial<OrchestrationV2AppThread>) =>
+        policy
+          .resolve({ thread: { ...thread, ...delegation }, modelSelection })
+          .pipe(Effect.map((resolved) => resolved.strictModelOptions === true));
+
+      assert.isFalse(yield* strict({}));
+      assert.isTrue(
+        yield* strict({
+          lineage: {
+            ...thread.lineage,
+            parentThreadId: parentId,
+            relationshipToParent: "subagent",
+          },
+        }),
+      );
+      assert.isTrue(
+        yield* strict({
+          delegatedFrom: {
+            environmentId: EnvironmentId.make("environment:linked"),
+            threadId: parentId,
+            title: "Parent",
+          },
+        }),
+      );
     }),
   );
 });

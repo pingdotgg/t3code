@@ -154,6 +154,21 @@ export function mergeOlderHistoryIntoProjection(
       ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),
     ];
   }
+  // Consent rows can be retained below the history cursor while the intervening rows are unloaded.
+  for (const row of projection.visibleTurnItems) {
+    if (row.item.type !== "delegation_approval" || row.sourceThreadId !== projection.thread.id)
+      continue;
+    const index = visible.indexOf(row);
+    const before = visible.findIndex(
+      (candidate) =>
+        candidate.sourceThreadId === row.sourceThreadId &&
+        candidate.item.ordinal > row.item.ordinal,
+    );
+    if (before >= 0 && index > before) {
+      visible.splice(index, 1);
+      visible.splice(before, 0, row);
+    }
+  }
   if (
     visible.length === projection.visibleTurnItems.length &&
     visible.every((row, index) => row === projection.visibleTurnItems[index])

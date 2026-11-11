@@ -11,6 +11,7 @@ import { ChevronDownIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import { EnvironmentSubagentAvatar, SubagentElapsed, V2LifecycleRow } from "./V2LifecycleRow";
+import { DelegationApprovalCard } from "./DelegationApprovalCard";
 import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimelineRowCtx, type TimelineRow } from "./timelineRowContext";
@@ -25,6 +26,15 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   if (item.type === "secret_request") {
     return (
       <SecretRequestCard
+        environmentId={ctx.activeThreadEnvironmentId}
+        item={item}
+        visibility={visibility}
+      />
+    );
+  }
+  if (item.type === "delegation_approval") {
+    return (
+      <DelegationApprovalCard
         environmentId={ctx.activeThreadEnvironmentId}
         item={item}
         visibility={visibility}

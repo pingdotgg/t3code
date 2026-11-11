@@ -300,6 +300,8 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   /** Option selections (e.g. reasoningEffort) for the session and `startTurn`. */
   readonly options?: ModelSelection["options"];
   readonly runtimeMode?: RuntimeMode;
+  readonly strictModelOptions?: boolean;
+  readonly interactionMode?: "default" | "plan";
   /** Holds the script's inbound frames at labels the test releases. */
   readonly replayGate?: ProviderReplayGate;
   readonly testHooks?: Parameters<typeof makeKiroAdapterV2>[0]["testHooks"];
@@ -378,8 +380,11 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   };
   const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
     runtimeMode: input.runtimeMode ?? "approval-required",
-    interactionMode: "default",
+    interactionMode: input.interactionMode ?? "default",
     cwd: replayDir,
+    ...(input.strictModelOptions === undefined
+      ? {}
+      : { strictModelOptions: input.strictModelOptions }),
   });
   yield* Effect.gen(function* () {
     const session = yield* adapter.openSession({
@@ -403,7 +408,7 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
           providerInstanceId: instanceId,
           modelSelection: turnSelection,
           runtimeMode: runtimePolicy.runtimeMode,
-          interactionMode: "default",
+          interactionMode: runtimePolicy.interactionMode,
           branch: null,
           worktreePath: null,
           activeProviderThreadId: providerThread.id,
@@ -956,6 +961,113 @@ describe("KiroAdapterV2 agents", () => {
           yield* startTurn;
           assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
         }),
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+});
+
+describe("KiroAdapterV2 delegated task options", () => {
+  const agentOptions = [modeOption, kiroModelOption("auto"), autopilotOption("on")];
+  it.effect.each([
+    {
+      name: "an agent the session does not list",
+      options: [{ id: "mode", value: "deleted-agent" }],
+      frames: [],
+    },
+    {
+      name: "an approved agent replaced by plan mode",
+      options: [{ id: "mode", value: "vibe" }],
+      interactionMode: "plan" as const,
+      frames: [],
+      planFrames: [
+        setConfig("mode", "plan"),
+        configResult([
+          { ...modeOption, currentValue: "plan" },
+          kiroModelOption("auto"),
+          autopilotOption("off"),
+        ]),
+      ],
+    },
+    {
+      name: "an effort the model does not offer",
+      options: reasoning("xhigh"),
+      model: "claude-opus-4.6",
+      frames: [
+        setConfig("model", "claude-opus-4.6"),
+        configResult([
+          modeOption,
+          kiroModelOption("claude-opus-4.6"),
+          autopilotOption("on"),
+          effortOption("high", CLAUDE_4_6_EFFORT_LEVELS),
+        ]),
+      ],
+    },
+    {
+      name: "a model Kiro advertises after its write and plan mode then replaces",
+      options: [],
+      model: "claude-opus-5.5",
+      interactionMode: "plan" as const,
+      setup: [modeOption, autopilotOption("on")],
+      error: "AcpModelSelectionError",
+      frames: [
+        setConfig("model", "claude-opus-5.5"),
+        configResult([modeOption, autopilotOption("on")]),
+        setConfig("autopilot", "off"),
+        configResult([modeOption, autopilotOption("off")]),
+        update({
+          sessionUpdate: "config_option_update",
+          configOptions: [modeOption, kiroModelOption("claude-opus-5.5"), autopilotOption("off")],
+        }),
+        // Kiro's planner runs its own model. Plan mode writes the mode, then each mode option.
+        ...[1, 2].flatMap(() => [
+          setConfig("mode", "plan"),
+          configResult([
+            { ...modeOption, currentValue: "plan" },
+            kiroModelOption("claude-sonnet-4.5"),
+            autopilotOption("off"),
+          ]),
+        ]),
+      ],
+      ownsPolicyFrames: true,
+    },
+  ])("does not start a delegated task on $name, which Kiro would skip", (input) =>
+    Effect.gen(function* () {
+      const refused = yield* runKiroScript({
+        scenario: `strict-${input.options[0]?.id ?? "late-model"}`,
+        strictModelOptions: true,
+        ...("interactionMode" in input ? { interactionMode: input.interactionMode } : {}),
+        options: input.options,
+        ...(input.model === undefined ? {} : { model: input.model }),
+        frames: [
+          outbound("initialize"),
+          answer("initialize", KIRO_V3_INITIALIZE),
+          outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+          answer("session/new", sessionSetup("setup" in input ? input.setup : agentOptions)),
+          ...input.frames,
+          ...("ownsPolicyFrames" in input
+            ? []
+            : [
+                setConfig("autopilot", "off"),
+                configResult([
+                  modeOption,
+                  kiroModelOption(input.model ?? "auto"),
+                  autopilotOption("off"),
+                  ...(input.model === undefined
+                    ? []
+                    : [effortOption("high", CLAUDE_4_6_EFFORT_LEVELS)]),
+                ]),
+              ]),
+          ...("planFrames" in input ? input.planFrames : []),
+          ...closeSession,
+        ],
+        drive: () => Effect.void,
+      }).pipe(Effect.result);
+      assert.equal(refused._tag, "Failure");
+      if (refused._tag === "Failure") {
+        assert.equal(
+          (refused.failure as { readonly cause?: { readonly _tag?: string } }).cause?._tag,
+          "error" in input ? input.error : "AcpModelOptionError",
+        );
+      }
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });

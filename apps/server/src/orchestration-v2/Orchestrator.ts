@@ -662,6 +662,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.parentThreadId;
     case "secret_request.record":
     case "link_request.record":
+    case "delegation_approval.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -8452,6 +8453,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Parent run ${command.parentRunId} is stopping.`,
         });
       }
+      // Archive keeps the run active until its session detaches.
+      if (
+        parentProjection.thread.archivedAt !== null ||
+        parentProjection.thread.deletedAt !== null
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Parent thread ${command.parentThreadId} is archived or deleted.`,
+        });
+      }
       const parentNode = parentProjection.nodes.find(
         (candidate) => candidate.id === command.parentNodeId,
       );
@@ -9541,6 +9553,146 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     },
   );
+
+  /** The first answer stands: once a card leaves pending, no later record changes it. */
+  const dispatchDelegationApprovalRecord = Effect.fn(
+    "orchestrationV2.dispatch.delegationApprovalRecord",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "delegation_approval.record" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(
+        command.threadId,
+        ["runs", "nodes", "turnItems", "attempts", "providerTurns"],
+        { turnItemTypes: ["delegation_approval"], messageRoles: [] },
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    const run = projection.runs.find((candidate) => candidate.id === command.runId);
+    if (run === undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} was not found.`,
+      });
+    }
+    const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
+    if (existing !== undefined && existing.type !== "delegation_approval") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Turn item ${command.turnItemId} is not a delegation approval.`,
+      });
+    }
+    if (existing !== undefined && existing.runId !== command.runId) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Delegation approval ${command.turnItemId} belongs to another run.`,
+      });
+    }
+    // An answer keeps the card on the node it was asked from, even after a steer replaced the root.
+    if (existing === undefined && run.rootNodeId !== command.nodeId) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
+      });
+    }
+    if (
+      existing === undefined ||
+      (existing.approvalStatus === "pending" && command.approvalStatus === "approved")
+    ) {
+      // Archive keeps the run active until its session detaches, so it needs its own check.
+      if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is archived or deleted.`,
+        });
+      }
+      if (!isActiveRun(run) || (yield* stopReachedRun(command, command.threadId, run.id))) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Run ${command.runId} is not active.`,
+        });
+      }
+    }
+    const nodeId = existing?.nodeId ?? command.nodeId;
+    const now = yield* DateTime.now;
+    const unchanged =
+      existing !== undefined &&
+      (existing.approvalStatus !== "pending" || command.approvalStatus === "pending");
+    const pending = command.approvalStatus === "pending";
+    const turnItem: OrchestrationV2TurnItem = unchanged
+      ? existing
+      : {
+          id: command.turnItemId,
+          threadId: command.threadId,
+          runId: command.runId,
+          nodeId,
+          providerThreadId:
+            existing === undefined ? run.providerThreadId : existing.providerThreadId,
+          providerTurnId:
+            existing === undefined
+              ? (providerTurnForRun(projection, run)?.id ?? null)
+              : existing.providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
+          status: pending
+            ? "waiting"
+            : command.approvalStatus === "approved"
+              ? "completed"
+              : "cancelled",
+          title: command.title,
+          startedAt: existing?.startedAt ?? now,
+          completedAt: pending ? null : now,
+          updatedAt: now,
+          type: "delegation_approval",
+          task: command.task,
+          current: command.current,
+          proposed: command.proposed,
+          ...(command.environmentId === undefined ? {} : { environmentId: command.environmentId }),
+          approvalStatus: command.approvalStatus,
+        };
+    if (
+      !unchanged &&
+      command.approvalStatus === "approved" &&
+      projection.thread.snoozedUntil != null
+    ) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.unsnoozed",
+        threadId: command.threadId,
+        providerInstanceId: projection.thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...projection.thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
+      });
+    }
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      runId: command.runId,
+      nodeId,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+      payload: turnItem,
+    });
+  });
 
   /**
    * Records or updates the card for a link an agent asked the user to make.
@@ -14111,6 +14263,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "link_request.record":
         yield* dispatchLinkRequestRecord(command, events, effects);
+        break;
+      case "delegation_approval.record":
+        yield* dispatchDelegationApprovalRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

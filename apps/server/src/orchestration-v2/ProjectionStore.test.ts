@@ -2355,10 +2355,10 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
           userMessageId: MessageId.make(`message:pending-request-window:${turn}`),
           rootNodeId: nodeId,
           activeAttemptId: null,
-          status: "completed",
+          status: turn === 1 ? "running" : "completed",
           requestedAt: now,
           startedAt: now,
-          completedAt: now,
+          completedAt: turn === 1 ? null : now,
           checkpointId: null,
           contextHandoffId: null,
         },
@@ -2404,6 +2404,24 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
             requestId: request("question:resolved", nodeId, "user_input").id,
             questions: [question],
           },
+          {
+            ...itemBase(runId, nodeId, "delegation:pending"),
+            status: "waiting",
+            completedAt: null,
+            type: "delegation_approval",
+            task: "Review the change",
+            current: modelSelection,
+            proposed: { ...modelSelection, model: "gpt-5.5" },
+            approvalStatus: "pending",
+          },
+          {
+            ...itemBase(runId, nodeId, "delegation:resolved"),
+            type: "delegation_approval",
+            task: "Review the change",
+            current: modelSelection,
+            proposed: { ...modelSelection, model: "gpt-5.5" },
+            approvalStatus: "approved",
+          },
         );
         for (const [id, kind, status] of [
           ["question:pending", "user_input", "pending"],
@@ -2443,6 +2461,7 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
       TurnItemId.make("item:pending-request-window:question:pending"),
       TurnItemId.make("item:pending-request-window:approval:pending"),
     ];
+    const delegationId = TurnItemId.make("item:pending-request-window:delegation:pending");
     const { statements, tracer } = traceSqlStatements();
     const snapshot = yield* store
       .getThreadSnapshotWindow(threadId, {
@@ -2477,7 +2496,12 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
       bounded.projection.turnItems.map((item) => item.id),
       TurnItemId.make("item:pending-request-window:question:resolved"),
     );
-    for (const projection of [snapshot.projection, bounded.projection]) {
+    const smallWindow = buildBoundedThreadProjection({
+      projection: snapshot.projection,
+      snapshotSequence: snapshot.snapshotSequence,
+      policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined, maxItems: 2 },
+    });
+    for (const projection of [snapshot.projection, bounded.projection, smallWindow.projection]) {
       const visibleIds = projection.visibleTurnItems.map((row) => row.sourceItemId);
       assert.notInclude(visibleIds, TurnItemId.make("item:pending-request-window:message:1"));
       assert.includeMembers(
@@ -2485,6 +2509,18 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
         pendingCardIds,
       );
       for (const id of pendingCardIds) assert.notInclude(visibleIds, id);
+      assert.include(
+        projection.turnItems.map((item) => item.id),
+        delegationId,
+      );
+      assert.lengthOf(
+        visibleIds.filter((id) => id === delegationId),
+        1,
+      );
+      assert.notInclude(
+        projection.turnItems.map((item) => item.id),
+        TurnItemId.make("item:pending-request-window:delegation:resolved"),
+      );
     }
   }).pipe(Effect.provide(layerTest)),
 );
@@ -6939,7 +6975,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("selects the latest waiting secret only from active runs", () =>
+  it.effect("selects the latest waiting secret or delegation card only from active runs", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
@@ -6981,6 +7017,37 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* addSecret("secret:a", 2, "waiting");
       yield* addSecret("secret:b", 3, "waiting");
       yield* addSecret("secret:c", 4, "completed");
+      const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+      yield* projectionStore.apply({
+        id: EventId.make("event:approval:d"),
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        nodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("approval:d"),
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 5,
+          status: "waiting",
+          title: "Delegate a task",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: DateTime.add(now, { seconds: 5 }),
+          type: "delegation_approval",
+          task: "Review the change.",
+          current: selection,
+          proposed: { ...selection, model: "gpt-5.5" },
+          approvalStatus: "pending",
+        },
+      });
 
       yield* sql`
         UPDATE orchestration_v2_projection_runs
@@ -6996,7 +7063,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         secretOnlyShell,
         ProjectionStore.threadShellFromProjection(secretOnlyProjection),
       ]) {
-        assert.equal(shell?.pendingRuntimeRequest?.id, "secret:b");
+        assert.equal(shell?.pendingRuntimeRequest?.id, "approval:d");
         assert.isTrue(shell?.pendingRuntimeRequest?.blocking);
       }
 
@@ -7057,7 +7124,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               yield* projectionStore.getThreadProjection(threadId),
             ),
           ]) {
-            assert.equal(shell?.pendingRuntimeRequest?.id, fresh ? requestId : "secret:b");
+            assert.equal(shell?.pendingRuntimeRequest?.id, fresh ? requestId : "approval:d");
           }
         }
       }
@@ -7083,7 +7150,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const terminal = status === "completed" || status === "rolled_back";
         assert.deepEqual(
           [thread?.pendingRuntimeRequest?.id, memoryShell.pendingRuntimeRequest?.id],
-          terminal ? [requestId, requestId] : ["secret:b", "secret:b"],
+          terminal ? [requestId, requestId] : ["approval:d", "approval:d"],
         );
         assert.deepEqual(
           [thread?.pendingRuntimeRequest?.blocking, memoryShell.pendingRuntimeRequest?.blocking],

@@ -1048,7 +1048,8 @@ describe("AntigravityAdapterV2 subagent reads", () => {
 });
 
 describe("AntigravityAdapterV2 runtime mode ceiling", () => {
-  const modesSetFor = (pickedMode: string) =>
+  /** The modes the session set, or the tag of the error that refused to open it. */
+  const modesSetFor = (pickedMode: string | undefined, strictModelOptions = false) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -1086,29 +1087,44 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
         defaultModel: Effect.undefined,
       });
       const threadId = ThreadId.make("thread-antigravity-ceiling");
-      yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-antigravity-ceiling"),
-        modelSelection: {
-          instanceId,
-          model: "gemini-test-low",
-          options: [{ id: "_t3/session-mode", value: pickedMode }],
-        },
-        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "approval-required",
-          interactionMode: "default",
-          cwd: process.cwd(),
-          maxRuntimeMode: "auto-accept-edits",
-        }),
-      });
-      return modesSet;
+      const opened = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-ceiling"),
+          modelSelection: {
+            instanceId,
+            model: "gemini-test-low",
+            options:
+              pickedMode === undefined ? [] : [{ id: "_t3/session-mode", value: pickedMode }],
+          },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd: process.cwd(),
+            maxRuntimeMode: "auto-accept-edits",
+            ...(strictModelOptions ? { strictModelOptions } : {}),
+          }),
+        })
+        .pipe(Effect.result);
+      return opened._tag === "Success"
+        ? modesSet
+        : (opened.failure.cause as { readonly _tag?: string })._tag;
     }).pipe(Effect.provide(layerSession), Effect.scoped);
 
   it.effect("does not apply a picked session mode above the policy ceiling", () =>
     Effect.gen(function* () {
-      assert.deepEqual(yield* modesSetFor("yolo"), ["default"]);
-      // A mode under the ceiling is still the user's to pick.
-      assert.deepEqual(yield* modesSetFor("auto_edit"), ["default", "auto_edit"]);
+      // An ordinary session runs narrower than a mode above the ceiling, or one it cannot place.
+      for (const mode of ["yolo", "custom"]) {
+        assert.deepEqual(yield* modesSetFor(mode), ["default"]);
+        // A delegated task was approved on that mode, so it does not start without it.
+        assert.equal(yield* modesSetFor(mode, true), "AcpModelOptionError");
+      }
+      for (const strict of [false, true]) {
+        // A mode under the ceiling is still the user's to pick.
+        assert.deepEqual(yield* modesSetFor("auto_edit", strict), ["default", "auto_edit"]);
+        // With no mode approved, the task runs at its own runtime mode.
+        assert.deepEqual(yield* modesSetFor(undefined, strict), ["default"]);
+      }
     }),
   );
 });

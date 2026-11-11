@@ -24,6 +24,10 @@ Approve or reject requests in the conversation to let the agent continue. Permis
 not prevent the agent from asking questions about the task. Subagent approval requests appear in
 the parent conversation with the subagent's name, so you can respond without switching threads.
 
+In every mode, an agent that delegates a task to a different provider, model, or model options
+asks you first, in the conversation. No subagent starts until you approve that exact choice; a
+subagent on the thread's own provider, model, and options starts without asking.
+
 ## Provider differences
 
 Providers enforce permissions differently. Some read-only actions can proceed in **Supervised**.

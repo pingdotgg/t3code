@@ -5627,6 +5627,256 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  const approvedAgent = { id: "agent", value: "example" } as const;
+  it.effect.each([
+    { name: "an option the session lacks", options: [{ id: "missing", value: "x" }] },
+    {
+      name: "a value the option does not offer",
+      options: [{ id: "agent", value: "https://example.invalid/?token=test-only-private-value" }],
+    },
+    { name: "a value the agent rejects", options: [approvedAgent], set: "reject" },
+    { name: "a value the agent leaves unchanged", options: [approvedAgent], set: "ignore" },
+    { name: "an idle update resets the option", options: [approvedAgent], set: "drift" },
+    {
+      name: "the agent refuses to restore an idle update",
+      options: [approvedAgent],
+      set: "drift-reject",
+    },
+    {
+      name: "a value a later option's write resets",
+      options: [approvedAgent, { id: "mode", value: "code" }],
+      set: "reset",
+    },
+    {
+      name: "a model a later option's write resets",
+      model: "composer-2",
+      options: [{ id: "mode", value: "code" }],
+      set: "model-reset",
+    },
+    {
+      name: "a model a later option's write drops",
+      model: "composer-2",
+      options: [{ id: "mode", value: "code" }],
+      set: "model-drop",
+    },
+    {
+      name: "an idle update drops a previously exposed model",
+      model: "composer-2",
+      options: [],
+      set: "model-drift-drop",
+    },
+    {
+      name: "the flavor's own option write drops the model",
+      model: "composer-2",
+      options: [approvedAgent],
+      set: "hook-drop",
+    },
+    {
+      name: "a model the flavor's own option write resets",
+      model: "composer-2",
+      options: [approvedAgent],
+      set: "hook-reset",
+    },
+    {
+      name: "a permitted session mode the agent does not offer",
+      options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: "missing" }],
+    },
+  ] as const)(
+    "a delegated task restores or refuses $name before prompting, which an ordinary session skips",
+    ({ options, ...agent }) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("acp-test-strict-options");
+        let resetAgent: () => Effect.Effect<unknown, EffectAcpErrors.AcpError> = () => Effect.void;
+        let prompts = 0;
+        let restoring = false;
+        const prompted = yield* Deferred.make<void>();
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            ...("set" in agent && (agent.set === "hook-reset" || agent.set === "hook-drop")
+              ? {
+                  // A native flavor that writes the model, then an option it owns.
+                  applyModelSelection: ({ runtime }) =>
+                    runtime
+                      .setConfigOption("model", agent.model)
+                      .pipe(
+                        Effect.andThen(runtime.setConfigOption("agent", approvedAgent.value)),
+                        Effect.as(agent.model),
+                      ),
+                  ownedModelOptions: [{ id: "agent", nativeId: "agent" }],
+                }
+              : {}),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION: "1" },
+              wrapRuntime: (runtime) => {
+                let modelDropped = false;
+                resetAgent = () =>
+                  "set" in agent && agent.set === "model-drift-drop"
+                    ? Effect.sync(() => {
+                        modelDropped = true;
+                      })
+                    : runtime.setConfigOption("agent", "").pipe(
+                        Effect.tap(() =>
+                          Effect.sync(() => {
+                            restoring = true;
+                          }),
+                        ),
+                      );
+                return {
+                  ...runtime,
+                  // The mode write's snapshot no longer lists the model.
+                  getConfigOptions: runtime.getConfigOptions.pipe(
+                    Effect.map((configOptions) =>
+                      modelDropped
+                        ? configOptions.filter((option) => option.id !== "model")
+                        : configOptions,
+                    ),
+                  ),
+                  prompt: (...args) => {
+                    prompts += 1;
+                    return Deferred.succeed(prompted, undefined).pipe(
+                      Effect.andThen(runtime.prompt(...args)),
+                    );
+                  },
+                  setConfigOption: (configId, value, setOptions) => {
+                    const write = runtime.setConfigOption(configId, value, setOptions);
+                    if (!("set" in agent) || agent.set === "drift") return write;
+                    if (agent.set === "drift-reject") {
+                      return restoring && configId === "agent"
+                        ? Effect.fail(
+                            EffectAcpErrors.AcpRequestError.invalidParams("Mock restore refusal"),
+                          )
+                        : write;
+                    }
+                    if (agent.set === "model-drop") {
+                      return configId === "mode"
+                        ? write.pipe(
+                            Effect.tap(() =>
+                              Effect.sync(() => {
+                                modelDropped = true;
+                              }),
+                            ),
+                          )
+                        : write;
+                    }
+                    if (agent.set === "hook-drop") {
+                      return configId === "agent"
+                        ? write.pipe(
+                            Effect.tap(() =>
+                              Effect.sync(() => {
+                                modelDropped = true;
+                              }),
+                            ),
+                          )
+                        : write;
+                    }
+                    if (agent.set === "hook-reset") {
+                      return configId === "agent"
+                        ? write.pipe(Effect.andThen(runtime.setConfigOption("model", "default")))
+                        : write;
+                    }
+                    if (agent.set === "reset" || agent.set === "model-reset") {
+                      // The mode write's snapshot puts the agent or model back to its default.
+                      return configId === "mode"
+                        ? write.pipe(
+                            Effect.andThen(
+                              agent.set === "reset"
+                                ? runtime.setConfigOption("agent", "")
+                                : runtime.setConfigOption("model", "default"),
+                            ),
+                          )
+                        : write;
+                    }
+                    if (configId !== "agent") return write;
+                    return agent.set === "reject"
+                      ? Effect.fail(EffectAcpErrors.AcpRequestError.invalidParams("Mock refusal"))
+                      : Effect.succeed({ configOptions: [] });
+                  },
+                };
+              },
+            }),
+          },
+          selfInvocation: yield* resolveSelfInvocation(),
+        });
+        const modelSelection = {
+          instanceId,
+          model: "model" in agent ? agent.model : "default",
+          options,
+        } satisfies ModelSelection;
+        const open = (strictModelOptions: boolean) =>
+          Effect.gen(function* () {
+            const threadId = ThreadId.make(`thread-acp-strict-options-${strictModelOptions}`);
+            const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+              ...(strictModelOptions ? { strictModelOptions } : {}),
+            });
+            const session = yield* adapter.openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make(
+                `provider-session-acp-strict-options-${strictModelOptions}`,
+              ),
+              modelSelection,
+              runtimePolicy,
+            });
+            if (
+              strictModelOptions &&
+              "set" in agent &&
+              (agent.set === "drift" ||
+                agent.set === "drift-reject" ||
+                agent.set === "model-drift-drop")
+            ) {
+              const providerThread = yield* session.ensureThread({
+                threadId,
+                modelSelection,
+                runtimePolicy,
+              });
+              yield* resetAgent();
+              yield* session.startTurn(
+                makeTurnInput({
+                  threadId,
+                  providerThread,
+                  instanceId,
+                  modelSelection,
+                  runtimePolicy,
+                  now: yield* DateTime.now,
+                }),
+              );
+              yield* Deferred.await(prompted);
+            }
+          }).pipe(Effect.scoped);
+
+        yield* open(false);
+        const result = yield* open(true).pipe(Effect.result);
+        const restored = "set" in agent && agent.set === "drift";
+        assert.equal(result._tag, restored ? "Success" : "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(
+            result.failure._tag,
+            "set" in agent && (agent.set === "drift-reject" || agent.set === "model-drift-drop")
+              ? "ProviderAdapterTurnStartError"
+              : "ProviderAdapterOpenSessionError",
+          );
+          assert.equal(
+            (result.failure.cause as { readonly _tag?: string })._tag,
+            "model" in agent ? "AcpModelSelectionError" : "AcpModelOptionError",
+          );
+        }
+        assert.notInclude(JSON.stringify(result), "test-only-private-value");
+        assert.equal(prompts, restored ? 1 : 0);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("terminalizes an empty successful foreground Bash tool when the turn completes", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

@@ -18,6 +18,7 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { pinnedRuntimePaths, prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import { SERVICE_LAUNCHER_PROTOCOL } from "../cloud/serviceProtocol.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
@@ -124,6 +125,7 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
   ) =>
     runUpdate({
       baseDir: "/unused",
+      dbPath: "/unused/statev2.sqlite",
       logsDir: "/unused",
       serverRuntimeStatePath: "/unused",
       channel: input.channel,
@@ -496,6 +498,7 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
 
       const output = yield* runUpdate({
         baseDir,
+        dbPath: path.join(baseDir, "userdata/statev2.sqlite"),
         logsDir: baseDir,
         serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
         channel: undefined,
@@ -528,5 +531,102 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.Environment, { PATH: "" }),
     ),
+  );
+});
+
+it.layer(NodeServices.layer)("t3 update downgrade", (it) => {
+  it.effect.each(["ready", "blocked", "invalid", "wrong-version", "unavailable"] as const)(
+    "keeps the launcher on a compatible reader when the older runtime preflight is %s",
+    (preflight) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+        const targetVersion = "0.1.7";
+        const current = pinnedRuntimePaths(path, baseDir, packageJson.version, "linux");
+        const target = pinnedRuntimePaths(path, baseDir, targetVersion, "linux");
+        for (const [runtime, version] of [
+          [current, packageJson.version],
+          [target, targetVersion],
+        ] as const) {
+          yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+          yield* fs.writeFileString(runtime.entryPath, "");
+          yield* fs.writeFileString(runtime.sentinelPath, `${version}\n`);
+        }
+        const launcher = path.join(baseDir, "t3");
+        yield* fs.symlink(current.entryPath, launcher);
+        const dbPath = path.join(baseDir, "userdata/statev2.sqlite");
+        const runner = ProcessRunner.ProcessRunner.of({
+          run: (input) =>
+            unrelatedLsof.run(input).pipe(
+              Effect.map((result) => {
+                if (input.args?.includes("--version")) {
+                  return { ...result, stdout: `t3 v${targetVersion}\n` };
+                }
+                if (!input.args?.includes("__service-preflight")) return result;
+                assert.include(input.args, dbPath);
+                assert.include(input.args, String(SERVICE_LAUNCHER_PROTOCOL));
+                return {
+                  ...result,
+                  code: ChildProcessSpawner.ExitCode(preflight === "unavailable" ? 1 : 0),
+                  stdout:
+                    preflight === "invalid"
+                      ? "not JSON"
+                      : JSON.stringify({
+                          status: preflight === "blocked" ? "blocked" : "ready",
+                          version: preflight === "wrong-version" ? "0.1.6" : targetVersion,
+                          launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+                          reason:
+                            "This database contains delegation approval cards the older reader cannot decode.",
+                        }),
+                };
+              }),
+            ),
+        });
+
+        const result = yield* runUpdate({
+          baseDir,
+          dbPath,
+          logsDir: baseDir,
+          serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+          channel: "stable",
+          requestedVersion: targetVersion,
+          allowDowngrade: true,
+          assumeYes: true,
+        }).pipe(
+          Effect.exit,
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(BootService.BootService, {
+                status: Effect.succeed({
+                  supported: true,
+                  installed: false,
+                  current: false,
+                  unitPath: path.join(baseDir, "t3code.service"),
+                  logPath: path.join(baseDir, "boot-service.log"),
+                }),
+              }),
+              Layer.succeed(ProcessRunner.ProcessRunner, runner),
+              ManagedPolicy.layerTest(),
+              Layer.succeed(
+                HttpClient.HttpClient,
+                HttpClient.make(() => Effect.die("unexpected download")),
+              ),
+            ),
+          ),
+          Effect.provideService(HostProcess.InvokedAs, launcher),
+        );
+
+        assert.equal(Exit.isSuccess(result), preflight === "ready");
+        assert.equal(
+          yield* fs.readLink(launcher),
+          preflight === "ready" ? target.entryPath : current.entryPath,
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
+        Effect.provideService(HostProcess.IsExecutable, true),
+      ),
   );
 });

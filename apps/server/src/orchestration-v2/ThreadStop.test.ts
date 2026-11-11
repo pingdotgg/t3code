@@ -968,23 +968,84 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("a run Stop reached cannot delegate or start a watch, even after it ends", () =>
+it.effect("Stop and archive block delegation, approval cards and watches before a run ends", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = ThreadId.make("thread:stop-barrier");
-    yield* createWatchingThread(threadId, 4);
-    yield* send(threadId, "work", "start_immediately");
-    const now = yield* DateTime.now;
-    const run = { ...(yield* orchestrator.getThreadProjection(threadId)).runs[0]!, startedAt: now };
-    yield* projections.apply({
-      id: EventId.make("event:stop-barrier:running"),
-      type: "run.updated",
-      threadId,
-      runId: run.id,
-      occurredAt: now,
-      payload: { ...run, status: "running" },
+    const startRun = (threadId: ThreadId, number: number) =>
+      Effect.gen(function* () {
+        yield* createWatchingThread(threadId, number);
+        yield* send(threadId, "work", "start_immediately");
+        const now = yield* DateTime.now;
+        const run = {
+          ...(yield* orchestrator.getThreadProjection(threadId)).runs[0]!,
+          startedAt: now,
+        };
+        yield* projections.apply({
+          id: EventId.make(`event:${threadId}:running`),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "running" },
+        });
+        const recordApproval = (
+          key: string,
+          approvalStatus: "pending" | "approved" | "declined" | "cancelled",
+        ) =>
+          orchestrator.dispatch({
+            type: "delegation_approval.record",
+            commandId: CommandId.make(`approval:${threadId}:${key}:${approvalStatus}`),
+            threadId,
+            runId: run.id,
+            nodeId: run.rootNodeId!,
+            turnItemId: TurnItemId.make(`approval:${key}`),
+            title: "Delegate a task",
+            task: "Review the change.",
+            current: modelSelection,
+            proposed: { ...modelSelection, model: "another-model" },
+            approvalStatus,
+          });
+        return { now, run, recordApproval };
+      });
+    const approvalStatuses = (threadId: ThreadId) =>
+      Effect.map(orchestrator.getThreadProjection(threadId), (projection) =>
+        projection.turnItems.flatMap((item) =>
+          item.type === "delegation_approval" ? [item.approvalStatus] : [],
+        ),
+      );
+
+    // Archive commits before the worker detaches the session, so the run is still active.
+    const archivedId = ThreadId.make("thread:archive-barrier");
+    const archived = yield* startRun(archivedId, 3);
+    yield* archived.recordApproval("approve-after-archive", "pending");
+    yield* archived.recordApproval("decline-after-archive", "pending");
+    yield* archived.recordApproval("cancel-after-archive", "pending");
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-barrier"),
+      threadId: archivedId,
     });
+    assert.deepEqual((yield* threadState(archivedId)).runs, ["running"]);
+    const archivedDelegation = yield* delegate(archivedId, "archived task").pipe(Effect.flip);
+    assert.include(String(archivedDelegation.cause), "archived");
+    const archivedCard = yield* archived
+      .recordApproval("after-archive", "pending")
+      .pipe(Effect.flip);
+    assert.include(String(archivedCard.cause), "archived");
+    const archivedAnswer = yield* archived
+      .recordApproval("approve-after-archive", "approved")
+      .pipe(Effect.flip);
+    assert.include(String(archivedAnswer.cause), "archived");
+    yield* archived.recordApproval("decline-after-archive", "declined");
+    yield* archived.recordApproval("cancel-after-archive", "cancelled");
+    assert.deepEqual(yield* approvalStatuses(archivedId), ["pending", "declined", "cancelled"]);
+    assert.isEmpty((yield* orchestrator.getThreadProjection(archivedId)).subagents);
+
+    const threadId = ThreadId.make("thread:stop-barrier");
+    const { now, run, recordApproval } = yield* startRun(threadId, 4);
+    yield* recordApproval("before-stop", "pending");
+    yield* recordApproval("decline-after-stop", "pending");
     yield* send(threadId, "queued", "queue_after_active");
     const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
     yield* orchestrator.dispatch({
@@ -1021,6 +1082,17 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
 
     assert.isTrue(Exit.isFailure(yield* Effect.exit(delegate(threadId, "late task"))));
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 5))));
+    const lateApproval = yield* recordApproval("after-stop", "pending").pipe(Effect.flip);
+    assert.include(String(lateApproval.cause), "not active");
+    const lateAnswer = yield* recordApproval("before-stop", "approved").pipe(Effect.flip);
+    assert.include(String(lateAnswer.cause), "not active");
+    assert.deepEqual(
+      (yield* orchestrator.getThreadProjection(threadId)).turnItems.flatMap((item) =>
+        item.type === "delegation_approval" ? [item.approvalStatus] : [],
+      ),
+      ["pending", "pending"],
+    );
+    yield* recordApproval("decline-after-stop", "declined");
 
     yield* projections.apply({
       id: EventId.make("event:stop-barrier:interrupted"),
@@ -1031,6 +1103,20 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
       payload: { ...run, status: "interrupted", completedAt: now },
     });
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 5))));
+    const endedApproval = yield* recordApproval("after-end", "pending").pipe(Effect.flip);
+    assert.include(String(endedApproval.cause), "not active");
+    yield* recordApproval("before-stop", "cancelled");
+    assert.deepEqual(
+      (yield* orchestrator.getThreadProjection(threadId)).turnItems.flatMap((item) =>
+        item.type === "delegation_approval"
+          ? [{ id: item.id, approvalStatus: item.approvalStatus }]
+          : [],
+      ),
+      [
+        { id: TurnItemId.make("approval:before-stop"), approvalStatus: "cancelled" },
+        { id: TurnItemId.make("approval:decline-after-stop"), approvalStatus: "declined" },
+      ],
+    );
     assert.deepEqual(yield* threadState(threadId), {
       runs: ["interrupted", "cancelled"],
       watched: [4],
