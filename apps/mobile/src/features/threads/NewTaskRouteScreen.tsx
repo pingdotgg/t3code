@@ -240,14 +240,21 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       return;
     }
     // Restamp only on choice, so backing out leaves the draft as it was.
-    const draftId =
-      routeDraftId !== undefined &&
-      (await retargetSavedNewTaskDraft(routeDraftId, {
-        environmentId: project.environmentId,
-        projectId: project.id,
-      }))
-        ? routeDraftId
-        : undefined;
+    const retargeted =
+      routeDraftId === undefined
+        ? false
+        : await retargetSavedNewTaskDraft(routeDraftId, {
+            environmentId: project.environmentId,
+            projectId: project.id,
+          }).then(
+            (found) => found,
+            () => null,
+          );
+    if (retargeted === null) {
+      Dialog.alert("Could not change project", "Saved drafts could not be loaded. Try again.");
+      return;
+    }
+    const draftId = retargeted ? routeDraftId : undefined;
     selectDetail({
       name: "Thread",
       params: {
