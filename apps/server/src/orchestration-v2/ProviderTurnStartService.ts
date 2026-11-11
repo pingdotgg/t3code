@@ -38,6 +38,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { providerUserText } from "./providerUserText.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
@@ -171,14 +172,10 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
-    // Agent chips tell the model whether the agent still exists here; unreadable settings omit that.
-    const mentionedAgents = (records: ReadonlyArray<{ readonly kind: string }>) =>
-      records.some((record) => record.kind === "agent")
-        ? serverSettings.getSettings.pipe(
-            Effect.map((settings) => settings.mcpGatewayProfiles),
-            Effect.orElseSucceed(() => undefined),
-          )
-        : Effect.undefined;
+    const userTextForProvider = (input: Parameters<typeof providerUserText>[0]) =>
+      providerUserText(input).pipe(
+        Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+      );
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
       function* (cwd: string) {
@@ -874,12 +871,9 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const records = message.context?.records ?? [];
-      const agents = yield* mentionedAgents(records);
-      const baseUserText = projectComposerContextForProvider({
+      const baseUserText = yield* userTextForProvider({
         text: message.text,
-        records,
-        ...(agents === undefined ? {} : { agents }),
+        records: message.context?.records ?? [],
       });
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
@@ -1645,8 +1639,7 @@ export const layer: Layer.Layer<
             Effect.provideService(Path.Path, path),
           )
         : "";
-      const profileAgents = yield* mentionedAgents(message.context?.records ?? []);
-      const userText = projectComposerContextForProvider({
+      const userText = yield* userTextForProvider({
         text: sendAgentInstructions
           ? agentProfilePrompt(
               skillIndex ? `${skillIndex}\n\n${message.text}` : message.text,
@@ -1660,7 +1653,6 @@ export const layer: Layer.Layer<
                 profileContent,
               ),
         records: message.context?.records ?? [],
-        ...(profileAgents === undefined ? {} : { agents: profileAgents }),
       });
       const persistHandoff = Effect.fn("ProviderTurnStartService.persist")(function* (
         handoff: OrchestrationV2ContextHandoff,

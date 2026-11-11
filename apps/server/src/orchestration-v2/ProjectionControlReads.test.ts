@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -15,6 +16,10 @@ import {
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import {
+  agentContextRecord,
+  formatComposerContextReference,
+} from "@t3tools/shared/composerContextReferences";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,6 +29,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const threadId = ThreadId.make("thread:control-reads");
 const providerThreadId = ProviderThreadId.make("provider-thread:control-reads");
@@ -32,6 +38,11 @@ const providerSessionId = ProviderSessionId.make("session:control-reads");
 const attemptId = RunAttemptId.make("attempt:control-reads");
 const runId = RunId.make("run:control-reads");
 const messageId = MessageId.make("message:control-reads");
+const ghostAgent = agentContextRecord(
+  { profileId: "ghost", name: "Ghost", runtimeMode: "auto" },
+  EnvironmentId.make("local"),
+);
+const steerText = `Use the smaller fix, then ask ${formatComposerContextReference(ghostAgent)}`;
 const requestId = RuntimeRequestId.make("request:control-reads");
 const nodeId = NodeId.make("node:control-reads");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -157,7 +168,8 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
         runId,
         nodeId,
         role: "user",
-        text: "Use the smaller fix.",
+        text: steerText,
+        context: { version: 1, records: [ghostAgent] },
         attachments: [],
         streaming: false,
         createdBy: "user",
@@ -254,7 +266,7 @@ it.effect.each(storageCases)(
       assert.equal(context.providerThread?.id, providerThreadId);
       assert.equal(context.providerTurn?.id, providerTurnId);
       assert.equal(context.attempt?.id, attemptId);
-      assert.equal(context.message?.text, "Use the smaller fix.");
+      assert.equal(context.message?.text, steerText);
       assert.equal(context.run?.id, runId);
       assert.equal((yield* store.getRuntimeRequest(threadId, requestId))?.status, "resolved");
       assert.isUndefined(
@@ -307,7 +319,10 @@ it.effect.each(storageCases)(
           messageId,
         });
         yield* reply.respond({ threadId, providerSessionId, requestId, decision: "accept" });
-        assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply"]);
+        // A steer resolves agent chips the way a new turn does: the deleted agent is unavailable.
+        assert.include(calls[1], "profileId: ghost");
+        assert.include(calls[1], "Unavailable: this environment has no agent with this profileId");
+        assert.deepEqual([calls[0], calls[2]], ["interrupt", "reply"]);
         const wrongSession = ProviderSessionId.make("session:wrong");
         assert.equal(
           (yield* Effect.exit(
@@ -341,11 +356,11 @@ it.effect.each(storageCases)(
           payload: { ...turn, status: "completed", completedAt: now },
         });
         yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
-        assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply", "interrupt"]);
+        assert.deepEqual([calls.length, calls[3]], [4, "interrupt"]);
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
-            Layer.provide(layerSessions),
+            Layer.provide(Layer.merge(layerSessions, ServerSettings.layerTest())),
           ),
         ),
       );

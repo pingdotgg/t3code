@@ -98,6 +98,13 @@ describe("runtime profile persistence", () => {
         );
         expect(updated.revision).toBe(2);
         expect(updated.profileId).toBe(id);
+        // A new icon replaces the legacy fallback older builds draw, not just the iconId.
+        const iconed = yield* Effect.promise(() =>
+          port.updateProfile!("local", created[1]!.profileId!, { icon: "code" }).then(() =>
+            port.updateProfile!("local", created[1]!.profileId!, { iconId: "palette" }),
+          ),
+        );
+        expect(iconed).toMatchObject({ iconId: "palette", icon: "pen" });
         yield* Effect.promise(() => port.replicateProfiles!("remote", [updated]));
         expect(writes.at(-1)).toMatchObject({
           replicateProfiles: true,

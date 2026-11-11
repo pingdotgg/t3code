@@ -1,3 +1,4 @@
+import { legacyAgentIcon } from "@t3tools/shared/agentIcons";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import { AgentSkill, type ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
 import {
@@ -769,6 +770,9 @@ export function createGatewayRuntimePort(
             ? decodeProfile({
                 ...profile,
                 ...patch,
+                ...(patch.iconId !== undefined && patch.icon === undefined
+                  ? { icon: legacyAgentIcon(patch.iconId) }
+                  : {}),
                 ...(patch.providerLabel !== undefined || patch.modelLabel !== undefined
                   ? { modelSelection: undefined }
                   : {}),
@@ -1069,7 +1073,9 @@ export function createGatewayRuntimePort(
           const registry = yield* EnvironmentRegistry;
           const settings = yield* registry.run(
             EnvironmentId.make(rawEnvironmentId),
-            request(WS_METHODS.serverGetConfig, {}).pipe(Effect.map((config) => config.settings)),
+            request(WS_METHODS.serverGetConfig, { agentSkillBodiesOnDemand: true }).pipe(
+              Effect.map((config) => config.settings),
+            ),
           );
           return settings.mcpGatewayProfiles.map((profile) => ({
             ...profile,
