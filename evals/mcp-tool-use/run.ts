@@ -1860,7 +1860,8 @@ export const gradeSample = (
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request"; counts add up.
   const count = (tool: string) =>
     calls.filter((call) => tool.split("|").includes(call.tool)).length;
-  const found = ({ tool, args = {}, allowedArgs, requiredArgs }: McpToolUseCall, among = calls) =>    among.some(
+  const found = ({ tool, args = {}, allowedArgs, requiredArgs }: McpToolUseCall, among = calls) =>
+    among.some(
       ({ tool: callTool, input }) =>
         tool.split("|").includes(callTool) &&
         matches(args, input) &&
