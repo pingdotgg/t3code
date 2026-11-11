@@ -4,6 +4,7 @@ import {
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
@@ -79,6 +80,7 @@ const remark = (
 });
 
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
+const decodeWatch = Schema.decodeUnknownSync(ThreadPullRequestWatch);
 
 describe("evaluatePullRequestWatch", () => {
   it("waits for workflow approval once, through reads that miss it, until the run finishes", () => {
@@ -443,6 +445,87 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(second.next, detail(), [again]).changes, []);
     const own = { ...edited, author: { login: "agent-user", name: null, avatarUrl: null } };
     assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [own]).changes, []);
+  });
+
+  it("ignores Mergify ETA edits without spending wakes, but reports queue and admission changes", () => {
+    const body = (eta: string, payload: Record<string, unknown> = {}, extra = "") =>
+      [
+        "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-",
+        JSON.stringify({
+          version: 1,
+          state: "checking",
+          queue_rule_name: "default",
+          queued_at: "2026-10-02T11:00:00Z",
+          estimated_time_of_merge: `2026-10-02T${eta}:00Z`,
+          speculative_check_pr: 42,
+          required_conditions: [{ description: "check-success = test", match: false }],
+          ...payload,
+        }),
+        "-*- Mergify Payload End -*-\n-->",
+        `### 🟠 Testing · estimated merge ${eta} UTC`,
+        "- [ ] `check-success = test`",
+        extra,
+      ].join("\n\n");
+    const original = {
+      ...remark("mergify[bot]", "2026-10-02T11:00:00Z", body("13:00")),
+      kind: "issue-comment" as const,
+      path: null,
+    };
+    let saved = evaluatePullRequestWatch(watch({ headSha: "aaaaaaaaaa" }), detail(), [
+      original,
+    ]).next;
+    saved = decodeWatch(JSON.parse(JSON.stringify(saved)));
+    for (let minute = 1; minute <= PULL_REQUEST_WATCH_WAKE_LIMIT + 2; minute++) {
+      const edited = {
+        ...original,
+        body: body(`13:${String(minute).padStart(2, "0")}`),
+        editedAt: `2026-10-02T12:${String(minute).padStart(2, "0")}:00Z`,
+      };
+      const report = evaluatePullRequestWatch(saved, detail(), [edited]);
+      assert.deepEqual(report.changes, []);
+      assert.equal(report.next.wakes, 0);
+      assert.isFalse(report.exhausted);
+      assert.equal(report.next.remarksThrough, edited.editedAt);
+      saved = report.next;
+    }
+    const late = remark("reviewer", saved.remarksThrough);
+    assert.deepEqual(evaluatePullRequestWatch(saved, detail(), [late]).changes, [
+      { kind: "remarks", remarks: [late] },
+    ]);
+
+    for (const [payload, extra] of [
+      [{ state: "queued" }, ""],
+      [{ speculative_check_pr: 43 }, ""],
+      [{ required_conditions: [{ description: "github-review-approved", match: false }] }, ""],
+      [{ state: "dequeued", dequeue_reason: { code: "CHECKS_FAILED" } }, ""],
+      [{ state: "merged" }, ""],
+      [{}, "- [ ] `approved-reviews-by = reviewer`"],
+      [{}, "Failing checks: `Build server`"],
+      [{ version: 2 }, ""],
+    ] satisfies ReadonlyArray<readonly [Record<string, unknown>, string]>) {
+      const changed = {
+        ...original,
+        body: body("13:30", payload, extra),
+        editedAt: "2026-10-02T12:30:00Z",
+      };
+      assert.deepEqual(evaluatePullRequestWatch(saved, detail(), [changed]).changes, [
+        { kind: "remarks", remarks: [changed] },
+      ]);
+    }
+    const blocked = {
+      ...original,
+      body: body("13:30").replace(" UTC", " UTC · blocked by a new review"),
+      editedAt: "2026-10-02T12:30:00Z",
+    };
+    assert.deepEqual(evaluatePullRequestWatch(saved, detail(), [blocked]).changes, [
+      { kind: "remarks", remarks: [blocked] },
+    ]);
+    const human = { ...original, author: { login: "reviewer", name: null, avatarUrl: null } };
+    const announced = evaluatePullRequestWatch(watch(), detail(), [human]).next;
+    const humanEdit = { ...human, body: body("13:31"), editedAt: "2026-10-02T12:31:00Z" };
+    assert.deepEqual(evaluatePullRequestWatch(announced, detail(), [humanEdit]).changes, [
+      { kind: "remarks", remarks: [humanEdit] },
+    ]);
   });
 
   it("does not treat a failed check read as a rerun", () => {

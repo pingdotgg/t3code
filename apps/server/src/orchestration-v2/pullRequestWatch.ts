@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - pure watch evaluation hashes comment bodies synchronously.
 import type {
   OrchestrationV2Notification,
   PullRequestCheck,
@@ -6,6 +7,7 @@ import type {
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as NodeCrypto from "node:crypto";
 
 /** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
@@ -34,6 +36,38 @@ const isFailedCheck = (check: PullRequestCheck) =>
 // A GitHub Actions job's URL extends its workflow run's URL; their names need not match.
 const workflowRunOf = (url: string | null) => url?.match(/^.*\/actions\/runs\/\d+/)?.[0] ?? null;
 const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? check.name;
+
+function remarkFingerprint(remark: PullRequestComment): string | null {
+  if (remark.kind !== "issue-comment" || remark.author?.login.toLowerCase() !== "mergify[bot]") {
+    return null;
+  }
+  const match = remark.body.match(
+    /-\*- Mergify Payload -\*-\s*([\s\S]*?)\s*-\*- Mergify Payload End -\*-/,
+  );
+  if (!match) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(match[1]!);
+  } catch {
+    return null;
+  }
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !("version" in payload) ||
+    payload.version !== 1 ||
+    !("state" in payload) ||
+    typeof payload.state !== "string" ||
+    !("estimated_time_of_merge" in payload)
+  ) {
+    return null;
+  }
+  // Keep all queue state and visible blockers; only the countdown field and heading are volatile.
+  const stable = remark.body
+    .replace(match[1]!, JSON.stringify({ ...payload, estimated_time_of_merge: null }))
+    .replaceAll(/^(### [^\r\n]*?) · estimated merge \d{2}:\d{2} UTC(?=$| ·)/gm, "$1");
+  return NodeCrypto.createHash("sha256").update(stable).digest("hex");
+}
 
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
@@ -160,6 +194,15 @@ export function evaluatePullRequestWatch(
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
   const through = Date.parse(watch.remarksThrough);
   const activeAt = (remark: PullRequestComment) => remark.editedAt ?? remark.createdAt;
+  const fingerprints =
+    remarks === null
+      ? watch.remarkFingerprints
+      : Object.fromEntries(
+          remarks.flatMap((remark) => {
+            const fingerprint = remarkFingerprint(remark);
+            return fingerprint === null ? [] : [[remark.id, fingerprint]];
+          }),
+        );
   // Hosts can stamp remarks to the second, so remarks at the boundary time are told apart by ID.
   const fresh = (remarks ?? []).filter((remark) => {
     const at = Date.parse(activeAt(remark));
@@ -168,7 +211,11 @@ export function evaluatePullRequestWatch(
       remark.author?.login.toLowerCase() !== own
     );
   });
-  if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });
+  const meaningful = fresh.filter((remark) => {
+    const fingerprint = fingerprints?.[remark.id];
+    return fingerprint === undefined || fingerprint !== watch.remarkFingerprints?.[remark.id];
+  });
+  if (meaningful.length > 0) changes.push({ kind: "remarks", remarks: meaningful });
   const latest = Math.max(through, ...fresh.map((remark) => Date.parse(activeAt(remark))));
   const atLatest = fresh.filter((remark) => Date.parse(activeAt(remark)) === latest);
   const remarksThrough = latest === through ? watch.remarksThrough : activeAt(atLatest[0]!);
@@ -202,6 +249,8 @@ export function evaluatePullRequestWatch(
       approvalAnnounced,
       remarksThrough,
       remarkIds,
+      ...(fingerprints &&
+        Object.keys(fingerprints).length > 0 && { remarkFingerprints: fingerprints }),
       conflicting,
       wakes,
       checksAwaitedSince,
