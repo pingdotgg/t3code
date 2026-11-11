@@ -83,8 +83,9 @@ const layerLinuxSecretHelper = (
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const application = command._tag === "StandardCommand" ? command.args[0] : undefined;
-          yield* Ref.update(lookups, (all) => [...all, application ?? ""]);
+          const arg = command._tag === "StandardCommand" ? command.args[0] : undefined;
+          const application = typeof arg === "string" ? arg : "";
+          yield* Ref.update(lookups, (all) => [...all, application]);
           yield* beforeLookup;
           const secret = application === OLD_SAFE_STORAGE_NAME ? OLD_SAFE_STORAGE_SECRET : null;
           return ChildProcessSpawner.makeHandle({
