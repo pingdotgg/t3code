@@ -2716,12 +2716,32 @@ describe("UsageService", () => {
 
   it.live("counts archived Codex rollouts once, including one copied to both directories", () =>
     Effect.gen(function* () {
-      const { home, settings } = yield* setupArchivedCodex;
-      yield* Effect.gen(function* () {
+      const { home, settings, codexHome } = yield* setupArchivedCodex;
+      const complete = yield* Effect.gen(function* () {
         const service = yield* UsageService.make;
-        const summary = yield* service.readSummary(WINDOW);
-        assert.strictEqual(totalOutputTokens(summary), 70);
+        return yield* service.readSummary(WINDOW);
       }).pipe(Effect.provide(layerService({ prefix: "usage-codex-archived", home, settings })));
+      assert.strictEqual(totalOutputTokens(complete), 70);
+
+      // A newer archive-only scan must not claim completeness over the active history.
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(codexHome, "sessions"), { recursive: true }),
+      );
+      const archiveOnly = yield* Effect.gen(function* () {
+        return yield* (yield* UsageService.make).readSummary(WINDOW);
+      }).pipe(Effect.provide(layerService({ prefix: "usage-codex-archive-only", home, settings })));
+      assert.strictEqual(
+        archiveOnly.sources.find((source) => source.fingerprint.provider === "codex")?.status,
+        "partial",
+      );
+      const merged = mergeUsage(
+        [
+          { environmentId: EnvironmentId.make("complete"), label: "complete", summary: complete },
+          { environmentId: EnvironmentId.make("archive"), label: "archive", summary: archiveOnly },
+        ],
+        USAGE_CONTRACT_VERSION,
+      );
+      assert.strictEqual(merged.outputTokens, 70);
     }).pipe(Effect.scoped),
   );
 

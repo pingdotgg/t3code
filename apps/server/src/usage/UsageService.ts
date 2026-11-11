@@ -693,6 +693,8 @@ export const make = Effect.gen(function* () {
       return { path, records, malformedRecords };
     });
     const unread = failedPaths + read.filter((file) => file.failed).length;
+    // The first root holds active transcripts; without it, other roots alone are not complete.
+    const primaryMissing = listings[0] === null;
     yield* Effect.annotateCurrentSpan({
       "usage.files": files.length,
       "usage.files_parsed": read.filter((file) => file.update !== undefined).length,
@@ -708,7 +710,12 @@ export const make = Effect.gen(function* () {
             status: "partial",
             message: `${unread} transcript path(s) could not be read; usage may be incomplete.`,
           }
-        : {}),
+        : primaryMissing
+          ? {
+              status: "partial",
+              message: "Active transcript directory is missing; usage may be incomplete.",
+            }
+          : {}),
     } satisfies ScannedDir;
   });
 
