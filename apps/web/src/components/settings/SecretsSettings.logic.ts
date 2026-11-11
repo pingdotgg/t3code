@@ -6,7 +6,7 @@ import {
   secretReferencesInSettings,
   type ServerSettings,
   SimlockDeviceHostConfig,
-  TextGeneratorConfig,
+  TextGeneratorApiConfig,
   UsageLimitSourceConfig,
 } from "@t3tools/contracts";
 import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
@@ -94,12 +94,14 @@ export function secretProviderUses(
       ),
     ),
     ...Object.entries(settings.textGenerators).flatMap(([id, generator]) =>
-      uses(
-        { settingsSchema: TextGeneratorConfig },
-        `text-generator:${id}`,
-        generator.label ?? generator.baseUrl,
-        generator,
-      ),
+      generator.kind === "opencode"
+        ? []
+        : uses(
+            { settingsSchema: TextGeneratorApiConfig },
+            `text-generator:${id}`,
+            generator.label ?? generator.baseUrl,
+            generator,
+          ),
     ),
     ...settings.easDeviceHosts.flatMap((host) =>
       uses({ settingsSchema: EasDeviceHostConfig }, `eas:${host.id}`, host.label, host),

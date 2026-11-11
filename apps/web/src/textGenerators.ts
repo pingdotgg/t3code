@@ -22,13 +22,14 @@ import {
   deriveProviderInstanceEntries,
   type ProviderInstanceEntry,
   providerInstanceEntriesFor,
+  shouldShowInstanceBadge,
 } from "./providerInstances";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { formatEnvironmentQueryError } from "./state/query";
 import { serverEnvironment } from "./state/server";
 
 export interface TextGeneratorPreset {
-  readonly id: "openai" | "openrouter" | "anthropic" | "custom";
+  readonly id: "openai" | "openrouter" | "anthropic" | "opencode" | "custom";
   readonly label: string;
   readonly kind: TextGeneratorKind;
   /** Empty for a custom server, whose URL the user enters. */
@@ -50,10 +51,12 @@ export const TEXT_GENERATOR_PRESETS: ReadonlyArray<TextGeneratorPreset> = [
     baseUrl: "https://api.anthropic.com/v1",
   },
   { id: "custom", label: "Custom (OpenAI-compatible)", kind: "openaiCompatible", baseUrl: "" },
+  { id: "opencode", label: "OpenCode", kind: "opencode", baseUrl: "" },
 ];
 
 export function textGeneratorDisplayName(config: TextGeneratorConfig): string {
   if (config.label) return config.label;
+  if (config.kind === "opencode") return "OpenCode raw";
   const preset = TEXT_GENERATOR_PRESETS.find(
     (candidate) => candidate.baseUrl === config.baseUrl && candidate.kind === config.kind,
   );
@@ -69,11 +72,15 @@ export function textGeneratorDisplayName(config: TextGeneratorConfig): string {
  * The service a text generator reaches, which picks its picker icon. It stands in for the driver
  * kind in picker entries only, so generators of one service share an icon and get instance badges.
  */
-export function textGeneratorBrand(config: Pick<TextGeneratorConfig, "kind" | "baseUrl">) {
+export function textGeneratorBrand(config: {
+  readonly kind: TextGeneratorKind;
+  readonly baseUrl?: string;
+}) {
+  if (config.kind === "opencode") return ProviderDriverKind.make("opencode");
   if (config.kind === "anthropic") return ProviderDriverKind.make("anthropic");
   let url: URL | null = null;
   try {
-    url = new URL(config.baseUrl);
+    url = new URL(config.baseUrl ?? "");
   } catch {}
   const host = url?.hostname ?? "";
   if (host === "openrouter.ai" || host.endsWith(".openrouter.ai")) {
@@ -110,10 +117,7 @@ export function nextTextGeneratorId(
 type ModelsKey = readonly [
   environmentId: EnvironmentId,
   id: ProviderInstanceId,
-  // The connection settings, so editing them asks again instead of reusing a stale list.
-  kind: TextGeneratorKind,
-  baseUrl: string,
-  apiKey: TextGeneratorConfig["apiKey"],
+  config: TextGeneratorConfig,
 ];
 
 const refreshCountAtom = Atom.family((key: string) =>
@@ -219,20 +223,18 @@ export function useTextGeneratorModels(
   config: TextGeneratorConfig,
 ): AsyncResult.AsyncResult<ReadonlyArray<TextGeneratorModel>, string> {
   return useAtomValue(
-    textGeneratorModelsAtom(
-      JSON.stringify([
-        environmentId,
-        id,
-        config.kind,
-        config.baseUrl,
-        config.apiKey,
-      ] satisfies ModelsKey),
-    ),
+    textGeneratorModelsAtom(JSON.stringify([environmentId, id, config] satisfies ModelsKey)),
   );
 }
 
 function toProviderModel(model: TextGeneratorModel): ServerProviderModel {
-  return { slug: model.id, name: model.name, isCustom: false, capabilities: null };
+  return {
+    slug: model.id,
+    name: model.name,
+    ...(model.subProvider ? { subProvider: model.subProvider } : {}),
+    isCustom: false,
+    capabilities: null,
+  };
 }
 
 /** Picker stand-in for a text generator. It never leaves the settings pickers. */
@@ -301,13 +303,7 @@ export function useTextGenerationTargets(input: {
           .map(([id, config]) => ({
             id,
             config,
-            key: JSON.stringify([
-              environmentId,
-              id,
-              config.kind,
-              config.baseUrl,
-              config.apiKey,
-            ] satisfies ModelsKey),
+            key: JSON.stringify([environmentId, id, config] satisfies ModelsKey),
           }));
   const results = useAtomValue(
     textGeneratorCatalogAtom(JSON.stringify(generators.map((generator) => generator.key))),
@@ -325,12 +321,21 @@ export function useTextGenerationTargets(input: {
   const providers = input.providers.filter(
     (provider) => !Object.hasOwn(settings.textGenerators, provider.instanceId),
   );
+  const providerEntries = providerInstanceEntriesFor(providers, settings, input.projectId);
   return {
     providers: [...providers, ...generatorProviders],
     // Project provider overrides do not apply to text generators, so their entries skip them.
     entries: [
-      ...providerInstanceEntriesFor(providers, settings, input.projectId),
-      ...deriveProviderInstanceEntries(generatorProviders),
+      ...providerEntries.map((entry) => ({
+        ...entry,
+        instanceBadge: shouldShowInstanceBadge(entry, providerEntries),
+      })),
+      ...deriveProviderInstanceEntries(generatorProviders).map((entry) => ({
+        ...entry,
+        ...(settings.textGenerators[entry.instanceId]?.kind === "opencode"
+          ? { instanceBadge: true }
+          : {}),
+      })),
     ],
   };
 }

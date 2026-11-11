@@ -132,8 +132,10 @@ export const invalidateSettingsSecrets = Effect.fn("SettingsSecrets.invalidate")
     Effect.map((current) => [
       ...collectSourceControlHostSecretReferences(current.sourceControlHosts),
       ...collectUsageLimitSecretReferences(current.usageLimitSources),
-      ...Object.values(current.textGenerators).flatMap(({ apiKey }) =>
-        isSecretReference(apiKey) ? [apiKey] : [],
+      ...Object.values(current.textGenerators).flatMap((generator) =>
+        generator.kind !== "opencode" && isSecretReference(generator.apiKey)
+          ? [generator.apiKey]
+          : [],
       ),
       ...collectDeviceHostSecretReferences(current),
       ...Object.values(current.cloudSpeechCredentials).filter(isSecretReference),

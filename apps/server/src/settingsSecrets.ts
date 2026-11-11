@@ -8,7 +8,7 @@ import {
   type ServerSettings,
   type SettingsSecretValue,
   SimlockDeviceHostConfig,
-  TextGeneratorConfig,
+  TextGeneratorApiConfig,
   UsageLimitSourceConfig,
   isSecretReference,
   secretSettingsFields,
@@ -47,7 +47,7 @@ const providerSecretFields = new Map([
   ),
 ]);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
-const textGeneratorSecretFields = secretSettingsFields(TextGeneratorConfig);
+const textGeneratorSecretFields = secretSettingsFields(TextGeneratorApiConfig);
 const voiceSecretFields = secretSettingsFields(CloudSpeechCredentials);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);

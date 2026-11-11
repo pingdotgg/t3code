@@ -30,6 +30,7 @@ describe("nextTextGeneratorId", () => {
 describe("textGeneratorBrand", () => {
   it.each([
     ["anthropic", "https://proxy.example/v1", "anthropic"],
+    ["opencode", "", "opencode"],
     ["openaiCompatible", "https://openrouter.ai/api/v1", "openrouter"],
     ["openaiCompatible", "https://api.openai.com/v1", "openai"],
     ["openaiCompatible", "http://localhost:11434/v1", "ollama"],

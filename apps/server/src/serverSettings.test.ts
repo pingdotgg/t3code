@@ -1429,8 +1429,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const fs = yield* FileSystem.FileSystem;
         const store = yield* ServerSecretStore.ServerSecretStore;
         const instanceId = ProviderInstanceId.make("antigravity_secrets");
+        const openCodeId = ProviderInstanceId.make("opencode_work");
+        const generatorId = ProviderInstanceId.make("opencode_raw");
         const saved = yield* service.updateSettings({
+          textGenerators: {
+            [generatorId]: { kind: "opencode", providerInstanceId: openCodeId, enabled: true },
+          },
           providerInstances: {
+            [openCodeId]: {
+              driver: ProviderDriverKind.make("opencode"),
+              config: { serverUrl: "http://127.0.0.1:4096", serverPassword: "opencode-password" },
+              environment: [
+                { name: "OPENCODE_API_KEY", value: "opencode-account-key", sensitive: true },
+              ],
+            },
             [instanceId]: {
               driver: ProviderDriverKind.make("antigravity"),
               config: { apiKey: "config-secret" },
@@ -1466,6 +1478,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           ],
         });
         const values = [
+          "opencode-password",
+          "opencode-account-key",
           "config-secret",
           "env-secret",
           "github-secret",
@@ -1485,6 +1499,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         }
         assert.include(JSON.stringify(client), "https://example.test");
         assert.include(JSON.stringify(client), "me@example.test");
+        const openCodeSecretNames = [
+          "provider-config-b3BlbmNvZGVfd29yaw-b3BlbmNvZGU-c2VydmVyUGFzc3dvcmQ",
+          "provider-env-b3BlbmNvZGVfd29yaw-T1BFTkNPREVfQVBJX0tFWQ",
+        ];
+        const openCodeSecrets = yield* Effect.forEach(openCodeSecretNames, (name) =>
+          store.get(name),
+        );
+        for (const secret of openCodeSecrets) assert.isTrue(Option.isSome(secret));
+        const removedGenerator = yield* service.updateSettings({
+          textGenerators: { [generatorId]: null },
+        });
+        assert.notProperty(removedGenerator.textGenerators, generatorId);
+        assert.deepEqual(removedGenerator.providerInstances, saved.providerInstances);
+        assert.deepEqual(
+          yield* Effect.forEach(openCodeSecretNames, (name) => store.get(name)),
+          openCodeSecrets,
+        );
         const echoed = yield* service.updateSettings({
           providerInstances: client.providerInstances,
           sourceControlHosts: client.sourceControlHosts,
@@ -1541,6 +1572,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           }),
           sourceControlHostSecretName({ kind: "gitcafe", field: "token", serverHost: null }),
           "usage-limit-source-aHVi",
+          ...openCodeSecretNames,
         ];
         for (const name of secretNames) {
           assert.isTrue(Option.isSome(yield* store.get(name)), name);
@@ -1752,9 +1784,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const openCode = ProviderInstanceId.make("opencode");
         const hub = UsageLimitSourceId.make("hub");
         const router = ProviderInstanceId.make("openrouter");
+        const rawGenerator = ProviderInstanceId.make("opencode-raw");
         const withUsage = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
           textGenerators: {
+            [rawGenerator]: { kind: "opencode", providerInstanceId: openCode, enabled: true },
             [router]: {
               kind: "openaiCompatible",
               baseUrl: "https://openrouter.ai/api/v1",
@@ -1814,7 +1848,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
-        assert.equal(legacy.textGenerators[router]?.apiKey, SECRET_REDACTED);
+        const legacyGenerator = legacy.textGenerators[router];
+        assert(legacyGenerator?.kind !== "opencode");
+        assert.equal(legacyGenerator?.apiKey, SECRET_REDACTED);
+        assert.deepEqual(legacy.textGenerators[rawGenerator], {
+          kind: "opencode",
+          providerInstanceId: openCode,
+          enabled: true,
+        });
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
         const configOf = (settings: ServerSettings, id: ProviderInstanceId) =>
@@ -1836,7 +1877,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "ghe.acme.test": "ghp_ghe",
         });
         assert.deepEqual(echoed.usageLimitSources[hub]?.managementKey, usageReference);
-        assert.deepEqual(echoed.textGenerators[router]?.apiKey, usageReference);
+        const echoedGenerator = echoed.textGenerators[router];
+        assert(echoedGenerator?.kind !== "opencode");
+        assert.deepEqual(echoedGenerator?.apiKey, usageReference);
+        assert.deepEqual(echoed.textGenerators[rawGenerator], legacy.textGenerators[rawGenerator]);
         assert.deepEqual(echoed.cloudSpeechCredentials, {
           openai: usageReference,
           xai: "literal-fixture",

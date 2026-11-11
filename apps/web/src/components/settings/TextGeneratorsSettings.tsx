@@ -57,6 +57,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Label } from "../ui/label";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { searchableSetting } from "./settingsSearch";
@@ -127,7 +128,11 @@ export function TextGeneratorsSettings({
                 // Indented past the icon so it lines up with the name.
                 <span className="block truncate ps-7.5">
                   {config.enabled ? "" : "Off · "}
-                  {config.baseUrl.replace(/^https?:\/\//, "")}
+                  {config.kind === "opencode"
+                    ? providers.find(
+                        (provider) => provider.instanceId === config.providerInstanceId,
+                      )?.displayName || config.providerInstanceId
+                    : config.baseUrl.replace(/^https?:\/\//, "")}
                 </span>
               }
               control={
@@ -151,7 +156,7 @@ export function TextGeneratorsSettings({
                           disabled={!config.enabled}
                           onClick={() => setViewing({ id, config })}
                         >
-                          Show models
+                          Choose models
                         </MenuItem>
                         <MenuItem variant="destructive" onClick={() => setRemoving(id)}>
                           Remove
@@ -206,8 +211,10 @@ export function TextGeneratorsSettings({
               Remove {removingConfig ? textGeneratorDisplayName(removingConfig) : ""}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This deletes the API key stored on {environmentLabel}. Anything set to use this
-              generator falls back to the text generation model.
+              {removingConfig?.kind === "opencode"
+                ? "This removes only the text generator. Your OpenCode provider, sign-in, and API keys are kept."
+                : `This deletes the API key stored on ${environmentLabel}.`}{" "}
+              Anything set to use this generator falls back to the text generation model.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -232,12 +239,21 @@ const STEPS = ["Connect", "Use it"] as const;
 
 /** Text tasks a generator can write, in the order the settings pages show them. */
 const TASKS = [
-  { key: "textGenerationModelSelection", label: "Thread titles and other generated text" },
+  {
+    key: "textGenerationModelSelection",
+    label: "Thread titles and other generated text",
+    shortLabel: "Thread titles",
+  },
   {
     key: "sourceControlWriterModelSelection",
     label: "Commit messages, pull requests, and branch names",
+    shortLabel: "Source control",
   },
-  { key: "speechPostProcessingModelSelection", label: "Voice transcript cleanup" },
+  {
+    key: "speechPostProcessingModelSelection",
+    label: "Voice transcript cleanup",
+    shortLabel: "Voice cleanup",
+  },
 ] as const;
 
 /**
@@ -261,13 +277,22 @@ function TextGeneratorWizard({
   readonly newId: (preset: TextGeneratorPreset) => ProviderInstanceId;
 }) {
   const existing = editing === "new" ? null : editing.config;
+  const apiExisting = existing?.kind === "opencode" ? null : existing;
+  const openCodeProviders = providers.filter(
+    (provider) => provider.driver === "opencode" && provider.enabled,
+  );
+  const [providerInstanceId, setProviderInstanceId] = useState(
+    existing?.kind === "opencode"
+      ? existing.providerInstanceId
+      : (openCodeProviders[0]?.instanceId ?? ""),
+  );
   const [step, setStep] = useState(0);
   const [preset, setPreset] = useState(TEXT_GENERATOR_PRESETS[0]!);
-  const [baseUrl, setBaseUrl] = useState(existing?.baseUrl ?? preset.baseUrl);
+  const [baseUrl, setBaseUrl] = useState(apiExisting?.baseUrl ?? preset.baseUrl);
   const [label, setLabel] = useState(existing?.label ?? "");
   const secretSources = useSecretSources(environmentId);
   const [keyDraft, setKeyDraft] = useState<string | SecretReference>(
-    isSecretReference(existing?.apiKey) ? existing.apiKey : "",
+    isSecretReference(apiExisting?.apiKey) ? apiExisting.apiKey : "",
   );
   const [keyValid, setKeyValid] = useState(true);
   const [checking, setChecking] = useState(false);
@@ -279,23 +304,24 @@ function TextGeneratorWizard({
   );
 
   // A saved literal key arrives redacted; sending the marker back keeps it.
-  const storedKey = typeof existing?.apiKey === "string" ? existing.apiKey : "";
+  const storedKey = typeof apiExisting?.apiKey === "string" ? apiExisting.apiKey : "";
   const apiKey = typeof keyDraft === "string" ? keyDraft.trim() || storedKey : keyDraft;
   const kind = existing?.kind ?? preset.kind;
   const config = decodeTextGenerator({
     kind,
     ...(label.trim() ? { label: label.trim() } : {}),
-    baseUrl: baseUrl.trim(),
-    apiKey,
+    ...(kind === "opencode" ? { providerInstanceId } : { baseUrl: baseUrl.trim(), apiKey }),
     enabled: existing?.enabled ?? true,
   });
-  const keyRequired = existing === null && preset.id !== "custom";
+  const keyRequired = kind !== "opencode" && existing === null && preset.id !== "custom";
   // Presets know their URL; only a custom endpoint, or one already saved as such, asks for it.
   const showBaseUrl =
-    existing === null
+    kind !== "opencode" &&
+    (existing === null
       ? preset.id === "custom"
-      : !["openai", "anthropic", "openrouter"].includes(textGeneratorBrand(existing));
-  const canConnect = keyValid && Option.isSome(config) && (!keyRequired || apiKey !== "");
+      : !["openai", "anthropic", "openrouter"].includes(textGeneratorBrand(existing)));
+  const canConnect =
+    (kind === "opencode" || keyValid) && Option.isSome(config) && (!keyRequired || apiKey !== "");
   const name = Option.isSome(config) ? textGeneratorDisplayName(config.value) : preset.label;
 
   const connect = async () => {
@@ -326,7 +352,11 @@ function TextGeneratorWizard({
       <WizardPopup>
         <WizardHeader
           title={existing ? `Edit ${textGeneratorDisplayName(existing)}` : "Add a text generator"}
-          description="Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment."
+          description={
+            kind === "opencode"
+              ? "Uses an existing OpenCode provider's server, accounts, and models for raw text generation. No separate API key is needed."
+              : "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment."
+          }
         >
           <WizardSteps
             steps={STEPS}
@@ -404,25 +434,54 @@ function TextGeneratorWizard({
                     />
                   </div>
                 ) : null}
-                <div className="grid gap-1.5">
-                  <Label htmlFor="text-generator-key">
-                    {keyRequired ? "API key" : "API key (optional)"}
-                  </Label>
-                  <SecretSourceInput
-                    id="text-generator-key"
-                    aria-label="API key"
-                    value={keyDraft}
-                    configured={storedKey !== ""}
-                    sources={secretSources}
-                    onChange={(event) => {
-                      setKeyDraft(event.target.value);
-                      setCheckError(null);
-                    }}
-                    onSecretChange={(secret) => setKeyDraft(secret ?? "")}
-                    autoFocus={existing === null && preset.id !== "custom"}
-                    onValidityChange={setKeyValid}
-                  />
-                </div>
+                {kind === "opencode" ? (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="text-generator-opencode">OpenCode provider</Label>
+                    <Select
+                      value={providerInstanceId}
+                      onValueChange={(value) => {
+                        if (value !== null) setProviderInstanceId(value);
+                        setCheckError(null);
+                      }}
+                    >
+                      <SelectTrigger id="text-generator-opencode" aria-label="OpenCode provider">
+                        <SelectValue placeholder="Choose an OpenCode provider" />
+                      </SelectTrigger>
+                      <SelectPopup>
+                        {openCodeProviders.map((provider) => (
+                          <SelectItem key={provider.instanceId} value={provider.instanceId}>
+                            {provider.displayName || "OpenCode"} ({provider.instanceId})
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                    <p className="text-sm text-muted-foreground">
+                      {openCodeProviders.length === 0
+                        ? "Add and enable an OpenCode 2 provider in Settings → Providers first."
+                        : "Requires OpenCode 2 and a model that supports raw generation."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="text-generator-key">
+                      {keyRequired ? "API key" : "API key (optional)"}
+                    </Label>
+                    <SecretSourceInput
+                      id="text-generator-key"
+                      aria-label="API key"
+                      value={keyDraft}
+                      configured={storedKey !== ""}
+                      sources={secretSources}
+                      onChange={(event) => {
+                        setKeyDraft(event.target.value);
+                        setCheckError(null);
+                      }}
+                      onSecretChange={(secret) => setKeyDraft(secret ?? "")}
+                      autoFocus={existing === null && preset.id !== "custom"}
+                      onValidityChange={setKeyValid}
+                    />
+                  </div>
+                )}
                 <div className="grid gap-1.5">
                   <Label htmlFor="text-generator-label">Name (optional)</Label>
                   <Input
@@ -600,15 +659,14 @@ function TextGenerationTaskPicker({
   );
 }
 
-/** Searchable models; selectable when `onSelect` is given. */
 function TextGeneratorModelList({
   models,
   selected,
   onSelect,
 }: {
   readonly models: ReadonlyArray<TextGeneratorModel>;
-  readonly selected?: string | null;
-  readonly onSelect?: (id: string) => void;
+  readonly selected: string | null;
+  readonly onSelect: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -634,39 +692,27 @@ function TextGeneratorModelList({
         {shown.length === 0 ? (
           <p className="px-3 py-2 text-sm text-muted-foreground">No models match.</p>
         ) : (
-          <ul role={onSelect ? "listbox" : "list"} aria-label="Models">
+          <ul aria-label="Models">
             {shown.map((model) => {
               const isSelected = model.id === selected;
-              const label = (
-                <>
-                  <span className="grid min-w-0 flex-1">
-                    <span className="truncate">{model.name}</span>
-                    {model.name !== model.id ? (
-                      <span className="truncate font-mono text-xs text-muted-foreground">
-                        {model.id}
-                      </span>
-                    ) : null}
-                  </span>
-                  {isSelected ? <CheckIcon className="size-4 shrink-0 text-primary" /> : null}
-                </>
-              );
               return (
-                <li
-                  key={model.id}
-                  role={onSelect ? "option" : undefined}
-                  aria-selected={onSelect ? isSelected : undefined}
-                >
-                  {onSelect ? (
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
-                      onClick={() => onSelect(model.id)}
-                    >
-                      {label}
-                    </button>
-                  ) : (
-                    <div className="flex items-center gap-2 px-3 py-2 text-sm">{label}</div>
-                  )}
+                <li key={model.id}>
+                  <button
+                    type="button"
+                    aria-pressed={isSelected}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                    onClick={() => onSelect(model.id)}
+                  >
+                    <span className="grid min-w-0 flex-1">
+                      <span className="truncate">{model.name}</span>
+                      {model.name !== model.id ? (
+                        <span className="truncate font-mono text-xs text-muted-foreground">
+                          {model.id}
+                        </span>
+                      ) : null}
+                    </span>
+                    {isSelected ? <CheckIcon className="size-4 shrink-0 text-primary" /> : null}
+                  </button>
                 </li>
               );
             })}
@@ -688,6 +734,18 @@ function TextGeneratorModelsDialog({
   readonly onClose: () => void;
 }) {
   const name = textGeneratorDisplayName(saved.config);
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const [taskKey, setTaskKey] = useState<(typeof TASKS)[number]["key"]>(
+    () =>
+      TASKS.find(
+        (task) =>
+          (settings[task.key] ?? settings.textGenerationModelSelection).instanceId === saved.id,
+      )?.key ?? TASKS[0].key,
+  );
+  const own = settings[taskKey];
+  const selection = own ?? settings.textGenerationModelSelection;
+  const selected = selection.instanceId === saved.id ? selection.model : null;
   const result = useTextGeneratorModels(environmentId, saved.id, saved.config);
   const [refreshing, setRefreshing] = useState(false);
   const refresh = async () => {
@@ -719,7 +777,7 @@ function TextGeneratorModelsDialog({
               ? error
                 ? "The model list couldn't load."
                 : "Loading the model list."
-              : `${models.length} ${models.length === 1 ? "model" : "models"} available. Pick one in a text generation model picker.`}
+              : `${models.length} ${models.length === 1 ? "model" : "models"} available. Choose a task, then click a model to use it.`}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -730,7 +788,46 @@ function TextGeneratorModelsDialog({
           ) : models === null ? (
             <Spinner tone="muted" />
           ) : (
-            <TextGeneratorModelList models={models} />
+            <div className="grid gap-4">
+              <div className="grid gap-1.5">
+                <Label htmlFor="text-generator-model-task">Use model for</Label>
+                <Select
+                  value={taskKey}
+                  onValueChange={(value) => {
+                    const task = TASKS.find((candidate) => candidate.key === value);
+                    if (task !== undefined) setTaskKey(task.key);
+                  }}
+                >
+                  <SelectTrigger id="text-generator-model-task" aria-label="Use model for">
+                    <SelectValue>
+                      {TASKS.find((task) => task.key === taskKey)?.shortLabel}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {TASKS.map((task) => (
+                      <SelectItem key={task.key} value={task.key}>
+                        {task.shortLabel}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+                <p aria-live="polite" className="text-xs text-muted-foreground">
+                  Current model:{" "}
+                  {selected === null
+                    ? selection.model
+                    : (models.find((model) => model.id === selected)?.name ?? selected)}
+                  {selected === null ? " (another provider)" : ""}
+                  {own === null ? " · Follows the text generation model" : ""}
+                </p>
+              </div>
+              <TextGeneratorModelList
+                models={models}
+                selected={selected}
+                onSelect={(model) =>
+                  updateSettings({ [taskKey]: createModelSelection(saved.id, model) })
+                }
+              />
+            </div>
           )}
         </DialogPanel>
         <DialogFooter variant="bare">

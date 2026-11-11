@@ -15,10 +15,15 @@ import { expect, vi } from "vite-plus/test";
 import * as ServerSettings from "../serverSettings.ts";
 import { SECRET_REDACTED } from "../settingsSecrets.ts";
 import * as TextGenerators from "./TextGenerators.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 
 const ID = ProviderInstanceId.make("router");
 
-const layer = (generator: Partial<TextGeneratorConfig>, policy?: ManagedPolicySummary) =>
+const layer = (
+  generator: Partial<Exclude<TextGeneratorConfig, { kind: "opencode" }>>,
+  policy?: ManagedPolicySummary,
+) =>
   Layer.effect(TextGenerators.TextGenerators, TextGenerators.make).pipe(
     Layer.provideMerge(
       ServerSettings.layerTest(
@@ -32,6 +37,7 @@ const layer = (generator: Partial<TextGeneratorConfig>, policy?: ManagedPolicySu
     ),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+    Layer.provide(Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({})),
   );
 
 const request = {
@@ -41,6 +47,111 @@ const request = {
   outputSchema: Schema.Struct({ title: Schema.String }),
   modelSelection: { instanceId: ID, model: "some/model" },
 } as const;
+
+it.effect("an OpenCode text generator uses its selected provider without running an agent", () =>
+  Effect.gen(function* () {
+    const generateText = vi.fn<NonNullable<ProviderInstance["generateText"]>>(() =>
+      Effect.succeed('{"title":"Fix login"}'),
+    );
+    const instanceId = ProviderInstanceId.make("opencode-work");
+    const config = { kind: "opencode", providerInstanceId: instanceId, enabled: true } as const;
+    const models = [
+      { slug: "openai/gpt-6-luna", name: "GPT-6 Luna", subProvider: "OpenAI" },
+      { slug: "opencode-go/gpt-6-luna", name: "GPT-6 Luna", subProvider: "OpenCode Go" },
+      { slug: "opencode/free-model", name: "Free model" },
+    ];
+    const snapshot = Effect.succeed({ version: "2.2.5", models });
+    const modelSelection = {
+      instanceId: ID,
+      model: "openai/gpt-6-luna",
+      options: [{ id: "variant", value: "low" }],
+    };
+    const instance = {
+      instanceId,
+      driverKind: ProviderDriverKind.make("opencode"),
+      enabled: true,
+      generateText,
+      snapshot: { getSnapshot: snapshot, refresh: snapshot },
+    } as unknown as ProviderInstance;
+    const generators = yield* TextGenerators.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ textGenerators: { [ID]: config } }),
+          FetchHttpClient.layer,
+          Layer.mock(SecretResolver.SecretResolver)({}),
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            getInstance: (id) => Effect.succeed(id === instanceId ? instance : undefined),
+          }),
+        ),
+      ),
+    );
+    expect((yield* generators.listModels({ id: ID })).models).toEqual([
+      { id: "openai/gpt-6-luna", name: "GPT-6 Luna", subProvider: "OpenAI" },
+      { id: "opencode-go/gpt-6-luna", name: "GPT-6 Luna", subProvider: "OpenCode Go" },
+      { id: "opencode/free-model", name: "Free model", subProvider: "opencode" },
+    ]);
+    const run = yield* generators.runner(ID);
+    expect(yield* run!({ ...request, modelSelection })).toEqual({ title: "Fix login" });
+    expect(generateText).toHaveBeenLastCalledWith({
+      prompt: request.prompt,
+      modelSelection: { ...modelSelection, instanceId },
+    });
+    generateText.mockReturnValueOnce(Effect.succeed("Hello, world."));
+    expect(
+      yield* run!({
+        ...request,
+        operation: "generateTranscriptionPostProcessing",
+        outputSchema: Schema.Struct({ transcription: Schema.String }),
+      }),
+    ).toEqual({ transcription: "Hello, world." });
+    const tested = yield* generators.listModels({ id: ID, test: true, model: "openai/gpt-6-luna" });
+    expect(tested.testedModel).toBe("openai/gpt-6-luna");
+    expect(generateText).toHaveBeenLastCalledWith({
+      prompt: "Reply with OK.",
+      modelSelection: { instanceId, model: "openai/gpt-6-luna" },
+    });
+  }),
+);
+
+it.effect.each(["missing", "disabled", "wrong driver", "OpenCode 1"] as const)(
+  "rejects an OpenCode text generator whose provider is %s",
+  (state) =>
+    Effect.gen(function* () {
+      const generateText = vi.fn<NonNullable<ProviderInstance["generateText"]>>(() =>
+        Effect.die("must not generate"),
+      );
+      const config = {
+        kind: "opencode",
+        providerInstanceId: ProviderInstanceId.make("opencode-work"),
+        enabled: true,
+      } as const;
+      const snapshot = Effect.succeed({ version: "1.18.32", models: [] });
+      const instance =
+        state === "missing"
+          ? undefined
+          : ({
+              enabled: state !== "disabled",
+              driverKind: state === "wrong driver" ? "codex" : "opencode",
+              generateText,
+              snapshot: { getSnapshot: snapshot, refresh: snapshot },
+            } as unknown as ProviderInstance);
+      const generators = yield* TextGenerators.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest({}),
+            FetchHttpClient.layer,
+            Layer.mock(SecretResolver.SecretResolver)({}),
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () => Effect.succeed(instance),
+            }),
+          ),
+        ),
+      );
+      const failure = yield* generators.listModels({ id: ID, config }).pipe(Effect.flip);
+      expect(failure.detail).toContain("OpenCode");
+      expect(generateText).not.toHaveBeenCalled();
+    }),
+);
 
 it.effect.each([
   {
@@ -165,7 +276,10 @@ it.effect("checks unsaved settings, keeping the saved key behind a redaction mar
     const generators = yield* TextGenerators.TextGenerators.pipe(
       Effect.provide(layer({ apiKey: "saved-key" })),
     );
-    const list = (id: string, config: Partial<TextGeneratorConfig>) =>
+    const list = (
+      id: string,
+      config: Partial<Exclude<TextGeneratorConfig, { kind: "opencode" }>>,
+    ) =>
       generators
         .listModels({
           id: ProviderInstanceId.make(id),

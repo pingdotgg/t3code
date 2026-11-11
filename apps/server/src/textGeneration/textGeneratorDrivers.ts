@@ -251,7 +251,9 @@ const anthropic: TextGeneratorDriver = {
   ),
 };
 
-export const TEXT_GENERATOR_DRIVERS: Readonly<Record<TextGeneratorKind, TextGeneratorDriver>> = {
+export const TEXT_GENERATOR_DRIVERS: Readonly<
+  Record<Exclude<TextGeneratorKind, "opencode">, TextGeneratorDriver>
+> = {
   openaiCompatible: openAICompatible,
   anthropic,
 };
