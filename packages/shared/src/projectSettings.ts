@@ -148,6 +148,12 @@ function resolveProjectOverrides(
     ) {
       continue;
     }
+    // Per-host pins: keep environment hosts the project did not set.
+    if (key === "githubHostAccounts" && value !== null && typeof value === "object") {
+      effective[key] = { ...settings.githubHostAccounts, ...value };
+      sources[key] = "project";
+      continue;
+    }
     effective[key] = value;
     sources[key] = "project";
   }

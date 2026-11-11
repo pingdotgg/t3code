@@ -70,6 +70,23 @@ describe("resolveProjectSettings", () => {
     expect(resolveProjectSettings(settings, otherProjectId).settings.defaultAutoPull).toBe(true);
   });
 
+  it("merges githubHostAccounts per host so unset hosts keep the environment pin", () => {
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      githubHostAccounts: { "github.com": "work", "ghe.example.test": "bot" },
+      projectSettingsOverrides: {
+        [projectId]: { githubHostAccounts: { "ghe.example.test": "project-bot" } },
+      },
+    });
+    expect(resolveProjectSettings(settings, projectId).settings.githubHostAccounts).toEqual({
+      "github.com": "work",
+      "ghe.example.test": "project-bot",
+    });
+    expect(resolveProjectSettings(settings, otherProjectId).settings.githubHostAccounts).toEqual({
+      "github.com": "work",
+      "ghe.example.test": "bot",
+    });
+  });
+
   it("honours the aggregate's own fields only until the server has folded them", () => {
     const aggregateModel = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
     const project = {

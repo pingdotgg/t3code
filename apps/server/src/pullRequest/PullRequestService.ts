@@ -913,6 +913,9 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  // Pin per project so a settings change cannot reuse another account's cached reads.
+  const projectAccountKeys = new Map<ProjectId, string>();
+
   const readWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
@@ -1001,6 +1004,7 @@ export const make = Effect.gen(function* () {
               const githubHostAccounts = resolveProjectSettings(settings, project.id).settings
                 .githubHostAccounts;
               const accountKey = githubHostAccounts[host] ?? "";
+              projectAccountKeys.set(project.id, accountKey);
               if (api !== null) {
                 const rootsKey = `${host}\n${accountKey}`;
                 const roots = viewerRoots.get(rootsKey);
@@ -3059,12 +3063,13 @@ export const make = Effect.gen(function* () {
       ref.repository.toLowerCase(),
       ref.number,
       ref.expectedAccountId ?? null,
+      projectAccountKeys.get(ref.projectId) ?? "",
       ref[credentialNamespace] ?? null,
     ]);
   const refOfCacheKey = (key: string): PullRequestRef => {
-    const [, projectId, host, repository, number, expectedAccountId, fingerprint] = JSON.parse(
+    const [, projectId, host, repository, number, expectedAccountId, , fingerprint] = JSON.parse(
       key,
-    ) as [number, string, string | null, string, number, string | null, string | null];
+    ) as [number, string, string | null, string, number, string | null, string, string | null];
     return {
       projectId,
       ...(host === null ? {} : { host }),
@@ -3143,6 +3148,7 @@ export const make = Effect.gen(function* () {
       project.project.workspaceRoot,
       String(input.number),
       input.expectedAccountId ?? "",
+      viewerAccountKey(project),
       input[credentialNamespace] ?? "",
     ]
       .map(encodeURIComponent)
