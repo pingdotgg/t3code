@@ -249,13 +249,17 @@ function NoticeCard({
         </ComposerBanner.Content>
         {item.actions || item.onDismiss || overflow ? (
           <ComposerBanner.Actions className="min-w-14 sm:min-w-12">
-            {overflow}
             {item.actions}
-            {item.onDismiss ? (
-              <ComposerBanner.Dismiss
-                aria-label={item.dismissLabel ?? "Dismiss warning"}
-                onClick={item.onDismiss}
-              />
+            {overflow || item.onDismiss ? (
+              <span className="ms-auto flex items-center gap-1.5">
+                {overflow}
+                {item.onDismiss ? (
+                  <ComposerBanner.Dismiss
+                    aria-label={item.dismissLabel ?? "Dismiss warning"}
+                    onClick={item.onDismiss}
+                  />
+                ) : null}
+              </span>
             ) : null}
           </ComposerBanner.Actions>
         ) : null}
