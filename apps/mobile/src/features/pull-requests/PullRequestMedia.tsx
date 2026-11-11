@@ -1,50 +1,41 @@
-import { createContext, useContext, useMemo, useState } from "react";
-import { pullRequestMediaSource, pullRequestImageSource } from "./pullRequestMediaSource";
-import { useFilePreviewGallery } from "../../components/FilePreviewGallery";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { createContext, useContext, useState } from "react";
 import {
-  SOURCE_CONTROL_MEDIA_ASSET,
-  type AssetResource,
-  type EnvironmentId,
-} from "@t3tools/contracts";
+  pullRequestMediaSource,
+  pullRequestImageSource,
+  type PullRequestMediaLocation,
+} from "./pullRequestMediaSource";
+import { useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { AppText } from "../../components/ui/AppText";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { assetImageCacheKey } from "../../lib/assetImageSource";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
-import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import {
   FilePreviewModal,
   type FilePreviewSource,
   type FilePreviewItem,
-} from "../../components/FilePreviewModal";
+} from "../../components/ui/FilePreviewModal";
 
 export const PullRequestMediaVisibleContext = createContext(true);
 
-export const PullRequestMediaContext = createContext<{
-  readonly environmentId: EnvironmentId;
-  readonly cwd: string;
-} | null>(null);
+export const PullRequestMediaContext = createContext<PullRequestMediaLocation | null>(null);
 
 export function usePullRequestMediaUrl(url: string) {
   const context = useContext(PullRequestMediaContext);
-  const fetchUrl = sourceControlClients.mediaUrl(url)?.fetchUrl;
-  const resource = useMemo<AssetResource | null>(
-    () =>
-      context && fetchUrl
-        ? { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: context.cwd, url: fetchUrl }
-        : null,
-    [context, fetchUrl],
-  );
+  const source = pullRequestMediaSource(url, context);
+  const resource = "resource" in source ? (source.resource ?? null) : null;
   const asset = useAssetUrlState(context?.environmentId ?? null, resource);
   const refresh = useRefreshAssetUrl(context?.environmentId ?? null, resource);
   return {
     uri: asset._tag === "Success" ? asset.url : resource ? null : url,
+    cacheKey: context && resource ? assetImageCacheKey(context.environmentId, resource) : undefined,
     unavailable: resource !== null && asset._tag === "Failure",
-    source: pullRequestMediaSource(url, context),
+    source,
     resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
   };
 }
@@ -68,6 +59,7 @@ export function PullRequestMedia(props: {
         <ThreadMarkdownImageView
           uri={media.uri}
           sourceKey={props.url}
+          cacheKey={media.cacheKey}
           unavailable={media.unavailable}
           alt={name}
           onPressPreview={(source) =>
@@ -137,7 +129,7 @@ export function PullRequestImageAttachment(props: {
       >
         <View className="overflow-hidden rounded-2xl border border-border-subtle bg-grouped-card">
           <Image
-            source={media.uri ? { uri: media.uri } : null}
+            source={media.uri ? { uri: media.uri, cacheKey: media.cacheKey } : null}
             style={{ width: 174, height: 112 }}
             contentFit="contain"
             cachePolicy="memory-disk"

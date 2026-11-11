@@ -13,6 +13,14 @@ import * as GitHubQuota from "./GitHubQuota.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { runGitHubStackAction as runStackAction } from "./githubStackActions.ts";
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
+
+const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+  enabled: false,
+  token: () => Effect.succeedNone,
+  invalidate: () => Effect.void,
+});
 
 type Call = ReadonlyArray<string>;
 type Send = (call: Call, kind: "graphql" | "rest") => Effect.Effect<unknown>;
@@ -86,13 +94,19 @@ const runGitHubStackAction = (send: Send, input: Parameters<typeof runStackActio
                     source: "gh" as const,
                     fingerprint: "fp",
                   }),
+                saved: () => Effect.succeedNone,
+                fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
                 invalidate: () => Effect.void,
               }),
               GitHubQuota.layer,
               SourceControlRateLimit.layer,
+              appSignedOut,
             ),
           ),
         ),
+        Layer.mock(GitHubAppAccess.GitHubAppAccess)({
+          credentialFor: () => Effect.succeed({ token: Redacted.make("token"), fingerprint: "fp" }),
+        }),
         Layer.succeed(HttpClient.HttpClient, graphQlHttp(send)),
       ),
     ),
@@ -327,7 +341,7 @@ it.effect("rebases the open layers bottom to top in a scratch clone, each onto t
     expect(api.calls.some(isMutation)).toBe(false);
     const rebases = gitCalls.filter((args) => args[0] === "rebase");
     expect(rebases).toEqual([
-      ["rebase", "--quiet", "--onto", "origin/main", "new-sha"],
+      ["rebase", "--quiet", "--onto", "origin/main", "aaa"],
       ["rebase", "--quiet", "--onto", "new-sha", "bbb"],
     ]);
     expect(gitCalls.filter((args) => args[0] === "push")).toEqual([
