@@ -49,6 +49,7 @@ export function WorkspaceToolbar(props: {
   const { layout, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const searchRef = useRef<SearchBarCommands>(null);
+  const submittingSearch = useRef(false);
   const settingsMenu = useSettingsEnvironmentMenu();
   // The Settings list takes the selected tab's place, so search follows it.
   const selectedTab = workspace.settingsOpen ? "settings" : workspace.state.selectedTab;
@@ -88,10 +89,13 @@ export function WorkspaceToolbar(props: {
     tab.searchMode === "resting"
       ? enterSearch()
       : workspace.dispatch({ type: "search", tab: selectedTab });
-  // Integrated Settings search collapses on blur; end the session so the list cannot stay filtered
-  // behind a closed button. The Duo keeps its field mounted, so it expands like the other tabs.
+  // Integrated Settings search collapses on a dismissing blur; end the session so the list cannot
+  // stay filtered behind a closed button. The keyboard Search key blurs too but keeps the query.
+  // The Duo keeps its field mounted, so it expands like the other tabs.
   const blurSearch = () => {
-    if (selectedTab === "settings" && NATIVE_LIQUID_GLASS_SUPPORTED && !duoSearch) {
+    const submitted = submittingSearch.current;
+    submittingSearch.current = false;
+    if (selectedTab === "settings" && NATIVE_LIQUID_GLASS_SUPPORTED && !duoSearch && !submitted) {
       cancelSearch();
       return;
     }
@@ -189,7 +193,10 @@ export function WorkspaceToolbar(props: {
                   cancelButtonHidden: foldedSearch,
                   onFocus: searchFocused,
                   onBlur: blurSearch,
-                  onSearchButtonPress: () => searchRef.current?.blur(),
+                  onSearchButtonPress: () => {
+                    submittingSearch.current = true;
+                    searchRef.current?.blur();
+                  },
                   onChangeText: ({ nativeEvent }) =>
                     workspace.dispatch({
                       type: "query",
