@@ -1,0 +1,161 @@
+---
+title: Worktrees
+description: Run alchemy deploy, dev, and tests from several git worktrees at once — one stage per worktree, so parallel agents never touch each other's resources.
+---
+
+Coding agents often work in parallel, each in its own
+[git worktree](https://git-scm.com/docs/git-worktree). Every worktree
+is a full checkout of your app, so each one can deploy, run
+`alchemy dev`, and run tests. They just need separate
+[stages](/environments/stages).
+
+## Why worktrees collide
+
+The default stages are named after your user, not your checkout.
+
+```sh
+alchemy deploy   # live_sam, from every worktree
+alchemy dev      # dev_sam, from every worktree
+```
+
+Two worktrees deploying `live_sam` are one stage. Each deploy
+replaces the other's code, and a `destroy` in one deletes resources
+the other still uses.
+
+## Name a stage after the worktree
+
+Derive the stage from the worktree's directory name.
+
+```sh
+basename "$(git rev-parse --show-toplevel)"
+# feat-x
+```
+
+Stage names must match `[a-z0-9][-_a-z0-9]*`, so name worktree
+directories with letters, digits, `-`, and `_`.
+
+## Deploy
+
+Put the stage in a script so neither you nor an agent has to type it.
+
+```json
+{
+  "scripts": {
+    "deploy": "alchemy deploy --stage live_${USER}_$(basename \"$(git rev-parse --show-toplevel)\")",
+    "destroy": "alchemy destroy --stage live_${USER}_$(basename \"$(git rev-parse --show-toplevel)\")"
+  }
+}
+```
+
+`pnpm run deploy` in `feat-x` now deploys `live_sam_feat-x`, and
+`pnpm run destroy` tears down only that stage.
+
+## Dev
+
+`alchemy dev` gets its own stage the same way.
+
+```json
+{
+  "scripts": {
+    "dev": "alchemy dev --stage dev_${USER}_$(basename \"$(git rev-parse --show-toplevel)\")"
+  }
+}
+```
+
+Each worktree's Workers and dev servers pick a free localhost port,
+so several dev sessions run side by side. Don't pin a fixed
+`dev.port` in code that runs in more than one worktree.
+
+## Destroy a dev stage
+
+Resources with no local emulator, and anything you pinned with
+[`remote()`](/environments/local-development#local-by-default-live-on-demand),
+are real cloud resources. They keep running after `alchemy dev`
+exits. Destroy the dev stage with `alchemy destroy`.
+
+```json
+{
+  "scripts": {
+    "dev:destroy": "alchemy destroy --stage dev_${USER}_$(basename \"$(git rev-parse --show-toplevel)\")"
+  }
+}
+```
+
+`alchemy destroy` defaults to the deploy stage, so always pass the
+dev stage here.
+
+## Test
+
+`Test.make` deploys to `test_$USER` by default, so tests need a
+worktree stage too. How you pass it depends on your
+[test runner](/testing/test-harness#runners).
+
+### With @alchemy.run/test
+
+The `alchemy-test` runner takes the stage as a flag.
+
+```json
+{
+  "scripts": {
+    "test": "alchemy-test --stage test_${USER}_$(basename \"$(git rev-parse --show-toplevel)\")"
+  }
+}
+```
+
+`pnpm test` in `feat-x` now deploys every test stack to
+`test_sam_feat-x`. Extra arguments still pass through, so
+`pnpm test test/integ.test.ts -t "serves"` runs one test on the
+same stage.
+
+### With bun test or Vitest
+
+Neither runner has a stage flag. Set `ALCHEMY_TEST_STAGE`, which
+`--stage` sets for you under `alchemy-test`.
+
+```json
+{
+  "scripts": {
+    "test": "ALCHEMY_TEST_STAGE=test_${USER}_$(basename \"$(git rev-parse --show-toplevel)\") bun test"
+  }
+}
+```
+
+Swap `bun test` for `vitest run` on Vitest.
+
+## Tell your agents
+
+Agents follow the scripts they find. Spell out the rule in
+`AGENTS.md` (or `CLAUDE.md`).
+
+```md
+## Stages
+
+This repo is worked on from several git worktrees at once.
+Never run `alchemy deploy`, `alchemy dev`, `alchemy destroy`, or the test runner directly.
+Use `pnpm run deploy`, `pnpm run dev`, `pnpm run destroy`, `pnpm run dev:destroy`,
+and `pnpm test`, which pick a stage named after this worktree.
+Before deleting the worktree, run `pnpm run dev:destroy` and `pnpm run destroy`.
+```
+
+## Clean up before removing a worktree
+
+A deleted worktree takes its scripts with it, not its cloud
+resources. Destroy its stages first.
+
+```sh
+pnpm run dev:destroy
+pnpm run destroy
+git worktree remove ../feat-x
+```
+
+If the worktree is already gone, run the destroy from any checkout
+with the stage spelled out.
+
+```sh
+alchemy destroy --stage dev_sam_feat-x
+alchemy destroy --stage live_sam_feat-x
+```
+
+This works when the worktrees share a remote
+[state store](/state-store). With local state, each worktree's state lives
+in its own `.alchemy/` directory, so destroy before you delete it.
