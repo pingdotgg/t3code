@@ -1627,10 +1627,20 @@ const make = Effect.gen(function* () {
   const assertNavigationSucceeded = (tab: ServerTab) => {
     const failure = loadErrorOf(tab);
     if (failure) {
+      const diagnosticUrl = URL.parse(failure.url);
+      if (diagnosticUrl) {
+        diagnosticUrl.username = "";
+        diagnosticUrl.password = "";
+        diagnosticUrl.search = "";
+        diagnosticUrl.hash = "";
+      }
+      const url = diagnosticUrl
+        ? ServerBrowserPage.withoutDataPayload(diagnosticUrl.href)
+        : "the requested page";
       throw new ServerBrowserPage.ServerBrowserOperationError({
         tag: "PreviewAutomationExecutionError",
-        message: `Navigation to ${failure.url} failed: ${failure.description}`,
-        detail: failure,
+        message: `Navigation to ${url} failed: ${failure.description}`,
+        detail: { ...failure, url },
       });
     }
   };

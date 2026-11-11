@@ -2699,7 +2699,7 @@ it.live("reports why a page failed to load while the tab shows the error page", 
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("preview_open rejects a desktop navigation that failed before automation attached", () =>
+it.effect("preview_open rejects a desktop navigation that failed before automation attached", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker, tabId } = yield* ready;
@@ -2707,18 +2707,23 @@ it.live("preview_open rejects a desktop navigation that failed before automation
       const channel = yield* DesktopChannel.DesktopBrowserChannel;
       desktopRendersNext = true;
       desktopPageUrl = "chrome-error://chromewebdata/";
-      using _failure = vi.spyOn(channel, "loadFailure").mockReturnValue(certificateError);
+      const failure = {
+        ...certificateError,
+        url: "https://user:secret@device.local/?token=private#fragment",
+      };
+      using _failure = vi.spyOn(channel, "loadFailure").mockReturnValue(failure);
       const error = yield* broker
         .invoke<PreviewAutomationStatus>({
           scope,
           operation: "open",
-          input: { url: certificateError.url, reuseExistingTab: false, open: false },
+          input: { url: failure.url, reuseExistingTab: false, open: false },
         })
         .pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "PreviewAutomationExecutionError",
         reason: `Navigation to ${certificateError.url} failed: ${certificateError.description}`,
       });
+      expect(JSON.stringify(error)).not.toMatch(/secret|private|fragment/);
       const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
       expect(sessions.map((session) => session.tabId)).toEqual([tabId]);
     }),
