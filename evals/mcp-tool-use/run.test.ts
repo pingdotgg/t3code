@@ -843,6 +843,31 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
       }
     ).checks.map((check) => check.name);
   assert.deepEqual(ciNames({ check: " test " }), ["Test"]);
+  const shards = makeSample(
+    {
+      ...childCase,
+      setup: {
+        ...childCase.setup,
+        world: {
+          ...childCase.setup.world,
+          prs: [
+            {
+              number: 7,
+              checks: Array.from({ length: 6 }, (_, index) => ({
+                name: `Shard ${index}`,
+                state: "fail",
+              })),
+            },
+          ],
+        },
+      },
+    },
+    base,
+  );
+  const logs = (
+    t3Default(shards, "ci_logs", { number: 7 }) as { checks: Array<{ log: string | null }> }
+  ).checks.map((check) => check.log !== null);
+  assert.deepEqual(logs, [true, true, true, true, true, false]);
   assert.deepEqual(ciNames({}), ["Lint"]);
   const read: Readonly<Record<string, unknown>> = t3Default(sample, "pull_request_read", {
     number: 5,

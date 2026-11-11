@@ -1235,6 +1235,9 @@ const branchPullRequest = (sample: Sample) => {
   return { number, created: true, pr: undefined };
 };
 
+/** PullRequestService reads this many logs when no check is named. */
+const DEFAULT_CHECK_LOGS = 5;
+
 /** The checks `ci_logs` and `ci_rerun` act on, selected as PullRequestService does. */
 const selectedWorldChecks = (sample: Sample, input: Readonly<Record<string, unknown>>) => {
   const number = typeof input.number === "number" ? input.number : branchPullRequest(sample).number;
@@ -1469,19 +1472,27 @@ export const t3Default = (
       };
     case "ci_logs":
     case "ci_rerun": {
-      const { number, checks } = selectedWorldChecks(sample, input);
+      const { number, checks, named } = selectedWorldChecks(sample, input);
       return {
         ...pullRequest(sample.repo, { number }),
-        checks: checks.map((check) =>
+        checks: checks.map((check, index) =>
           name === "ci_rerun"
             ? { name: valueText(check.name), rerun: true, detail: null }
-            : {
-                name: valueText(check.name),
-                url: null,
-                log: valueText(check.log ?? `Error: ${valueText(check.name)} failed`),
-                truncated: false,
-                detail: null,
-              },
+            : named === null && index >= DEFAULT_CHECK_LOGS
+              ? {
+                  name: valueText(check.name),
+                  url: null,
+                  log: null,
+                  truncated: false,
+                  detail: "Not read, to keep the reply short. Ask for this check by name.",
+                }
+              : {
+                  name: valueText(check.name),
+                  url: null,
+                  log: valueText(check.log ?? `Error: ${valueText(check.name)} failed`),
+                  truncated: false,
+                  detail: null,
+                },
         ),
       };
     }
