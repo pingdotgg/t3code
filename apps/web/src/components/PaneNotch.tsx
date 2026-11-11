@@ -149,11 +149,11 @@ export function PaneNotch({
   // chrome gives it the dark tokens there (index.css).
   const isMobile = useMediaQuery("max-md");
   const notchRef = useRef<HTMLDivElement>(null);
-  const { split, focused } = useLayoutPane();
+  const { split, focused, visible } = useLayoutPane();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Mark the mounted notch ancestors and remove those external DOM markers on cleanup.
   useLayoutEffect(() => {
     const notch = notchRef.current;
-    if (!notch || !marksHost) return;
+    if (!notch || !marksHost || !visible) return;
     const unmarkPane = markNotchHost(
       notch.closest(
         side === "right" ? "[data-layout-tab-id], [data-pane-notch-host]" : "[data-layout-tab-id]",
@@ -165,7 +165,7 @@ export function PaneNotch({
       unmarkPane();
       unmarkInset();
     };
-  }, [marksHost, side]);
+  }, [marksHost, side, visible]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the notch DOM gap before paint and stop observing when its host changes.
   useLayoutEffect(() => {
     const notch = notchRef.current;
