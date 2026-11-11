@@ -3,15 +3,10 @@ import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contrac
 import { createModelSelection } from "@t3tools/shared/model";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import { resolveDefaultModelSettingsPresentation } from "./ProjectDefaultsSettings.logic";
 
 const claudeId = ProviderInstanceId.make("claudeAgent");
-const codexId = ProviderInstanceId.make("codex");
 const high = [{ id: "effort", value: "high" }];
 const savedClaude = createModelSelection(claudeId, "claude-opus-4-8", high);
 function provider(input: {
@@ -48,115 +43,70 @@ const claudeAndCodex = [
   provider({ instanceId: "claudeAgent", driver: "claudeAgent", models: ["claude-opus-4-8"] }),
 ];
 
-function present(input: {
-  providers: ReadonlyArray<ServerProvider>;
-  saved: ReturnType<typeof createModelSelection> | null;
-  settings?: UnifiedSettings;
-}) {
-  const settings = input.settings ?? DEFAULT_UNIFIED_SETTINGS;
+function present(
+  providers: ReadonlyArray<ServerProvider>,
+  overrides: Partial<UnifiedSettings> = {},
+) {
+  const settings = {
+    ...DEFAULT_UNIFIED_SETTINGS,
+    defaultModelSelection: savedClaude,
+    ...overrides,
+  };
   return resolveDefaultModelSettingsPresentation({
-    entries: sortProviderInstanceEntries(
-      applyProviderInstanceSettings(deriveProviderInstanceEntries(input.providers), settings, null),
-    ),
-    providers: input.providers,
+    entries: providerInstanceEntriesFor(providers, settings, null),
+    providers,
     settings,
-    saved: input.saved,
+    projectId: null,
   });
 }
 
-function claudeOff(): UnifiedSettings {
-  return {
-    ...DEFAULT_UNIFIED_SETTINGS,
-    providerInstances: {
-      [claudeId]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: false },
-    },
-  };
-}
+const claudeOff: Partial<UnifiedSettings> = {
+  providerInstances: {
+    [claudeId]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: false },
+  },
+};
 
 describe("resolveDefaultModelSettingsPresentation", () => {
-  it("keeps a saved model when its provider is turned off and locks effort", () => {
-    const row = present({
-      providers: claudeAndCodex.map((entry) =>
-        entry.instanceId === claudeId ? { ...entry, enabled: false } : entry,
-      ),
-      saved: savedClaude,
-      settings: claudeOff(),
-    });
-    expect(row).toMatchObject({
+  it("keeps the saved model and explains why when its provider cannot run", () => {
+    const withoutClaude = claudeAndCodex.filter((entry) => entry.instanceId !== claudeId);
+    const claudeUnavailable = claudeAndCodex.map((entry) =>
+      entry.instanceId === claudeId ? { ...entry, availability: "unavailable" as const } : entry,
+    );
+    // Settings turn Claude off before the server snapshot reflects it.
+    expect(present(claudeAndCodex, claudeOff)).toEqual({
       selection: savedClaude,
-      effortLocked: true,
-      note: "Claude is turned off.",
+      providerNote: "Claude is turned off.",
     });
-  });
-
-  it("keeps the saved model when settings turn the provider off before the snapshot updates", () => {
-    const row = present({ providers: claudeAndCodex, saved: savedClaude, settings: claudeOff() });
-    expect(row.selection).toBe(savedClaude);
-    expect(row.effortLocked).toBe(true);
-    expect(row.note).toBe("Claude is turned off.");
-  });
-
-  it("keeps the saved model when its provider is unavailable", () => {
-    const row = present({
-      providers: claudeAndCodex.map((entry) =>
-        entry.instanceId === claudeId ? { ...entry, availability: "unavailable" as const } : entry,
-      ),
-      saved: savedClaude,
-    });
-    expect(row).toMatchObject({
+    expect(present(claudeUnavailable)).toEqual({
       selection: savedClaude,
-      effortLocked: true,
-      note: "Claude is unavailable.",
+      providerNote: "Claude is unavailable.",
     });
-  });
-
-  it("keeps the saved model when its provider is absent from this environment", () => {
-    const row = present({
-      providers: claudeAndCodex.filter((entry) => entry.instanceId !== claudeId),
-      saved: savedClaude,
-    });
-    expect(row).toMatchObject({
+    expect(present(withoutClaude)).toEqual({
       selection: savedClaude,
-      effortLocked: true,
-      note: "This provider is not available on this environment.",
+      providerNote: "This provider is not available on this environment.",
     });
   });
 
   it("leaves effort editable when the saved provider can run", () => {
-    const row = present({ providers: claudeAndCodex, saved: savedClaude });
-    expect(row.selection).toBe(savedClaude);
-    expect(row.effortLocked).toBe(false);
-    expect(row.note).toBeNull();
-  });
-
-  it("shows the automatic fallback when nothing is saved", () => {
-    const row = present({ providers: claudeAndCodex, saved: null });
-    expect(row).toMatchObject({
-      effortLocked: false,
-      note: null,
-      selection: { instanceId: codexId, model: "gpt-5.6" },
-    });
+    expect(present(claudeAndCodex)).toEqual({ selection: savedClaude, providerNote: null });
   });
 
   it("still follows a hidden model on the same provider", () => {
-    const settings: UnifiedSettings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerModelPreferences: {
-        [claudeId]: { hiddenModels: ["claude-opus-4-8"], modelOrder: [] },
-      },
-    };
-    const row = present({
-      providers: [
+    const row = present(
+      [
         provider({
           instanceId: "claudeAgent",
           driver: "claudeAgent",
           models: ["claude-sonnet-5", "claude-opus-4-8"],
         }),
       ],
-      saved: savedClaude,
-      settings,
-    });
-    expect(row.effortLocked).toBe(false);
+      {
+        providerModelPreferences: {
+          [claudeId]: { hiddenModels: ["claude-opus-4-8"], modelOrder: [] },
+        },
+      },
+    );
+    expect(row.providerNote).toBeNull();
     expect(row.selection).toMatchObject({ instanceId: claudeId, model: "claude-sonnet-5" });
   });
 });
