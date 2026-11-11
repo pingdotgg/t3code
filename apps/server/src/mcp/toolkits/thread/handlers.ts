@@ -76,7 +76,7 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
     });
   return { ...context, request, item };
 });
-/** A field the chosen action needs. `null` counts as given, as in `beforeRunId: null`. */
+/** A field the chosen action needs. */
 const required = <A>(value: A | undefined, name: string) =>
   value === undefined
     ? Effect.fail(
@@ -305,12 +305,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             }));
           }
           case "reorder": {
-            const beforeRunId = yield* required(input.beforeRunId, "beforeRunId");
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
               type: "queued-run.reorder",
               runId,
-              beforeRunId,
+              beforeRunId: input.beforeRunId ?? null,
             }));
           }
           case "promote_to_steer": {
