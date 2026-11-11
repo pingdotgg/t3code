@@ -1156,7 +1156,6 @@ export function ThreadRelationshipsPanel(props: {
       {lineageVisible ? (
         <ThreadDetailsSection
           title="Lineage"
-          spacing="relaxed"
           summary={
             unlinkedRunningCount +
               (groups.find((group) => group.id === "active")?.rows.length ?? 0) >
