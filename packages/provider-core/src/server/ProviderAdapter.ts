@@ -98,6 +98,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     providerThread: OrchestrationV2ProviderThread,
     /** Work remaining at this point in the event stream, including native continuations. */
     pendingBackgroundWork: Schema.optional(Schema.Boolean),
+    /** Persist idle background snapshots before a run subscriber exists. */
+    sessionScoped: Schema.optional(Schema.Boolean),
     retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
   }),
   Schema.Struct({
@@ -125,6 +127,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("turn_item.updated"),
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
+    /** Persist recovered activity independently of a run subscription. */
+    sessionScoped: Schema.optional(Schema.Boolean),
   }),
   /** A steer the provider queued stays `pending` until the agent reads it; `cancelled` if dropped unread. */
   Schema.Struct({
