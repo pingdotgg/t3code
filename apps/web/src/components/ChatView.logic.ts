@@ -67,6 +67,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftId,
+  type DraftSessionState,
   type DraftThreadState,
 } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -1515,4 +1516,42 @@ export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | nu
     if (providerTurn?.providerThreadId === providerThread.id) available.add(run.ordinal);
   }
   return available;
+}
+
+// Matches serializeComposerFileLink's output: its destination is an encoded path, never a URL.
+// Two-letter minimum scheme keeps `C:%5C...` Windows paths counted as files.
+const COMPOSER_LINK_DESTINATION = /\]\(([^()\s]+)\)/g;
+const URL_SCHEME = /^[a-z][a-z\d+.-]+:/i;
+
+export function promptHasFileReferences(prompt: string): boolean {
+  for (const [, destination] of prompt.matchAll(COMPOSER_LINK_DESTINATION)) {
+    if (destination && !URL_SCHEME.test(destination)) return true;
+  }
+  return false;
+}
+
+export function resolveAutomaticEnvironment(input: {
+  readonly ready: boolean;
+  readonly hasMultipleEnvironments: boolean;
+  readonly loadBalancingEnabled: boolean;
+  readonly isScratch: boolean;
+  readonly hasAttachments: boolean;
+  readonly hasFileReferences: boolean;
+  readonly draft: Pick<
+    DraftSessionState,
+    "environmentSelection" | "loadBalancedEnvironmentId" | "branch" | "worktreePath"
+  > | null;
+}): boolean {
+  const { draft } = input;
+  // Scratch file links resolve only on the machine the scratch folder lives on.
+  const machineLocalContent = input.hasAttachments || (input.isScratch && input.hasFileReferences);
+  return (
+    input.ready &&
+    input.hasMultipleEnvironments &&
+    input.loadBalancingEnabled &&
+    draft?.environmentSelection !== "manual" &&
+    (!machineLocalContent || Boolean(draft?.loadBalancedEnvironmentId)) &&
+    (!draft?.branch || draft.environmentSelection === "auto") &&
+    !draft?.worktreePath
+  );
 }

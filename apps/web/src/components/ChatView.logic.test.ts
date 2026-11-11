@@ -6,9 +6,12 @@ import {
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
+  promptHasFileReferences,
+  resolveAutomaticEnvironment,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
 import { terminalContextReference } from "../lib/composerContextRecords";
@@ -1215,4 +1218,64 @@ describe("deriveAvailableRevertTurnCounts", () => {
     expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
     expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
   });
+});
+
+describe("resolveAutomaticEnvironment", () => {
+  const fileLink = `Read ${serializeComposerFileLink("notes/plan.md")} first`;
+  const unbalanced = {
+    loadBalancedEnvironmentId: null,
+    branch: null,
+    worktreePath: null,
+  };
+  it.each([
+    {
+      name: "a scratch draft with a file link stays put",
+      isScratch: true,
+      prompt: fileLink,
+      balanced: null,
+      expected: false,
+    },
+    {
+      name: "a file link added after balancing settled keeps auto",
+      isScratch: true,
+      prompt: fileLink,
+      balanced: EnvironmentId.make("box"),
+      expected: true,
+    },
+    {
+      name: "a project draft with a file link still balances",
+      isScratch: false,
+      prompt: fileLink,
+      balanced: null,
+      expected: true,
+    },
+    {
+      name: "a web link is not a file reference",
+      isScratch: true,
+      prompt: "See [docs](https://t3.codes/docs)",
+      balanced: null,
+      expected: true,
+    },
+  ])("$name", ({ isScratch, prompt, balanced, expected }) => {
+    expect(
+      resolveAutomaticEnvironment({
+        ready: true,
+        hasMultipleEnvironments: true,
+        loadBalancingEnabled: true,
+        isScratch,
+        hasAttachments: false,
+        hasFileReferences: promptHasFileReferences(prompt),
+        draft: { ...unbalanced, loadBalancedEnvironmentId: balanced },
+      }),
+    ).toBe(expected);
+  });
+});
+
+describe("promptHasFileReferences", () => {
+  it.each([".env", "notes", "pages/[id].tsx", "file]", "C:\\work\\a (1).md"])(
+    "counts a composer link to %s",
+    (path) => {
+      expect(promptHasFileReferences(`See ${serializeComposerFileLink(path)} now`)).toBe(true);
+    },
+  );
 });
