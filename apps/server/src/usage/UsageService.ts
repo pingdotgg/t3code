@@ -1,4 +1,6 @@
 import {
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadProjection,
   type ProviderInstanceConfig,
   ProviderInstanceId,
   USAGE_CONTRACT_VERSION,
@@ -39,7 +41,12 @@ import type {
   TranscriptUsageFormat,
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import {
+  canonicalModelFilter,
+  resolveModelAliases,
+  UsageAggregator,
+  type UsageSessions,
+} from "./usageAggregation.ts";
 import {
   createOverrideRateTable,
   isUnlistedModel,
@@ -156,10 +163,29 @@ const decodeCachedSources = Schema.decodeUnknownOption(
   }),
 );
 
+/** A summary request once its thread, if any, is resolved to sessions. */
+export type UsageScanInput = Omit<UsageSummaryInput, "threadId">;
+
+/** Where a thread's usage is recorded: the native conversations of its provider threads. */
+export function threadUsageSessions(records: {
+  readonly thread: Pick<OrchestrationV2ThreadProjection["thread"], "createdAt">;
+  readonly providerThreads: ReadonlyArray<Pick<OrchestrationV2ProviderThread, "nativeThreadRef">>;
+}): UsageSessions {
+  return {
+    ids: new Set(
+      records.providerThreads.flatMap((thread) => thread.nativeThreadRef?.nativeId ?? []),
+    ),
+    sinceTimeMs: DateTime.toEpochMillis(records.thread.createdAt),
+  };
+}
+
 export class UsageService extends Context.Service<
   UsageService,
   {
-    readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly readSummary: (
+      input: UsageScanInput,
+      sessions?: UsageSessions,
+    ) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
   }
 >()("t3/usage/UsageService") {}
@@ -823,9 +849,10 @@ export const make = Effect.gen(function* () {
   });
 
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
-    input: UsageSummaryInput,
+    input: UsageScanInput,
     settings: ServerSettingsValue,
     provisional: boolean,
+    sessions: UsageSessions | undefined,
   ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
@@ -856,18 +883,6 @@ export const make = Effect.gen(function* () {
         });
       }
       hourlyWindow = { sinceTimeMs, untilTimeMs };
-    }
-
-    const sessionFilter = input.sessionFilter;
-    const sessionsSince =
-      sessionFilter?.sinceTime === undefined
-        ? Option.none()
-        : DateTime.make(sessionFilter.sinceTime);
-    if (sessionFilter?.sinceTime !== undefined && Option.isNone(sessionsSince)) {
-      return yield* new UsageReadError({
-        reason: "invalidWindow",
-        detail: "Session usage requires a valid sinceTime instant",
-      });
     }
 
     const startedAtMs = yield* Clock.currentTimeMillis;
@@ -1019,17 +1034,7 @@ export const make = Effect.gen(function* () {
       modelAliases,
       rateModel: (provider, model) => providerRateModels.get(provider)?.(model),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
-      ...(sessionFilter === undefined
-        ? {}
-        : {
-            sessions: {
-              ids: new Set(sessionFilter.sessionIds),
-              sinceTimeMs: Option.match(sessionsSince, {
-                onNone: () => 0,
-                onSome: DateTime.toEpochMillis,
-              }),
-            },
-          }),
+      ...(sessions === undefined ? {} : { sessions }),
     });
 
     const windowEndMs =
@@ -1210,23 +1215,25 @@ export const make = Effect.gen(function* () {
   });
 
   const readWindow = Effect.fn("UsageService.readWindow")(function* (
-    input: UsageSummaryInput,
+    input: UsageScanInput,
     settings: ServerSettingsValue,
     provisional: boolean,
+    sessions: UsageSessions | undefined,
   ) {
-    const { summary, fromMemory } = yield* scanSummary(input, settings, provisional);
+    const { summary, fromMemory } = yield* scanSummary(input, settings, provisional, sessions);
     // With nothing marked refreshing the client would keep a saved answer as final.
     return fromMemory && !summary.sources.some((source) => source.refreshing === true)
-      ? (yield* scanSummary(input, settings, false)).summary
+      ? (yield* scanSummary(input, settings, false, sessions)).summary
       : summary;
   });
 
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
 
   const scanKey = (
-    input: UsageSummaryInput,
+    input: UsageScanInput,
     settings: ServerSettingsValue,
     provisional: boolean,
+    sessions: UsageSessions | undefined,
   ): string =>
     JSON.stringify([
       input.timeZone,
@@ -1239,18 +1246,19 @@ export const make = Effect.gen(function* () {
       input.awaitRefresh === true,
       provisional,
       input.modelFilter ?? null,
-      input.sessionFilter ?? null,
+      sessions === undefined ? null : [[...sessions.ids].sort(), sessions.sinceTimeMs],
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (
-    requested: UsageSummaryInput,
+    requested: UsageScanInput,
+    sessions?: UsageSessions,
   ) {
     const { modelFilter: requestedFilter, ...unfiltered } = requested;
     const modelFilter = canonicalModelFilter(requestedFilter);
     const input = modelFilter === undefined ? unfiltered : { ...unfiltered, modelFilter };
     const settings = yield* readSettings;
     const provisional = input.provisional === true && input.awaitRefresh !== true;
-    const key = scanKey(input, settings, provisional);
+    const key = scanKey(input, settings, provisional, sessions);
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inflightScans.get(key);
@@ -1261,7 +1269,7 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detach so caller departure cannot cancel shared scans; finished scans warm the cache.
         // Register writes before releasing waiters, but start writing after delivering their summary.
-        yield* readWindow(input, settings, provisional).pipe(
+        yield* readWindow(input, settings, provisional, sessions).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),

@@ -1,6 +1,6 @@
 import {
   EnvironmentId,
-  ProviderDriverKind,
+  ThreadId,
   UsageDay,
   USAGE_CONTRACT_VERSION,
   type UsageModelFilter,
@@ -13,7 +13,12 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
-import { refreshUsage, refreshUsageLimits, threadUsageSummaryInput } from "./usage.ts";
+import {
+  makeTurnEndRefresh,
+  refreshUsage,
+  refreshUsageLimits,
+  threadUsageSummaryInput,
+} from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -209,49 +214,53 @@ describe("limits refresh cooldown", () => {
 });
 
 describe("threadUsageSummaryInput", () => {
-  const providerThread = (nativeId: string | null) => ({
-    nativeThreadRef:
-      nativeId === null
-        ? null
-        : { driver: ProviderDriverKind.make("codex"), nativeId, strength: "strong" as const },
-  });
+  const threadId = ThreadId.make("thread-1");
+  const capabilities = { usageThreadFilter: true };
   const createdAt = DateTime.makeUnsafe("2026-09-03T08:15:00.000Z");
   const now = DateTime.makeUnsafe("2026-09-05T12:00:00Z");
 
-  it("asks for every conversation the thread has held, from its creation", () => {
-    expect(
-      threadUsageSummaryInput({
-        providerThreads: [
-          providerThread("session-b"),
-          providerThread(null),
-          providerThread("session-a"),
-          providerThread("session-b"),
-        ],
-        createdAt,
-        now,
-      }),
-    ).toMatchObject({
+  it("asks for the thread's usage from the day it was created", () => {
+    expect(threadUsageSummaryInput({ threadId, createdAt, capabilities, now })).toMatchObject({
       sinceDay: "2026-09-03",
       untilDay: "2026-09-05",
-      sessionFilter: {
-        sessionIds: ["session-a", "session-b"],
-        sinceTime: "2026-09-03T08:15:00.000Z",
-      },
+      threadId,
     });
   });
 
-  it("has nothing to ask before a provider starts a conversation", () => {
+  it("asks nothing of a server that would answer with every thread's usage", () => {
+    expect(threadUsageSummaryInput({ threadId, createdAt, capabilities: {}, now })).toBeNull();
     expect(
-      threadUsageSummaryInput({ providerThreads: [providerThread(null)], createdAt, now }),
+      threadUsageSummaryInput({ threadId, createdAt, capabilities: undefined, now }),
     ).toBeNull();
   });
 
   it("never opens a window that starts after it ends", () => {
     const input = threadUsageSummaryInput({
-      providerThreads: [providerThread("session-a")],
+      threadId,
       createdAt,
+      capabilities,
       now: DateTime.makeUnsafe("2026-09-01T12:00:00Z"),
     });
     expect(input).toMatchObject({ sinceDay: input?.untilDay });
+  });
+});
+
+describe("makeTurnEndRefresh", () => {
+  it("reads again when a turn ends after the answer in hand", () => {
+    const shouldRefresh = makeTurnEndRefresh();
+    expect(shouldRefresh(100, true)).toBe(false);
+    expect(shouldRefresh(100, false)).toBe(false);
+    expect(shouldRefresh(200, false)).toBe(true);
+    expect(shouldRefresh(200, true)).toBe(false);
+    expect(shouldRefresh(200, false)).toBe(false);
+  });
+
+  it("follows a read that a turn end overtook with one more", () => {
+    const shouldRefresh = makeTurnEndRefresh();
+    expect(shouldRefresh(100, true)).toBe(false);
+    // The turn ends while the first read is still scanning.
+    expect(shouldRefresh(200, true)).toBe(false);
+    expect(shouldRefresh(200, false)).toBe(true);
+    expect(shouldRefresh(200, false)).toBe(false);
   });
 });

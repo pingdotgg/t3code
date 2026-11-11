@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
-  OrchestrationV2ProviderThread,
+  ExecutionEnvironmentCapabilities,
+  ThreadId,
   UsageModelFilter,
   UsageSummaryInput,
 } from "@t3tools/contracts";
@@ -25,18 +26,16 @@ export function usageSummaryInput(
 }
 
 /**
- * The usage query for one thread: every provider conversation it has held, from when it was
- * created. Null until a provider has started one. Ask only servers with `usageSessionFilter`.
+ * The usage query for one thread, from the day it was created. Null for a server that would
+ * ignore `threadId` and answer with every thread's usage.
  */
 export function threadUsageSummaryInput(input: {
-  readonly providerThreads: ReadonlyArray<Pick<OrchestrationV2ProviderThread, "nativeThreadRef">>;
+  readonly threadId: ThreadId;
   readonly createdAt: DateTime.Utc;
+  readonly capabilities: Pick<ExecutionEnvironmentCapabilities, "usageThreadFilter"> | undefined;
   readonly now?: DateTime.Utc;
 }): UsageSummaryInput | null {
-  const sessionIds = [
-    ...new Set(input.providerThreads.flatMap((thread) => thread.nativeThreadRef?.nativeId ?? [])),
-  ].sort();
-  if (sessionIds.length === 0) return null;
+  if (input.capabilities?.usageThreadFilter !== true) return null;
   const { untilDay, timeZone } = makeWindow(
     1,
     input.now === undefined ? undefined : DateTime.toDateUtc(input.now),
@@ -47,7 +46,26 @@ export function threadUsageSummaryInput(input: {
     sinceDay: createdDay < untilDay ? createdDay : untilDay,
     untilDay,
     timeZone,
-    sessionFilter: { sessionIds, sinceTime: DateTime.formatIso(input.createdAt) },
+    threadId: input.threadId,
+  };
+}
+
+/**
+ * Decides when to read a thread's usage again. A turn's last records reach the transcript as it
+ * ends, and a read in flight at that moment may have scanned before them, so that read's answer
+ * is followed by another.
+ */
+export function makeTurnEndRefresh(): (lastTurnEndMs: number, waiting: boolean) => boolean {
+  // The latest turn end that the read in flight, or the answer in hand, began after.
+  let readAfter: number | null = null;
+  return (lastTurnEndMs, waiting) => {
+    if (readAfter === null) {
+      readAfter = lastTurnEndMs;
+      return false;
+    }
+    if (waiting || readAfter === lastTurnEndMs) return false;
+    readAfter = lastTurnEndMs;
+    return true;
   };
 }
 

@@ -63,6 +63,13 @@ interface MutableBucket {
   sessions: Set<string>;
 }
 
+/** Keeps only these sessions' records at or after `sinceTimeMs`. */
+export interface UsageSessions {
+  readonly ids: ReadonlySet<string>;
+  /** A forked session repeats its source's earlier records; this instant leaves them out. */
+  readonly sinceTimeMs: number;
+}
+
 export interface AggregateOptions {
   readonly timeZone: string;
   readonly sinceDay: string;
@@ -72,8 +79,7 @@ export interface AggregateOptions {
   readonly modelAliases?: ReadonlyMap<string, string>;
   readonly rateModel?: (provider: UsageRecord["provider"], model: string) => string | undefined;
   readonly modelFilter?: UsageModelFilter;
-  /** Keeps only these sessions' records at or after `sinceTimeMs`. */
-  readonly sessions?: { readonly ids: ReadonlySet<string>; readonly sinceTimeMs: number };
+  readonly sessions?: UsageSessions;
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;

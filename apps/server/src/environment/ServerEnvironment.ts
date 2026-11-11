@@ -256,7 +256,7 @@ export const make = Effect.gen(function* () {
       modelCatalogRefresh: true,
       usagePriceOverrides: true,
       usageModelAliases: true,
-      usageSessionFilter: true,
+      usageThreadFilter: true,
       threadPinning: true,
       threadPinReorder: true,
       threadActiveReorder: true,
