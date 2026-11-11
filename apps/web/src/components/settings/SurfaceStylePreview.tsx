@@ -3,12 +3,12 @@ import { SURFACE_STYLES, type SurfaceStyle } from "@t3tools/contracts";
 import { Button, ContentButton } from "../ui/button";
 
 const SURFACE_STYLE_LABELS: Record<SurfaceStyle, string> = {
-  "gradient-rim": "Toned aqua",
+  "gradient-rim": "Standard",
   flat: "Flat",
-  "soft-gradient": "Soft gradient",
-  "aqua-gloss-full": "Aqua gloss",
-  "aqua-blue": "Aqua blue",
-  "gradient-rim-everywhere": "Gradient rim",
+  "soft-gradient": "Soft",
+  "aqua-gloss-full": "Gloss",
+  "aqua-blue": "Accent gloss",
+  "gradient-rim-everywhere": "Outline",
 };
 
 /**
@@ -47,12 +47,7 @@ export function SurfaceStylePicker({
                 <Button render={<span />} size="sm">
                   Approve
                 </Button>
-                <Button
-                  render={<span />}
-
-                  size="sm"
-                  variant="secondary"
-                >
+                <Button render={<span />} size="sm" variant="secondary">
                   Button
                 </Button>
               </span>
