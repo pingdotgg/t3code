@@ -51,6 +51,8 @@ interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
   readonly lastAlive: AliveMark;
+  /** Set when a request finds the token idle; only `touch` clears it, whatever the clocks do. */
+  readonly expired: boolean;
 }
 
 interface RegistryState {
@@ -143,7 +145,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(records);
-        next.set(tokenHash, { tokenHash, scope, lastAlive: issuedAlive });
+        next.set(tokenHash, { tokenHash, scope, lastAlive: issuedAlive, expired: false });
         return { records: next };
       });
       return {
@@ -168,8 +170,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const alive = yield* currentAliveMark;
       return yield* SynchronizedRef.modify(state, ({ records }) => {
         const record = records.get(tokenHash);
-        if (!record || idleMs(record.lastAlive, alive) > livenessWindowMs) {
-          return [undefined, { records }] as const;
+        if (!record || record.expired) return [undefined, { records }] as const;
+        if (idleMs(record.lastAlive, alive) > livenessWindowMs) {
+          const next = new Map(records);
+          next.set(tokenHash, { ...record, expired: true });
+          return [undefined, { records: next }] as const;
         }
         const next = new Map(records);
         next.set(tokenHash, { ...record, lastAlive: alive });
@@ -185,7 +190,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         const next = new Map(records);
         for (const [tokenHash, record] of records) {
           if (record.scope.thread.threadId === threadId) {
-            next.set(tokenHash, { ...record, lastAlive: alive });
+            next.set(tokenHash, { ...record, lastAlive: alive, expired: false });
           }
         }
         return { records: next };
