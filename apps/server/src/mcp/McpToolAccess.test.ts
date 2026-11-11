@@ -4,7 +4,6 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   ProviderInstanceId,
-  ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -123,10 +122,7 @@ const ProbeToolkit = Toolkit.make(
   }),
   Tool.make("starts_threads", {
     ...probe,
-    parameters: Schema.Struct({
-      runtimeMode: Schema.optional(RuntimeMode),
-      interactionMode: Schema.optional(ProviderInteractionMode),
-    }),
+    parameters: Schema.Struct({ runtimeMode: Schema.optional(RuntimeMode) }),
   }),
   Tool.make("writes_environment", probe),
 );
@@ -303,8 +299,7 @@ it.effect.each([
   ["starts_threads", supervised, {}, "approval-required/default"],
   ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],
   ["starts_threads", plan, {}, "approval-required/plan"],
-  ["starts_threads", plan, { interactionMode: "default" }, "interaction_mode_escalation_denied"],
-  ["starts_threads", fullAccess, { runtimeMode: "auto", interactionMode: "plan" }, "auto/plan"],
+  ["starts_threads", fullAccess, { runtimeMode: "auto" }, "auto/default"],
   ["starts_threads", ended, {}, "parent_not_active"],
   ["starts_threads", supervisedClient, {}, "approval-required/default"],
   ["starts_threads", supervisedClient, { runtimeMode: "auto" }, "runtime_mode_escalation_denied"],
@@ -366,7 +361,6 @@ const linkedProbe = {
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     runtimeMode: Schema.optional(RuntimeMode),
-    interactionMode: Schema.optional(ProviderInteractionMode),
   }),
 };
 const LinkedProbeToolkit = Toolkit.make(
@@ -417,12 +411,6 @@ it.effect.each([
   ["writes", ended, { environmentId: box }, "parent_not_active"],
   ["writes", supervised, { environmentId: box }, "writes in environment-box"],
   ["writes_with_capability", readOnlyClient, { environmentId: box }, "capability_denied"],
-  [
-    "starts_threads",
-    plan,
-    { environmentId: box, interactionMode: "default" },
-    "interaction_mode_escalation_denied",
-  ],
   ["starts_threads", plan, { environmentId: box }, "starts_threads in environment-box"],
   ["writes_environment", supervised, { environmentId: box }, "capability_denied"],
   [

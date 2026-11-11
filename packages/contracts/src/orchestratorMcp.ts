@@ -130,11 +130,9 @@ export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 export const OrchestratorMcpRuntimeMode = Schema.Union([Schema.Literal("inherit"), RuntimeMode]);
 export type OrchestratorMcpRuntimeMode = typeof OrchestratorMcpRuntimeMode.Type;
 
-export const OrchestratorMcpInteractionMode = Schema.Union([
-  Schema.Literal("inherit"),
-  ProviderInteractionMode,
-]);
-export type OrchestratorMcpInteractionMode = typeof OrchestratorMcpInteractionMode.Type;
+// Children always run in their caller's interaction mode. The field stays so an
+// explicit mode from an older caller fails decoding instead of being dropped.
+export const OrchestratorMcpInteractionMode = Schema.Literal("inherit");
 
 export const OrchestratorMcpTaskRole = Schema.Literals([
   "implementation",

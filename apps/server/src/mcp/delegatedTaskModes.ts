@@ -2,7 +2,6 @@ import {
   type ModelSelection,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
-  type OrchestratorMcpInteractionMode,
   type OrchestratorMcpRuntimeMode,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -71,12 +70,11 @@ export function resolveRuntimeMode(
   );
 }
 
-/** The same, for interaction modes. */
+/** Refuses a target interaction mode broader than its parent's. */
 export function resolveInteractionMode(
   parentMode: ProviderInteractionMode,
-  requested: OrchestratorMcpInteractionMode | undefined,
+  resolved: ProviderInteractionMode,
 ): Effect.Effect<ProviderInteractionMode, OrchestratorMcpFailure> {
-  const resolved = requested === undefined || requested === "inherit" ? parentMode : requested;
   return interactionModeRank(resolved) > interactionModeRank(parentMode)
     ? Effect.fail(
         new OrchestratorMcpFailure({

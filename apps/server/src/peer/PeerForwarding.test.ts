@@ -517,9 +517,11 @@ it.effect("launches in a linked environment with the caller's modes, retry-safe"
       expect(relaunched?.threadId).toBe(launched?.threadId);
       expect(retried.structuredContent).toEqual(first.structuredContent);
 
-      // An escalation past the caller's own modes is refused here.
-      const escalated = yield* launch("thread:laptop-plan", { interactionMode: "default" });
-      expect(failureOf(escalated)).toMatchObject({ code: "interaction_mode_escalation_denied" });
+      // An explicit mode from an older caller is refused, not dropped.
+      const chosen = yield* Effect.flip(
+        launch("thread:laptop-full", { clientRequestId: "launch-3", interactionMode: "plan" }),
+      );
+      expect(String(chosen)).toContain('["interactionMode"]');
       // A pending upload lives here, so it cannot go along.
       yield* Ref.set(b.bearers, []);
       const withUpload = yield* launch("thread:laptop-full", {

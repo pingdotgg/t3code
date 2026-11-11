@@ -2,12 +2,14 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  OrchestratorMcpCreateThreadRequest,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
 } from "./orchestratorMcp.ts";
 
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
+const decodeCreateThreadRequest = Schema.decodeUnknownSync(OrchestratorMcpCreateThreadRequest);
 
 describe("orchestrator MCP contracts", () => {
   it("decodes cross-provider delegated task requests and durable results", () => {
@@ -23,6 +25,11 @@ describe("orchestrator MCP contracts", () => {
       runtimeMode: "inherit",
       interactionMode: "inherit",
     });
+    // Children run in their caller's interaction mode; an explicit one is refused, not dropped.
+    expect(() => decodeDelegateTaskInput({ task: "Plan it.", interactionMode: "plan" })).toThrow();
+    expect(() =>
+      decodeCreateThreadRequest({ prompt: "Plan it.", interactionMode: "plan" }),
+    ).toThrow();
     const result = decodeDelegateTaskResult({
       taskId: "node-task-1",
       childThreadId: "thread-child-1",

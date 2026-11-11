@@ -29,11 +29,7 @@ import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentPro
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
-import {
-  resolveInteractionMode,
-  resolveRuntimeMode,
-  taskPrompt,
-} from "../mcp/delegatedTaskModes.ts";
+import { resolveRuntimeMode, taskPrompt } from "../mcp/delegatedTaskModes.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -238,17 +234,13 @@ const make = Effect.gen(function* () {
         (instanceId === inherited.instanceId && model === inherited.model
           ? inherited.options
           : undefined);
-      // Modes asked for are checked against this thread. Omitted ones are left
-      // to the other side, which inherits this thread's modes capped by the
-      // link's access, so a narrower link still takes the task.
+      // A runtime mode asked for is checked against this thread. Otherwise the
+      // other side inherits this thread's modes capped by the link's access,
+      // so a narrower link still takes the task.
       const runtimeMode =
         input.runtimeMode === undefined || input.runtimeMode === "inherit"
           ? undefined
           : yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
-      const interactionMode =
-        input.interactionMode === undefined || input.interactionMode === "inherit"
-          ? undefined
-          : yield* resolveInteractionMode(parent.thread.interactionMode, input.interactionMode);
       const projectId = yield* resolveRemoteProject(
         scope,
         target.environmentId,
@@ -270,7 +262,6 @@ const make = Effect.gen(function* () {
           title,
           modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
           ...(runtimeMode === undefined ? {} : { runtimeMode }),
-          ...(interactionMode === undefined ? {} : { interactionMode }),
           message: task,
           clientRequestId: `delegate:${scope.thread.threadId}:${key}`,
           // The thread there shows it is this thread's subagent, with a way back.
