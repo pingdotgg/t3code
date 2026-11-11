@@ -13,8 +13,29 @@ const MINUTE = 60_000;
 
 // A window is [usedPercent, minutesFromN0 | null]; null is unknown reset timing.
 const at = (n0, minutes) => (minutes === null ? null : n0 + minutes * MINUTE);
+const iso = (n0, minutes) =>
+  minutes === null ? undefined : new Date(at(n0, minutes)).toISOString();
 const usage = (account, n0) => {
   const [session, weekly, fable] = account.windows;
+  if (account.provider === "xai") {
+    return {
+      config: {
+        creditUsagePercent: session[0],
+        currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end: iso(n0, session[1]) },
+      },
+    };
+  }
+  if (account.provider === "antigravity") {
+    const bucket = (bucketId, window, [used, minutes]) => ({
+      bucketId,
+      window,
+      remainingFraction: 1 - used / 100,
+      resetTime: iso(n0, minutes),
+    });
+    return {
+      buckets: [bucket("gemini-5h", "5h", session), bucket("gemini-weekly", "weekly", weekly)],
+    };
+  }
   if (account.provider === "codex") {
     const window = ([used, minutes], seconds) => ({
       used_percent: used,
@@ -68,6 +89,7 @@ NodeHttp.createServer((request, response) => {
           auth_index: id,
           provider: account.provider,
           ...(account.email ? { email: account.email } : {}),
+          ...(account.project_id ? { project_id: account.project_id } : {}),
         })),
       });
     }
@@ -75,6 +97,13 @@ NodeHttp.createServer((request, response) => {
       const call = JSON.parse(raw);
       const account = accounts[call.auth_index];
       if (!account) return json(response, { status_code: 404, body: "{}" });
+      // "refused" fails every upstream call; "malformed" answers the usage call with the wrong shape.
+      if (account.state === "refused") {
+        return json(response, { status_code: 403, body: JSON.stringify({ error: "refused" }) });
+      }
+      if (call.url.endsWith("/userinfo")) {
+        return json(response, { status_code: 200, body: JSON.stringify({ id: call.auth_index }) });
+      }
       if (call.url.endsWith("/rate-limit-reset-credits")) {
         const credits = Array.from({ length: account.credits ?? 0 }, (_, index) => ({
           id: `${call.auth_index}-credit-${index}`,
@@ -84,7 +113,11 @@ NodeHttp.createServer((request, response) => {
         }));
         return json(response, { status_code: 200, body: JSON.stringify({ credits }) });
       }
-      return json(response, { status_code: 200, body: JSON.stringify(usage(account, n0)) });
+      const body =
+        account.state === "malformed"
+          ? { config: "malformed", buckets: "malformed" }
+          : usage(account, n0);
+      return json(response, { status_code: 200, body: JSON.stringify(body) });
     }
     response.writeHead(404).end();
   });

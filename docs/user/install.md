@@ -134,7 +134,7 @@ on first launch; after an update, or any time, choose **Install** next to
 **t3 command** in **Settings → About**. On macOS and Linux it adds a `t3` link
 in `~/.local/bin` (or `~/bin`); on Windows it adds the app's command folder to
 your `PATH`. Open a new terminal afterwards. If the folder is not on your
-`PATH`, **Add to PATH** in the welcome setup or **Settings → About** adds one
+`PATH`, **Add to PATH** on the Welcome page or in **Settings → About** adds one
 line to your shell's startup file. **Remove** takes it off, and the app does not
 add it again. If you already have another `t3`, it stays as it is.
 
@@ -214,7 +214,9 @@ on the environment's machine. An unlisted version is unverified.
 When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** runs the installer that owns the CLI
 (Homebrew, mise, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or
-the CLI's own update command when T3 Code cannot tell. T3 Code runs `mise upgrade`
+the CLI's own update command when T3 Code cannot tell. Claude, Codex, and
+OpenCode installs T3 Code cannot identify stay manual: update them through the
+installer you used. T3 Code runs `mise upgrade`
 only for a tool your mise config requests as `latest` when the provider's binary
 path is a mise shim or under the tool's `installs/<tool>/latest` link; update a
 pinned version, or a path into one version's directory, through mise yourself.
