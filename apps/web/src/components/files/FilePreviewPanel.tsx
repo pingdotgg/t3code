@@ -1559,6 +1559,10 @@ export default function FilePreviewPanel({
               }
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
+              onOpenFilePreview={(path) => {
+                setRenderMarkdownPreferred(true);
+                onOpenFile(path);
+              }}
               workspaceMutationId={workspaceMutationId}
               {...(previewPath && !isMedia && !isPdf
                 ? {
