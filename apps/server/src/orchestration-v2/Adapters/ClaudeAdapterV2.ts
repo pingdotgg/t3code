@@ -12483,13 +12483,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
               const activeNativeThreadId = yield* getNativeThreadId(forkInput.sourceProviderThread);
               yield* closeLiveQueryForNativeThread(activeNativeThreadId);
-              const sourceNativeThreadId =
-                (forkInput.providerTurnId === undefined
-                  ? undefined
-                  : forkInput.sourceProviderThread.nativeMetadata?.claudeRollbackSessionIds?.[
-                      forkInput.providerTurnId
-                    ]) ?? activeNativeThreadId;
               const upToMessageId = yield* resolveClaudeForkUpToMessageId(forkInput);
+              const boundaryTurn = forkInput.sourceProviderTurns?.find(
+                (turn) => turn.id === forkInput.providerTurnId,
+              );
+              // Only the boundary turn's own cursor lives in its saved source session;
+              // the head fallback is a cursor in the active session.
+              const sourceNativeThreadId =
+                (boundaryTurn !== undefined &&
+                upToMessageId !== undefined &&
+                boundaryTurn.nativeTurnRef?.nativeId === upToMessageId
+                  ? forkInput.sourceProviderThread.nativeMetadata?.claudeRollbackSessionIds?.[
+                      boundaryTurn.id
+                    ]
+                  : undefined) ?? activeNativeThreadId;
               const forkOptions: ForkSessionOptions = {
                 ...(input.runtimePolicy.cwd === null ? {} : { dir: input.runtimePolicy.cwd }),
                 ...(upToMessageId === undefined ? {} : { upToMessageId }),

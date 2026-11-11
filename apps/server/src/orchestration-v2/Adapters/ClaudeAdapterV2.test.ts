@@ -2570,6 +2570,43 @@ describe("ClaudeAdapterV2 native fork", () => {
         assert.equal(forkedProviderThread.forkedFrom?.providerThreadId, sourceProviderThread.id);
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, providerTurnId);
 
+        // After a recovered rollback to a /compact turn, the head fallback is a
+        // cursor in the active session, not the turn's saved source session.
+        yield* runtime.forkThread({
+          sourceProviderThread: {
+            ...sourceProviderThread,
+            nativeConversationHeadRef: {
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeId: "recovered-head-cursor",
+              strength: "weak",
+            },
+            nativeMetadata: {
+              claudeRollbackSessionIds: { [providerTurnId]: "pre-compaction-session" },
+            },
+          },
+          sourceProviderTurns: [
+            {
+              id: providerTurnId,
+              providerThreadId: sourceProviderThread.id,
+              nodeId: NodeId.make("node-claude-source"),
+              runAttemptId: RunAttemptId.make("run-attempt-claude-source"),
+              nativeTurnRef: {
+                driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                nativeId: "turn:run-attempt-claude-source",
+                strength: "weak",
+              },
+              ordinal: 1,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          ],
+          providerTurnId,
+          targetThreadId: ThreadId.make("thread-claude-fork-after-compact-rollback"),
+        });
+        assert.equal(forkCalls[1]?.sessionId, "source-native-session");
+        assert.equal(forkCalls[1]?.options.upToMessageId, "recovered-head-cursor");
+
         yield* runtime.startTurn({
           appThread: {
             createdBy: "user",
