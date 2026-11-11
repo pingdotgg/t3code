@@ -488,6 +488,30 @@ describe("provider projection", () => {
       kind: "pull-request",
       contextId: pr.contextId,
     });
+    for (const record of [jira, figma, issue, pr]) {
+      const imported = { ...record, contextId: ctx("copy_1") };
+      const importedText = formatComposerContextReference(imported);
+      expect(collectComposerContextReferences(importedText)).toMatchObject([
+        { kind: record.kind, contextId: imported.contextId },
+      ]);
+      expect(
+        projectComposerContextForProvider({ text: importedText, records: [imported] }),
+      ).toContain(`url: ${record.url}`);
+    }
+    for (const url of [
+      "https://git.cafe/acme/app/pulls/42",
+      "https://gitlab.com/acme/app/-/merge_requests/42",
+      "https://bitbucket.org/acme/app/pull-requests/42",
+    ]) {
+      const record = { ...pr, url };
+      const reference = formatComposerContextReference(record);
+      expect(collectComposerContextReferences(reference)).toMatchObject([
+        { kind: "pull-request", contextId: record.contextId },
+      ]);
+      expect(projectComposerContextForProvider({ text: reference, records: [record] })).toContain(
+        `url: ${url}`,
+      );
+    }
   });
 
   it("marks duplicate identities unavailable instead of choosing one payload", () => {

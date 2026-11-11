@@ -65,9 +65,9 @@ export function readPastedComposerContext(
   );
   const records = new Map<string, ComposerContextRecord>();
   for (const record of [
-    ...(decodedFragment?.records ?? []),
-    ...threads.records,
     ...external.records,
+    ...threads.records,
+    ...(decodedFragment?.records ?? []),
   ]) {
     if (
       record.kind === "preview-annotation" &&

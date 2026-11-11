@@ -228,7 +228,9 @@ export function formatComposerContextReference(reference: {
       ? reference.url.trim()
       : "";
   const href =
-    externalUrl.length > 0 && isSafeComposerContextMarkdownHref(externalUrl)
+    externalUrl.length > 0 &&
+    isSafeComposerContextMarkdownHref(externalUrl) &&
+    parseExternalComposerContextHref(externalUrl)?.contextId === reference.contextId
       ? externalUrl
       : formatComposerContextHref(reference.kind, reference.contextId);
   return `${reference.kind === "image" ? "!" : ""}[${label}](${href})`;

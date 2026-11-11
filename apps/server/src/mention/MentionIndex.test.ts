@@ -47,6 +47,7 @@ it.effect("searches locally without needing a network round trip", () =>
         itemKey: "org/repo#42",
         label: "#42",
         description: "Improve context chips",
+        url: "https://github.com/org/repo/pull/42",
         tokens: "42 #42 improve context chips org/repo",
         pullRequest: {
           number: 42,
@@ -78,6 +79,13 @@ it.effect("searches locally without needing a network round trip", () =>
     expect(result.status).toBe("ready");
     expect(result.hits.map((hit) => hit.label)).toEqual(["#42"]);
     expect(result.hits[0]?.pullRequest?.number).toBe(42);
+    const byUrl = yield* index.search({
+      projectId,
+      providers: ["pull-request"],
+      query: "https://github.com/org/repo/pull/42",
+      limit: 10,
+    });
+    expect(byUrl.hits.map((hit) => hit.label)).toEqual(["#42"]);
   }).pipe(Effect.provide(testLayer)),
 );
 

@@ -105,5 +105,9 @@ describe("composerContextExternalLinks", () => {
     expect(rewritten.text).toContain("](https://www.figma.com/design/AbCdEf123)");
     expect(rewritten.text).toContain("](https://github.com/acme/app/issues/7)");
     expect(rewritten.text).not.toContain("t3-context://");
+    expect(externalLinkContextReferences(rewritten.text)).toEqual({
+      text: rewritten.text,
+      records: [],
+    });
   });
 });

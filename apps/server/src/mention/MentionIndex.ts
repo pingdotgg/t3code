@@ -162,7 +162,8 @@ function scoreRow(row: MentionIndexRow, query: string): number {
   const q = fold(query);
   if (q.length === 0) return row.updatedAt / 1e13;
   const tokens = row.tokens;
-  if (tokens === q || row.label.toLowerCase() === q || row.itemKey === q) return 1_000;
+  if (tokens === q || row.label.toLowerCase() === q || row.itemKey === q || fold(row.url) === q)
+    return 1_000;
   if (tokens.startsWith(q) || row.itemKey.startsWith(q)) return 800;
   if (tokens.includes(q)) return 400 + Math.min(200, q.length * 10);
   const words = q.split(/\s+/u).filter(Boolean);

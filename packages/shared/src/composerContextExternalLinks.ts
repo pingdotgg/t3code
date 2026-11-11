@@ -121,39 +121,47 @@ export function externalLinkContextReferences(
   readonly records: ReadonlyArray<ExternalLinkContextRecord>;
 } {
   const records = new Map<ComposerContextId, ExternalLinkContextRecord>();
-  let rewritten = text;
+  const rewritten = text
+    .split(/(!?\[[^\]\n]*\]\([^\s)]*\))/gu)
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      let rewritten = part;
 
-  rewritten = rewritten.replace(JIRA_URL, (match) => {
-    const parsed = parseJiraBrowseUrl(match);
-    if (!parsed) return match;
-    const record = jiraContextRecord(parsed);
-    const contextId = accept(record);
-    if (contextId === undefined) return match;
-    records.set(record.contextId, record);
-    return formatComposerContextReference({ ...record, contextId });
-  });
+      rewritten = rewritten.replace(JIRA_URL, (match) => {
+        const parsed = parseJiraBrowseUrl(match);
+        if (!parsed) return match;
+        const record = jiraContextRecord(parsed);
+        const contextId = accept(record);
+        if (contextId === undefined) return match;
+        records.set(record.contextId, record);
+        return formatComposerContextReference({ ...record, contextId });
+      });
 
-  rewritten = rewritten.replace(FIGMA_URL, (match) => {
-    const trimmed = trimTrailingProsePunctuation(match);
-    const trailing = match.slice(trimmed.length);
-    const parsed = parseFigmaDesignUrl(trimmed);
-    if (!parsed) return match;
-    const record = figmaContextRecord(parsed);
-    const contextId = accept(record);
-    if (contextId === undefined) return match;
-    records.set(record.contextId, record);
-    return `${formatComposerContextReference({ ...record, contextId })}${trailing}`;
-  });
+      rewritten = rewritten.replace(FIGMA_URL, (match) => {
+        const trimmed = trimTrailingProsePunctuation(match);
+        const trailing = match.slice(trimmed.length);
+        const parsed = parseFigmaDesignUrl(trimmed);
+        if (!parsed) return match;
+        const record = figmaContextRecord(parsed);
+        const contextId = accept(record);
+        if (contextId === undefined) return match;
+        records.set(record.contextId, record);
+        return `${formatComposerContextReference({ ...record, contextId })}${trailing}`;
+      });
 
-  rewritten = rewritten.replace(GITHUB_ISSUE_URL, (match) => {
-    const parsed = parseGitHubIssueUrl(match);
-    if (!parsed) return match;
-    const record = issueContextRecord(parsed);
-    const contextId = accept(record);
-    if (contextId === undefined) return match;
-    records.set(record.contextId, record);
-    return formatComposerContextReference({ ...record, contextId });
-  });
+      rewritten = rewritten.replace(GITHUB_ISSUE_URL, (match) => {
+        const parsed = parseGitHubIssueUrl(match);
+        if (!parsed) return match;
+        const record = issueContextRecord(parsed);
+        const contextId = accept(record);
+        if (contextId === undefined) return match;
+        records.set(record.contextId, record);
+        return formatComposerContextReference({ ...record, contextId });
+      });
+
+      return rewritten;
+    })
+    .join("");
 
   return { text: rewritten, records: [...records.values()] };
 }

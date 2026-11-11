@@ -4,7 +4,11 @@ import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
-import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import {
+  formatComposerContextReference,
+  threadContextRecord,
+} from "@t3tools/shared/composerContextReferences";
+import { issueContextRecord } from "@t3tools/shared/composerContextExternalLinks";
 import { describe, expect, it } from "vite-plus/test";
 
 import { importPastedComposerText } from "./composerInlineTokenPaste";
@@ -28,6 +32,31 @@ const importAll =
   };
 
 describe("importPastedComposerText", () => {
+  it("preserves copied issue metadata without nesting its markdown link", () => {
+    const record = issueContextRecord({
+      number: 7,
+      title: "Fix login",
+      url: "https://github.com/acme/app/issues/7",
+      repository: "acme/app",
+      state: "closed",
+    });
+    const pasted = formatComposerContextReference(record);
+    const imported: Array<ComposerContextClipboardFragment> = [];
+    const text = importPastedComposerText(
+      clipboard({
+        "text/plain": pasted,
+        [COMPOSER_CONTEXT_CLIPBOARD_MIME]: encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: thread.environmentId },
+          records: [record],
+        })!,
+      }),
+      importAll(imported),
+      { rewriteExternalLinks: true },
+    );
+    expect(text).toBe(pasted);
+    expect(imported.map((fragment) => fragment.records)).toEqual([[record]]);
+  });
   it("pastes a copied thread link back as the chip it was copied from", () => {
     const target = threadChipCopyTarget(thread, "Fix the login flow");
     const imported: Array<ComposerContextClipboardFragment> = [];
