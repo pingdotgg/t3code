@@ -1,4 +1,4 @@
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 
 export const API_PORT = 3000;
 

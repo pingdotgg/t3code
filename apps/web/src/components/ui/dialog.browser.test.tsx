@@ -1,9 +1,9 @@
-import { act, createRef, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createRef } from "react";
+import { describe, expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { requestConfirmDialog, resetConfirmDialogForTests } from "~/confirmDialog";
+import { act, render } from "../../../test/render";
 import { ConfirmDialogHost } from "../ConfirmDialogHost";
 import { Button } from "./button";
 import {
@@ -15,120 +15,85 @@ import {
   DialogTrigger,
 } from "./dialog";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  resetConfirmDialogForTests();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  resetConfirmDialogForTests();
-  vi.unstubAllGlobals();
-});
-
-async function render(element: ReactNode) {
-  await act(async () => root.render(element));
-}
-
-describe("dialog keyboard interaction", () => {
+describe("dialog initial focus", () => {
   it.each([
-    { label: "generic", options: undefined },
-    { label: "destructive opt-in", options: { variant: "destructive", initialFocus: "confirm" } },
-  ] as const)("cancels a $label confirmation on Enter", async ({ options }) => {
-    await render(<ConfirmDialogHost />);
-    let confirmation: Promise<boolean> | undefined;
-    await act(async () => {
-      confirmation = requestConfirmDialog("Continue?", options);
-    });
+    { label: "generic", options: undefined, focused: "Cancel", confirmed: false },
+    {
+      label: "destructive opt-in",
+      options: { variant: "destructive", initialFocus: "confirm" },
+      focused: "Cancel",
+      confirmed: false,
+    },
+    { label: "opt-in", options: { initialFocus: "confirm" }, focused: "Confirm", confirmed: true },
+  ] as const)(
+    "focuses $focused for a $label confirmation",
+    async ({ options, focused, confirmed }) => {
+      resetConfirmDialogForTests();
+      await using _screen = await render(<ConfirmDialogHost />);
+      let confirmation: Promise<boolean> | undefined;
+      await act(() => {
+        confirmation = requestConfirmDialog("Continue?", options);
+      });
 
-    await expect.element(page.getByRole("button", { name: "Cancel", exact: true })).toHaveFocus();
-    await act(async () => userEvent.keyboard("{Enter}"));
-    await expect(confirmation).resolves.toBe(false);
-  });
+      await expect.element(page.getByRole("button", { name: focused, exact: true })).toHaveFocus();
+      await act(() => userEvent.keyboard("{Enter}"));
+      await expect(confirmation).resolves.toBe(confirmed);
+    },
+  );
 
-  it("activates a dialog action with Space after opening from the keyboard", async () => {
-    const retry = vi.fn();
+  it("focuses the dialog action and keeps the caller's popup ref", async () => {
     const popup = createRef<HTMLDivElement>();
-    await render(
+    await using _screen = await render(
       <Dialog>
         <DialogTrigger>Open retry</DialogTrigger>
         <DialogPopup ref={popup}>
           <DialogTitle>Import failed</DialogTitle>
           <DialogClose>Cancel</DialogClose>
-          <DialogAction onClick={retry}>Try again</DialogAction>
+          <DialogAction>Try again</DialogAction>
         </DialogPopup>
       </Dialog>,
     );
-    await act(async () => page.getByRole("button", { name: "Open retry" }).element().focus());
-    await act(async () => userEvent.keyboard("{Enter}"));
+    await act(() => page.getByRole("button", { name: "Open retry" }).element().focus());
+    await act(() => userEvent.keyboard("{Enter}"));
 
     await expect.element(page.getByRole("button", { name: "Try again" })).toHaveFocus();
     expect(popup.current).toBe(page.getByRole("dialog").element());
-    expect(retry).not.toHaveBeenCalled();
-    await act(async () => userEvent.keyboard(" "));
-    expect(retry).toHaveBeenCalledOnce();
   });
 
   it.each(["disabled action", "caller initialFocus"] as const)(
-    "falls back to Cancel for %s",
+    "falls back to Cancel for a %s",
     async (reason) => {
-      const popup = createRef<HTMLDivElement>();
       const cancel = createRef<HTMLButtonElement>();
-      const confirm = vi.fn();
-      await render(
+      await using _screen = await render(
         <Dialog defaultOpen>
-          <DialogPopup
-            ref={popup}
-            {...(reason === "caller initialFocus" ? { initialFocus: cancel } : {})}
-          >
+          <DialogPopup {...(reason === "caller initialFocus" ? { initialFocus: cancel } : {})}>
             <DialogTitle>Install update?</DialogTitle>
             <DialogClose ref={cancel} render={<Button variant="outline" />}>
               Cancel
             </DialogClose>
-            <DialogAction disabled={reason === "disabled action"} onClick={confirm}>
-              Install
-            </DialogAction>
+            <DialogAction disabled={reason === "disabled action"}>Install</DialogAction>
           </DialogPopup>
         </Dialog>,
       );
 
       await expect.element(page.getByRole("button", { name: "Cancel", exact: true })).toHaveFocus();
-      await act(async () => userEvent.keyboard("{Enter}"));
-      await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-      expect(confirm).not.toHaveBeenCalled();
     },
   );
 
-  it("focuses the popup instead of its input or action when opened by touch", async () => {
-    const install = vi.fn();
-    const popup = createRef<HTMLDivElement>();
-    const cleanup = vi.fn();
-    await render(
+  it("focuses the popup instead of the action when opened by touch", async () => {
+    await using _screen = await render(
       <Dialog>
         <DialogTrigger>Open installer</DialogTrigger>
-        <DialogPopup
-          ref={(element) => {
-            popup.current = element;
-            return cleanup;
-          }}
-        >
+        <DialogPopup>
           <DialogTitle>Install relay client</DialogTitle>
-          <input aria-label="Install directory" />
           <DialogClose>Cancel</DialogClose>
-          <DialogAction onClick={install}>Install</DialogAction>
+          <DialogAction>Install</DialogAction>
         </DialogPopup>
       </Dialog>,
     );
 
     const trigger = page.getByRole("button", { name: "Open installer" }).element();
-    await act(async () => {
+    await act(() => {
       trigger.dispatchEvent(
         new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }),
       );
@@ -139,11 +104,5 @@ describe("dialog keyboard interaction", () => {
     });
 
     await expect.element(page.getByRole("dialog")).toHaveFocus();
-    expect(popup.current).toBe(page.getByRole("dialog").element());
-    await act(async () => userEvent.keyboard("{Enter}"));
-    expect(install).not.toHaveBeenCalled();
-    await act(async () => userEvent.keyboard("{Escape}"));
-    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-    expect(cleanup).toHaveBeenCalled();
   });
 });

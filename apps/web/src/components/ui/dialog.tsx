@@ -1,9 +1,7 @@
-"use client";
-
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { useRender } from "@base-ui/react/use-render";
 import { XIcon } from "lucide-react";
-import { useRef } from "react";
+import { type ComponentProps, createContext, type ReactNode, use, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
@@ -15,7 +13,33 @@ import {
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
 
-const Dialog = DialogPrimitive.Root;
+const ControlledOpenContext = createContext<boolean | undefined>(undefined);
+
+function RetainedWhileClosed({ open, children }: { open: boolean; children: ReactNode }) {
+  const controlledOpen = use(ControlledOpenContext);
+  const isOpen = open && controlledOpen !== false;
+  const [retained, setRetained] = useState(children);
+  if (isOpen && retained !== children) {
+    setRetained(children);
+  }
+  return isOpen ? children : retained;
+}
+
+function renderRetainedPopup(props: ComponentProps<"div">, state: { open: boolean }) {
+  return (
+    <div {...props}>
+      <RetainedWhileClosed open={state.open}>{props.children}</RetainedWhileClosed>
+    </div>
+  );
+}
+
+function Dialog<Payload>(props: DialogPrimitive.Root.Props<Payload>) {
+  return (
+    <ControlledOpenContext value={props.open}>
+      <DialogPrimitive.Root {...props} />
+    </ControlledOpenContext>
+  );
+}
 
 function useDialogActionInitialFocus() {
   const popupRef = useRef<HTMLDivElement>(null);
@@ -98,6 +122,7 @@ function DialogPopup({
         )}
         data-slot="dialog-popup"
         initialFocus={initialFocus}
+        render={renderRetainedPopup}
         {...props}
       >
         {children}
@@ -175,7 +200,7 @@ function DialogFooter({
 function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
-      className={cn("wrap-anywhere font-semibold text-xl leading-none", className)}
+      className={cn("wrap-anywhere font-semibold text-xl leading-snug", className)}
       data-slot="dialog-title"
       {...props}
     />
@@ -212,6 +237,8 @@ function DialogPanel({
 }
 
 export {
+  ControlledOpenContext,
+  renderRetainedPopup,
   Dialog,
   DialogTrigger,
   DialogPortal,

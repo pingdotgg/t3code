@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 Continue from [Part 1](/prisma/tutorial/part-1). The Project exists, but it
 has no public endpoint yet. Add a Compute service that runs an Effect HTTP
@@ -16,7 +16,7 @@ handler on Prisma's Bun runtime.
 Create `src/Api.ts`:
 
 ```typescript
-import * as Prisma from "alchemy/Prisma";
+import * as Prisma from "@alchemy.run/prisma";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Project } from "./Database.ts";
@@ -123,12 +123,7 @@ process is responding, independently of the database added in Part 3.
 
 ## Deploy the API
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun"><Code code="bun alchemy deploy" lang="sh" /></TabItem>
-  <TabItem label="npm" icon="npm"><Code code="npx alchemy deploy" lang="sh" /></TabItem>
-  <TabItem label="pnpm" icon="pnpm"><Code code="pnpm exec alchemy deploy" lang="sh" /></TabItem>
-  <TabItem label="yarn" icon="seti:yarn"><Code code="yarn alchemy deploy" lang="sh" /></TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 The deployment prints `apiUrl` for the Compute service.
 
