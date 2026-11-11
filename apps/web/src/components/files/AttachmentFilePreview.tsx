@@ -1,3 +1,4 @@
+import { SearchableMarkdownPreview } from "./SearchableMarkdownPreview";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -27,7 +28,6 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
-import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -305,13 +305,13 @@ export function AttachmentFilePreview(props: {
         <MermaidFilePreview text={content.text} />
       </Suspense>
     ) : kind === "markdown" && rendered ? (
-      <ScrollArea className="min-h-0 flex-1">
+      <SearchableMarkdownPreview>
         <ChatMarkdown
           text={maskMarkdownFrontmatter(content.text)}
           cwd={undefined}
           className="mx-auto max-w-4xl px-6 py-5"
         />
-      </ScrollArea>
+      </SearchableMarkdownPreview>
     ) : (
       <ReadOnlySourcePreview name={props.name} text={content.text} wordWrap={wordWrap} />
     )

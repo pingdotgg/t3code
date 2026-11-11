@@ -951,28 +951,26 @@ function RenderedMarkdownSurface({
   useFileSaveSession(saveTarget, onPendingChange);
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
-      <FileMarkdownPreview
-        text={contents}
-        cwd={cwd}
-        relativePath={relativePath}
-        threadRef={threadRef}
-        workspaceMutationId={workspaceMutationId}
-        onTaskListChange={
-          readOnly
-            ? undefined
-            : ({ markerOffset, checked }) => {
-                const currentContents =
-                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-                  contents;
-                const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-                if (nextContents === currentContents) return;
-                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                changeFileSaveSession(saveTarget, nextContents);
-              }
-        }
-      />
-    </ScrollArea>
+    <FileMarkdownPreview
+      text={contents}
+      cwd={cwd}
+      relativePath={relativePath}
+      threadRef={threadRef}
+      workspaceMutationId={workspaceMutationId}
+      onTaskListChange={
+        readOnly
+          ? undefined
+          : ({ markerOffset, checked }) => {
+              const currentContents =
+                getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
+                contents;
+              const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
+              if (nextContents === currentContents) return;
+              setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+              changeFileSaveSession(saveTarget, nextContents);
+            }
+      }
+    />
   );
 }
 
@@ -1256,7 +1254,10 @@ export default function FilePreviewPanel({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <div
+      data-file-preview-panel
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+    >
       {breadcrumbPath !== null && breadcrumbTrail !== null ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           <ScrollArea
