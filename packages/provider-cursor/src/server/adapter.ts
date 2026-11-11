@@ -1005,6 +1005,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly agent: string;
           readonly orchestration: boolean;
           readonly device: boolean;
+          readonly browser: boolean;
         } | null>(null);
         // Cursor drops a cancelled run from the conversation, so the next message carries its prompt.
         const interruptedPrompt = yield* Ref.make<{
@@ -2296,7 +2297,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           mcpServers: Record<string, McpServerConfig> | undefined,
           hasDeviceTools: boolean,
-          delivered: { readonly orchestration: boolean; readonly device: boolean },
+          hasBrowserTools: boolean,
+          delivered: {
+            readonly orchestration: boolean;
+            readonly device: boolean;
+            readonly browser: boolean;
+          },
           interrupted: string | undefined,
         ) {
           const rawText = turnInput.message.text;
@@ -2329,8 +2335,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             }),
             hasT3Mcp: mcpServers !== undefined,
             hasDeviceTools,
+            hasBrowserTools,
             orchestrationDelivered: delivered.orchestration,
             deviceInstructionsDelivered: delivered.device,
+            browserInstructionsDelivered: delivered.browser,
           });
           const userText =
             interrupted === undefined
@@ -2400,17 +2408,20 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const mcpServers = cursorMcpServers(mcpSession);
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
+            const hasBrowserTools =
+              mcpServers !== undefined && mcpSession?.capabilities?.has("preview") === true;
             const known = yield* Ref.get(told);
             // A conversation this process has not sent to was told on its first run.
             const delivered =
               known?.agent === agent.nativeThreadId
                 ? known
-                : { orchestration: turnInput.runOrdinal > 1, device: false };
+                : { orchestration: turnInput.runOrdinal > 1, device: false, browser: false };
             const interrupted = yield* Ref.get(interruptedPrompt);
             const { message, prompt } = yield* resolveUserMessage(
               turnInput,
               mcpServers,
               hasDeviceTools,
+              hasBrowserTools,
               delivered,
               interrupted?.agent === agent.nativeThreadId ? interrupted.text : undefined,
             );
@@ -2441,6 +2452,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               agent: agent.nativeThreadId,
               orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
               device: !compacted && hasDeviceTools,
+              browser: !compacted && hasBrowserTools,
             });
             if (!compacted) {
               yield* Ref.set(interruptedPrompt, null);

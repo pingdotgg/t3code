@@ -71,6 +71,7 @@ export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
+  readonly hasBrowserTools: boolean;
 }
 
 /** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
@@ -84,7 +85,8 @@ export function t3AcpPromptWithInstructions(input: {
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
-    input.previousState.hasDeviceTools === input.state.hasDeviceTools
+    input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
+    input.previousState.hasBrowserTools === input.state.hasBrowserTools
   ) {
     return input.prompt;
   }
@@ -94,7 +96,7 @@ export function t3AcpPromptWithInstructions(input: {
       : T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS,
     ...(input.state.hasT3Mcp
       ? [
-          T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
+          ...(input.state.hasBrowserTools ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()] : []),
           ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
           T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
           T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
@@ -104,10 +106,10 @@ export function t3AcpPromptWithInstructions(input: {
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
 
-const orchestrationInstructions = (hasDeviceTools: boolean) =>
-  hasDeviceTools
-    ? `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n`
-    : T3_CODE_ORCHESTRATION_INSTRUCTIONS;
+const orchestrationInstructions = (hasDeviceTools: boolean, hasBrowserTools: boolean) =>
+  T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+  (hasBrowserTools ? `\n${T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()}\n` : "") +
+  (hasDeviceTools ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n` : "");
 
 function prependT3OrchestrationInstructions(prompt: string, instructions: string): string {
   return `<t3_code_orchestration_instructions>${instructions.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
@@ -118,24 +120,35 @@ export function t3OrchestrationPrompt(input: {
   readonly prompt: string;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
+  readonly hasBrowserTools: boolean;
   readonly orchestrationDelivered: boolean;
   readonly deviceInstructionsDelivered: boolean;
+  readonly browserInstructionsDelivered: boolean;
 }): string {
   if (!input.hasT3Mcp) return input.prompt;
   if (!input.orchestrationDelivered) {
     return prependT3OrchestrationInstructions(
       input.prompt,
-      orchestrationInstructions(input.hasDeviceTools),
+      orchestrationInstructions(input.hasDeviceTools, input.hasBrowserTools),
     );
   }
-  return input.hasDeviceTools && !input.deviceInstructionsDelivered
-    ? prependT3OrchestrationInstructions(input.prompt, T3_CODE_DEVICE_TOOL_INSTRUCTIONS)
+  const instructions = [
+    ...(input.hasBrowserTools && !input.browserInstructionsDelivered
+      ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()]
+      : []),
+    ...(input.hasDeviceTools && !input.deviceInstructionsDelivered
+      ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS]
+      : []),
+  ];
+  return instructions.length > 0
+    ? prependT3OrchestrationInstructions(input.prompt, instructions.join("\n\n"))
     : input.prompt;
 }
 
 export function t3OrchestrationSystemPrompt(
   hasT3Mcp: boolean,
   hasDeviceTools: boolean,
+  hasBrowserTools: boolean,
 ): string | undefined {
-  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools) : undefined;
+  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools, hasBrowserTools) : undefined;
 }
