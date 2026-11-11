@@ -332,6 +332,74 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
   }),
 );
 
+it.effect("a launch with a model its provider does not advertise creates no thread", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const providers: ServerProvider[] = ["claudeAgent", "codex"].map((driver) => ({
+      instanceId: ProviderInstanceId.make(driver),
+      driver: ProviderDriverKind.make(driver),
+      enabled: true,
+      installed: true,
+      status: "ready",
+      version: null,
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00Z",
+      models: [
+        driver === "claudeAgent"
+          ? {
+              slug: "claude-opus",
+              name: "Opus",
+              aliases: ["opus"],
+              isCustom: false,
+              capabilities: null,
+            }
+          : { slug: "gpt-5.4", name: "GPT", isCustom: false, capabilities: null },
+      ],
+      slashCommands: [],
+      skills: [],
+    }));
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      providers,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launchWith = (instanceId: string, model: string) =>
+      toolkit
+        .handle("t3_thread_launch", {
+          title: "Fix",
+          projectId,
+          modelSelection: { instanceId: ProviderInstanceId.make(instanceId), model },
+        })
+        .pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((result) => result.at(-1)?.result),
+          Effect.provide(dependencies),
+        );
+
+    for (const [instanceId, model] of [
+      ["claudeAgent", "claude-unadvertised"],
+      ["codex", "opus"],
+    ] as const) {
+      expect(yield* launchWith(instanceId, model)).toMatchObject({
+        code: "model_unavailable",
+        message: `Model ${model} is not advertised by provider ${instanceId}.`,
+      });
+    }
+    expect(launched).toHaveLength(0);
+
+    expect(yield* launchWith("claudeAgent", "Opus")).toMatchObject({
+      modelSelection: { instanceId: "claudeAgent", model: "Opus" },
+    });
+    expect(launched).toHaveLength(1);
+  }),
+);
+
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
