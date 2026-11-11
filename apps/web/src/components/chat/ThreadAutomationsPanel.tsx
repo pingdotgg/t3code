@@ -146,11 +146,11 @@ export function ThreadAutomationsPanel(props: {
       }
       data-thread-automations-panel
     >
-      <div className="max-h-[13.5rem] overflow-y-auto">
+      <div className="max-h-[13.5rem] overflow-x-hidden overflow-y-auto">
         {boundTasks.map((task) => (
           <Menu key={task.id}>
-            <div className="flex min-h-9 items-center pe-1">
-              <MenuTrigger render={<ThreadDetailsControl multiline />}>
+            <div className="flex min-h-9 min-w-0 items-center pe-1">
+              <MenuTrigger render={<ThreadDetailsControl className="min-w-0 flex-1" multiline />}>
                 <span className="relative shrink-0">
                   <CalendarClockIcon className="size-4 text-muted-foreground" />
                   {task.enabled ? (
