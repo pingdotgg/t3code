@@ -1,6 +1,7 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
-import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
+import { memo, use, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
@@ -87,6 +88,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
   const autoAdvanceTimerRef = useRef<number | null>(null);
+  const optionsRef = useRef<HTMLDivElement>(null);
+  const questionTextId = useId();
   const advance = useStableCallback(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
     questionId: string;
@@ -140,7 +143,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     }
     autoAdvanceTimerRef.current = window.setTimeout(() => {
       autoAdvanceTimerRef.current = null;
-      advance();
+      const hadFocus = optionsRef.current?.contains(document.activeElement) ?? false;
+      flushSync(advance);
+      // The next question's options replace the focused one, so focus would fall to <body>.
+      const options = optionsRef.current;
+      if (!hadFocus || !options || options.contains(document.activeElement)) return;
+      (
+        options.querySelector<HTMLElement>('[aria-pressed="true"]') ??
+        options.querySelector<HTMLElement>("button")
+      )?.focus();
     }, 200);
   };
 
@@ -258,14 +269,22 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="ps-6 pe-4 pb-1 wrap-anywhere sm:ps-5.5">
-            <ChatMarkdown
-              text={activeQuestion.question}
-              cwd={cwd}
-              threadRef={threadRef}
-              className={cn("pt-0.5 text-foreground/85", questionTextAlign)}
-            />
+            <div id={questionTextId}>
+              <ChatMarkdown
+                text={activeQuestion.question}
+                cwd={cwd}
+                threadRef={threadRef}
+                className={cn("pt-0.5 text-foreground/85", questionTextAlign)}
+              />
+            </div>
             {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}
-            <div className="-ms-2 mt-1.5 sm:-ms-1.5">
+            <div
+              key={activeQuestion.id}
+              ref={optionsRef}
+              role="group"
+              aria-labelledby={questionTextId}
+              className="-ms-2 mt-1.5 sm:-ms-1.5"
+            >
               {activeQuestion.options.map((option, index) => {
                 const optionValue = option.value ?? option.label;
                 const isOptimisticallySelected =
