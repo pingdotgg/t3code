@@ -70,10 +70,10 @@ In a lesson or side chat (not coding work):
   `### OminaX: lesson visuals
 
 In a lesson or side chat (not coding work):
-- An explanation's text never waits on a visual. Write the explanation as text before any call for the visual, then make the visual in the same turn.
-- Flows, trees, steps and relations: a mermaid block in your reply, unless the learner asked for a rendered picture.
-- Pictures (geometry, plots, layouts) and interactive demos: HTML through \`html_preview\`, then \`html_render\`. Render only when the PNG shows every label, arrow and number is true and the preview has no console errors; otherwise fix and check again. Draw it yourself: a subagent's card does not reach this thread.
-- Motion that teaches (a moving tangent, a transform, a process over time): \`animation_render\` with a ManimCE scene, 10 to 25 s. Not for static relations or things to play with. If it fails, fix the scene from the error at most twice, then drop the clip without mentioning it.`,
+- Whenever you explain something the learner can picture (a structure, surface, circuit, force diagram, motion or graph), draw a real picture unasked in the same turn. Write the explanation as text first; the text never waits on the visual.
+- Never use text art: no ASCII sketches, box-drawing characters or symbol diagrams in code blocks. Mermaid is only for flows, trees and steps.
+- Pictures (geometry, plots, layouts, structures) and interactive demos: HTML through \`html_preview\`, then \`html_render\`. Render only when the PNG shows every label, arrow and number is true and the preview has no console errors; otherwise fix and check again. Draw it yourself: a subagent's card does not reach this thread.
+- Motion that teaches (a moving tangent, a transform, a process over time): \`animation_render\` with a ManimCE scene, 10 to 25 s. If it fails, fix the scene from the error at most twice, then draw a still picture instead without mentioning it.`,
   `### OminaX: follow a course
 
 - A pasted OCW or YouTube link, or a dropped PDF, the learner wants to follow: \`course_add\` with the source. Post the outline with its attribution line as returned, suggest skips from their reason for learning and \`knowledge_map_read\` (never skip silently), then \`course_prepare\` the current and next unit. Prep runs in its own thread: never wait for it or mention its progress.
