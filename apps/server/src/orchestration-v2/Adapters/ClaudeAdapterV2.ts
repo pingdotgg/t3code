@@ -13,6 +13,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { field, text } from "../unknownField.ts";
 import { mergeWorkflowAgentMetadata, type WorkflowAgentMetadata } from "../workflowAgentAnswers.ts";
+import { inlineContextUserTextStart } from "../ContextHandoffDelivery.ts";
 import {
   initialWorkflowAgentTranscriptCursor,
   readWorkflowAgentTranscript,
@@ -2391,7 +2392,9 @@ export function makeClaudeUserMessage(input: {
   // Claude expands a skill only when `/name` starts the last text block.
   // Keep the whole request before that block; see ClaudeSkillDispatch.
   const dispatch =
-    input.skills === undefined ? undefined : planClaudeSkillDispatch(input.text, input.skills);
+    input.skills === undefined
+      ? undefined
+      : planClaudeSkillDispatch(input.text, input.skills, inlineContextUserTextStart(input.text));
   return {
     type: "user",
     message: {
@@ -2580,7 +2583,11 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   const dispatch =
     input.skills === undefined
       ? undefined
-      : planClaudeSkillDispatch(textWithAttachmentPaths, input.skills);
+      : planClaudeSkillDispatch(
+          textWithAttachmentPaths,
+          input.skills,
+          inlineContextUserTextStart(textWithAttachmentPaths),
+        );
   const content: Array<ClaudeUserContentBlock> = [];
   // Base64 adds a third to the payload. Leave room below Anthropic's 32 MB
   // request limit for text, instructions, and SDK framing. The SDK does not

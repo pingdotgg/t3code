@@ -13,8 +13,16 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 
 /** The provider prompt for a turn that carries inline context ahead of the user's text. */
+const INLINE_CONTEXT_USER_MESSAGE_MARKER = "\n\nUser message:\n";
+
 export const withInlineContext = (context: string, userText: string): string =>
-  context === "" ? userText : `${context}\n\nUser message:\n${userText}`;
+  context === "" ? userText : `${context}${INLINE_CONTEXT_USER_MESSAGE_MARKER}${userText}`;
+
+/** Where the user's text starts in a `withInlineContext` prompt; the last marker is never inside the context. */
+export const inlineContextUserTextStart = (prompt: string): number => {
+  const index = prompt.lastIndexOf(INLINE_CONTEXT_USER_MESSAGE_MARKER);
+  return index === -1 ? 0 : index + INLINE_CONTEXT_USER_MESSAGE_MARKER.length;
+};
 
 /** Persist around injection; ambiguous delivery requires a fresh native thread. Call unsent if refused before prompt consumption. */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
