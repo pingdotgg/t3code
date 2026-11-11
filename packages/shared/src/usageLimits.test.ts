@@ -1892,6 +1892,8 @@ describe("reset credits per window", () => {
       scope: "Fable",
     });
     expect(resetCreditsForWindow(mixed, windows, "five_hour").count).toBe(0);
+    const withoutWeekly = windows.filter((shown) => shown.id !== "seven_day");
+    expect(resetCreditsForWindow(credits, withoutWeekly, "five_hour").count).toBe(1);
   });
 
   it("counts resets without clears details against every window", () => {

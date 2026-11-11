@@ -1048,9 +1048,11 @@ export function resetCreditsForWindow(
     let scope: string | undefined;
     if (clears) {
       const listed = resettable.filter((window) => clears.includes(window.id));
-      scope = listed.some((window) => window.kind === "weekly" && !scopeOf(window))
-        ? undefined
-        : listed.map(scopeOf).find(Boolean);
+      // An id with no window shown may be the all-models Weekly, so it rules out a model scope.
+      const modelOnly = clears.every((id) =>
+        listed.some((window) => window.id === id && (scopeOf(window) || window.kind === "session")),
+      );
+      scope = modelOnly ? listed.map(scopeOf).find(Boolean) : undefined;
       // Claude lists the shared Session in a model-scoped reset's clears, but redeeming leaves it.
       // A model's row only counts that model's own resets, though a full reset clears it too.
       const cleared = listed.filter((window) => scopeOf(window) === scope);
