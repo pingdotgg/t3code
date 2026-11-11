@@ -108,7 +108,6 @@ it.effect.each([false, true])(
             platform: "linux",
             isDevelopment: false,
             isPackaged: true,
-            stateDir: "/isolated/userdata",
             configuredBackendPort: Option.some(3773),
             defaultDesktopSettings: { serverExposureMode: "local-only" },
           } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),

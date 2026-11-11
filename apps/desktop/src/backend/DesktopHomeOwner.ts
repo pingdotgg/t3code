@@ -28,7 +28,7 @@ const isProcessAlive = (pid: number): boolean => {
   }
 };
 
-/** The live server recorded as owning the desktop's T3 home, if any. */
+/** The live server recorded as owning the desktop's T3 home. Only call once the ownership lock refused a backend: a live PID alone may be reused. */
 export const readLiveHomeOwner = Effect.fn("DesktopHomeOwner.readLiveHomeOwner")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
