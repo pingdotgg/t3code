@@ -35,6 +35,7 @@ import {
   collectPullRequestListFacets,
   narrowPullRequestsToFilters,
   mergePullRequestDiffStats,
+  settlePullRequestSortStats,
   pullRequestDiffStatKey,
   pullRequestEntryKey,
   rankPullRequestMatches,
@@ -44,6 +45,7 @@ import {
   type EnvironmentPullRequestEntry,
   type MergedPullRequestList,
   type PullRequestDiffStats,
+  type PullRequestSortStats,
   type PullRequestStatsBatch,
   type PullRequestStatsPolicy,
   type PullRequestStatsScope,
@@ -752,6 +754,16 @@ export function PullRequestsPage() {
   });
 
   const visibleStatsKeys = useRef({ key: filterKey, values: new Set<string>() });
+  const sortStatsKey = JSON.stringify([
+    filterKey,
+    typedQuery,
+    sort,
+    pageSize,
+    sentCursors,
+    ...[listQuery, baselineQuery, authoredQuery, reviewingQuery].map((query) =>
+      query.observations.map(([environmentId, , timestamp]) => [environmentId, timestamp]),
+    ),
+  ]);
   const [statsByRow, setStatsByRow] = useState<PullRequestDiffStats>(() => new Map());
   if (
     panelEnvironmentId !== null &&
@@ -771,6 +783,7 @@ export function PullRequestsPage() {
   }
   const [statsTargetState, setStatsTargetState] = useState<{
     readonly key: string;
+    readonly sortKey?: string;
     readonly batches: ReadonlyArray<PullRequestStatsBatch>;
   }>({ key: filterKey, batches: [] });
   const statsBatches = statsTargetState.key === filterKey ? statsTargetState.batches : [];
@@ -828,10 +841,12 @@ export function PullRequestsPage() {
         activeBatches: batches,
         statsByRow: known,
       });
-      if (added.length === 0 && current.key === filterKey) return current;
-      return { key: filterKey, batches: [...batches, ...added] };
+      if (added.length === 0 && current.key === filterKey && current.sortKey === sortStatsKey) {
+        return current;
+      }
+      return { key: filterKey, sortKey: sortStatsKey, batches: [...batches, ...added] };
     });
-  }, [filterKey, entriesByStatsKey, statsPolicy]);
+  }, [filterKey, entriesByStatsKey, statsPolicy, sortStatsKey]);
   // The observer outlives the rows it watches, so it reads the rows held at the time it fires.
   const readStatsRows = useEffectEvent(() => entriesByStatsKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- IntersectionObserver on rows requests stats for rows that scroll into view
@@ -900,6 +915,20 @@ export function PullRequestsPage() {
     setMergedStats(stats);
     setStatsByRow((previous) => mergePullRequestDiffStats(previous, stats));
   }
+  const [sortStats, setSortStats] = useState<PullRequestSortStats | null>(null);
+  const nextSortStats = settlePullRequestSortStats(
+    sortStats,
+    sortStatsKey,
+    statsByRow,
+    statsPolicy === "eager" ? statsQuery.stats : null,
+    statsPolicy !== "eager" ||
+      (statsTargetState.sortKey === sortStatsKey &&
+        !statsQuery.isPending &&
+        !listQuery.isPending &&
+        !baselineQuery.isPending &&
+        (!partitionsWanted || (!authoredQuery.isPending && !reviewingQuery.isPending))),
+  );
+  if (nextSortStats !== sortStats) setSortStats(nextSortStats);
   // Stable so a refresh that resumes after awaiting the host compares against the scope on screen
   // by then, not the one it started from.
   const refreshListAndStats = useStableCallback(
@@ -956,6 +985,7 @@ export function PullRequestsPage() {
     host: search.host,
     groups,
     statsByRow,
+    sortStatsByRow: nextSortStats.stats,
     overrides,
     state: search.state,
     localFilters,
