@@ -2442,7 +2442,7 @@ describe("UsageService", () => {
       const projectRows = (summary: UsageSummary) =>
         (summary.projectTotals ?? [])
           .filter((row) => row.provider !== "pi")
-          .map((row) => [String(row.projectId ?? null), row.totals.outputTokens, row.sessions])
+          .map((row) => [String(row.projectId ?? null), row.totals.outputTokens])
           .toSorted(([a], [b]) => String(a).localeCompare(String(b)));
 
       yield* Effect.gen(function* () {
@@ -2478,15 +2478,15 @@ describe("UsageService", () => {
         const service = yield* UsageService.make;
         const summary = yield* service.readSummary(WINDOW);
         assert.deepStrictEqual(projectRows(summary), [
-          ["null", 18, 2],
-          ["p-app", 8, 2],
-          ["p-gone", 13, 1],
+          ["null", 18],
+          ["p-app", 8],
+          ["p-gone", 13],
         ]);
         assert.deepStrictEqual(
           summary.projectTotals
             ?.filter((row) => row.provider === "pi")
-            .map((row) => [row.projectId, row.totals.outputTokens, row.sessions]),
-          [[ProjectId.make("p-app"), 17, 1]],
+            .map((row) => [row.projectId, row.totals.outputTokens]),
+          [[ProjectId.make("p-app"), 17]],
         );
         assert.deepStrictEqual(
           summary.projects?.toSorted((a, b) => a.projectId.localeCompare(b.projectId)),

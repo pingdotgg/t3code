@@ -317,7 +317,6 @@ describe("UsageAggregator", () => {
         costUsd: expect.closeTo(projectCost, 9),
         records: 2,
         unpricedRecords: 0,
-        sessions: 1,
       },
       {
         provider: "claude",
@@ -326,7 +325,6 @@ describe("UsageAggregator", () => {
         costUsd: 0,
         records: 1,
         unpricedRecords: 1,
-        sessions: 1,
       },
     ]);
     const bucketCost = result.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0);

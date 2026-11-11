@@ -147,7 +147,6 @@ describe("mergeUsage", () => {
       costUsd,
       records: 1,
       unpricedRecords: 0,
-      sessions: 1,
     });
     const withProjects = (
       usageSummary: UsageSummary,
@@ -217,7 +216,6 @@ describe("mergeUsage", () => {
       costUsd,
       records: 1,
       unpricedRecords: 0,
-      sessions: 1,
     });
     const merged = mergeUsage(
       [
@@ -376,7 +374,6 @@ describe("mergeUsage", () => {
           costUsd: 7,
           records: 3,
           unpricedRecords: 0,
-          sessions: 2,
         },
       ],
       projects: [{ projectId: "p1" as ProjectId, title: "App" }],

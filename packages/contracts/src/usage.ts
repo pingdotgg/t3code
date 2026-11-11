@@ -85,7 +85,6 @@ export const UsageProjectTotals = Schema.Struct({
   costUsd: Schema.Number,
   records: NonNegativeInt,
   unpricedRecords: NonNegativeInt,
-  sessions: NonNegativeInt,
 });
 export type UsageProjectTotals = typeof UsageProjectTotals.Type;
 

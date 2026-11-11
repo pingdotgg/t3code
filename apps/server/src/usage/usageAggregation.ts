@@ -69,7 +69,6 @@ interface MutableProjectTotals {
   costUsd: number;
   records: number;
   unpricedRecords: number;
-  sessions: Set<string>;
 }
 
 export interface AggregateOptions {
@@ -240,10 +239,7 @@ export class UsageAggregator {
     }
     // Keyed usage is counted in finish(), once all its copies are merged.
     if (record.dedupeKey === null) this.#accumulate(bucket, project, record);
-    if (record.sessionId.length > 0) {
-      bucket.sessions.add(record.sessionId);
-      project?.sessions.add(record.sessionId);
-    }
+    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     return true;
   }
 
@@ -287,7 +283,6 @@ export class UsageAggregator {
         costUsd: 0,
         records: 0,
         unpricedRecords: 0,
-        sessions: new Set(),
       };
       this.#projects.set(key, project);
     }
@@ -458,7 +453,6 @@ export class UsageAggregator {
               costUsd: project.costUsd,
               records: project.records,
               unpricedRecords: project.unpricedRecords,
-              sessions: project.sessions.size,
             };
           });
 
