@@ -7,6 +7,7 @@ import type {
 import type { PullRequestTabStatusSeed } from "~/components/RightPanelTabs";
 import { pullRequestSurfaceId } from "~/rightPanelStore";
 import {
+  comparePullRequestsByRecency,
   filterPullRequestsByInvolvement,
   groupPullRequestsByInvolvement,
   matchesPullRequestFilters,
@@ -57,20 +58,15 @@ export function pullRequestGroups({
 
   const entries = (() => {
     const involvementEntries = filterPullRequestsByInvolvement(known, viewers, involvement);
-    // The hosts search more than the row shows — a body, a review, a commit message — so once
-    // their answer is in, narrowing it again here would throw away matches the reader asked for.
-    // The local pass stands in for the answer that has not arrived yet, and for the hosts that
-    // answered without searching at all: Azure DevOps has no text filter, so its rows arrive
-    // whole and would otherwise sit under a search that never touched them.
+    // Host text searches cover fields absent from rows, so do not narrow their matches locally.
+    // Filter text locally while results are pending or when the host has no text search.
     const narrowedEntries = hasLocalFilters
       ? involvementEntries.filter((entry) =>
           matchesPullRequestFilters(entry, localFilters, pullRequestEntryViewer(entry, viewers)),
         )
       : involvementEntries;
     if (text.length === 0) {
-      return narrowedEntries.toSorted((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt),
-      );
+      return narrowedEntries.toSorted(comparePullRequestsByRecency);
     }
     return narrowedEntries.filter(
       (entry) =>

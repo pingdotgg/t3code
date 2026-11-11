@@ -2,6 +2,10 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeModule from "node:module";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { workspaceDetailRouter } from "../layout/workspace/workspace-detail-selection";
+import type { NavigationState } from "@react-navigation/native";
 import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
@@ -9,47 +13,70 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { isValidElement, type ReactNode } from "react";
+import { act, createElement, isValidElement, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
   baseDirectory: "",
-  projects: [] as string[],
-  home: "/home/tester",
   os: "linux",
-  supportsCloneTracking: false,
-  registered: [] as Array<{
+  home: "/home/tester",
+  projects: [] as string[],
+  cloneDestinations: [] as string[],
+  existingProjects: [] as {
     environmentId: string;
     id: string;
     title: string;
     workspaceRoot: string;
-  }>,
-  cloneCalls: [] as string[],
-  alerts: [] as string[],
-  navigations: [] as unknown[],
-  draftLoadError: false,
-  stateUpdates: [] as unknown[],
-  draftTexts: [] as Array<{ draftId: string; text: string }>,
+  }[],
+  createResult: null as Promise<unknown> | null,
+  createNewResult: null as Promise<unknown> | null,
+  startCloneResult: null as Promise<unknown> | null,
+  connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
+  newProjectsRoot: null as string | null,
+  waitForProject: vi.fn(),
+  dispatch: vi.fn(),
+  alert: vi.fn(),
+  navigationState: undefined as NavigationState | undefined,
+  environments: [{ environmentId: "environment", environmentLabel: "Environment" }],
 }));
 
-// Stands in for the server's `~` expansion, which filesystem.browse reports as parentPath.
-function expandHome(path: string): string {
-  if (path !== "~" && !path.startsWith("~/") && !path.startsWith("~\\")) return path;
-  const expanded = `${state.home}${path.slice(1)}`;
-  return state.os === "windows" ? expanded.replaceAll("/", "\\") : expanded;
+// Stands in for the host's `~` expansion, which filesystem.browse reports as parentPath.
+function browseResult(partialPath: string) {
+  const expanded = /^~(?:[\\/]|$)/.test(partialPath)
+    ? `${state.home}${partialPath.slice(1)}`
+    : partialPath;
+  const normalized = state.os === "windows" ? expanded.replaceAll("/", "\\") : expanded;
+  return {
+    parentPath: normalized.slice(
+      0,
+      Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\")) + 1,
+    ),
+    entries: [],
+  };
 }
 
-vi.mock("react", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("react")>()),
-  useCallback: (callback: unknown) => callback,
-  useMemo: (factory: () => unknown) => factory(),
-  useState: (initial: unknown) => [
-    typeof initial === "function" ? initial() : initial,
-    (value: unknown) => state.stateUpdates.push(value),
-  ],
-  useRef: (current: unknown) => ({ current }),
-  useEffect: () => {},
+function loadRouters() {
+  const requireNavigation = NodeModule.createRequire(
+    NodeModule.createRequire(import.meta.url).resolve("@react-navigation/native/package.json"),
+  );
+  return requireNavigation("@react-navigation/routers") as {
+    StackRouter: typeof import("@react-navigation/native").StackRouter;
+    StackActions: typeof import("@react-navigation/native").StackActions;
+    CommonActions: typeof import("@react-navigation/native").CommonActions;
+  };
+}
+
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", async () => {
+  const { selectWorkspaceDetail } = await import("../layout/workspace/workspace-detail-selection");
+  return {
+    useSelectWorkspaceDetail: () => (detail: Parameters<typeof selectWorkspaceDetail>[0]) =>
+      state.dispatch(selectWorkspaceDetail(detail)),
+  };
+});
+vi.mock("../../native/StackHeader", () => ({
+  nativeHeaderScrollEdgeEffects: () => undefined,
 }));
 vi.mock("../../components/ui/NavigationRow", () => ({ NavigationRow: "NavigationRow" }));
 vi.mock("../../components/ui/Button", () => ({ Button: "Button" }));
@@ -59,15 +86,30 @@ vi.mock("../../components/ui/ThemedSwitch", () => ({ ThemedSwitch: "Switch" }));
 vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
   ActivityIndicator: "ActivityIndicator",
-  Alert: { alert: (title: string) => state.alerts.push(title) },
+  Alert: { alert: state.alert },
   Pressable: "Pressable",
   ScrollView: "ScrollView",
   View: "View",
 }));
 vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ dispatch: (action: unknown) => state.navigations.push(action) }),
+  useNavigation: () => ({
+    dispatch: state.dispatch,
+    getState: () =>
+      state.navigationState ?? {
+        index: 4,
+        routes: [
+          { key: "home", name: "Home" },
+          { key: "draft", name: "Thread", params: { draft: {} } },
+          { key: "picker", name: "NewTaskProject" },
+          { key: "add", name: "AddProject" },
+          { key: "local", name: "AddProjectLocal" },
+        ],
+      },
+  }),
   CommonActions: { reset: (input: unknown) => input },
-  StackActions: {},
+  StackActions: {
+    push: (name: string, params: unknown) => ({ type: "PUSH", payload: { name, params } }),
+  },
 }));
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ bottom: 0 }),
@@ -84,26 +126,16 @@ vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_environmentId: string, scope: string) => state.scopes.has(scope),
   readEnvironmentScope: (_environmentId: string, scope: string) => state.scopes.has(scope),
 }));
-vi.mock("../../state/use-composer-drafts", () => ({
-  waitForComposerDraftsLoaded: async () => {
-    if (state.draftLoadError) throw new Error("Draft storage unavailable");
-  },
-  createNewTaskDraft: () => "draft",
-  setComposerDraftText: (draftId: string, text: string) => state.draftTexts.push({ draftId, text }),
-}));
 vi.mock("../../state/entities", () => ({
-  useProjects: () => state.registered,
-  waitForProject: async ({ projectId }: { projectId: string }) =>
-    state.registered.find((project) => project.id === projectId) ?? null,
+  useProjects: () => state.existingProjects,
+  waitForProject: state.waitForProject,
   useServerConfigs: () =>
     new Map([
       [
         "environment",
         {
-          environment: {
-            platform: { os: state.os },
-            capabilities: { projectCloneTracking: state.supportsCloneTracking },
-          },
+          environment: { platform: { os: state.os }, capabilities: {} },
+          newProjectsRoot: state.newProjectsRoot,
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
       ],
@@ -112,46 +144,28 @@ vi.mock("../../state/entities", () => ({
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useRemoteEnvironmentRuntime: () => ({ connectionState: "connected" }),
   useRemoteConnectionStatus: () => ({
-    connectedEnvironments: [{ environmentId: "environment", connectionState: "connected" }],
+    connectedEnvironments: state.environments.map((environment) => ({
+      environmentId: environment.environmentId,
+      connectionState: state.connectionStates[environment.environmentId] ?? "connected",
+    })),
   }),
   useSavedRemoteConnections: () => ({
-    savedConnectionsById: {
-      connection: { environmentId: "environment", environmentLabel: "Environment" },
-    },
+    savedConnectionsById: Object.fromEntries(
+      state.environments.map((environment) => [environment.environmentId, environment]),
+    ),
   }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-function browseResult(target: unknown) {
-  const partialPath = (target as { input?: { partialPath?: string } } | null)?.input?.partialPath;
-  if (partialPath === undefined || partialPath === "") return null;
-  const expanded = expandHome(partialPath);
-  return {
-    parentPath: expanded.slice(
-      0,
-      Math.max(expanded.lastIndexOf("/"), expanded.lastIndexOf("\\")) + 1,
-    ),
-    entries: [],
-  };
-}
 vi.mock("../../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async (target: unknown) => {
-    // filesystem.browse requires a non-empty partialPath.
-    if ((target as { input?: { partialPath?: string } } | null)?.input?.partialPath === "") {
-      return AsyncResult.failure(Cause.fail(new Error("Invalid filesystem.browse input")));
-    }
-    const data = browseResult(target);
-    return data ? AsyncResult.success(data) : AsyncResult.success(null);
-  },
+  useAtomQueryRunner:
+    () =>
+    async ({ input }: { input: { partialPath: string } }) =>
+      // filesystem.browse rejects an empty partialPath.
+      input.partialPath === ""
+        ? AsyncResult.failure(Cause.fail(new Error("Invalid filesystem.browse input")))
+        : AsyncResult.success(browseResult(input.partialPath)),
 }));
-vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: (target: unknown) => ({
-    data: browseResult(target),
-    error: null,
-    isPending: false,
-    isSuccess: true,
-    refresh: () => {},
-  }),
-}));
+vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
 }));
@@ -160,61 +174,101 @@ vi.mock("../../state/filesystem", () => ({
 }));
 vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
-    cloneRepository: async ({ input }: { input: { destinationPath: string } }) => {
-      state.cloneCalls.push(input.destinationPath);
-      if (input.destinationPath.startsWith("~")) {
-        return AsyncResult.success({ cwd: input.destinationPath });
-      }
-      NodeFS.mkdirSync(input.destinationPath);
-      return AsyncResult.success({ cwd: input.destinationPath });
-    },
+    discovery: (input: unknown) => input,
     startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
-      state.cloneCalls.push(input.destinationPath);
+      state.cloneDestinations.push(input.destinationPath);
+      if (state.startCloneResult) return state.startCloneResult;
+      NodeFS.mkdirSync(input.destinationPath);
       return AsyncResult.success(undefined);
     },
   },
 }));
 vi.mock("../../state/projects", () => ({
   projectEnvironment: {
-    create: async ({ input }: { input: { workspaceRoot: string } }) => {
+    createNew: () => state.createNewResult,
+    create: ({ input }: { input: { workspaceRoot: string } }) => {
       if (!state.scopes.has(AuthOrchestrationOperateScope)) {
-        return AsyncResult.failure(Cause.fail(new Error("Project creation denied")));
-      }
-      const root = expandHome(input.workspaceRoot).replace(/\/+$/, "");
-      if (state.registered.some((project) => project.workspaceRoot === root)) {
-        return AsyncResult.failure(Cause.fail(new Error("Failed to mutate project")));
+        return Promise.resolve(
+          AsyncResult.failure(Cause.fail(new Error("Project creation denied"))),
+        );
       }
       state.projects.push(input.workspaceRoot);
-      return AsyncResult.success(undefined);
+      return state.createResult ?? Promise.resolve(AsyncResult.success(undefined));
     },
   },
 }));
 
-import { AddProjectDestinationScreen, AddProjectLocalFolderScreen } from "./AddProjectScreen";
+vi.mock("../../state/use-composer-drafts", () => ({
+  waitForComposerDraftsLoaded: async () => {},
+  createNewTaskDraft: () => "prompt-draft",
+  setComposerDraftText: () => {},
+}));
 
-function findAction(node: ReactNode, label: string): (() => unknown) | null {
+import {
+  AddProjectNewScreen,
+  AddProjectDestinationScreen,
+  AddProjectLocalFolderScreen,
+  AddProjectSourceScreen,
+} from "./AddProjectScreen";
+import { AddProjectSourceRoute } from "./AddProjectSourceRoute";
+
+function findAction(
+  node: ReactNode,
+  label: string,
+  includeDisabled = false,
+): (() => unknown) | null {
   if (Array.isArray(node)) {
     for (const child of node) {
-      const action = findAction(child, label);
+      const action = findAction(child, label, includeDisabled);
       if (action) return action;
     }
     return null;
   }
-  if (!isValidElement<{ label?: string; onPress?: () => unknown; children?: ReactNode }>(node)) {
+  if (
+    !isValidElement<{
+      label?: string;
+      title?: string;
+      onPress?: () => unknown;
+      disabled?: boolean;
+      children?: ReactNode;
+    }>(node)
+  ) {
     return null;
   }
-  if (node.props.label === label) return node.props.onPress ?? null;
-  return findAction(node.props.children, label);
+  if ((node.props.label ?? node.props.title) === label) {
+    return node.props.disabled && !includeDisabled ? null : (node.props.onPress ?? null);
+  }
+  return findAction(node.props.children, label, includeDisabled);
+}
+
+const mountedRoots: ReturnType<typeof createRoot>[] = [];
+afterEach(() => {
+  for (const root of mountedRoots.splice(0)) act(() => root.unmount());
+});
+function renderScreen(render: () => ReactNode) {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(document.createElement("div"));
+  mountedRoots.push(root);
+  let screen: ReactNode;
+  function Observer() {
+    screen = render();
+    return null;
+  }
+  act(() => root.render(createElement(Observer)));
+  return screen;
 }
 
 function cloneAction() {
   const action = findAction(
-    AddProjectDestinationScreen({
-      environmentId: "environment",
-      remoteUrl: "https://example.com/repo.git",
-      repositoryName: "repo",
-    }),
+    renderScreen(() =>
+      AddProjectDestinationScreen({
+        environmentId: "environment",
+        remoteUrl: "https://example.com/repo.git",
+        repositoryName: "repo",
+      }),
+    ),
     "Clone project",
+    true,
   );
   if (!action) throw new Error("Clone action missing");
   return action;
@@ -227,6 +281,7 @@ describe("clone project permissions", () => {
     );
     state.scopes = new Set([AuthSourceControlWriteScope]);
     state.projects = [];
+    state.createResult = null;
   });
 
   afterEach(async () => {
@@ -254,6 +309,491 @@ describe("clone project permissions", () => {
   );
 });
 
+function mountProjectFlow(
+  withDraft: boolean,
+  withChooser = true,
+  withPullRequest = false,
+  screenName = "AddProjectLocal",
+) {
+  const { StackRouter, StackActions, CommonActions } = loadRouters();
+  const base = StackRouter({});
+  const router = { ...base, ...workspaceDetailRouter(base) };
+  const options = {
+    routeNames: [
+      "Home",
+      "Thread",
+      "PullRequest",
+      "PullRequestFile",
+      "NewTaskProject",
+      "AddProject",
+      "AddProjectLocal",
+      "AddProjectNew",
+      "AddProjectDestination",
+    ],
+    routeParamList: {},
+    routeGetIdList: {},
+  };
+  let current = router.getInitialState(options);
+  const home = current.routes[0]!;
+  const apply = (action: Parameters<typeof router.getStateForAction>[1]) => {
+    const next = router.getStateForAction(current, action, options);
+    if (!next || next.stale !== false) throw new Error("Navigation action rejected");
+    current = next;
+    state.navigationState = current;
+  };
+  if (withPullRequest) {
+    apply(StackActions.push("PullRequest", { number: 123 }));
+    apply(StackActions.push("PullRequestFile", { path: "file.ts" }));
+  }
+  const underlyingRoutes = current.routes;
+  if (withDraft) {
+    apply(StackActions.push("Thread", { draft: { projectId: "previous-project" } }));
+  }
+  const draftKey = withDraft ? current.routes[current.index]!.key : null;
+  for (const name of [...(withChooser ? ["NewTaskProject"] : []), "AddProject", screenName]) {
+    apply(StackActions.push(name));
+  }
+  state.navigationState = current;
+  state.dispatch.mockImplementation((action) =>
+    apply(
+      action.type === "PUSH" || action.type === "SELECT_WORKSPACE_DETAIL"
+        ? action
+        : CommonActions.reset(action),
+    ),
+  );
+  return {
+    home,
+    draftKey,
+    underlyingRoutes,
+    flowRoutes: current.routes.slice(underlyingRoutes.length),
+    getState: () => current,
+    back: () => apply(StackActions.pop()),
+    setParams: (params: object) => apply(CommonActions.setParams(params)),
+    push: (name: string) => apply(StackActions.push(name)),
+  };
+}
+
+describe("add project source environment", () => {
+  it("blocks local add on a requested unavailable host until reconnect or manual choice", async () => {
+    state.scopes = new Set([AuthOrchestrationOperateScope]);
+    state.dispatch.mockReset();
+    state.environments = [
+      { environmentId: "environment", environmentLabel: "Environment" },
+      { environmentId: "another-environment", environmentLabel: "Another environment" },
+    ];
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    let screen: ReactNode;
+    function SourceObserver() {
+      screen = AddProjectSourceScreen({ environmentId: "environment" });
+      return null;
+    }
+    try {
+      for (const phase of ["available", "offline", "error"] as const) {
+        state.connectionStates = { environment: phase };
+        await act(() => root.render(createElement(SourceObserver)));
+        expect(findAction(screen, "Local folder")).toBeNull();
+        expect(state.dispatch).not.toHaveBeenCalled();
+      }
+      state.connectionStates = {};
+      await act(() => root.render(createElement(SourceObserver)));
+      const reconnectedLocal = findAction(screen, "Local folder");
+      if (!reconnectedLocal) throw new Error("Reconnected local folder action missing");
+      reconnectedLocal();
+      expect(state.dispatch).toHaveBeenLastCalledWith({
+        type: "PUSH",
+        payload: { name: "AddProjectLocal", params: { environmentId: "environment" } },
+      });
+      state.connectionStates = { environment: "offline" };
+      await act(() => root.render(createElement(SourceObserver)));
+      expect(findAction(screen, "Local folder")).toBeNull();
+      const select = findAction(screen, "Another environment");
+      if (!select) throw new Error("Connected environment selection missing");
+      await act(() => select());
+      const local = findAction(screen, "Local folder");
+      if (!local) throw new Error("Manually selected local folder action missing");
+      local();
+      expect(state.dispatch).toHaveBeenLastCalledWith({
+        type: "PUSH",
+        payload: { name: "AddProjectLocal", params: { environmentId: "another-environment" } },
+      });
+    } finally {
+      await act(() => root.unmount());
+      state.connectionStates = {};
+      state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+    }
+  });
+
+  it("keeps a manual host selection when the requested host finishes connecting", async () => {
+    state.scopes = new Set([AuthOrchestrationOperateScope]);
+    state.dispatch.mockReset();
+    const navigation = mountProjectFlow(false, true, false, "AddProject");
+    state.environments = [
+      { environmentId: "environment", environmentLabel: "Environment" },
+      { environmentId: "another-environment", environmentLabel: "Another environment" },
+    ];
+    state.connectionStates = { environment: "connecting" };
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    let screen: ReactNode;
+    function SourceObserver() {
+      screen = AddProjectSourceScreen({ environmentId: "environment" });
+      return null;
+    }
+    try {
+      await act(() => root.render(createElement(SourceObserver)));
+      expect(findAction(screen, "Local folder")).toBeNull();
+      expect(navigation.getState().routes.at(-1)?.name).toBe("AddProject");
+      const select = findAction(screen, "Another environment");
+      if (!select) throw new Error("Connected environment selection missing");
+      await act(() => select());
+      state.connectionStates = {};
+      await act(() => root.render(createElement(SourceObserver)));
+      const local = findAction(screen, "Local folder");
+      if (!local) throw new Error("Local folder action missing");
+      local();
+      expect(navigation.getState().routes.at(-1)).toMatchObject({
+        name: "AddProjectLocal",
+        params: { environmentId: "another-environment" },
+      });
+    } finally {
+      await act(() => root.unmount());
+      state.connectionStates = {};
+      state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+    }
+  });
+
+  it("follows warm environment requests while preserving manual selection between requests", async () => {
+    state.scopes = new Set([AuthOrchestrationOperateScope]);
+    state.dispatch.mockReset();
+    const navigation = mountProjectFlow(false, true, false, "AddProject");
+    state.environments = [
+      { environmentId: "environment", environmentLabel: "Environment" },
+      { environmentId: "another-environment", environmentLabel: "Another environment" },
+    ];
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    let actions: { local: () => unknown; selectEnvironment: () => unknown } | undefined;
+    function SourceRouteObserver(props: { environmentId?: string | string[] }) {
+      const route = AddProjectSourceRoute({ route: { params: props } });
+      const screen = AddProjectSourceScreen(route.props);
+      const local = findAction(screen, "Local folder");
+      const selectEnvironment = findAction(screen, "Environment");
+      if (!local || !selectEnvironment) throw new Error("Source actions missing");
+      actions = { local, selectEnvironment };
+      return null;
+    }
+    const openLocalFolder = (environmentId: string) => {
+      state.dispatch.mockClear();
+      actions!.local();
+      expect(navigation.getState().routes.at(-1)).toMatchObject({
+        name: "AddProjectLocal",
+        params: { environmentId },
+      });
+      navigation.back();
+    };
+    try {
+      await act(() =>
+        root.render(createElement(SourceRouteObserver, { environmentId: "environment" })),
+      );
+      openLocalFolder("environment");
+      await act(() =>
+        root.render(createElement(SourceRouteObserver, { environmentId: "another-environment" })),
+      );
+      openLocalFolder("another-environment");
+      await act(() => actions!.selectEnvironment());
+      await act(() =>
+        root.render(createElement(SourceRouteObserver, { environmentId: ["another-environment"] })),
+      );
+      openLocalFolder("environment");
+      await act(() =>
+        root.render(createElement(SourceRouteObserver, { environmentId: "environment" })),
+      );
+      await act(() =>
+        root.render(createElement(SourceRouteObserver, { environmentId: "another-environment" })),
+      );
+      openLocalFolder("another-environment");
+    } finally {
+      await act(() => root.unmount());
+      state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+    }
+  });
+});
+
+describe("local project navigation", () => {
+  function setup() {
+    state.navigationState = undefined;
+    state.scopes = new Set([AuthOrchestrationOperateScope]);
+    state.baseDirectory = "/tmp/t3-mobile-audit-fixture";
+    state.projects = [];
+    state.dispatch.mockReset();
+    state.alert.mockReset();
+    state.waitForProject.mockReset();
+    const created = Promise.withResolvers<ReturnType<typeof AsyncResult.success<void>>>();
+    const projected = Promise.withResolvers<unknown>();
+    const waitingForProject = Promise.withResolvers<void>();
+    state.createResult = created.promise;
+    state.waitForProject.mockImplementation(() => {
+      waitingForProject.resolve();
+      return projected.promise;
+    });
+    const submit = findAction(
+      renderScreen(() => AddProjectLocalFolderScreen({ environmentId: "environment" })),
+      "Add project",
+    );
+    if (!submit) throw new Error("Add project action missing");
+    return { created, projected, waitingForProject, submit };
+  }
+
+  it("keeps navigation in place and explains a project projection timeout", async () => {
+    const { created, projected, submit } = setup();
+    const submission = submit();
+    created.resolve(AsyncResult.success(undefined));
+    projected.resolve(null);
+    await submission;
+
+    expect(state.projects).toEqual(["/tmp/t3-mobile-audit-fixture"]);
+    expect(state.dispatch).not.toHaveBeenCalled();
+    expect(state.alert).toHaveBeenCalledExactlyOnceWith(
+      "Project added",
+      "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+    );
+  });
+
+  it("does not replace a reopened flow when the previous submission finishes", async () => {
+    const { created, projected, submit } = setup();
+    const navigation = mountProjectFlow(false);
+    const submission = submit();
+    created.resolve(AsyncResult.success(undefined));
+    await created.promise;
+    navigation.back();
+    navigation.push("AddProjectLocal");
+    const remaining = navigation.getState();
+    projected.resolve({ environmentId: "environment", id: "project" });
+    await submission;
+
+    expect(state.projects).toEqual(["/tmp/t3-mobile-audit-fixture"]);
+    expect(navigation.getState()).toEqual(remaining);
+    expect(state.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a warm-linked flow sharing the original route key", async () => {
+    const { created, projected, submit } = setup();
+    const navigation = mountProjectFlow(false);
+    const submission = submit();
+    created.resolve(AsyncResult.success(undefined));
+    await created.promise;
+    const originalKey = navigation.getState().routes.at(-1)!.key;
+    navigation.setParams({ environmentId: "other-environment" });
+    const remaining = navigation.getState();
+    expect(remaining.routes.at(-1)!.key).toBe(originalKey);
+    projected.resolve({ environmentId: "environment", id: "project" });
+    await submission;
+
+    expect(navigation.getState()).toEqual(remaining);
+    expect(state.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("does not redirect a reopened flow when an earlier new project finishes", async () => {
+    const { projected } = setup();
+    state.newProjectsRoot = "/projects";
+    const created = Promise.withResolvers<unknown>();
+    const waitingForProject = Promise.withResolvers<void>();
+    state.createNewResult = created.promise;
+    state.waitForProject.mockImplementation(() => {
+      waitingForProject.resolve();
+      return projected.promise;
+    });
+    const navigation = mountProjectFlow(false, true, true, "AddProjectNew");
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    let screen: ReactNode;
+    function NewProjectObserver() {
+      screen = AddProjectNewScreen({ environmentId: "environment" });
+      return null;
+    }
+    function enterName(node: ReactNode): boolean {
+      if (Array.isArray(node)) return node.some(enterName);
+      if (
+        !isValidElement<{
+          placeholder?: string;
+          onChangeText?: (text: string) => void;
+          children?: ReactNode;
+        }>(node)
+      )
+        return false;
+      if (node.props.placeholder === "Project name") {
+        node.props.onChangeText!("new-project");
+        return true;
+      }
+      return enterName(node.props.children);
+    }
+    try {
+      await act(() => root.render(createElement(NewProjectObserver)));
+      await act(() => {
+        expect(enterName(screen)).toBe(true);
+      });
+      const submit = findAction(screen, "Create project");
+      if (!submit) throw new Error("Create project action missing");
+      await act(async () => {
+        submit();
+        created.resolve(
+          AsyncResult.success({
+            projectId: "project",
+            workspaceRoot: "/projects/new-project",
+          }),
+        );
+        await waitingForProject.promise;
+      });
+      navigation.back();
+      navigation.push("AddProjectNew");
+      const remaining = navigation.getState();
+      await act(async () => {
+        projected.resolve({ environmentId: "environment", id: "project" });
+        await projected.promise;
+      });
+
+      expect(navigation.getState()).toEqual(remaining);
+      expect(state.dispatch).not.toHaveBeenCalled();
+    } finally {
+      await act(() => root.unmount());
+      state.newProjectsRoot = null;
+      state.createNewResult = null;
+    }
+  });
+
+  it.each([
+    { origin: "Thread", withDraft: true, withChooser: true },
+    { origin: "NewTaskProject", withDraft: false, withChooser: true },
+    { origin: "AddProject", withDraft: false, withChooser: false },
+  ])(
+    "waits for projection then selects the draft from $origin",
+    async ({ withDraft, withChooser }) => {
+      const { created, projected, waitingForProject, submit } = setup();
+      const navigation = mountProjectFlow(withDraft, withChooser, true);
+      const before = navigation.getState();
+      const submission = submit();
+      created.resolve(AsyncResult.success(undefined));
+      await waitingForProject.promise;
+      expect(state.projects).toEqual(["/tmp/t3-mobile-audit-fixture"]);
+      expect(navigation.getState()).toBe(before);
+      projected.resolve({ environmentId: "environment", id: "project" });
+      await submission;
+      expect(state.dispatch).toHaveBeenCalledTimes(1);
+      expect(navigation.getState().routes.map((route) => route.name)).toEqual(["Home", "Thread"]);
+      expect(navigation.getState().routes[1]?.params).toEqual({
+        draft: {
+          environmentId: "environment",
+          projectId: "project",
+          title: "t3-mobile-audit-fixture",
+        },
+      });
+      navigation.back();
+      expect(navigation.getState().routes).toEqual([navigation.home]);
+    },
+  );
+});
+
+describe("local folder path", () => {
+  function findPathInput(
+    node: ReactNode,
+  ): { value: string; onChangeText: (value: string) => void } | null {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const input = findPathInput(child);
+        if (input) return input;
+      }
+      return null;
+    }
+    if (
+      !isValidElement<{
+        value?: string;
+        onChangeText?: (value: string) => void;
+        onSubmit?: () => void;
+        children?: ReactNode;
+      }>(node)
+    ) {
+      return null;
+    }
+    const { value, onChangeText, onSubmit } = node.props;
+    if (typeof value === "string" && onChangeText && onSubmit) return { value, onChangeText };
+    return findPathInput(node.props.children);
+  }
+
+  function mountLocalFolder() {
+    state.scopes = new Set([AuthOrchestrationOperateScope]);
+    state.baseDirectory = "/work";
+    state.connectionStates = {};
+    state.environments = [
+      { environmentId: "environment", environmentLabel: "Environment" },
+      { environmentId: "another-environment", environmentLabel: "Another environment" },
+    ];
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    const renderedPaths: string[] = [];
+    let input: ReturnType<typeof findPathInput> = null;
+    function LocalFolderObserver(props: { environmentId?: string }) {
+      input = findPathInput(AddProjectLocalFolderScreen(props));
+      if (input) renderedPaths.push(input.value);
+      return null;
+    }
+    return {
+      renderedPaths,
+      get path() {
+        return input?.value;
+      },
+      type: (value: string) => act(() => input!.onChangeText(value)),
+      render: (environmentId?: string) =>
+        act(() => root.render(createElement(LocalFolderObserver, { environmentId }))),
+      [Symbol.asyncDispose]: async () => {
+        await act(() => root.unmount());
+        state.connectionStates = {};
+        state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+      },
+    };
+  }
+
+  it("shows the new host's default path on the first render after the host changes", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render("environment");
+    await screen.type("/work/edited");
+    screen.renderedPaths.length = 0;
+
+    await screen.render("another-environment");
+
+    expect(screen.renderedPaths).not.toContain("/work/edited");
+    expect(screen.path).toBe("~/");
+  });
+
+  it("keeps each host's typed path when switching between hosts", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render("environment");
+    await screen.type("/work/a");
+    await screen.render("another-environment");
+    await screen.type("~/b");
+
+    await screen.render("environment");
+    expect(screen.path).toBe("/work/a");
+    await screen.render("another-environment");
+    expect(screen.path).toBe("~/b");
+  });
+
+  it("keeps a typed path when the default host drops out and comes back", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render();
+    expect(screen.path).toBe("~/");
+    await screen.type("~/code/app");
+
+    state.connectionStates = { "another-environment": "offline" };
+    await screen.render();
+    expect(screen.path).toBe("/work/");
+
+    state.connectionStates = {};
+    await screen.render();
+    expect(screen.path).toBe("~/code/app");
+  });
+});
+
 describe("adding an already registered project", () => {
   const existing = {
     environmentId: "environment",
@@ -261,144 +801,83 @@ describe("adding an already registered project", () => {
     title: "Bike documents",
     workspaceRoot: "/home/tester/repro/bike-documents",
   };
-  const existingDraft = {
-    index: 0,
-    routes: [
-      {
-        name: "NewTaskDraft",
-        params: { environmentId: "environment", projectId: existing.id, title: existing.title },
-      },
-    ],
-  };
 
-  beforeEach(() => {
+  function setup(input: { baseDirectory: string; os?: string; home?: string; root?: string }) {
+    state.navigationState = undefined;
     state.scopes = new Set([
-      AuthSourceControlWriteScope,
       AuthOrchestrationOperateScope,
+      AuthSourceControlWriteScope,
       AuthFilesystemReadScope,
     ]);
+    state.baseDirectory = input.baseDirectory;
+    state.os = input.os ?? "linux";
+    state.home = input.home ?? "/home/tester";
+    state.existingProjects = [{ ...existing, workspaceRoot: input.root ?? existing.workspaceRoot }];
     state.projects = [];
-    state.registered = [existing];
-    state.cloneCalls = [];
-    state.alerts = [];
-    state.navigations = [];
-    state.draftTexts = [];
-    state.draftLoadError = false;
-    state.stateUpdates = [];
-    state.supportsCloneTracking = false;
-    state.home = "/home/tester";
-    state.os = "linux";
-  });
-
-  async function submitLocalFolder(path: string) {
-    state.baseDirectory = path;
-    const action = findAction(
-      AddProjectLocalFolderScreen({ environmentId: "environment" }),
-      "Add project",
-    );
-    if (!action) throw new Error("Add project action missing");
-    await action();
+    state.cloneDestinations = [];
+    state.createResult = null;
+    state.startCloneResult = null;
+    state.dispatch.mockReset();
+    state.alert.mockReset();
+    return {
+      navigation: mountProjectFlow(false),
+      [Symbol.dispose]: () => {
+        state.os = "linux";
+        state.home = "/home/tester";
+        state.existingProjects = [];
+      },
+    };
   }
 
-  it.each(["~/repro/bike-documents/", "/home/tester/repro/bike-documents/"])(
-    "opens the existing project's draft without an alert for local folder %s",
-    async (path) => {
-      await submitLocalFolder(path);
-
-      expect(state.alerts).toEqual([]);
-      expect(state.navigations).toEqual([existingDraft]);
+  it.each([
+    { path: "~/repro/bike-documents/" },
+    { path: "~/", root: "/home/tester" },
+    {
+      path: "~\\repro\\bike-documents",
+      os: "windows",
+      home: "C:\\Users\\tester",
+      root: "C:\\Users\\tester\\repro\\bike-documents",
     },
-  );
-
-  it("opens the existing project's draft for a Windows ~\\ folder", async () => {
-    state.os = "windows";
-    state.home = "C:\\Users\\tester";
-    state.registered = [{ ...existing, workspaceRoot: "C:\\Users\\tester\\repro\\bike-documents" }];
-
-    await submitLocalFolder("~\\repro\\bike-documents");
-
-    expect(state.alerts).toEqual([]);
-    expect(state.navigations).toEqual([existingDraft]);
-  });
-
-  it("opens the home directory's project for ~/", async () => {
-    const home = { ...existing, id: "home-project", title: "Home", workspaceRoot: "/home/tester" };
-    state.registered = [home];
-
-    await submitLocalFolder("~/");
-
-    expect(state.alerts).toEqual([]);
-    expect(state.navigations).toEqual([
-      {
-        index: 0,
-        routes: [
-          {
-            name: "NewTaskDraft",
-            params: { environmentId: "environment", projectId: home.id, title: home.title },
-          },
-        ],
-      },
-    ]);
-  });
-
-  it("keeps the prompt available and reports draft failure before retrying", async () => {
-    state.baseDirectory = "~/repro";
-    state.draftLoadError = true;
-    const action = findAction(
-      AddProjectDestinationScreen({
-        environmentId: "environment",
-        remoteUrl: "https://example.com/bike-documents.git",
-        repositoryName: "bike-documents",
-        prompt: "Fix the bike",
-      }),
-      "Clone project",
+  ])("opens the existing project for local folder $path", async ({ path, ...host }) => {
+    using flow = setup({ baseDirectory: path, ...host });
+    const submit = findAction(
+      renderScreen(() => AddProjectLocalFolderScreen({ environmentId: "environment" })),
+      "Add project",
     );
-    if (!action) throw new Error("Clone action missing");
-    await action();
+    if (!submit) throw new Error("Add project action missing");
+    await submit();
 
-    expect(state.navigations).toEqual([]);
-    expect(state.cloneCalls).toEqual([]);
-    expect(state.stateUpdates).toContain("Draft storage unavailable");
-    expect(state.stateUpdates.at(-1)).toBe(false);
-
-    state.draftLoadError = false;
-    await action();
-    expect(state.draftTexts).toEqual([{ draftId: "draft", text: "Fix the bike" }]);
-    expect(state.navigations).toHaveLength(1);
-    expect(state.cloneCalls).toEqual([]);
+    expect(state.projects).toEqual([]);
+    expect(state.alert).not.toHaveBeenCalled();
+    expect(flow.navigation.getState().routes.at(-1)?.params).toEqual({
+      draft: { environmentId: "environment", projectId: existing.id, title: existing.title },
+    });
   });
 
-  it.each([false, true])(
-    "opens the existing project's draft with the prompt before cloning (clone tracking: %s)",
-    async (supportsCloneTracking) => {
-      state.supportsCloneTracking = supportsCloneTracking;
-      state.baseDirectory = "~/repro";
-      const action = findAction(
+  it("opens the existing project with the prompt instead of cloning into it", async () => {
+    using flow = setup({ baseDirectory: "~/repro" });
+    const submit = findAction(
+      renderScreen(() =>
         AddProjectDestinationScreen({
           environmentId: "environment",
           remoteUrl: "https://example.com/bike-documents.git",
           repositoryName: "bike-documents",
           prompt: "Fix the bike",
         }),
-        "Clone project",
-      );
-      if (!action) throw new Error("Clone action missing");
-      await action();
+      ),
+      "Clone project",
+    );
+    if (!submit) throw new Error("Clone action missing");
+    await submit();
 
-      expect(state.cloneCalls).toEqual([]);
-      expect(state.alerts).toEqual([]);
-      expect(state.draftTexts).toEqual([{ draftId: "draft", text: "Fix the bike" }]);
-      expect(state.navigations).toEqual([
-        {
-          ...existingDraft,
-          routes: [
-            {
-              ...existingDraft.routes[0],
-              params: { ...existingDraft.routes[0]!.params, draftId: "draft" },
-            },
-          ],
-        },
-      ]);
-    },
-  );
+    expect(state.cloneDestinations).toEqual([]);
+    expect(flow.navigation.getState().routes.at(-1)?.params).toEqual({
+      draft: {
+        environmentId: "environment",
+        projectId: existing.id,
+        title: existing.title,
+        draftId: "prompt-draft",
+      },
+    });
+  });
 });
