@@ -45,7 +45,6 @@ export function useThreadLifecycleMenu(
   readonly sheet: ReactNode;
 } {
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
-  const shells = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
   const {
     settleThread,
     unsettleThread,
@@ -120,10 +119,12 @@ export function useThreadLifecycleMenu(
       ? listEnvironments.pinReorderEnvironmentIds.has(thread.environmentId)
       : listEnvironments.activeReorderEnvironmentIds.has(thread.environmentId));
 
+  // Read shells lazily — do not subscribe the open header to every list change.
   const moveAvailability = (() => {
-    if (thread === null || !reorderSupported || snoozed || settled) {
+    if (thread === null || !canOperate || !reorderSupported || snoozed || settled) {
       return { canMoveUp: false, canMoveDown: false };
     }
+    const shells = appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom);
     const section = thread.pinnedAt != null ? "pinned" : "active";
     const ordered = getThreadListV2OrderedSection({
       threads: shells,
