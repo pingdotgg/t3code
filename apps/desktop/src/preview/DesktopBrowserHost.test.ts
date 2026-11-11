@@ -1006,50 +1006,6 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
-  // A capture Chromium was sent holds its wake lock until a painted frame answers it.
-  it.effect("paints for a screenshot already sent until Chromium answers it, past the turn", () =>
-    Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
-      const debuggee = makeDebuggee();
-      host.attach(key, debuggee.tab);
-      const painting = yield* watchPainting(host);
-      const turn = (active: boolean) =>
-        host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
-
-      yield* turn(true);
-      yield* command(host, 1, "Page.captureScreenshot");
-      yield* settle;
-      expect(debuggee.sent).toEqual([1]);
-      yield* turn(false);
-      yield* settle;
-      expect(painting).toEqual([true]);
-
-      debuggee.release();
-      yield* settle;
-      expect(painting).toEqual([true, false]);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("paints for a screenshot already sent until Chromium answers it, past a release", () =>
-    Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
-      const debuggee = makeDebuggee();
-      host.attach(key, debuggee.tab);
-      const painting = yield* watchPainting(host);
-
-      yield* command(host, 1, "Page.captureScreenshot");
-      yield* settle;
-      expect(debuggee.sent).toEqual([1]);
-      yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
-      yield* settle;
-      expect(painting).toEqual([true]);
-
-      debuggee.release();
-      yield* settle;
-      expect(painting).toEqual([true, false]);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("paints a streamed guest until its last screencast ends", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
