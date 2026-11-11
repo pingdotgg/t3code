@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { diffScrollPositions } from "~/diffPanelStore";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -144,6 +144,11 @@ export function useDiffScrollRestore({
     handleRef.current = handle;
     flush();
   });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- an offscreen file finishing its load re-renders no visible row, so the viewer reports nothing to resume restoration
+  useEffect(() => {
+    if (!patchesPending) flush();
+  }, [patchesPending, flush]);
 
   return { attach, flush, onScroll, stop, discard };
 }
