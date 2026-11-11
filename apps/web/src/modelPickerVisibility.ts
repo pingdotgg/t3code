@@ -1,8 +1,13 @@
-const MODEL_PICKER_CONTENT_SELECTOR = "[data-model-picker-content]";
+// Keydown handlers read this on every key, so a mount count replaces a document query.
+let mountedModelPickers = 0;
+
+export function registerModelPickerContent(): () => void {
+  mountedModelPickers += 1;
+  return () => {
+    mountedModelPickers -= 1;
+  };
+}
 
 export function isModelPickerOpen(): boolean {
-  return (
-    typeof document !== "undefined" &&
-    document.querySelector(MODEL_PICKER_CONTENT_SELECTOR) !== null
-  );
+  return mountedModelPickers > 0;
 }

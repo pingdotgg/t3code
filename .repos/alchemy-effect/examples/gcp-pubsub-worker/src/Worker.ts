@@ -1,23 +1,12 @@
-import * as GCP from "alchemy/GCP";
+import { createHash } from "node:crypto";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import { createHash } from "node:crypto";
-import {
-  Jobs,
-  Results,
-  resultPath,
-  type JobMessage,
-  type JobResult,
-} from "./resources.ts";
+import { Jobs, Results, resultPath, type JobMessage, type JobResult } from "./resources.ts";
 
 const decode = (data: string | undefined) =>
-  Effect.try(
-    () =>
-      JSON.parse(
-        Buffer.from(data ?? "", "base64").toString("utf8"),
-      ) as JobMessage,
-  );
+  Effect.try(() => JSON.parse(Buffer.from(data ?? "", "base64").toString("utf8")) as JobMessage);
 
 /** The "work": hash and count the payload. */
 const runJob = (job: JobMessage) =>
@@ -60,9 +49,7 @@ export default class Worker extends GCP.Run.WorkerPool<Worker>()(
               // A message that can never parse would be redelivered
               // forever; drop it (the batch ack removes it) instead.
               if (Result.isFailure(decoded)) {
-                yield* Effect.logWarning(
-                  `dropping malformed message ${message.messageId}`,
-                );
+                yield* Effect.logWarning(`dropping malformed message ${message.messageId}`);
                 return;
               }
               const job = decoded.success;
@@ -76,10 +63,5 @@ export default class Worker extends GCP.Run.WorkerPool<Worker>()(
           Effect.orDie,
         ),
     );
-  }).pipe(
-    Effect.provide([
-      GCP.Run.TopicPullEventSource,
-      GCP.Firestore.WriteDatabaseHttp,
-    ]),
-  ),
+  }).pipe(Effect.provide([GCP.Run.TopicPullEventSource, GCP.Firestore.WriteDatabaseHttp])),
 ) {}
