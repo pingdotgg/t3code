@@ -4,9 +4,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Relay delivery ids already handled, kept longer than the relay holds a
-  // request so a replay can never run twice. The delivery log keeps only the
-  // newest 50 rows per task, which is too short for that.
+  // Retain handled ids longer than relay requests; the 50-row delivery log cannot prevent all replays.
   yield* sql`
     CREATE TABLE IF NOT EXISTS scheduled_task_webhook_relay_deliveries (
       relay_delivery_id TEXT PRIMARY KEY,

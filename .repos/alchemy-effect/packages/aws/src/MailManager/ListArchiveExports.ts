@@ -1,0 +1,36 @@
+import type * as mm from "@distilled.cloud/aws/mailmanager";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Archive } from "./Archive.ts";
+
+/**
+ * Runtime binding for `ses:ListArchiveExports`.
+ *
+ * Lists the recent exports of the bound archive. The archive id is
+ * injected from the binding. Provide the implementation with
+ * `Effect.provide(AWS.MailManager.ListArchiveExportsHttp)`.
+ * ### Exporting from the Archive
+ * **Example:** List Recent Exports
+ * ```typescript
+ * const listExports = yield* MailManager.ListArchiveExports(archive);
+ *
+ * // runtime
+ * const { Exports } = yield* listExports({});
+ * ```
+ *
+ * @binding
+ */
+export interface ListArchiveExports extends Binding.Service<
+  ListArchiveExports,
+  "AWS.MailManager.ListArchiveExports",
+  (
+    archive: Archive,
+  ) => Effect.Effect<
+    (
+      request: Omit<mm.ListArchiveExportsRequest, "ArchiveId">,
+    ) => Effect.Effect<mm.ListArchiveExportsResponse, mm.ListArchiveExportsError>
+  >
+> {}
+export const ListArchiveExports = Binding.Service<ListArchiveExports>(
+  "AWS.MailManager.ListArchiveExports",
+);
