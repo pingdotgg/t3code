@@ -26,7 +26,7 @@ import {
   type MarkdownImageSourceResolver,
 } from "../../native/SelectableMarkdownText";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
