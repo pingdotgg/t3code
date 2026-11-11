@@ -4,9 +4,15 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthStandardClientScopes, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
+import {
+  AuthStandardClientScopes,
+  EnvironmentId,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  OrchestratorMcpFailure,
+} from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
@@ -15,20 +21,32 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/http";
+import { Tool, Toolkit } from "effect/ai";
+import { FetchHttpClient, HttpBody, HttpClient, HttpRouter } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command, CliError } from "effect/cli";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as McpOAuth from "../auth/McpOAuth.ts";
 import { cli } from "../binCli.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
 } from "../cloud/serviceProtocol.ts";
 import * as ServiceLauncherClient from "../cloud/serviceLauncherClient.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as McpToolAccess from "../mcp/McpToolAccess.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
@@ -606,6 +624,8 @@ describe("scripted auth output", () => {
       ["auth", "session", "issue", "--token-only"],
       ["auth", "session", "list", "--json"],
       ["auth", "pairing", "list", "--json"],
+      ["auth", "mcp", "issue", "--access", "read-only", "--label", "Bot", "--token-only"],
+      ["auth", "mcp", "list", "--json"],
     ].map((command) => ({ command, label: command.join(" ") })),
   )("prints only the result for $label after removing an abandoned upload", ({ command }) =>
     Effect.gen(function* () {
@@ -636,5 +656,204 @@ describe("scripted auth output", () => {
         assert.match(output.trim(), /^[\w-]+\.[\w-]+/);
       }
     }),
+  );
+});
+
+describe("auth mcp", () => {
+  const AccessProbe = Toolkit.make(
+    Tool.make("access", {
+      description: "Reports the caller's access level.",
+      success: Schema.Struct({ access: Schema.String }),
+      failure: OrchestratorMcpFailure,
+      failureMode: "return",
+      dependencies: [McpInvocationContext.McpInvocationContext],
+    }),
+    Tool.make("change", {
+      description: "Changes the environment.",
+      success: Schema.Struct({ changed: Schema.Boolean }),
+      failure: OrchestratorMcpFailure,
+      failureMode: "return",
+      dependencies: [
+        McpInvocationContext.McpInvocationContext,
+        ThreadManagementService.ThreadManagementService,
+      ],
+    }),
+  );
+
+  // Serves /mcp over the same state the CLI wrote, as a running server would.
+  const serveMcp = (baseDir: string) =>
+    HttpRouter.serve(
+      McpHttpServer.layerMcpTransport(
+        McpHttpServer.toolkitRegistration(
+          AccessProbe,
+          McpToolAccess.toLayer(AccessProbe, {
+            access: McpToolAccess.reads(() =>
+              McpInvocationContext.McpInvocationContext.pipe(
+                Effect.map((scope) => ({ access: scope.client?.access ?? "none" })),
+              ),
+            ),
+            change: McpToolAccess.writes(() => Effect.succeed({ changed: true })),
+          }),
+        ),
+      ).pipe(
+        Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: () => Effect.undefined,
+          }),
+        ),
+        Layer.provide(Layer.mock(ThreadManagementService.ThreadManagementService)({})),
+        Layer.provide(
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("auth-mcp-test")),
+          }),
+        ),
+      ),
+      { disableListenLog: true, disableLogger: true },
+    ).pipe(
+      Layer.provideMerge(EnvironmentAuth.layerRuntime),
+      Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+      Layer.build,
+    );
+
+  const callTool = (token: string, name: "access" | "change") =>
+    Effect.gen(function* () {
+      const httpClient = yield* HttpClient.HttpClient;
+      const headers = {
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+      };
+      const initialize = yield* httpClient.post("/mcp", {
+        headers,
+        body: HttpBody.text(
+          `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"Grok Bot","version":"1.0.0"}}}`,
+          "application/json",
+        ),
+      });
+      if (initialize.status !== 200) return { status: initialize.status } as const;
+      const called = yield* httpClient.post("/mcp", {
+        headers: {
+          ...headers,
+          "mcp-session-id": initialize.headers["mcp-session-id"]!,
+          "mcp-protocol-version": "2025-06-18",
+        },
+        body: HttpBody.text(
+          `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"${name}","arguments":{}}}`,
+          "application/json",
+        ),
+      });
+      const body = (yield* called.json) as {
+        readonly result: { readonly isError?: boolean; readonly structuredContent?: unknown };
+      };
+      return { status: called.status, result: body.result } as const;
+    });
+
+  it.effect(
+    "issues MCP client credentials that /mcp accepts at their access level until revoked or expired",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-mcp-"));
+          const issue = (access: string, ttl: string) =>
+            captureStdout(
+              runCli([
+                "auth",
+                "mcp",
+                "issue",
+                "--base-dir",
+                baseDir,
+                "--access",
+                access,
+                "--label",
+                `Grok Bot ${access}`,
+                "--ttl",
+                ttl,
+                "--json",
+              ]),
+            ).pipe(
+              Effect.map(
+                (output) =>
+                  JSON.parse(output) as {
+                    readonly sessionId: string;
+                    readonly token: string;
+                    readonly access: string;
+                    readonly label: string;
+                    readonly expiresAt: string;
+                  },
+              ),
+            );
+          const listMcp = captureStdout(
+            runCli(["auth", "mcp", "list", "--base-dir", baseDir, "--json"]),
+          ).pipe(
+            Effect.map(
+              (output) =>
+                JSON.parse(output) as ReadonlyArray<{
+                  readonly sessionId: string;
+                  readonly label: string;
+                }>,
+            ),
+          );
+
+          const readOnly = yield* issue("read-only", "2h");
+          const fullAccess = yield* issue("full-access", "1h");
+          // A browser session is not an MCP credential, so `auth mcp` neither lists nor revokes it.
+          const browser = JSON.parse(
+            yield* captureStdout(
+              runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"]),
+            ),
+          ) as { readonly sessionId: string };
+
+          assert.deepInclude(readOnly, {
+            access: "read-only",
+            label: "Grok Bot read-only",
+            expiresAt: "1970-01-01T02:00:00.000Z",
+          });
+          assert.equal(fullAccess.expiresAt, "1970-01-01T01:00:00.000Z");
+          assert.sameDeepMembers(
+            (yield* listMcp).map(({ sessionId, label }) => ({ sessionId, label })),
+            [
+              { sessionId: readOnly.sessionId, label: "Grok Bot read-only" },
+              { sessionId: fullAccess.sessionId, label: "Grok Bot full-access" },
+            ],
+          );
+
+          yield* serveMcp(baseDir);
+          assert.deepInclude((yield* callTool(readOnly.token, "access")).result, {
+            structuredContent: { access: "read-only" },
+          });
+          const denied = (yield* callTool(readOnly.token, "change")).result;
+          assert.isTrue(denied?.isError);
+          assert.include(JSON.stringify(denied), "capability_denied");
+          assert.deepInclude((yield* callTool(fullAccess.token, "change")).result, {
+            structuredContent: { changed: true },
+          });
+
+          assert.equal(
+            yield* captureStdout(
+              runCli(["auth", "mcp", "revoke", browser.sessionId, "--base-dir", baseDir]),
+            ),
+            `No active MCP client credential found for ${browser.sessionId}.\n`,
+          );
+          assert.equal(
+            yield* captureStdout(
+              runCli(["auth", "mcp", "revoke", readOnly.sessionId, "--base-dir", baseDir]),
+            ),
+            `Revoked MCP client credential ${readOnly.sessionId}.\n`,
+          );
+          assert.deepEqual(yield* callTool(readOnly.token, "access"), { status: 401 });
+          assert.deepEqual(
+            (yield* listMcp).map(({ sessionId }) => sessionId),
+            [fullAccess.sessionId],
+          );
+
+          yield* TestClock.adjust("1 hour");
+          assert.deepEqual(yield* callTool(fullAccess.token, "access"), { status: 401 });
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeHttpServer.layerTest, layerCliRuntime, TestConsole.layer),
+        ),
+      ),
   );
 });

@@ -117,7 +117,21 @@ Add the environment as a custom MCP app in ChatGPT's apps settings:
 
 Any agent that supports remote MCP servers over HTTP with OAuth can connect. Give
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
-Agents without OAuth support cannot connect.
+
+An agent that cannot finish the OAuth sign-in, or only accepts a fixed bearer
+token, can use a token issued on the host instead:
+
+```sh
+t3 auth mcp issue --access full-access --label "Grok Bot" --token-only
+```
+
+Give the agent the MCP URL and send the token as `Authorization: Bearer <token>`.
+`--access` takes the same levels as the sign-in page: `read-only`,
+`approval-required` (Supervised), `auto-accept-edits`, `auto` or `full-access`.
+The token lasts 30 days unless you pass `--ttl`, such as `--ttl 90d`. Anyone who
+holds it gets that access, so keep it in the agent's secret settings.
+`t3 auth mcp list` shows every agent's credential, including OAuth sign-ins, and
+`t3 auth mcp revoke <id>` cuts one off at its next request.
 
 ## Scripts on the host
 

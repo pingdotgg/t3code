@@ -1,4 +1,10 @@
-import type { AuthClientMetadata, AuthClientSession, AuthPairingLink } from "@t3tools/contracts";
+import type {
+  AuthClientMetadata,
+  AuthClientSession,
+  AuthMcpClientAccess,
+  AuthPairingLink,
+  AuthSessionId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import type { IssuedBearerSession, IssuedPairingLink } from "./auth/EnvironmentAuth.ts";
@@ -180,6 +186,91 @@ export function formatSessionList(
           `  method: ${session.method}`,
           `  subject: ${session.subject}`,
           `  client: ${formatClientMetadata(session.client)}`,
+          `  issued: ${toIsoString(session.issuedAt)}`,
+          `  last connected: ${
+            session.lastConnectedAt ? toIsoString(session.lastConnectedAt) : "never"
+          }`,
+          `  expires: ${toIsoString(session.expiresAt)}`,
+        ].join(newline),
+      )
+      .join(`${newline}${newline}`) + newline
+  );
+}
+
+export function formatIssuedMcpClient(
+  issued: {
+    readonly sessionId: AuthSessionId;
+    readonly token: string;
+    readonly expiresAt: DateTime.DateTime;
+    readonly label: string;
+    readonly access: AuthMcpClientAccess;
+  },
+  options?: {
+    readonly json?: boolean;
+    readonly tokenOnly?: boolean;
+  },
+): string {
+  if (options?.tokenOnly) {
+    return `${issued.token}${newline}`;
+  }
+
+  if (options?.json) {
+    return `${JSON.stringify(
+      {
+        sessionId: issued.sessionId,
+        token: issued.token,
+        label: issued.label,
+        access: issued.access,
+        expiresAt: toIsoString(issued.expiresAt),
+      },
+      null,
+      2,
+    )}${newline}`;
+  }
+
+  return (
+    [
+      `Issued MCP client credential ${issued.sessionId} (${issued.label}).`,
+      `Access: ${issued.access}`,
+      `Token: ${issued.token}`,
+      `Expires at: ${toIsoString(issued.expiresAt)}`,
+      "Send it to the environment's /mcp URL as `Authorization: Bearer <token>`.",
+    ].join(newline) + newline
+  );
+}
+
+export function formatMcpClientList(
+  sessions: ReadonlyArray<AuthClientSession>,
+  options?: {
+    readonly json?: boolean;
+  },
+): string {
+  if (options?.json) {
+    return `${JSON.stringify(
+      sessions.map((session) => ({
+        sessionId: session.sessionId,
+        label: session.client.label ?? null,
+        scopes: session.scopes,
+        connected: session.connected,
+        issuedAt: toIsoString(session.issuedAt),
+        expiresAt: toIsoString(session.expiresAt),
+        lastConnectedAt: session.lastConnectedAt ? toIsoString(session.lastConnectedAt) : null,
+      })),
+      null,
+      2,
+    )}${newline}`;
+  }
+
+  if (sessions.length === 0) {
+    return `No active MCP client credentials.${newline}`;
+  }
+
+  return (
+    sessions
+      .map((session) =>
+        [
+          `${session.sessionId} (${session.client.label ?? "MCP client"})${session.connected ? " connected" : ""}`,
+          `  scopes: ${session.scopes.join(" ")}`,
           `  issued: ${toIsoString(session.issuedAt)}`,
           `  last connected: ${
             session.lastConnectedAt ? toIsoString(session.lastConnectedAt) : "never"

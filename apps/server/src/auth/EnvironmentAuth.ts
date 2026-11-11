@@ -548,11 +548,13 @@ export class EnvironmentAuth extends Context.Service<
     readonly authenticateMcpClient: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<McpClientSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    /** Issues the bearer credential an OAuth approval grants; 30 days unless `ttl` says otherwise. */
     readonly issueMcpClientSession: (input: {
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly peerLink: boolean;
       readonly client: AuthClientMetadata;
+      readonly ttl?: Duration.Duration;
     }) => Effect.Effect<
       {
         readonly sessionId: AuthSessionId;
@@ -561,6 +563,14 @@ export class EnvironmentAuth extends Context.Service<
       },
       ServerAuthInternalError
     >;
+    readonly listMcpClientSessions: () => Effect.Effect<
+      ReadonlyArray<AuthClientSession>,
+      ServerAuthInternalError
+    >;
+    /** Revokes only an MCP client credential; false for any other session id. */
+    readonly revokeMcpClientSession: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<boolean, ServerAuthInternalError>;
     /**
      * Spends a code covering all granted scopes and returns the level it approves. A level-bound
      * code must name `access`. Rejects desktop grants and leaves refused codes unspent.
@@ -1344,7 +1354,7 @@ export const make = Effect.gen(function* () {
         subject: MCP_CLIENT_SUBJECT,
         method: "bearer-access-token",
         scopes: mcpClientScopes(input.access),
-        ttl: MCP_CLIENT_SESSION_TTL,
+        ttl: input.ttl ?? MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         peerLink: input.peerLink,
         client: { ...input.client, label: input.label, deviceType: "bot" },
@@ -1358,6 +1368,20 @@ export const make = Effect.gen(function* () {
         Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
         Effect.withSpan("EnvironmentAuth.issueMcpClientSession"),
       );
+
+  const listMcpClientSessions: EnvironmentAuth["Service"]["listMcpClientSessions"] = () =>
+    listSessions().pipe(
+      Effect.map((active) => active.filter((session) => session.subject === MCP_CLIENT_SUBJECT)),
+      Effect.withSpan("EnvironmentAuth.listMcpClientSessions"),
+    );
+
+  const revokeMcpClientSession: EnvironmentAuth["Service"]["revokeMcpClientSession"] = Effect.fn(
+    "EnvironmentAuth.revokeMcpClientSession",
+  )(function* (sessionId) {
+    const mcpClients = yield* listMcpClientSessions();
+    if (!mcpClients.some((session) => session.sessionId === sessionId)) return false;
+    return yield* revokeSession(sessionId);
+  });
 
   const consumeMcpApprovalCode: EnvironmentAuth["Service"]["consumeMcpApprovalCode"] = (
     code,
@@ -1410,6 +1434,8 @@ export const make = Effect.gen(function* () {
     issueStartupPairingUrl,
     authenticateMcpClient,
     issueMcpClientSession,
+    listMcpClientSessions,
+    revokeMcpClientSession,
     consumeMcpApprovalCode,
   });
 });

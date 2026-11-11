@@ -1,4 +1,4 @@
-import { AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthMcpClientAccess, AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,8 +10,10 @@ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
 import {
+  formatIssuedMcpClient,
   formatIssuedPairingCredential,
   formatIssuedSession,
+  formatMcpClientList,
   formatPairingCredentialList,
   formatSessionList,
 } from "../cliAuthFormat.ts";
@@ -248,7 +250,99 @@ const sessionCommand = Command.make("session").pipe(
   Command.withSubcommands([sessionIssueCommand, sessionListCommand, sessionRevokeCommand]),
 );
 
+const mcpIssueCommand = Command.make("issue", {
+  ...authLocationFlags,
+  access: Flag.Literals("access", AuthMcpClientAccess.literals).pipe(
+    Flag.withDescription(
+      "What the client may do, as on the MCP sign-in page: read-only, approval-required (Supervised), auto-accept-edits, auto, or full-access.",
+    ),
+  ),
+  label: Flag.String("label").pipe(
+    Flag.withDescription("Name of the client, shown in `t3 auth mcp list`."),
+  ),
+  ttl: ttlFlag.pipe(Flag.withDescription("TTL, for example `1h` or `90d`. Defaults to 30 days.")),
+  tokenOnly: tokenOnlyFlag,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Issue a bearer token for an MCP client that cannot finish the OAuth sign-in.",
+  ),
+  Command.withHandler((flags) =>
+    runWithEnvironmentAuth(
+      flags,
+      (environmentAuth) =>
+        Effect.gen(function* () {
+          const issued = yield* environmentAuth.issueMcpClientSession({
+            label: flags.label,
+            access: flags.access,
+            peerLink: false,
+            client: { deviceType: "bot" },
+            ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
+          });
+          yield* Console.log(
+            formatIssuedMcpClient(
+              { ...issued, label: flags.label, access: flags.access },
+              { json: flags.json, tokenOnly: flags.tokenOnly },
+            ),
+          );
+        }),
+      {
+        quietLogs: flags.json || flags.tokenOnly,
+      },
+    ),
+  ),
+);
+
+const mcpListCommand = Command.make("list", {
+  ...authLocationFlags,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "List active MCP client credentials, including OAuth sign-ins, without revealing tokens.",
+  ),
+  Command.withHandler((flags) =>
+    runWithEnvironmentAuth(
+      flags,
+      (environmentAuth) =>
+        Effect.gen(function* () {
+          const clients = yield* environmentAuth.listMcpClientSessions();
+          yield* Console.log(formatMcpClientList(clients, { json: flags.json }));
+        }),
+      {
+        quietLogs: flags.json,
+      },
+    ),
+  ),
+);
+
+const mcpRevokeCommand = Command.make("revoke", {
+  ...authLocationFlags,
+  sessionId: Argument.String("session-id").pipe(
+    Argument.withDescription("MCP client credential id to revoke, from `t3 auth mcp list`."),
+    Argument.withSchema(AuthSessionId),
+  ),
+}).pipe(
+  Command.withDescription("Revoke an MCP client credential. Its next /mcp request gets HTTP 401."),
+  Command.withHandler((flags) =>
+    runWithEnvironmentAuth(flags, (environmentAuth) =>
+      Effect.gen(function* () {
+        const revoked = yield* environmentAuth.revokeMcpClientSession(flags.sessionId);
+        yield* Console.log(
+          revoked
+            ? `Revoked MCP client credential ${flags.sessionId}.\n`
+            : `No active MCP client credential found for ${flags.sessionId}.\n`,
+        );
+      }),
+    ),
+  ),
+);
+
+const mcpCommand = Command.make("mcp").pipe(
+  Command.withDescription("Manage bearer credentials for outside MCP clients."),
+  Command.withSubcommands([mcpIssueCommand, mcpListCommand, mcpRevokeCommand]),
+);
+
 export const authCommand = Command.make("auth").pipe(
   Command.withDescription("Manage the local auth control plane for headless deployments."),
-  Command.withSubcommands([pairingCommand, sessionCommand]),
+  Command.withSubcommands([pairingCommand, sessionCommand, mcpCommand]),
 );
