@@ -1,0 +1,163 @@
+---
+title: GKE
+description: Run Effect programs as Kubernetes Deployments and Jobs on a GKE Autopilot cluster, with bindings granted through Workload Identity.
+---
+
+import PackageManagers from "../../../../components/PackageManagers.astro";
+
+export const pkgs = "@alchemy.run/kubernetes";
+
+GKE runs your Effect program as a Kubernetes workload. You declare the
+cluster, then a `Kubernetes.Deployment` or `Kubernetes.Job` on it.
+Alchemy builds the image, pushes it to Artifact Registry, and applies
+the objects. No YAML, no `kubectl`.
+
+## Install
+
+<PackageManagers add={pkgs} />
+
+Merge the Kubernetes providers next to GCP's:
+
+```typescript
+// alchemy.run.ts
+providers: Layer.mergeAll(GCP.providers(), Kubernetes.providers()),
+```
+
+## Create a cluster
+
+An Autopilot cluster sizes its nodes from your pods, so there are no
+node pools to manage:
+
+```typescript
+// src/infra.ts
+import * as GCP from "@alchemy.run/gcp";
+
+export const Cluster = GCP.Container.Cluster("Cluster", {
+  location: "us-central1",
+  autopilot: true,
+  releaseChannel: "REGULAR",
+});
+```
+
+Autopilot needs a region, not a zone. Creating a cluster takes about
+ten minutes.
+
+## Deploy an Effect program
+
+A Deployment takes the same `fetch` handler as a Cloud Run service:
+
+```typescript
+// src/Api.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Kubernetes from "@alchemy.run/kubernetes";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Cluster, Entries } from "./infra.ts";
+
+export class Api extends Kubernetes.Deployment<Api>()("Api") {}
+
+export default Api.make(
+  Effect.gen(function* () {
+    return {
+      cluster: yield* Cluster,
+      main: import.meta.url,
+      port: 3000,
+      replicas: 2,
+      serviceType: "LoadBalancer" as const,
+      resources: {
+        requests: { cpu: "250m", memory: "512Mi" },
+        limits: { cpu: "250m", memory: "512Mi" },
+      },
+    };
+  }),
+  Effect.gen(function* () {
+    const db = yield* GCP.Firestore.ReadWriteDatabase(Entries);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const page = yield* db.list("entries", { pageSize: 100 });
+        return yield* HttpServerResponse.json(page.documents);
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.Firestore.ReadWriteDatabaseHttp)),
+);
+```
+
+`serviceType: "LoadBalancer"` gives the Deployment a public IP.
+`api.url` includes the port: `http://<ip>:3000`.
+
+## Add it to the Stack
+
+Provide the Deployment's layer and yield the class:
+
+```typescript
+// alchemy.run.ts
+import ApiLive, { Api } from "./src/Api.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Layer.mergeAll(GCP.providers(), Kubernetes.providers()),
+    state: GCP.state(),
+  },
+  Effect.gen(function* () {
+    const api = yield* Api;
+    return { url: api.url };
+  }).pipe(Effect.provide(ApiLive)),
+);
+```
+
+## Bindings use Workload Identity
+
+`ReadWriteDatabase` grants the role to the Deployment's Kubernetes
+service account directly. Pods get Google tokens from the GKE metadata
+server. There are no keys and no Google service account to create.
+
+A new conditional grant can take a few minutes to reach Firestore. Set
+`backoffLimit` on Jobs so Kubernetes retries until it lands.
+
+## Run a Job
+
+`Kubernetes.Job` takes a `run` entry and runs once when it is applied:
+
+```typescript
+// src/Seed.ts
+export default Kubernetes.Job(
+  "Seed",
+  Effect.gen(function* () {
+    return { cluster: yield* Cluster, main: import.meta.url, backoffLimit: 6 };
+  }),
+  Effect.gen(function* () {
+    const db = yield* GCP.Firestore.WriteDatabase(Entries);
+    return {
+      run: db.set("entries/hello", { message: "first!" }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.Firestore.WriteDatabaseHttp)),
+);
+```
+
+Add `schedule: "0 3 * * *"` to the props to make it a CronJob.
+
+## Deploy an existing image
+
+```typescript
+const web = yield* Kubernetes.Deployment("Web", {
+  cluster,
+  image: "nginx:1.27",
+  port: 80,
+  serviceType: "LoadBalancer",
+});
+```
+
+## Example
+
+[`examples/gcp-gke`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-gke)
+is a guestbook on Autopilot: an Effect API, an nginx Deployment, a
+seed Job, and a namespace from a raw manifest.
+
+## Where next
+
+- [Kubernetes](/kubernetes) — Deployments, Jobs, manifests, and Helm
+  charts in depth.
+- [Container reference](/providers/gcp/container#cluster) — every
+  cluster prop.

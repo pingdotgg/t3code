@@ -17,6 +17,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
+  SERVER_EXIT_CODE_MANAGED_POLICY,
   SERVER_EXIT_CODE_STATE_DIR_OWNED,
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
@@ -40,6 +41,12 @@ const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 // Match the service launcher's grace period so backends can stop provider sessions.
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(5);
+// Allow SIGKILL and the spawner exit wait after the SIGTERM grace so quit cannot
+// orphan a backend whose shutdown hangs.
+export const BACKEND_QUIT_STOP_TIMEOUT = Duration.sum(
+  DEFAULT_BACKEND_TERMINATE_GRACE,
+  Duration.seconds(2),
+);
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 // Three restarts without readiness is about 2 s of backoff: past a blip, early enough to help.
@@ -223,6 +230,8 @@ export const PRIMARY_INSTANCE_ID: BackendInstanceId = BackendInstanceId(
 
 export interface BackendStartupFailure {
   readonly reason: string;
+  /** The server refused to start under this machine's managed policy. */
+  readonly managedPolicy: boolean;
   /** Tail of the last run's stdout and stderr. */
   readonly output: string;
 }
@@ -231,6 +240,7 @@ export interface DesktopBackendInstance {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
   readonly start: Effect.Effect<void>;
+  /** Timeout controls the warning; stop still waits for process teardown and exit. */
   readonly stop: (options?: { readonly timeout?: Duration.Duration }) => Effect.Effect<void>;
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
@@ -298,21 +308,36 @@ const closeRun = (
   run: ActiveBackendRun,
   parentScope: Scope.Scope,
   options?: { readonly timeout?: Duration.Duration },
-): Effect.Effect<boolean> => {
+) => {
   const waitForFiber = Option.match(run.fiber, {
     onNone: () => Effect.void,
     onSome: (fiber) => Fiber.await(fiber).pipe(Effect.asVoid),
   });
-  const close = Scope.close(run.scope, Exit.void).pipe(Effect.andThen(waitForFiber));
+  const close = Scope.close(run.scope, Exit.void).pipe(
+    Effect.withSpan("desktop.backendInstance.closeScope"),
+    Effect.andThen(waitForFiber.pipe(Effect.withSpan("desktop.backendInstance.awaitRun"))),
+  );
   const timeout = options?.timeout;
 
   if (!timeout) {
-    return close.pipe(Effect.as(true));
+    return close;
   }
 
-  return Effect.forkIn(close, parentScope).pipe(
+  return Effect.forkIn(close, parentScope, { startImmediately: true }).pipe(
     Effect.flatMap((closeFiber) =>
-      Fiber.await(closeFiber).pipe(Effect.timeoutOption(timeout), Effect.map(Option.isSome)),
+      Fiber.await(closeFiber).pipe(
+        Effect.timeoutOption(timeout),
+        Effect.tap((completed) =>
+          Option.isNone(completed)
+            ? logBackendProcessWarning("backend shutdown exceeded timeout; waiting for exit", {
+                timeoutMs: Duration.toMillis(timeout),
+              })
+            : Effect.void,
+        ),
+        // Parent-scope interruption still finishes release; do not cancel sibling stops.
+        Effect.andThen(Fiber.await(closeFiber)),
+        Effect.asVoid,
+      ),
     ),
   );
 };
@@ -564,6 +589,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
 
   const exit = yield* handle.exitCode.pipe(
+    Effect.withSpan("desktop.backendProcess.awaitExit"),
     Effect.map((exitCode) => ({
       code: Option.some(exitCode),
       reason: `code=${exitCode}`,
@@ -599,6 +625,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   }).pipe(
     Effect.timeout(options.outputDrainTimeout ?? DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT),
     Effect.ignore,
+    Effect.withSpan("desktop.backendProcess.drainOutput"),
   );
   if (Exit.isFailure(exit)) {
     return yield* Effect.failCause(exit.cause);
@@ -635,9 +662,11 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   // One streaming decoder per stream keeps UTF-8 characters split across chunks intact.
   const makeOutputDecoders = () => ({ stdout: new TextDecoder(), stderr: new TextDecoder() });
   let outputDecoders = makeOutputDecoders();
-  const reportStartupFailure = (reason: string) =>
+  const reportStartupFailure = (reason: string, managedPolicy = false) =>
     Ref.get(outputTail).pipe(
-      Effect.flatMap((output) => spec.onStartupFailure?.({ reason, output }) ?? Effect.void),
+      Effect.flatMap(
+        (output) => spec.onStartupFailure?.({ reason, managedPolicy, output }) ?? Effect.void,
+      ),
     );
 
   const { logWarning: logInstanceWarning, logError: logInstanceError } =
@@ -880,7 +909,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                   yield* (spec.onStateDirOwned?.() ?? Effect.void).pipe(Effect.ignore);
                   return;
                 }
-                yield* scheduleRestart(reason);
+                yield* scheduleRestart(reason, exitCode);
               }
             }),
           );
@@ -980,6 +1009,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
   const scheduleRestart = Effect.fn("desktop.backendInstance.scheduleRestart")(function* (
     reason: string,
+    exitCode?: number,
   ) {
     const scheduled = yield* SubscriptionRef.modify(state, (latest) => {
       if (!latest.desiredRunning || Option.isSome(latest.restartFiber)) {
@@ -1003,8 +1033,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           reason,
           delayMs: Duration.toMillis(delay),
         });
-        if (attempt >= STARTUP_FAILURE_RESTART_ATTEMPTS) {
-          yield* reportStartupFailure(`The server could not start (${reason}).`);
+        // Retrying cannot fix a policy refusal, so say so at once; retries still pick up a fix.
+        const managedPolicy = exitCode === SERVER_EXIT_CODE_MANAGED_POLICY;
+        if (managedPolicy || attempt >= STARTUP_FAILURE_RESTART_ATTEMPTS) {
+          yield* reportStartupFailure(`The server could not start (${reason}).`, managedPolicy);
         }
         const restartFiber = yield* Effect.forkIn(
           Effect.sleep(delay).pipe(
@@ -1080,10 +1112,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       onNone: () => Effect.void,
       // The enclosing operation owns the span for this inline handler.
       onSome: Effect.fnUntraced(function* (run) {
-        const closed = yield* closeRun(run, parentScope, options);
-        if (!closed) {
-          return;
-        }
+        yield* closeRun(run, parentScope, options);
         const cleanup = yield* mutex.withPermits(1)(
           SubscriptionRef.modify(
             state,

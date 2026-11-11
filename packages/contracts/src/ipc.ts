@@ -14,7 +14,7 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
-import type { PreviewForwardedShortcut } from "./keybindings.ts";
+import { KeybindingShortcut, type PreviewForwardedShortcut } from "./keybindings.ts";
 
 import type {
   DesktopAppActivationRequest,
@@ -24,6 +24,7 @@ import type {
 export interface ContextMenuItem<T extends string = string> {
   id: T;
   label: string;
+  detail?: string;
   destructive?: boolean;
   disabled?: boolean;
   header?: boolean;
@@ -40,6 +41,7 @@ export type QuitShortcutHintEvent =
 export interface ContextMenuItemSchemaType {
   readonly id: string;
   readonly label: string;
+  readonly detail?: string;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
   readonly header?: boolean;
@@ -52,6 +54,7 @@ export interface ContextMenuItemSchemaType {
 export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
+  detail: Schema.optionalKey(Schema.String),
   destructive: Schema.optionalKey(Schema.Boolean),
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
@@ -334,6 +337,8 @@ export const DesktopCliCommandStateSchema = Schema.Struct({
   installedPath: Schema.NullOr(Schema.String),
   onPath: Schema.Boolean,
   shadowedBy: Schema.optionalKey(Schema.String),
+  /** For an installed `t3` that is off PATH: the shell startup file that adds it, and whether it has. */
+  pathSetup: Schema.optionalKey(Schema.Struct({ file: Schema.String, added: Schema.Boolean })),
   /** The app's bundled `t3` launcher, which runs without Node or a PATH entry. */
   launcherPath: Schema.NullOr(Schema.String),
 });
@@ -993,6 +998,11 @@ export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
   audioMuted: Schema.Boolean,
 });
 
+export const DesktopPreviewSetShownInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  shown: Schema.Boolean,
+});
+
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
   theme: DesktopPreviewAnnotationThemeSchema,
 });
@@ -1043,9 +1053,13 @@ export interface DesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale: () => string | null;
+  /** The OS's preferred languages, most preferred first; `navigator.languages` is pinned like the locale. */
+  getPreferredSystemLanguages: () => readonly string[];
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled: () => boolean;
   setLocalEnvironmentEnabled: (enabled: boolean) => Promise<void>;
+  /** The environment ID recorded in this app's T3 home, such as its own machine's background service. */
+  getHostEnvironmentId?: () => Promise<string | null>;
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
@@ -1133,6 +1147,7 @@ export interface DesktopBridge {
     getState: () => Promise<DesktopCliCommandState>;
     install: () => Promise<DesktopCliCommandState>;
     uninstall: () => Promise<DesktopCliCommandState>;
+    addToPath: () => Promise<DesktopCliCommandState>;
   };
   webLinks: {
     setReady: (ready: boolean) => Promise<void>;
@@ -1148,6 +1163,79 @@ export interface DesktopBridge {
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
+
+/**
+ * Dictation for the annotation editor drawn inside a preview guest. The guest only shows
+ * controls and forwards trusted user gestures; the renderer records, with its consent
+ * checks, and publishes state back. `shortcuts` are the dictation chords in effect.
+ */
+export const DesktopPreviewAnnotationVoiceConfigSchema = Schema.Struct({
+  sessionId: Schema.String.check(Schema.isMaxLength(64)),
+  shortcuts: Schema.Array(KeybindingShortcut).check(Schema.isMaxLength(16)),
+});
+export type DesktopPreviewAnnotationVoiceConfig =
+  typeof DesktopPreviewAnnotationVoiceConfigSchema.Type;
+
+export const DesktopPreviewAnnotationVoiceEventSchema = Schema.Struct({
+  sessionId: Schema.String.check(Schema.isMaxLength(64)),
+  text: Schema.String.check(Schema.isMaxLength(100_000)),
+  cursor: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  selectionEnd: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  action: Schema.Literals([
+    "sync",
+    "start",
+    "stop",
+    "cancel",
+    "skip",
+    "settings",
+    "key",
+    "focus",
+    "blur",
+  ]),
+  keyboard: Schema.optional(
+    Schema.Struct({
+      type: Schema.Literals(["keydown", "keyup"]),
+      key: Schema.String.check(Schema.isMaxLength(32)),
+      code: Schema.String.check(Schema.isMaxLength(64)),
+      metaKey: Schema.Boolean,
+      ctrlKey: Schema.Boolean,
+      shiftKey: Schema.Boolean,
+      altKey: Schema.Boolean,
+      repeat: Schema.Boolean,
+    }),
+  ),
+});
+export type DesktopPreviewAnnotationVoiceEvent =
+  typeof DesktopPreviewAnnotationVoiceEventSchema.Type;
+
+export const DesktopPreviewAnnotationVoiceStateSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  sessionId: Schema.String.check(Schema.isMaxLength(64)),
+  available: Schema.Boolean,
+  phase: Schema.Literals([
+    "idle",
+    "preparing",
+    "recording",
+    "transcribing",
+    "post-processing",
+    "error",
+  ]),
+  status: Schema.NullOr(Schema.String),
+  errorAction: Schema.NullOr(Schema.Literals(["retry", "settings"])),
+  preview: Schema.NullOr(Schema.String),
+  level: Schema.Number,
+  shortcutLabel: Schema.NullOr(Schema.String),
+  freezesEditor: Schema.Boolean,
+  blocksSubmission: Schema.Boolean,
+  draft: Schema.NullOr(Schema.Struct({ text: Schema.String, cursor: Schema.Int })),
+});
+export type DesktopPreviewAnnotationVoiceState =
+  typeof DesktopPreviewAnnotationVoiceStateSchema.Type;
+
+export const DesktopPreviewPickElementInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  voice: Schema.optional(DesktopPreviewAnnotationVoiceConfigSchema),
+});
 
 export interface DesktopPreviewBridge {
   setForwardedShortcuts: (shortcuts: ReadonlyArray<PreviewForwardedShortcut>) => Promise<void>;
@@ -1165,6 +1253,8 @@ export interface DesktopPreviewBridge {
   hardReload: (tabId: string) => Promise<void>;
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
+  /** Tells the tab's server whether its webview is on screen. */
+  setShown: (tabId: string, shown: boolean) => Promise<void>;
   openDevTools: (tabId: string) => Promise<void>;
   clearCookies: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   clearCache: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
@@ -1181,8 +1271,17 @@ export interface DesktopPreviewBridge {
   }) => Promise<BrowserImportResult>;
   setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;
   setAnnotationSendEnabled: (tabId: string, enabled: boolean) => Promise<void>;
+  annotationVoice: {
+    onEvent: (
+      listener: (tabId: string, event: DesktopPreviewAnnotationVoiceEvent) => void,
+    ) => () => void;
+    update: (state: DesktopPreviewAnnotationVoiceState) => Promise<void>;
+  };
   /** Resolves with the annotation and attach/send intent, or null on cancellation. Rejects if activation fails. */
-  pickElement: (tabId: string) => Promise<PreviewAnnotationSubmissionResult | null>;
+  pickElement: (
+    tabId: string,
+    voice?: DesktopPreviewAnnotationVoiceConfig,
+  ) => Promise<PreviewAnnotationSubmissionResult | null>;
   cancelPickElement: (tabId: string) => Promise<void>;
   captureScreenshot: (
     tabId: string,
