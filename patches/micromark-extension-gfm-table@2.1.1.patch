@@ -1,0 +1,146 @@
+diff --git a/dev/lib/syntax.js b/dev/lib/syntax.js
+--- a/dev/lib/syntax.js
++++ b/dev/lib/syntax.js
+@@ -46,6 +46,10 @@
+   let sizeB = 0
+   /** @type {boolean | undefined} */
+   let seen
++  let mathEnd = 0
++  let afterMath
++  let literalRow = -1
++  let literalRanges = []
+ 
+   return start
+ 
+@@ -223,6 +227,21 @@
+    * @type {State}
+    */
+   function headRowData(code) {
++    const construct = (self.parser.constructs.text[code] || []).find(
++      (entry) => entry.name === 'mathText' || entry.name === 'mathTexText'
++    )
++    if (construct && (!construct.previous || construct.previous.call(self, self.previous))) {
++      afterMath = headRowData
++      return effects.check({tokenize: checkMath}, mathData, ordinaryData)(code)
++    }
++    return ordinaryData(code)
++
++    function ordinaryData(code) {
++      return headRowDataOrdinary(code)
++    }
++  }
++
++  function headRowDataOrdinary(code) {
+     if (
+       code === codes.eof ||
+       code === codes.verticalBar ||
+@@ -585,6 +604,21 @@
+    * @type {State}
+    */
+   function bodyRowData(code) {
++    const construct = (self.parser.constructs.text[code] || []).find(
++      (entry) => entry.name === 'mathText' || entry.name === 'mathTexText'
++    )
++    if (construct && (!construct.previous || construct.previous.call(self, self.previous))) {
++      afterMath = bodyRowData
++      return effects.check({tokenize: checkMath}, mathData, ordinaryData)(code)
++    }
++    return ordinaryData(code)
++
++    function ordinaryData(code) {
++      return bodyRowDataOrdinary(code)
++    }
++  }
++
++  function bodyRowDataOrdinary(code) {
+     if (
+       code === codes.eof ||
+       code === codes.verticalBar ||
+@@ -618,6 +652,75 @@
+ 
+     return bodyRowData(code)
+   }
++  function checkMath(effects, ok, nok) {
++    const context = this
++    const startLine = context.now().line
++    const mathStart = context.now().offset
++    const row = self.events.findLast(
++      (event) => event[0] === 'enter' && event[1].type === 'tableRow'
++    )[1]
++    return startMath
++
++    function startMath(code) {
++      const construct = context.parser.constructs.text[code].find(
++        (entry) => entry.name === 'mathText' || entry.name === 'mathTexText'
++      )
++      const inlineContext = Object.create(context)
++      inlineContext.mathSingleLine = true
++      return effects.attempt({
++        partial: true,
++        tokenize: (effects, ok, nok) => construct.tokenize.call(inlineContext, effects, ok, nok)
++      }, done, nok)(code)
++    }
++
++    function done(code) {
++      if (context.now().line !== startLine) return nok(code)
++      mathEnd = context.now().offset
++      if (literalRow === row.start.offset) return acceptMath(code)
++      if (code === codes.eof || markdownLineEnding(code)) return inspectRow(code)
++      effects.enter(types.data)
++      return rowEnd(code)
++    }
++
++    function rowEnd(code) {
++      if (code !== codes.eof && !markdownLineEnding(code)) {
++        effects.consume(code)
++        return rowEnd
++      }
++      effects.exit(types.data)
++      return inspectRow(code)
++    }
++
++    function inspectRow(code) {
++      // Inline parsing owns destinations, code, autolinks and tag attributes.
++      const events = context.parser.text(row.start).write([
++        ...context.sliceStream({start: row.start, end: context.now()}),
++        codes.eof
++      ])
++      literalRanges = events.flatMap(([kind, token]) =>
++        kind === 'enter' &&
++        (token.type === 'resource' || token.type === 'codeText' ||
++          token.type === 'autolink' || token.type === 'htmlText')
++          ? [[token.start.offset, token.end.offset]]
++          : []
++      )
++      literalRow = row.start.offset
++      return acceptMath(code)
++    }
++
++    function acceptMath(code) {
++      return literalRanges.some(([start, end]) => start <= mathStart && mathStart < end)
++        ? nok(code)
++        : ok(code)
++    }
++  }
++
++  function mathData(code) {
++    if (self.now().offset >= mathEnd) return afterMath(code)
++    effects.consume(code)
++    return mathData
++  }
++
+ }
+ 
+ /** @type {Resolver} */
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -27,7 +27,7 @@
+   },
+   "exports": {
+     "development": "./dev/index.js",
+-    "default": "./index.js"
++    "default": "./dev/index.js"
+   },
+   "files": [
+     "dev/",

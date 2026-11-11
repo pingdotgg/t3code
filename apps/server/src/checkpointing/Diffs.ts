@@ -17,7 +17,6 @@ export function parseTurnDiffFilesFromNumstat(numstat: string): ReadonlyArray<Tu
     let path = record.slice(counts[0].length);
     let previousPath: string | undefined;
     if (path.length === 0) {
-      // Renames and copies use two more records: the source and destination.
       previousPath = records[index + 1];
       path = records[index + 2] ?? "";
       index += 2;

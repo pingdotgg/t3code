@@ -261,6 +261,26 @@ fn rgba(raw: &[u8], width: usize, height: usize, stride: usize, format: usize) -
     Ok(output)
 }
 
+/// The desktop app rejects larger capture PNGs (`linuxCaptureSession.ts`).
+const MAX_PNG_BYTES: usize = 32 * 1024 * 1024;
+
+/// Level 6 dominated capture time, so encode at the much faster level 2 and fall back
+/// to level 6 only when level 2's slightly larger output would be rejected.
+fn encode_png(rgba: &[u8], width: u32, height: u32, limit: usize) -> Result<Vec<u8>> {
+    for level in [2, 6] {
+        let mut png = Vec::new();
+        let mut encoder = png::Encoder::new(&mut png, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_deflate_compression(png::DeflateCompression::Level(level));
+        encoder.write_header()?.write_image_data(rgba)?;
+        if png.len() <= limit {
+            return Ok(png);
+        }
+    }
+    Err("Screenshot too large".into())
+}
+
 fn capture(connection: &Connection, directory: &Path) -> Result<Option<Window>> {
     // Lack of scripting only loses identity/text; never guess which app was captured.
     let before = window(connection, directory, None).ok().flatten();
@@ -299,16 +319,12 @@ fn capture(connection: &Connection, directory: &Path) -> Result<Option<Window>> 
     let mut raw = vec![0; bytes];
     reader.read_exact(&mut raw)?;
     let pixels = rgba(&raw, width, height, stride, uint(&metadata, "format")?)?;
-    let image = OpenOptions::new()
+    let png = encode_png(&pixels, width as u32, height as u32, MAX_PNG_BYTES)?;
+    OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(directory.join("capture.png"))?;
-    let mut encoder = png::Encoder::new(image, width as u32, height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut image = encoder.write_header()?;
-    image.write_image_data(&pixels)?;
-    image.finish()?;
+        .open(directory.join("capture.png"))?
+        .write_all(&png)?;
     let identity = before.filter(|before| {
         window(connection, directory, Some(&before.id))
             .ok()
@@ -451,6 +467,28 @@ mod tests {
             }
             assert!(!before.matches_after_capture(&after), "{field}");
         }
+    }
+
+    #[test]
+    fn falls_back_to_smaller_png_when_fast_encode_exceeds_limit() {
+        let (width, height) = (256, 256);
+        let rgba: Vec<u8> = (0..width * height * 4)
+            .map(|i| (((i / 4) % 251) ^ (i % 7)) as u8)
+            .collect();
+        let decode = |png: &[u8]| {
+            let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+                .read_info()
+                .unwrap();
+            let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+            reader.next_frame(&mut pixels).unwrap();
+            pixels
+        };
+        let fast = encode_png(&rgba, width, height, usize::MAX).unwrap();
+        let fallback = encode_png(&rgba, width, height, fast.len() - 1).unwrap();
+        assert!(fallback.len() < fast.len());
+        assert_eq!(decode(&fast), rgba);
+        assert_eq!(decode(&fallback), rgba);
+        assert!(encode_png(&rgba, width, height, fallback.len() - 1).is_err());
     }
 
     #[test]
