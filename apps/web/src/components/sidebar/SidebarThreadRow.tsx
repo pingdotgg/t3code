@@ -1059,10 +1059,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       )}
       dir={textDirection(thread.title)}
     >
+      {thread.source.specialist !== undefined ? (
+        <span className="mr-1.5 shrink-0 font-medium text-muted-foreground">
+          @{thread.source.specialist.key}
+        </span>
+      ) : null}
       {thread.title}
     </span>
   );
-  const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
+  const accessibleTitle = isRenaming ? null : (
+    <span className="sr-only">
+      {thread.source.specialist !== undefined
+        ? `${thread.source.specialist.label} (@${thread.source.specialist.key}): ${thread.title}`
+        : thread.title}
+    </span>
+  );
 
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)

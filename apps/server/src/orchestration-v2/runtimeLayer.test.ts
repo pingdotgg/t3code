@@ -2903,6 +2903,46 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         DateTime.toEpochMillis(untaggedShell.updatedAt),
       );
 
+      yield* orchestrator.dispatch({
+        type: "thread.specialist.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-specialist-bind"),
+        threadId,
+        specialist: { key: "dev-ui", label: "Dev UI", instructions: "Owns the web client." },
+      });
+      assert.deepEqual(shellOf(yield* orchestrator.getShellSnapshot()).specialist, {
+        key: "dev-ui",
+        label: "Dev UI",
+        instructions: "Owns the web client.",
+      });
+      const specialistShell = shellOf(yield* orchestrator.getShellSnapshot());
+      assert.equal(
+        DateTime.toEpochMillis(specialistShell.updatedAt),
+        DateTime.toEpochMillis(untaggedShell.updatedAt),
+      );
+      const otherThreadId = ThreadId.make("runtime-layer-lifecycle-specialist-other");
+      yield* orchestrator.dispatch({
+        ...create,
+        commandId: CommandId.make("runtime-layer-lifecycle-specialist-other-create"),
+        threadId: otherThreadId,
+        title: "Other lifecycle thread",
+      });
+      const specialistConflict = yield* orchestrator
+        .dispatch({
+          type: "thread.specialist.set",
+          commandId: CommandId.make("runtime-layer-lifecycle-specialist-conflict"),
+          threadId: otherThreadId,
+          specialist: { key: "dev-ui", label: "Dev UI" },
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(specialistConflict, Orchestrator.OrchestratorDispatchError);
+      yield* orchestrator.dispatch({
+        type: "thread.specialist.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-specialist-clear"),
+        threadId,
+        specialist: null,
+      });
+      assert.isUndefined(shellOf(yield* orchestrator.getShellSnapshot()).specialist);
+
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator
         .dispatch({

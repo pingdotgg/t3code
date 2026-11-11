@@ -612,6 +612,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
+    case "thread.specialist.set":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -3630,6 +3631,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unpin"
           | "thread.pin.reorder"
           | "thread.tag.set"
+          | "thread.specialist.set"
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
@@ -3664,6 +3666,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: `Thread ${command.threadId} is deleted.`,
       });
+    }
+    if (command.type === "thread.specialist.set") {
+      if (thread.lineage.relationshipToParent === "subagent" || thread.lineage.sideChat === true) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is a subagent or side chat and cannot own a specialist.`,
+        });
+      }
+      const specialist = command.specialist;
+      if (specialist !== null) {
+        const snapshot = yield* projectionStore
+          .getShellSnapshot({ projectId: thread.projectId })
+          .pipe(mapDispatchError(command));
+        const conflict = [...snapshot.threads, ...snapshot.archivedThreads].find(
+          (candidate) =>
+            candidate.id !== thread.id &&
+            candidate.deletedAt === null &&
+            candidate.specialist?.key === specialist.key,
+        );
+        if (conflict !== undefined) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Specialist key "${specialist.key}" is already bound to thread ${conflict.id}.`,
+          });
+        }
+      }
     }
     if (
       command.type === "thread.pull-request.watch" &&
@@ -4210,6 +4240,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : current.filter((tag) => tag !== command.tag),
           };
         }
+        case "thread.specialist.set": {
+          if (command.specialist === null) {
+            const { specialist: _cleared, ...rest } = thread;
+            return rest;
+          }
+          return {
+            ...thread,
+            specialist: command.specialist,
+          };
+        }
         case "thread.mark-unread": {
           // Retire the wake before rewinding the visit, preserving its settlement timer.
           const snoozeExpired =
@@ -4589,6 +4629,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.active-reordered" as const;
         case "thread.tag.set":
           return "thread.tags-updated" as const;
+        case "thread.specialist.set":
+          return "thread.specialist-updated" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
@@ -13970,6 +14012,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pin.reorder":
       case "thread.active.reorder":
       case "thread.tag.set":
+      case "thread.specialist.set":
       case "thread.mark-unread":
       case "thread.metadata.update":
       case "thread.pull-request.link":
