@@ -31,6 +31,9 @@ export interface CommitPlanGenerationInput {
   branch: string | null;
   changeUnitSummary: string;
   annotatedPatch: string;
+  correction?:
+    | { readonly error: string; readonly previousPlan: CommitPlanGenerationResult }
+    | undefined;
   /** Optional repository-specific instructions for generated commit text. */
   policy?: TextGenerationPolicy | undefined;
   /** What model and provider to use for generation. */

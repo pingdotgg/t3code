@@ -109,6 +109,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         branch: input.branch,
         changeUnitSummary: input.changeUnitSummary,
         annotatedPatch: input.annotatedPatch,
+        correction: input.correction,
         policy: input.policy,
       }),
     });

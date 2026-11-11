@@ -2,7 +2,11 @@ import { GitManagerError, type GitStartCommitWorkflowInput } from "@t3tools/cont
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import * as Schema from "effect/Schema";
+import type {
+  CommitPlanGenerationResult,
+  ProviderTextGeneration,
+} from "@t3tools/provider-core/server/textGeneration";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
   buildPatchForLogicalChangeUnits,
@@ -12,6 +16,7 @@ import {
 } from "./LogicalCommitPatch.ts";
 
 const PATCH_LIMIT = 2_000_000;
+const isGitManagerError = Schema.is(GitManagerError);
 
 export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
   function* (
@@ -121,29 +126,39 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
     const targetTree = yield* output(["write-tree"], { env: candidateEnv });
     const writerDirectory = path.join(directory, "writer");
     yield* fs.makeDirectory(writerDirectory);
-    const generated = yield* generatePlan({
+    const planInput = {
       cwd: writerDirectory,
       branch,
       changeUnitSummary: summarizeLogicalChangeUnits(units),
       annotatedPatch: formatLogicalChangeUnitsForModel(units),
-    });
-    const seen = new Set<string>();
-    const ids = new Set(units.map((unit) => unit.id));
-    for (const commit of generated.commits) {
-      if (!commit.subject.trim() || commit.hunkIds.length === 0)
-        return yield* fail("The generated commit plan contained an empty commit.");
-      for (const id of commit.hunkIds) {
-        if (!ids.has(id) || seen.has(id))
-          return yield* fail(
-            `The generated commit plan contained an invalid or duplicate hunk ID: ${id}`,
-          );
-        seen.add(id);
+    };
+    const validationError = (plan: CommitPlanGenerationResult) => {
+      const seen = new Set<string>();
+      const ids = new Set(units.map((unit) => unit.id));
+      for (const commit of plan.commits) {
+        if (!commit.subject.trim() || commit.hunkIds.length === 0)
+          return "The generated commit plan contained an empty commit.";
+        for (const id of commit.hunkIds) {
+          if (!ids.has(id) || seen.has(id))
+            return `The generated commit plan contained an invalid or duplicate hunk ID: ${id}`;
+          seen.add(id);
+        }
       }
+      const missing = units.filter((unit) => !seen.has(unit.id));
+      return missing.length > 0
+        ? `The generated commit plan omitted ${missing.length} change unit(s): ${missing.map((unit) => `${unit.id} (${unit.filePath})`).join(", ")}.`
+        : null;
+    };
+    let generated = yield* generatePlan(planInput);
+    const problem = validationError(generated);
+    if (problem) {
+      generated = yield* generatePlan({
+        ...planInput,
+        correction: { error: problem, previousPlan: generated },
+      });
+      const remainingProblem = validationError(generated);
+      if (remainingProblem) return yield* fail(remainingProblem);
     }
-    if (seen.size !== units.length)
-      return yield* fail(
-        `The generated commit plan omitted ${units.length - seen.size} change unit(s).`,
-      );
     const backupRef = `${backupRoot}/original`;
     yield* execute(["update-ref", backupRef, head, ""]);
     const finalIndex = path.join(directory, "final-index");
@@ -254,7 +269,7 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
           new GitManagerError({
             operation: "splitCommits",
             cwd: request.cwd,
-            detail: `${cause.message} Recovery refs, if created: ${backupRoot}`,
+            detail: `${isGitManagerError(cause) ? cause.detail : cause.message} Recovery refs, if created: ${backupRoot}`,
             cause,
           }),
       ),

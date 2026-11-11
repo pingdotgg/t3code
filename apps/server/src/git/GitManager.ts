@@ -2618,7 +2618,7 @@ export const make = Effect.gen(function* () {
             new GitManagerError({
               operation: "splitCommits",
               cwd: request.cwd,
-              detail: cause.message,
+              detail: cause.detail,
               cause,
             }),
         ),

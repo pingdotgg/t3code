@@ -4,7 +4,7 @@ import { limitTitleMessage } from "./threadTitleContext.ts";
 import type { BranchNamingOptions, ChatAttachment } from "@t3tools/contracts";
 
 import { limitSection } from "./textGenerationUtils.ts";
-import type { ReviewGuideStackLayer } from "./textGeneration.ts";
+import type { CommitPlanGenerationInput, ReviewGuideStackLayer } from "./textGeneration.ts";
 import type { TextGenerationPolicy } from "@t3tools/provider-core/server/textGenerationPolicy";
 
 const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
@@ -72,6 +72,7 @@ export interface CommitPlanPromptInput {
   branch: string | null;
   changeUnitSummary: string;
   annotatedPatch: string;
+  correction?: CommitPlanGenerationInput["correction"];
   policy?: TextGenerationPolicy | undefined;
 }
 
@@ -99,6 +100,16 @@ export function buildCommitPlanPrompt(input: CommitPlanPromptInput) {
     "",
     "Detailed change units:",
     input.annotatedPatch,
+    ...(input.correction
+      ? [
+          "",
+          "The previous plan failed validation:",
+          input.correction.error,
+          "Previous invalid plan:",
+          JSON.stringify(input.correction.previousPlan),
+          "Return a complete corrected plan using every available ID exactly once. Preserve valid groups and messages unless a change is needed to fix the plan.",
+        ]
+      : []),
   ].join("\n");
 
   return {
