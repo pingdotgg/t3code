@@ -1,16 +1,10 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import {
-  Bucket,
-  ORPHAN_GRACE,
-  RegistryConfig,
-  SWEEP_LOOKAHEAD,
-  tarballKey,
-} from "./Bindings.ts";
+import { Bucket, ORPHAN_GRACE, RegistryConfig, SWEEP_LOOKAHEAD, tarballKey } from "./Bindings.ts";
 import * as GitHub from "./GitHub.ts";
 import * as Tags from "./Tags.ts";
 
@@ -37,15 +31,13 @@ export const sweep = Effect.gen(function* () {
       const [repo, number] = ref.split("#");
       return github.getPullRequest(repo!, Number(number)).pipe(
         Effect.map((pr) =>
-          pr.state === "open"
-            ? undefined
-            : Date.parse(pr.merged_at ?? pr.closed_at ?? "") || now,
+          pr.state === "open" ? undefined : Date.parse(pr.merged_at ?? pr.closed_at ?? "") || now,
         ),
         Effect.map((closedAt) => [ref, { closedAt }] as const),
         Effect.catch((e) =>
-          Effect.logWarning(
-            `pull request ${ref} lookup failed: ${GitHub.describe(e)}`,
-          ).pipe(Effect.as([ref, undefined] as const)),
+          Effect.logWarning(`pull request ${ref} lookup failed: ${GitHub.describe(e)}`).pipe(
+            Effect.as([ref, undefined] as const),
+          ),
         ),
       );
     },
@@ -85,20 +77,15 @@ export const sweep = Effect.gen(function* () {
   );
 
   // Uploads that never got tagged.
-  const orphans = yield* Stream.paginate(
-    undefined as string | undefined,
-    (cursor) =>
-      r2
-        .list({ cursor, limit: 500 })
-        .pipe(
-          Effect.map(
-            (page) =>
-              [
-                page.objects,
-                page.truncated ? Option.some(page.cursor) : Option.none(),
-              ] as const,
-          ),
+  const orphans = yield* Stream.paginate(undefined as string | undefined, (cursor) =>
+    r2
+      .list({ cursor, limit: 500 })
+      .pipe(
+        Effect.map(
+          (page) =>
+            [page.objects, page.truncated ? Option.some(page.cursor) : Option.none()] as const,
         ),
+      ),
   ).pipe(
     Stream.filter((object) => {
       const match = object.key.match(/^(.+)\/([a-f0-9]{64})\.tgz$/);
