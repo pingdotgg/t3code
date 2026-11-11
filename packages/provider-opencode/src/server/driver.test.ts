@@ -222,6 +222,117 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect.each([
+    "1.18.32",
+    "opencode v2.0.18",
+    "opencode v2.2.4",
+    "opencode v2.2.5",
+    "opencode v2.2.6",
+  ])("advertises native goal support only for supported OpenCode versions: %s", (version) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "opencode-goal-capability-" });
+      const binaryPath = NodePath.join(
+        root,
+        "lib",
+        "node_modules",
+        "@opencode",
+        "cli",
+        "bin",
+        "opencode",
+      );
+      yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+      yield* fs.writeFileString(binaryPath, "");
+      const instance = yield* create({ binaryPath }, noHttp).pipe(
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
+          ...openCode2Runtime,
+          runOpenCodeCommand: () => Effect.succeed({ stdout: version, stderr: "", code: 0 }),
+        }),
+      );
+      yield* instance.snapshot.resolveMaintenance({ fresh: true });
+      const capabilities = yield* instance.orchestrationAdapter.getCapabilities();
+      assert.equal(
+        capabilities.turns.supportsNativeGoals === true,
+        version.endsWith("2.2.5") || version.endsWith("2.2.6"),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("uses the connected OpenCode version for goal support after an upgrade", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "opencode-upgraded-goals-" });
+      const binaryPath = NodePath.join(
+        root,
+        "lib",
+        "node_modules",
+        "@opencode",
+        "cli",
+        "bin",
+        "opencode",
+      );
+      yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+      yield* fs.writeFileString(binaryPath, "");
+      const http = HttpClient.make((request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/api/info")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                ...JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body),
+                version: "2.2.5",
+              }),
+            ),
+          );
+        if (path === "/api/model")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ location: { directory: "/work" }, data: [] }),
+            ),
+          );
+        if (path === "/api/event")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(new ReadableStream(), {
+                headers: { "content-type": "text/event-stream" },
+              }),
+            ),
+          );
+        return Effect.die(`Unexpected request: ${path}`);
+      });
+      const instance = yield* create({ binaryPath }, http).pipe(
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
+          ...openCode2Runtime,
+          runOpenCodeCommand: () =>
+            Effect.succeed({ stdout: "opencode v2.2.4", stderr: "", code: 0 }),
+          startOpenCodeServerProcess: ({ verify }) =>
+            Effect.gen(function* () {
+              const url = "http://127.0.0.1:4096";
+              const version = verify ? yield* verify(url) : "2.2.5";
+              return { url, version, isRunning: Effect.succeed(true), exitCode: Effect.never };
+            }),
+        }),
+      );
+      yield* instance.snapshot.resolveMaintenance({ fresh: true });
+      assert.isFalse(
+        (yield* instance.orchestrationAdapter.getCapabilities()).turns.supportsNativeGoals,
+      );
+      const session = yield* instance.orchestrationAdapter.openSession({
+        threadId: ThreadId.make("upgraded-goal"),
+        providerSessionId: ProviderSessionId.make("upgraded-goal"),
+        modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
+        runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+      });
+      assert.isTrue(session.providerSession.capabilities.turns.supportsNativeGoals);
+      assert.isTrue(
+        (yield* instance.orchestrationAdapter.getCapabilities()).turns.supportsNativeGoals,
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("answers capability reads without waiting on an unreachable server", () =>
     Effect.gen(function* () {
       const hang = HttpClient.make(() => Effect.never);
