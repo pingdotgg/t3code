@@ -3837,6 +3837,108 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
+  // regression: #34401 Stop killed a child's background command but its task read completed
+  it.effect("reports a child whose background work outlived a Stop as interrupted", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const stoppedAt = DateTime.add(now, { seconds: 10 });
+      const threadId = ThreadId.make("thread:stop-background-parent");
+      const projectId = ProjectId.make("project:stop-background-parent");
+      const runId = RunId.make("run:stop-background-parent");
+      const rootNodeId = NodeId.make("node:stop-background-parent-root");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:stop-background-parent-settled"),
+        deliveryState: "delivered",
+        now,
+      });
+      const seedStoppedChild = (name: string, commandEndedAt: DateTime.Utc) =>
+        Effect.gen(function* () {
+          const child = yield* seedRestartCancelledChild({
+            parentThreadId: threadId,
+            projectId,
+            parentRunId: runId,
+            rootNodeId,
+            name,
+            completionWake: "always",
+            continuationPending: false,
+            runStatus: "completed",
+            now,
+          });
+          const item = {
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+          };
+          const scope = {
+            type: "turn-item.updated" as const,
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            providerInstanceId: modelSelection.instanceId,
+          };
+          yield* eventSink.write({
+            commandId: CommandId.make(`command:${name}:stop`),
+            events: [
+              {
+                ...scope,
+                id: EventId.make(`event:${name}:command`),
+                occurredAt: commandEndedAt,
+                payload: {
+                  ...item,
+                  id: TurnItemId.make(`turn-item:${name}:command`),
+                  type: "command_execution",
+                  ordinal: 1,
+                  status: "interrupted",
+                  title: "Run build",
+                  input: "./build.sh",
+                  startedAt: now,
+                  completedAt: commandEndedAt,
+                  updatedAt: commandEndedAt,
+                },
+              },
+              {
+                ...scope,
+                id: EventId.make(`event:${name}:interrupt-request`),
+                occurredAt: stoppedAt,
+                payload: {
+                  ...item,
+                  id: TurnItemId.make(`turn-item:${name}:interrupt-request`),
+                  type: "run_interrupt_request",
+                  ordinal: 2,
+                  status: "completed",
+                  title: "Interrupt requested",
+                  startedAt: stoppedAt,
+                  completedAt: stoppedAt,
+                  updatedAt: stoppedAt,
+                  message: "Stopped by user",
+                },
+              },
+            ],
+          });
+          return child;
+        });
+      const cut = yield* seedStoppedChild("stop-background-cut", stoppedAt);
+      const finished = yield* seedStoppedChild("stop-background-finished", now);
+
+      yield* orchestrator.recoverDelegatedTasks;
+
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      const statusOf = (taskId: NodeId) =>
+        settled.subagents.find((row) => row.id === taskId)?.status;
+      assert.equal(statusOf(cut.taskId), "interrupted");
+      assert.equal(statusOf(finished.taskId), "completed");
+    }),
+  );
+
   it.effect("cancelling a task whose child already finished keeps its completed result", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

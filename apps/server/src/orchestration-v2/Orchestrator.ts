@@ -13238,7 +13238,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageRoles: ["assistant"],
           messageRunIds: [childRun.id],
           turnItemRunId: childRun.id,
-          turnItemTypes: ["assistant_message", "error"],
+          turnItemTypes: [
+            "assistant_message",
+            "error",
+            "run_interrupt_request",
+            "command_execution",
+            "dynamic_tool",
+            "subagent",
+          ],
         },
       );
       const childProjection = {
@@ -13270,9 +13277,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (task === undefined) {
         return;
       }
-      // A cancelled task's completed run ends it interrupted.
+      // A cancelled task's completed run ends it interrupted. So does one whose background work
+      // outlived a Stop: the run stays completed while Stop kills that work.
       const cancelled = task.cancelledRunId === childRun.id;
-      if (cancelled && terminalStatus === "completed") outcome = terminalStatus = "interrupted";
+      const stopRequestedAt = childResult.turnItems.find(
+        (item) => item.runId === childRun.id && item.type === "run_interrupt_request",
+      )?.startedAt;
+      const stopped =
+        stopRequestedAt != null &&
+        childResult.turnItems.some(
+          (item) =>
+            item.runId === childRun.id &&
+            (item.type === "command_execution" ||
+              item.type === "dynamic_tool" ||
+              item.type === "subagent") &&
+            (item.completedAt === null ||
+              DateTime.isGreaterThanOrEqualTo(item.completedAt, stopRequestedAt)),
+        );
+      if ((cancelled || stopped) && terminalStatus === "completed")
+        outcome = terminalStatus = "interrupted";
       const existingResultTransfer = parentProjection.contextTransfers.find(
         (transfer) =>
           transfer.type === "subagent_result" &&

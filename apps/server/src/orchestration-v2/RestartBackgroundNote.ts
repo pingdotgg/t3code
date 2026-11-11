@@ -5,8 +5,10 @@ import type {
   OrchestrationV2RestartCancelledBackgroundWork,
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
+  OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
@@ -129,6 +131,66 @@ export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): s
   return [
     "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
+    ...(omitted > 0 ? [`- and ${omitted} more`] : []),
+  ].join("\n");
+}
+
+/** Delegated tasks a Stop on this thread interrupted, until a turn that started after they ended completes. */
+export function pendingStoppedDelegatedTasks(input: {
+  readonly runs: ReadonlyArray<OrchestrationV2Run>;
+  readonly providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>;
+  readonly attempts: ReadonlyArray<Attempt>;
+  readonly subagents: ReadonlyArray<OrchestrationV2Subagent>;
+  readonly compactionMessageIds: ReadonlySet<string>;
+}): ReadonlyArray<OrchestrationV2Subagent> {
+  const stoppedRunIds = new Set(
+    input.runs
+      .filter((run) => run.delegatedCompletion?.disposition === "stopped")
+      .map((run) => run.id),
+  );
+  if (stoppedRunIds.size === 0) return [];
+  const completedAttemptIds = new Set(
+    input.providerTurns
+      .filter((turn) => turn.status === "completed")
+      .map((turn) => turn.runAttemptId),
+  );
+  const toldRunStarts = input.runs
+    .filter(
+      (run) =>
+        run.startedAt !== null &&
+        !input.compactionMessageIds.has(run.userMessageId) &&
+        input.attempts.some(
+          (attempt) => attempt.runId === run.id && completedAttemptIds.has(attempt.id),
+        ),
+    )
+    .map((run) => DateTime.toEpochMillis(run.startedAt!));
+  return input.subagents.filter(
+    (task) =>
+      task.origin === "app_owned" &&
+      task.runId !== null &&
+      stoppedRunIds.has(task.runId) &&
+      task.status === "interrupted" &&
+      task.cancelledRunId === undefined &&
+      task.completionDelivery?.state === "disposed" &&
+      task.completedAt !== null &&
+      !toldRunStarts.some((startedAt) => startedAt > DateTime.toEpochMillis(task.completedAt!)),
+  );
+}
+
+export function stoppedDelegatedTasksNote(tasks: ReadonlyArray<OrchestrationV2Subagent>): string {
+  const omitted = tasks.length - MAX_NOTE_ENTRIES;
+  return [
+    "Note: Stop on this thread also stopped these delegated tasks before they finished. They will not report back on their own, so check them with task_status and start again what you still need:",
+    ...tasks
+      .slice(0, MAX_NOTE_ENTRIES)
+      .map(
+        (task) =>
+          `- ${labelWithId(
+            compactLabel(task.title) === undefined ? task.prompt : task.title,
+            "delegated task",
+            ` (task ${task.id})`,
+          )}`,
+      ),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");
 }
