@@ -1,4 +1,5 @@
 import * as NodeOS from "node:os";
+import * as NodeSqlite from "node:sqlite";
 
 import {
   AgentSessionScanError,
@@ -46,9 +47,28 @@ import {
 } from "./AgentSessionJson.ts";
 
 const TRANSCRIPT_PREFIX_BYTES = 32 * 1024;
+
+class TranscriptParseError extends Schema.TaggedError<TranscriptParseError>()(
+  "TranscriptParseError",
+  { filePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not parse the transcript at ${this.filePath}.`;
+  }
+}
+
+class CodexStateReadError extends Schema.TaggedError<CodexStateReadError>()("CodexStateReadError", {
+  databasePath: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `Could not read Codex projects from ${this.databasePath}.`;
+  }
+}
 const METADATA_READ_BYTES = 8 * 1024;
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 const MAX_CODEX_SESSION_INDEX_BYTES = 1024 * 1024;
+const MAX_CODEX_PROJECT_ROOT_ROWS = 100_000;
 
 const MAX_TRANSCRIPTS_PER_SOURCE = 5000;
 
@@ -120,6 +140,7 @@ const TranscriptRecord = Schema.Struct({
       message: Schema.optional(Schema.String),
       model: Schema.optional(Schema.String),
       cwd: Schema.optional(Schema.String),
+      history_base: Schema.optional(Schema.Unknown),
       content: Schema.optional(Schema.Array(TranscriptContentBlock)),
       internal_chat_message_metadata_passthrough: Schema.optional(Schema.Unknown),
     }),
@@ -144,6 +165,14 @@ const decodePiEntryLinks = Schema.decodeUnknownOption(
 );
 const selectTranscriptPath = createTranscriptJsonSelector(TranscriptRecord);
 const decodeCodexTurnMetadata = Schema.decodeUnknownOption(CodexTurnMetadata);
+const decodeCodexHistoryBase = Schema.decodeUnknownOption(
+  Schema.Struct({ thread_id: Schema.String, end_byte_offset: Schema.Number }),
+);
+// Original rollouts end in their thread ID, rewound ones in `<thread ID>_<rollout ID>`.
+const CODEX_ROLLOUT_ID_PATTERN =
+  /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?\.jsonl$/i;
+// Codex records a chat's project only here; moving a chat leaves its rollout cwd unchanged.
+const CODEX_STATE_DATABASE = "state_5.sqlite";
 const decodeCodexSessionIndexEntry = Schema.decodeUnknownOption(
   Schema.fromJsonString(CodexSessionIndexEntry),
 );
@@ -208,6 +237,7 @@ interface RawCandidate {
   readonly transcripts: ReadonlyArray<{
     readonly filePath: string;
     readonly mtimeMs: number | null;
+    readonly projectRoots?: ReadonlyArray<string> | undefined;
   }>;
 }
 
@@ -217,6 +247,7 @@ interface TranscriptCandidate {
   readonly providerInstanceId: ProviderInstanceId;
   readonly homePath: string;
   readonly size: number;
+  readonly projectRoots?: ReadonlyArray<string> | undefined;
 }
 
 interface MetadataReadBudget {
@@ -333,6 +364,21 @@ function parseCodexThreadNames(contents: string): ReadonlyMap<string, string> {
     if (entry !== undefined && name) names.set(entry.id, name);
   }
   return names;
+}
+
+// A rewound paginated Codex thread continues in a new rollout that inherits a
+// byte prefix of the rollout it replaced.
+function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
+  const base = Option.getOrUndefined(
+    decodeCodexHistoryBase(
+      records.find((record) => record.type === "session_meta")?.payload?.history_base,
+    ),
+  );
+  return base !== undefined &&
+    Number.isSafeInteger(base.end_byte_offset) &&
+    base.end_byte_offset >= 0
+    ? base
+    : undefined;
 }
 
 function deriveTitle(source: AgentSessionSource, text: string): string | undefined {
@@ -997,8 +1043,10 @@ export const make = Effect.gen(function* () {
     filePath: string,
     expected: ReturnType<typeof transcriptIdentity>,
     source: AgentSessionSource,
+    prefix?: { readonly endByteOffset: number; readonly historyBytes: number },
   ) {
-    if (expected.size > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
+    const readBytes = prefix?.endByteOffset ?? expected.size;
+    if (readBytes > expected.size || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
 
     return yield* Effect.scoped(
       fileSystem.open(filePath, { flag: "r" }).pipe(
@@ -1010,16 +1058,16 @@ export const make = Effect.gen(function* () {
             const records: Array<DecodedTranscriptRecord> = [];
             let cwd = Option.none<string>();
             let claudeFields = emptyClaudeFields;
-            let historyBytes = 0;
+            let historyBytes = prefix?.historyBytes ?? 0;
             let recordBytes = 0;
             let recordCount = 0;
             let bytesRead = 0;
             const reserve = (bytes: number) => {
               recordBytes += bytes;
               if (historyBytes + recordBytes > MAX_IMPORT_HISTORY_BYTES) {
-                throw new TranscriptJsonLimitError(
-                  "Transcript selected history exceeds the 32 MiB memory budget",
-                );
+                throw new TranscriptJsonLimitError({
+                  message: "Transcript selected history exceeds the 32 MiB memory budget",
+                });
               }
             };
             let reader = createTranscriptJsonReader(reserve, selectTranscriptPath);
@@ -1062,34 +1110,44 @@ export const make = Effect.gen(function* () {
               return true;
             };
 
-            while (bytesRead < expected.size) {
+            while (bytesRead < readBytes) {
               const next = yield* file.readAlloc(
-                Math.min(TRANSCRIPT_PREFIX_BYTES, expected.size - bytesRead),
+                Math.min(TRANSCRIPT_PREFIX_BYTES, readBytes - bytesRead),
               );
               if (Option.isNone(next)) {
                 return null;
               }
 
               bytesRead += next.value.byteLength;
-              const withinBudget = yield* Effect.try(() => {
-                let start = 0;
-                while (start < next.value.byteLength) {
-                  const newline = next.value.indexOf(10, start);
-                  const end = newline === -1 ? next.value.byteLength : newline;
-                  recordStarted = true;
-                  reader.write(decoder.decode(next.value.subarray(start, end), { stream: true }));
-                  if (newline === -1) break;
-                  if (!finishRecord()) return false;
-                  start = newline + 1;
-                }
-                return true;
+              const withinBudget = yield* Effect.try({
+                try: () => {
+                  let start = 0;
+                  while (start < next.value.byteLength) {
+                    const newline = next.value.indexOf(10, start);
+                    const end = newline === -1 ? next.value.byteLength : newline;
+                    recordStarted = true;
+                    reader.write(decoder.decode(next.value.subarray(start, end), { stream: true }));
+                    if (newline === -1) break;
+                    if (!finishRecord()) return false;
+                    start = newline + 1;
+                  }
+                  return true;
+                },
+                catch: (cause) => new TranscriptParseError({ filePath, cause }),
               });
               if (!withinBudget) return null;
             }
 
-            if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
+            if (
+              recordStarted &&
+              !(yield* Effect.try({
+                try: finishRecord,
+                catch: (cause) => new TranscriptParseError({ filePath, cause }),
+              }))
+            )
+              return null;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
-              ? { records, cwd, claudeFields }
+              ? { records, cwd, claudeFields, historyBytes }
               : null;
           }),
         ),
@@ -1191,6 +1249,47 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const readCodexProjectRoots = Effect.fn("AgentSessionScanner.readCodexProjectRoots")(function* (
+    homePath: string,
+  ) {
+    const rootsByThread = new Map<string, Array<string>>();
+    const databasePath = path.join(homePath, CODEX_STATE_DATABASE);
+    return yield* Effect.try({
+      try: () => {
+        const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+        try {
+          database.exec("PRAGMA busy_timeout = 100");
+          const rows = database
+            .prepare(
+              `SELECT threads.id AS id, project_roots.path AS path
+               FROM threads JOIN project_roots ON project_roots.project_id = threads.project_id
+               ORDER BY threads.rowid DESC, project_roots.position LIMIT ?`,
+            )
+            .all(MAX_CODEX_PROJECT_ROOT_ROWS);
+          for (const { id, path: root } of rows) {
+            if (typeof id !== "string" || typeof root !== "string" || root.trim().length === 0) {
+              continue;
+            }
+            const roots = rootsByThread.get(id);
+            if (roots === undefined) rootsByThread.set(id, [root]);
+            else roots.push(root);
+          }
+          return rootsByThread;
+        } finally {
+          database.close();
+        }
+      },
+      catch: (cause) => new CodexStateReadError({ databasePath, cause }),
+    }).pipe(Effect.orElseSucceed((): ReadonlyMap<string, ReadonlyArray<string>> => new Map()));
+  });
+
+  // Only chats left in an excluded folder, such as Codex's scratch folder, take their project's root.
+  const projectCwd = (cwd: string, projectRoots: ReadonlyArray<string> | undefined) =>
+    projectRoots !== undefined &&
+    isExcludedProjectPath(path.resolve(expandHomePath(cwd.trim(), homeDir)))
+      ? projectRoots[0]!
+      : cwd;
+
   const discoverCodexTranscripts = Effect.fn("AgentSessionScanner.discoverCodexTranscripts")(
     function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
       const sessionsDir = path.join(homePath, "sessions");
@@ -1252,7 +1351,15 @@ export const make = Effect.gen(function* () {
           }
         }
       }
-      return { transcripts, truncated };
+      const projectRoots = yield* readCodexProjectRoots(homePath);
+      return {
+        transcripts: transcripts.map((transcript) => {
+          const threadId = CODEX_ROLLOUT_ID_PATTERN.exec(transcript.filePath)?.[1];
+          const roots = threadId === undefined ? undefined : projectRoots.get(threadId);
+          return roots === undefined ? transcript : { ...transcript, projectRoots: roots };
+        }),
+        truncated,
+      };
     },
   );
 
@@ -1322,13 +1429,14 @@ export const make = Effect.gen(function* () {
         providerInstanceId: ProviderInstanceId;
         homePath: string;
         lastActiveAtMs: number;
-        transcripts: Array<{ filePath: string; mtimeMs: number }>;
+        transcripts: Array<TranscriptCandidate>;
       }
     >();
 
     for (const transcript of transcripts) {
-      const cwd = yield* readCwd(source, transcript, budget);
-      if (cwd === null || cwd === false) continue;
+      const rolloutCwd = yield* readCwd(source, transcript, budget);
+      if (rolloutCwd === null || rolloutCwd === false) continue;
+      const cwd = projectCwd(rolloutCwd, transcript.projectRoots);
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
       if (existing) {
@@ -1667,6 +1775,57 @@ export const make = Effect.gen(function* () {
     const codexThreadNamesByHome = new Map<string, ReadonlyMap<string, string>>();
     let bytesRemaining = MAX_IMPORT_BYTES;
     let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
+    const codexRolloutPaths = new Map<ProviderInstanceId, ReadonlyMap<string, string>>();
+    const codexRolloutPath = (providerInstanceId: ProviderInstanceId, rolloutId: string) => {
+      let paths = codexRolloutPaths.get(providerInstanceId);
+      if (paths === undefined) {
+        paths = new Map(
+          candidates.flatMap((candidate) =>
+            candidate.source === "codex" && candidate.providerInstanceId === providerInstanceId
+              ? candidate.transcripts.flatMap((transcript) => {
+                  const match = CODEX_ROLLOUT_ID_PATTERN.exec(transcript.filePath);
+                  const id = match?.[2] ?? match?.[1];
+                  return id === undefined ? [] : [[id, transcript.filePath] as const];
+                })
+              : [],
+          ),
+        );
+        codexRolloutPaths.set(providerInstanceId, paths);
+      }
+      return paths.get(rolloutId);
+    };
+    // Reads the prefixes a rewound rollout inherits, oldest first. Without all of
+    // them the rollout is imported on its own, as before.
+    const readCodexHistoryBase = Effect.fn("AgentSessionScanner.readCodexHistoryBase")(function* (
+      providerInstanceId: ProviderInstanceId,
+      records: ReadonlyArray<DecodedTranscriptRecord>,
+      historyBytes: number,
+    ) {
+      const prefixes: Array<ReadonlyArray<DecodedTranscriptRecord>> = [];
+      const visited = new Set<string>();
+      for (let base = codexHistoryBase(records); base !== undefined;) {
+        const filePath = visited.has(base.thread_id)
+          ? undefined
+          : codexRolloutPath(providerInstanceId, base.thread_id);
+        if (filePath === undefined || base.end_byte_offset > bytesRemaining) return null;
+        visited.add(base.thread_id);
+        const stats = yield* statOption(filePath);
+        if (Option.isNone(stats) || stats.value.type !== "File") return null;
+        bytesRemaining -= base.end_byte_offset;
+        const inherited = yield* readTranscript(
+          filePath,
+          transcriptIdentity(filePath, stats.value),
+          "codex",
+          { endByteOffset: base.end_byte_offset, historyBytes },
+        );
+        if (inherited === null) return null;
+        historyBytes = inherited.historyBytes;
+        // The rollout's own session_meta names the thread; inherited ones may name a fork parent.
+        prefixes.unshift(inherited.records.filter((record) => record.type !== "session_meta"));
+        base = codexHistoryBase(inherited.records);
+      }
+      return prefixes.flat();
+    });
     return Stream.fromIteratorSucceed(eligibleTranscripts.values(), 1).pipe(
       Stream.mapEffect(({ candidate, transcript }) =>
         Effect.gen(function* () {
@@ -1711,7 +1870,10 @@ export const make = Effect.gen(function* () {
           if (Option.isNone(snapshot.cwd)) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          const expandedCwd = expandHomePath(snapshot.cwd.value.trim(), homeDir);
+          const expandedCwd = expandHomePath(
+            projectCwd(snapshot.cwd.value, transcript.projectRoots).trim(),
+            homeDir,
+          );
           if (
             !path.isAbsolute(expandedCwd) ||
             (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
@@ -1719,6 +1881,14 @@ export const make = Effect.gen(function* () {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
 
+          const inheritedRecords =
+            candidate.source === "codex"
+              ? yield* readCodexHistoryBase(
+                  candidate.providerInstanceId,
+                  snapshot.records,
+                  snapshot.historyBytes,
+                )
+              : null;
           const parsedThread = parseAgentSessionRecords(
             {
               source: candidate.source,
@@ -1726,7 +1896,9 @@ export const make = Effect.gen(function* () {
               fallbackSessionId: path.basename(transcript.filePath, ".jsonl"),
               lastActiveAtMs: transcript.mtimeMs,
             },
-            snapshot.records,
+            inheritedRecords === null
+              ? snapshot.records
+              : [...inheritedRecords, ...snapshot.records],
             snapshot.claudeFields,
           );
           if (parsedThread === null) {

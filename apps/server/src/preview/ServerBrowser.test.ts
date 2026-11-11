@@ -219,7 +219,7 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       interactiveElements: [],
     })),
     ariaSnapshot: vi.fn(async () => '- button "delete" [ref=e1]'),
-    locator: vi.fn(() => {
+    locator: vi.fn((): unknown => {
       throw new Error("Unexpected locator action");
     }),
     isClosed: () => closed,
@@ -321,6 +321,10 @@ const desktopRenders = (tabId: string) => {
   }
   return desktopTabs.has(tabId);
 };
+/** When set, a desktop that has not attached a tab waits for it the way the real channel does. */
+let desktopAttachesLate = false;
+let desktopAttachWaiting = Promise.withResolvers<void>();
+const shownDesktopTabs = new Set<string>();
 const releasedDesktopTabs: Array<string> = [];
 const desktopTurns = new NodeEvents.EventEmitter();
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
@@ -354,7 +358,30 @@ const dependencies = Layer.mergeAll(
   }),
   Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
     available: true,
-    awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+    awaitAttached: (key, timeout) =>
+      !desktopAttachesLate || desktopRenders(key.tabId)
+        ? Effect.sync(() => desktopRenders(key.tabId))
+        : Effect.raceFirst(
+            Stream.callback<string>((queue) =>
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  const onAttach = (attached: { tabId: string }) =>
+                    Queue.offerUnsafe(queue, attached.tabId);
+                  desktopDetaches.on("attach", onAttach);
+                  return onAttach;
+                }),
+                (onAttach) => Effect.sync(() => desktopDetaches.off("attach", onAttach)),
+              ),
+            ).pipe(
+              Stream.filter((tabId) => tabId === key.tabId),
+              Stream.runHead,
+              Effect.as(true),
+            ),
+            Effect.sync(() => desktopAttachWaiting.resolve()).pipe(
+              Effect.andThen(Effect.sleep(timeout)),
+              Effect.as(false),
+            ),
+          ),
     detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -379,10 +406,12 @@ const dependencies = Layer.mergeAll(
       ),
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+    isShown: (key) => shownDesktopTabs.has(key.tabId),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
         Effect.sync(() => {
           releasedDesktopTabs.push(key.tabId);
+          desktopDetaches.emit("release", key.tabId);
           desktopReleased.resolve();
         }),
       ),
@@ -455,7 +484,10 @@ beforeEach(() => {
   keyCopy = "";
   focusedFrame = null;
   desktopTabs.clear();
+  shownDesktopTabs.clear();
   desktopRendersNext = false;
+  desktopAttachesLate = false;
+  desktopAttachWaiting = Promise.withResolvers<void>();
   desktopPageUrl = "about:blank";
   desktopSizeAnswer = null;
   desktopDetachReady = Promise.withResolvers<void>();
@@ -619,6 +651,63 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
 
       expect(headlessOf(tabId)).toBe(true);
       expect(headlessOf(desktopTab.tabId)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const threadId = scope.thread.threadId;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { url: "https://example.com/?t=1", reuseExistingTab: false, open: false },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      // The renderer reloads on another thread: its webview goes, and it only mounts this
+      // thread's tabs again once a preview event for the thread reaches it.
+      yield* Effect.promise(() => desktopDetachReady.promise);
+      desktopAttachesLate = true;
+      desktopTabs.delete(tabId);
+      desktopDetaches.emit("detach", { threadId, tabId });
+      yield* Effect.promise(() => desktopReleased.promise);
+      // It is still reloading when the agent's call arrives, so it misses the first event.
+      yield* Effect.gen(function* () {
+        yield* Effect.promise(() => desktopAttachWaiting.promise);
+        const events = yield* manager.subscribeEvents;
+        const nextForThread = Effect.gen(function* () {
+          let event = yield* PubSub.take(events);
+          while (event.threadId !== threadId) event = yield* PubSub.take(events);
+        });
+        yield* nextForThread;
+        yield* nextForThread;
+        desktopTabs.add(tabId);
+        desktopDetaches.emit("attach", { threadId, tabId });
+      }).pipe(Effect.forkScoped);
+
+      const evaluating = yield* broker
+        .invoke({
+          scope,
+          tabId,
+          operation: "evaluate",
+          input: { expression: "navigator.userAgent" },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.raceFirst(
+        Fiber.join(evaluating),
+        Effect.promise(() => desktopAttachWaiting.promise).pipe(
+          Effect.andThen(TestClock.adjust("10 seconds")),
+          Effect.andThen(Fiber.join(evaluating)),
+        ),
+      );
+      const { sessions } = yield* manager.list({ threadId });
+
+      expect(sessions.find((session) => session.tabId === tabId)?.headless).toBeUndefined();
+      expect(desktopConnections).toHaveLength(2);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -901,6 +990,40 @@ it.live(
             input: { expression: "resumed()" },
           }),
         ).toBe("evaluated");
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live(
+  "reports a valid CSS selector that matches several elements as ambiguous, not invalid",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const strict = new Error(
+          "locator.scrollIntoViewIfNeeded: Error: strict mode violation: locator('button[aria-label=\\'Permissions: Full access\\']') resolved to 2 elements:",
+        );
+        contexts[0]!.page.locator.mockImplementation(
+          () =>
+            new Proxy(
+              {},
+              {
+                get: () => async () => {
+                  throw strict;
+                },
+              },
+            ),
+        );
+        const failure = yield* broker
+          .invoke<void>({
+            scope,
+            tabId,
+            operation: "click",
+            input: { selector: "button[aria-label='Permissions: Full access']", timeoutMs: 1_000 },
+          })
+          .pipe(Effect.flip);
+        expect(failure.message).not.toMatch(/invalid selector/);
+        expect(failure.message).toMatch(/2 elements/);
       }),
     ).pipe(Effect.provide(layer)),
 );
@@ -1957,6 +2080,47 @@ it.effect("a stalled desktop viewer still gets its size, control and reconnect",
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("the tab the desktop shows is visible and picked for agents without a tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      const openDesktopTab = Effect.fn("openDesktopTab")(function* (url: string) {
+        desktopRendersNext = true;
+        const opened = yield* manager.open({
+          threadId: scope.thread.threadId,
+          url,
+          runtime: "server",
+        });
+        const tabId = PreviewTabId.make(opened.tabId);
+        yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+        return tabId;
+      });
+      const recentTab = yield* openDesktopTab("http://localhost:5173/recent");
+      const shownTab = yield* openDesktopTab("http://localhost:5173/shown");
+      // Opened first and used last, so recency or insertion order alone picks it.
+      yield* broker.invoke({ scope, tabId: recentTab, operation: "status", input: {} });
+
+      shownDesktopTabs.add(shownTab);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: asSession("agent-b"),
+        operation: "status",
+        input: {},
+      });
+      expect(status).toMatchObject({
+        tabId: shownTab,
+        visible: true,
+        tabs: [
+          expect.objectContaining({ tabId: recentTab, visible: false }),
+          expect.objectContaining({ tabId: shownTab, visible: true }),
+        ],
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("agents read a human's tab with no arguments and act on it only while nobody drives", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -2323,6 +2487,75 @@ it.live("failed session and browser launches release capacity, as does closing a
         input: {},
       });
       expect(status.tabs).toHaveLength(8);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a full server takes back the slot of the longest idle agent tab nobody views", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      const now = vi.spyOn(Date, "now").mockReturnValue(0);
+      yield* Effect.addFinalizer(() => Effect.sync(() => now.mockRestore()));
+      const open = (providerSessionId: string) => {
+        desktopRendersNext = true;
+        return broker.invoke<PreviewAutomationStatus>({
+          scope: asSession(providerSessionId),
+          operation: "open",
+          input: { reuseExistingTab: false, open: false },
+        });
+      };
+      const opened: Array<string> = [];
+      for (let index = 0; index < 32; index++) {
+        now.mockReturnValue(index);
+        opened.push((yield* open(`agent-${Math.floor(index / 8)}`)).tabId!);
+      }
+
+      now.mockReturnValue(100);
+      yield* broker.invoke<PreviewAutomationStatus>({
+        scope: asSession("agent-observer"),
+        operation: "status",
+        tabId: PreviewTabId.make(opened[0]!),
+        input: {},
+      });
+
+      // Inside the idle window every desktop tab keeps its slot.
+      now.mockReturnValue(29 * 60 * 1000);
+      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).toEqual([]);
+
+      now.mockReturnValue(31 * 60 * 1000);
+      // A session at its own limit couldn't use a freed slot, so nothing closes for it.
+      expect(yield* open("agent-3").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).toEqual([]);
+      // Tabs a desktop window shows keep their slots however long they sit idle.
+      for (const tabId of opened) shownDesktopTabs.add(tabId);
+      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).toEqual([]);
+      shownDesktopTabs.clear();
+      shownDesktopTabs.add(opened[1]!);
+      const events = yield* manager.subscribeEvents;
+      const releases = yield* Queue.unbounded<string>();
+      const recordRelease = (tabId: string) => Queue.offerUnsafe(releases, tabId);
+      desktopDetaches.on("release", recordRelease);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => desktopDetaches.off("release", recordRelease)),
+      );
+      const fresh = yield* open("agent-new");
+      expect(fresh.tabId).toBeDefined();
+      expect(yield* Queue.take(releases)).toBe(opened[2]);
+      yield* Stream.fromSubscription(events).pipe(
+        Stream.filter((event) => event.type === "closed" && event.tabId === opened[2]),
+        Stream.runHead,
+      );
+      expect(releasedDesktopTabs).toEqual([opened[2]]);
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
+        [...opened.filter((tabId) => tabId !== opened[2]), fresh.tabId!].toSorted(),
+      );
     }),
   ).pipe(Effect.provide(layer)),
 );
