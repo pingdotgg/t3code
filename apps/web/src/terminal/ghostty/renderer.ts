@@ -337,22 +337,19 @@ export function renderGhosttySnapshot(options: {
   if (cursorOn && snapshot.cursorVisible && snapshot.cursorX >= 0 && snapshot.cursorY >= 0) {
     const left = padding + snapshot.cursorX * metrics.width;
     const top = originY + snapshot.cursorY * metrics.height;
+    const cells = snapshot.rowData[snapshot.cursorY]?.cells ?? [];
+    const wide = isWideGlyph(cells, snapshot.cursorX);
+    const width = wide ? metrics.width * 2 : metrics.width;
     context.fillStyle = cssColor(snapshot.cursor);
-    if (!focused) {
+    if (!focused || snapshot.cursorStyle === 3) {
       context.strokeStyle = cssColor(snapshot.cursor);
-      context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+      context.strokeRect(left + 0.5, top + 0.5, width - 1, metrics.height - 1);
     } else if (snapshot.cursorStyle === 0) {
       context.fillRect(left, top, 2, metrics.height);
     } else if (snapshot.cursorStyle === 2) {
-      context.fillRect(left, top + metrics.height - 2, metrics.width, 2);
-    } else if (snapshot.cursorStyle === 3) {
-      context.strokeStyle = cssColor(snapshot.cursor);
-      context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+      context.fillRect(left, top + metrics.height - 2, width, 2);
     } else {
-      const cells = snapshot.rowData[snapshot.cursorY]?.cells ?? [];
       const cell = cells[snapshot.cursorX];
-      const wide = isWideGlyph(cells, snapshot.cursorX);
-      const width = wide ? metrics.width * 2 : metrics.width;
       context.fillRect(left, top, width, metrics.height);
       if (cell?.text) {
         context.fillStyle = cssColor(snapshot.background);
