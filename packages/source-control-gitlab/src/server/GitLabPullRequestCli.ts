@@ -730,14 +730,14 @@ function gitLabLineRangeEnd(
   };
 }
 
-const gitLabFileHash = Effect.fnUntraced(function* (path: string) {
-  const digest = yield* Digest.Digest;
-  return yield* digest.digestHex(Digest.sha1, new TextEncoder().encode(path));
-}, Effect.provide(Digest.layerWebCrypto));
-
-function gitLabLineRange(fileHash: string, patch: string, comment: PullRequestReviewCommentDraft) {
+const gitLabLineRange = Effect.fn("GitLabPullRequestCli.lineRange")(function* (
+  patch: string,
+  comment: PullRequestReviewCommentDraft,
+) {
   const start = comment.startPosition;
   if (start === undefined) return {};
+  const digest = yield* Digest.Digest;
+  const fileHash = yield* digest.digestHex(Digest.sha1, new TextEncoder().encode(comment.path));
   const header = gitLabDiffHeader(comment.oldPath ?? comment.path, comment.path);
   const first = gitLabLineRangeEnd(fileHash, start, gitLabLineCounters(patch, header, start));
   const last = gitLabLineRangeEnd(
@@ -746,7 +746,7 @@ function gitLabLineRange(fileHash: string, patch: string, comment: PullRequestRe
     gitLabLineCounters(patch, header, comment.position),
   );
   return first.line_code === last.line_code ? {} : { line_range: { start: first, end: last } };
-}
+}, Effect.provide(Digest.layerWebCrypto));
 
 function stateParam(state: PullRequestListState): string {
   return state === "open" ? "opened" : state;
@@ -2697,11 +2697,8 @@ export const make = Effect.gen(function* () {
         yield* Effect.forEach(
           input.comments,
           (comment) =>
-            (comment.startPosition === undefined
-              ? Effect.succeed("")
-              : gitLabFileHash(comment.path)
-            ).pipe(
-              Effect.flatMap((fileHash) =>
+            gitLabLineRange(patch, comment).pipe(
+              Effect.flatMap((lineRange) =>
                 api({
                   cwd: input.cwd,
                   host: input.host,
@@ -2720,7 +2717,7 @@ export const make = Effect.gen(function* () {
                       old_path: comment.oldPath ?? comment.path,
                       new_path: comment.path,
                       ...gitLabReviewPositionLines(comment.position),
-                      ...gitLabLineRange(fileHash, patch, comment),
+                      ...lineRange,
                     },
                   }),
                 }),
