@@ -1,3 +1,5 @@
+import "~/index.css";
+
 import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -5,6 +7,7 @@ import { act, fakeTimers, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   file: null as ProjectReadFileResult | null,
+  files: {} as Record<string, ProjectReadFileResult>,
   optimistic: null as ProjectReadFileResult | null,
   writeFile: vi.fn(),
 }));
@@ -51,8 +54,12 @@ vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
 vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
 vi.mock(import("./projectFilesQueryState"), async (original) => ({
   ...(await original()),
-  useProjectFileQuery: () => ({
-    data: state.file,
+  useProjectFileQuery: (
+    _environmentId: EnvironmentId,
+    _cwd: string,
+    relativePath: string | null,
+  ) => ({
+    data: (relativePath ? state.files[relativePath] : undefined) ?? state.file,
     error: null,
     isPending: false,
     readError: null,
@@ -83,6 +90,7 @@ function setup() {
   localStorage.setItem(keys[0]!, "false");
   localStorage.setItem(keys[1]!, "true");
   state.optimistic = null;
+  state.files = {};
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   return {
     [Symbol.dispose]() {
@@ -158,5 +166,74 @@ describe("rendered Markdown task saves", () => {
         contents: "- [x] Keep the rest of this file\n",
       },
     });
+  });
+});
+
+function markdownFile(relativePath: string, contents: string): ProjectReadFileResult {
+  return { relativePath, contents, byteLength: contents.length, truncated: false };
+}
+
+function scrollPanel(relativePath: string) {
+  return (
+    <div className="flex h-[400px] flex-col">
+      <FilePreviewPanel
+        environmentId={environmentId}
+        cwd="/workspace"
+        projectName="Project"
+        relativePath={relativePath}
+        threadRef={threadRef}
+        composerDraftTarget={threadRef}
+        keybindings={[]}
+        availableEditors={[]}
+        openInShortcutEnabled={false}
+        revealLine={null}
+        revealRequestId={0}
+        onOpenFile={vi.fn()}
+        onNavigateFolder={vi.fn()}
+        folderTrail={undefined}
+        onPendingChange={vi.fn()}
+        selectedFilePending={false}
+        workspaceMutationId={null}
+      />
+    </div>
+  );
+}
+
+function markdownViewport(container: HTMLElement) {
+  const element = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="scroll-area-viewport"]'),
+  ).find((candidate) => candidate.textContent?.includes("paragraph 0."));
+  if (!element) throw new Error("rendered markdown viewport is missing");
+  return element;
+}
+
+describe("rendered markdown file preview", () => {
+  // regression: #22300 switching file tabs reset the rendered markdown scroll to the top
+  it("keeps each file's scroll position across file tab switches", async () => {
+    using _settings = setup();
+    state.files = {
+      "AGENTS.md": markdownFile(
+        "AGENTS.md",
+        Array.from({ length: 200 }, (_, i) => `Agents paragraph ${i}.`).join("\n\n"),
+      ),
+      "README.md": markdownFile(
+        "README.md",
+        Array.from({ length: 200 }, (_, i) => `Readme paragraph ${i}.`).join("\n\n"),
+      ),
+    };
+
+    await using screen = await render(scrollPanel("AGENTS.md"));
+    await expect.element(screen.getByText("Agents paragraph 199.")).toBeInTheDocument();
+    const agents = markdownViewport(screen.container);
+    agents.scrollTop = 1800;
+    agents.dispatchEvent(new Event("scroll"));
+
+    await screen.rerender(scrollPanel("README.md"));
+    await expect.element(screen.getByText("Readme paragraph 0.")).toBeInTheDocument();
+    expect(markdownViewport(screen.container).scrollTop).toBe(0);
+
+    await screen.rerender(scrollPanel("AGENTS.md"));
+    await expect.element(screen.getByText("Agents paragraph 0.")).toBeInTheDocument();
+    await vi.waitFor(() => expect(markdownViewport(screen.container).scrollTop).toBe(1800));
   });
 });
