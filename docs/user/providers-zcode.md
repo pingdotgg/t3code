@@ -1,7 +1,8 @@
 # ZCode
 
-T3 Code runs the ZCode CLI as an agent, using your own Z.AI account, skills, plugins, and MCP
-configuration.
+T3 Code attaches to the ZCode daemon (`zcode serve`) as an agent, using your own Z.AI account,
+skills, plugins, and MCP configuration. T3 Code starts the daemon when it is not already running
+and leaves it running when the session ends, so other ZCode clients on the machine keep working.
 
 ## Set Up ZCode
 
@@ -16,11 +17,10 @@ with T3 Code; the server's own `zcode login` is what counts.
 
 ## Credentials
 
-T3 Code never stores your Z.AI sign-in. The ZCode agent asks its host for credentials before every
-account-model request, so the server stands in as that host: it reads the sign-in `zcode login`
-already wrote on the same machine, exchanges it for a short-lived access token through the same
-Z.AI endpoints the ZCode app uses, and holds that token in memory only. The store is never
-written, so signing out or signing in again from a terminal applies on the next refresh.
+T3 Code never stores or reads your Z.AI sign-in. The ZCode daemon owns the credential exchange:
+it reads the sign-in `zcode login` wrote on the same machine and mints the short-lived account
+tokens its turns need. T3 Code attaches to that daemon and never handles the tokens. Signing out
+or signing in again from a terminal applies to the next turn.
 
 ## Models
 

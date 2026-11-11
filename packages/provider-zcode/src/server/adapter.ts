@@ -1,6 +1,4 @@
-import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Predicate from "effect/Predicate";
 import {
   type OrchestrationV2ConversationMessage,
@@ -32,6 +30,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -54,30 +53,21 @@ import {
 
 import {
   isServerRequest,
-  makeZcodeConnection,
   zcodeJsonStringify,
   zcodeRecordArray,
   zcodeRecordField,
   zcodeRecordNumber,
   zcodeRecordString,
   type ZcodeConnection,
+  type ZcodeProtocolError,
+  type ZcodeProtocolTimeoutError,
   type ZcodeRecord,
 } from "./zcodeProtocol.ts";
+import { zcodeModelSelectionFromSlug } from "./zcodeRuntime.ts";
 import {
-  readZcodeAppVersion,
-  resolveZcodeCatalogFiles,
-  resolveZcodeLaunchCommand,
-  zcodeDataRoot,
-  zcodeModelSelectionFromSlug,
-  zcodeRuntimeEnvironment,
-  zcodeSpawnArgs,
-  type ZcodeCatalogFileSet,
-} from "./zcodeRuntime.ts";
-import {
-  makeZcodeRequestAuth,
-  zcodeAccountConfigPushFromLadder,
-  zcodeFamilyFromProviderId,
-} from "./zcodeRequestAuth.ts";
+  makeZcodeServeConnection,
+  type ZcodeServeConnectionOptions,
+} from "./zcodeServeConnection.ts";
 
 export const ZCODE_PROVIDER: ProviderDriverKind = ProviderDriverKind.make("zcode");
 const DEFAULT_ZCODE_SETTINGS = Schema.decodeSync(ZcodeSettings)({});
@@ -192,10 +182,14 @@ export interface ZcodeAdapterV2Options {
   readonly settings: ZcodeSettings;
   /** Instance environment already merged with the host process environment. */
   readonly environment: NodeJS.ProcessEnv;
-  /** Testkit injection point; production spawns the real `zcode app-server`. */
-  readonly makeConnection?: typeof makeZcodeConnection;
-  /** Testkit injection point; production mints OAuth project tokens from the local store. */
-  readonly makeRequestAuth?: typeof makeZcodeRequestAuth;
+  /** Testkit injection point; production attaches to the local `zcode serve` daemon. */
+  readonly makeConnection?: (
+    options: ZcodeServeConnectionOptions,
+  ) => Effect.Effect<
+    ZcodeConnection,
+    ZcodeProtocolError | ZcodeProtocolTimeoutError,
+    ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+  >;
 }
 
 function providerRef(
@@ -418,7 +412,6 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
   options: ZcodeAdapterV2Options,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const agentScope = yield* AgentScope;
   const fileSystem = yield* FileSystem.FileSystem;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -431,20 +424,6 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
       detail,
       ...(payload === undefined ? {} : { payload }),
     });
-
-  // The CLI's own host reports the installed version in the token exchange; unknown stays omitted.
-  const dataRoot = zcodeDataRoot(options.environment);
-  const clientVersion =
-    dataRoot === undefined
-      ? undefined
-      : yield* readZcodeAppVersion(fileSystem, `${dataRoot}/.zcode/server/current.json`);
-
-  const requestAuth = (options.makeRequestAuth ?? makeZcodeRequestAuth)({
-    fileSystem,
-    httpClient,
-    environment: options.environment,
-    clientVersion,
-  });
 
   const zcodeMcpServers = (
     session: McpProviderSessionConfig | undefined,
@@ -474,34 +453,14 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
     ) {
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
-      // Catalog files must exist before spawn: the CLI fails closed on dangling env paths.
-      const catalogFiles: ZcodeCatalogFileSet = yield* resolveZcodeCatalogFiles(
-        fileSystem,
-        options.environment,
-      );
-      const env = zcodeRuntimeEnvironment(options.environment, catalogFiles);
-      const launchCommand = yield* resolveZcodeLaunchCommand(
-        options.settings,
-        options.environment,
-        fileSystem,
-      );
-      const scopedLaunch = yield* agentScope.wrap({
-        command: launchCommand,
-        args: zcodeSpawnArgs(options.settings.launchArgs),
-        name: "zcode",
-        threadId: input.threadId,
-        env,
-      });
-      // Finalizers run in reverse order: reap detached work after terminating zcode.
-      const scopeUnit = scopedLaunch.unit;
-      const stopScope =
-        scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
-      yield* Effect.addFinalizer(() => stopScope);
-      const connection: ZcodeConnection = yield* (options.makeConnection ?? makeZcodeConnection)({
-        command: scopedLaunch.command,
-        args: scopedLaunch.args,
+      const connection: ZcodeConnection = yield* (
+        options.makeConnection ?? makeZcodeServeConnection
+      )({
+        environment: options.environment,
+        settings: options.settings,
         cwd,
-        env,
+        fileSystem,
+        httpClient,
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.mapError(
@@ -513,13 +472,8 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
             }),
         ),
       );
-      // Detached children can keep stdout open after zcode exits.
-      if (scopeUnit !== undefined) {
-        yield* connection.exited.pipe(
-          Effect.matchEffect({ onFailure: () => stopScope, onSuccess: () => stopScope }),
-          Effect.forkIn(scope),
-        );
-      }
+      // A daemon restart surfaces as a closed channel; the pump below fails with it.
+      yield* connection.exited.pipe(Effect.ignore, Effect.forkIn(scope));
 
       const now = yield* DateTime.now;
       let sessionEntity: OrchestrationV2ProviderSession = {
@@ -1503,45 +1457,6 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
             yield* connection.respond(respondId, {});
             return;
           }
-          case "interaction/requestProviderRuntimeHeaders": {
-            const params = zcodeRecordField(record, "params");
-            const providerId =
-              zcodeRecordString(params ?? {}, "providerId") ??
-              zcodeRecordString(
-                zcodeRecordField(params ?? {}, "modelSelection") ?? {},
-                "providerId",
-              );
-            const family = zcodeFamilyFromProviderId(providerId);
-            if (family === undefined) {
-              yield* connection.respond(respondId, {
-                headersApplied: false,
-                errorMessage: "Unsupported ZCode account provider.",
-              });
-              return;
-            }
-            const rejectedProjectTokenFingerprint = zcodeRecordString(
-              params ?? {},
-              "rejectedProjectTokenFingerprint",
-            );
-            const answer = requestAuth.answerRuntimeHeaders({
-              family,
-              ...(rejectedProjectTokenFingerprint === undefined
-                ? {}
-                : { rejectedProjectTokenFingerprint }),
-            });
-            // Minting can take seconds on a cache miss; the CLI correlates the reply by id, so
-            // fork it instead of stalling every session event this permit serializes.
-            yield* answer.pipe(
-              Effect.flatMap((response) => connection.respond(respondId, response)),
-              Effect.catchCause((cause) =>
-                Effect.logWarning("ZCode runtime headers answer failed.", {
-                  errorTag: causeErrorTag(cause),
-                }),
-              ),
-              Effect.forkIn(scope),
-            );
-            return;
-          }
           case "interaction/requestPermission": {
             const params = zcodeRecordField(record, "params");
             const nativeRequestId =
@@ -1656,7 +1571,7 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
                 ? null
                 : makeProviderFailure({
                     cause,
-                    message: "zcode app-server exited unexpectedly.",
+                    message: "The ZCode server connection was lost.",
                     class: "transport_error",
                   });
               yield* finalizeTurn(state);
@@ -1666,8 +1581,8 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
             yield* updateProviderSession(
               interrupted ? "stopped" : "error",
               interrupted
-                ? "zcode app-server was stopped."
-                : "zcode app-server exited unexpectedly.",
+                ? "The ZCode server connection was closed."
+                : "The ZCode server connection was lost.",
             );
             yield* Queue.fail(
               events,
@@ -1682,40 +1597,7 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
         Effect.forkIn(scope),
       );
 
-      // Provisioning must precede session/create: the CLI resolves models against the registry
-      // it builds from this push. Best-effort — a rejected push surfaces honestly as a
-      // "Select a model" turn failure instead of failing the session open.
-      const bootstrapProviderRegistry = Effect.fn("ZcodeAdapter.bootstrapProviderRegistry")(
-        function* () {
-          if (catalogFiles.builtinCatalog === undefined || catalogFiles.builtinPath === undefined) {
-            yield* Effect.logWarning(
-              "ZCode builtin catalog unavailable; account models will report as missing.",
-              { builtinPath: catalogFiles.builtinPath ?? null },
-            );
-            return;
-          }
-          const push = yield* zcodeAccountConfigPushFromLadder(fileSystem, {
-            builtinPath: catalogFiles.builtinPath,
-            builtinCatalog: catalogFiles.builtinCatalog,
-            environment: options.environment,
-          });
-          if (push === undefined) {
-            yield* Effect.logWarning(
-              "ZCode catalog declares no account providers; account models will report as missing.",
-            );
-            return;
-          }
-          yield* request("provider/updateAccountConfig", push).pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning("ZCode account config push failed.", {
-                operation: error.operation,
-              }),
-            ),
-            Effect.ignore,
-          );
-        },
-      );
-      yield* bootstrapProviderRegistry();
+      // The daemon owns provider/credential provisioning, so no account config is pushed here.
 
       const subscribeSession = Effect.fnUntraced(function* (sessionId: string) {
         const result = yield* request("session/subscribe", {

@@ -30,7 +30,6 @@ import { ZCODE_PROVIDER, makeZcodeAdapterV2 } from "@t3tools/provider-zcode/test
 import {
   type FakeZcodeScenario,
   ZcodeAdapterTestLayer,
-  fakeZcodeRequestAuth,
   makeFakeZcodeConnection,
   makeZcodeAdapterOptions,
   zcodeDriverKind,
@@ -451,52 +450,29 @@ describe("ZcodeAdapterV2 (frame-driven)", () => {
     }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
   );
 
-  it.effect(
-    "sends account-model turns with the advertised reasoning level and serves runtime headers",
-    () =>
-      Effect.gen(function* () {
-        const harness = yield* makeHarness({ makeRequestAuth: fakeZcodeRequestAuth() });
-        // "default" omits the model entirely; account slugs select per turn.
-        yield* harness.startTurn(TURN_TEXT, "account:zai-individual-coding-plan/GLM-5.3-Flash");
-        const send = requestFor(harness.scenario, "session/send");
-        assert.isDefined(send);
-        assert.deepEqual(send!.params["modelSelection"], {
-          providerId: "account:zai-individual-coding-plan",
-          modelId: "GLM-5.3-Flash",
-          options: { reasoningLevel: "max" },
-        });
+  it.effect("sends account-model turns with the advertised reasoning level", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      // "default" omits the model entirely; account slugs select per turn.
+      yield* harness.startTurn(TURN_TEXT, "account:zai-individual-coding-plan/GLM-5.3-Flash");
+      const send = requestFor(harness.scenario, "session/send");
+      assert.isDefined(send);
+      assert.deepEqual(send!.params["modelSelection"], {
+        providerId: "account:zai-individual-coding-plan",
+        modelId: "GLM-5.3-Flash",
+        options: { reasoningLevel: "max" },
+      });
 
-        // Before an account-model request the CLI asks the host for project runtime headers;
-        // the injected request auth's response must reach the wire verbatim.
-        const broker = zcodeServerRequest("interaction/requestProviderRuntimeHeaders", {
-          sessionId: harness.scenario.createdSessionId(),
-          modelSelection: {
-            providerId: "account:zai-individual-coding-plan",
-            modelId: "GLM-5.3-Flash",
-            options: { reasoningLevel: "max" },
-          },
-        });
-        yield* harness.scenario.offerEvent(broker);
-        // The first two responds are the create-time runtime preferences and MCP auth headers.
-        yield* harness.scenario.takeRespond;
-        yield* harness.scenario.takeRespond;
-        const answered = yield* harness.scenario.takeRespond;
-        assert.equal(answered.id, broker.id);
-        assert.deepEqual(answered.result, {
-          headersApplied: true,
-          requestAuth: { apiKey: "test", apiKeyId: "k", accountScope: "a" },
-        });
-
-        yield* harness.offerTurnEvent("turn.completed", {
-          response: "pong",
-          tokenCount: 3,
-          toolCallCount: 0,
-          duration: 60,
-          resultType: "success",
-        });
-        yield* harness.takeEvent("turn.terminal", (event) => event.status === "completed");
-        assert.deepEqual(harness.scenario.unexpectedMethods(), []);
-      }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
+      yield* harness.offerTurnEvent("turn.completed", {
+        response: "pong",
+        tokenCount: 3,
+        toolCallCount: 0,
+        duration: 60,
+        resultType: "success",
+      });
+      yield* harness.takeEvent("turn.terminal", (event) => event.status === "completed");
+      assert.deepEqual(harness.scenario.unexpectedMethods(), []);
+    }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
   );
 
   it.effect("maps shell tool lifecycle into command execution items", () =>

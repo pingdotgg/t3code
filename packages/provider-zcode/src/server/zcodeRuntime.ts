@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Catalog paths key on sha256 of the endpoint origin; Effect's crypto service adds a dependency the driver does not carry.
-// Provisioning for `zcode app-server --stdio`: spawn args, catalog-backed environment, the
-// account config push that makes catalog models selectable, and T3 model slug mapping.
+// ZCode CLI locations and catalog discovery: the data root, the installed catalog files the
+// model picker enumerates, the launch command and `serve` args, and T3 model slug mapping.
 // Everything protocol-shaped here mirrors the Phase 0 probe notes (PROTOCOL-NOTES.md).
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
@@ -208,8 +208,8 @@ export function zcodeModelSelectionFromSlug(slug: string): ZcodeModelSelection |
   return { providerId, modelId, options: { reasoningLevel } };
 }
 
-export function zcodeSpawnArgs(launchArgs: string): ReadonlyArray<string> {
-  return ["app-server", "--stdio", ...launchArgs.split(/\s+/).filter((arg) => arg.length > 0)];
+export function zcodeServeArgs(launchArgs: string): ReadonlyArray<string> {
+  return ["serve", ...launchArgs.split(/\s+/).filter((arg) => arg.length > 0)];
 }
 
 /**

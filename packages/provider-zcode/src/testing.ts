@@ -9,5 +9,4 @@ export type {
   ZcodeProtocolError,
   ZcodeProtocolTimeoutError,
   ZcodeRecord,
-  ZcodeSpawnOptions,
 } from "./server/zcodeProtocol.ts";

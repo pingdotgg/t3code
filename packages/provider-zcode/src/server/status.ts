@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import type { ZcodeSettings } from "../settings.ts";
 import { resolveZcodeCatalogFiles, resolveZcodeLaunchCommand } from "./zcodeRuntime.ts";
-import { zcodeEntitledModels, zcodeOAuthSelectedFamilies } from "./zcodeRequestAuth.ts";
+import { zcodeEntitledModels, zcodeOAuthSelectedFamilies } from "./zcodeEntitlements.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -136,8 +136,8 @@ const runZcodeDoctor = Effect.fn("ZcodeProviderStatus.runDoctor")(function* (
 
 /**
  * Auth is CLI-managed (`zcode login`); the probe derives status from the same credential-store
- * keys and setting.json plan selections the provisioning ladder accepts, so an account that can
- * make ZCode requests never shows a false `zcode login` warning.
+ * keys and setting.json plan selections the model picker accepts, so an account that can make
+ * ZCode requests never shows a false `zcode login` warning.
  */
 export const zcodeAuthFromCredentials = (
   data: unknown,
@@ -153,7 +153,7 @@ export const zcodeAuthFromCredentials = (
     );
     return hasActiveProvider ? "authenticated" : "unauthenticated";
   }
-  // Object stores are judged like provisioning, which ignores any oauth:active_provider marker.
+  // Object stores are judged like the picker, which ignores any oauth:active_provider marker.
   if (typeof data === "object" && data !== null) {
     return zcodeOAuthSelectedFamilies(setting, data as Record<string, unknown>).size > 0
       ? "authenticated"

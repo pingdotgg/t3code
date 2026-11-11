@@ -46,8 +46,6 @@ export interface FakeZcodeScenario {
 }
 
 const KNOWN_METHODS = new Set([
-  "provider/updateAccountConfig",
-  "provider/refreshRegistry",
   "session/create",
   "session/read",
   "session/resume",
@@ -119,7 +117,7 @@ function zcodeSessionCreateResult(sessionId: string, params: ZcodeRecord): Zcode
   };
 }
 
-/** Builds the fake `zcode app-server` NDJSON peer the adapter talks to. */
+/** Builds the fake ZCode connection peer the adapter talks to. */
 export const makeFakeZcodeConnection = Effect.fnUntraced(function* (): Effect.fn.Return<
   FakeZcodeScenario,
   never,
@@ -182,14 +180,6 @@ export const makeFakeZcodeConnection = Effect.fnUntraced(function* (): Effect.fn
           });
           return { sessionId: createdSessionId, accepted: true, stateRevision: 1 };
         }
-        case "provider/updateAccountConfig":
-          return {
-            receivedRevision: String(params["revision"] ?? ""),
-            providerCount: Object.keys((params["providers"] ?? {}) as ZcodeRecord).length,
-            status: "received",
-          };
-        case "provider/refreshRegistry":
-          return { refreshed: true };
         case "session/read":
           return zcodeSessionCreateResult(createdSessionId ?? "sess_unknown", params);
         case "session/stop":
@@ -262,19 +252,6 @@ export const makeZcodeAdapterOptions = (): ZcodeAdapterV2Options => ({
   settings: ZcodeAdapterV2Driver.defaultConfig(),
   environment: {},
 });
-
-/**
- * Request auth the adapter can drive without touching the local credential store or network:
- * every runtime-headers request is answered with the fixed successful exchange.
- */
-export const fakeZcodeRequestAuth =
-  (): NonNullable<ZcodeAdapterV2Options["makeRequestAuth"]> => () => ({
-    answerRuntimeHeaders: () =>
-      Effect.succeed({
-        headersApplied: true,
-        requestAuth: { apiKey: "test", apiKeyId: "k", accountScope: "a" },
-      }),
-  });
 
 /** The driver kind the package driver and the hand-built adapter options must agree on. */
 export const zcodeDriverKind: typeof ZCODE_PROVIDER = ZCODE_PROVIDER;

@@ -25,7 +25,8 @@ export const ZcodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Launch arguments",
-        description: "Additional CLI arguments passed to zcode app-server on session start.",
+        description:
+          "Additional CLI arguments passed to `zcode serve` when T3 Code starts the ZCode daemon.",
         providerSettingsForm: { clearWhenEmpty: "omit" },
       }),
     ),
