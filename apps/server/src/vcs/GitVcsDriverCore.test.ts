@@ -4931,19 +4931,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const fileSystem = yield* FileSystem.FileSystem;
           const pathService = yield* Path.Path;
 
-          // Git blocks file submodule transports (CVE-2022-39253) despite repo config; local fixtures need env permission.
-          const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
-          process.env.GIT_ALLOW_PROTOCOL = "file";
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              if (previousAllowedProtocol === undefined) {
-                delete process.env.GIT_ALLOW_PROTOCOL;
-              } else {
-                process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
-              }
-            }),
-          );
-
           const submoduleRepo = yield* makeTmpDir("git-submodule-");
           yield* initRepoWithCommit(submoduleRepo);
           yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
@@ -4999,7 +4986,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           // The borrowed objects were copied, so the worktree survives the source losing them.
           yield* fileSystem.remove(pathService.join(cwd, ".git", "modules"), { recursive: true });
           yield* git(pathService.join(worktreePath, "shared"), ["fsck", "--no-progress"]);
-        }),
+        }).pipe(withGitFileProtocol),
     );
 
     it.effect.each([
