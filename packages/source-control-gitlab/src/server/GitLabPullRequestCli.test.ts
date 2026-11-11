@@ -1383,6 +1383,21 @@ layer("GitLabPullRequestCli.layer", (it) => {
           ),
         ),
       );
+      // Line 12 is added after a removed line, so GitLab's old counter there is 11, not 0.
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify([
+              {
+                old_path: "src/a.ts",
+                new_path: "src/b.ts",
+                renamed_file: true,
+                diff: "@@ -8,4 +9,4 @@\n a\n b\n-c\n+d\n+e\n f\n-g\n",
+              },
+            ]),
+          ),
+        ),
+      );
       mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
@@ -1399,12 +1414,26 @@ layer("GitLabPullRequestCli.layer", (it) => {
             position: { kind: "deleted", oldLine: 4 },
             body: "why remove?",
           },
+          {
+            path: "src/b.ts",
+            oldPath: "src/a.ts",
+            startPosition: { kind: "context", oldLine: 9, newLine: 10, side: "right" },
+            position: { kind: "added", newLine: 12 },
+            body: "this block",
+          },
+          {
+            path: "src/b.ts",
+            startPosition: { kind: "added", newLine: 12 },
+            position: { kind: "added", newLine: 12 },
+            body: "one line",
+          },
         ],
       });
 
       expect(argsOfCall(0)[1]).toContain("merge_requests/7");
-      expect(argsOfCall(1)[1]).toContain("/discussions");
-      expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({
+      expect(argsOfCall(1)[1]).toContain("merge_requests/7/diffs");
+      expect(argsOfCall(2)[1]).toContain("/discussions");
+      expect(JSON.parse(callAt(2).stdin ?? "")).toEqual({
         body: "why remove?",
         position: {
           base_sha: "base",
@@ -1416,8 +1445,18 @@ layer("GitLabPullRequestCli.layer", (it) => {
           old_line: 4,
         },
       });
-      expect(argsOfCall(2)[1]).toContain("/notes");
-      expect(argsOfCall(3)[1]).toContain("/approve");
+      // sha1("src/b.ts")
+      const fileHash = "e55a8d6c5dd26e72538fd71fb7695dd829c8dab5";
+      expect(JSON.parse(callAt(3).stdin ?? "").position).toMatchObject({
+        new_line: 12,
+        line_range: {
+          start: { line_code: `${fileHash}_9_10`, type: null, old_line: 9, new_line: 10 },
+          end: { line_code: `${fileHash}_11_12`, type: "new", new_line: 12 },
+        },
+      });
+      expect(JSON.parse(callAt(4).stdin ?? "").position).not.toHaveProperty("line_range");
+      expect(argsOfCall(5)[1]).toContain("/notes");
+      expect(argsOfCall(6)[1]).toContain("/approve");
     }),
   );
 
