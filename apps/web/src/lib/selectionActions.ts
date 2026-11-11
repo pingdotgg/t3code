@@ -28,6 +28,9 @@ export function resolveSelectionActionPosition(options: {
 
 type SelectionRect = { left: number; top: number; right: number; bottom: number };
 
+// Covers the small hand drift between releasing a drag and the next click.
+const RELEASE_MARGIN = 16;
+
 export function resolveChatSelectionActionPosition({
   selectionRect,
   bounds,
@@ -52,12 +55,12 @@ export function resolveChatSelectionActionPosition({
       viewport.width - actionSize.width - 8,
     ),
   );
-  const nearRelease = (y: number, left = x) =>
+  const nearRelease = (y: number) =>
     pointer !== null &&
-    pointer.x >= left - 8 &&
-    pointer.x <= left + actionSize.width + 8 &&
-    pointer.y >= y - 8 &&
-    pointer.y <= y + actionSize.height + 8;
+    pointer.x >= x - RELEASE_MARGIN &&
+    pointer.x <= x + actionSize.width + RELEASE_MARGIN &&
+    pointer.y >= y - RELEASE_MARGIN &&
+    pointer.y <= y + actionSize.height + RELEASE_MARGIN;
   for (const clip of [bounds, outerBounds]) {
     const top = Math.max(8, clip.top);
     const bottom = Math.min(viewport.height - 8, clip.bottom);
@@ -71,8 +74,8 @@ export function resolveChatSelectionActionPosition({
   if (!pointer || !nearRelease(pinTop)) return { x, y: pinTop };
   if (!nearRelease(pinBottom)) return { x, y: pinBottom };
   // A chat area too short for either pin: step sideways off the release point.
-  const right = pointer.x + 16;
-  const left = Math.max(8, pointer.x - actionSize.width - 16);
+  const right = pointer.x + RELEASE_MARGIN;
+  const left = Math.max(8, pointer.x - actionSize.width - RELEASE_MARGIN);
   return {
     x: right + actionSize.width <= viewport.width - 8 ? right : left,
     y: pinTop,

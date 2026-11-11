@@ -36,6 +36,13 @@ describe("selection action positioning", () => {
       expected: { x: 260, y: 464 },
     },
     {
+      name: "pinned fallback avoids a click just past the release point",
+      rect: { left: 200, right: 400, top: 102, bottom: 498 },
+      pointer: { x: 261, y: 115 },
+      actionSize: { width: 60, height: 24 },
+      expected: { x: 270, y: 468 },
+    },
+    {
       name: "short chat area steps sideways off the release point",
       rect: { left: 200, right: 400, top: 102, bottom: 148 },
       bounds: { ...bounds, top: 100, bottom: 150 },
@@ -58,10 +65,10 @@ describe("selection action positioning", () => {
   ])("$name", ({ rect, expected, bounds: clips, ...options }) => {
     expect(
       resolveChatSelectionActionPosition({
+        actionSize,
         ...options,
         selectionRect: rect,
         bounds: clips ?? bounds,
-        actionSize,
         viewport,
       }),
     ).toEqual(expected);
