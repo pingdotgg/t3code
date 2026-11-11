@@ -56,7 +56,7 @@ describe("ThemeImportDialog", () => {
     );
 
     await userEvent.click(page.getByRole("button", { name: "Search community themes" }));
-    await userEvent.type(page.getByLabelText("Search Open VSX themes"), "night");
+    await userEvent.fill(page.getByLabelText("Search Open VSX themes"), "night");
 
     await expect.element(page.getByRole("button", { name: "Install Nightfall" })).toBeVisible();
     // A slow runner can debounce on a prefix like "ni"; wait for the full query.
