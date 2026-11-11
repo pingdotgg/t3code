@@ -171,65 +171,71 @@ vi.mock(import("../../state/session"), async (original) => ({
   readEnvironmentScope: () => true,
 }));
 
+function setupEffortTask() {
+  setup();
+  const selection = {
+    ...task.modelSelection,
+    options: [{ id: "reasoningEffort", value: "high" }],
+  };
+  state.tasks = [{ ...task, modelSelection: selection }];
+  state.settings = { ...DEFAULT_UNIFIED_SETTINGS, defaultModelSelection: selection };
+  state.providers = Atom.make<ReadonlyArray<ServerProvider>>([
+    {
+      instanceId: selection.instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-03T00:00:00.000Z",
+      models: [
+        {
+          slug: selection.model,
+          name: "GPT-5.4",
+          isCustom: false,
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning effort",
+                type: "select",
+                options: [
+                  { id: "low", label: "Low", isDefault: true },
+                  { id: "high", label: "High" },
+                ],
+                currentValue: "low",
+              },
+            ],
+          }),
+        },
+        { slug: "plain", name: "Plain model", isCustom: false, capabilities: null },
+      ],
+      skills: [],
+      slashCommands: [],
+    },
+  ]);
+  return selection;
+}
+
+async function fillTitleAndPrompt() {
+  await userEvent.fill(page.getByRole("textbox", { name: "Name" }), "Effort task");
+  await userEvent.fill(page.getByRole("textbox", { name: "Prompt", exact: true }), "Review issues");
+}
+
 describe("ScheduledTasksSettings", () => {
   it.each([false, true])(
-    "preserves and edits model options (existing task: %s)",
+    "keeps model options when the same model is reselected (existing task: %s)",
     async (editing) => {
-      setup();
-      const selection = {
-        ...task.modelSelection,
-        options: [{ id: "reasoningEffort", value: "high" }],
-      };
-      state.tasks = [{ ...task, modelSelection: selection }];
-      state.settings = { ...DEFAULT_UNIFIED_SETTINGS, defaultModelSelection: selection };
-      state.providers = Atom.make<ReadonlyArray<ServerProvider>>([
-        {
-          instanceId: selection.instanceId,
-          driver: ProviderDriverKind.make("codex"),
-          enabled: true,
-          installed: true,
-          version: null,
-          status: "ready",
-          auth: { status: "authenticated" },
-          checkedAt: "2026-11-03T00:00:00.000Z",
-          models: [
-            {
-              slug: selection.model,
-              name: "GPT-5.4",
-              isCustom: false,
-              capabilities: createModelCapabilities({
-                optionDescriptors: [
-                  {
-                    id: "reasoningEffort",
-                    label: "Reasoning effort",
-                    type: "select",
-                    options: [
-                      { id: "low", label: "Low", isDefault: true },
-                      { id: "high", label: "High" },
-                    ],
-                    currentValue: "low",
-                  },
-                ],
-              }),
-            },
-            { slug: "plain", name: "Plain model", isCustom: false, capabilities: null },
-          ],
-          skills: [],
-          slashCommands: [],
-        },
-      ]);
+      const selection = setupEffortTask();
       await using screen = await render(
         <ScheduledTasksSettings {...(editing ? { taskId: task.id } : {})} />,
       );
       if (!editing) await screen.getByRole("button", { name: "New task" }).click();
-      await userEvent.fill(page.getByRole("textbox", { name: "Name" }), "Effort task");
-      await userEvent.fill(
-        page.getByRole("textbox", { name: "Prompt", exact: true }),
-        "Review issues",
-      );
+      await fillTitleAndPrompt();
       await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
       await page.getByRole("option", { name: /GPT-5.4/ }).click();
-      expect(page.getByRole("button", { name: "High", exact: true }).query()).not.toBeNull();
+      await expect.element(page.getByRole("button", { name: "High", exact: true })).toBeVisible();
       await page.getByRole("button", { name: editing ? "Save task" : "Create task" }).click();
       await vi.waitFor(() =>
         expect(state.upsert).toHaveBeenLastCalledWith({
@@ -237,45 +243,44 @@ describe("ScheduledTasksSettings", () => {
           input: expect.objectContaining({ modelSelection: selection }),
         }),
       );
-
-      await screen.rerender(<ScheduledTasksSettings />);
-      await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
-      await userEvent.fill(page.getByRole("textbox", { name: "Name" }), "Low effort task");
-      await userEvent.fill(
-        page.getByRole("textbox", { name: "Prompt", exact: true }),
-        "Review issues",
-      );
-      await page.getByRole("button", { name: "High", exact: true }).click();
-      await page.getByRole("menuitemradio", { name: /^Low/ }).click();
-      await expect.element(page.getByRole("button", { name: "Low", exact: true })).toBeVisible();
-      await page.getByRole("button", { name: "Save task" }).click();
-      await vi.waitFor(() =>
-        expect(state.upsert).toHaveBeenLastCalledWith({
-          environmentId,
-          input: expect.objectContaining({
-            modelSelection: {
-              ...selection,
-              options: expect.arrayContaining([{ id: "reasoningEffort", value: "low" }]),
-            },
-          }),
-        }),
-      );
-      await screen.rerender(<ScheduledTasksSettings />);
-      await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
-      await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
-      await page.getByRole("option", { name: /Plain model/ }).click();
-      expect(page.getByRole("button", { name: "High", exact: true }).query()).toBeNull();
-      await page.getByRole("button", { name: "Save task" }).click();
-      await vi.waitFor(() =>
-        expect(state.upsert).toHaveBeenLastCalledWith({
-          environmentId,
-          input: expect.objectContaining({
-            modelSelection: { instanceId: selection.instanceId, model: "plain" },
-          }),
-        }),
-      );
     },
   );
+
+  it("saves a changed effort and drops options when switching models", async () => {
+    const selection = setupEffortTask();
+    await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await fillTitleAndPrompt();
+    await page.getByRole("button", { name: "High", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: /^Low/ }).click();
+    await expect.element(page.getByRole("button", { name: "Low", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Save task" }).click();
+    await vi.waitFor(() =>
+      expect(state.upsert).toHaveBeenLastCalledWith({
+        environmentId,
+        input: expect.objectContaining({
+          modelSelection: {
+            ...selection,
+            options: expect.arrayContaining([{ id: "reasoningEffort", value: "low" }]),
+          },
+        }),
+      }),
+    );
+
+    await screen.rerender(<ScheduledTasksSettings />);
+    await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
+    await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+    await page.getByRole("option", { name: /Plain model/ }).click();
+    expect(page.getByRole("button", { name: "High", exact: true }).query()).toBeNull();
+    await page.getByRole("button", { name: "Save task" }).click();
+    await vi.waitFor(() =>
+      expect(state.upsert).toHaveBeenLastCalledWith({
+        environmentId,
+        input: expect.objectContaining({
+          modelSelection: { instanceId: selection.instanceId, model: "plain" },
+        }),
+      }),
+    );
+  });
   it("creates on a permitted secondary and reacts to permission changes", async () => {
     setup();
     state.secondary = true;

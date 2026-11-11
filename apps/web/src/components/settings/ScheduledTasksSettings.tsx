@@ -49,7 +49,7 @@ import {
 
 import { formatRelativeTime } from "../../timestampFormat";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
-import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { getCustomModelOptionsByInstance, selectsPlanAgent } from "../../modelSelection";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { usePrimaryCloudLinkState } from "../../cloud/cloudLinkState";
 import { requestConfirmDialog } from "../../confirmDialog";
@@ -1779,7 +1779,7 @@ function ScheduledTaskEditorForm({
                   model={activeModel}
                   modelOptions={activeSelection.options ?? []}
                   allowPromptInjectedEffort={false}
-                  planModeEnabled={settings.planModeEnabled}
+                  includePlanAgent={selectsPlanAgent(activeSelection.options)}
                   disabled={saving || !connected}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>
