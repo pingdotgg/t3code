@@ -451,6 +451,10 @@
       "types": "./src/threadReference.ts",
       "default": "./src/threadReference.ts"
     },
+    "./fleet-address": {
+      "types": "./src/fleetAddress.ts",
+      "default": "./src/fleetAddress.ts"
+    },
     "./pull-request-project-filter": {
       "types": "./src/pullRequestProjectFilter.ts",
       "default": "./src/pullRequestProjectFilter.ts"

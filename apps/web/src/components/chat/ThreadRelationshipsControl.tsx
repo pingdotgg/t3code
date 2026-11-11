@@ -8,6 +8,11 @@ import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  fleetSeatAddressabilityHint,
+  fleetSeatFromRemoteChild,
+  resolveFleetSeatAddressability,
+} from "@t3tools/client-runtime/fleet-address";
+import {
   deriveWorkflowGroups,
   projectedSubagentsToRuntime,
   type RuntimeSubagent,
@@ -258,7 +263,8 @@ function currentSubagent<Agent extends RuntimeSubagent>(
 
 /**
  * A task delegated to a linked environment. It has no thread here, so it opens
- * the thread there, when this client is connected to that environment.
+ * the seat there when this client is connected to that environment — the same
+ * fleet address used to queue or send without leaving the team surface.
  */
 function RemoteSubagentRow(props: {
   readonly agent: RemoteSubagent;
@@ -267,6 +273,11 @@ function RemoteSubagentRow(props: {
   const navigate = useNavigate();
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
   const { remoteChild } = props.agent;
+  const seat = fleetSeatFromRemoteChild(remoteChild);
+  const addressability = resolveFleetSeatAddressability({
+    connection: environment?.connection ?? null,
+  });
+  const addressable = addressability === "ready";
   const status = props.agent.status;
   const failed = status === "failed";
   const title = relationshipThreadTitle({
@@ -283,14 +294,12 @@ function RemoteSubagentRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              aria-disabled={environment === null || undefined}
+              aria-disabled={!addressable || undefined}
               onClick={() => {
-                if (environment === null) return;
+                if (!addressable) return;
                 void navigate({
                   to: "/$environmentId/$threadId",
-                  params: buildThreadRouteParams(
-                    scopeThreadRef(remoteChild.environmentId, remoteChild.threadId),
-                  ),
+                  params: buildThreadRouteParams(scopeThreadRef(seat.environmentId, seat.threadId)),
                 });
               }}
             />
@@ -319,9 +328,9 @@ function RemoteSubagentRow(props: {
           <LineageTooltipContent
             title={title}
             hint={
-              environment === null
-                ? `Runs on ${remoteChild.label}. Connect to it to open the thread there.`
-                : `Open on ${remoteChild.label}`
+              addressable
+                ? `Addressable on ${remoteChild.label}. Open to queue or send.`
+                : fleetSeatAddressabilityHint(addressability, remoteChild.label)
             }
           />
         </TooltipPopup>
