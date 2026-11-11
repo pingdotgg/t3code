@@ -4,7 +4,10 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import {
   findExistingAddProject,
+  getCloneDestinationPath,
+  getCloneDirectoryLeafName,
   getCloneDirectoryName,
+  getCloneDirectoryPath,
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
@@ -60,6 +63,33 @@ describe("add project shared logic", () => {
     );
     expect(normalizePastedCloneUrl("group/subgroup/project")).toBe("group/subgroup/project");
     expect(normalizePastedCloneUrl("/srv/git/repo.git")).toBe("/srv/git/repo.git");
+    for (const gitlabProject of [
+      "https://gitlab.com/acme/tools/src/branch/worker.git",
+      "https://scm.example.test/acme/tools/src/branch/worker.git",
+      "https://scm.example.test/acme/tools/src/branch/worker",
+      "https://scm.example.test/team/repo/src/branch/main/-/README.md",
+      "https://forgejo.example.test/a/b/src/branch/mount/team/repo.git",
+    ]) {
+      expect(normalizePastedCloneUrl(gitlabProject)).toBe(gitlabProject);
+    }
+  });
+
+  it("clones the repository when given a page URL copied from the browser", () => {
+    for (const [pageUrl, pageRoute, repository] of [
+      ["https://github.com/pingdotgg/t3code/tree/main", "/tree/", "t3code"],
+      ["https://gitlab.com/gitlab-org/gitlab-runner/-/tree/main", "/-/", "gitlab-runner"],
+      ["https://git.cafe/pingdotgg/t3code/tree/main", "/tree/", "t3code"],
+      ["https://gitlab.example.test/g/p/-/blob/main/src/branch/x", "/-/", "p"],
+      ["https://code.company.test/g/p/-/tree/main", "/-/", "p"],
+      ["https://github.com/pingdotgg/t3code/tree/release.git", "/tree/", "t3code"],
+    ] as const) {
+      const cloneUrl = normalizePastedCloneUrl(pageUrl);
+      expect(cloneUrl).not.toContain(pageRoute);
+      expect(getCloneDirectoryName(cloneUrl)).toBe(repository);
+    }
+    expect(
+      normalizePastedCloneUrl("https://alice:example@bitbucket.org/workspace/repo/src/master/"),
+    ).toBe("https://alice:example@bitbucket.org/workspace/repo");
   });
 
   it("uses HTTPS for repositories selected through a provider", () => {
@@ -92,6 +122,38 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("C:\\src\\repo.git")).toBe("repo");
     expect(getCloneDirectoryName("git@github.com:repo.git")).toBe("repo");
     expect(getCloneDirectoryName("  https://github.com/owner/repo.git  ")).toBe("repo");
+  });
+
+  it("lays clone folders out like ghq only when asked, and only when the URL is safe", () => {
+    expect(getCloneDirectoryPath("git@github.com:owner/repo.git", false)).toBe("repo");
+    expect(getCloneDirectoryPath("git@github.com:owner/repo.git", true)).toBe(
+      "github.com/owner/repo",
+    );
+    expect(getCloneDirectoryPath("ssh://git@gitlab.com:2222/group/sub/repo.git", true)).toBe(
+      "gitlab.com/group/sub/repo",
+    );
+    expect(getCloneDirectoryPath("https://github.com/owner/../../repo", true)).toBe("repo");
+    expect(getCloneDirectoryPath("/srv/git/repo.git", true)).toBe("repo");
+    expect(
+      getCloneDirectoryPath(
+        "git@ssh.dev.azure.com:v3/org/Project/My%20Repo",
+        false,
+        "Project/My Repo",
+      ),
+    ).toBe("My Repo");
+    expect(
+      getCloneDirectoryLeafName(
+        "git@ssh.dev.azure.com:v3/org/Project/My%20Repo",
+        true,
+        "Project/My Repo",
+      ),
+    ).toBe("My%20Repo");
+    expect(
+      getCloneDestinationPath(
+        "C:\\Users\\me\\ghq",
+        getCloneDirectoryPath("git@github.com:owner/repo.git", true),
+      ),
+    ).toBe("C:\\Users\\me\\ghq\\github.com\\owner\\repo");
   });
 
   it("keeps a numeric repository name that sits on a path", () => {
