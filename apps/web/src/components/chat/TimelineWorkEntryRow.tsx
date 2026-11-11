@@ -1,4 +1,3 @@
-import type { TimelineRow } from "./timelineRowContext";
 import {
   THINKING_PREVIEW_PLUGINS,
   THOUGHT_PREVIEW_PLUGINS,
@@ -38,7 +37,6 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import {
-  resolveViewedImageAsset,
   toolGroupAction,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
@@ -51,7 +49,6 @@ import {
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
-import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { workGroupImageGallery } from "./markdownImageGallery";
 import { CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
@@ -177,37 +174,6 @@ export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEn
   );
 });
 
-export function ViewedImagesTimelineRow({
-  row,
-}: {
-  row: Extract<TimelineRow, { kind: "viewed-images" }>;
-}) {
-  const { threadRef, workspaceRoot, onImageExpand } = use(TimelineRowCtx);
-  if (!threadRef) return null;
-  return (
-    <div className="flex flex-wrap items-start gap-2 px-0.5" data-image-gallery>
-      {row.paths.map((path) => {
-        const image = resolveViewedImageAsset(path, {
-          threadId: threadRef.threadId,
-          workspaceRoot,
-        });
-        return image ? (
-          <ChatMarkdownAssetImage
-            key={path}
-            environmentId={threadRef.environmentId}
-            resource={image.resource}
-            alt={image.alt}
-            srcFragment={image.srcFragment}
-            workspaceRoot={workspaceRoot}
-            maxHeightRem={10}
-            onImageExpand={onImageExpand}
-          />
-        ) : null;
-      })}
-    </div>
-  );
-}
-
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const {
     workEntry,
@@ -217,7 +183,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     severeFailure = false,
   } = props;
   const ctx = use(TimelineRowCtx);
-  const { threadRef, onImageExpand, timestampFormat } = ctx;
+  const { onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
   const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
   const createdThread =
@@ -348,7 +314,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
       : null;
-  const viewedImagePath = workEntryViewedImagePath(workEntry);
   const payload = workEntry.structuredPayload;
   const skill =
     payload?.type === "dynamic_tool"
@@ -360,20 +325,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : skill
         ? (skill.args ?? null)
         : undefined;
-  const viewedImage =
-    viewedImagePath && threadRef
-      ? resolveViewedImageAsset(viewedImagePath, {
-          threadId: threadRef.threadId,
-          workspaceRoot,
-        })
-      : null;
   const groupViewedImages = groupView?.viewedImages;
   // Images in this entry's expanded body page through the group's viewed images, like its strip.
-  const expandImage =
-    viewedImage && groupViewedImages
-      ? (preview: ExpandedImagePreview) =>
-          onImageExpand(workGroupImageGallery(groupViewedImages, viewedImagePath, preview))
-      : onImageExpand;
+  const expandImage = groupViewedImages
+    ? (preview: ExpandedImagePreview) =>
+        onImageExpand(
+          workGroupImageGallery(groupViewedImages, workEntryViewedImagePath(workEntry), preview),
+        )
+    : onImageExpand;
   const inspectedItem =
     plainOutput === undefined &&
     workEntry.projectedItem &&
@@ -385,12 +344,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     (expanded || !inspectedItem) && !isReasoning
       ? plainOutput !== undefined
         ? plainOutput
-        : buildToolCallExpandedBody(
-            workEntry,
-            workspaceRoot,
-            previewText,
-            viewedImage ? viewedImagePath : null,
-          )
+        : buildToolCallExpandedBody(workEntry, workspaceRoot, previewText)
       : null;
   const plainOutputFetches =
     plainOutput !== undefined &&
@@ -401,7 +355,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     Boolean(
       expandedBody ||
       inspectedItem ||
-      viewedImage ||
       workEntry.questionAnswer ||
       plainOutputFetches ||
       (isReasoning && workEntry.detail?.trim()),
@@ -568,19 +521,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         </>
       }
     >
-      {expanded && viewedImage && threadRef ? (
-        <WorkLogDetails kind="media">
-          <ChatMarkdownAssetImage
-            environmentId={threadRef.environmentId}
-            resource={viewedImage.resource}
-            alt={viewedImage.alt}
-            srcFragment={viewedImage.srcFragment}
-            workspaceRoot={workspaceRoot}
-            maxHeightRem={16}
-            onImageExpand={expandImage}
-          />
-        </WorkLogDetails>
-      ) : null}
       {expanded && workEntry.questionAnswer ? (
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
@@ -614,6 +554,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   environmentId={ctx.activeThreadEnvironmentId}
                   onImageExpand={expandImage}
                   source={ctx.turnItemSource}
+                  showImages={toolGroupAction(workEntry) !== "read"}
                 />
               ) : null}
             </>
