@@ -36,6 +36,6 @@ it("normalizes Unicode whitespace and ignores a large hidden suffix", () => {
     subagentDetailPreview({ status: "running", progress: "\uFEFF\u2029", result: " Done " }),
   ).toBe("Done");
   expect(subagentDetailPreview({ status: "failed", result: "x".repeat(279) + "😀" })).toBe(
-    "x".repeat(279) + "\uD83D…",
+    "x".repeat(279) + "…",
   );
 });

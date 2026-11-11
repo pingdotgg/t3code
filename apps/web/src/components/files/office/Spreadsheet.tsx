@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { observeResize } from "~/lib/observeResize";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -33,6 +34,8 @@ import {
 } from "./sheet-paint";
 import { externalUrl } from "./links";
 
+const isSupersededError = Schema.is(SupersededError);
+
 type Client = ReturnType<typeof createWorkerClient<SheetMethods>>;
 type Opened = {
   engine: Client;
@@ -67,7 +70,7 @@ export default function Spreadsheet(props: {
       .then((value) => {
         if (!value) throw new Error("This workbook has no visible sheets.");
         setOpened({ ...value, engine });
-        onDetails(`${value.tabs.length} sheets`);
+        onDetails(`${value.tabs.length} sheet${value.tabs.length === 1 ? "" : "s"}`);
       })
       .catch(fail);
     return () => {
@@ -264,7 +267,7 @@ function SpreadsheetGrid(props: {
             schedule();
           })
           .catch((cause: unknown) => {
-            if (!(cause instanceof SupersededError) && !controller.signal.aborted)
+            if (!isSupersededError(cause) && !controller.signal.aborted)
               setNotice("These cells could not be drawn.");
           });
       }
