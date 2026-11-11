@@ -535,7 +535,7 @@ export const make = Effect.gen(function* () {
       Effect.catch((error) =>
         Effect.logWarning("Could not re-encrypt the recovered connection catalog.", {
           catalogPath,
-          error,
+          errorTag: error._tag,
         }),
       ),
     );
