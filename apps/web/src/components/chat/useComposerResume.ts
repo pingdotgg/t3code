@@ -13,6 +13,7 @@ import {
 import { useState } from "react";
 import { newMessageId } from "~/lib/utils";
 import type { ComposerHandleRef } from "../../composerHandleContext";
+import { DEFAULT_INTERACTION_MODE } from "../../types";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { makeThreadErrorSetter } from "../ChatView.logic";
@@ -32,7 +33,6 @@ interface ComposerResumeInput {
   readonly threadDetailLoading: boolean;
   readonly activeEnvironmentUnavailable: boolean;
   readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode;
   readonly localCheckoutBranchMismatch: { readonly currentBranch: string } | null;
   readonly composerRef: ComposerHandleRef;
   readonly persistThreadSettingsForNextTurn: (input: {
@@ -64,7 +64,6 @@ export function useComposerResume(input: ComposerResumeInput) {
     threadDetailLoading,
     activeEnvironmentUnavailable,
     runtimeMode,
-    interactionMode,
     localCheckoutBranchMismatch,
     composerRef,
     persistThreadSettingsForNextTurn,
@@ -106,6 +105,9 @@ export function useComposerResume(input: ComposerResumeInput) {
       if (resumableRunId === null) {
         return resumeThreadQueue({ environmentId, input: { threadId } });
       }
+      // Read before the first await: the composer follows the route, so after the user switches
+      // threads it holds the other thread's model.
+      const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
       const createdAt = new Date().toISOString();
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId,
@@ -114,10 +116,9 @@ export function useComposerResume(input: ComposerResumeInput) {
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
         runtimeMode,
-        interactionMode,
+        interactionMode: DEFAULT_INTERACTION_MODE,
       });
       if (settingsResult._tag === "Failure") return settingsResult;
-      const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
       const turnResult = await startThreadTurn({
         environmentId,
         input: {
@@ -131,7 +132,7 @@ export function useComposerResume(input: ComposerResumeInput) {
             attachments: [],
           },
           runtimeMode,
-          interactionMode,
+          interactionMode: DEFAULT_INTERACTION_MODE,
           dispatchMode: "start",
         },
       });
