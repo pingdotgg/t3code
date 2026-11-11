@@ -62,6 +62,7 @@ export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
   // After root settlement, new children belong to the live run unless their coordinator still holds this run open.
   readonly rootTurnEnded: boolean;
+  readonly adoptsChildrenAfterRootTurn: boolean;
   readonly workflowMemberParents: ReadonlyMap<ThreadId, ThreadId>;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurns: ReadonlyMap<ProviderTurnId, ProviderThreadId>;
@@ -340,10 +341,12 @@ export function makeProviderEventRoutingState(input: {
   readonly providerTurnId: ProviderTurnId | null;
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
+  readonly adoptsChildrenAfterRootTurn?: boolean;
 }): ProviderEventRoutingState {
   return {
     ownedThreadIds: new Set([input.identity.threadId, ...(input.relatedThreadIds ?? [])]),
     rootTurnEnded: false,
+    adoptsChildrenAfterRootTurn: input.adoptsChildrenAfterRootTurn ?? false,
     workflowMemberParents: new Map(),
     ownedProviderThreadIds: new Set([
       input.identity.providerThreadId,
@@ -459,9 +462,12 @@ export function routeProviderEvent(
       const belongs = ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId);
       const coordinator = event.subagent;
       // Resumes reattribute child threads to the live run, which may not have observed their creation.
+      // Codex can start that child's turn after the root turn ended; a nested one is runless and
+      // follows the owned child that resumed it.
       const adopted =
-        ownsRun(coordinator.runId) &&
-        !state.rootTurnEnded &&
+        (!state.rootTurnEnded || state.adoptsChildrenAfterRootTurn) &&
+        (ownsRun(coordinator.runId) ||
+          (coordinator.runId === null && ownsChildThread(coordinator.threadId))) &&
         isOrchestrationV2WorkActive(coordinator.status) &&
         coordinator.origin === "provider_native" &&
         coordinator.childThreadId !== null &&
@@ -521,6 +527,7 @@ export function routeProviderEvent(
       ];
     case "background_work.updated":
       return [state.ownedProviderTurns.has(event.providerTurnId), state];
+    case "provider_thread.unloaded":
     case "command_output.delta":
     case "prompt_suggestion.updated":
       // The session manager serves these to clients directly; runs never see them.
@@ -583,6 +590,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly readSubagentThread?: ProviderAdapter.ProviderAdapterV2TurnInput["readSubagentThread"];
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
@@ -1071,11 +1079,17 @@ export const layer: Layer.Layer<
             ...(input.relatedProviderThreadIds === undefined
               ? {}
               : { relatedProviderThreadIds: input.relatedProviderThreadIds }),
+            adoptsChildrenAfterRootTurn: input.session.resumesChildrenAfterRootTurn === true,
           }),
         );
         const rootTerminalSeen = yield* Ref.make(false);
         const rootRunFinalized = yield* Ref.make(false);
         const providerThreadOwnerLost = yield* Ref.make(false);
+        // A settled completed root keeps its subscription without ingesting until a newer root
+        // turn on its thread or the thread unloads: a child it resumed can start after the root.
+        let dormant = false;
+        let newerRootTurnSeen = false;
+        let providerThreadUnloaded = false;
         const pendingBackgroundProviderTurns = new Set<ProviderTurnId>();
         const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
         const activeChildSubagents = yield* Ref.make<ReadonlyMap<NodeId, ThreadId>>(new Map());
@@ -1299,6 +1313,9 @@ export const layer: Layer.Layer<
           if (!(yield* agentTurnsSettled)) {
             return false;
           }
+          if (dormant) {
+            return newerRootTurnSeen || providerThreadUnloaded;
+          }
           const terminal = yield* Ref.get(terminalEvent);
           if (
             terminal !== null &&
@@ -1334,7 +1351,16 @@ export const layer: Layer.Layer<
               return false;
             }
           }
-          return true;
+          if (
+            input.session.resumesChildrenAfterRootTurn !== true ||
+            terminal?.status !== "completed" ||
+            newerRootTurnSeen ||
+            providerThreadUnloaded
+          ) {
+            return true;
+          }
+          dormant = true;
+          return false;
         });
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
@@ -1346,8 +1372,33 @@ export const layer: Layer.Layer<
         const routeEvent = Effect.fnUntraced(function* (
           event: ProviderAdapter.ProviderAdapterV2Event,
         ) {
+          if (
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.runAttemptId !== null &&
+            event.providerTurn.runAttemptId !== input.attempt.id &&
+            (event.threadId === input.run.threadId ||
+              event.providerTurn.providerThreadId === input.providerThread.id)
+          ) {
+            newerRootTurnSeen = true;
+          }
+          if (
+            event.type === "provider_thread.unloaded" &&
+            event.providerThreadId === input.providerThread.id
+          ) {
+            providerThreadUnloaded = true;
+          }
           const previous = yield* Ref.get(eventRouting);
           const [accepted, routing] = routeProviderEvent(event, routeIdentity, previous);
+          if (dormant) {
+            // Wake only for a provider-native child attributed to this run or resumed by an owned child.
+            const resumed =
+              accepted &&
+              event.type === "subagent.updated" &&
+              event.subagent.origin === "provider_native" &&
+              isOrchestrationV2WorkActive(event.subagent.status);
+            if (!resumed) return { event, accepted: false };
+            dormant = false;
+          }
           yield* Ref.set(eventRouting, routing);
           if (
             event.type === "subagent.updated" &&
@@ -1641,6 +1692,8 @@ export const layer: Layer.Layer<
               (cause) => !Cause.hasInterruptsOnly(cause),
               (cause) =>
                 Effect.gen(function* () {
+                  // A released session fails its subscribers; a dormant run has nothing left to settle.
+                  if (dormant) return;
                   const completedAt = yield* DateTime.now;
                   yield* Effect.logWarning("orchestration V2 provider event ingestion failed", {
                     runId: input.run.id,
@@ -1802,6 +1855,9 @@ export const layer: Layer.Layer<
           modelSelection: input.modelSelection,
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
+          ...(input.readSubagentThread === undefined
+            ? {}
+            : { readSubagentThread: input.readSubagentThread }),
         };
         // Check after the context read: ingestion can settle the run while
         // it awaits. A failed ownership read fails the start below.
