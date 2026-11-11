@@ -1,14 +1,14 @@
+import { expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
 import * as storage from "@distilled.cloud/gcp/storage_v1";
 import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
-import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -18,11 +18,7 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 // Kept for the post-destroy check in `afterAll`.
 let deployedBucket: string | undefined;
@@ -64,8 +60,7 @@ const getPublic = (url: string) =>
     }),
   );
 
-const siteBase = (bucketName: string) =>
-  `https://storage.googleapis.com/${bucketName}`;
+const siteBase = (bucketName: string) => `https://storage.googleapis.com/${bucketName}`;
 
 test(
   "serves index.html publicly with its content type",
@@ -116,9 +111,7 @@ test(
     const missing = yield* getPublic(`${siteBase(bucketName)}/nope.html`);
     expect(missing.status).toBe(404);
 
-    const bucket = yield* storage
-      .getBuckets({ bucket: bucketName })
-      .pipe(Effect.provide(GcpHttp));
+    const bucket = yield* storage.getBuckets({ bucket: bucketName }).pipe(Effect.provide(GcpHttp));
     expect(bucket.website).toEqual({
       mainPageSuffix: "index.html",
       notFoundPage: "404.html",

@@ -27,19 +27,15 @@ test("opt-in tags require exact positive selection of every required tag", () =>
   expect(matches(["slow", "provider:aws"])).toBe(true);
   expect(matches(["slow && provider:cloudflare"])).toBe(false);
   expect(matches(["slow"], ["slow", "requires:enterprise"])).toBe(false);
-  expect(matches(["slow && requires:*"], ["slow", "requires:enterprise"])).toBe(
-    false,
-  );
-  expect(
-    matches(["slow", "requires:enterprise"], ["slow", "requires:enterprise"]),
-  ).toBe(true);
+  expect(matches(["slow && requires:*"], ["slow", "requires:enterprise"])).toBe(false);
+  expect(matches(["slow", "requires:enterprise"], ["slow", "requires:enterprise"])).toBe(true);
   expect(compileTagsFilter([])(["unit"])).toBe(true);
   expect(matches([], [])).toBe(true);
   expect(matches(["provider:*"], [])).toBe(true);
 });
 
 test("Alchemy tests and provider tests forward tags", async () => {
-  const { make } = await import("../../alchemy/src/Test/Alchemy.ts");
+  const { make } = await import("../src/Alchemy.ts");
   const suite = await collect("adapter.test.ts", async () => {
     const api = make({ providers: Layer.empty, dev: false, sidecar: false });
     describe(
@@ -62,9 +58,7 @@ test("Alchemy tests and provider tests forward tags", async () => {
   try {
     const tests: TestCase[] = [];
     forEachTest(suite, (test) => tests.push(test));
-    expect(tests.map((test) => test.optInTags)).toEqual(
-      Array(3).fill(["enterprise", "slow"]),
-    );
+    expect(tests.map((test) => test.optInTags)).toEqual(Array(3).fill(["enterprise", "slow"]));
     expect(tests.map((test) => test.tags)).toEqual([
       ["e2e", "provider:cloudflare", "dev"],
       ["e2e", "provider:cloudflare", "live"],
@@ -76,15 +70,12 @@ test("Alchemy tests and provider tests forward tags", async () => {
 });
 
 test("tag expressions support precedence, grouping, negation and wildcards", () => {
-  const matches = (expression: string, tags: string[]) =>
-    compileTagsFilter([expression])(tags);
+  const matches = (expression: string, tags: string[]) => compileTagsFilter([expression])(tags);
   expect(matches("unit || e2e && live", ["unit"])).toBe(true);
   expect(matches("unit || e2e && live", ["e2e"])).toBe(false);
   expect(matches("(unit || e2e) && live", ["unit"])).toBe(false);
   expect(matches("(unit || e2e) && live", ["e2e", "live"])).toBe(true);
-  expect(
-    matches("e2e AND provider:aws and NOT slow", ["e2e", "provider:aws"]),
-  ).toBe(true);
+  expect(matches("e2e AND provider:aws and NOT slow", ["e2e", "provider:aws"])).toBe(true);
   expect(matches("e2e && !slow", ["e2e", "slow"])).toBe(false);
   expect(matches("!!unit", ["unit"])).toBe(true);
   expect(matches("provider:*", ["provider:cloudflare"])).toBe(true);
@@ -95,9 +86,7 @@ test("tag expressions support precedence, grouping, negation and wildcards", () 
   expect(matches("!live", [])).toBe(true);
   expect(matches("*", [])).toBe(false);
   expect(compileTagsFilter([])([])).toBe(true);
-  expect(compileTagsFilter(["unit || e2e", "!slow"])(["unit", "slow"])).toBe(
-    false,
-  );
+  expect(compileTagsFilter(["unit || e2e", "!slow"])(["unit", "slow"])).toBe(false);
 });
 
 test("malformed expressions fail eagerly, including short-circuited operands", () => {
@@ -123,67 +112,49 @@ test("malformed expressions fail eagerly, including short-circuited operands", (
 
 test("tag names reject expression syntax and merge without duplicates", () => {
   expect(mergeTags(["unit"], ["unit", "core"])).toEqual(["unit", "core"]);
-  for (const tag of [
-    "",
-    "two words",
-    "and",
-    "OR",
-    "not",
-    "provider:*",
-    "!slow",
-    "a(b)",
-    "a|b",
-  ]) {
+  for (const tag of ["", "two words", "and", "OR", "not", "provider:*", "!slow", "a(b)", "a|b"]) {
     expect(() => mergeTags([], [tag])).toThrow("Invalid test tag");
   }
 });
 
 test("all registration variants inherit suite tags and add their own", async () => {
   const suite = await collect("tags.test.ts", async () => {
-    describe(
-      "outer",
-      { tags: ["e2e", "provider:aws"], optInTags: ["enterprise"] },
-      () => {
-        describe(
-          "inner",
-          { tags: ["live", "e2e"], optInTags: ["enterprise"] },
+    describe("outer", { tags: ["e2e", "provider:aws"], optInTags: ["enterprise"] }, () => {
+      describe("inner", { tags: ["live", "e2e"], optInTags: ["enterprise"] }, () => {
+        it("plain", () => {}, { tags: "slow", optInTags: ["slow"] });
+        it.skip("skipped", () => {}, { tags: "slow", optInTags: ["slow"] });
+        it.only("only", () => {}, { tags: "slow", optInTags: ["slow"] });
+        it.todo("todo", undefined, { tags: "slow", optInTags: ["slow"] });
+        it.fails("fails", () => {}, { tags: "slow", optInTags: ["slow"] });
+        it.skipIf(true)("conditional", () => {}, {
+          tags: "slow",
+          optInTags: ["slow"],
+        });
+        it.runIf(true)("conditional-run", () => {}, {
+          tags: "slow",
+          optInTags: ["slow"],
+        });
+        it.each([1, 2])("each", () => {}, {
+          tags: "slow",
+          optInTags: ["slow"],
+        });
+        it.effect("effect", () => Effect.void, {
+          tags: "slow",
+          optInTags: ["slow"],
+        });
+        it.live.each([1])("live", () => Effect.void, {
+          tags: "slow",
+          optInTags: ["slow"],
+        });
+        describe.each([1])(
+          "suite-each",
           () => {
-            it("plain", () => {}, { tags: "slow", optInTags: ["slow"] });
-            it.skip("skipped", () => {}, { tags: "slow", optInTags: ["slow"] });
-            it.only("only", () => {}, { tags: "slow", optInTags: ["slow"] });
-            it.todo("todo", undefined, { tags: "slow", optInTags: ["slow"] });
-            it.fails("fails", () => {}, { tags: "slow", optInTags: ["slow"] });
-            it.skipIf(true)("conditional", () => {}, {
-              tags: "slow",
-              optInTags: ["slow"],
-            });
-            it.runIf(true)("conditional-run", () => {}, {
-              tags: "slow",
-              optInTags: ["slow"],
-            });
-            it.each([1, 2])("each", () => {}, {
-              tags: "slow",
-              optInTags: ["slow"],
-            });
-            it.effect("effect", () => Effect.void, {
-              tags: "slow",
-              optInTags: ["slow"],
-            });
-            it.live.each([1])("live", () => Effect.void, {
-              tags: "slow",
-              optInTags: ["slow"],
-            });
-            describe.each([1])(
-              "suite-each",
-              () => {
-                it("inherited", () => {});
-              },
-              { tags: "slow", optInTags: ["slow"] },
-            );
+            it("inherited", () => {});
           },
+          { tags: "slow", optInTags: ["slow"] },
         );
-      },
-    );
+      });
+    });
     it("untagged", () => {});
   });
   const tests: TestCase[] = [];
