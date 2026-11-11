@@ -60,11 +60,12 @@ export function parseScutilProxy(output: string, inheritedNoProxy = ""): Record<
     }
   }
 
-  const http = proxyUrl(fields, "HTTP");
-  const https = proxyUrl(fields, "HTTPS");
+  const proxy = proxyUrl(fields, "HTTP");
   const inherited = inheritedNoProxy.split(",").flatMap((entry) => entry.trim() || []);
   if (
-    (!http && !https) ||
+    // npm sends http requests via https_proxy and https via HTTP_PROXY, so only one shared proxy keeps macOS's routing.
+    !proxy ||
+    proxy !== proxyUrl(fields, "HTTPS") ||
     // npm cannot match dotless hosts either, so honouring this needs a direct connection.
     fields.get("ExcludeSimpleHostnames") === "1" ||
     [...inherited, ...exceptions].some(hasUnrepresentableException)
@@ -73,8 +74,10 @@ export function parseScutilProxy(output: string, inheritedNoProxy = ""): Record<
   }
   const noProxy = [...inherited, ...LOOPBACK_NO_PROXY, ...exceptions.map(toNoProxyEntry)].join(",");
   return {
-    ...(http ? { HTTP_PROXY: http, http_proxy: http } : {}),
-    ...(https ? { HTTPS_PROXY: https, https_proxy: https } : {}),
+    HTTP_PROXY: proxy,
+    http_proxy: proxy,
+    HTTPS_PROXY: proxy,
+    https_proxy: proxy,
     NO_PROXY: noProxy,
     no_proxy: noProxy,
   };

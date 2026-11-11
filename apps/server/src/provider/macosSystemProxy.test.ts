@@ -40,12 +40,13 @@ describe("parseScutilProxy", () => {
     },
     { name: "an IP range in NO_PROXY", lines: [], noProxy: "registry.corp,127.0.0.0/8" },
     { name: "simple hostnames excluded", lines: ["ExcludeSimpleHostnames : 1"], noProxy: "" },
+    { name: "an HTTPS-only proxy", lines: ["HTTPEnable : 0"], noProxy: "" },
+    { name: "different HTTP and HTTPS proxies", lines: ["HTTPPort : 8080"], noProxy: "" },
   ])("keeps the direct connection with $name, which npm cannot match", ({ lines, noProxy }) => {
+    const proxy = ["HTTPEnable : 1", "HTTPPort : 3128", "HTTPProxy : 10.0.0.1"];
+    const httpsProxy = ["HTTPSEnable : 1", "HTTPSPort : 3128", "HTTPSProxy : 10.0.0.1"];
     assert.deepStrictEqual(
-      parseScutilProxy(
-        dictionary(...lines, "HTTPEnable : 1", "HTTPPort : 3128", "HTTPProxy : 10.0.0.1"),
-        noProxy,
-      ),
+      parseScutilProxy(dictionary(...proxy, ...httpsProxy, ...lines), noProxy),
       {},
     );
   });
@@ -59,6 +60,9 @@ describe("parseScutilProxy", () => {
           "  1 : 169.254/16",
           "  2 : internal.corp",
           "}",
+          "HTTPEnable : 1",
+          "HTTPPort : 8443",
+          "HTTPProxy : fd00::1",
           "HTTPSEnable : 1",
           "HTTPSPort : 8443",
           "HTTPSProxy : fd00::1",
@@ -73,6 +77,8 @@ describe("parseScutilProxy", () => {
         "registry.corp, ",
       ),
       {
+        HTTP_PROXY: "http://[fd00::1]:8443",
+        http_proxy: "http://[fd00::1]:8443",
         HTTPS_PROXY: "http://[fd00::1]:8443",
         https_proxy: "http://[fd00::1]:8443",
         NO_PROXY: "registry.corp,localhost,127.0.0.1,::1,[::1],.local,169.254.0.0/16,internal.corp",
