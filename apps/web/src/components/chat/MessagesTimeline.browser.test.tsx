@@ -744,6 +744,44 @@ describe("MessagesTimeline work rows", () => {
 });
 
 describe("MessagesTimeline messages", () => {
+  it.each([0.98, 1.02])("keeps row sizes in layout pixels at scale %s", async (scale) => {
+    const props = baseProps();
+    const entries = [
+      message("A paragraph that wraps across the conversation. ".repeat(100), {
+        role: "assistant",
+      }),
+      message("The next prompt", {}, "next-prompt"),
+    ];
+    const timeline = (resolvedTheme: "light" | "dark") => (
+      <MessagesTimeline {...props} timelineEntries={entries} resolvedTheme={resolvedTheme} />
+    );
+    await using screen = await renderElement(timeline("light"));
+    const first = screen.container.querySelector<HTMLElement>("[data-timeline-row-id]")!;
+    const next = screen.container.querySelector<HTMLElement>(
+      '[data-timeline-row-id="entry-next-prompt"]',
+    )!;
+    const height = first.getBoundingClientRect().height;
+    await vi.waitFor(() =>
+      expect(props.listRef.current!.getState().sizeAtIndex(0)).toBe(Math.round(height)),
+    );
+    await new Promise<void>((resolve) => {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(first);
+    });
+    screen.container.style.transform = `scale(${scale})`;
+    await screen.rerender(timeline("dark"));
+    screen.container.style.transform = "";
+    await vi.waitFor(() => {
+      expect(props.listRef.current!.getState().sizeAtIndex(0)).toBe(Math.round(height));
+      expect(
+        Math.abs(next.getBoundingClientRect().top - first.getBoundingClientRect().bottom),
+      ).toBeLessThanOrEqual(1);
+    });
+  });
+
   it("settles when equally long messages have very different rendered heights", async () => {
     const props = baseProps();
     const tall = message("a\n\n".repeat(6000), { role: "assistant" }, "tall");
