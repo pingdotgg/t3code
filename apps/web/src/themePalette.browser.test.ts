@@ -25,31 +25,26 @@ describe("standard painted theme colors", () => {
   it("match the chip surfaces index.css paints", () => {
     const root = document.documentElement;
     try {
-      for (const redesign of [false, true, false]) {
-        root.toggleAttribute("data-redesign", redesign);
-        for (const appearance of ["light", "dark"] as const) {
-          root.classList.toggle("dark", appearance === "dark");
-          const colors = getStandardPaintedThemeColors(appearance, redesign);
-          const canvas = paintedChannels("--background");
-          for (const [variable, role] of [
-            ["--background", "canvas"],
-            ["--card", "surface"],
-            ["--surface-raised", "surfaceRaised"],
-            ["--message-surface", "messageSurface"],
-          ] as const) {
-            const expected = toRgb(colors[role])!;
-            const painted = paintedChannels(variable, canvas);
-            [expected.r, expected.g, expected.b].forEach((channel, index) => {
-              expect(
-                Math.abs(channel * 255 - painted[index]!),
-                `${appearance} ${role}`,
-              ).toBeLessThan(1.5);
-            });
-          }
+      for (const appearance of ["light", "dark"] as const) {
+        root.classList.toggle("dark", appearance === "dark");
+        const colors = getStandardPaintedThemeColors(appearance);
+        const canvas = paintedChannels("--background");
+        for (const [variable, role] of [
+          ["--background", "canvas"],
+          ["--card", "surface"],
+          ["--surface-raised", "surfaceRaised"],
+          ["--message-surface", "messageSurface"],
+        ] as const) {
+          const expected = toRgb(colors[role])!;
+          const painted = paintedChannels(variable, canvas);
+          [expected.r, expected.g, expected.b].forEach((channel, index) => {
+            expect(Math.abs(channel * 255 - painted[index]!), `${appearance} ${role}`).toBeLessThan(
+              1.5,
+            );
+          });
         }
       }
     } finally {
-      root.removeAttribute("data-redesign");
       root.classList.remove("dark");
     }
   });

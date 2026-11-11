@@ -22,10 +22,11 @@ export const onRequest = defineRouteMiddleware(async (context, next) => {
   const pathname = context.url.pathname;
   if (pathname === "/blog" || pathname.startsWith("/blog/")) return;
 
-  const { starlightRoute } = context.locals;
+  // TODO: fix types
+  const { starlightRoute } = context.locals as Record<string, any>;
   const tab = activeTab(pathname);
   const group = starlightRoute.sidebar.find(
-    (item): item is Extract<SidebarItem, { type: "group" }> =>
+    (item: any): item is Extract<SidebarItem, { type: "group" }> =>
       item.type === "group" && item.label === tab.label,
   );
   if (!group) return;

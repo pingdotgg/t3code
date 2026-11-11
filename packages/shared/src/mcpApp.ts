@@ -131,11 +131,29 @@ export function mcpAppReferencesEqual(left: McpAppReference, right: McpAppRefere
   );
 }
 
-export function readMcpAppResourceUri(meta: unknown): string | undefined {
+/** Reads a tool's `_meta.ui.resourceUri`, or the deprecated flat `ui/resourceUri`. */
+export function mcpAppToolResourceUri(meta: unknown): string | undefined {
   if (!Predicate.isObject(meta)) return undefined;
-  const nested = Predicate.isObject(meta.ui) ? meta.ui.resourceUri : undefined;
-  const uri = nested ?? meta["ui/resourceUri"];
-  return typeof uri === "string" && uri.startsWith(MCP_APP_RESOURCE_SCHEME) ? uri : undefined;
+  const uri =
+    (Predicate.isObject(meta.ui) ? meta.ui.resourceUri : undefined) ?? meta["ui/resourceUri"];
+  return typeof uri === "string" &&
+    uri.length <= MAX_RESOURCE_URI_LENGTH &&
+    uri.startsWith(MCP_APP_RESOURCE_SCHEME)
+    ? uri
+    : undefined;
+}
+
+export const claudeMcpToolNamePart = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+/** Claude Code's `mcp__<server>__` prefix; it also collapses and trims `_` in `claude.ai ` connector names. */
+export function claudeMcpToolPrefix(server: string): string {
+  const part = claudeMcpToolNamePart(server);
+  return `mcp__${server.startsWith("claude.ai ") ? part.replace(/_+/g, "_").replace(/^_|_$/g, "") : part}__`;
+}
+
+/** Claude Code names MCP tools `mcp__<server>__<tool>`, replacing characters outside `[a-zA-Z0-9_-]`. */
+export function claudeMcpToolName(server: string, tool: string): string {
+  return `${claudeMcpToolPrefix(server)}${claudeMcpToolNamePart(tool)}`;
 }
 
 export function mcpAppToolCallableByApp(meta: unknown): boolean {

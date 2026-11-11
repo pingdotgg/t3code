@@ -22,7 +22,7 @@ program that runs on it.
 
 ```typescript
 // src/box.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 
 export default class Box extends Fly.Sprite<Box>()(
@@ -44,7 +44,7 @@ Return `fetch` from the constructor Effect to boot an HTTP server. The
 Sprite URL proxies to `port`.
 
 ```diff lang="typescript"
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 +import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
