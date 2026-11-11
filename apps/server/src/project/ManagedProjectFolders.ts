@@ -1,6 +1,7 @@
 import {
   CommandId,
   type GitManagerServiceError,
+  type Project,
   ProjectId,
   type ThreadId,
   VcsProcessSpawnError,
@@ -97,6 +98,13 @@ export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
   {
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
+    /**
+     * No project's folder as its project stores it, which can be the real path behind a
+     * symlinked `scratchRoot`. Clients compare it to project roots as text. Falls back to `scratchRoot`.
+     */
+    readonly scratchProjectRoot: Effect.Effect<Option.Option<string>>;
+    /** Whether `folder` sits directly in the scratch folder, under either spelling of a symlink. */
+    readonly isScratchFolder: (folder: string) => Effect.Effect<boolean>;
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
     readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly folderForThread: (input: {
@@ -269,10 +277,61 @@ const make = Effect.gen(function* () {
       .makeDirectory(folder, { recursive: true })
       .pipe(Effect.mapError((cause) => new ScratchFolderError({ folder, cause })));
 
+  // A symlinked scratch folder has two spellings, and No project may be stored under either.
+  const realPathOrResolved = (folder: string) =>
+    fileSystem.realPath(folder).pipe(Effect.orElseSucceed(() => path.resolve(folder)));
+
+  const scratchRootSpellings = (root: string) =>
+    realPathOrResolved(root).pipe(Effect.map((real) => (real === root ? [root] : [root, real])));
+
+  const existingScratchProject = Effect.fn("ManagedProjectFolders.existingScratchProject")(
+    function* (root: string) {
+      for (const spelling of yield* scratchRootSpellings(root)) {
+        const project = yield* projects
+          .getByWorkspaceRoot(spelling)
+          .pipe(Effect.orElseSucceed(() => Option.none<Project>()));
+        if (Option.isSome(project)) return project;
+      }
+      return Option.none<Project>();
+    },
+  );
+
+  const scratchProjectRoot: ManagedProjectFolders["Service"]["scratchProjectRoot"] =
+    scratchRoot.pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.succeedNone,
+          onSome: (root) =>
+            existingScratchProject(root).pipe(
+              Effect.map((project) =>
+                Option.some(
+                  Option.match(project, {
+                    onNone: () => root,
+                    onSome: (found) => found.workspaceRoot,
+                  }),
+                ),
+              ),
+            ),
+        }),
+      ),
+    );
+
+  const isScratchFolder: ManagedProjectFolders["Service"]["isScratchFolder"] = Effect.fn(
+    "ManagedProjectFolders.isScratchFolder",
+  )(function* (folder) {
+    const root = yield* scratchRoot;
+    if (Option.isNone(root)) return false;
+    const parent = path.dirname(path.resolve(folder));
+    if (parent === root.value) return true;
+    return (yield* realPathOrResolved(parent)) === (yield* realPathOrResolved(root.value));
+  });
+
   const ensureScratchProject: ManagedProjectFolders["Service"]["ensureScratchProject"] = Effect.gen(
     function* () {
       const workspaceRoot = yield* scratchProbe.pipe(Effect.flatMap(Effect.fromResult));
       yield* makeScratchFolder(workspaceRoot);
+      const existing = yield* existingScratchProject(workspaceRoot);
+      if (Option.isSome(existing)) return { projectId: existing.value.id };
       const id = yield* random
         .uuidV4()
         .pipe(Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })));
@@ -308,13 +367,17 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const isScratchRoot = (projectId: ProjectId, root: string) =>
-    projects.getById(projectId).pipe(
-      Effect.map(
-        Option.exists((project) => path.resolve(project.workspaceRoot) === path.resolve(root)),
-      ),
-      Effect.orElseSucceed(() => false),
-    );
+  const isScratchRoot = Effect.fn("ManagedProjectFolders.isScratchRoot")(function* (
+    projectId: ProjectId,
+    root: string,
+  ) {
+    const project = yield* projects
+      .getById(projectId)
+      .pipe(Effect.orElseSucceed(() => Option.none<Project>()));
+    if (Option.isNone(project)) return false;
+    const projectRoot = path.resolve(project.value.workspaceRoot);
+    return (yield* scratchRootSpellings(root)).includes(projectRoot);
+  });
 
   const isScratchProject: ManagedProjectFolders["Service"]["isScratchProject"] = (projectId) =>
     scratchRoot.pipe(
@@ -473,6 +536,8 @@ const make = Effect.gen(function* () {
 
   return ManagedProjectFolders.of({
     scratchRoot,
+    scratchProjectRoot,
+    isScratchFolder,
     ensureScratchProject,
     isScratchProject,
     folderForThread,

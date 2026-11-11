@@ -1779,7 +1779,7 @@ export const layerWsRpc = (
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
-        const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
+        const scratchWorkspaceRoot = yield* managedFolders.scratchProjectRoot;
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
         const discovery = yield* resolveOpenDiscoveryForConfig({
           editors: externalLauncher.resolveAvailableEditors(),

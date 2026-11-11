@@ -202,6 +202,46 @@ it.effect("creates one Scratch project, even for concurrent first requests", () 
   ),
 );
 
+it.effect(
+  "treats a No project stored at the real path behind a symlinked scratch folder as No project",
+  () =>
+    withScratch(({ baseDir }) =>
+      Effect.gen(function* () {
+        const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const projects = yield* ProjectService.ProjectService;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* requireRoot;
+        const realRoot = path.join(baseDir, "visible-chats");
+        yield* fileSystem.makeDirectory(realRoot);
+        yield* fileSystem.symlink(realRoot, root);
+        const resolvedRealRoot = yield* fileSystem.realPath(realRoot);
+        const projectId = ProjectId.make("project:no-project-real-path");
+        yield* projects.create({
+          commandId: CommandId.make("no-project-real-path"),
+          projectId,
+          title: "No project",
+          workspaceRoot: resolvedRealRoot,
+        });
+
+        assert.isTrue(yield* scratch.isScratchProject(projectId));
+        assert.equal((yield* scratch.ensureScratchProject).projectId, projectId);
+        assert.equal(Option.getOrThrow(yield* scratch.scratchProjectRoot), resolvedRealRoot);
+        assert.isTrue(yield* scratch.isScratchFolder(path.join(root, "2026-01-01-thread")));
+        assert.isTrue(
+          yield* scratch.isScratchFolder(path.join(resolvedRealRoot, "2026-01-01-thread")),
+        );
+        assert.isFalse(yield* scratch.isScratchFolder(path.join(baseDir, "elsewhere", "thread")));
+
+        const snapshot = yield* projects.snapshot;
+        assert.lengthOf(
+          snapshot.projects.filter((project) => project.title === "No project"),
+          1,
+        );
+      }),
+    ),
+);
+
 it.effect("recreates the Scratch folder after it is deleted", () =>
   withScratch(() =>
     Effect.gen(function* () {
