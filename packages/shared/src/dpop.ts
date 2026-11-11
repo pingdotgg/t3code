@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import { p256 } from "@noble/curves/nist";
 import { sha256 } from "@noble/hashes/sha2";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -94,7 +95,12 @@ function dpopThumbprintInput(jwk: DpopPublicJwkType): string {
 }
 
 export function computeDpopJwkThumbprint(jwk: DpopPublicJwkType): string {
-  return Base64Url.encode(sha256(new TextEncoder().encode(dpopThumbprintInput(jwk))));
+  return pipe(
+    dpopThumbprintInput(jwk),
+    (input) => new TextEncoder().encode(input),
+    sha256,
+    Base64Url.encode,
+  );
 }
 
 export function computeDpopAccessTokenHash(accessToken: string): string {

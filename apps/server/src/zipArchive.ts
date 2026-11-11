@@ -3,9 +3,7 @@ import * as Effect from "effect/Effect";
 import type * as NodeStream from "node:stream";
 import * as Yauzl from "yauzl";
 
-/**
- * Close the scope to close the archive.
- */
+/** Closing the scope closes the archive. */
 export const openZipArchive = Effect.fn("zipArchive.open")(function* <E>(
   archivePath: string,
   makeError: (detail: string, cause: unknown) => E,

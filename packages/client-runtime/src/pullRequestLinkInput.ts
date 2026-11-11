@@ -1,4 +1,5 @@
 import type { RepositoryIdentity } from "@t3tools/contracts";
+import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 
 import { sourceControlClients, type ChangeRequestTerminology } from "./sourceControlClients.ts";
 
@@ -86,7 +87,12 @@ export function resolveLinkPullRequestInput(input: {
       return { error: `No project in this environment can read ${url.host}/${url.repository}.` };
     }
     return {
-      link: { host: url.host, repository: url.repository, number: url.number, url: parsed },
+      link: {
+        host: url.host,
+        repository: url.repository,
+        number: url.number,
+        url: canonicalizeGitCafePullRequestUrl(parsed),
+      },
     };
   }
   const number = Number(parsed);
