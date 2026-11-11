@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off schemaClassMissingBrand:off
 import * as NodeDnsPromises from "node:dns/promises";
-import { readFile } from "node:fs/promises";
-import { resolve as resolvePath } from "node:path";
-import { spawn as nodeSpawn } from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Agent, fetch as undiciFetch } from "undici";
@@ -124,15 +124,15 @@ const driveRewrite = (url: URL) => {
 
 const workerScript = () =>
   import.meta.url.endsWith(".ts")
-    ? resolvePath(new URL("./course-pdf-worker.ts", import.meta.url).pathname)
-    : resolvePath(new URL("./course-pdf-worker.mjs", import.meta.url).pathname);
+    ? NodePath.resolve(new URL("./course-pdf-worker.ts", import.meta.url).pathname)
+    : NodePath.resolve(new URL("./course-pdf-worker.mjs", import.meta.url).pathname);
 
 const childRssBytes = async (pid: number): Promise<number | undefined> => {
   // The watchdog is deliberately outside Effect so it can kill a blocked worker.
   // oxlint-disable-next-line t3code/no-global-process-runtime -- inspect the host platform for RSS polling.
   if (process.platform === "linux") {
     try {
-      const statm = await readFile(`/proc/${pid}/statm`, "utf8");
+      const statm = await NodeFSP.readFile(`/proc/${pid}/statm`, "utf8");
       return Number(statm.trim().split(/\s+/)[1]) * 4096;
     } catch {
       return undefined;
@@ -154,7 +154,7 @@ const childRssBytes = async (pid: number): Promise<number | undefined> => {
 const runPdfWorker = async (
   bytes: Uint8Array,
   requested: ReadonlyArray<number>,
-  spawnImpl: typeof nodeSpawn = nodeSpawn,
+  spawnImpl: typeof NodeChildProcess.spawn = NodeChildProcess.spawn,
   limits: {
     readonly timeoutMs?: number;
     readonly rssLimitBytes?: number;

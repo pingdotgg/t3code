@@ -2,7 +2,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeFSP from "node:fs/promises";
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 import {
   checkedDispatcher,
   encodeGrayscalePng,
@@ -243,7 +243,7 @@ describe("course reference fetch", () => {
   });
 
   it("kills an over-sized PDF worker", async () => {
-    const child = new EventEmitter() as any;
+    const child = new NodeEvents.EventEmitter() as any;
     child.pid = 42;
     child.exitCode = null;
     child.killed = false;
@@ -267,7 +267,7 @@ describe("course reference fetch", () => {
   });
 
   it("kills a PDF worker after the timeout", async () => {
-    const child = new EventEmitter() as any;
+    const child = new NodeEvents.EventEmitter() as any;
     child.pid = 43;
     child.exitCode = null;
     child.killed = false;
