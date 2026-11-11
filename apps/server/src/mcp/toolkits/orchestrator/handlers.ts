@@ -145,6 +145,13 @@ const handlers = {
       return yield* service.createThreads(scope, input);
     }),
   ),
+  find_or_open_specialist: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.findOrOpenSpecialist(scope, input);
+    }),
+  ),
   t3_thread_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

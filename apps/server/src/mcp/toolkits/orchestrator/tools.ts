@@ -9,6 +9,8 @@ import {
   OrchestratorMcpEnvironmentUnlinkResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
+  OrchestratorMcpFindOrOpenSpecialistInput,
+  OrchestratorMcpFindOrOpenSpecialistResult,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpDeleteScheduledTaskInput,
@@ -222,6 +224,20 @@ const CreateThreadsTool = Tool.make("create_threads", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const FindOrOpenSpecialistTool = Tool.make("find_or_open_specialist", {
+  description:
+    "Resume or create a durable specialist thread by stable `key` (e.g. `dev-ui`) in a project. Keeps context across days; not a turn-scoped `delegate_task`. Creating needs an active run. In your reply, name it as its `link` verbatim.",
+  parameters: OrchestratorMcpFindOrOpenSpecialistInput,
+  success: OrchestratorMcpFindOrOpenSpecialistResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Find or open a durable specialist")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(Tool.Idempotent, true);
+
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
     "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
@@ -361,6 +377,7 @@ export const OrchestratorToolkit = Toolkit.make(
   DeleteScheduledTaskTool,
   RequestSecretTool,
   CreateThreadsTool,
+  FindOrOpenSpecialistTool,
   ThreadListTool,
   ThreadReadTool,
   ThreadUpdateTool,

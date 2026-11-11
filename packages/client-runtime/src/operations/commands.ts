@@ -25,6 +25,7 @@ import {
   type RuntimeRequestId,
   type ThreadId,
   type ThreadEnvMode,
+  type ThreadSpecialist,
   type UploadChatAttachment,
   type GuestMessageId,
 } from "@t3tools/contracts";
@@ -107,6 +108,10 @@ export interface ReorderPinnedThreadInput extends ThreadCommandInput {
 
 export interface ReorderActiveThreadInput extends ThreadCommandInput {
   readonly orderKey: string;
+}
+
+export interface SetThreadSpecialistInput extends ThreadCommandInput {
+  readonly specialist: ThreadSpecialist | null;
 }
 
 export interface SnoozeThreadInput extends ThreadCommandInput {
@@ -543,6 +548,17 @@ export const reorderActiveThread = Effect.fn("EnvironmentCommands.reorderActiveT
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     orderKey: input.orderKey,
+  });
+});
+
+export const setThreadSpecialist = Effect.fn("EnvironmentCommands.setThreadSpecialist")(function* (
+  input: SetThreadSpecialistInput,
+) {
+  return yield* dispatch({
+    type: "thread.specialist.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    specialist: input.specialist,
   });
 });
 
