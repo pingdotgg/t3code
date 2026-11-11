@@ -5,7 +5,6 @@ import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 
 export function PullRequestSheetContent(props: {
   readonly title: string;
@@ -34,14 +33,7 @@ export function PullRequestSheetContent(props: {
       className="bg-sheet ios:flex-1"
       style={android ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
-      <NativeStackScreenOptions
-        options={{
-          gestureEnabled: !props.busy,
-          ...(android ? { sheetCornerRadius: 28, sheetAllowedDetents: "fitToContents" } : {}),
-        }}
-      />
       <SheetHeader
-        presentation={android ? "inline" : "native"}
         title={props.title}
         subtitle={props.subtitle}
         onCancel={() => navigation.goBack()}
