@@ -2109,5 +2109,7 @@ it("shows a Grok todo_write tool's steps and keeps its omitted output expandable
 
   const row = screen.getByRole("button", { name: "Updating plan" });
   await expect.element(row).toHaveAttribute("aria-expanded", "false");
-  await expect.element(screen.getByText("In progress: Reinstall the CLI")).toBeVisible();
+  const step = screen.getByRole("listitem").filter({ hasText: "In progress: Reinstall the CLI" });
+  await expect.element(step).toBeVisible();
+  expect(row.element().contains(step.element())).toBe(false);
 });

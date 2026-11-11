@@ -1,3 +1,4 @@
+import { cn } from "~/lib/utils";
 import type { GrokTodoStep } from "../../grokTodoPlan";
 
 const STATUS: Record<GrokTodoStep["status"], { readonly mark: string; readonly label: string }> = {
@@ -12,10 +13,7 @@ export function TodoChecklist(props: {
   readonly className?: string;
 }) {
   return (
-    <ul
-      className={`${props.className ? `${props.className} ` : ""}space-y-0.5 text-sm`}
-      data-todo-checklist=""
-    >
+    <ul className={cn("space-y-0.5 text-sm", props.className)}>
       {props.steps.map((step) => (
         <li key={step.id} className="flex min-w-0 gap-2">
           <span className="w-3 shrink-0 text-muted-foreground" aria-hidden>

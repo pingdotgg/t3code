@@ -385,14 +385,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             viewedImage ? viewedImagePath : null,
           )
       : null;
-  const plainOutputFetches =
-    plainOutput !== undefined &&
-    workEntry.projectedItem !== undefined &&
-    turnItemNeedsDetailFetch(workEntry.projectedItem.item);
+  const needsDetailFetch =
+    workEntry.projectedItem !== undefined && turnItemNeedsDetailFetch(workEntry.projectedItem.item);
+  const plainOutputFetches = plainOutput !== undefined && needsDetailFetch;
   const canExpandProjectedItem =
-    (todoSteps.length === 0 ||
-      (workEntry.projectedItem !== undefined &&
-        turnItemNeedsDetailFetch(workEntry.projectedItem.item))) &&
+    (todoSteps.length === 0 || needsDetailFetch) &&
     (plainOutput !== undefined
       ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
       : workEntry.projectedItem === undefined
@@ -446,7 +443,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       }
     : {};
 
-  return (
+  const row = (
     <WorkLogRow
       data-work-entry-id={workEntry.id}
       data-v2-item-type={workEntry.projectedItem?.item.type}
@@ -565,7 +562,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         </>
       }
     >
-      {todoSteps.length > 0 ? <TodoChecklist className="ms-7 mt-1" steps={todoSteps} /> : null}
       {expanded && viewedImage && threadRef ? (
         <WorkLogDetails kind="media">
           <ChatMarkdownAssetImage
@@ -621,6 +617,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         </WorkLogDetails>
       ) : null}
     </WorkLogRow>
+  );
+  if (todoSteps.length === 0) return row;
+  return (
+    <>
+      {row}
+      <TodoChecklist className="ms-8 mt-1" steps={todoSteps} />
+    </>
   );
 }
 
