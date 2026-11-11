@@ -573,7 +573,10 @@ it.effect.each([
       updated_at: "2026-09-16T00:00:00Z",
       closed_at: null,
       merged_at: null,
-      labels: [],
+      labels: [
+        { id: 1, name: "bug", color: "ee0701", description: "Something is broken" },
+        { id: 2, name: "triage", color: "c5def5", description: "" },
+      ],
     };
     const requests: string[] = [];
     return Effect.gen(function* () {
@@ -603,6 +606,10 @@ it.effect.each([
       const detail = yield* provider.getChangeRequest(input);
       assert.strictEqual(list.items.length, 1);
       assert.strictEqual(detail.headSha, "head");
+      assert.deepStrictEqual(detail.labels, [
+        { name: "bug", color: "ee0701", description: "Something is broken" },
+        { name: "triage", color: "c5def5", description: null },
+      ]);
       for (const result of [list.items[0]!, summary, detail]) {
         assert.strictEqual(result.mergeability, mergeability);
         assert.strictEqual(result.isDraft, isDraft);
