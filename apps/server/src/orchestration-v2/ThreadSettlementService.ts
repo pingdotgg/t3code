@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
@@ -45,6 +46,8 @@ export interface SettlementPullRequest {
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+// Matches the Claude adapter's wake-turn start deadline.
+const AGENT_WAKE_GRACE_MS = 2 * 60 * 1_000;
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -158,6 +161,30 @@ export function isAutoSettlementCandidate(
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.
   return !isSnoozed(thread, nowMs);
+}
+
+/**
+ * Awaited background work wakes its agent when it ends. Settling then detaches the provider
+ * session and cancels the queued wake run, so the agent never hears the work finished.
+ * Holds while the latest run is outstanding: a sweep can see the work end after its wake run
+ * was requested. Otherwise holds until the grace passes, unless a run since the end completed.
+ */
+export function awaitingAgentWake(
+  thread: Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestRunRequestedAt" | "latestRunCompletedAt"
+  >,
+  heldWorkEndedAtMs: number | undefined,
+  nowMs: number,
+): boolean {
+  if (heldWorkEndedAtMs === undefined) return false;
+  const requestedAtMs = toMillis(thread.latestRunRequestedAt);
+  if (requestedAtMs !== null) {
+    const completedAtMs = toMillis(thread.latestRunCompletedAt);
+    if (completedAtMs === null || completedAtMs < requestedAtMs) return true;
+    if (requestedAtMs >= heldWorkEndedAtMs) return false;
+  }
+  return nowMs - heldWorkEndedAtMs < AGENT_WAKE_GRACE_MS;
 }
 
 /** Match client effectiveSnoozed so agents and sidebar agree. */
@@ -314,6 +341,13 @@ export const make = Effect.gen(function* () {
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
+  // Threads last seen with background work that holds completion, and when that work ended.
+  const threadsHoldingWork = new Set<ThreadId>();
+  const heldWorkEndedAt = new Map<ThreadId, number>();
+  // Threads to resweep once their wake grace passes; start() feeds them to enqueueThread.
+  const wakeRecheckRequests = yield* Queue.unbounded<ThreadId>();
+  // Separate from threadSweeps so drain does not wait out a wake grace.
+  const wakeRechecks = yield* FiberSet.make<void>();
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -329,7 +363,24 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
-    const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
+    const candidates: Array<(typeof threads)[number]> = [];
+    for (const thread of threads) {
+      if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) {
+        threadsHoldingWork.add(thread.id);
+      } else if (threadsHoldingWork.delete(thread.id)) {
+        // Any sweep may see the work end first, so the wake grace starts here.
+        heldWorkEndedAt.set(thread.id, nowMs);
+        yield* Effect.sleep(AGENT_WAKE_GRACE_MS).pipe(
+          Effect.andThen(Queue.offer(wakeRecheckRequests, thread.id)),
+          Effect.asVoid,
+          FiberSet.run(wakeRechecks),
+        );
+      }
+      if (!isAutoSettlementCandidate(thread, nowMs)) continue;
+      if (awaitingAgentWake(thread, heldWorkEndedAt.get(thread.id), nowMs)) continue;
+      heldWorkEndedAt.delete(thread.id);
+      candidates.push(thread);
+    }
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
     const settleThread = Effect.fnUntraced(
@@ -637,21 +688,32 @@ export const make = Effect.gen(function* () {
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.settled":
+        threadsHoldingWork.delete(event.threadId);
+        heldWorkEndedAt.delete(event.threadId);
         return cleanUpSettledThread(event.threadId);
+      // Stopped work wakes no agent, so it settles without the wake grace.
+      case "run.background-work-cancelled":
+        threadsHoldingWork.delete(event.threadId);
+        heldWorkEndedAt.delete(event.threadId);
+        return enqueueThread(event.threadId);
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "provider-session.detached":
-      case "run.background-work-cancelled":
         return enqueueThread(event.threadId);
       // Sweep only when the work can have ended: progress updates cannot settle anything.
       case "subagent.updated":
-        return isOrchestrationV2WorkActive(event.payload.status)
-          ? Effect.void
-          : enqueueThread(event.threadId);
+        if (isOrchestrationV2WorkActive(event.payload.status)) {
+          // A subagent can start and end between sweeps; mark it so its end restarts the wake grace.
+          threadsHoldingWork.add(event.threadId);
+          return Effect.void;
+        }
+        return enqueueThread(event.threadId);
       case "provider-thread.updated":
-        return backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])
-          ? Effect.void
-          : enqueueThread(event.threadId);
+        if (backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])) {
+          threadsHoldingWork.add(event.threadId);
+          return Effect.void;
+        }
+        return enqueueThread(event.threadId);
       case "turn-item.updated": {
         const item = event.payload;
         if (
@@ -707,6 +769,7 @@ export const make = Effect.gen(function* () {
       }),
     );
     yield* forkParked(Stream.runForEach(mergedPullRequests, (event) => runSweep(event)));
+    yield* forkParked(Stream.runForEach(Stream.fromQueue(wakeRecheckRequests), enqueueThread));
     yield* forkParked(
       Stream.runForEach(events, processEvent).pipe(
         Effect.catchCause((cause) =>
