@@ -14,6 +14,10 @@ import {
   EnvironmentId,
   WS_METHODS,
   mergeAgentLibraries,
+  agentSkillDigest,
+  toAgentSkillStub,
+  type AgentSkill,
+  type McpGatewayProfile,
   type ServerConfig,
   type ServerSettings,
 } from "@t3tools/contracts";
@@ -25,7 +29,16 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { AVAILABLE_CONNECTION_STATE, PrimaryConnectionTarget } from "../connection/model.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { syncAgentLibraryBeforeUse } from "./agentLibrary.ts";
+import {
+  agentLibraryOperationsFromPatch,
+  completeAgentLibraryPatch,
+  createAgentLibrarySyncGate,
+  planAgentLibrarySync,
+  syncAgentLibraryBeforeUse,
+  withAgentSkillBodies,
+  type AgentLibraryPatch,
+  type AgentLibrarySource,
+} from "./agentLibrary.ts";
 
 it.effect(
   "awaits the newest remote prompt and skill revision and does not resurrect deletions",
@@ -214,5 +227,243 @@ it.effect(
       yield* sync;
       expect(local.agentSkills).toEqual([]);
       expect(writes).toBe(2);
+      // Only a stub reaches this client and nobody live serves the body: never store the agent.
+      const secret = { ...skill, skillId: "secret", name: "Secret", updatedAt: "2026-01-04" };
+      remote = {
+        ...remote,
+        agentSkills: [toAgentSkillStub(secret, agentSkillDigest(secret))],
+        mcpGatewayProfiles: [
+          ...remote.mcpGatewayProfiles,
+          { ...profile, profileId: "sam", name: "Sam", skillIds: ["secret"] },
+        ],
+      };
+      const error = yield* Effect.flip(
+        syncAgentLibraryBeforeUse("sam").pipe(
+          Effect.provideService(EnvironmentRegistry, registry),
+          Effect.provideService(EnvironmentSupervisor, target),
+        ),
+      );
+      expect(error.message).toContain('Sam needs "Secret"');
+      expect(local.mcpGatewayProfiles.map((item) => item.profileId)).toEqual(["randy"]);
     }),
 );
+
+it("plans per-target patches with only missing or older items and fetches stub bodies from a holder", () => {
+  const agent: McpGatewayProfile = {
+    profileId: "randy",
+    name: "Randy",
+    skillIds: ["review"],
+    iconId: "rocket",
+    revision: 2,
+    runtimeMode: "auto",
+    interactionMode: "default",
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-02",
+  };
+  const oldSkill: AgentSkill = {
+    skillId: "review",
+    name: "Review",
+    description: "Review code",
+    content: "Old rules",
+    revision: 1,
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+  };
+  const newSkill = { ...oldSkill, content: "New rules", revision: 2, updatedAt: "2026-01-02" };
+  const offlineSkill = { ...oldSkill, skillId: "offline", updatedAt: "2026-01-03" };
+  const stub = (skill: AgentSkill) => toAgentSkillStub(skill, agentSkillDigest(skill));
+  const current = {
+    agentLibrarySync: true,
+    agentSkillsSync: true,
+    agentSkillResources: true,
+    agentSkillBodiesOnDemand: true,
+    agentLibraryMutations: true,
+  };
+  const source = (
+    id: string,
+    library: AgentLibrarySource["library"],
+    capabilities: AgentLibrarySource["capabilities"] = current,
+    live = true,
+  ): AgentLibrarySource => ({ environmentId: EnvironmentId.make(id), library, capabilities, live });
+  const plan = planAgentLibrarySync([
+    source("holder", { mcpGatewayProfiles: [agent], agentSkills: [stub(newSkill)] }),
+    source("stale", { mcpGatewayProfiles: [agent], agentSkills: [stub(oldSkill)] }),
+    source("legacy", { mcpGatewayProfiles: [] }, { agentLibrarySync: true }),
+    source("cached", { mcpGatewayProfiles: [], agentSkills: [stub(offlineSkill)] }, current, false),
+  ]);
+  // Only the cached machine holds `offline`, and nobody live can serve its body yet.
+  expect(plan.targets.map((target) => target.environmentId)).toEqual(["stale", "legacy"]);
+  const [stale, legacy] = plan.targets;
+  expect(stale?.patch.mcpGatewayProfiles).toEqual([]);
+  expect(stale?.patch.agentSkills).toEqual([stub(newSkill)]);
+  const { skillIds: _skillIds, iconId: _iconId, ...legacyAgent } = agent;
+  expect(legacy?.patch).toEqual({
+    mcpGatewayProfiles: [legacyAgent],
+    mcpGatewayProfileDeletedAt: {},
+  });
+  expect(plan.fetches).toEqual([{ environmentId: "holder", skillIds: ["review"] }]);
+  expect(withAgentSkillBodies(stale!.patch, [newSkill]).agentSkills).toEqual([newSkill]);
+  // A body that changed since the plan names another version and waits for the next pass.
+  expect(
+    withAgentSkillBodies(stale!.patch, [{ ...newSkill, content: "Newer" }]).agentSkills,
+  ).toEqual([]);
+  // An agent assigned a skill the target would still lack waits, as does one whose fetch failed.
+  const olly = { ...agent, profileId: "olly", name: "Olly", skillIds: ["offline"] };
+  const withOlly = { ...stale!, patch: { ...stale!.patch, mcpGatewayProfiles: [olly] } };
+  expect(completeAgentLibraryPatch(plan.library, withOlly, [newSkill])).toEqual({
+    patch: { ...withOlly.patch, agentSkills: [newSkill], mcpGatewayProfiles: [] },
+    complete: true,
+  });
+  const reviewer = { ...olly, skillIds: ["review"] };
+  expect(
+    completeAgentLibraryPatch(
+      plan.library,
+      { ...stale!, heldSkillIds: [], patch: { ...stale!.patch, mcpGatewayProfiles: [reviewer] } },
+      [],
+    ),
+  ).toEqual({
+    patch: { ...stale!.patch, agentSkills: [], mcpGatewayProfiles: [] },
+    complete: false,
+  });
+});
+
+it("converges with servers that predate case-insensitive agent names", () => {
+  const agent = (id: string, name: string, createdAt: string): McpGatewayProfile => ({
+    profileId: id,
+    name,
+    revision: 1,
+    runtimeMode: "auto",
+    interactionMode: "default",
+    createdAt,
+    updatedAt: createdAt,
+  });
+  const current = {
+    agentLibrarySync: true,
+    agentSkillsSync: true,
+    agentSkillResources: true,
+    agentSkillBodiesOnDemand: true,
+    agentLibraryMutations: true,
+  };
+  const legacy = { agentLibrarySync: true, agentSkillsSync: true };
+  let modern = { mcpGatewayProfiles: [agent("p1", "Doug", "2026-01-01")] };
+  let old = { mcpGatewayProfiles: [agent("p2", "doug", "2026-01-02")] };
+  const plan = () =>
+    planAgentLibrarySync([
+      {
+        environmentId: EnvironmentId.make("modern"),
+        library: modern,
+        capabilities: current,
+        live: true,
+      },
+      { environmentId: EnvironmentId.make("old"), library: old, capabilities: legacy, live: true },
+    ]);
+  // An older server keeps its stored copy on an updatedAt tie and only rejects exact-name repeats.
+  const oldReplicate = (patch: AgentLibraryPatch) => {
+    const profiles = new Map(old.mcpGatewayProfiles.map((item) => [item.profileId, item]));
+    for (const candidate of patch.mcpGatewayProfiles) {
+      const previous = profiles.get(candidate.profileId);
+      if (
+        !previous ||
+        candidate.updatedAt > previous.updatedAt ||
+        (candidate.updatedAt === previous.updatedAt &&
+          JSON.stringify(candidate) > JSON.stringify(previous))
+      )
+        profiles.set(candidate.profileId, candidate);
+    }
+    old = { mcpGatewayProfiles: [...profiles.values()] };
+  };
+  for (const { environmentId, patch } of plan().targets) {
+    if (environmentId === "old") oldReplicate(patch);
+    else modern = mergeAgentLibraries([modern, patch]);
+  }
+  expect(modern.mcpGatewayProfiles.map((item) => item.name)).toEqual(["Doug", "doug (2)"]);
+  expect(old.mcpGatewayProfiles.map((item) => item.name).toSorted()).toEqual(["Doug", "doug"]);
+  expect(plan().targets).toEqual([]);
+});
+
+it("sends a patch an older server keeps dropping once per change of its library", () => {
+  const agent = (id: string, updatedAt: string): McpGatewayProfile => ({
+    profileId: id,
+    name: "Doug",
+    revision: 1,
+    runtimeMode: "auto",
+    interactionMode: "default",
+    createdAt: updatedAt,
+    updatedAt,
+  });
+  const legacy = { agentLibrarySync: true, agentSkillsSync: true };
+  let old = { mcpGatewayProfiles: [agent("p2", "2026-01-02")] };
+  const sources = (): ReadonlyArray<AgentLibrarySource> => [
+    {
+      environmentId: EnvironmentId.make("modern"),
+      library: { mcpGatewayProfiles: [agent("p1", "2026-01-01")] },
+      capabilities: { ...legacy, agentLibraryMutations: true },
+      live: true,
+    },
+    { environmentId: EnvironmentId.make("old"), library: old, capabilities: legacy, live: true },
+  ];
+  const gate = createAgentLibrarySyncGate();
+  const pass = (accepted: boolean) => {
+    const current = sources();
+    const batch = gate.take(planAgentLibrarySync(current), current);
+    batch.settle(accepted);
+    return batch.targets.map((target) => target.environmentId);
+  };
+  // The older server drops p1 for repeating the exact name "Doug", so every plan targets it.
+  expect(pass(true)).toContain("old");
+  expect(pass(true)).not.toContain("old");
+  old = { mcpGatewayProfiles: [...old.mcpGatewayProfiles, agent("p3", "2026-01-03")] };
+  expect(pass(false)).toContain("old");
+  expect(pass(true)).toContain("old");
+  expect(pass(true)).not.toContain("old");
+  // Converging forgets the delivery, so a target restored to the earlier state is sent again.
+  const dropped = old;
+  old = { mcpGatewayProfiles: [agent("p1", "2026-01-01"), agent("p3", "2026-01-03")] };
+  expect(pass(true)).not.toContain("old");
+  old = dropped;
+  expect(pass(true)).toContain("old");
+});
+
+it("turns a whole-library patch into per-item operations based on the revisions the editor opened", () => {
+  const agent = (id: string, revision: number, name = id): McpGatewayProfile => ({
+    profileId: id,
+    name,
+    revision,
+    runtimeMode: "auto",
+    interactionMode: "default",
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+  });
+  const skill: AgentSkill = {
+    skillId: "review",
+    name: "Review",
+    description: "",
+    content: "Rules",
+    revision: 3,
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+  };
+  const lint: AgentSkill = { ...skill, skillId: "lint", name: "Lint", revision: 4 };
+  const snapshot = {
+    // Another machine saved "e" and "lint" after their editors opened at revision 3.
+    mcpGatewayProfiles: [agent("a", 2), agent("b", 5), agent("c", 1), agent("e", 4)],
+    agentSkills: [toAgentSkillStub(skill, agentSkillDigest(skill)), lint],
+  };
+  const created = agent("d", 1);
+  const staleAgent = agent("e", 3, "Eve");
+  const staleSkill = { ...lint, content: "Stale edit", revision: 3 };
+  const { operations, rest } = agentLibraryOperationsFromPatch(snapshot, {
+    mcpGatewayProfiles: [agent("a", 2), agent("b", 5, "Bea"), created, staleAgent],
+    agentSkills: [staleSkill],
+    newWorktreesStartFromOrigin: true,
+  });
+  expect(operations).toEqual([
+    { type: "skill.upsert", skill: staleSkill, baseRevision: 3 },
+    { type: "profile.upsert", profile: agent("b", 5, "Bea"), baseRevision: 5 },
+    { type: "profile.upsert", profile: created, baseRevision: null },
+    { type: "profile.upsert", profile: staleAgent, baseRevision: 3 },
+    { type: "profile.delete", profileId: "c", baseRevision: 1 },
+    { type: "skill.delete", skillId: "review", baseRevision: 3 },
+  ]);
+  expect(rest).toEqual({ newWorktreesStartFromOrigin: true });
+});

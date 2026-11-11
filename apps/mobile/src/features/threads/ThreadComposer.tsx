@@ -65,6 +65,8 @@ import {
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useVisibleThreadShells } from "../../state/entities";
+import { mentionableAgentProfiles } from "@t3tools/client-runtime/state/agentIdentity";
+import { useEnvironmentAgents } from "../../state/agents";
 import { useMentionableEnvironments } from "../../state/environments";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -552,6 +554,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     environments: offersLinkedEnvironments(props.serverConfig)
       ? mentionableEnvironments
       : NO_MACHINES,
+    // Only agents this environment's server resolves, and none where it would drop the record.
+    agents: mentionableAgentProfiles(useEnvironmentAgents(props.environmentId)),
+    machineLabel: (id) =>
+      mentionableEnvironments.find((environment) => environment.environmentId === id)?.label,
     linkedEnvironments: useLinkedEnvironments(props.environmentId),
     currentThreadId: props.selectedThread.id,
     projectCwd: props.projectCwd,

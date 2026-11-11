@@ -1800,6 +1800,7 @@ export const layerWsRpc = (
         readonly workspaceSnapshotsOnDemand: boolean;
         readonly deferNetworkDiscovery: boolean;
         readonly catalogsPerCwd?: ReadonlySet<string>;
+        readonly agentSkillBodiesOnDemand?: boolean;
       }) {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const currentProviders = yield* providerRegistry.getProviders;
@@ -1811,7 +1812,10 @@ export const layerWsRpc = (
           : commandProviders;
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
-          settingsClient,
+          {
+            ...settingsClient,
+            agentSkillBodiesOnDemand: options.agentSkillBodiesOnDemand === true,
+          },
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
@@ -2348,12 +2352,21 @@ export const layerWsRpc = (
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
-        [WS_METHODS.serverGetConfig]: (_input) =>
+        [WS_METHODS.serverGetConfig]: (input) =>
           loadServerConfig({
             usageLimitsCommand: false,
             workspaceSnapshotsOnDemand: false,
             deferNetworkDiscovery: false,
+            agentSkillBodiesOnDemand: input.agentSkillBodiesOnDemand === true,
           }),
+        [WS_METHODS.serverGetAgentSkills]: (input) =>
+          serverSettings.getSettings.pipe(
+            Effect.map((settings) => ({
+              agentSkills: ServerSettings.selectAgentSkills(settings, input.skillIds),
+            })),
+          ),
+        [WS_METHODS.serverMutateAgentLibrary]: (input) =>
+          serverSettings.mutateAgentLibrary(input.operations),
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
           acpRegistryCatalog
             .search(input)
@@ -2699,7 +2712,12 @@ export const layerWsRpc = (
           tailnetDevices.setAppAccess(input.appId, input.access),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
-          Effect.fnUntraced(function* ({ patch, providerInstanceMutation, replicateProfiles }) {
+          Effect.fnUntraced(function* ({
+            patch,
+            providerInstanceMutation,
+            replicateProfiles,
+            agentSkillBodiesOnDemand,
+          }) {
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -2709,7 +2727,10 @@ export const layerWsRpc = (
             const settings = yield* providerInstanceMutation === undefined
               ? serverSettings.updateSettings(nextPatch, replicateProfiles)
               : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
-            return ServerSettings.redactServerSettingsForClient(settings, settingsClient);
+            return ServerSettings.redactServerSettingsForClient(settings, {
+              ...settingsClient,
+              agentSkillBodiesOnDemand: agentSkillBodiesOnDemand === true,
+            });
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
@@ -3315,11 +3336,13 @@ export const layerWsRpc = (
                   .pipe(Effect.catchCause(() => directEndpoints.resolveAvailable())),
                 { startImmediately: true },
               );
+              const agentSkillBodiesOnDemand = input.agentSkillBodiesOnDemand === true;
               const config = yield* loadServerConfig({
                 usageLimitsCommand,
                 workspaceSnapshotsOnDemand,
                 deferNetworkDiscovery: true,
                 catalogsPerCwd: yield* currentCatalogsPerCwd,
+                agentSkillBodiesOnDemand,
               });
               const keybindingsUpdates = keybindingsChanges.pipe(
                 Stream.map((event) => ({
@@ -3391,7 +3414,10 @@ export const layerWsRpc = (
                   : Stream.empty;
               const settingsUpdates = settingsChanges.pipe(
                 Stream.map((settings) =>
-                  ServerSettings.redactServerSettingsForClient(settings, settingsClient),
+                  ServerSettings.redactServerSettingsForClient(settings, {
+                    ...settingsClient,
+                    agentSkillBodiesOnDemand,
+                  }),
                 ),
                 Stream.map((settings) => ({
                   version: 1 as const,

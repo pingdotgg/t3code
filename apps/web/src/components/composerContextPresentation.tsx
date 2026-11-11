@@ -2,6 +2,7 @@ import ChatMarkdown from "./ChatMarkdown";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type {
+  AgentContextRecord,
   EnvironmentContextRecord,
   PreviewAnnotationPayload,
   ThreadContextRecord,
@@ -30,10 +31,12 @@ import {
   reviewCommentContextLabel,
   terminalContextReference,
   uploadedAttachmentContextRecord,
+  type MentionedIdentityRecord,
 } from "~/lib/composerContextRecords";
 import type { TerminalContextDraft } from "~/lib/terminalContext";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
+import { AgentContextChip } from "./AgentContextChip";
 import { EnvironmentContextChip } from "./EnvironmentContextChip";
 import { ThreadContextChip } from "./ThreadContextChip";
 import { useLinkedEnvironments } from "~/state/peerLinks";
@@ -64,7 +67,8 @@ export type ComposerDraftContextRecord =
   | { kind: "image"; record: ComposerImageAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "file"; record: ComposerFileAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "thread"; record: ThreadContextRecord }
-  | { kind: "environment"; record: EnvironmentContextRecord };
+  | { kind: "environment"; record: EnvironmentContextRecord }
+  | { kind: "agent"; record: AgentContextRecord };
 
 export {
   ComposerContextActionsContext,
@@ -89,7 +93,7 @@ export function composerContextRecordsFromDraft(input: {
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations?: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
-  environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  environmentContexts?: ReadonlyArray<MentionedIdentityRecord>;
   images?: ReadonlyArray<ComposerImageAttachment>;
   files?: ReadonlyArray<ComposerFileAttachment>;
   uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
@@ -127,7 +131,10 @@ export function composerContextRecordsFromDraft(input: {
     records.set(record.contextId, { kind: "thread", record });
   }
   for (const record of input.environmentContexts ?? []) {
-    records.set(record.contextId, { kind: "environment", record });
+    records.set(
+      record.contextId,
+      record.kind === "agent" ? { kind: "agent", record } : { kind: "environment", record },
+    );
   }
   return records;
 }
@@ -333,6 +340,11 @@ function ComposerPreviewAnnotationDetails({
   );
 }
 
+function ComposerAgentContextChip(props: { record: AgentContextRecord }) {
+  const { environmentId } = use(ComposerContextActionsContext);
+  return <AgentContextChip record={props.record} environmentId={environmentId} />;
+}
+
 function ComposerThreadContextChip(props: { record: ThreadContextRecord }) {
   const { environmentId } = use(ComposerContextActionsContext);
   const linkedEnvironments = useLinkedEnvironments(environmentId);
@@ -374,6 +386,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
     "preview-annotation",
     "thread",
     "environment",
+    "agent",
   ],
   handlers: [
     {
@@ -476,6 +489,16 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
       render: (entry, context) =>
         entry.kind === "environment" ? (
           <EnvironmentContextChip record={entry.record} />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+    {
+      kind: "agent",
+      canRender: (entry) => entry.kind === "agent",
+      render: (entry, context) =>
+        entry.kind === "agent" ? (
+          <ComposerAgentContextChip record={entry.record} />
         ) : (
           <UnresolvedContextChip label={context.label} />
         ),

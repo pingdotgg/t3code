@@ -143,6 +143,10 @@
       "types": "./src/operations/index.ts",
       "default": "./src/operations/index.ts"
     },
+    "./operations/agentLibrary": {
+      "types": "./src/operations/agentLibrary.ts",
+      "default": "./src/operations/agentLibrary.ts"
+    },
     "./operations/projects": {
       "types": "./src/operations/projects.ts",
       "default": "./src/operations/projects.ts"
@@ -518,6 +522,10 @@
     "./state/agents": {
       "types": "./src/state/agents.ts",
       "default": "./src/state/agents.ts"
+    },
+    "./state/agentIdentity": {
+      "types": "./src/state/agentIdentity.ts",
+      "default": "./src/state/agentIdentity.ts"
     },
     "./state/child-status-counts": {
       "types": "./src/state/childStatusCounts.ts",

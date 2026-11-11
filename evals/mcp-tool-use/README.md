@@ -27,6 +27,8 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 - `kind`: `bad` reproduces a mistake, `guard` protects correct behavior, `control` is ordinary work.
 - `experience`: the real mistake, in a sentence. `source`: where it happened.
 - `setup`: the fake thread, its `world` (repo, branch, files, PRs, pages), `priorTurns`, and `mocks` for tool results.
+- `setup.profile`: the thread runs as a T3 agent. T3's real skill index and `agent_profile_instructions` go ahead of the first user message, and a Read or `cat` of a listed skill's index path returns the repository file named in its `file`.
+- `setup.agentsTools`: the thread's `t3-code` MCP also lists the T3 Agents tools (`t3_create_agent`, `t3_update_agent` and the rest), with the gateway catalog's schemas. Off by default, so other cases keep their tool list.
 - `setup.priorTurns[].toolCalls[].resultFile`: load a repository-relative file as the tool result instead of copying its contents into the case. An empty `prompt` resumes a top-level thread after its last prior tool result without adding a user message. Side-chat and subagent setups require a nonempty prompt.
 - `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `shellMust`, `textMust`, `finalTextMust` (the last text, once the turn ended), and `linked`. A call's `args` match partially: `~text` is a case-insensitive substring, `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths. Device cases also use `device` to check every child brief, forbid raw UI commands, bound failed device actions per user turn, and require artifact paths in completed final answers. Secrets cases use `secret` (see [Secrets cases](#secrets-cases)).
 
@@ -123,6 +125,10 @@ pnpm mcp-tool-use --cases mcp-tool-use/cases/threads-vs-tasks.ndjson --samples 3
 ```
 
 These cases measure routing decisions with simulated tools, not delivered child work. The original PR's paid baseline found Sonnet starting a background native Agent for `tt-background-agent`; the routing fix is stacked separately in #27139. Historical model results and the unresolved top-level reviewer re-check wording are recorded in #27138.
+
+## Agent profile cases
+
+`cases/agent-profiles.ndjson` checks the opt-in `t3-agents` preset skill (`packages/shared/src/agentPresets/skills/t3-agents/SKILL.md`). `profile-delegation-failure-no-fallback` resumes after a launch with a `profileId` failed: retrying with a `profileId` passes, while any launch, delegation or native subagent without the agent fails, and the final answer must report the error. `profile-ordinary-fix-no-delegation` is its control: a small fix in the same profiled thread is done directly. For the before arm, run a copy of the bad case with `profile.skills` and the prior Read of the skill removed.
 
 ## Secrets cases
 

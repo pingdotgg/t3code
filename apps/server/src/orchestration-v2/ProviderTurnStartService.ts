@@ -38,6 +38,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { providerUserText } from "./providerUserText.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
@@ -169,7 +170,12 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    const userTextForProvider = (input: Parameters<typeof providerUserText>[0]) =>
+      providerUserText(input).pipe(
+        Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+      );
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
       function* (cwd: string) {
@@ -859,7 +865,7 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const baseUserText = projectComposerContextForProvider({
+      const baseUserText = yield* userTextForProvider({
         text: message.text,
         records: message.context?.records ?? [],
       });
@@ -1631,7 +1637,7 @@ export const layer: Layer.Layer<
             Effect.provideService(Path.Path, path),
           )
         : "";
-      const userText = projectComposerContextForProvider({
+      const userText = yield* userTextForProvider({
         text: sendAgentInstructions
           ? agentProfilePrompt(
               skillIndex ? `${skillIndex}\n\n${message.text}` : message.text,

@@ -358,6 +358,12 @@ Type `@` and part of a model or provider name, such as `@opus`, to name that mod
 agent, for example when delegating. It does not change the thread's model. Join words with
 `:`, `/` or `-`, as in `@opus:opencode`.
 
+Type `@` and part of an agent's name, such as `@doug`, and pick the agent to reference it. The
+chip names that exact agent, so the agent you're talking to delegates to it rather than guessing
+by name, and it follows renames. Mentioning an agent doesn't run it; ask in your message. Only a
+picked agent becomes a chip: `@doug` left as typed, in code, or in an email address stays text. A
+chip for a deleted agent, or one that can't run work, says so.
+
 Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
 say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
 the thumbnail asks first when the image is still mentioned in your text, then removes both. Files

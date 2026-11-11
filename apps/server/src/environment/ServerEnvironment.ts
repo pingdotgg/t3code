@@ -233,6 +233,8 @@ export const make = Effect.gen(function* () {
       threadAutoSettlement: true,
       agentSkillsSync: true,
       agentSkillResources: true,
+      agentSkillBodiesOnDemand: true,
+      agentLibraryMutations: true,
       storageCleanup: true,
       storageCleanupRun: true,
       databaseStorage: true,

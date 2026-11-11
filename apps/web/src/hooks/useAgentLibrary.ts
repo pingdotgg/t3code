@@ -1,13 +1,42 @@
+import * as Cause from "effect/Cause";
+import * as Predicate from "effect/Predicate";
 import { useEffect, useRef } from "react";
 import {
-  agentLibraryForSync,
+  agentSkillHasResources,
+  isAgentSkillStub,
   mergeAgentLibraries,
+  withoutAgentSkillTransportFields,
+  type AgentSkill,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
+import {
+  agentLibraryOperationsFromPatch,
+  agentLibrarySources,
+  loadAgentSkills,
+  missingAgentSkills,
+  createAgentLibrarySyncGate,
+  planAgentLibrarySync,
+  runAgentLibrarySync,
+  type AgentLibrarySyncIo,
+} from "@t3tools/client-runtime/operations/agentLibrary";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import { serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useUpdateEnvironmentSettings } from "./useSettings";
+
+function useAgentLibraryIo(label: string): AgentLibrarySyncIo {
+  const getSkills = useAtomCommand(serverEnvironment.getAgentSkills, `${label}: load skills`);
+  const replicate = useAtomCommand(serverEnvironment.updateSettings, label);
+  return {
+    fetchSkills: async (environmentId, skillIds) => {
+      const result = await getSkills({ environmentId, input: { skillIds } });
+      return result._tag === "Success" ? result.value.agentSkills : [];
+    },
+    replicate: async (environmentId, patch) =>
+      (await replicate({ environmentId, input: { patch, replicateProfiles: true } }))._tag ===
+      "Success",
+  };
+}
 
 export function useAgentLibrary() {
   const { environments } = useEnvironments();
@@ -17,10 +46,10 @@ export function useAgentLibrary() {
       env.connection.phase === "connected" &&
       env.serverConfig?.environment.capabilities.agentLibrarySync === true,
   );
-  const library = mergeAgentLibraries(
-    environments.flatMap((env) => (env.serverConfig ? [env.serverConfig.settings] : [])),
-  );
+  const sources = agentLibrarySources(environments);
+  const library = mergeAgentLibraries(sources.map((source) => source.library));
   const target =
+    connected.find((env) => env.serverConfig?.environment.capabilities.agentLibraryMutations) ??
     connected.find((env) => env.serverConfig?.environment.capabilities.agentSkillResources) ??
     connected.find(
       (env) =>
@@ -29,84 +58,100 @@ export function useAgentLibrary() {
     ) ??
     connected.find((env) => env.serverConfig?.environment.capabilities.agentSkillsSync) ??
     connected[0];
+  const capabilities = target?.serverConfig?.environment.capabilities;
   const persistSettings = useUpdateEnvironmentSettings(target?.environmentId ?? null);
-  const replicate = useAtomCommand(
-    serverEnvironment.updateSettings,
-    "agent library sync before edit",
-  );
+  const io = useAgentLibraryIo("agent library sync before edit");
+  const mutate = useAtomCommand(serverEnvironment.mutateAgentLibrary, "agent library edit");
+  /** Full skills, bodies included, for editing, export or reuse; unreachable ones are left out. */
+  const loadSkills = (skillIds: ReadonlyArray<string>) =>
+    loadAgentSkills(sources, library, skillIds, io.fetchSkills);
   const updateSettings = async (patch: ServerSettingsPatch) => {
     if (!target) return false;
     if (
-      library.agentSkills.some((skill) => skill.resources?.length) &&
-      target.serverConfig?.environment.capabilities.agentSkillResources !== true
+      library.agentSkills.some(agentSkillHasResources) &&
+      capabilities?.agentSkillResources !== true
     )
       throw new Error("Update T3 on this machine to edit skills with resources.");
-    const synced = await replicate({
-      environmentId: target.environmentId,
-      input: {
-        patch: agentLibraryForSync(
-          library,
-          target.serverConfig?.environment.capabilities.agentSkillsSync === true,
-        ),
-        replicateProfiles: true,
-      },
-    });
-    if (synced._tag !== "Success") return false;
+    const plan = planAgentLibrarySync(sources, { targets: [target.environmentId] });
+    const available = new Set(
+      [
+        ...(target.serverConfig?.settings.agentSkills ?? []),
+        ...(plan.targets[0]?.patch.agentSkills ?? []),
+        ...(patch.agentSkills ?? []),
+      ].map((skill) => skill.skillId),
+    );
+    const missing = new Set(
+      (patch.mcpGatewayProfiles ?? []).flatMap((profile) => {
+        const seen = library.mcpGatewayProfiles.find(
+          (item) => item.profileId === profile.profileId,
+        );
+        return seen === profile ? [] : missingAgentSkills(library, profile, available);
+      }),
+    );
+    if (missing.size > 0)
+      throw new Error(
+        `Connect the machine that holds ${[...missing].map((name) => `"${name}"`).join(", ")}, then save again.`,
+      );
+    if (!(await runAgentLibrarySync(plan, io))) return false;
+    if (capabilities?.agentLibraryMutations === true) {
+      const { operations, rest } = agentLibraryOperationsFromPatch(library, patch);
+      if (operations.length > 0) {
+        const result = await mutate({ environmentId: target.environmentId, input: { operations } });
+        if (result._tag !== "Success") {
+          // Name and revision conflicts carry a message the editor shows; other failures stay generic.
+          const failure = Cause.squash(result.cause);
+          if (Predicate.isTagged(failure, "AgentLibraryConflictError") && failure instanceof Error)
+            throw failure;
+          return false;
+        }
+      }
+      return Object.keys(rest).length === 0 || persistSettings(rest);
+    }
+    // Older servers store whatever they receive, so stubs from newer machines get their bodies first.
+    if (patch.agentSkills?.some(isAgentSkillStub)) {
+      const stubs = patch.agentSkills.filter(isAgentSkillStub);
+      const loaded = await loadSkills(stubs.map((skill) => skill.skillId));
+      if (loaded.length < stubs.length)
+        throw new Error("Connect the machine that holds these skills, then save again.");
+      const agentSkills = patch.agentSkills.map((skill): AgentSkill => {
+        const full = loaded.find((item) => item.skillId === skill.skillId);
+        if (!isAgentSkillStub(skill) || !full) return skill;
+        return {
+          ...withoutAgentSkillTransportFields(skill),
+          content: full.content,
+          ...(full.resources ? { resources: full.resources } : {}),
+        };
+      });
+      return persistSettings({ ...patch, agentSkills });
+    }
     return persistSettings(patch);
   };
   return {
-    skillsAvailable: target?.serverConfig?.environment.capabilities.agentSkillsSync === true,
-    skillResourcesAvailable:
-      target?.serverConfig?.environment.capabilities.agentSkillResources === true,
+    skillsAvailable: capabilities?.agentSkillsSync === true,
+    skillResourcesAvailable: capabilities?.agentSkillResources === true,
     skills: library.agentSkills,
     profiles: library.mcpGatewayProfiles,
     available: !!target,
     updateSettings,
+    loadSkills,
   };
 }
 
 /** A connected client bridges its machines. */
 export function AgentLibrarySync() {
   const { environments } = useEnvironments();
-  const update = useAtomCommand(serverEnvironment.updateSettings, "agent library sync");
-  const pending = useRef(new Set<string>());
+  const io = useAgentLibraryIo("agent library sync");
+  const gate = useRef(createAgentLibrarySyncGate());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- replicates the merged agent library to connected servers when their streamed settings change
   useEffect(() => {
-    const connected = environments.filter(
-      (env) =>
-        env.connection.phase === "connected" &&
-        env.serverConfig?.environment.capabilities.agentLibrarySync === true,
+    const sources = agentLibrarySources(environments);
+    const plan = planAgentLibrarySync(sources);
+    const batch = gate.current.take(plan, sources);
+    if (batch.targets.length === 0) return;
+    void runAgentLibrarySync({ ...plan, targets: batch.targets }, io).then(
+      (accepted) => batch.settle(accepted),
+      () => batch.settle(false),
     );
-    const library = mergeAgentLibraries(
-      environments.flatMap((env) =>
-        env.serverConfig?.environment.capabilities.agentLibrarySync
-          ? [env.serverConfig.settings]
-          : [],
-      ),
-    );
-    for (const env of connected) {
-      if (
-        library.agentSkills.some((skill) => skill.resources?.length) &&
-        env.serverConfig!.environment.capabilities.agentSkillResources !== true
-      )
-        continue;
-      const supportsSkills = env.serverConfig!.environment.capabilities.agentSkillsSync === true;
-      const patch = agentLibraryForSync(library, supportsSkills);
-      const serialized = JSON.stringify(patch);
-      if (
-        JSON.stringify(
-          agentLibraryForSync(mergeAgentLibraries([env.serverConfig!.settings]), supportsSkills),
-        ) === serialized
-      )
-        continue;
-      const environmentId = env.environmentId;
-      const key = `${environmentId}:${serialized}`;
-      if (pending.current.has(key)) continue;
-      pending.current.add(key);
-      void update({ environmentId, input: { patch, replicateProfiles: true } }).finally(() =>
-        pending.current.delete(key),
-      );
-    }
-  }, [environments, update]);
+  }, [environments, io]);
   return null;
 }

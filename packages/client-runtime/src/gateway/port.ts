@@ -62,6 +62,8 @@ export type GatewayThreadExecutionState = (typeof GATEWAY_THREAD_EXECUTION_STATE
 export interface GatewayProfile {
   readonly description?: string | undefined;
   readonly color?: string | undefined;
+  readonly iconId?: string | undefined;
+  readonly tags?: ReadonlyArray<string> | undefined;
   readonly icon?:
     | "orb"
     | "bot"
@@ -110,6 +112,8 @@ export type GatewayProfileInput = Pick<
   | "systemPrompt"
   | "color"
   | "icon"
+  | "iconId"
+  | "tags"
   | "runtimeMode"
   | "interactionMode"
   | "environmentIds"

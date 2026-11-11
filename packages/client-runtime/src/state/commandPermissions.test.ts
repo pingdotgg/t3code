@@ -160,6 +160,7 @@ describe("command permissions", () => {
 
   it.effect.each([
     { method: WS_METHODS.serverRunStorageCleanup, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.serverMutateAgentLibrary, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
     // A read-only app of the device network opens other members; the server caps the grant.
     { method: WS_METHODS.tailnetDevicesOpenDevice, scope: AuthOrchestrationReadScope },

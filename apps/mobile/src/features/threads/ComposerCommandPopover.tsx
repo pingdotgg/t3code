@@ -2,6 +2,7 @@ import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
+import type { ComposerAgentItem } from "@t3tools/client-runtime/composerThreadItems";
 import type {
   EnvironmentId,
   EnvironmentMachineKind,
@@ -23,6 +24,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import type { ModelOption } from "../../lib/modelOptions";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 export type ComposerCommandItem =
+  | ComposerAgentItem
   | {
       readonly id: string;
       readonly type: "pull-request";
@@ -133,6 +135,8 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
       return "text.bubble";
     case "environment":
       return ENVIRONMENT_MACHINE_SYMBOLS[item.machine];
+    case "agent":
+      return "person.crop.circle";
   }
 }
 

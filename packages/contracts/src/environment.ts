@@ -100,6 +100,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Shared skill content and live agent instruction refresh. */
   agentSkillsSync: Schema.optionalKey(Schema.Boolean),
   agentSkillResources: Schema.optionalKey(Schema.Boolean),
+  /** Honors `agentSkillBodiesOnDemand` and serves `server.getAgentSkills`. */
+  agentSkillBodiesOnDemand: Schema.optionalKey(Schema.Boolean),
+  /** Serves `server.mutateAgentLibrary`, rejects case-insensitive agent name clashes, and keeps `iconId`/`tags`. */
+  agentLibraryMutations: Schema.optionalKey(Schema.Boolean),
   /** First-turn bootstrap retains the selected agent profile. Missing means update before sending agent drafts. */
   agentThreadBootstrap: Schema.optionalKey(Schema.Boolean),
   storageCleanup: Schema.optionalKey(Schema.Boolean),

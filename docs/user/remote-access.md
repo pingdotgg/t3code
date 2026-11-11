@@ -561,9 +561,9 @@ on Windows".
 
 ### Organize work by agent
 
-Open **Open agents** in the command palette, or visit `/agents`. Create a named agent, choose its
-provider, model, thinking, allowed machines, and a system prompt describing its role and workflow,
-then start a task or an empty chat. Clicking a
+Open **Open agents** in the command palette, or visit `/agents`. Create a named agent with an icon,
+optional roles, and a model; its thinking, allowed machines, system prompt, and other settings sit
+under **Advanced**. Then start a task or an empty chat. Clicking a
 card opens the conversation; **Back to agents** returns to the board. Settled work moves into a collapsed **Settled** section
 in its agent column. Right-click a chat to settle or un-settle it. Deleting an agent keeps its conversations under **Removed agents**.
 
@@ -576,8 +576,15 @@ switch away; settled chats remain on the board under **Settled**.
 Agents are shared across clients connected to the same server. Updated clients also synchronize
 the agent library between connected environments that support agent sync, including after reconnecting. Each target resolves the provider and model locally; an unavailable or
 ambiguous selection must be re-selected before starting a thread. Agent configuration and skill changes apply when a new chat is created. Existing chats keep the configuration and skill contents they started with.
+Agent names ignore case, so "Doug" and "doug" cannot coexist. When synchronizing machines brings two
+agents with the same name together, the one created later is renamed with a number, such as
+"Doug (2)".
 
-Add a short **Specialization** when creating or editing an agent to show what it does beneath its name and in MCP. This description does not replace its instructions.
+Add a short **Specialization** under **Advanced** to show what an agent does on its details card and in MCP. This description does not replace its instructions.
+
+Hover or keyboard-focus an agent in the left rail, or tap it on a touch screen, to see its details
+and to edit, schedule, reorder, or delete it. Turn on **Group by role** beside the **Agents**
+heading to list agents under their roles; an agent with several roles appears under each.
 
 MCP assistants can discover agents with read access using `t3_list_agents`, or manage them using `t3_create_agent`, `t3_update_agent`, and `t3_delete_agent` with create
 or admin access. Agent writes share only to connected environments with one of those grants;
@@ -648,7 +655,7 @@ cards, and a chat left pointing at a missing parent is detached when the server 
 
 ### Schedule prompts for an agent
 
-Open **Scheduled** on the Agents board, or choose **Schedule task** from an agent's menu, to send
+Open **Scheduled** on the Agents board, or choose **Schedule task** from an agent's details card, to send
 an agent a prompt at a set time (for example a deploy tonight) or on repeat (for example pulling
 the latest changes every weekday at 7:00). Each task has one thread: the first run creates it and
 every later run posts into it. Pause, resume, run now, edit, or delete a task from the same list.

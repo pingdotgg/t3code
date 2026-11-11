@@ -5,6 +5,7 @@ import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
   ContextHandoffId,
+  EnvironmentId,
   ContextTransferId,
   GitCommandError,
   MessageId,
@@ -15,6 +16,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
+  ServerSettingsError,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -34,6 +36,10 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
+import {
+  agentContextRecord,
+  formatComposerContextReference,
+} from "@t3tools/shared/composerContextReferences";
 import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -68,11 +74,17 @@ const normalize = (target: string) => {
   }
   return `/${parts.join("/")}`;
 };
-const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
+const layerWorktreeLocation = (
+  worktreesDir = managedWorktreesDir,
+  serverSettings: Layer.Layer<
+    ServerSettings.ServerSettingsService,
+    ServerSettingsError
+  > = ServerSettings.layerTest(),
+) =>
   Layer.mergeAll(
     Path.layer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
-    ServerSettings.layerTest(),
+    serverSettings,
   );
 
 function startWithMissingWorktree(
@@ -290,6 +302,10 @@ function makeLocalCommandHarness(input: {
   readonly failReadsAfterRunning?: boolean;
   /** Frozen agent content the thread references; `null` references a missing row. */
   readonly profileContent?: ProfileSnapshotContent | null;
+  readonly contextRecords?: NonNullable<
+    OrchestrationV2ThreadProjection["messages"][number]["context"]
+  >["records"];
+  readonly serverSettings?: Layer.Layer<ServerSettings.ServerSettingsService, ServerSettingsError>;
   readonly previousTurn?: {
     readonly runStatus: "failed" | "completed";
     readonly turnStatus: "running" | "completed" | "interrupted";
@@ -368,6 +384,9 @@ function makeLocalCommandHarness(input: {
     role: "user",
     text: input.text,
     attachments: [],
+    ...(input.contextRecords === undefined
+      ? {}
+      : { context: { version: 1 as const, records: input.contextRecords } }),
     streaming: false,
     createdBy: "user",
     creationSource: "web",
@@ -986,7 +1005,7 @@ function makeLocalCommandHarness(input: {
             }),
         }),
         IdAllocator.layer,
-        layerWorktreeLocation(input.worktreesDir),
+        layerWorktreeLocation(input.worktreesDir, input.serverSettings),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -1100,6 +1119,55 @@ effectIt.effect("prefixes an agent turn with the instructions its thread referen
       "<agent_profile_instructions>\nReview every change.\n</agent_profile_instructions>\n\nContinue",
     );
   }),
+);
+
+effectIt.effect(
+  "tells the provider an agent chip is unavailable, and claims nothing when settings are unreadable",
+  () =>
+    Effect.gen(function* () {
+      const agentChip = agentContextRecord(
+        { profileId: "ghost", name: "Ghost", runtimeMode: "auto" },
+        EnvironmentId.make("local"),
+      );
+      const sentText = (
+        serverSettings?: Layer.Layer<ServerSettings.ServerSettingsService, ServerSettingsError>,
+      ) =>
+        Effect.gen(function* () {
+          const harness = makeLocalCommandHarness({
+            text: `Ask ${formatComposerContextReference(agentChip)}`,
+            previousTurn: { runStatus: "completed", turnStatus: "completed" },
+            contextRecords: [agentChip],
+            ...(serverSettings === undefined ? {} : { serverSettings }),
+          });
+          yield* harness.start;
+          return harness.startRootRun.mock.calls[0]?.[0].message.text ?? "";
+        });
+
+      const unknown = yield* sentText();
+      expect(unknown).toContain("profileId: ghost");
+      expect(unknown).toContain("Unavailable: this environment has no agent with this profileId");
+
+      const unreadable = yield* sentText(
+        Layer.effect(
+          ServerSettings.ServerSettingsService,
+          Effect.map(
+            Effect.service(ServerSettings.ServerSettingsService),
+            (settings): ServerSettings.ServerSettingsService["Service"] => ({
+              ...settings,
+              getSettings: Effect.fail(
+                new ServerSettingsError({
+                  settingsPath: "<memory>",
+                  operation: "read-file",
+                  cause: new Error("settings unreadable"),
+                }),
+              ),
+            }),
+          ),
+        ).pipe(Layer.provide(ServerSettings.layerTest())),
+      );
+      expect(unreadable).toContain("profileId: ghost");
+      expect(unreadable).not.toContain("Unavailable:");
+    }),
 );
 
 effectIt.effect("reminds the agent of instructions the native conversation already holds", () =>

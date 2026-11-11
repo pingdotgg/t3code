@@ -21,6 +21,7 @@ import {
   RuntimeMode,
   ThreadContextRecord,
   EnvironmentContextRecord,
+  AgentContextRecord,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
@@ -87,6 +88,7 @@ import {
   terminalContextReference,
   threadContextReference,
   environmentContextReference,
+  type MentionedIdentityRecord,
 } from "./lib/composerContextRecords";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
@@ -106,7 +108,8 @@ const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isThreadContextRecord = Schema.is(ThreadContextRecord);
-const isEnvironmentContextRecord = Schema.is(EnvironmentContextRecord);
+const MentionedIdentityRecordSchema = Schema.Union([EnvironmentContextRecord, AgentContextRecord]);
+const isEnvironmentContextRecord = Schema.is(MentionedIdentityRecordSchema);
 const isSnapShotSource = Schema.is(SnapShotSource);
 const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
 
@@ -247,7 +250,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   previewAnnotations: Schema.optionalKey(Schema.Array(PreviewAnnotationPayloadSchema)),
   reviewComments: Schema.optionalKey(Schema.Array(ReviewCommentContextSchema)),
   threadContexts: Schema.optionalKey(Schema.Array(ThreadContextRecord)),
-  environmentContexts: Schema.optionalKey(Schema.Array(EnvironmentContextRecord)),
+  environmentContexts: Schema.optionalKey(Schema.Array(MentionedIdentityRecordSchema)),
   modelSelectionByProvider: Schema.optionalKey(Schema.Record(ProviderInstanceId, ModelSelection)),
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
@@ -371,7 +374,8 @@ export interface ComposerThreadDraftState {
   previewAnnotations: PreviewAnnotationPayload[];
   reviewComments: ReviewCommentContext[];
   threadContexts: ThreadContextRecord[];
-  environmentContexts: EnvironmentContextRecord[];
+  /** Machines and agents mentioned with `@`. */
+  environmentContexts: MentionedIdentityRecord[];
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
   activeProvider: ProviderInstanceId | null;
   modelSelectionExplicit?: boolean;
@@ -612,15 +616,15 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     records: ReadonlyArray<ThreadContextRecord>,
   ) => void;
-  /** Mentions machines as context; already-mentioned machines are skipped. */
+  /** Mentions machines or agents as context; already-mentioned ones are skipped. */
   addEnvironmentContexts: (
     threadRef: ComposerThreadTarget,
-    records: ReadonlyArray<EnvironmentContextRecord>,
+    records: ReadonlyArray<MentionedIdentityRecord>,
     options?: ComposerContextAddOptions,
   ) => void;
   setEnvironmentContexts: (
     threadRef: ComposerThreadTarget,
-    records: ReadonlyArray<EnvironmentContextRecord>,
+    records: ReadonlyArray<MentionedIdentityRecord>,
   ) => void;
   clearPersistedAttachments: (threadRef: ComposerThreadTarget) => void;
   syncPersistedAttachments: (
@@ -730,7 +734,7 @@ const EMPTY_TERMINAL_CONTEXTS: TerminalContextDraft[] = [];
 const EMPTY_PREVIEW_ANNOTATIONS: PreviewAnnotationPayload[] = [];
 const EMPTY_REVIEW_COMMENTS: ReviewCommentContext[] = [];
 const EMPTY_THREAD_CONTEXTS: ThreadContextRecord[] = [];
-const EMPTY_ENVIRONMENT_CONTEXTS: EnvironmentContextRecord[] = [];
+const EMPTY_ENVIRONMENT_CONTEXTS: MentionedIdentityRecord[] = [];
 Object.freeze(EMPTY_IMAGES);
 Object.freeze(EMPTY_FILES);
 Object.freeze(EMPTY_IDS);

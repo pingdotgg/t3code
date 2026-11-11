@@ -38,6 +38,10 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
+import {
+  AgentsToolkit,
+  agentsToolInputSchema,
+} from "../../apps/server/src/mcp/agents/AgentsMcpTools.ts";
 import * as Contracts from "@t3tools/contracts";
 import {
   EnvironmentId,
@@ -50,10 +54,12 @@ import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
+import { agentProfilePrompt } from "../../apps/server/src/orchestration-v2/AgentProfile.ts";
 import {
-  AgentsToolkit,
-  agentsToolInputSchema,
-} from "../../apps/server/src/mcp/agents/AgentsMcpTools.ts";
+  agentInstructionRelativePath,
+  assignedSkillIndex,
+  assignedSkillIndexEntry,
+} from "../../apps/server/src/provider/AgentInstructionFiles.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
@@ -298,6 +304,8 @@ export const McpToolUseCase = Schema.Struct({
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
+    /** The thread's `t3-code` MCP also hosts the T3 Agents tools (t3_create_agent and friends). */
+    agentsTools: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
@@ -319,6 +327,27 @@ export const McpToolUseCase = Schema.Struct({
     /** Regexes on one part of a shell command. A match wins over the shell simulator. */
     shellMocks: Schema.optional(
       Schema.Array(Schema.Struct({ match: Schema.String, output: Schema.String })),
+    ),
+    /**
+     * The thread runs as a T3 agent: T3 puts its skill index and system prompt ahead of the first
+     * user message. Each skill's `file` is a repository-relative SKILL.md whose text the runner
+     * loads; reads of its index path return that text.
+     */
+    profile: Schema.optional(
+      Schema.Struct({
+        name: Schema.String,
+        systemPrompt: Schema.optional(Schema.String),
+        skills: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              name: Schema.String,
+              description: Schema.String,
+              file: Schema.String,
+              content: Schema.optional(Schema.String),
+            }),
+          ),
+        ),
+      }),
     ),
     /** The thread is a side chat's first turn: T3 puts the parent's digest ahead of `prompt`. */
     sideChat: Schema.optional(
@@ -455,19 +484,17 @@ const t3InputDecoders = new Map(
     ),
   ]),
 );
-// The Agents tools keep the gateway catalog's input schema, as McpHttpServer registers them.
-const t3Tools: ReadonlyArray<ApiTool> = [
-  ...t3SourceTools.map((tool) => ({
-    name: `${T3_PREFIX}${tool.name}`,
-    description: Tool.getDescription(tool) ?? "",
-    input_schema: advertisedJsonSchema(tool),
-  })),
-  ...Object.values(AgentsToolkit.tools).map((tool) => ({
-    name: `${T3_PREFIX}${tool.name}`,
-    description: Tool.getDescription(tool) ?? "",
-    input_schema: agentsToolInputSchema(tool.name),
-  })),
-];
+const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
+  name: `${T3_PREFIX}${tool.name}`,
+  description: Tool.getDescription(tool) ?? "",
+  input_schema: advertisedJsonSchema(tool),
+}));
+// The server advertises the gateway catalog's own schema for these; only opted-in cases list them.
+const agentsTools: ReadonlyArray<ApiTool> = Object.values(AgentsToolkit.tools).map((tool) => ({
+  name: `${T3_PREFIX}${tool.name}`,
+  description: Tool.getDescription(tool) ?? "",
+  input_schema: agentsToolInputSchema(tool.name),
+}));
 const enabledWhen = (predicate: () => boolean) =>
   new Set(
     t3SourceTools
@@ -500,12 +527,18 @@ const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
-const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>
-  t3Tools.filter(
+const visibleT3Tools = (options: {
+  readonly subagent?: boolean;
+  readonly links?: boolean;
+  readonly agents?: boolean;
+}) => [
+  ...t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
-  );
+  ),
+  ...(options.agents === true ? agentsTools : []),
+];
 
 /**
  * T3's Claude Code options for an eval thread: its system prompt append and its hooks. `device` says
@@ -611,6 +644,7 @@ export const buildBase = (
     readonly keepUserInstructions: boolean;
     readonly subagent?: boolean;
     readonly links?: boolean;
+    readonly agents?: boolean;
     /** A native subagent starts from its task: T3 appends nothing to its system prompt. */
     readonly nativeSubagent?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
@@ -703,6 +737,7 @@ const buildCodexBase = (
     readonly effort?: string | undefined;
     readonly subagent?: boolean;
     readonly links?: boolean;
+    readonly agents?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
   },
@@ -926,6 +961,49 @@ const MAIN_COMMITS = [
  * The gitStatus Claude Code shows when a session starts, built from the case's world. Commits and
  * a branch that the prior turns made (their tool results show it) came later, so they are left out.
  */
+const PROFILE_THREAD_ID = "33333333-3333-4333-8333-333333333333";
+const profileSkillPath = (name: string) =>
+  agentInstructionRelativePath(PROFILE_THREAD_ID).replace(/AGENT\.md$/, `skills/${name}/SKILL.md`);
+
+/** A user message of a thread that runs as a T3 agent: the first carries its instructions. */
+export const withAgentProfile = ({ setup }: McpToolUseCase, message: string) => {
+  const { profile } = setup;
+  if (!profile) return message;
+  const index = assignedSkillIndex(
+    (profile.skills ?? []).map((skill) =>
+      assignedSkillIndexEntry(
+        { ...skill, revision: 1, updatedAt: "2026-01-01T00:00:00.000Z" },
+        NodeCrypto.createHash("sha256")
+          .update(skill.content ?? "")
+          .digest("hex"),
+        profileSkillPath(skill.name),
+      ),
+    ),
+  );
+  return agentProfilePrompt(index ? `${index}\n\n${message}` : message, profile.systemPrompt);
+};
+
+/** A profile skill's SKILL.md when a Read, or a plain `cat`, names its file. */
+export const profileSkillOutput = ({ setup }: McpToolUseCase, call: Omit<ShellEntry, "output">) => {
+  const input = isRecord(call.input) ? call.input : {};
+  const target =
+    call.tool === "Read"
+      ? valueText(input.file_path)
+      : call.tool === "Bash"
+        ? /^cat\s+(\S+)$/.exec(valueText(input.command).trim())?.[1]
+        : undefined;
+  const skill = target
+    ? setup.profile?.skills?.find((entry) => target.endsWith(profileSkillPath(entry.name)))
+    : undefined;
+  if (skill?.content === undefined) return undefined;
+  return call.tool === "Read"
+    ? skill.content
+        .split("\n")
+        .map((line, index) => `${String(index + 1).padStart(6)}\t${line}`)
+        .join("\n")
+    : skill.content;
+};
+
 const gitStatus = ({ setup }: McpToolUseCase) => {
   const prior = valueText(setup.priorTurns ?? []);
   const branch = setup.world?.branch ?? "main";
@@ -996,6 +1074,12 @@ export const buildMessages = (sample: Sample) => {
   ];
   const reminders = base.reminders.toSpliced(base.gitStatusAt, 0, reminder(gitStatus(testCase)));
   push("user", ...reminders, ...notes.flatMap((note) => (note ? [reminder(note)] : [])));
+  let profiled = false;
+  const firstUser = (message: string) => {
+    if (profiled) return message;
+    profiled = true;
+    return withAgentProfile(testCase, message);
+  };
   const toolSearch = findTool(base, "ToolSearch")?.name ?? "ToolSearch";
   let nextId = 0;
   for (const turn of priorTurns) {
@@ -1027,7 +1111,7 @@ export const buildMessages = (sample: Sample) => {
           : (sample.priorResults.get(prior) ?? result);
       push("user", toolResult(id, replayed));
     }
-    if (turn.text) push(turn.role, text(turn.text));
+    if (turn.text) push(turn.role, text(turn.role === "user" ? firstUser(turn.text) : turn.text));
   }
   const userText =
     testCase.promptContext === undefined
@@ -1037,7 +1121,7 @@ export const buildMessages = (sample: Sample) => {
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (testCase.prompt !== "")
-    push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+    push("user", text(firstUser(role === "delegated-child" ? childPrompt() : prompt)));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));
@@ -1538,7 +1622,9 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
   call: Omit<ShellEntry, "output">,
 ) {
   const command = call.tool === "Bash" && isRecord(call.input) ? call.input.command : undefined;
-  let output = typeof command === "string" ? cannedOutput(sample, command) : undefined;
+  let output =
+    profileSkillOutput(sample.testCase, call) ??
+    (typeof command === "string" ? cannedOutput(sample, command) : undefined);
   if (output === undefined) {
     const body = shellRequest(sample, call, config.shellModel);
     const response = isPricedModel(config.shellModel)
@@ -2449,11 +2535,20 @@ const main = Effect.gen(function* () {
           return { ...turn, toolCalls };
         }),
       );
+      const profile = testCase.setup.profile && {
+        ...testCase.setup.profile,
+        skills: yield* Effect.forEach(testCase.setup.profile.skills ?? [], (skill) =>
+          fs
+            .readFileString(path.resolve(import.meta.dirname, "../..", skill.file))
+            .pipe(Effect.map((content) => ({ ...skill, content: content.trim() }))),
+        ),
+      };
       return {
         ...testCase,
         setup: {
           ...testCase.setup,
           priorTurns,
+          ...(profile && { profile }),
         },
       };
     }),
@@ -2472,6 +2567,7 @@ const main = Effect.gen(function* () {
     role: McpToolUseCase["setup"]["role"],
     deviceAccess: boolean,
     links: boolean,
+    agents: boolean,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2482,6 +2578,7 @@ const main = Effect.gen(function* () {
               effort: flags.effort,
               subagent: role === "delegated-child",
               links,
+              agents,
               deviceAccess,
             }),
           ),
@@ -2494,6 +2591,7 @@ const main = Effect.gen(function* () {
               subagent: role === "delegated-child",
               nativeSubagent: role === "native-subagent",
               links,
+              agents,
               deviceAccess,
             });
             return role === "native-subagent"
@@ -2505,18 +2603,19 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}`;
-  const base = yield* buildFor("top", true, false);
-  const bases = new Map<string, Base>([["top:true:false", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.agentsTools === true}`;
+  const base = yield* buildFor("top", true, false, false);
+  const bases = new Map<string, Base>([["top:true:false:false", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", access, links] = key.split(":") as [
+    const [role = "top", access, links, agents] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
+      string,
     ];
-    bases.set(key, yield* buildFor(role, access === "true", links === "true"));
+    bases.set(key, yield* buildFor(role, access === "true", links === "true", agents === "true"));
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";

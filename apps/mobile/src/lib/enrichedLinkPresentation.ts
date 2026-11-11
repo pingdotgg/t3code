@@ -13,27 +13,54 @@ import type {
   SelectableMarkdownSkill,
 } from "../native/SelectableMarkdownText.types";
 import {
+  agentChipState,
+  type EnvironmentAgents,
+} from "@t3tools/client-runtime/state/agentIdentity";
+import {
   formatComposerContextHref,
   parseComposerContextHref,
 } from "@t3tools/shared/composerContextReferences";
 import { hasThreadLinks, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 
+const AGENT_STATE_SUFFIX: Record<ReturnType<typeof agentChipState>["status"], string> = {
+  unknown: "",
+  unsupported: " · unavailable",
+  available: "",
+  missing: " · unavailable",
+  "read-only": " · read-only",
+  elsewhere: " · other machine",
+};
+
+/**
+ * With `agents`, the environment's own library, an agent chip shows the agent's current name
+ * and whether it still exists there.
+ */
 export function enrichedContextLinkPresentation(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
+  agents?: EnvironmentAgents,
 ): { accent?: string; icon: ContextChipIconRef; label?: string } | undefined {
   const reference = parseComposerContextHref(href);
   if (!reference) return undefined;
   const record = records?.find((candidate) => candidate.contextId === reference.contextId);
+  const agent =
+    record?.kind === "agent" && "profileId" in record && agents
+      ? agentChipState(record, agents, undefined)
+      : undefined;
   const presentation =
-    records && !record
+    (records && !record) || agent?.status === "missing" || agent?.status === "unsupported"
       ? UNAVAILABLE_CONTEXT_CHIP_PRESENTATION
       : contextChipPresentation(reference.kind, record);
   const size = composerChipSizeSuffix(record);
+  const label = agent
+    ? `${agent.name}${AGENT_STATE_SUFFIX[agent.status]}`
+    : record && size
+      ? `${record.label} · ${size}`
+      : undefined;
   return {
     ...(presentation.accent ? { accent: presentation.accent } : {}),
     icon: contextChipIcon(presentation, contextRecordFileName(record)),
-    ...(record && size ? { label: `${record.label} · ${size}` } : {}),
+    ...(label ? { label } : {}),
   };
 }
 

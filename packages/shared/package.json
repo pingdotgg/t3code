@@ -451,6 +451,10 @@
       "types": "./src/markdownGithubAlerts.ts",
       "import": "./src/markdownGithubAlerts.ts"
     },
+    "./agentIcons": {
+      "types": "./src/agentIcons.ts",
+      "import": "./src/agentIcons.ts"
+    },
     "./agentPresets": {
       "types": "./src/agentPresets/agentPresets.ts",
       "import": "./src/agentPresets/agentPresets.ts"

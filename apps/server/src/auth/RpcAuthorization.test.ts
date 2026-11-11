@@ -76,6 +76,15 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets config readers fetch skill bodies but only settings writers edit the library", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverGetAgentSkills)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverMutateAgentLibrary)).toBe(
+      AuthSettingsWriteScope,
+    );
+  });
+
   it("lets thread readers observe and refresh checkout branches", () => {
     for (const method of [WS_METHODS.subscribeVcsBranch, WS_METHODS.vcsRefreshBranch]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);

@@ -1261,12 +1261,28 @@ export function createServerEnvironmentAtoms<R, E>(
   const updateSettings = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:server:update-settings",
     tag: WS_METHODS.serverUpdateSettings,
+    // Skill bodies stream as stubs anyway; callers that forward the saved library opt out.
+    execute: (input) =>
+      requestGuarded(WS_METHODS.serverUpdateSettings, {
+        agentSkillBodiesOnDemand: true,
+        ...input,
+      }),
     scheduler: configScheduler,
     concurrency: configConcurrency,
   });
 
   return {
     configValueAtom,
+    getAgentSkills: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:get-agent-skills",
+      tag: WS_METHODS.serverGetAgentSkills,
+    }),
+    mutateAgentLibrary: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:mutate-agent-library",
+      tag: WS_METHODS.serverMutateAgentLibrary,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     runStorageCleanup: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:run-storage-cleanup",
       tag: WS_METHODS.serverRunStorageCleanup,

@@ -91,5 +91,84 @@ export const AgentSkill = Schema.Struct({
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   createdAt: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
+  /**
+   * Set only on metadata stubs sent to clients that opt into `agentSkillBodiesOnDemand`: `content`
+   * is then {@link AGENT_SKILL_OMITTED_CONTENT}, `resources` is absent, and the full skill comes from
+   * `server.getAgentSkills`. Servers never persist a stub.
+   */
+  contentOmitted: Schema.optional(Schema.Literal(true)),
+  /** Stub only: how many resource files the full skill carries. */
+  resourceCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** {@link agentSkillDigest} of content and resources; lets stubs compare bodies without them. */
+  digest: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
 });
 export type AgentSkill = typeof AgentSkill.Type;
+
+/** Placeholder body of a stub; it satisfies the schema but is never a real SKILL.md. */
+const AGENT_SKILL_OMITTED_CONTENT = "(skill body omitted; fetch it with server.getAgentSkills)";
+
+export const isAgentSkillStub = (skill: AgentSkill) => skill.contentOmitted === true;
+
+export const agentSkillHasResources = (skill: AgentSkill) =>
+  (skill.resources?.length ?? skill.resourceCount ?? 0) > 0;
+
+function fnv1a(input: string, seed: number) {
+  let hash = seed;
+  for (let index = 0; index < input.length; index++) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/** Stable across machines; identifies a body, not a security boundary. */
+export function agentSkillDigest(skill: Pick<AgentSkill, "content" | "resources">) {
+  const input = [
+    skill.content,
+    ...(skill.resources ?? []).map(
+      (file) => `${file.path}\u0000${file.executable === true ? 1 : 0}\u0000${file.contentBase64}`,
+    ),
+  ].join("\u0001");
+  return `${fnv1a(input, 0x811c9dc5)}${fnv1a(input, 0x050c5d1f)}`;
+}
+
+const digests = new WeakMap<AgentSkill, string>();
+/** A stub's carried digest, or the full skill's, computed once per object. */
+export function agentSkillDigestOf(skill: AgentSkill) {
+  if (skill.digest !== undefined) return skill.digest;
+  let digest = digests.get(skill);
+  if (digest === undefined) {
+    digest = agentSkillDigest(skill);
+    digests.set(skill, digest);
+  }
+  return digest;
+}
+
+export function toAgentSkillStub(skill: AgentSkill, digest: string): AgentSkill {
+  const {
+    resources,
+    digest: _digest,
+    contentOmitted: _omitted,
+    resourceCount: _count,
+    ...rest
+  } = skill;
+  return {
+    ...rest,
+    content: AGENT_SKILL_OMITTED_CONTENT,
+    contentOmitted: true,
+    ...(resources?.length ? { resourceCount: resources.length } : {}),
+    digest,
+  };
+}
+
+/** What a server persists: the transport-only stub fields removed. */
+export function withoutAgentSkillTransportFields(skill: AgentSkill): AgentSkill {
+  if (
+    skill.contentOmitted === undefined &&
+    skill.digest === undefined &&
+    skill.resourceCount === undefined
+  )
+    return skill;
+  const { contentOmitted: _omitted, digest: _digest, resourceCount: _count, ...rest } = skill;
+  return rest;
+}

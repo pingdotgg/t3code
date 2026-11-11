@@ -27,7 +27,6 @@ import type {
   ProjectId,
   PreviewAnnotationPayload,
   ThreadContextRecord,
-  EnvironmentContextRecord,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   RuntimeRequestId,
@@ -143,6 +142,7 @@ import {
   type TerminalContextSelection,
 } from "../../lib/terminalContext";
 import {
+  agentContextRecord,
   threadContextRecord,
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
@@ -181,6 +181,7 @@ import {
   threadContextReference,
   environmentContextRecord,
   environmentContextReference,
+  type MentionedIdentityRecord,
 } from "~/lib/composerContextRecords";
 import { rememberCopiedComposerAttachments } from "~/lib/copiedComposerAttachments";
 import { useThreadContextDrop, threadContextDropTargetProps } from "./threadContextDrag";
@@ -325,7 +326,7 @@ export interface ChatComposerHandle {
     previewAnnotations: PreviewAnnotationPayload[];
     reviewComments: ReviewCommentContext[];
     threadContexts: ThreadContextRecord[];
-    environmentContexts: EnvironmentContextRecord[];
+    environmentContexts: MentionedIdentityRecord[];
     selectedPromptEffort: string | null;
     selectedModelSelection: ModelSelection;
     multipleModelSelections: ReadonlyArray<ModelSelection> | null;
@@ -2020,9 +2021,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       return;
     }
-    if (item.type === "environment") {
+    if (item.type === "environment" || item.type === "agent") {
       if (trigger.kind !== "path") return;
-      const record = environmentContextRecord(item.environmentId, item.label);
+      const record =
+        item.type === "agent"
+          ? agentContextRecord(item.agent, environmentId)
+          : environmentContextRecord(item.environmentId, item.label);
       const replacement = `${formatInlineContextReference(environmentContextReference(record))} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,

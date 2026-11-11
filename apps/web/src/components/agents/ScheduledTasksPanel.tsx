@@ -135,7 +135,11 @@ function ScheduledTaskRow({
       }
     >
       <div className="scheduled-task-heading">
-        {profile ? <AgentIcon icon={profile.icon} /> : <ClockIcon size={18} />}
+        {profile ? (
+          <AgentIcon icon={profile.icon} iconId={profile.iconId} />
+        ) : (
+          <ClockIcon size={18} />
+        )}
         <div className="scheduled-task-title">
           <strong>{task.title}</strong>
           <span>
