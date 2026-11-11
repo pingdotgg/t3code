@@ -42,6 +42,7 @@ function choices(field: string, options: Readonly<Record<string, string>>, selec
 }
 
 type ProjectOrder = readonly {
+  readonly label: string;
   readonly memberProjectRefs: readonly ScopedProjectRef[];
   readonly pinned: boolean;
   readonly archived: boolean;
@@ -51,6 +52,7 @@ const sameProjectOrder = (previous: ProjectOrder, next: ProjectOrder) =>
   previous.every((group, index) => {
     const members = next[index]!.memberProjectRefs;
     return (
+      group.label === next[index]!.label &&
       group.pinned === next[index]!.pinned &&
       group.archived === next[index]!.archived &&
       group.memberProjectRefs.length === members.length &&
@@ -76,6 +78,7 @@ const sidebarProjectOrderFamily = Atom.family((mode: SidebarProjectGroupingMode)
       pendingTasks: [],
       projectSortOrder: "updated_at",
     }).map((scope) => ({
+      label: scope.title,
       memberProjectRefs: scope.projectRefs,
       pinned: scope.pinned,
       archived: scope.archived,
@@ -83,12 +86,9 @@ const sidebarProjectOrderFamily = Atom.family((mode: SidebarProjectGroupingMode)
   ).pipe(Atom.withEquality(sameProjectOrder)),
 );
 
-function useProjectsInSidebarOrder<Project extends { id: string; environmentId: string }>(
-  projects: readonly Project[],
-) {
+export function usePullRequestProjectGroups() {
   const { sidebarProjectGroupingMode } = useMobileProjectGroupingSettings();
-  const scopes = useAtomValue(sidebarProjectOrderFamily(sidebarProjectGroupingMode));
-  return sortProjectsByGroupOrder(projects, scopes);
+  return useAtomValue(sidebarProjectOrderFamily(sidebarProjectGroupingMode));
 }
 
 export interface PullRequestFilterMenu {
@@ -117,7 +117,7 @@ export function usePullRequestListFilters(props: {
   readonly onSearch: (kind: "labels" | "authors") => void;
 }) {
   const { value } = props;
-  const projects = useProjectsInSidebarOrder(props.projects);
+  const projects = sortProjectsByGroupOrder(props.projects, usePullRequestProjectGroups());
   const selectedLabels = value.filters.labels?.flat() ?? [];
   const selectedLabelSet = new Set(selectedLabels);
   const author = value.filters.author;
