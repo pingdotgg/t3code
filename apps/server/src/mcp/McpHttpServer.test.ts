@@ -175,6 +175,50 @@ const callTool = (name: string, args: Record<string, unknown>) =>
 
 const callSnapshot = (args: Record<string, unknown>) => callTool("preview_snapshot", args);
 
+it("returns each course reference page as MCP image content", () => {
+  const result = McpHttpServer.imageToolContent({
+    url: "https://example.com/solution.pdf",
+    images: [
+      {
+        type: "image",
+        data: Buffer.from("one").toString("base64"),
+        mimeType: "image/png",
+        width: 2,
+        height: 3,
+      },
+      {
+        type: "image",
+        data: Buffer.from("two").toString("base64"),
+        mimeType: "image/png",
+        width: 4,
+        height: 5,
+      },
+    ],
+  });
+  expect(result.metadata).toEqual({
+    url: "https://example.com/solution.pdf",
+    images: [
+      { mimeType: "image/png", width: 2, height: 3 },
+      { mimeType: "image/png", width: 4, height: 5 },
+    ],
+  });
+  expect(result.content.slice(1)).toEqual([
+    { type: "image", mimeType: "image/png", data: new Uint8Array(Buffer.from("one")) },
+    { type: "image", mimeType: "image/png", data: new Uint8Array(Buffer.from("two")) },
+  ]);
+});
+
+it("keeps HTML course reference results usable without images", () => {
+  const result = McpHttpServer.imageToolContent({
+    url: "https://example.com/index.html",
+    title: "Solutions",
+    text: "Problem 1",
+    links: [{ text: "Pset 1", href: "https://example.com/pset1.pdf" }],
+  });
+  expect(result.metadata).toMatchObject({ title: "Solutions", images: [] });
+  expect(result.content).toHaveLength(1);
+});
+
 it.effect.each([
   { input: {}, open: false, message: "No device is open in this thread. Call device_open first." },
   {

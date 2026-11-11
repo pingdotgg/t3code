@@ -353,4 +353,67 @@ describe("course ingestion parsers", () => {
       Effect.provideService(ProcessRunner.ProcessRunner, { run: () => Effect.die("not used") }),
     ),
   );
+
+  it.effect("audits the OCW download page with its bytes and hash", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "ocw-audit-")),
+      );
+      const html = "<html>no course zip here</html>";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(html, { headers: { "content-type": "text/html" } })),
+      );
+      const result = yield* ingestCourse("https://ocw.mit.edu/courses/tiny/", {
+        ytDlp: false,
+        workDir: NodePath.join(stateDir, "tmp"),
+        audit: { stateDir, threadId: "lesson-1", courseId: null },
+      }).pipe(Effect.flip, Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals())));
+      expect(result.message).toContain("did not contain a course zip");
+      const [file] = yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(stateDir, "audit")));
+      const lines = (yield* Effect.promise(() =>
+        NodeFSP.readFile(NodePath.join(stateDir, "audit", file!), "utf8"),
+      ))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({
+        url: "https://ocw.mit.edu/courses/tiny/download/",
+        status: 200,
+        bytes: Buffer.byteLength(html),
+        threadId: "lesson-1",
+      });
+      expect(lines[0].sha256).toMatch(/^[0-9a-f]{64}$/);
+    }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, { run: () => Effect.die("not used") }),
+    ),
+  );
+
+  it.effect("audits one failed OCW hop once", () =>
+    Effect.gen(function* () {
+      const stateDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "ocw-audit-failure-")),
+      );
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Promise.reject(new Error("socket closed"))),
+      );
+      yield* ingestCourse("https://ocw.mit.edu/courses/tiny/", {
+        ytDlp: false,
+        workDir: NodePath.join(stateDir, "tmp"),
+        audit: { stateDir },
+      }).pipe(Effect.flip, Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals())));
+      const [file] = yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(stateDir, "audit")));
+      const lines = (yield* Effect.promise(() =>
+        NodeFSP.readFile(NodePath.join(stateDir, "audit", file!), "utf8"),
+      ))
+        .trim()
+        .split("\n");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("socket closed");
+    }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, { run: () => Effect.die("not used") }),
+    ),
+  );
 });
