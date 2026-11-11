@@ -1,5 +1,7 @@
 import type { SdkLoginOptions, StoredSdkCredentials } from "@cursor/sdk";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSetupError, type ProviderAuthState } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -79,7 +81,7 @@ const phase = (auth: Auth, phase: ProviderAuthState["phase"], session = owner) =
     Effect.map(Option.getOrThrow),
   );
 
-it.layer(NodeServices.layer)("CursorAuth", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it) => {
   it.effect("closes SDK sessions and interrupts in-flight credential work before signing out", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
