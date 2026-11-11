@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import { LayoutPaneContext } from "~/layout/layoutPaneContext";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
@@ -186,4 +187,47 @@ it("runs a side chat's composer chords only from its composer, and never thread 
 
   expect(toggles).toEqual(["model"]);
   expect(stops).toEqual([]);
+});
+
+// A chat beside its thread's focused surface tab, such as an open pull request.
+function RelatedChat(props: { copies: string[] }) {
+  useChatShortcuts({
+    enabled: true,
+    keybindings: [ctrlShift("c", "thread.copyReference")],
+    scriptKeybindings: [],
+    getShortcutContext: () => shortcutContext,
+    threadFindActive: false,
+    composerRef: { current: null },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: { "thread.copyReference": () => void props.copies.push("copy") },
+    fallback: () => undefined,
+  });
+  return null;
+}
+
+it("copies the thread's link while one of its surface tabs has focus", async () => {
+  const copies: string[] = [];
+  await using _screen = await render(
+    <LayoutPaneContext
+      value={{
+        tabId: null,
+        paneId: null,
+        split: true,
+        narrow: false,
+        leadingEdge: true,
+        trailingEdge: false,
+        focused: false,
+        related: true,
+        visible: true,
+      }}
+    >
+      <RelatedChat copies={copies} />
+    </LayoutPaneContext>,
+    options,
+  );
+
+  await userEvent.keyboard("{Control>}{Shift>}C{/Shift}{/Control}");
+
+  expect(copies).toEqual(["copy"]);
 });
