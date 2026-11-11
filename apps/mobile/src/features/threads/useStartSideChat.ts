@@ -2,18 +2,27 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
   ThreadId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type RuntimeMode,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { prepareTurnAttachments } from "../../lib/attachmentUpload";
+import {
+  serializeComposerMessageForServer,
+  uploadedComposerContext,
+} from "../../lib/composerContext";
+import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
@@ -21,8 +30,14 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { waitForThreadShell } from "./threadForkNavigation";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
+export interface SideChatMessage {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  readonly context: OrchestrationMessageContext | undefined;
+}
+
 /**
- * Forks `source` at its latest stable point into a side chat, sends `prompt` there, and opens
+ * Forks `source` at its latest stable point into a side chat, sends `message` there, and opens
  * it like any linked thread. Resolves false when the side chat did not start. `settings` are
  * what the parent's composer would send, which its thread gets only on its next send.
  */
@@ -44,9 +59,23 @@ export function useStartSideChat() {
 
   return async (
     source: ScopedThreadRef,
-    prompt: string,
+    message: SideChatMessage,
     settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
   ): Promise<boolean> => {
+    // Upload first, so an attachment that cannot go out never leaves an empty side chat.
+    const prepared = await settlePromise(() =>
+      prepareTurnAttachments({
+        environmentId: source.environmentId,
+        attachments: message.attachments,
+        supportsImageUploads: true,
+      }),
+    );
+    if (prepared._tag === "Failure") {
+      alertFailure(prepared, "Could not upload the attachments.");
+      return false;
+    }
+    if (prepared.value.status !== "ready") return false;
+    const attachments = prepared.value.attachments;
     const targetThreadId = ThreadId.make(uuidv4());
     const fork = await forkSideChat({
       environmentId: source.environmentId,
@@ -104,11 +133,14 @@ export function useStartSideChat() {
         message: {
           messageId: MessageId.make(uuidv4()),
           role: "user",
-          text: prompt,
-          attachments: [],
+          ...serializeComposerMessageForServer(
+            restoreAttachmentOnlyBootstrapPrompt(message.text, attachments.length > 0),
+            uploadedComposerContext(message.context, message.attachments, attachments),
+          ),
+          attachments,
         },
         modelSelection: settings.modelSelection,
-        titleSeed: deriveThreadTitleSeed({ text: prompt, attachments: [] }),
+        titleSeed: deriveThreadTitleSeed(message),
         runtimeMode: settings.runtimeMode,
         interactionMode: "default",
         createdAt: new Date().toISOString(),

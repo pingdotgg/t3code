@@ -60,6 +60,7 @@ import {
   appendPendingThreadMessages,
   selectPendingAcknowledgedMessages,
 } from "../features/threads/pending-thread-feed";
+import type { SideChatMessage } from "../features/threads/useStartSideChat";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
 import { appAtomRegistry } from "./atom-registry";
 import { pendingThreadCreationMessage } from "./pending-thread-creation";
@@ -180,10 +181,10 @@ export function useThreadDraftForThread(input: {
 }
 
 export function useThreadComposerState(input: {
-  /** Forks the thread into a side chat that gets `prompt`; resolves false when it did not start. */
+  /** Forks the thread into a side chat that gets `message`; resolves false when it did not start. */
   readonly startSideChat: (
     source: ScopedThreadRef,
-    prompt: string,
+    message: SideChatMessage,
     settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
   ) => Promise<boolean>;
 }) {
@@ -568,16 +569,26 @@ export function useThreadComposerState(input: {
     };
     // A redirect's text answers its approval, so `/side` there is that text, not the command.
     const sideChatCommand = beforeDispatch === undefined ? parseSideChatCommand(text) : null;
+    const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (sideChatCommand) {
       if (sideChatUnavailableReason !== null) {
         Dialog.alert("Side chat not started", sideChatUnavailableReason);
-      } else if (attachments.length > 0 || (draft.context?.records.length ?? 0) > 0) {
+      } else if (
+        draft.context?.records.some((record) => record.kind !== "image" && record.kind !== "file")
+      ) {
         Dialog.alert(
-          "Side chats take text only",
-          "Remove the attachments and context, then send it again.",
+          "Side chats take text and attachments only",
+          "Remove the added context, then send it again.",
         );
-      } else if (sideChatCommand.prompt.length === 0) {
+      } else if (sideChatCommand.prompt.length === 0 && attachments.length === 0) {
         Dialog.alert("Ask a side question", "Type the question after /side, then send it.");
+      } else if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+        Dialog.alert(
+          "Too many attachments",
+          `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+        );
+      } else if (contextBlockReason) {
+        Dialog.alert("Too much context", contextBlockReason);
       } else if (modelUnavailable) {
         alertModelUnavailable();
       } else if (!startingSideChatRef.current) {
@@ -585,7 +596,7 @@ export function useThreadComposerState(input: {
         const started = await input
           .startSideChat(
             { environmentId: thread.environmentId, threadId: thread.id },
-            sideChatCommand.prompt,
+            { text: sideChatCommand.prompt, attachments, context: draft.context },
             {
               runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
               modelSelection,
@@ -599,8 +610,11 @@ export function useThreadComposerState(input: {
         if (
           started &&
           current.text === draft.text &&
-          current.attachments.length === 0 &&
-          (current.context?.records.length ?? 0) === 0
+          current.attachments.length === attachments.length &&
+          current.attachments.every(
+            (attachment, index) => attachment.id === attachments[index]?.id,
+          ) &&
+          JSON.stringify(current.context) === JSON.stringify(draft.context)
         ) {
           clearComposerDraftContent(threadKey);
         }
@@ -629,7 +643,6 @@ export function useThreadComposerState(input: {
       return null;
     }
 
-    const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (contextBlockReason) {
       Dialog.alert("Too much context", contextBlockReason);
       return null;

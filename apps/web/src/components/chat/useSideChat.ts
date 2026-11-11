@@ -1,6 +1,5 @@
 import type { ModelSelection, RuntimeMode, ScopedThreadRef } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -11,6 +10,7 @@ import { useRef } from "react";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import type { SideChatFirstMessage } from "../ChatView.logic";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { readThreadShell, waitForThreadShell } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
@@ -19,7 +19,7 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 
 /**
  * Starts side chats from `threadRef`, or offers none when it is null. `open` forks the
- * thread's latest stable point, sends `prompt` there with `readSettings()`, the parent
+ * thread's latest stable point, sends `message` there with `readSettings()`, the parent
  * composer's settings, and shows the tab. It resolves false when the side chat did not
  * start, or another one is still starting.
  */
@@ -48,7 +48,7 @@ export function useSideChat(input: {
     const error = squashAtomCommandFailure(failure);
     input.onError(error instanceof Error ? error.message : fallback);
   };
-  const start = async (threadRef: ScopedThreadRef, prompt: string | undefined) => {
+  const start = async (threadRef: ScopedThreadRef, message: SideChatFirstMessage | null) => {
     const { runtimeMode, modelSelection } = input.readSettings();
     const targetThreadId = newThreadId();
     const fork = await forkSideChat({
@@ -88,16 +88,16 @@ export function useSideChat(input: {
         return false;
       }
     }
-    const text = prompt?.trim();
     // Send before showing the tab: closing a tab whose side chat has no run deletes it.
-    if (text) {
+    if (message) {
+      const { titleSeed, ...content } = message;
       const turn = await startThreadTurn({
         environmentId: threadRef.environmentId,
         input: {
           threadId: targetThreadId,
-          message: { messageId: newMessageId(), role: "user", text, attachments: [] },
+          message: { messageId: newMessageId(), role: "user", ...content },
           ...(modelSelection === undefined ? {} : { modelSelection }),
-          titleSeed: deriveThreadTitleSeed({ text, attachments: [] }),
+          titleSeed,
           runtimeMode,
           interactionMode: "default",
           createdAt: new Date().toISOString(),
@@ -114,11 +114,11 @@ export function useSideChat(input: {
     useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
     return true;
   };
-  const open = async (prompt?: string) => {
+  const open = async (message: SideChatFirstMessage | null = null) => {
     const { threadRef } = input;
     if (!threadRef || pendingRef.current) return false;
     pendingRef.current = true;
-    return start(threadRef, prompt).finally(() => {
+    return start(threadRef, message).finally(() => {
       pendingRef.current = false;
     });
   };

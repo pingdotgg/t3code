@@ -11,6 +11,7 @@ import {
   deriveAvailableRevertTurnCounts,
   deriveThreadPendingBackgroundTasks,
   presentThreadShellFromProjection,
+  type SideChatFirstMessage,
 } from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { usePullRequestLinking } from "../hooks/usePullRequestLinking";
@@ -2803,7 +2804,9 @@ export default function ChatView(props: ChatViewProps) {
                 ? "Available once the thread's worktree is set up."
                 : null;
   const openSideChatStable = useStableCallback(() => void sideChat.open());
-  const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
+  const sendSideChatStable = useStableCallback((message: SideChatFirstMessage | null) =>
+    sideChat.open(message),
+  );
   const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =
     useTimelineRewind({
       environmentId,
@@ -2874,7 +2877,7 @@ export default function ChatView(props: ChatViewProps) {
     scrollToEnd,
     setThreadError,
   });
-  const { onSend } = useComposerSend({
+  const { onSend, sideChatStarting } = useComposerSend({
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -2926,6 +2929,7 @@ export default function ChatView(props: ChatViewProps) {
     respondingRequestIds,
     activePendingProgress,
     onAdvanceActivePendingUserInput,
+    onChangeActivePendingUserInputCustomAnswer,
     onRespondToApproval: onRespondToApprovalStable,
     beginLocalDispatch,
     resetLocalDispatch,
@@ -3599,6 +3603,7 @@ export default function ChatView(props: ChatViewProps) {
                                 canInterrupt={canInterruptRunningThread}
                                 isSendBusy={
                                   (isSendBusy && !sendQueuesBehindSetup) ||
+                                  sideChatStarting ||
                                   (setupQueueSendThreadKey !== null &&
                                     setupQueueSendThreadKey === activeThreadKey) ||
                                   queuedRunEdit.isSaving ||

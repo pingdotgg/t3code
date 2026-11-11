@@ -21,6 +21,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type AssetCreateUrlInput,
   type AssetCreateUrlResult,
+  type ChatAttachment,
   type ChatFileAttachment,
   type CommandId,
   type EnvironmentId,
@@ -40,6 +41,7 @@ import {
   type ThreadId,
   type ThreadLinkedPullRequest,
   type RunId,
+  type UploadChatAttachment,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
@@ -63,6 +65,8 @@ import {
   type Thread,
   type TurnDiffSummary,
 } from "../types";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
@@ -82,6 +86,7 @@ import {
   stripInlineContextReferences,
 } from "~/lib/composerContextReferences";
 import {
+  buildMessageContext,
   previewAnnotationContextLabel,
   reviewCommentContextLabel,
   terminalContextReference,
@@ -1350,6 +1355,38 @@ export function withMessageContext(input: {
   if (context === undefined) return { text };
   return { text, context };
 }
+
+/**
+ * The first message `/side` sends to its side chat, or null when it only opens one.
+ * `turnAttachments` are `attachments` as the turn sends them, in the same order.
+ */
+export function sideChatFirstMessage(input: {
+  readonly prompt: string;
+  readonly attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
+  readonly turnAttachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
+}) {
+  const text = input.prompt.trim();
+  if (text.length === 0 && input.turnAttachments.length === 0) return null;
+  const attachmentIds = boundAttachmentIds(input.turnAttachments, input.attachments);
+  return {
+    ...withMessageContext({
+      text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      context: buildMessageContext({
+        terminalContexts: [],
+        reviewComments: [],
+        previewAnnotations: [],
+        attachments: input.attachments.map((attachment, index) => ({
+          attachment,
+          attachmentId: attachmentIds[index] ?? attachment.id,
+        })),
+      }),
+    }),
+    attachments: input.turnAttachments,
+    titleSeed: deriveThreadTitleSeed({ text, attachments: input.turnAttachments }),
+  };
+}
+
+export type SideChatFirstMessage = NonNullable<ReturnType<typeof sideChatFirstMessage>>;
 
 /** The attachments the optimistic user row shows before the server echoes the message. */
 export function optimisticMessageAttachments(
