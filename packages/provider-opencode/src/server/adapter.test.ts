@@ -1009,6 +1009,92 @@ describe("OpenCodeAdapterV2", () => {
         ),
     );
 
+    it.effect.each(["permission", "question"] as const)(
+      "ignores a %s settled during the final owner lookup",
+      (kind) =>
+        Effect.gen(function* () {
+          const finalLookup = promiseGate<void>();
+          const releaseLookup = promiseGate<void>();
+          let lookups = 0;
+          const harness = yield* makeHarness({
+            session: {
+              get: async () => {
+                lookups += 1;
+                if (lookups === 6) {
+                  finalLookup.resolve();
+                  await releaseLookup.promise;
+                }
+                throw new Error("Owner unavailable");
+              },
+            },
+          });
+          yield* harness.ask(kind);
+          yield* TestClock.adjust("5 seconds");
+          yield* Effect.promise(() => finalLookup.promise);
+          yield* Effect.promise(() =>
+            harness.nativeEvents.push({
+              type: `${kind}.replied`,
+              properties: { sessionID: "child", requestID: "request", reply: "once", answers: [] },
+            }),
+          );
+          releaseLookup.resolve();
+          yield* TestClock.adjust("0 millis");
+          assert.equal(lookups, 6);
+          assert.isEmpty(harness.errors());
+          assert.isEmpty(harness.warnings);
+          assert.isEmpty(harness.rejections);
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+        }).pipe(
+          Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+          Effect.scoped,
+        ),
+    );
+
+    it.effect("pins idle release through the initial lookup, backoff and question rejection", () =>
+      Effect.gen(function* () {
+        const lookupStarted = promiseGate<void>();
+        const releaseLookup = promiseGate<void>();
+        const rejectionStarted = promiseGate<void>();
+        const releaseRejection = promiseGate<void>();
+        const harness = yield* makeHarness({
+          session: {
+            get: async () => {
+              lookupStarted.resolve();
+              await releaseLookup.promise;
+              return { data: { id: "child", parentID: "root" } };
+            },
+          },
+          question: {
+            reject: async () => {
+              rejectionStarted.resolve();
+              await releaseRejection.promise;
+              return { data: true };
+            },
+          },
+        });
+        assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+        const asking = yield* harness.ask("question").pipe(Effect.forkScoped);
+        yield* Effect.promise(() => lookupStarted.promise);
+        assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+        releaseLookup.resolve();
+        yield* Fiber.join(asking);
+        yield* TestClock.adjust("4999 millis");
+        assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+        yield* TestClock.adjust("1 milli");
+        yield* Effect.promise(() => rejectionStarted.promise);
+        assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+        assert.isEmpty(harness.errors());
+        releaseRejection.resolve();
+        yield* TestClock.adjust("0 millis");
+        assert.lengthOf(harness.errors(), 1);
+        assert.include(harness.errors()[0]!.providerSession.lastError, "question request request");
+        assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+    );
+
     it.effect.each(["success", "404", "failure", "timeout"] as const)(
       "settles only delivered local question rejections: %s",
       (outcome) =>
@@ -1052,6 +1138,7 @@ describe("OpenCodeAdapterV2", () => {
             assert.isTrue(signal!.aborted);
           }
           assert.lengthOf(harness.warnings, 1);
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
           assert.lengthOf(harness.errors(), outcome === "404" ? 0 : 1);
           if (outcome !== "404") {
             assert.include(
@@ -1190,6 +1277,7 @@ describe("OpenCodeAdapterV2", () => {
           assert.isEmpty(harness.errors());
           assert.isEmpty(harness.warnings);
           assert.isEmpty(harness.rejections);
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
           available = true;
           yield* harness.ask(kind);
           const resumed = yield* harness.runtime.resumeThread({

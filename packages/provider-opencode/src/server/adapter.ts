@@ -2022,6 +2022,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               return true;
             }
             const state = yield* resolveSessionOwner(sessionId);
+            if (settledNativeRequestIds.has(nativeRequestId)) return true;
             // Failed lookups cannot erase ownership evidence; later registration can replace it.
             if (state !== undefined) lastResolvedOwner = state;
             const owner = state == null ? undefined : topLevelRequestOwner(state);
@@ -2029,52 +2030,71 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             yield* emitRuntimeRequest(owner, nativeRequestId, request);
             return true;
           });
-          if (yield* attempt) return;
-          pendingChildRequestRoutes.add(nativeRequestId);
-          yield* Effect.gen(function* () {
-            for (let retry = 0; retry < 5; retry += 1) {
-              yield* Effect.sleep(Duration.millis(Math.min(200 * 2 ** retry, 2_000)));
-              if (yield* attempt) return;
-            }
-            if (lastResolvedOwner === null) return;
-            const detail =
-              `OpenCode ${request.type} request ${nativeRequestId} could not be routed to an active thread.` +
-              (request.type === "permission"
-                ? " Native permission remains pending because rejection can cancel other permissions in the same native session."
-                : "");
-            yield* Effect.logWarning(detail, {
-              nativeSessionId: sessionId,
-              providerSessionId: input.providerSessionId,
-            });
-            // Native permission rejection also cancels sibling requests in the same session.
-            if (lastResolvedOwner !== undefined && request.type === "question") {
-              const rejected = yield* sdkCall(
-                "question.reject",
-                { requestID: nativeRequestId },
-                (signal) => client.question.reject({ requestID: nativeRequestId }, { signal }),
-              ).pipe(
-                Effect.map((response) => unwrapData("question.reject", response)),
-                Effect.timeout("10 seconds"),
-                Effect.exit,
+          // Keep the idle pin while transferring the initial lookup to the retry fiber.
+          yield* Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              pendingChildRequestRoutes.add(nativeRequestId);
+              const routed = yield* restore(attempt).pipe(
+                Effect.onExit((exit) =>
+                  Effect.sync(() => {
+                    if (Exit.isFailure(exit) || exit.value) {
+                      pendingChildRequestRoutes.delete(nativeRequestId);
+                    }
+                  }),
+                ),
               );
-              if (Exit.isFailure(rejected)) {
-                if (isOpenCodeNotFound(Cause.squash(rejected.cause))) {
-                  rememberSettledRequest(nativeRequestId);
-                  return;
-                }
-                yield* updateProviderSession(
-                  "error",
-                  `${detail} Native rejection failed.`,
-                  routingSession,
-                );
-                return;
-              }
-              rememberSettledRequest(nativeRequestId);
-            }
-            yield* updateProviderSession("error", detail, routingSession);
-          }).pipe(
-            Effect.ensuring(Effect.sync(() => pendingChildRequestRoutes.delete(nativeRequestId))),
-            Effect.forkIn(scope),
+              if (routed) return;
+              yield* restore(
+                Effect.gen(function* () {
+                  for (let retry = 0; retry < 5; retry += 1) {
+                    yield* Effect.sleep(Duration.millis(Math.min(200 * 2 ** retry, 2_000)));
+                    if (yield* attempt) return;
+                  }
+                  if (lastResolvedOwner === null) return;
+                  const detail =
+                    `OpenCode ${request.type} request ${nativeRequestId} could not be routed to an active thread.` +
+                    (request.type === "permission"
+                      ? " Native permission remains pending because rejection can cancel other permissions in the same native session."
+                      : "");
+                  yield* Effect.logWarning(detail, {
+                    nativeSessionId: sessionId,
+                    providerSessionId: input.providerSessionId,
+                  });
+                  // Native permission rejection also cancels sibling requests in the same session.
+                  if (lastResolvedOwner !== undefined && request.type === "question") {
+                    const rejected = yield* sdkCall(
+                      "question.reject",
+                      { requestID: nativeRequestId },
+                      (signal) =>
+                        client.question.reject({ requestID: nativeRequestId }, { signal }),
+                    ).pipe(
+                      Effect.map((response) => unwrapData("question.reject", response)),
+                      Effect.timeout("10 seconds"),
+                      Effect.exit,
+                    );
+                    if (Exit.isFailure(rejected)) {
+                      if (isOpenCodeNotFound(Cause.squash(rejected.cause))) {
+                        rememberSettledRequest(nativeRequestId);
+                        return;
+                      }
+                      yield* updateProviderSession(
+                        "error",
+                        `${detail} Native rejection failed.`,
+                        routingSession,
+                      );
+                      return;
+                    }
+                    rememberSettledRequest(nativeRequestId);
+                  }
+                  yield* updateProviderSession("error", detail, routingSession);
+                }),
+              ).pipe(
+                Effect.ensuring(
+                  Effect.sync(() => pendingChildRequestRoutes.delete(nativeRequestId)),
+                ),
+                Effect.forkIn(scope),
+              );
+            }),
           );
         });
 
@@ -3139,7 +3159,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           providerSessionId: input.providerSessionId,
           providerSession: sessionEntity,
           events: Stream.fromEffectRepeat(Queue.take(events)),
-          hasPendingBackgroundWork: Effect.sync(() => busySessionIds.size > 0),
+          hasPendingBackgroundWork: Effect.sync(
+            () => busySessionIds.size > 0 || pendingChildRequestRoutes.size > 0,
+          ),
           ensureThread: Effect.fn("OpencodeAdapter.ensureThread")(
             function* (threadInput) {
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {
