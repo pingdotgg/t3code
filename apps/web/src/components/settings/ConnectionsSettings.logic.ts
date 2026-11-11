@@ -218,9 +218,7 @@ export function parseManualDesktopSshTarget(input: {
     throw new Error("SSH host or alias is required.");
   }
 
-  if (port !== null && (!Number.isInteger(port) || port <= 0 || port > 65_535)) {
-    throw new Error("SSH port must be between 1 and 65535.");
-  }
+  assertSshPort(port);
 
   return {
     alias: hostname,
@@ -228,6 +226,29 @@ export function parseManualDesktopSshTarget(input: {
     username,
     port,
   };
+}
+
+// A discovered alias is an ssh config Host name, so it is never split into user@host:port.
+export function parseDiscoveredDesktopSshTarget(input: {
+  readonly alias: string;
+  readonly username: string;
+  readonly port: string;
+}): DesktopSshEnvironmentTarget {
+  const rawPort = input.port.trim();
+  const port = rawPort.length > 0 ? Number.parseInt(rawPort, 10) : null;
+  assertSshPort(port);
+  return {
+    alias: input.alias,
+    hostname: input.alias,
+    username: input.username.trim() || null,
+    port,
+  };
+}
+
+function assertSshPort(port: number | null) {
+  if (port !== null && (!Number.isInteger(port) || port <= 0 || port > 65_535)) {
+    throw new Error("SSH port must be between 1 and 65535.");
+  }
 }
 
 export function parsePairingUrlFields(

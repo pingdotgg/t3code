@@ -59,6 +59,7 @@ import {
   threadJumpIndexFromCommand,
 } from "../../keybindings";
 import {
+  parseDiscoveredDesktopSshTarget,
   parseManualDesktopSshTarget,
   parsePairingUrlFields,
   parseRemotePairingFields,
@@ -281,8 +282,8 @@ export function AddEnvironmentDialog({
     // today would pin its user and port, so later config edits never apply.
     let aliasTarget: DesktopSshEnvironmentTarget;
     try {
-      aliasTarget = parseManualDesktopSshTarget({
-        host: target.alias,
+      aliasTarget = parseDiscoveredDesktopSshTarget({
+        alias: target.alias,
         username: savedBackendSshUsername,
         port: savedBackendSshPort,
       });
