@@ -1,12 +1,16 @@
 import {
   AuthStandardClientScopes,
   CommandId,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettings as ServerSettingsSchema,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
   type ProjectMutation,
   type ProjectSnapshot,
   ProjectId,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Console from "effect/Console";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
@@ -42,6 +46,12 @@ import {
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import {
+  reportDiscoveryErrors,
+  withThreadTools,
+  listAllProjects,
+  listAllThreads,
+} from "./discovery.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 type ProjectMutationTarget = {
@@ -594,7 +604,75 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+const encodeDiscoveryJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+// The app saves a project's model in settings.json; the project record keeps only a pre-fold value.
+const decodeProjectModelSettings = Schema.decodeUnknownOption(
+  fromLenientJson(
+    Schema.Struct({
+      projectSettingsOverrides: ServerSettingsSchema.fields.projectSettingsOverrides,
+      projectSettingsFolded: ServerSettingsSchema.fields.projectSettingsFolded,
+    }),
+  ),
+);
+
+const projectListCommand = Command.make("list", {
+  ...projectLocationFlags,
+  json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
+}).pipe(
+  Command.withDescription("List projects, their default models, and thread counts by status."),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.project.list")(function* (tools) {
+        const snapshot = {
+          projects: yield* listAllProjects(tools),
+          threads: yield* listAllThreads(tools, { allProjects: true }),
+        };
+        const { settingsPath } = yield* ServerConfig.ServerConfig;
+        const settingsJson = yield* (yield* FileSystem.FileSystem)
+          .readFileString(settingsPath)
+          .pipe(Effect.orElseSucceed(() => "{}"));
+        const settings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          ...Option.getOrUndefined(decodeProjectModelSettings(settingsJson)),
+        };
+        const countsByProject = new Map<ProjectId, Record<string, number>>();
+        for (const thread of snapshot.threads) {
+          const counts = countsByProject.get(thread.projectId) ?? {};
+          counts[thread.status] = (counts[thread.status] ?? 0) + 1;
+          countsByProject.set(thread.projectId, counts);
+        }
+        const projects = snapshot.projects.map((project) => {
+          const threadCounts = countsByProject.get(project.id) ?? {};
+          return {
+            id: project.id,
+            title: project.title,
+            workspaceRoot: project.workspaceRoot,
+            defaultModelSelection:
+              resolveProjectSettings(settings, project.id, project).overrides
+                .defaultModelSelection ?? null,
+            threadCounts,
+          };
+        });
+        if (flags.json) return yield* Console.log(encodeDiscoveryJson(projects));
+        for (const project of projects) {
+          const model = project.defaultModelSelection;
+          yield* Console.log(
+            `${project.id}  ${project.title}  ${project.workspaceRoot}  ${model === null ? "default" : `${model.instanceId}/${model.model}`}  ${encodeDiscoveryJson(project.threadCounts)}`,
+          );
+        }
+      }),
+      { access: "read-only", quietLogs: flags.json },
+    ).pipe(reportDiscoveryErrors),
+  ),
+);
+
 export const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),
-  Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
+  Command.withSubcommands([
+    projectListCommand,
+    projectAddCommand,
+    projectRemoveCommand,
+    projectRenameCommand,
+  ]),
 );

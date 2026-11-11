@@ -14,18 +14,13 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
 
+import type { ThreadTools } from "./discovery.ts";
 import * as McpBridge from "../mcp/AcpMcpStdioBridge.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import {
-  readLatestMessages,
-  threadCommand,
-  type ThreadTools,
-  titleFromMessage,
-  waitForRun,
-} from "./thread.ts";
+import { readLatestMessages, threadCommand, titleFromMessage, waitForRun } from "./thread.ts";
 
 vi.mock("../auth/EnvironmentAuth.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../auth/EnvironmentAuth.ts")>();

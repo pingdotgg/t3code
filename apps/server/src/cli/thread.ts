@@ -1,6 +1,4 @@
 import {
-  OrchestratorMcpFailure,
-  OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
@@ -8,30 +6,28 @@ import {
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
-  type OrchestratorMcpThreadListItem,
   type OrchestratorMcpThreadStatus,
+  OrchestrationV2RunStatus,
   type OrchestratorMcpThreadTimelineItem,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
-import * as References from "effect/References";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
-import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import { Argument, Command, Flag } from "effect/cli";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as ServerConfig from "../config.ts";
-import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
-import { expandHomePath } from "../os-jank.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
-import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import {
+  DiscoveryCliError,
+  resolveDiscoveryProject,
+  withThreadTools,
+  listAllProjects,
+  listAllThreads,
+  type ThreadTools,
+} from "./discovery.ts";
+import { projectLocationFlags } from "./config.ts";
 
 /**
  * Short enough that a run which stops to ask the user something is noticed
@@ -41,53 +37,12 @@ const WAIT_SLICE_MS = 15_000;
 const READ_PAGE_LIMIT = 100;
 const TITLE_MAX_CHARS = 80;
 
-export class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServerNotRunningError>()(
-  "ThreadServerNotRunningError",
-  { baseDir: Schema.String },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    return `No running T3 Code server uses ${this.baseDir}. Start T3 Code, then retry.`;
-  }
-}
-
-export class ThreadServerUnreachableError extends Schema.TaggedError<ThreadServerUnreachableError>()(
-  "ThreadServerUnreachableError",
-  { origin: Schema.String, cause: Schema.Defect() },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    const reason = this.cause instanceof Error ? ` ${this.cause.message}` : "";
-    return `Could not reach the T3 Code server at ${this.origin}.${reason}`;
-  }
-}
-
-export class ThreadToolFailedError extends Schema.TaggedError<ThreadToolFailedError>()(
-  "ThreadToolFailedError",
-  { tool: Schema.String, detail: Schema.String },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    return this.detail;
-  }
-}
-
 export class ThreadUsageError extends Schema.TaggedError<ThreadUsageError>()("ThreadUsageError", {
   detail: Schema.String,
 }) {
   override readonly [Runtime.errorReported] = false;
   override get message(): string {
     return this.detail;
-  }
-}
-
-export class ThreadProjectNotFoundError extends Schema.TaggedError<ThreadProjectNotFoundError>()(
-  "ThreadProjectNotFoundError",
-  { identifier: Schema.String },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    return `No T3 Code project matches '${this.identifier}'. Pass a project id or a path inside a project.`;
   }
 }
 
@@ -116,11 +71,8 @@ export class ThreadRunEndedError extends Schema.TaggedError<ThreadRunEndedError>
 }
 
 const ThreadCliError = Schema.Union([
-  ThreadServerNotRunningError,
-  ThreadServerUnreachableError,
-  ThreadToolFailedError,
   ThreadUsageError,
-  ThreadProjectNotFoundError,
+  DiscoveryCliError,
   ThreadNeedsInputError,
   ThreadRunEndedError,
 ]);
@@ -137,112 +89,13 @@ const reportThreadErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     ),
   );
 
-const decodeFailureText = Schema.decodeUnknownOption(Schema.fromJsonString(OrchestratorMcpFailure));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const printJson = (value: unknown) => Console.log(encodeJson(value));
-
-const ToolResult = Schema.Struct({
-  isError: Schema.optional(Schema.Boolean),
-  structuredContent: Schema.optional(Schema.Unknown),
-  content: Schema.optional(
-    Schema.Array(Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) })),
-  ),
-});
-
-const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
-
-const ProjectListResult = Schema.Struct({
-  projects: Schema.Array(
-    Schema.Struct({ id: ProjectId, title: Schema.String, workspaceRoot: Schema.String }),
-  ),
-  nextCursor: Schema.NullOr(Schema.Int),
-});
 
 const ThreadLaunchResult = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   runId: Schema.NullOr(RunId),
-});
-
-const toolFailureDetail = (result: typeof ToolResult.Type) => {
-  const text = result.content?.find((part) => part.text !== undefined)?.text ?? "";
-  return Option.match(decodeFailureText(text), {
-    onNone: () => text || "The tool call failed.",
-    onSome: (failure) => failure.message,
-  });
-};
-
-const makeThreadTools = (session: McpToolSession, origin: string) => {
-  const unexpected = (tool: string) =>
-    new ThreadToolFailedError({
-      tool,
-      detail: `The server sent an unexpected ${tool} result. Update the t3 CLI to match the server.`,
-    });
-  return {
-    call: Effect.fn("cli.thread.callTool")(function* <S extends Schema.Decoder<unknown>>(
-      tool: string,
-      args: Readonly<Record<string, unknown>>,
-      schema: S,
-    ): Effect.fn.Return<S["Type"], ThreadServerUnreachableError | ThreadToolFailedError> {
-      const raw = yield* session
-        .call(tool, args)
-        .pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
-      const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
-      if (result.isError === true) {
-        return yield* new ThreadToolFailedError({ tool, detail: toolFailureDetail(result) });
-      }
-      return yield* Schema.decodeUnknownEffect(schema)(result.structuredContent).pipe(
-        Effect.mapError(() => unexpected(tool)),
-      );
-    }),
-  };
-};
-export type ThreadTools = ReturnType<typeof makeThreadTools>;
-
-/**
- * Signs in as a short-lived MCP client of the running server, the same way an
- * outside agent does, and revokes that session when the command ends.
- */
-const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string> },
-  run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
-) {
-  const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
-  return yield* Effect.gen(function* () {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
-      return yield* new ThreadServerNotRunningError({ baseDir: config.baseDir });
-    }
-    const origin = runtimeState.value.origin;
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const issued = yield* Effect.acquireRelease(
-      environmentAuth.issueMcpClientSession({
-        label: "t3 thread cli",
-        // The CLI runs as the machine's owner. New threads still start at
-        // the project's default mode, never at this ceiling by default.
-        access: "full-access",
-        peerLink: false,
-        client: { deviceType: "bot" },
-      }),
-      (session) =>
-        environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
-    );
-    const session = yield* mcpToolSession({
-      endpoint: new URL("/mcp", origin).href,
-      authorization: `Bearer ${issued.token}`,
-      clientName: "t3-thread-cli",
-    }).pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
-    return yield* run(makeThreadTools(session, origin));
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(
-      EnvironmentAuth.layerRuntime.pipe(
-        Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
-      ),
-    ),
-  );
 });
 
 const readMessageArgument = Effect.fn("cli.thread.readMessage")(function* (argument: string) {
@@ -258,21 +111,6 @@ const readMessageArgument = Effect.fn("cli.thread.readMessage")(function* (argum
   return text;
 });
 
-const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools: ThreadTools) {
-  const projects: Array<(typeof ProjectListResult.Type)["projects"][number]> = [];
-  let cursor: number | null = 0;
-  while (cursor !== null) {
-    const page: typeof ProjectListResult.Type = yield* tools.call(
-      "t3_project_list",
-      { cursor, limit: 100 },
-      ProjectListResult,
-    );
-    projects.push(...page.projects);
-    cursor = page.nextCursor;
-  }
-  return projects;
-});
-
 /** A project id, or a path inside a project's folder (deepest project wins). */
 const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   tools: ThreadTools,
@@ -282,31 +120,7 @@ const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   const byId = projects.find((project) => project.id === identifier);
   if (byId !== undefined) return byId;
 
-  const path = yield* Path.Path;
-  const fileSystem = yield* FileSystem.FileSystem;
-  // Stored roots keep the path the project was added with, which may pass
-  // through a symlink (macOS /tmp), so both sides compare as real paths.
-  const realPath = (value: string) =>
-    fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const target = yield* realPath(
-    path.resolve(yield* HostProcess.WorkingDirectory, yield* expandHomePath(identifier)),
-  );
-  const roots = yield* Effect.forEach(projects, (project) =>
-    Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
-  );
-  const containing = roots
-    .filter(({ root }) => {
-      const relative = path.relative(root, target);
-      return (
-        relative === "" ||
-        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-      );
-    })
-    .toSorted((left, right) => right.root.length - left.root.length)[0];
-  if (containing === undefined) {
-    return yield* new ThreadProjectNotFoundError({ identifier });
-  }
-  return containing.project;
+  return yield* resolveDiscoveryProject(projects, identifier);
 });
 
 /** Every item on a timeline view, oldest first. */
@@ -566,35 +380,49 @@ const threadListCommand = Command.make("list", {
   ...projectLocationFlags,
   project: Flag.String("project").pipe(
     Flag.withDescription("Project id or a path inside the project. Defaults to this directory."),
-    Flag.withDefault("."),
+    Flag.optional,
+  ),
+  allProjects: Flag.Boolean("all-projects").pipe(
+    Flag.withDescription("List threads across all projects instead of the current project."),
+    Flag.withDefault(false),
+  ),
+  status: Flag.Literals("status", ["idle", ...OrchestrationV2RunStatus.literals]).pipe(
+    Flag.withDescription("Filter by thread status, such as running, waiting, or completed."),
+    Flag.optional,
   ),
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("List a project's threads, newest first."),
+  Command.withDescription("List a project's threads, most recently updated first."),
   Command.withHandler((flags) =>
-    withThreadTools(
-      flags,
-      Effect.fn("cli.thread.list")(function* (tools) {
-        const project = yield* resolveProject(tools, flags.project);
-        const threads: Array<OrchestratorMcpThreadListItem> = [];
-        let cursor: number | null = 0;
-        while (cursor !== null) {
-          const page: OrchestratorMcpThreadListResult = yield* tools.call(
-            "t3_thread_list",
-            { projectId: project.id, includeSubagents: false, limit: 100, cursor },
-            OrchestratorMcpThreadListResult,
-          );
-          threads.push(...page.threads);
-          cursor = page.nextCursor;
-        }
-        if (flags.json) {
-          return yield* printJson(threads);
-        }
-        for (const thread of threads) {
-          yield* Console.log(`${thread.threadId}  ${thread.status.padEnd(11)}  ${thread.title}`);
-        }
-      }),
-    ).pipe(reportThreadErrors),
+    Effect.gen(function* () {
+      if (flags.allProjects && Option.isSome(flags.project)) {
+        return yield* new ThreadUsageError({
+          detail: "--all-projects and --project cannot be used together.",
+        });
+      }
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.list")(function* (tools) {
+          const project = flags.allProjects
+            ? undefined
+            : yield* resolveProject(
+                tools,
+                Option.getOrElse(flags.project, () => "."),
+              );
+          const threads = yield* listAllThreads(tools, {
+            ...(project === undefined ? { allProjects: true } : { projectId: project.id }),
+            ...(Option.isSome(flags.status) ? { statuses: [flags.status.value] } : {}),
+          });
+          if (flags.json) return yield* printJson(threads);
+          for (const thread of threads) {
+            yield* Console.log(
+              `${thread.threadId}  ${flags.allProjects ? `${thread.projectId}  ` : ""}${thread.status.padEnd(11)}  ${thread.title}`,
+            );
+          }
+        }),
+        { access: "read-only", quietLogs: flags.json },
+      );
+    }).pipe(reportThreadErrors),
   ),
 );
 
