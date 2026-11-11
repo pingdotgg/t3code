@@ -304,9 +304,10 @@ describe("ssh tunnel scripts", () => {
         Effect.forkChild,
       );
       yield* Deferred.await(spawned);
-      yield* TestClock.adjust(Duration.seconds(90));
-      const error = yield* Fiber.join(pairing);
-      assert.equal(error.message, "SSH command timed out after 90000ms.");
+      // Past the 60s default command timeout, a held Tailscale check still waits.
+      yield* TestClock.adjust(Duration.seconds(61));
+      assert.isUndefined(pairing.pollUnsafe());
+      yield* Fiber.interrupt(pairing);
     });
   });
 
