@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   collectLimitAccounts,
   collectExternalUsageLinks,
@@ -253,7 +254,7 @@ function PoolWindowCard({
               <View className="absolute inset-0 overflow-hidden rounded-md">
                 <AccountSegment
                   remaining={remainingPercent(window)}
-                  color={color}
+                  color={normalizeProviderAccentColor(account.accentColor) ?? color}
                   refillPercent={window.resetsAt ? member.refillPercent : 0}
                 />
               </View>
@@ -324,6 +325,7 @@ function PoolWindowCard({
     <View>
       {pool.columns.map(({ account, window }, index) => {
         if (!window) return null;
+        const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const resetsIn = formatResetsIn(window, now);
         return (
@@ -335,7 +337,12 @@ function PoolWindowCard({
             onPress={() => openAccount(account)}
             className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
           >
-            <View className="size-5 items-center justify-center overflow-hidden rounded-md bg-subtle-strong">
+            <View className="relative size-5 items-center justify-center overflow-hidden rounded-md bg-subtle-strong">
+              <View
+                pointerEvents="none"
+                className="absolute inset-0"
+                style={{ backgroundColor: segmentColor, opacity: 0.35 }}
+              />
               <Text className="text-xs font-t3-medium tabular-nums text-foreground">
                 {index + 1}
               </Text>
@@ -401,13 +408,11 @@ export function UsageLimitsSection({
   now,
   failedLabels,
   selectedEnvironmentIds,
-  cursorPrompt,
   wide = false,
 }: {
   readonly now: number;
   readonly failedLabels: readonly string[];
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
-  readonly cursorPrompt?: ReactNode;
   readonly wide?: boolean;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
@@ -419,17 +424,11 @@ export function UsageLimitsSection({
   const notices = collectLimitNotices(selected);
   const externalLinks = collectExternalUsageLinks(selected);
   const colors = useProviderColors();
-  const cursorPromptAt =
-    Math.max(
-      pools.findIndex((pool) => pool.driver === "codex"),
-      pools.findIndex((pool) => pool.driver === "claudeAgent"),
-    ) + 1;
   return (
     <View className="gap-6">
       {pools.length === 0 &&
       notices.length === 0 &&
       failedLabels.length === 0 &&
-      !cursorPrompt &&
       externalLinks.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
@@ -437,11 +436,10 @@ export function UsageLimitsSection({
             : "No provider on the selected environments reports subscription limits."}
         </Text>
       ) : null}
-      {pools.map((pool, index) => {
+      {pools.map((pool) => {
         const windows = displayLimitWindows(pool);
         return (
           <Fragment key={pool.driver}>
-            {index === cursorPromptAt ? cursorPrompt : null}
             <View className="gap-3">
               <View className="flex-row items-center gap-2 px-1">
                 <ProviderIcon provider={pool.driver} size={18} />
@@ -471,7 +469,6 @@ export function UsageLimitsSection({
           </Fragment>
         );
       })}
-      {cursorPromptAt === pools.length ? cursorPrompt : null}
       {externalLinks.map((link) => (
         <View key={link.url} className="gap-3 rounded-xl border border-border-subtle p-4">
           <Text className="text-base font-t3-medium text-foreground">{link.label}</Text>

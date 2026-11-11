@@ -1,7 +1,7 @@
 import type { AntigravitySettings, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,10 +15,18 @@ import {
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 
-const ENDPOINTS = [
-  "https://daily-cloudcode-pa.googleapis.com",
-  "https://cloudcode-pa.googleapis.com",
-];
+const DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
+const PROD_ENDPOINT = "https://cloudcode-pa.googleapis.com";
+// The ACP runtime meters consumer tiers on the daily host and GCP-terms tiers on prod.
+// The sign-in method stands in for the tier.
+const ENDPOINTS = {
+  "oauth-personal": [DAILY_ENDPOINT, PROD_ENDPOINT],
+  "oauth-business": [PROD_ENDPOINT, DAILY_ENDPOINT],
+};
+const SUMMARY_WINDOW_MINS = new Map([
+  ["5h", 5 * 60],
+  ["weekly", 7 * 24 * 60],
+]);
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
 const TokenFile = Schema.Struct({
   client_id: Schema.NonEmptyString,
@@ -40,6 +48,7 @@ const Bucket = Schema.Struct({
   bucketId: Schema.NonEmptyString,
   window: Schema.optional(Schema.String),
   displayName: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
 });
 const Summary = Schema.Struct({
@@ -96,7 +105,22 @@ function quotaWindow(
   };
 }
 
-function summaryWindows(summary: typeof Summary.Type) {
+function summaryResetTime(
+  bucket: typeof Bucket.Type,
+  windowDurationMins: number | undefined,
+  requestedAt: number,
+): string | undefined {
+  // Untouched summary buckets report a rolling full-window reset.
+  const untouched =
+    bucket.remainingFraction === 1 &&
+    bucket.description === undefined &&
+    windowDurationMins !== undefined &&
+    Math.abs(Date.parse(bucket.resetTime ?? "") - requestedAt - windowDurationMins * 60_000) <=
+      60_000;
+  return untouched ? undefined : bucket.resetTime;
+}
+
+function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   const groups = summary.groups?.some((group) => group.buckets?.length)
     ? summary.groups
@@ -104,19 +128,25 @@ function summaryWindows(summary: typeof Summary.Type) {
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
-      const family = bucket.bucketId.startsWith("gemini-")
-        ? "Gemini"
-        : bucket.bucketId.startsWith("3p-")
-          ? "Claude & GPT (shared)"
-          : group.displayName?.trim() || bucket.bucketId;
+      // Argon and Carbon are metered separately from the default Gemini buckets.
+      const family = bucket.bucketId.startsWith("gemini-argon-")
+        ? group.displayName?.trim() || "Gemini Argon"
+        : bucket.bucketId.startsWith("gemini-carbon-")
+          ? group.displayName?.trim() || "Gemini Carbon"
+          : bucket.bucketId.startsWith("gemini-")
+            ? "Gemini"
+            : bucket.bucketId.startsWith("3p-")
+              ? "Claude & GPT (shared)"
+              : group.displayName?.trim() || bucket.bucketId;
       const weekly = bucket.window === "weekly";
       const session = bucket.window === "5h";
+      const windowDurationMins = SUMMARY_WINDOW_MINS.get(bucket.window ?? "");
       const window = quotaWindow(
         bucket.bucketId,
         `${family} · ${weekly ? "Weekly" : session ? "5-hour" : bucket.displayName?.trim() || "Quota"}`,
-        bucket,
+        { ...bucket, resetTime: summaryResetTime(bucket, windowDurationMins, requestedAt) },
         weekly ? "weekly" : session ? "session" : "other",
-        weekly ? 7 * 24 * 60 : session ? 5 * 60 : undefined,
+        windowDurationMins,
       );
       if (window) windows.set(window.id, window);
     }
@@ -164,7 +194,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
@@ -175,7 +205,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
 
   const sha256 = (text: string) =>
     crypto
-      .digest("SHA-256", new TextEncoder().encode(text))
+      .digest(Digest.sha256, new TextEncoder().encode(text))
       .pipe(
         Effect.map((digest) =>
           Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
@@ -245,39 +275,46 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       accessToken = cached.accessToken;
       account = cached.account;
     }
-    // Merge endpoints because quota groups differ; keep each bucket's most-used reading.
+    const endpoints = ENDPOINTS[input.authMethod];
+    // Merge endpoints because quota groups differ; the metered host's reading of a bucket wins.
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
       operation: string,
-      parse: (response: unknown) => Effect.Effect<ServerProviderUsageWindow[], E>,
+      parse: (
+        response: unknown,
+        requestedAt: number,
+      ) => Effect.Effect<ServerProviderUsageWindow[], E>,
     ) {
       const responses = yield* Effect.forEach(
-        ENDPOINTS,
+        endpoints,
         (endpoint) =>
-          request(
-            HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
-              HttpClientRequest.setHeaders({
-                Authorization: `Bearer ${accessToken}`,
-                "User-Agent": `antigravity/hub/1.0.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
-              }),
-              HttpClientRequest.bodyJsonUnsafe(
-                token.project_id ? { project: token.project_id } : {},
+          Effect.gen(function* () {
+            // Capture each request after auth, so refresh latency does not widen the tolerance.
+            const requestedAt = yield* Clock.currentTimeMillis;
+            return yield* request(
+              HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
+                HttpClientRequest.setHeaders({
+                  Authorization: `Bearer ${accessToken}`,
+                  "User-Agent": `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
+                }),
+                HttpClientRequest.bodyJsonUnsafe(
+                  token.project_id ? { project: token.project_id } : {},
+                ),
               ),
-            ),
-          ).pipe(
-            Effect.flatMap(parse),
-            Effect.orElseSucceed(() => []),
-          ),
+            ).pipe(
+              Effect.flatMap((response) => parse(response, requestedAt)),
+              Effect.orElseSucceed(() => []),
+            );
+          }),
         { concurrency: "unbounded" },
       );
       const windows = new Map<string, ServerProviderUsageWindow>();
       for (const window of responses.flat()) {
-        const previous = windows.get(window.id);
-        if (!previous || window.usedPercent > previous.usedPercent) windows.set(window.id, window);
+        if (!windows.has(window.id)) windows.set(window.id, window);
       }
       return [...windows.values()];
     });
-    const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response) =>
-      decodeSummary(response).pipe(Effect.map(summaryWindows)),
+    const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response, requestedAt) =>
+      decodeSummary(response).pipe(Effect.map((summary) => summaryWindows(summary, requestedAt))),
     );
     const windows = summary.length
       ? summary
