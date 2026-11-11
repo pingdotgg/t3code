@@ -41,7 +41,7 @@ contract every Function and Server returns:
 
 ```typescript
 // sandbox.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -88,7 +88,7 @@ VM, wait for `RUNNING`, mint an auth token, then call the typed RPC stub with
 
 ```typescript
 // api.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -190,7 +190,7 @@ is provided on the Stack so it gets built and deployed alongside:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import Api from "./api.ts";
 import SandboxLive from "./sandbox.ts";
@@ -216,7 +216,7 @@ the bare build Role and the image live directly in the Stack's `Effect.gen`:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
