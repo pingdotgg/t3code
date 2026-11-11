@@ -34,7 +34,9 @@ export function DesktopUpdateCoordinator() {
     setRequest(null);
     // Machines that still cache an older latest version add their rows while the dialog is open.
     setCheckingProviders(true);
-    void checkProviderUpdates({ quiet: true }).finally(() => setCheckingProviders(false));
+    const providerCheck = checkProviderUpdates({ quiet: true }).finally(() =>
+      setCheckingProviders(false),
+    );
     let current = await bridge.getUpdateState();
     if (latestRequestId.current !== incoming.requestId) return;
     if (
@@ -55,29 +57,43 @@ export function DesktopUpdateCoordinator() {
       });
       return;
     }
-    const localAction = current.enabled ? resolveDesktopUpdateButtonAction(current) : "none";
-    if (localAction === "none" && !everything.hasUpdates) {
-      const reason = !current.enabled
-        ? (current.message ?? "Desktop updates are disabled.")
-        : current.status === "error"
-          ? current.message
-          : null;
-      await command.complete(
-        reason
-          ? {
-              version: 1,
-              requestId: incoming.requestId,
-              ok: false,
-              code: "internal-error",
-              message: reason,
-            }
-          : { version: 1, requestId: incoming.requestId, ok: true, status: "up-to-date" },
-      );
-      return;
+    // With nothing local to offer, only the refreshed provider state can decide; see `nothingOffered`.
+    if (!current.enabled || resolveDesktopUpdateButtonAction(current) === "none") {
+      await providerCheck;
+      if (latestRequestId.current !== incoming.requestId) return;
     }
     setPrepared(current);
     setRequest(incoming);
   });
+  const nothingOffered =
+    request !== null && prepared !== null && action === "none" && !everything.hasUpdates;
+  const replyNothingOffered = useEffectEvent(async () => {
+    if (!request || !prepared || !command) return;
+    const answered = request.requestId;
+    const reason = !prepared.enabled
+      ? (prepared.message ?? "Desktop updates are disabled.")
+      : prepared.status === "error"
+        ? prepared.message
+        : null;
+    await command.complete(
+      reason
+        ? {
+            version: 1,
+            requestId: request.requestId,
+            ok: false,
+            code: "internal-error",
+            message: reason,
+          }
+        : { version: 1, requestId: request.requestId, ok: true, status: "up-to-date" },
+    );
+    setRequest((current) => (current?.requestId === answered ? null : current));
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- answers the host only after a render reads the refreshed provider offers
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- State changes only after the host has the reply.
+    if (nothingOffered) void replyNothingOffered();
+  }, [nothingOffered]);
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- receives native update intents independently of the local backend connection
   useEffect(() => {
     if (!command) return;
@@ -159,7 +175,7 @@ export function DesktopUpdateCoordinator() {
       );
     }
   };
-  if (!request) return null;
+  if (!request || nothingOffered) return null;
   return (
     <UpdateEverythingDialog
       open

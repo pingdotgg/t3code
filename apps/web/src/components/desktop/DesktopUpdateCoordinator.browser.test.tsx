@@ -10,10 +10,17 @@ import "../../index.css";
 import { DesktopUpdateCoordinator } from "./DesktopUpdateCoordinator";
 import { ToastProvider } from "../ui/toast";
 
-const mocks = vi.hoisted(() => ({ run: vi.fn(async () => undefined) }));
+const mocks = vi.hoisted(() => ({
+  run: vi.fn(async () => undefined),
+  hasUpdates: true,
+  checkProviders: vi.fn(async () => undefined),
+}));
+vi.mock("../ProviderUpdatesAction", () => ({
+  useCheckProviderUpdates: () => mocks.checkProviders,
+}));
 vi.mock("../sidebar/useUpdateEverything", () => ({
   useUpdateEverything: () => ({
-    hasUpdates: true,
+    hasUpdates: mocks.hasUpdates,
     version: "0.1.8",
     providerCount: 0,
     rows: [
@@ -43,8 +50,57 @@ const state: DesktopUpdateState = {
   canRetry: false,
 };
 
-it("uses one native confirmation and cancels without starting the coordinated runner", async () => {
+function setup() {
   mocks.run.mockClear();
+  mocks.hasUpdates = true;
+  mocks.checkProviders.mockImplementation(async () => undefined);
+}
+
+it("offers provider updates found by the refresh while this app is current", async () => {
+  setup();
+  mocks.hasUpdates = false;
+  mocks.checkProviders.mockImplementation(async () => {
+    mocks.hasUpdates = true;
+  });
+  const current: DesktopUpdateState = { ...state, status: "up-to-date", availableVersion: null };
+  let listener: ((request: DesktopUpdateCommandRequest) => void) | undefined;
+  const complete = vi.fn(async () => true);
+  using _bridge = stubGlobal("desktopBridge", {
+    getUpdateState: async () => current,
+    checkForUpdate: async () => ({ checked: true, state: current }),
+    updateCommand: {
+      setReady: async () => undefined,
+      complete,
+      finish: async () => undefined,
+      onRequest: (callback: typeof listener) => {
+        listener = callback;
+        return () => {
+          listener = undefined;
+        };
+      },
+    },
+  });
+  await using _screen = await render(<DesktopUpdateCoordinator />);
+  await act(async () => listener?.({ version: 1, requestId: "cli", type: "update" }));
+  await expect.element(page.getByRole("alertdialog")).toBeVisible();
+  expect(complete).not.toHaveBeenCalled();
+
+  mocks.hasUpdates = false;
+  mocks.checkProviders.mockImplementation(async () => undefined);
+  await act(async () => listener?.({ version: 1, requestId: "about", type: "update" }));
+  await vi.waitFor(() =>
+    expect(complete).toHaveBeenCalledWith({
+      version: 1,
+      requestId: "about",
+      ok: true,
+      status: "up-to-date",
+    }),
+  );
+  await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+});
+
+it("uses one native confirmation and cancels without starting the coordinated runner", async () => {
+  setup();
   let listener: ((request: DesktopUpdateCommandRequest) => void) | undefined;
   const complete = vi.fn(async () => true);
   const finish = vi.fn(async () => undefined);
@@ -89,7 +145,7 @@ it("uses one native confirmation and cancels without starting the coordinated ru
 });
 
 it("replaces a disconnected confirmation and ignores its late preparation", async () => {
-  mocks.run.mockClear();
+  setup();
   let listener: ((request: DesktopUpdateCommandRequest) => void) | undefined;
   let releaseOld: ((value: DesktopUpdateState) => void) | undefined;
   const oldState = new Promise<DesktopUpdateState>((resolve) => {
@@ -139,7 +195,7 @@ it("replaces a disconnected confirmation and ignores its late preparation", asyn
 });
 
 it("explains an expired confirmation without starting an update", async () => {
-  mocks.run.mockClear();
+  setup();
   let listener: ((request: DesktopUpdateCommandRequest) => void) | undefined;
   using _bridge = stubGlobal("desktopBridge", {
     getUpdateState: async () => state,
