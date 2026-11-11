@@ -4481,6 +4481,8 @@ interface ClaudeLiveQueryContext {
   capabilities: ReadonlySet<string>;
   permissionMode: PermissionMode;
   stopping: boolean;
+  // Why the CLI died before any turn claimed it; the turn start reports it.
+  exitCause: Cause.Cause<ClaudeAgentSdkQueryRunnerError> | undefined;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
   // Subagents this process still ran when a replacement took over; only its exit can end them.
   handedOffSubagents: ReadonlySet<ActiveClaudeSubagent>;
@@ -11112,6 +11114,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             capabilities: new Set(),
             permissionMode: queryOptions.permissionMode,
             stopping: false,
+            exitCause: undefined,
             handedOffSubagents: new Set(),
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
@@ -11182,6 +11185,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
+                if (exit._tag === "Failure") context.exitCause = exit.cause;
                 const heldContext = yield* Ref.get(activeTurn);
                 if (
                   (yield* Ref.get(queryContext))?.query === querySession &&
@@ -11358,6 +11362,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: CLAUDE_PROVIDER,
                   detail: "Claude provider query ended before the turn could start.",
+                  cause: querySession.exitCause,
                 });
               }
               if (
