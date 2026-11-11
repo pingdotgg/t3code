@@ -2,6 +2,7 @@ import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type {
   PullRequestAction,
   PullRequestDetail,
@@ -10,7 +11,7 @@ import type {
 import { useRef, useState } from "react";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { canPerformPullRequestAction } from "./pullRequestActions";
+import { canPerformPullRequestAction, pullRequestActionLabel } from "./pullRequestActions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 
@@ -18,7 +19,6 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
   const target = pullRequestTarget(params);
   const permissions = usePullRequestPermissions(params, pr);
   const run = useAtomCommand(composerPullRequests.runAction, { reportFailure: false });
-  const refreshDetail = useAtomRefresh(composerPullRequests.detail(target));
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(target));
   const pending = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -37,12 +37,11 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        "Couldn't update this pull request",
+        `Couldn't update this ${sourceControlClients.get(pr?.provider).changeRequest.singular}`,
         cause instanceof Error ? cause.message : "Try again.",
       );
       return;
     }
-    refreshDetail();
     refreshActivity();
   };
   const confirm = (action: PullRequestAction, title: string, message: string) =>
@@ -54,5 +53,13 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
         onPress: () => void perform(action),
       },
     ]);
-  return { available, perform, confirm, busy };
+  const confirmClose = () => {
+    const terminology = sourceControlClients.get(pr?.provider).changeRequest;
+    confirm(
+      "close",
+      pullRequestActionLabel("close", terminology),
+      `Close this ${terminology.singular} without merging its changes?`,
+    );
+  };
+  return { available, perform, confirm, confirmClose, busy };
 }

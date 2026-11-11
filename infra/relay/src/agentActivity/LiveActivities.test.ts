@@ -72,8 +72,6 @@ describe("LiveActivities", () => {
       yield* register("current-token");
       yield* register("new-card-token");
 
-      // The foreground refresh still clears the delivered baseline so the
-      // replay repaints the card, but only a new card counts as freshly armed.
       expect(insertedValues[0]).toMatchObject({ remoteStartedAt: armedAt });
       expect(conflictSets[0]).toMatchObject({ remoteStartedAt: armedAt, lastAggregateJson: null });
       expect(insertedValues[1]?.remoteStartedAt).not.toBe(armedAt);

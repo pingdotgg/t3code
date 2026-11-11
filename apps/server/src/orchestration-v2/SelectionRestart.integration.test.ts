@@ -5,6 +5,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   ProjectId,
@@ -47,6 +48,10 @@ const seedSelection = {
   instanceId: providerInstanceId,
   model: "seed-model",
 } satisfies ModelSelection;
+const modelSwitches = (projection: OrchestrationV2ThreadProjection) =>
+  projection.turnItems.flatMap((item) =>
+    item.type === "user_message" && item.modelSwitch !== undefined ? [item.modelSwitch] : [],
+  );
 const pooledCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 const exclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
   ...CodexProviderCapabilitiesV2,
@@ -407,6 +412,9 @@ it.live("retries a failed selection restart session open before completing", () 
         "selection restart supersede must not project hard-Stop interrupt items",
       );
       assert.equal(projection.runs.at(-1)?.modelSelection.model, replacementSelection.model);
+      assert.deepEqual(modelSwitches(projection), [
+        { from: initialSelection, to: replacementSelection },
+      ]);
       assert.equal(projection.runs.at(-1)?.status, "completed");
       assert.isTrue(captured.failedReplacementOpen);
       assert.equal(captured.closedSessionCount, 0);
@@ -433,6 +441,118 @@ it.live("retries a failed selection restart session open before completing", () 
         projection.providerThreads[0]?.providerSessionId,
         projection.providerSessions.find((session) => session.model === replacementSelection.model)
           ?.id,
+      );
+    }),
+  ),
+);
+
+it.live("Stop during a restart interrupts the turn the restart could not stop", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("selection-restart-stop");
+      const threadId = ThreadId.make("thread:selection-restart-stop");
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: false,
+      });
+      const base = makeRestartAdapter(state);
+      // A wedged provider ignores the restart's soft cancel; only Stop ends its turn.
+      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+        ...base,
+        openSession: (input) =>
+          base.openSession(input).pipe(
+            Effect.map((session) => ({
+              ...session,
+              interruptTurn: (interrupt: ProviderAdapter.ProviderAdapterV2InterruptInput) =>
+                interrupt.requestRuntimeRestart === true
+                  ? session.interruptTurn(interrupt)
+                  : Effect.never,
+            })),
+          ),
+      };
+
+      const result = yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const running = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:selection-restart-stop:create"),
+          threadId,
+          projectId: ProjectId.make("project:selection-restart-stop"),
+          title: "Stop during restart",
+          modelSelection: initialSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:selection-restart-stop:first"),
+          threadId,
+          messageId: MessageId.make("message:selection-restart-stop:first"),
+          text: "first",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        const runId = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:selection-restart-stop:steer"),
+          threadId,
+          messageId: MessageId.make("message:selection-restart-stop:steer"),
+          text: "Are you still going?",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "restart_active", targetRunId: runId },
+        });
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("command:selection-restart-stop:stop"),
+          threadId,
+          runId,
+        });
+        yield* worker.drain();
+        return {
+          projection: yield* orchestrator.getThreadProjection(threadId),
+          captured: yield* Ref.get(state),
+        };
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "selection-restart-stop" },
+            ProviderAdapterRegistry.layerSingle(adapter),
+          ),
+        ),
+      );
+
+      assert.isNull(result.captured.activeTurn);
+      assert.lengthOf(result.captured.started, 1);
+      assert.equal(result.projection.runs[0]?.status, "interrupted");
+      assert.deepEqual(
+        result.projection.providerTurns.map((turn) => turn.status),
+        ["interrupted"],
       );
     }),
   ),
@@ -578,6 +698,9 @@ it.live(
         const { projection, captured } = result;
         assert.lengthOf(projection.runs, 2);
         assert.equal(projection.runs[1]?.modelSelection.model, replacementSelection.model);
+        assert.deepEqual(modelSwitches(projection), [
+          { from: seedSelection, to: replacementSelection },
+        ]);
         assert.deepEqual(result.detachedSessionIds, [result.liveSessionId]);
         assert.equal(captured.closedSessionCount, 1);
         assert.deepEqual(
