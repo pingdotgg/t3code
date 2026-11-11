@@ -242,12 +242,14 @@ describe("GitCafeSourceControlProvider", () => {
           };
     return Effect.gen(function* () {
       const provider = yield* GitCafeSourceControlProvider.make;
-      yield* provider.checkoutChangeRequest({
-        cwd: "/repo",
-        reference: "https://git.cafe/team/project/pulls/7",
-        ...(context === undefined ? {} : { context }),
-      });
-      assert.deepStrictEqual(remotes, [expected]);
+      for (const route of ["pull", "pulls"]) {
+        yield* provider.checkoutChangeRequest({
+          cwd: "/repo",
+          reference: `https://git.cafe/team/project/${route}/7`,
+          ...(context === undefined ? {} : { context }),
+        });
+      }
+      assert.deepStrictEqual(remotes, [expected, expected]);
     }).pipe(
       Effect.provide(
         Layer.merge(GitCafeApi.layer, NoFiles).pipe(

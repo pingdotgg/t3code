@@ -2,6 +2,9 @@
   "name": "@fixtures/sveltekit-spa",
   "private": true,
   "type": "module",
+  "imports": {
+    "#lib/*": "./src/lib/*"
+  },
   "scripts": {
     "dev": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts dev --port 3108",
     "build": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts build",
