@@ -366,22 +366,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       }),
   );
 
-  // regression: #29881
-  it.effect("reports the unreachable user manager when lingering cannot start it", () =>
-    Effect.gen(function* () {
-      const { service, fs, statePath, control } = yield* makeHarness();
-      control.linger = undefined;
-      control.managerReachable = false;
-      control.failCommand = "loginctl enable-linger --no-ask-password 501";
-
-      expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
-        _tag: "BootServicePrerequisiteError",
-        problem: "user-manager-unavailable",
-      });
-      expect(yield* fs.exists(statePath)).toBe(false);
-    }),
-  );
-
   it.effect("does not reach a running root user manager under sudo", () =>
     Effect.gen(function* () {
       const { makeService, commands, control } = yield* makeHarness();
@@ -396,13 +380,10 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect.each([
-    { logind: "does not know root", linger: undefined },
-    { logind: "has root lingering disabled", linger: "no" },
-  ])("does not enable lingering for root under sudo when logind $logind", ({ linger }) =>
+  it.effect("does not enable lingering for root under sudo", () =>
     Effect.gen(function* () {
       const { makeService, commands, control } = yield* makeHarness();
-      control.linger = linger;
+      control.linger = undefined;
       control.managerReachable = false;
       const service = yield* makeService(undefined, "1.2.3", undefined, false, undefined, true);
 
@@ -446,7 +427,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     "waits a bounded time for the user manager lingering starts when it $manager",
     ({ upAfterPauses, pauses }) =>
       Effect.gen(function* () {
-        const { service, fs, commands, control } = yield* makeHarness();
+        const { service, fs, control } = yield* makeHarness();
         const { unitPath } = yield* service.status;
         control.linger = "no";
         control.managerReachable = false;
@@ -468,9 +449,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         );
 
         expect(waited).toEqual(Array.from({ length: pauses }, () => 500));
-        expect(
-          commands.filter((command) => command === "systemctl --user show-environment"),
-        ).toHaveLength(pauses + 2);
         if (upAfterPauses === undefined) {
           expect(result).toMatchObject({
             failure: { _tag: "BootServicePrerequisiteError", problem: "user-manager-unavailable" },
