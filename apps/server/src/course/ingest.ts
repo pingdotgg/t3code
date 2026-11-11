@@ -637,7 +637,6 @@ const boundedDownload = (url: string, destination: string, audit?: DownloadAudit
 
 const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
   const auditHops: { url: string; status: number | null; ips: string[] }[] = [];
-  let auditedAttempt = false;
   return Effect.tryPromise({
     try: async (signal) => {
       // Every URL we fetch stays on OCW: the source can come from a YouTube description.
@@ -647,13 +646,13 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
         return url;
       };
       const fetchPage = async (initial: URL) => {
-        auditedAttempt = true;
         let current = onOcw(initial);
         const hops: { url: string; status: number | null; ips: string[] }[] = [];
         let finalResponse: Response | undefined;
         let body: Buffer | undefined;
         try {
           for (let count = 0; count <= 5; count += 1) {
+            // OCW host validation is fixed; this lookup only records the resolved addresses.
             const ips = await NodeDnsPromises.lookup(current.hostname, { all: true })
               .then((rows) => rows.map(({ address }) => address))
               .catch(() => []);
@@ -708,7 +707,7 @@ const ocwDownloadUrl = (source: string, audit?: DownloadAuditContext) => {
       }),
   }).pipe(
     Effect.tapError((cause) =>
-      audit && !auditedAttempt
+      audit && auditHops.length === 0
         ? Effect.promise(() =>
             auditDownload(audit, {
               url: source,
