@@ -134,6 +134,12 @@ describe("GrokAdapterV2 capabilities", () => {
         retryable: null,
       },
     );
+    assert.deepEqual(flavor.promptFailure?.(new EffectAcpErrors.AcpInputStreamEndedError({})), {
+      class: "transport_error",
+      message: "Grok connection failed. Retry the turn.",
+      code: null,
+      retryable: null,
+    });
   });
 
   it("terminalizes only foreground tools under the actual Grok flavor", () => {
