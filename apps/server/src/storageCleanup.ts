@@ -1206,15 +1206,15 @@ const make = Effect.gen(function* () {
               )
             )
               return keep("settings changed since check");
-            // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
-            if (settings.worktreeKeepWhen === "tracked-changes")
-              yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
             const submodules = yield* submoduleRemoval(worktreePath, settings);
             if (submodules.reason !== null) return keep(submodules.reason);
             if (submodules.force) {
               const changes = yield* localChangesReason(worktreePath, settings);
               if (changes !== null) return keep(changes);
             }
+            // Submodule checks can retain the worktree, so do not discard its files before them.
+            if (settings.worktreeKeepWhen === "tracked-changes")
+              yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
             yield* removeLinkedWorktree({
               operation: "StorageCleanup.cleanupGit",
               cwd: project.workspaceRoot,

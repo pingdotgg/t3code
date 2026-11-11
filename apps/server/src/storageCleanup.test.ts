@@ -751,15 +751,21 @@ it.live("keeps unpushed submodule history after checkout and deinitialization", 
 it.live("keeps submodules when stored repository metadata is malformed", () =>
   runCleanupTest(
     Effect.gen(function* () {
-      const { service, fs, worktree, submodule, child, command } = yield* submoduleCleanupFixture();
+      const { service, fs, worktree, submodule, child, command, setPolicy } =
+        yield* submoduleCleanupFixture();
+      setPolicy("tracked-changes");
       const childGit = (yield* command(child, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
       yield* command(submodule, ["submodule", "deinit", "child"]);
       yield* fs.writeFileString(`${childGit}/HEAD`, "not a ref\n");
+      yield* fs.writeFileString(`${worktree}/notes.txt`, "keep while the worktree stays\n");
       expect(
         (yield* service.runNow).entries.find((entry) => entry.path === worktree),
       ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("inspected") });
       expect(yield* fs.exists(worktree)).toBe(true);
       expect(yield* fs.readFileString(`${childGit}/HEAD`)).toBe("not a ref\n");
+      expect(yield* fs.readFileString(`${worktree}/notes.txt`)).toBe(
+        "keep while the worktree stays\n",
+      );
     }),
   ),
 );
