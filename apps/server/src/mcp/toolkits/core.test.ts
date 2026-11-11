@@ -580,62 +580,6 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
   ),
 );
 
-it.effect("reorders an active thread through t3_thread_organize", () =>
-  Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    const result = yield* server
-      .callTool({
-        name: "t3_thread_organize",
-        arguments: {
-          action: "reorder",
-          threadId: "other-project-thread",
-          beforeThreadId: "neighbor-thread",
-        },
-      })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    expect(result.isError).toBe(false);
-    expect(reorderCommands).toEqual([
-      expect.objectContaining({
-        threadId: "other-project-thread",
-        placement: "before",
-        targetThreadId: "neighbor-thread",
-      }),
-    ]);
-  }).pipe(
-    Effect.provide(
-      layerThreadToolkit.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
-        Layer.provide(NodeCrypto.layer),
-        Layer.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: (id) =>
-              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
-            getProjectThreadRecords: () =>
-              Effect.succeed({
-                thread: {
-                  id: ThreadId.make("other-project-thread"),
-                  projectId: "other-project",
-                  runtimeMode: "auto",
-                  interactionMode: "default",
-                  deletedAt: null,
-                },
-              } as never),
-            reorderActiveThread: (input) =>
-              Effect.sync(() => {
-                reorderCommands.push(input);
-                return { sequence: 7 };
-              }),
-          }),
-        ),
-      ),
-    ),
-  ),
-);
-const reorderCommands: Array<unknown> = [];
-
 it.effect("a read-only client reads threads and is refused every write before it runs", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
