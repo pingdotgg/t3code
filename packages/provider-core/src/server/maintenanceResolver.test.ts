@@ -421,6 +421,57 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "keeps configured npm registries' latest versions apart for one install",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-registry-isolation");
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath = linkIntoPackage(tempDir, "package-tool", [
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+        let probes = 0;
+        const latest = (registry: string, version: string) =>
+          resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+            binaryPath,
+            env: { PATH: npmBinDir, NPM_CONFIG_REGISTRY: registry },
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              stdoutSpawner(() => {
+                probes++;
+                return JSON.stringify(version);
+              }),
+            ),
+            Effect.tap((capabilities) =>
+              Effect.sync(() => {
+                expect(capabilities.latestVersionCacheKey ?? "").not.toContain("private-token");
+              }),
+            ),
+            Effect.flatMap(resolveLatestProviderVersion),
+          );
+        const first = "https://user:private-token@first.example.test";
+        const second = "https://second.example.test";
+        expect(yield* latest(first, "1.1.0")).toBe("1.1.0");
+        expect(yield* latest(second, "2.0.0")).toBe("2.0.0");
+        expect(yield* latest(first, "1.2.0")).toBe("1.1.0");
+        expect(probes).toBe(2);
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("configured registries must not use public npm")),
+        ),
+      ),
+  );
+
   it("pins the advertised stable version in a pnpm-global update command", () => {
     const advisoryFor = (
       maintenanceCapabilities: ReturnType<typeof makeProviderMaintenanceCapabilities>,
@@ -962,6 +1013,63 @@ it.layer(
       });
 
       expect(capabilities.update).toBeNull();
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "a home-manager link in the native location",
+      definition: claudeUpdate,
+      resolved: "/home/me/.local/bin/claude",
+      real: "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-claude-code-with-bun/bin/claude",
+    },
+    {
+      name: "another provider's profile link",
+      definition: otherProviderUpdate,
+      resolved: "/etc/profiles/per-user/me/bin/native-package-tool",
+      real: "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-native-package-tool-1.0.0/bin/native-package-tool",
+    },
+  ] as const)("keeps a Nix store install manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ ...fixture, platform: "linux" });
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
+  it.effect.skipIf(windowsHost)("upgrades a mise tool through a shim of a Nix-installed mise", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-nix-mise-shim");
+      const mise = miseFixture(tempDir, { misePresent: false });
+      const nixMise = "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-mise-2026.1.0/bin/mise";
+      const spawned: Array<ReadonlyArray<string>> = [];
+
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(
+        {
+          provider: driver("packageTool"),
+          npmPackageName: "@example/package-tool",
+          mise: { tool: "package-tool" },
+          nativeUpdate: null,
+        },
+        {
+          binaryPath: "package-tool",
+          resolvedCommandPath: NodePath.join(tempDir, "mise", "shims", "package-tool"),
+          realCommandPath: nixMise,
+          env: { PATH: "" },
+          platform: "linux",
+        },
+      ).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          miseSpawner({ which: mise.binaryPath, installed: mise.installed() }, spawned),
+        ),
+      );
+
+      expect(capabilities.update).toMatchObject({
+        executable: nixMise,
+        args: ["upgrade", "package-tool"],
+      });
     }),
   );
 
