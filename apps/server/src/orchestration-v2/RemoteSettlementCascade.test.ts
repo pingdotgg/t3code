@@ -1,7 +1,12 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, type OrchestrationV2AppThread, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type GatewayScope,
+  type OrchestrationV2AppThread,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -61,7 +66,7 @@ const macBookThreads = [
 
 type Call = { readonly method: string; readonly args: ReadonlyArray<unknown> };
 
-const makeLayer = (calls: Array<Call>, scopes: ReadonlyArray<string>) =>
+const makeLayer = (calls: Array<Call>, scopes: ReadonlyArray<GatewayScope>) =>
   Layer.mergeAll(
     Layer.effect(
       McpGatewayBroker,
