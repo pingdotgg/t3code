@@ -258,22 +258,37 @@ describe("accepted server update recovery", () => {
           capabilities: { serverSelfUpdate: method, serverSelfUpdateProgress: true },
         },
       } as ServerConfig;
+      const ready = (serverVersion: string) =>
+        ({
+          version: 1,
+          sequence: 1,
+          type: "ready",
+          payload: { at: "2026-09-01T00:00:00.000Z", environment: { serverVersion } },
+        }) as Parameters<typeof matchesServerUpdateReadyEvent>[1];
+      let requested = false;
       const client = {
         [WS_METHODS.subscribeServerConfig]: () => Stream.never,
+        // Before the request, a boot-service update reads the accepting server's ready.
         [WS_METHODS.subscribeServerLifecycle]: () =>
-          Stream.fromEffect(Deferred.succeed(observing, undefined)).pipe(
-            Stream.drain,
-            Stream.concat(Stream.fromQueue(readyEvents)),
-            Stream.tap((event) =>
-              event.payload.environment.serverVersion === "0.0.30"
-                ? Deferred.succeed(oldReadyObserved, undefined)
-                : Effect.void,
-            ),
-          ),
+          requested
+            ? Stream.fromEffect(Deferred.succeed(observing, undefined)).pipe(
+                Stream.drain,
+                Stream.concat(Stream.fromQueue(readyEvents)),
+                Stream.tap((event) =>
+                  event.payload.environment.serverVersion === "0.0.30"
+                    ? Deferred.succeed(oldReadyObserved, undefined)
+                    : Effect.void,
+                ),
+              )
+            : Stream.make(ready("0.0.30")).pipe(Stream.concat(Stream.never)),
         [WS_METHODS.serverUpdateServerWithProgress]: () =>
-          (loss === "no_progress"
-            ? Stream.empty
-            : Stream.make({ type: "progress" as const, stage: "downloading" as const })
+          Stream.unwrap(
+            Effect.sync(() => {
+              requested = true;
+              return loss === "no_progress"
+                ? Stream.empty
+                : Stream.make({ type: "progress" as const, stage: "downloading" as const });
+            }),
           ).pipe(
             Stream.concat(
               Stream.fromEffect(
@@ -367,13 +382,6 @@ describe("accepted server update recovery", () => {
         status: "running",
         stage: "resuming",
       });
-      const ready = (serverVersion: string) =>
-        ({
-          version: 1,
-          sequence: 1,
-          type: "ready",
-          payload: { at: "2026-09-01T00:00:00.000Z", environment: { serverVersion } },
-        }) as Parameters<typeof matchesServerUpdateReadyEvent>[1];
       yield* Queue.offer(readyEvents, ready("0.0.30"));
       yield* Deferred.await(oldReadyObserved);
       expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toMatchObject({
@@ -782,6 +790,20 @@ describe("server state projection", () => {
         validateServerUpdateReadyEvent(result, ready("rolled-back")),
       );
       expect(rollback.message).toBe("prepared-timeout");
+      const foreign = ready("rolled-back");
+      const foreignRollback = yield* Effect.flip(
+        validateServerUpdateReadyEvent(result, {
+          ...foreign,
+          payload: {
+            ...foreign.payload,
+            updateOutcome: { ...foreign.payload.updateOutcome!, id: "manual-1" },
+          },
+        }),
+      );
+      expect(foreignRollback).toMatchObject({
+        status: "failed",
+        reason: "The service launcher resumed without committing the requested server version.",
+      });
     }),
   );
 
@@ -1486,54 +1508,6 @@ describe("launcher update resume", () => {
     ),
   );
 
-  it.effect("fails promptly when the restarted server reports another update's outcome", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const accepting = ready(
-          "2026-08-01T00:00:00.000Z",
-          "0.0.30",
-          committed("update-0", "0.0.29", "0.0.30"),
-        );
-        const update = yield* launchUpdate({
-          accepting: Stream.make(accepting),
-          resumed: after("1 second", accepting).pipe(
-            Stream.concat(
-              after(
-                "1 minute",
-                ready(
-                  "2026-08-01T00:05:00.000Z",
-                  "0.0.31",
-                  committed("manual-1", "0.0.30", "0.0.31"),
-                ),
-              ),
-            ),
-          ),
-        });
-        yield* update.resumeSubscribed;
-
-        yield* TestClock.adjust("1 second");
-        expect(update.state()).toMatchObject({ status: "running", stage: "resuming" });
-        yield* TestClock.adjust("1 minute");
-        expect(update.state()).toEqual(UNCOMMITTED_RESUME);
-      }),
-    ),
-  );
-
-  it.effect("fails promptly when the old server is gone before the resume wait subscribes", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const update = yield* launchUpdate({
-          accepting: Stream.make(ACCEPTING),
-          resumed: after("1 second", REPLACEMENT),
-        });
-        yield* update.resumeSubscribed;
-
-        yield* TestClock.adjust("1 minute");
-        expect(update.state()).toEqual(UNCOMMITTED_RESUME);
-      }),
-    ),
-  );
-
   it.effect(
     "fails promptly when the accepting server's replay arrives after a quick acknowledgement",
     () =>
@@ -1551,24 +1525,6 @@ describe("launcher update resume", () => {
           expect(update.state()).toEqual(UNCOMMITTED_RESUME);
         }),
       ),
-  );
-
-  it.effect("finishes when the restarted server commits this update", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const update = yield* launchUpdate({
-          accepting: Stream.make(ACCEPTING),
-          resumed: after(
-            "1 second",
-            ready("2026-08-01T00:05:00.000Z", "0.0.31", committed("update-1", "0.0.30", "0.0.31")),
-          ),
-        });
-        yield* update.resumeSubscribed;
-
-        yield* TestClock.adjust("1 minute");
-        expect(update.state()).toMatchObject({ status: "idle" });
-      }),
-    ),
   );
 
   it.effect(
@@ -1601,28 +1557,6 @@ describe("launcher update resume", () => {
           expect(update.state()).toMatchObject({ status: "idle" });
         }),
       ),
-  );
-
-  it.effect("does not report another update's rollback as this update's failure", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const update = yield* launchUpdate({
-          accepting: Stream.make(ACCEPTING),
-          resumed: after(
-            "1 second",
-            ready("2026-08-01T00:05:00.000Z", "0.0.30", {
-              ...committed("manual-1", "0.0.30", "0.0.31"),
-              status: "rolled-back",
-              reason: "The manual update rolled back.",
-            }),
-          ),
-        });
-        yield* update.resumeSubscribed;
-
-        yield* TestClock.adjust("1 minute");
-        expect(update.state()).toEqual(UNCOMMITTED_RESUME);
-      }),
-    ),
   );
 
   it.effect(

@@ -43,10 +43,13 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import {
+  currentSession,
   isRpcClientError,
   request,
   requestGuarded,
+  requestInSession,
   runStream,
+  runStreamInSession,
   subscribe,
   subscribeDynamicWithSession,
   type EnvironmentRpcInput,
@@ -870,13 +873,15 @@ export function createServerEnvironmentAtoms<R, E>(
         const desktopReconnected = yield* Deferred.make<void>();
         let accepting: { readonly session: RpcSession; readonly at: string } | undefined;
         let acceptedAt: string | undefined;
-        // The baseline only describes the accepting process if the request rides its session.
-        const bindAcceptedAt = Effect.gen(function* () {
-          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-          const session = Option.getOrUndefined(yield* SubscriptionRef.get(supervisor.session));
-          acceptedAt =
-            accepting !== undefined && accepting.session === session ? accepting.at : undefined;
-        });
+        // The baseline only describes the accepting process if the request rides its session,
+        // so the session read here is the one the request is sent on.
+        const acceptingSession = currentSession().pipe(
+          Effect.tap((session) =>
+            Effect.sync(() => {
+              acceptedAt = accepting?.session === session ? accepting.at : undefined;
+            }),
+          ),
+        );
         yield* Deferred.await(desktopCommitStarting).pipe(
           Effect.andThen(
             environmentRegistry.stateChanges(target.environmentId).pipe(
@@ -938,9 +943,13 @@ export function createServerEnvironmentAtoms<R, E>(
                     .runStream(
                       target.environmentId,
                       Stream.unwrap(
-                        bindAcceptedAt.pipe(
-                          Effect.as(
-                            runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
+                        acceptingSession.pipe(
+                          Effect.map((session) =>
+                            runStreamInSession(
+                              session,
+                              WS_METHODS.serverUpdateServerWithProgress,
+                              target.input,
+                            ),
                           ),
                         ),
                       ),
@@ -985,8 +994,10 @@ export function createServerEnvironmentAtoms<R, E>(
                   const exit = yield* environmentRegistry
                     .run(
                       target.environmentId,
-                      bindAcceptedAt.pipe(
-                        Effect.andThen(request(WS_METHODS.serverUpdateServer, target.input)),
+                      acceptingSession.pipe(
+                        Effect.flatMap((session) =>
+                          requestInSession(session, WS_METHODS.serverUpdateServer, target.input),
+                        ),
                       ),
                     )
                     .pipe(Effect.exit);
