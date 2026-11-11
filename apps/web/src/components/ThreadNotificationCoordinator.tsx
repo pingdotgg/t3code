@@ -7,6 +7,7 @@ import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import { monitorHoldsWakeCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
@@ -263,8 +264,10 @@ export function startThreadNotifications(
       const attention = needsAttention
         ? `${thread.latestRun?.runId ?? ""}:${status}:${requestId ?? ""}`
         : null;
-      const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-      const settled = status === "ready" && thread.latestRun?.status === "completed";
+      const completed = status === "ready" && thread.latestRun?.status === "completed";
+      const settled = completed && !monitorHoldsWakeCompletion(rawThread);
+      const parsedCompletedAt = Date.parse(thread.latestRun?.completedAt ?? "");
+      const completedAt = Number.isFinite(parsedCompletedAt) ? parsedCompletedAt : null;
       const state = {
         raw: rawThread,
         subagentRequest,
@@ -273,7 +276,8 @@ export function startThreadNotifications(
         attention,
         requestId,
         settled,
-        completedAt: settled && Number.isFinite(completedAt) ? completedAt : null,
+        completedAt: settled ? completedAt : null,
+        backgroundWake: rawThread.latestRunBackgroundWake === true,
       };
       next.set(thread.id, state);
       changed.push([prior, state]);
@@ -312,6 +316,7 @@ export function startThreadNotifications(
           return;
         }
         entry.reconnecting = true;
+        entry.gate.pause();
       },
       { immediate: true },
     );
