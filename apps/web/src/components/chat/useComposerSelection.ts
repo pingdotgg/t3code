@@ -19,7 +19,7 @@ import {
 } from "@t3tools/contracts";
 import type { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type SetStateAction } from "react";
+import { type SetStateAction, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toastManager } from "../ui/toast";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
@@ -101,8 +101,10 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const applyThreadModelPick = useApplyThreadModelPick();
 
+  const runtimeModeSelectionRef = useRef(0);
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
     if (mode === runtimeMode) return;
+    const selection = ++runtimeModeSelectionRef.current;
     setComposerDraftRuntimeMode(composerDraftTarget, mode);
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
@@ -116,10 +118,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
         },
       }).then((result) => {
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const currentDraftRuntimeMode = useComposerDraftStore
-            .getState()
-            .getComposerDraft(composerDraftTarget)?.runtimeMode;
-          if (currentDraftRuntimeMode === mode) {
+          if (runtimeModeSelectionRef.current === selection) {
             setComposerDraftRuntimeMode(composerDraftTarget, null);
           }
           const error = squashAtomCommandFailure(result);

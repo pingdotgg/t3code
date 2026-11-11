@@ -160,7 +160,7 @@ describe("useComposerSelection runtime mode persistence", () => {
     );
   });
 
-  it("preserves newer runtime mode selection when an earlier change fails after a delay", async () => {
+  it("rolls back only the selection whose save failed, even when a newer one has the same mode", async () => {
     using _cleanup = setup();
     let rejectFirst!: (res: unknown) => void;
     const firstPromise = new Promise((resolve) => {
@@ -172,14 +172,16 @@ describe("useComposerSelection runtime mode persistence", () => {
       .mockResolvedValueOnce(AsyncResult.success(undefined));
     let hook!: ReturnType<typeof useComposerSelection>;
 
-    await using _screen = await render(
+    const harness = (runInProgress: boolean) => (
       <TestHarness
+        runInProgress={runInProgress}
         setThreadRuntimeMode={setThreadRuntimeMode}
         onReady={(h) => {
           hook = h;
         }}
-      />,
+      />
     );
+    await using screen = await render(harness(false));
     using toastSpy = vi.spyOn(toastManager, "add");
 
     await act(() => {
@@ -192,6 +194,13 @@ describe("useComposerSelection runtime mode persistence", () => {
     expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
       "auto-accept-edits",
     );
+
+    // A send is in flight, so this same-mode selection is kept only as a draft.
+    await screen.rerender(harness(true));
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("approval-required");
+    });
+    expect(setThreadRuntimeMode).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       rejectFirst(AsyncResult.failure(Cause.fail(new Error("First call failed"))));
@@ -207,7 +216,7 @@ describe("useComposerSelection runtime mode persistence", () => {
     });
 
     expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
-      "auto-accept-edits",
+      "approval-required",
     );
   });
 
