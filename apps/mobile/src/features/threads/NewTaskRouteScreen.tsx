@@ -29,7 +29,7 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { retargetNewTaskDraft } from "../../state/use-composer-drafts";
+import { retargetSavedNewTaskDraft } from "../../state/use-composer-drafts";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
@@ -240,19 +240,21 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       return;
     }
     // Restamp only on choice, so backing out leaves the draft as it was.
-    if (routeDraftId !== undefined) {
-      retargetNewTaskDraft(routeDraftId, {
+    const draftId =
+      routeDraftId !== undefined &&
+      (await retargetSavedNewTaskDraft(routeDraftId, {
         environmentId: project.environmentId,
         projectId: project.id,
-      });
-    }
+      }))
+        ? routeDraftId
+        : undefined;
     selectDetail({
       name: "Thread",
       params: {
         draft: {
           environmentId: String(project.environmentId),
           projectId: String(project.id),
-          draftId: routeDraftId,
+          draftId,
           incomingShareId: incomingShare?.id,
         },
       },
