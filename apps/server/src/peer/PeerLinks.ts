@@ -222,6 +222,8 @@ const make = Effect.gen(function* () {
   const describe = (origin: string) =>
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
+      // One dropped connection must not list a live peer as down; the timeout still bounds both tries.
+      Effect.retry({ times: 1, while: (error) => certificateErrorCode(error) === undefined }),
       Effect.timeout(probeTimeout(origin)),
       Effect.asSome,
       Effect.catch((error) => {
