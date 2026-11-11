@@ -47,7 +47,8 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private var contentResetKey = ""
 
   @Volatile private var rowsDecodeGeneration = 0
-  private var tokensDecodeGeneration = 0
+
+  @Volatile private var tokensDecodeGeneration = 0
   private val payloadDecodeExecutor = Executors.newSingleThreadExecutor()
   private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
   private val minimumFlingVelocity = ViewConfiguration.get(context).scaledMinimumFlingVelocity
@@ -203,6 +204,11 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     tokensDecodeGeneration += 1
     val generation = tokensDecodeGeneration
     payloadDecodeExecutor.execute {
+      if (generation != tokensDecodeGeneration ||
+        Thread.currentThread().isInterrupted
+      ) {
+        return@execute
+      }
       val decodedTokens = parseTokensObject(value)
       post {
         if (generation != tokensDecodeGeneration) return@post
@@ -483,6 +489,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
       )
       postInvalidateOnAnimation()
     } else {
+      verticalScroller.forceFinished(true)
       canvasView.setVerticalOffset(target)
     }
   }
@@ -1122,7 +1129,8 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun maxHeaderPathOffset(fileId: String): Int {
-    val row = rows.firstOrNull { it.kind == "file" && it.resolvedFileId == fileId } ?: return 0
+    val rowIndex = fileHeaderIndices.firstOrNull { rows[it].resolvedFileId == fileId } ?: return 0
+    val row = rows[rowIndex]
     val top = 0
     val bottom = rowHeight(row)
     val iconRect = drawing.fileHeaderIconRect(top, bottom, style)
@@ -1423,13 +1431,24 @@ private fun centeredBaseline(top: Int, bottom: Int, paint: Paint): Float {
   return (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f
 }
 
+// A single-line preview never shows this many characters, so longer text is cut before measuring.
+private const val ELLIPSIZE_MAX_CHARS = 500
+
 private fun ellipsize(value: String, paint: Paint, width: Float): String {
-  if (paint.measureText(value) <= width) return value
+  val truncated = value.length > ELLIPSIZE_MAX_CHARS
+  val capEnd = surrogateSafeEnd(value, ELLIPSIZE_MAX_CHARS)
+  val text = if (truncated) value.substring(0, capEnd) else value
+  if (!truncated && paint.measureText(text) <= width) return value
   val suffix = "..."
   val available = max(0f, width - paint.measureText(suffix))
-  var end = value.length
-  while (end > 0 && paint.measureText(value, 0, end) > available) end -= 1
-  return value.substring(0, end) + suffix
+  val end = surrogateSafeEnd(text, paint.breakText(text, true, available, null))
+  return text.substring(0, end) + suffix
+}
+
+private fun surrogateSafeEnd(value: String, end: Int): Int {
+  val splitsPair = end in 1 until value.length &&
+    Character.isSurrogatePair(value[end - 1], value[end])
+  return if (splitsPair) end - 1 else end
 }
 
 private fun indexFileHeaders(rows: List<DiffRow>): IntArray {

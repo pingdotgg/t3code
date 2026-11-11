@@ -95,10 +95,6 @@ export const terminalSessionsTotal = Metric.counter("t3_terminal_sessions_total"
   description: "Total terminal sessions started.",
 });
 
-export const terminalRestartsTotal = Metric.counter("t3_terminal_restarts_total", {
-  description: "Total terminal restart requests handled.",
-});
-
 export const webhookDeliveriesTotal = Metric.counter("t3_webhook_deliveries_total", {
   description: "Webhook requests handled, by outcome and source.",
 });

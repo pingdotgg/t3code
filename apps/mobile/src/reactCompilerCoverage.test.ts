@@ -18,7 +18,6 @@ const KNOWN_BAILOUTS: Record<string, string> = {
   "src/features/diffs/nativeReviewDiffSurface.ts": "ref read during render",
   "src/features/home/thread-swipe-actions.tsx": "ref read during render",
   "src/features/threads/ThreadArrangementSheet.tsx": "ref read during render",
-  "src/features/voice-input/VoiceInputProvider.tsx": "ref read during render",
   "src/features/voice-input/useVoiceInputController.ts": "ref read during render",
   "src/native/T3ComposerEditor.ios.tsx": "ref read during render",
   "src/native/T3ComposerEditor.native.tsx": "ref read during render",
@@ -180,6 +179,24 @@ describe("React Compiler coverage", () => {
   it("caches the thread feed derivation", () => {
     expect(
       compilerCachedCalls("src/features/threads/ThreadFeed.tsx", "deriveThreadFeedPresentation"),
+    ).toEqual([true]);
+  });
+
+  // The compiler once silently dropped these caches, so the new-task context
+  // value changed on every provider render and re-rendered every consumer.
+  it("caches the new-task model options and host environments", () => {
+    const file = "src/features/threads/new-task-flow-provider.tsx";
+    expect(compilerCachedCalls(file, "buildModelOptions")).toEqual([true]);
+    expect(compilerCachedCalls(file, "repositoryGroupingKeyOf")).toEqual([true, true]);
+  });
+
+  // An uncached registration would re-register the workspace inspector on every render.
+  it("registers the workspace inspector only when its renderer changes", () => {
+    expect(
+      compilerCachedCalls(
+        "src/features/layout/AdaptiveWorkspaceLayout.tsx",
+        "registerWorkspaceInspector",
+      ),
     ).toEqual([true]);
   });
 

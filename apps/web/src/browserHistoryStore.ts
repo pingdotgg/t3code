@@ -1,5 +1,14 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+} from "@t3tools/client-runtime/environment";
+import type {
+  EnvironmentId,
+  PreviewSessionSnapshot,
+  ScopedProjectRef,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
@@ -12,17 +21,40 @@ import {
   type ThreadPreviewState,
 } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import {
+  readProject,
+  readProjects,
+  readThreadShell,
+  useProjects,
+  useQuietThreadShell,
+} from "~/state/entities";
+import { readPrimaryEnvironmentId, usePrimaryEnvironmentId } from "~/state/environments";
 import { readPreparedConnection } from "~/state/session";
 
 import { isLocalLoopbackHost, normalizeHostname } from "./browser/browserTargetResolver";
+import { useComposerDraftStore } from "./composerDraftStore";
+import {
+  ensureClientSettingsHydrated,
+  getClientSettings,
+  isClientSettingsHydrated,
+  useClientSettings,
+} from "./hooks/useSettings";
 import { resolveStorage } from "./lib/storage";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
+  selectProjectGroupingSettings,
+  type ProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
+import { buildPhysicalToLogicalProjectKeyMap } from "./sidebarProjectGrouping";
+import type { Project } from "./types";
 
 export type BrowserHistoryEntry = { url: string; lastVisitedAt: number; title?: string };
 
 export const BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT = 50;
 export const BROWSER_HISTORY_MAX_PROJECTS = 20;
 const BROWSER_HISTORY_MAX_URL_LENGTH = 2048;
-export const BROWSER_HISTORY_MAX_TITLE_LENGTH = 512;
+const BROWSER_HISTORY_MAX_TITLE_LENGTH = 512;
 const MAX_VALID_DATE_MS = 8_640_000_000_000_000;
 
 export function isValidHistoryTimestamp(value: unknown): value is number {
@@ -90,7 +122,7 @@ export function upsertHistoryEntry(
   return next.slice(0, BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT);
 }
 
-export function evictExcessProjects(
+function evictExcessProjects(
   byProjectKey: Record<string, BrowserHistoryEntry[]>,
 ): Record<string, BrowserHistoryEntry[]> {
   const keys = Object.keys(byProjectKey);
@@ -313,10 +345,63 @@ function migratePersistedThreadProjectKeys(
   );
 }
 
+/**
+ * History follows the sidebar's project rows, so a duplicate row shares the
+ * history of the group it is listed under rather than keying by its own path.
+ */
+function deriveHistoryProjectKey(
+  project: Project,
+  projects: ReadonlyArray<Project>,
+  settings: ProjectGroupingSettings,
+  primaryEnvironmentId: EnvironmentId | null,
+): string {
+  return (
+    buildPhysicalToLogicalProjectKeyMap({ projects, settings, primaryEnvironmentId }).get(
+      derivePhysicalProjectKey(project),
+    ) ?? deriveLogicalProjectKeyFromSettings(project, settings)
+  );
+}
+
+/** Server threads name their project in the shell; drafts in the composer draft store. */
+function readThreadProjectRef(ref: ScopedThreadRef): ScopedProjectRef | null {
+  const projectId = readThreadShell(ref)?.projectId;
+  if (projectId) return scopeProjectRef(ref.environmentId, projectId);
+  const draft = useComposerDraftStore.getState().getDraftSessionByRef(ref);
+  return draft ? scopeProjectRef(draft.environmentId, draft.projectId) : null;
+}
+
+/**
+ * Registers the thread under its current project so queued visits and titles
+ * land. Until the project loads, or client settings hydrate (the grouping is
+ * unknown before then), the last registration stands and writes stay queued.
+ */
+function resolveThreadProjectKey(ref: ScopedThreadRef): string | undefined {
+  const state = useBrowserHistoryStore.getState();
+  const registered = state.projectKeyByThreadKey[scopedThreadKey(ref)];
+  if (!isClientSettingsHydrated()) {
+    void ensureClientSettingsHydrated().then(
+      () => resolveThreadProjectKey(ref),
+      () => undefined,
+    );
+    return registered;
+  }
+  const projectRef = readThreadProjectRef(ref);
+  const project = projectRef ? readProject(projectRef) : null;
+  if (!project) return registered;
+  const projectKey = deriveHistoryProjectKey(
+    project,
+    readProjects(),
+    selectProjectGroupingSettings(getClientSettings()),
+    readPrimaryEnvironmentId(),
+  );
+  state.registerThreadProject(ref, projectKey);
+  return projectKey;
+}
+
 export function recordVisitForThread(ref: ScopedThreadRef, url: string, at?: number): void {
   const threadKey = scopedThreadKey(ref);
+  const projectKey = resolveThreadProjectKey(ref);
   const state = useBrowserHistoryStore.getState();
-  const projectKey = state.projectKeyByThreadKey[threadKey];
   const visitAt = at ?? Date.now();
   const connection = readPreparedConnection(ref.environmentId);
   const environmentHostname = connection ? new URL(connection.httpBaseUrl).hostname : null;
@@ -336,10 +421,9 @@ export function recordVisitForThread(ref: ScopedThreadRef, url: string, at?: num
 }
 
 /**
- * Titles only update entries already in history, so they apply on settle and on
- * visit. History is shared across a project's threads and settled sessions stay
- * retained, so a visit only fills untitled entries: replaying this thread's
- * older settle would clobber a newer title. Settles apply what just changed.
+ * History is shared across a project's threads and settled sessions are retained,
+ * so replaying an old settle would clobber another thread's newer title. Visits
+ * only fill untitled entries; settles apply only pages that loaded or retitled.
  */
 function recordPreviewTitles(
   ref: ScopedThreadRef,
@@ -368,9 +452,15 @@ function recordPreviewTitles(
     "urls" in only
       ? new Set(only.urls.map(titleKey).filter((key) => key !== null && !titled.has(key)))
       : null;
+  // Resizes and list reconciles replace a session without loading a new page.
+  const settledAgain = (session: PreviewSessionSnapshot, previous?: PreviewSessionSnapshot) =>
+    previous?.navStatus._tag === "Success" &&
+    session.navStatus._tag === "Success" &&
+    previous.navStatus.url === session.navStatus.url &&
+    previous.navStatus.title === session.navStatus.title;
   const include = (session: PreviewSessionSnapshot, url: string) =>
     "changedSince" in only
-      ? only.changedSince[session.tabId] !== session
+      ? !settledAgain(session, only.changedSince[session.tabId])
       : (visitKeys?.has(titleKey(url)) ?? false);
   // Tabs can share a URL; applying oldest first lets the newest settle win.
   const sessions = Object.values(preview.sessions).toSorted((a, b) =>
@@ -412,21 +502,45 @@ export function startPreviewTitleRecording(): () => void {
 }
 
 export function removeUrlForThread(ref: ScopedThreadRef, url: string): void {
-  const state = useBrowserHistoryStore.getState();
-  const projectKey = state.projectKeyByThreadKey[scopedThreadKey(ref)];
+  const projectKey = resolveThreadProjectKey(ref);
   if (!projectKey) return;
-  state.removeUrl(projectKey, url);
+  useBrowserHistoryStore.getState().removeUrl(projectKey, url);
 }
 
 const EMPTY_HISTORY: ReadonlyArray<BrowserHistoryEntry> = [];
+
+function useThreadHistoryProjectKey(ref: ScopedThreadRef): string | null {
+  const threadKey = scopedThreadKey(ref);
+  const shellProjectId = useQuietThreadShell(ref)?.projectId ?? null;
+  const draftProjectKey = useComposerDraftStore((state) => {
+    const draft = state.getDraftSessionByRef(ref);
+    return draft ? scopedProjectKey(scopeProjectRef(draft.environmentId, draft.projectId)) : null;
+  });
+  const projectKey = shellProjectId
+    ? scopedProjectKey(scopeProjectRef(ref.environmentId, shellProjectId))
+    : draftProjectKey;
+  const projects = useProjects();
+  const settings = useClientSettings(selectProjectGroupingSettings);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const registered = useBrowserHistoryStore(
+    (state) => state.projectKeyByThreadKey[threadKey] ?? null,
+  );
+  const project = projects.find(
+    (candidate) =>
+      scopedProjectKey(scopeProjectRef(candidate.environmentId, candidate.id)) === projectKey,
+  );
+  return project
+    ? deriveHistoryProjectKey(project, projects, settings, primaryEnvironmentId)
+    : registered;
+}
 
 export function useThreadRecentHistory(
   ref: ScopedThreadRef,
   limit: number,
 ): ReadonlyArray<BrowserHistoryEntry> {
+  const projectKey = useThreadHistoryProjectKey(ref);
   return useBrowserHistoryStore(
     useShallow((state) => {
-      const projectKey = state.projectKeyByThreadKey[scopedThreadKey(ref)];
       const entries = projectKey ? state.byProjectKey[projectKey] : undefined;
       return entries && entries.length > 0 ? entries.slice(0, limit) : EMPTY_HISTORY;
     }),
