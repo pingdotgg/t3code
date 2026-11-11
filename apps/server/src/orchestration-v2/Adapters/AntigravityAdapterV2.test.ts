@@ -196,11 +196,85 @@ describe("AntigravityAdapterV2 session open", () => {
         cause: undefined,
       }),
       requiresSignIn: true,
+      failure: undefined,
     },
     {
       name: "ACP authentication required",
       cause: EffectAcpErrors.AcpRequestError.authRequired(),
       requiresSignIn: true,
+      failure: undefined,
+    },
+    {
+      name: "Gemini Enterprise licensing rate limit",
+      cause: EffectAcpErrors.AcpRequestError.fromProtocolError(
+        {
+          code: -32603,
+          message: "Gemini Enterprise license resolution failed (HTTP 429)",
+        },
+        { method: "authenticate" },
+      ),
+      requiresSignIn: undefined,
+      failure: {
+        class: "usage_limit",
+        message:
+          "Antigravity's Gemini Enterprise license check is rate limited. Wait before retrying; signing in again will not reset this limit.",
+        code: "RATE_LIMIT_EXCEEDED",
+        retryable: true,
+      },
+    },
+    {
+      name: "licensing rate limit reported as authentication required",
+      cause: EffectAcpErrors.AcpRequestError.fromProtocolError(
+        {
+          code: -32000,
+          message: "Gemini Enterprise license resolution failed (HTTP 429)",
+        },
+        { method: "authenticate" },
+      ),
+      requiresSignIn: undefined,
+      failure: {
+        class: "usage_limit",
+        message:
+          "Antigravity's Gemini Enterprise license check is rate limited. Wait before retrying; signing in again will not reset this limit.",
+        code: "RATE_LIMIT_EXCEEDED",
+        retryable: true,
+      },
+    },
+    {
+      name: "unrelated authentication rate limit",
+      cause: EffectAcpErrors.AcpRequestError.fromProtocolError(
+        {
+          code: -32000,
+          message: "Authentication failed (HTTP 429)",
+        },
+        { method: "authenticate" },
+      ),
+      requiresSignIn: true,
+      failure: undefined,
+    },
+    {
+      name: "licensing service failure",
+      cause: EffectAcpErrors.AcpRequestError.fromProtocolError(
+        {
+          code: -32603,
+          message: "Gemini Enterprise license resolution failed (HTTP 500)",
+        },
+        { method: "authenticate" },
+      ),
+      requiresSignIn: undefined,
+      failure: undefined,
+    },
+    {
+      name: "quota text outside authentication",
+      cause: EffectAcpErrors.AcpRequestError.fromProtocolError(
+        {
+          code: -32603,
+          message: "Gemini Enterprise license resolution failed (HTTP 429)",
+        },
+        { method: "session/new" },
+      ),
+      requiresSignIn: undefined,
+      failure: undefined,
     },
     {
       name: "transport failure",
@@ -209,8 +283,9 @@ describe("AntigravityAdapterV2 session open", () => {
         cause: undefined,
       }),
       requiresSignIn: undefined,
+      failure: undefined,
     },
-  ] as const)("classifies $name during session open", ({ cause, requiresSignIn }) =>
+  ] as const)("classifies $name during session open", ({ cause, requiresSignIn, failure }) =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("antigravity-sign-in-test");
       const adapter = yield* makeAntigravityAdapterV2({
@@ -239,6 +314,7 @@ describe("AntigravityAdapterV2 session open", () => {
         error._tag === "ProviderAdapterOpenSessionError" && error.requiresSignIn,
         requiresSignIn,
       );
+      assert.deepEqual("failure" in error ? error.failure : undefined, failure);
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
