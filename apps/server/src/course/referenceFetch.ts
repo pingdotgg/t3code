@@ -4,7 +4,7 @@ import * as NodeZlib from "node:zlib";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Agent } from "undici";
-import { isPublicFaviconHost, isPrivateNetworkHost } from "@t3tools/shared/hostClassification";
+import { isPublicFaviconHost } from "@t3tools/shared/hostClassification";
 import { auditDownload, type DownloadAuditContext } from "./downloadAudit.ts";
 
 export class CourseReferenceFetchError extends Schema.TaggedError<CourseReferenceFetchError>()(
@@ -46,7 +46,7 @@ const checkedDispatcher = async (
   lookup: typeof NodeDnsPromises.lookup = NodeDnsPromises.lookup,
 ) => {
   const addresses = await lookup(hostname, { all: true, verbatim: true });
-  if (!addresses.length || addresses.some(({ address }) => isPrivateNetworkHost(address)))
+  if (!addresses.length || addresses.some(({ address }) => !isPublicFaviconHost(address)))
     throw new Error("The URL resolves to a private network address.");
   const address = addresses[0]!;
   return {

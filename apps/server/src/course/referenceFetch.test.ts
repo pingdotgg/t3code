@@ -3,10 +3,14 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { encodeGrayscalePng, fetchCourseReference } from "./referenceFetch.ts";
 
-const lookup = (async (hostname: string) =>
-  hostname === "private.example"
-    ? [{ address: "127.0.0.1", family: 4 as const }]
-    : [{ address: "93.184.216.34", family: 4 as const }]) as never;
+const lookup = (async (hostname: string) => {
+  const blocked: Record<string, string> = {
+    "private.example": "127.0.0.1",
+    "shared.example": "100.100.100.100",
+    "zero.example": "0.0.0.0",
+  };
+  return [{ address: blocked[hostname] ?? "93.184.216.34", family: 4 as const }];
+}) as never;
 
 describe("course reference fetch", () => {
   it.effect("rewrites Drive links before fetching", () =>
@@ -24,6 +28,19 @@ describe("course reference fetch", () => {
       });
       assert.include(requested, "/uc?export=download&id=abc123");
     }),
+  );
+
+  it.effect.each(["shared.example", "zero.example"])(
+    "rejects special resolved address %s",
+    (host) =>
+      Effect.gen(function* () {
+        const blocked = yield* fetchCourseReference({
+          url: `https://${host}/solution.pdf`,
+          lookup,
+          fetchImpl: () => Promise.resolve(new Response("", { status: 200 })),
+        }).pipe(Effect.flip);
+        assert.include(blocked.message, "private network");
+      }),
   );
 
   it.effect("rejects private hosts and private redirect targets", () =>
