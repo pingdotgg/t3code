@@ -176,6 +176,7 @@ import {
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
@@ -376,7 +377,7 @@ export function spawnClaudeProcessGroup(
   onExit?: () => void,
   onStderr: (text: string) => void = () => {},
   onStderrClose: () => void = () => {},
-): ClaudeSpawnedProcess {
+): ClaudeSpawnedProcess & Pick<NodeChildProcess.ChildProcess, "pid"> {
   const child = NodeChildProcess.spawn(
     "/bin/sh",
     ["-c", CLAUDE_GROUP_WATCH_SCRIPT, "t3-claude", options.command, ...options.args],
@@ -397,7 +398,60 @@ export function spawnClaudeProcessGroup(
     onExit?.();
   });
   // Node's typings make stdin and stdout nullable once stdio has a fourth entry; both are pipes.
-  return child as ClaudeSpawnedProcess;
+  return child as ClaudeSpawnedProcess & Pick<NodeChildProcess.ChildProcess, "pid">;
+}
+
+interface ClaudeProcessRow {
+  readonly pid: number;
+  readonly ppid: number;
+  readonly pgid: number;
+  readonly started: string;
+}
+
+/** Parses `ps -A -o pid=,ppid=,pgid=,lstart=`; pid plus start time tells a process from a reused pid. */
+function parseClaudeProcessTable(table: string): ReadonlyArray<ClaudeProcessRow> {
+  return table.split("\n").flatMap((line) => {
+    const [pid, ppid, pgid, ...started] = line.trim().split(/\s+/);
+    const row = {
+      pid: Number(pid),
+      ppid: Number(ppid),
+      pgid: Number(pgid),
+      started: started.join(" "),
+    };
+    return Number.isSafeInteger(row.pid) &&
+      Number.isSafeInteger(row.ppid) &&
+      Number.isSafeInteger(row.pgid) &&
+      row.started
+      ? [row]
+      : [];
+  });
+}
+
+// A job leading its own group takes the processes it started since with it.
+function killClaudeDescendant(row: ClaudeProcessRow) {
+  try {
+    if (row.pgid === row.pid) signalProcessGroup(row.pid, "SIGKILL");
+    else process.kill(row.pid, "SIGKILL");
+  } catch {}
+}
+
+function claudeDescendants(
+  rows: ReadonlyArray<ClaudeProcessRow>,
+  rootPid: number,
+): ReadonlyArray<ClaudeProcessRow> {
+  const children = Map.groupBy(rows, (row) => row.ppid);
+  const found: Array<ClaudeProcessRow> = [];
+  const seen = new Set<number>([rootPid]);
+  const pending = [rootPid];
+  for (let parent = pending.pop(); parent !== undefined; parent = pending.pop()) {
+    for (const child of children.get(parent) ?? []) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
+      found.push(child);
+      pending.push(child.pid);
+    }
+  }
+  return found;
 }
 
 export const ClaudeProviderCapabilitiesV2 = {
@@ -1170,6 +1224,25 @@ export const layerQueryRunner: Layer.Layer<
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
     const hostEnvironment = yield* HostProcess.Environment;
     const portDiscovery = yield* PortScanner.PortDiscovery;
+    const processRunner = yield* ProcessRunner.make();
+    const readProcessTable = processRunner
+      .run({ command: "ps", args: ["-A", "-o", "pid=,ppid=,pgid=,lstart="], timeout: "5 seconds" })
+      .pipe(
+        Effect.map((result) => (result.code === 0 ? parseClaudeProcessTable(result.stdout) : [])),
+        Effect.orElseSucceed(() => []),
+      );
+    // A job that left the CLI's group escapes the group kill and is re-parented once the CLI
+    // exits, so it is found while the CLI runs and stopped after it exits, if still the same process.
+    const stopAfterExit = Effect.fn("ClaudeAgentSdkQueryRunner.stopAfterExit")(function* (
+      descendants: ReadonlyArray<ClaudeProcessRow>,
+      exited: Promise<void>,
+    ) {
+      yield* Effect.promise(() => exited);
+      const running = new Set((yield* readProcessTable).map((row) => `${row.pid} ${row.started}`));
+      for (const row of descendants) {
+        if (running.has(`${row.pid} ${row.started}`)) killClaudeDescendant(row);
+      }
+    });
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: random.uuidV4(),
@@ -1234,6 +1307,7 @@ export const layerQueryRunner: Layer.Layer<
             if (answered) return;
             stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
           };
+          let cliPid: number | undefined;
           const spawnProcess =
             options.spawnClaudeCodeProcess ??
             ((spawnOptions: ClaudeSpawnOptions) => {
@@ -1241,7 +1315,14 @@ export const layerQueryRunner: Layer.Layer<
                 // Node can report "exit" before it has read the stderr the CLI wrote.
                 let stderrDone = () => {};
                 stderrClosed = new Promise((resolve) => (stderrDone = resolve));
-                return spawnClaudeProcessGroup(spawnOptions, stopScope, appendStderr, stderrDone);
+                const child = spawnClaudeProcessGroup(
+                  spawnOptions,
+                  stopScope,
+                  appendStderr,
+                  stderrDone,
+                );
+                cliPid = child.pid;
+                return child;
               }
               const child = NodeChildProcess.spawn(spawnOptions.command, spawnOptions.args, {
                 cwd: spawnOptions.cwd,
@@ -1536,7 +1617,17 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
-            close: Queue.shutdown(promptQueue).pipe(
+            close: Effect.gen(function* () {
+              const descendants =
+                cliPid === undefined || processExited
+                  ? []
+                  : claudeDescendants(yield* readProcessTable, cliPid);
+              const exited = processExit;
+              if (descendants.length > 0 && exited !== undefined) {
+                runFork(stopAfterExit(descendants, exited));
+              }
+            }).pipe(
+              Effect.andThen(Queue.shutdown(promptQueue)),
               Effect.andThen(closeClaudeQuery(queryRuntime)),
               Effect.tap(() =>
                 logProtocolEvent({
