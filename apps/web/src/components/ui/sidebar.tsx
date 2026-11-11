@@ -1,11 +1,10 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import { PanelLeft, PanelLeftClose } from "lucide";
+import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
   Sheet,
@@ -595,14 +594,25 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      <MorphIcon
-        className={cn(
-          "size-4",
-          props.variant === "media-navigation" ? "text-current" : "text-sidebar-toggle",
-        )}
-        icon={isOpen ? PanelLeftClose : PanelLeft}
-        strokeWidth={2.25}
-      />
+      {isOpen ? (
+        <PanelLeftCloseIcon
+          className={cn(
+            "size-4",
+            props.variant === "media-navigation" ? "text-current" : "text-sidebar-toggle",
+          )}
+
+          strokeWidth={2.25}
+        />
+      ) : (
+        <PanelLeftIcon
+          className={cn(
+            "size-4",
+            props.variant === "media-navigation" ? "text-current" : "text-sidebar-toggle",
+          )}
+
+          strokeWidth={2.25}
+        />
+      )}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );
