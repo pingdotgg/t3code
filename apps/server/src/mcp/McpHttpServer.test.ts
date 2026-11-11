@@ -30,6 +30,11 @@ import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as McpOAuth from "../auth/McpOAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -271,6 +276,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
     OrchestratorToolkit.tools.t3_thread_read,
     OrchestratorToolkit.tools.t3_thread_wait,
     ProjectToolkit.tools.t3_project_update,
+    ProjectToolkit.tools.t3_thread_launch,
   );
   const record = McpToolAccess.reads((params: unknown) =>
     Effect.sync(() => calls.push(params)).pipe(
@@ -286,6 +292,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
       t3_thread_read: record,
       t3_thread_wait: record,
       t3_project_update: record,
+      t3_thread_launch: record,
     }),
   ).pipe(
     Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -294,10 +301,19 @@ const layerRecordingTools = (calls: Array<unknown>) => {
         McpToolAccessTestkit.liveThreadsLayer,
         Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
-        NodeServices.layer,
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: process.cwd(),
+        }),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(ServerSettings.ServerSettingsService)({}),
+        Layer.mock(DocumentText.DocumentText)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" }),
         NodeCrypto.layer,
       ),
     ),
+    Layer.provideMerge(NodeServices.layer),
   );
 };
 
@@ -576,6 +592,22 @@ it.effect("checks each preview_act action against that action's own input", () =
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("rejects a hand-registered tool's undeclared argument before asking the browser", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const inputs = yield* serveSnapshots("mcp-excess-argument-client", snapshotResult);
+
+      const snapshot = yield* callSnapshot({ includeImages: true });
+
+      expect(inputs).toEqual([]);
+      expect(snapshot.isError).toBe(true);
+      expect(snapshot.content).toEqual([
+        { type: "text", text: expect.stringContaining('Unknown argument "includeImages"') },
+      ]);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("decodes null optional arguments the way it decodes omitted ones", () => {
   const calls: Array<unknown> = [];
   return Effect.gen(function* () {
@@ -590,6 +622,38 @@ it.effect("decodes null optional arguments the way it decodes omitted ones", () 
     expect(calls[1]).toEqual(calls[0]);
     expect(calls[3]).toEqual(calls[2]);
     expect(calls[4]).toStrictEqual({ projectId: "project-1", projectIcon: null });
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
+
+it.effect("rejects arguments a tool does not declare instead of dropping them", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const launch = yield* Effect.flip(
+      callTool("t3_thread_launch", { title: "Repro", scratch: true, prompt: "say hi" }),
+    );
+    const wait = yield* Effect.flip(
+      callTool("t3_thread_wait", { threadId: "thread-excess-arguments", timeout: 5_000 }),
+    );
+
+    expect(calls).toEqual([]);
+    expect(launch.message).toContain('Unknown argument "prompt"');
+    expect(wait.message).toContain('Unknown argument "timeout"');
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
+
+it.effect("accepts a nested key the merged advertised schema shows", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    yield* Effect.exit(
+      callTool("t3_thread_launch", {
+        title: "Root",
+        projectId: "project-1",
+        message: "say hi",
+        workspaceStrategy: { type: "root", baseRef: "main" },
+      }),
+    );
+
+    expect(calls).toHaveLength(1);
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
