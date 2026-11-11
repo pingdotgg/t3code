@@ -117,6 +117,7 @@ import {
   LiveWorkEntryTimelineRow,
   WorkGroupToggleTimelineRow,
 } from "./TimelineWorkGroupRows";
+import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
 import { UserMessageRow } from "./TimelineUserMessageRow";
 import {
   AssistantTimelineRow,
@@ -199,6 +200,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   },
 } as const satisfies MaintainScrollAtEndOptions;
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
+const EMPTY_TIMELINE_ENTRIES: ReadonlyArray<TimelineEntry> = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
   ...TIMELINE_MAINTAIN_SCROLL_AT_END,
   animated: true,
@@ -551,6 +553,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }
 
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
+  const screenReaderAnnouncements = useClientSettings(
+    (settings) => settings.screenReaderAnnouncements,
+  );
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
   const revealedMessageId = citationRequest?.citation.messageId ?? null;
@@ -1077,6 +1082,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
       runId={announcedRun?.runId ?? null}
       runStatus={announcedRun?.status ?? null}
       detailBehind={detailBehindShell}
+      level={screenReaderAnnouncements}
+      entries={screenReaderAnnouncements === "status" ? EMPTY_TIMELINE_ENTRIES : timelineEntries}
+      workspaceRoot={workspaceRoot}
     />
   );
   const listHeaderLeadingContent =
@@ -1453,7 +1461,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   row.kind === "event" ||
                   row.kind === "attempt-fold" ||
                   row.kind === "html-render" ||
-                  row.kind === "mcp-app"
+                  row.kind === "mcp-app" ||
+                  row.kind === "viewed-images"
                 ? "pb-2"
                 : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
@@ -1502,6 +1511,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
+      {row.kind === "viewed-images" ? <ViewedImagesTimelineRow row={row} /> : null}
       {row.kind === "mcp-app" ? <McpAppTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
