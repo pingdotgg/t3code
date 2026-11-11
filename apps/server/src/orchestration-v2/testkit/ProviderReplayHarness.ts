@@ -147,6 +147,7 @@ export function makeReplayServerConfig(
       settingsPath: path.join(stateDir, "settings.json"),
       providerStatusCacheDir,
       worktreesDir,
+      worktreeCheckoutCacheDir: path.join(providerStatusCacheDir, "worktree-checkouts"),
       attachmentsDir,
       browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
       environmentThemesDir,
@@ -499,6 +500,7 @@ export function layerWithRegistry<Error>(
         getThreadRecords: orchestrator.getThreadRecords,
         getThreadProjection: orchestrator.getThreadProjection,
         recoverDelegatedTask: orchestrator.recoverDelegatedTask,
+        cancelDelegatedTask: orchestrator.cancelDelegatedTask,
         delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
       });
     }),
