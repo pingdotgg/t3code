@@ -198,6 +198,16 @@ describe("bounded binary previews", () => {
         [block("alias.txt", encode(""), "1", 0, "later.txt"), block("later.txt", encode("hello"))],
         [block("a.txt", encode(""), "1", 0, "b.txt"), block("b.txt", encode(""), "1", 0, "a.txt")],
         [block("folder/", encode(""), "5"), block("alias.txt", encode(""), "1", 0, "folder/")],
+        [
+          block("replaced.txt", encode("stale")),
+          block("replaced.txt", encode(""), "2", 0, "elsewhere.txt"),
+          block("alias.txt", encode(""), "1", 0, "replaced.txt"),
+        ],
+        [
+          block("folder", encode("stale")),
+          block("folder/", encode(""), "5"),
+          block("alias.txt", encode(""), "1", 0, "folder"),
+        ],
       ]) {
         const archive = new Uint8Array(await new Blob(chunks).arrayBuffer());
         expect(

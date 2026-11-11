@@ -138,8 +138,12 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
         directory: type === "5",
         modified: Number.isNaN(date.getTime()) ? null : date.toISOString(),
       });
-      if (type === "5") files.delete(path);
-      else files.set(path, linked ?? content.slice());
+      if (type === "5") {
+        files.delete(path);
+        files.delete(path.replace(/\/+$/, ""));
+      } else files.set(path, linked ?? content.slice());
+    } else {
+      files.delete(path);
     }
     offset += 512 + Math.ceil(size / 512) * 512;
   }
