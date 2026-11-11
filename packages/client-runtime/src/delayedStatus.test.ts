@@ -27,6 +27,15 @@ describe("stepDelayedStatus", () => {
     expect(step(pending, "syncing", 399)).toBe(pending);
     const shown = step(pending, "syncing", 400);
     expect(shownDelayedStatus(shown, "thread-1")).toBe("syncing");
+    const slow = stepDelayedStatus(
+      null,
+      { key: "thread-1", value: "failed", deadlinePassed: false, showDelayMs: 5_000 },
+      () => 0,
+    );
+    expect(delayedStatusDeadline(slow)).toBe(5_000);
+    expect(shownDelayedStatus(step(slow, "failed", 4_999), "thread-1")).toBeNull();
+    expect(shownDelayedStatus(step(slow, "failed", 5_000), "thread-1")).toBe("failed");
+    expect(step(slow, null, 200).phase).toBe("idle");
   });
 
   it("never shows a status that clears before the show delay", () => {
@@ -69,5 +78,14 @@ describe("stepDelayedStatus", () => {
     const other = step(shown, "syncing", 500, "thread-2");
     expect(shownDelayedStatus(other, "thread-2")).toBeNull();
     expect(delayedStatusDeadline(other)).toBe(900);
+    const cleared = step(shown, null, 500, "cleared");
+    expect(shownDelayedStatus(cleared, "cleared")).toBeNull();
+    const retry = stepDelayedStatus(
+      cleared,
+      { key: "thread-1", value: "failed", deadlinePassed: false, showDelayMs: 5_000 },
+      () => 501,
+    );
+    expect(shownDelayedStatus(retry, "thread-1")).toBeNull();
+    expect(delayedStatusDeadline(retry)).toBe(5_501);
   });
 });
