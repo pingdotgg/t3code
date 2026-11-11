@@ -371,27 +371,33 @@ function DictionaryEditor(props: {
   return (
     <>
       <div className="flex items-start gap-2">
-        <Textarea
-          value={termDraft}
-          rows={1}
-          maxLength={5_100}
-          disabled={disabled}
-          placeholder="Add words, separated by commas"
-          aria-label={`Add a word or phrase to the ${label}`}
-          onChange={(event) => setTermDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.shiftKey) return;
-            event.preventDefault();
-            addTerm();
-          }}
-        />
+        {/* One line while empty, so a wrapped placeholder never makes the field taller than Add. */}
+        <div className="min-w-0 flex-1 [&_textarea]:placeholder-shown:whitespace-nowrap">
+          <Textarea
+            value={termDraft}
+            rows={1}
+            maxLength={5_100}
+            disabled={disabled}
+            placeholder="Add words, separated by commas"
+            aria-label={`Add a word or phrase to the ${label}`}
+            onChange={(event) => setTermDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.shiftKey) return;
+              event.preventDefault();
+              addTerm();
+            }}
+          />
+        </div>
         <Button type="button" variant="outline" disabled={!canAddTerm} onClick={addTerm}>
           <PlusIcon />
           Add
         </Button>
       </div>
       {words.length > 0 ? (
-        <ul aria-label={`${label} entries`} className="mt-2.5 flex flex-wrap gap-1.5">
+        <ul
+          aria-label={`${label} entries`}
+          className="mt-2.5 flex flex-col gap-1.5 @min-[32rem]/settings-row:flex-row @min-[32rem]/settings-row:flex-wrap"
+        >
           {words.map(({ term, aliases }) => (
             <li
               key={term}
@@ -408,7 +414,7 @@ function DictionaryEditor(props: {
                   maxLength={50}
                   aria-label={`Alias for ${term}`}
                   placeholder="Misspelling"
-                  className="w-32"
+                  className="ms-auto w-32"
                   onChange={(event) => setAliasDraft({ term, value: event.target.value })}
                   onBlur={() => setAliasDraft(null)}
                   onKeyDown={(event) => {
@@ -423,6 +429,7 @@ function DictionaryEditor(props: {
                   type="button"
                   size="xs"
                   variant="ghost-muted"
+                  className="ms-auto"
                   disabled={disabled || aliases.length >= 8}
                   aria-label={`Add an alias for ${term}`}
                   onClick={() => setAliasDraft({ term, value: "" })}
@@ -540,7 +547,7 @@ function CleanupModelRow() {
         connectedEnvironments.length === 0 ? (
           <span className="text-sm text-muted-foreground">Connect an environment first.</span>
         ) : (
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 @min-[32rem]/settings-row:justify-end">
             {dedicated && (!hasProvider || !instanceEntry) ? (
               <span className="text-sm text-muted-foreground">
                 No text generation providers available.
@@ -1013,7 +1020,7 @@ function SpeechModelBrowser(props: {
       </div>
       {status.supportsModelLinking && canReadFiles ? (
         <form
-          className="mb-2 flex items-center gap-2"
+          className="mb-2 flex flex-col items-start gap-2 @min-[28rem]/voice-models:flex-row @min-[28rem]/voice-models:items-center"
           onSubmit={(event) => {
             event.preventDefault();
             void run("Could not use a model from that path", async () => {
@@ -1022,7 +1029,7 @@ function SpeechModelBrowser(props: {
             });
           }}
         >
-          <div className="min-w-0 flex-1">
+          <div className="w-full min-w-0 flex-1">
             <Input
               size="compact"
               aria-label="Path to a model file or folder already on this environment"
@@ -1079,7 +1086,7 @@ function TranscriptionTest(props: {
         {...props.card}
         stacked={showTranscript}
         testControls={
-          <div className="flex min-w-0 max-w-full items-center gap-1">
+          <div className="order-last flex min-w-0 max-w-full basis-full items-center gap-1 @min-[28rem]/model:order-none @min-[28rem]/model:basis-auto">
             <ComposerSpeechRecordingPill
               state={speech.state}
               progress={null}
@@ -1276,7 +1283,7 @@ export function VoiceSettingsPanel() {
           title="Microphone"
           description="System default follows your operating system."
           control={
-            <div className="flex min-w-0 items-center gap-1.5">
+            <div className="flex w-full min-w-0 items-center gap-1.5 @min-[32rem]/settings-row:w-auto">
               <Select
                 value={selectedMicrophone ? `device:${selectedMicrophone}` : SYSTEM_DEFAULT}
                 onValueChange={(value) => {
@@ -1287,7 +1294,11 @@ export function VoiceSettingsPanel() {
                     });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Microphone" className="max-w-56">
+                <SelectTrigger
+                  size="sm"
+                  aria-label="Microphone"
+                  className="@min-[32rem]/settings-row:max-w-56"
+                >
                   <SelectValue>{selectedMicrophoneLabel}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1361,7 +1372,7 @@ export function VoiceSettingsPanel() {
               : "Where your speech is turned into text."
           }
           control={
-            <div className="flex min-w-0 items-center gap-1.5">
+            <div className="flex w-full min-w-0 items-center gap-1.5 @min-[32rem]/settings-row:w-auto">
               <Select
                 value={destinationValue}
                 onValueChange={(value) => {
@@ -1387,7 +1398,7 @@ export function VoiceSettingsPanel() {
                 <SelectTrigger
                   size="sm"
                   aria-label="Transcribe with"
-                  className="w-auto min-w-0 max-w-72"
+                  className="min-w-0 @min-[32rem]/settings-row:w-auto @min-[32rem]/settings-row:max-w-72"
                 >
                   <SelectValue>
                     <span className="flex min-w-0 items-center gap-2">
@@ -1681,7 +1692,7 @@ export function VoiceSettingsPanel() {
                 maxLength={50}
                 placeholder="sorry"
                 aria-label="Correction cue"
-                className="w-40"
+                className="@min-[32rem]/settings-row:w-40"
                 onBlur={(event) => {
                   const next = event.target.value.trim();
                   if (next !== settings.speechCorrectionWord)
