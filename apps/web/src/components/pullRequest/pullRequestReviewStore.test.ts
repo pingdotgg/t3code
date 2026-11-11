@@ -54,12 +54,18 @@ describe("pull request review drafts", () => {
     expect(usePullRequestReviewStore.getState().summaries[publicKey]).toBe("Public review");
   });
 
-  it("does not clear a summary revised while submission is in flight", () => {
+  it("does not clear a summary or reply revised while submission is in flight", () => {
     const store = usePullRequestReviewStore.getState();
     store.setSummary("review-a", "Submitted body");
     usePullRequestReviewStore.getState().setSummary("review-a", "Revised body");
     usePullRequestReviewStore.getState().clearSummary("review-a", "Submitted body");
 
     expect(usePullRequestReviewStore.getState().summaries["review-a"]).toBe("Revised body");
+
+    store.setReply("reply-a", "Revised reply");
+    store.clearReply("reply-a", "Sent reply");
+    expect(usePullRequestReviewStore.getState().replies["reply-a"]).toBe("Revised reply");
+    store.clearReply("reply-a", "Revised reply");
+    expect(usePullRequestReviewStore.getState().replies["reply-a"]).toBeUndefined();
   });
 });
