@@ -64,9 +64,10 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   return (
     <View
       collapsable={false}
-      className="bg-sheet ios:flex-1 android:flex-col-reverse"
+      className="bg-sheet ios:flex-1"
       style={Platform.OS === "android" ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
+      <SheetHeader title="Branches & worktrees" onClose={() => navigation.goBack()} />
       <ScreenContent fitToContents>
         <ScrollView
           nestedScrollEnabled
@@ -215,7 +216,6 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
           </View>
         </ScrollView>
       </ScreenContent>
-      <SheetHeader title="Branches & worktrees" onClose={() => navigation.goBack()} />
     </View>
   );
 }

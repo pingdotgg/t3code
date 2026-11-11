@@ -13,12 +13,12 @@ import { type Ref, type ReactElement, useImperativeHandle, useRef, useState } fr
 import {
   Platform,
   Pressable,
-  RefreshControl,
   ScrollView,
   type NativeSyntheticEvent,
   StyleSheet,
   View,
 } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";

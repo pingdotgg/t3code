@@ -117,9 +117,10 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   return (
     <View
       collapsable={false}
-      className="bg-sheet ios:flex-1 android:flex-col-reverse"
+      className="bg-sheet ios:flex-1"
       style={Platform.OS === "android" ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
+      <SheetHeader title="Confirm action" onClose={() => navigation.goBack()} />
       <ScreenContent fitToContents>
         <ScrollView
           nestedScrollEnabled
@@ -170,7 +171,6 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
           </View>
         </ScrollView>
       </ScreenContent>
-      <SheetHeader title="Confirm action" onClose={() => navigation.goBack()} />
     </View>
   );
 }

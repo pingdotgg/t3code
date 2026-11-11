@@ -45,7 +45,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import Animated, {
   FadeIn,
   FadeOut,
