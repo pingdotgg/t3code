@@ -1095,6 +1095,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
             : Effect.void,
         ),
         Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+        Effect.uninterruptible,
       ),
     );
     yield* runSteps(manager.finalize);
