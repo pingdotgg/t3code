@@ -12,6 +12,7 @@ const MAX_LOOKUPS_PER_RUN = 300;
 const MERGEABLE_ATTEMPTS = 3;
 const MERGEABLE_RETRY_MS = 30_000;
 const MERGEABLE_LOOKUP_RETRY_MS = 5_000;
+const RECENT_ACTIVITY_MS = 15 * 60 * 1000;
 
 const REBASE_LABEL = "needs-rebase";
 const CLOSING_LABEL = "triage:closing";
@@ -29,7 +30,7 @@ const OPEN_PRS_QUERY = `
         nodes {
           number
           mergeable
-          labels(first: 50) { nodes { name } }
+          labels(first: 100) { nodes { name } }
           timelineItems(itemTypes: [LABELED_EVENT], last: 30) {
             nodes { ... on LabeledEvent { createdAt label { name } } }
           }
@@ -44,12 +45,23 @@ const PR_DETAIL_QUERY = `
       pullRequest(number: $number) {
         state
         mergeable
-        labels(first: 50) { nodes { name } }
+        updatedAt
+        labels(first: 100) { nodes { name } }
         timelineItems(itemTypes: [LABELED_EVENT], last: 100) {
           nodes { ... on LabeledEvent { createdAt label { name } } }
         }
-        comments(first: 100) { totalCount nodes { author { login } } }
-        reviews(first: 100) { totalCount nodes { author { login } } }
+        comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { author { login } } }
+        reviews(first: 100) { pageInfo { hasNextPage endCursor } nodes { author { login } } }
+      }
+    }
+  }`;
+
+const PR_ACTIVITY_QUERY = `
+  query ($owner: String!, $repo: String!, $number: Int!, $comments: String, $reviews: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) {
+        comments(first: 100, after: $comments) { pageInfo { hasNextPage endCursor } nodes { author { login } } }
+        reviews(first: 100, after: $reviews) { pageInfo { hasNextPage endCursor } nodes { author { login } } }
       }
     }
   }`;
@@ -100,15 +112,30 @@ function sweepStep(pr) {
 }
 
 // CONTRIBUTING.md leaves a PR to maintainers once an exempt login has commented or reviewed.
-function maintainerOn(detail, exemptions) {
-  if (detail.comments.totalCount > 100 || detail.reviews.totalCount > 100) {
-    return "more activity than one page";
-  }
-  for (const node of [...detail.comments.nodes, ...detail.reviews.nodes]) {
+function maintainerOn(activity, exemptions) {
+  for (const node of [...activity.comments.nodes, ...activity.reviews.nodes]) {
     const login = node.author?.login;
     if (login && exemptions.has(login.toLowerCase())) return login;
   }
   return undefined;
+}
+
+// Reads every page, so a long thread can neither hide a maintainer nor pass for one.
+async function findMaintainer(github, repo, number, detail, exemptions) {
+  for (let activity = detail; ;) {
+    const login = maintainerOn(activity, exemptions);
+    if (login) return login;
+    const { comments, reviews } = activity;
+    if (!comments.pageInfo.hasNextPage && !reviews.pageInfo.hasNextPage) return undefined;
+    activity = (
+      await github.graphql(PR_ACTIVITY_QUERY, {
+        ...repo,
+        number,
+        comments: comments.pageInfo.endCursor,
+        reviews: reviews.pageInfo.endCursor,
+      })
+    ).repository.pullRequest;
+  }
 }
 
 function labeledAt(detail, name) {
@@ -201,7 +228,7 @@ async function sweep({ github, context, core, dryRun }) {
       continue;
     }
 
-    const maintainer = maintainerOn(detail, exemptions);
+    const maintainer = await findMaintainer(github, repo, number, detail, exemptions);
     if (maintainer) {
       const reason = `maintainer involved (${maintainer})`;
       if (step === "conflict-window") {
@@ -218,11 +245,7 @@ async function sweep({ github, context, core, dryRun }) {
       warnings += 1;
       plan.push({ number, action: "warn-conflict" });
       if (dryRun) continue;
-      await github.rest.issues.addLabels({
-        ...context.repo,
-        issue_number: number,
-        labels: [REBASE_LABEL],
-      });
+      // The request goes first: a label without it would start a clock nobody was told about.
       await github.rest.issues.createComment({
         ...context.repo,
         issue_number: number,
@@ -232,12 +255,19 @@ async function sweep({ github, context, core, dryRun }) {
           `Pushing removes the \`${REBASE_LABEL}\` label and restarts the check. See the [conflict window](${guideLink(context, "conflict-window")}).`,
         ].join("\n"),
       });
+      await github.rest.issues.addLabels({
+        ...context.repo,
+        issue_number: number,
+        labels: [REBASE_LABEL],
+      });
       continue;
     }
 
     const since = labeledAt(detail, labelOf(step));
     if (since === undefined || now - since < windowOf(step)) continue;
     if (closes >= MAX_CLOSES_PER_RUN) continue;
+    // A reply or push clears the label from another job; give that job time before closing.
+    if (Date.now() - Date.parse(detail.updatedAt) < RECENT_ACTIVITY_MS) continue;
     closes += 1;
     plan.push({ number, action: step === "closing-window" ? "close-triage" : "close-conflict" });
     if (dryRun) continue;
