@@ -3659,7 +3659,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         expect(detail.checks.find((check) => check.name === "Done")?.status).toBe("pending");
         expect(detail.checksState).toBe("failing");
         expect(detail.checksTruncated).toBe(false);
-        expect(variablesOf("CheckContexts")).toEqual([
+        expect(variablesOf("PullRequestCheckContexts")).toEqual([
           expect.objectContaining({ number: 7, after: "c1" }),
         ]);
         expect(mockedExecute).toHaveBeenCalledTimes(refused ? 3 : 2);
