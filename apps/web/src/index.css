@@ -5198,10 +5198,13 @@ body {
   margin-bottom: var(--chat-composer-inset, 0px);
 }
 
-/* Only the native track uses this changing inset. Stop it at the list content
-   so composer resizes do not restyle every virtualized row and nested scroller. */
+/* Only the scroller itself uses these changing insets. Stop them at the list content
+   so composer and lane resizes do not restyle every virtualized row and nested scroller. */
 .messages-timeline-scroll > * {
   --chat-composer-inset: initial;
+  --chat-lane-inset-start: initial;
+  --chat-lane-inset-end: initial;
+  --chat-timeline-gutter: initial;
 }
 
 /* Keep parent scrollbar styles off iframe owners to avoid WebKit resize loops: https://webkit.org/b/324485 */
