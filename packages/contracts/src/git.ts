@@ -352,8 +352,8 @@ export type VcsPullResult = typeof VcsPullResult.Type;
 
 // Git stderr can echo credentials from argv and remote URLs. Classified failures
 // use a closed reason tag plus a fixed actionable detail. Unclassified failures
-// may carry a capped, redacted diagnostic excerpt in `detail` instead. Newer
-// unknown reasons decode as absent through GitCommandError.
+// keep a fixed generic detail. Newer unknown reasons decode as absent through
+// GitCommandError.
 export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",
   "author_identity_unknown",

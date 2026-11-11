@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -1953,28 +1954,37 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     it.effect("names a missing author identity behind a failed commit", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
-        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (!ChildProcess.isStandardCommand(command) || command.args[0] !== "commit") {
+            return delegate.spawn(command);
+          }
+          assert.equal(command.options.env?.LANGUAGE, "C");
+          return delegate.spawn(
+            ChildProcess.make(command.command, command.args, {
+              ...command.options,
+              env: {
+                ...command.options.env,
+                GIT_CONFIG_GLOBAL: NodeOS.devNull,
+                GIT_CONFIG_NOSYSTEM: "1",
+                GIT_CONFIG_COUNT: "2",
+                GIT_CONFIG_KEY_0: "user.name",
+                GIT_CONFIG_VALUE_0: "",
+                GIT_CONFIG_KEY_1: "user.email",
+                GIT_CONFIG_VALUE_1: "",
+              },
+            }),
+          );
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
         yield* driver.initRepo({ cwd });
         yield* writeTextFile(cwd, "README.md", "hello\n");
         yield* git(cwd, ["add", "README.md"]);
 
-        const error = yield* driver
-          .execute({
-            operation: "GitVcsDriver.commit.commit",
-            cwd,
-            args: ["commit", "-m", "initial"],
-            env: {
-              LC_ALL: "C",
-              GIT_CONFIG_GLOBAL: NodeOS.devNull,
-              GIT_CONFIG_NOSYSTEM: "1",
-              GIT_CONFIG_COUNT: "2",
-              GIT_CONFIG_KEY_0: "user.name",
-              GIT_CONFIG_VALUE_0: "",
-              GIT_CONFIG_KEY_1: "user.email",
-              GIT_CONFIG_VALUE_1: "",
-            },
-          })
-          .pipe(Effect.flip);
+        const error = yield* driver.commit(cwd, "initial", "").pipe(Effect.flip);
 
         assert.deepInclude(error, {
           _tag: "GitCommandError",
