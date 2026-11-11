@@ -45,8 +45,10 @@ import * as DateTime from "effect/DateTime";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
+  ArrowUpRightIcon,
   BotIcon,
   ChevronDownIcon,
+  CornerDownRightIcon,
   CornerLeftUpIcon,
   GitForkIcon,
   MoreHorizontalIcon,
@@ -380,11 +382,13 @@ export function ThreadRelationshipsPanel(props: {
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
   const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
+  const promoteThread = useAtomCommand(threadEnvironment.promote);
+  const demoteThread = useAtomCommand(threadEnvironment.demote);
   const stopWorkflowCommand = useAtomCommand(orchestrationEnvironment.stopWorkflow);
   const canOperateWorkflow = useAtomValue(
     orchestrationEnvironment.stopWorkflow.permissionAtom(props.environmentId),
   );
-  const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
+  const [busyAction, setBusyAction] = useState<"merge" | "detach" | "promote" | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
   // Derive graphs after hooks to preserve their compiler cache.
   const providers = providersByEnvironment.get(props.environmentId);
@@ -442,6 +446,8 @@ export function ThreadRelationshipsPanel(props: {
   });
   const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
+  const isSubagent = currentThread?.lineage.relationshipToParent === "subagent";
+  const promoted = currentThread?.promotedAt != null;
 
   const {
     related = [],
@@ -515,6 +521,24 @@ export function ThreadRelationshipsPanel(props: {
     setBusyAction(null);
   };
 
+  const togglePromoted = async () => {
+    if (busyAction !== null) return;
+    setBusyAction("promote");
+    const result = await (promoted ? demoteThread : promoteThread)({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId },
+    });
+    setBusyAction(null);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: promoted
+          ? "Could not move thread back under its parent"
+          : "Could not promote thread",
+      });
+    }
+  };
+
   const stopSubagent = async (
     childThreadId: ThreadId,
     agent: Pick<OrchestrationV2Subagent, "id" | "threadId">,
@@ -557,34 +581,68 @@ export function ThreadRelationshipsPanel(props: {
       showHeading={
         runningCount > 0 ||
         canDetach ||
+        isSubagent ||
         related.length > 0 ||
         active.length > 0 ||
         delegatedFrom !== undefined
       }
       data-thread-relationships-panel
       actions={
-        canDetach ? (
-          <Menu>
-            <MenuTrigger
-              render={
-                <ThreadDetailsControl
-                  size="icon-xs"
-                  variant="ghost"
-                  part="icon"
-                  aria-label="More thread actions"
-                  disabled={busyAction !== null}
-                />
-              }
-            >
-              <MoreHorizontalIcon className="size-3.5" />
-            </MenuTrigger>
-            <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
-              <MenuItem onClick={() => void detach()}>
-                <UnplugIcon className="size-3.5" />
-                Disconnect agent session
-              </MenuItem>
-            </MenuPopup>
-          </Menu>
+        isSubagent || canDetach ? (
+          <>
+            {isSubagent ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <ThreadDetailsControl
+                      size="icon-xs"
+                      variant="ghost"
+                      part="icon"
+                      aria-label={promoted ? "Move back under parent" : "Promote to thread"}
+                      disabled={busyAction !== null}
+                      onClick={() => void togglePromoted()}
+                    />
+                  }
+                >
+                  {busyAction === "promote" ? (
+                    <Spinner aria-hidden size="xs" />
+                  ) : promoted ? (
+                    <CornerDownRightIcon aria-hidden className="size-3.5" />
+                  ) : (
+                    <ArrowUpRightIcon aria-hidden className="size-3.5" />
+                  )}
+                </TooltipTrigger>
+                <TooltipPopup side="left">
+                  {promoted
+                    ? "Hide this thread from the sidebar again; it stays under its parent"
+                    : "Give this subagent its own row in the sidebar"}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {canDetach ? (
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <ThreadDetailsControl
+                      size="icon-xs"
+                      variant="ghost"
+                      part="icon"
+                      aria-label="More thread actions"
+                      disabled={busyAction !== null}
+                    />
+                  }
+                >
+                  <MoreHorizontalIcon className="size-3.5" />
+                </MenuTrigger>
+                <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
+                  <MenuItem onClick={() => void detach()}>
+                    <UnplugIcon className="size-3.5" />
+                    Disconnect agent session
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            ) : null}
+          </>
         ) : null
       }
     >

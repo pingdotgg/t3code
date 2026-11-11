@@ -181,6 +181,8 @@ describe("omitIdleSubagentShells", () => {
       // Idle, but a woken grandchild walks through it to reach the root's badge.
       row("middle", "root"),
       row("grandchild", "middle"),
+      // Idle, but the user gave it a row of its own.
+      row("promoted", "root", { promotedAt: DateTime.makeUnsafe(0) }),
     ];
     expect(omitIdleSubagentShells(threads).map((thread) => thread.id)).toEqual([
       "root",
@@ -189,6 +191,7 @@ describe("omitIdleSubagentShells", () => {
       "asking",
       "background",
       "middle",
+      "promoted",
     ]);
   });
 
@@ -202,6 +205,19 @@ describe("omitIdleSubagentShells", () => {
         omitted.subagentThreadIds,
       ),
     ).toBe(false);
+  });
+
+  it("publishes the transcript events of a child once it is promoted, until it is demoted", () => {
+    const subagents = new Set(["child"]);
+    const publishes = (type: string) =>
+      shouldPublishShellApplicationEvent(
+        { event: { threadId: "child", type } } as ApplicationStoredEvent,
+        subagents,
+      );
+    expect(publishes("thread.promoted")).toBe(true);
+    expect(publishes("turn-item.updated")).toBe(true);
+    expect(publishes("thread.demoted")).toBe(true);
+    expect(publishes("turn-item.updated")).toBe(false);
   });
 });
 

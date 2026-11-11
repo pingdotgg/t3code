@@ -1,3 +1,4 @@
+import { isNestedSubagentThread } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   EnvironmentMachineKind,
@@ -46,7 +47,7 @@ export function matchComposerThreadItems(input: {
         input.linkedEnvironments.has(shell.environmentId)) &&
       shell.id !== input.excludeThreadId &&
       shell.archivedAt === null &&
-      shell.lineage.relationshipToParent !== "subagent",
+      !isNestedSubagentThread(shell),
   );
   return rankSearchItems(candidates, (shell, options) =>
     scoreThreadSearch(query, threadSearchSubject(shell, null), input.now, {

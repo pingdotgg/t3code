@@ -6,7 +6,11 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import { isProviderNativeSubagentThread, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import {
+  isNestedSubagentThread,
+  isProviderNativeSubagentThread,
+  OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
@@ -47,16 +51,16 @@ const isChildRunLive = (
 
 /**
  * Whether a thread shows under its parent rather than in thread lists: a
- * subagent, or a task a linked environment delegated here whose parent the
+ * subagent the user has not promoted, or a task a linked environment delegated here whose parent the
  * client lists (`delegatedUnderParent`, by thread key). A task whose parent
  * the client cannot list stays in the lists, so its work is never out of reach.
  */
 export function isShownUnderParent(
   ref: ScopedThreadRef,
-  lineage: OrchestrationV2ThreadShell["lineage"],
+  thread: Parameters<typeof isNestedSubagentThread>[0],
   delegatedUnderParent: ReadonlySet<string>,
 ): boolean {
-  return lineage.relationshipToParent === "subagent" || delegatedUnderParent.has(threadKey(ref));
+  return isNestedSubagentThread(thread) || delegatedUnderParent.has(threadKey(ref));
 }
 
 /** Provider-native
@@ -555,7 +559,7 @@ export function createEnvironmentThreadShellAtoms(input: {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         if (
           thread.archivedAt !== null ||
-          isShownUnderParent({ environmentId, threadId: thread.id }, thread.lineage, underParent)
+          isShownUnderParent({ environmentId, threadId: thread.id }, thread, underParent)
         ) {
           continue;
         }

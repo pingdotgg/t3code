@@ -497,6 +497,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.auto-settle.set":
     case "thread.pin":
     case "thread.unpin":
+    case "thread.promote":
+    case "thread.demote":
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.visit":
@@ -2830,6 +2832,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.auto-settle.set"
           | "thread.pin"
           | "thread.unpin"
+          | "thread.promote"
+          | "thread.demote"
           | "thread.pin.reorder"
           | "thread.active.reorder"
           | "thread.mark-unread"
@@ -2977,6 +2981,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.auto-settle.set" ||
         command.type === "thread.pin" ||
         command.type === "thread.unpin" ||
+        command.type === "thread.promote" ||
+        command.type === "thread.demote" ||
         command.type === "thread.pin.reorder" ||
         command.type === "thread.active.reorder" ||
         command.type === "thread.pull-request.sync") &&
@@ -2986,6 +2992,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is archived.`,
+      });
+    }
+    if (command.type === "thread.promote" && thread.lineage.relationshipToParent !== "subagent") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is not a subagent and already has its own row.`,
       });
     }
     // Reject reorder after unpin so a raced request cannot restore a cleared pin.
@@ -3351,6 +3364,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: alreadyUnpinned ? thread.updatedAt : now,
           };
         }
+        case "thread.promote":
+          return thread.promotedAt != null
+            ? thread
+            : { ...thread, promotedAt: now, updatedAt: now };
+        case "thread.demote":
+          return thread.promotedAt == null
+            ? thread
+            : { ...thread, promotedAt: null, updatedAt: now };
         case "thread.pin.reorder": {
           const keyUnchanged = thread.pinOrderKey === command.orderKey;
           return {
@@ -3733,6 +3754,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.pinned" as const;
         case "thread.unpin":
           return "thread.unpinned" as const;
+        case "thread.promote":
+          return "thread.promoted" as const;
+        case "thread.demote":
+          return "thread.demoted" as const;
         case "thread.pin.reorder":
           return "thread.pin-reordered" as const;
         case "thread.active.reorder":
@@ -12549,6 +12574,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.auto-settle.set":
       case "thread.pin":
       case "thread.unpin":
+      case "thread.promote":
+      case "thread.demote":
       case "thread.pin.reorder":
       case "thread.active.reorder":
       case "thread.mark-unread":
