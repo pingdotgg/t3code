@@ -521,6 +521,8 @@ export interface ProviderAdapterV2SteerInput {
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly providerTurnId: ProviderTurnId;
   readonly message: ProviderAdapterV2TurnMessage;
+  /** The selection sent with the message when it differs from the running turn's. */
+  readonly modelSelection?: ModelSelection;
 }
 
 export interface ProviderAdapterV2InterruptInput {

@@ -12018,11 +12018,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               persistAttachmentBudget(existing.nativeThreadId),
             );
+            // A selection sent with the steer applies to the running turn when the live process can switch to it.
+            const steerSelection =
+              turnInput.modelSelection === undefined
+                ? undefined
+                : compileClaudeModelSelection(turnInput.modelSelection, modelCatalog);
+            const liveSteerSelection =
+              steerSelection !== undefined &&
+              existing.selection.queryIdentity !== steerSelection.queryIdentity &&
+              canApplyClaudeSelectionLive(existing.selection, steerSelection) &&
+              (existing.selection.apiModelId === steerSelection.apiModelId ||
+                existing.openedPermissionMode === currentTurn.queryPolicy.permissionMode)
+                ? steerSelection
+                : undefined;
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
-                compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
-                  .promptEffort,
+                (
+                  liveSteerSelection ??
+                  compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
+                ).promptEffort,
               ),
               attachments: turnInput.message.attachments,
               priority: "now",
@@ -12036,9 +12051,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(Path.Path, path),
             );
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
-            // The turn can end while the moves are answered. A steer offered
-            // then would start a new turn the orchestrator never asked for, so
-            // the steer fails and the orchestrator starts the follow-up turn.
+            if (liveSteerSelection !== undefined) {
+              yield* applySelectionLive(existing, liveSteerSelection);
+            }
+            // The turn can end while the moves or the selection change are answered.
+            // A steer offered then would start a new turn the orchestrator never
+            // asked for, so the steer fails and the orchestrator starts the follow-up turn.
             if (
               (yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId ||
               (yield* Ref.get(queryContext)) !== existing ||

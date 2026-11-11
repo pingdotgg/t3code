@@ -499,6 +499,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
   const steered: string[] = [];
+  const steeredSelections: Array<ModelSelection | undefined> = [];
   const interrupted: ProviderTurnId[] = [];
   const capabilities = {
     ...CodexProviderCapabilitiesV2,
@@ -587,6 +588,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
           steerTurn: (turn) =>
             Effect.sync(() => {
               steered.push(turn.message.text);
+              steeredSelections.push(turn.modelSelection);
             }),
           interruptTurn: ({ providerTurnId }) =>
             Effect.sync(() => {
@@ -658,7 +660,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     yield* Fiber.join(running);
     return threadId;
   });
-  return { cwd, events, started, steered, interrupted, layer, startFirstTurn };
+  return { cwd, events, started, steered, steeredSelections, interrupted, layer, startFirstTurn };
 });
 
 it.effect.each([
@@ -1189,10 +1191,8 @@ it.effect(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-          "steering-selection-change",
-          true,
-        );
+        const { started, steered, steeredSelections, layer, startFirstTurn } =
+          yield* nextTurnSelectionHarness("steering-selection-change", true);
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -1252,6 +1252,8 @@ it.effect(
           yield* steer("steer-back", runSelection);
           const back = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(steered, ["steer-changed", "steer-reverted", "steer-back"]);
+          // The adapter gets each steer's selection so it can switch the live turn, and back.
+          assert.deepEqual(steeredSelections, [composerSelection, runSelection, runSelection]);
           assert.equal(back.thread.providerInstanceId, instanceId);
           assert.deepEqual(back.thread.modelSelection, runSelection);
         }).pipe(Effect.provide(layer));
