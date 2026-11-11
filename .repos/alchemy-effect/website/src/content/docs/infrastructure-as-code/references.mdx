@@ -64,6 +64,19 @@ const b = yield* Backend.stage.prod;     // pinned to "prod"
 const c = yield* Backend.stage["pr-42"]; // any stage name
 ```
 
+Declare the stages as a third type parameter and a misspelled
+stage becomes a type error:
+
+```typescript
+export class Backend extends Alchemy.Stack<
+  Backend,
+  { url: string },
+  "prod" | `pr-${number}`
+>()("Backend") {}
+
+const d = yield* Backend.stage[`pr-${pr}`];
+```
+
 Every successful `apply` persists what the Stack's effect returned
 as a per-stage output record; `yield* Backend` reads it back as a
 proxy of typed Outputs, so `(yield* Backend).url` is
