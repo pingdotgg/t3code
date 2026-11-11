@@ -1,6 +1,7 @@
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -351,10 +352,13 @@ export const make = Effect.gen(function* () {
         if (outputTail.length > 4) outputTail.shift();
       });
     };
-    yield* git
+    const provider = input.provider ?? SourceControlProviderKind.make("unknown");
+    const timeoutMs = options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs;
+    const clone = git
       .execute({
         ...command,
-        timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
+        // The deadline is applied below so a timeout is reported as one, not as git's last line.
+        timeoutMs: null,
         // Buffered output is unused and progress can be huge; cap it while retaining line callbacks.
         maxOutputBytes: 256 * 1024,
         appendTruncationMarker: true,
@@ -366,7 +370,7 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new SourceControlRepositoryError({
               operation: "cloneRepository",
-              provider: input.provider ?? SourceControlProviderKind.make("unknown"),
+              provider,
               detail:
                 outputTail.length > 0
                   ? outputTail.join(" ")
@@ -375,6 +379,21 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+    if (timeoutMs === null) return yield* clone;
+    // Interrupting the clone closes the scope that owns git, which kills it.
+    return yield* clone.pipe(
+      Effect.timeoutOrElse({
+        duration: timeoutMs,
+        orElse: () =>
+          Effect.fail(
+            new SourceControlRepositoryError({
+              operation: "cloneRepository",
+              provider,
+              detail: `The clone timed out after ${Duration.format(Duration.millis(timeoutMs))}.`,
+            }),
+          ),
+      }),
+    );
   });
 
   const runClone = Effect.fn("SourceControlRepositoryService.runClone")(function* (

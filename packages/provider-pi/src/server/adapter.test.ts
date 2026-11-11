@@ -306,7 +306,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
               "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
           };
         }
-        return base;
+        return promptDisposition && isStreaming
+          ? { ...base, data: { disposition: "queued" } }
+          : base;
       case "get_available_models":
         return { ...base, data: { models } };
       case "new_session": {
@@ -2274,6 +2276,59 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("selects the provider and id Pi reported when either contains a slash", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const hub = "hub=https://hub.example:8318/v1";
+      fake.queueModels([{ provider: "openrouter", id: "openrouter/auto" }]);
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+
+      yield* startTurn(
+        runtime,
+        providerThread,
+        "default",
+        [],
+        "First",
+        modelSelection("openrouter/openrouter/auto"),
+      );
+      const openRouterRequest = yield* fake.takeRequest("set_model");
+      assert.deepEqual(
+        { provider: openRouterRequest["provider"], modelId: openRouterRequest["modelId"] },
+        { provider: "openrouter", modelId: "openrouter/auto" },
+      );
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      // A provider registered after the session started, e.g. by an extension reload.
+      fake.queueModels([
+        { provider: "openrouter", id: "openrouter/auto" },
+        { provider: hub, id: "claude-haiku-4-5" },
+      ]);
+      yield* startTurn(
+        runtime,
+        providerThread,
+        "default",
+        [],
+        "Second",
+        modelSelection(`${hub}/claude-haiku-4-5`),
+        2,
+      );
+      const hubRequest = yield* fake.takeRequest("set_model");
+      assert.deepEqual(
+        { provider: hubRequest["provider"], modelId: hubRequest["modelId"] },
+        { provider: hub, modelId: "claude-haiku-4-5" },
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each(["anthropic/model-b", "default"])(
     "preserves explicit thinking when switching models to %s in the same runtime",
     (targetModel) =>
@@ -3608,6 +3663,77 @@ describe("PiAdapterV2", () => {
       fake.queueEntries(entries);
       yield* rollBackToStart(100);
       assert.deepEqual(forkedEntries(), ["u2", "u2"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("rolls back a persisted thread on a fresh runtime after its session was released", () =>
+    Effect.gen(function* () {
+      const previousFake = yield* makeFakePi;
+      const { runtime: previousRuntime } = yield* openRuntime(previousFake);
+      const providerThread = yield* previousRuntime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const sessionFile = providerThread.nativeThreadRef?.nativeId;
+      assert.isDefined(sessionFile);
+      const turn = (ordinal: number, entryId: string): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(`turn-${ordinal}`),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make(`node-${ordinal}`),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: entryId, strength: "strong" },
+        ordinal,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      });
+      const turns = [turn(1, "u1"), turn(2, "u2")];
+
+      // Rollback opens the session the way CheckpointRollbackService does, without resumeThread.
+      const fake = yield* makeFakePi;
+      const adapter = yield* makeAdapter(fake);
+      const runtime = yield* adapter.openSession({
+        threadId: THREAD_ID,
+        providerSessionId: SESSION_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+        initialNativeThreadId: sessionFile!,
+      });
+      yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
+      fake.queueState({ sessionFile: sessionFile! });
+      fake.queueState({ sessionFile: "/fake/rolled-back-session.jsonl" });
+      const result = yield* runtime
+        .rollbackThread({
+          providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint-1"),
+            appRunOrdinal: 1,
+            providerTurn: turns[0]!,
+          },
+          providerThreadTurns: turns,
+        })
+        .pipe(Effect.result);
+
+      assert.equal(
+        result._tag,
+        "Success",
+        `rollback on a fresh Pi runtime failed: ${result._tag === "Failure" ? String(result.failure.cause) : ""}`,
+      );
+      const requests = fake.allRequests();
+      const switchIndex = requests.findIndex(
+        (request) => request.type === "switch_session" && request.sessionPath === sessionFile,
+      );
+      const forkIndex = requests.findIndex((request) => request.type === "fork");
+      assert.isAtLeast(switchIndex, 0, "fresh runtime never switched to the persisted session");
+      assert.isAbove(forkIndex, switchIndex, "fork ran before switching to the persisted session");
+      assert.equal(requests[forkIndex]?.entryId, "u2");
+      if (result._tag !== "Success") return;
+      assert.equal(
+        result.success.providerThread.nativeThreadRef?.nativeId,
+        "/fake/rolled-back-session.jsonl",
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -5169,6 +5295,62 @@ describe("PiAdapterV2", () => {
       yield* fake.closeStdout;
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    { outcome: "Pi reads it", status: "completed" },
+    { outcome: "Stop clears it unread", status: "cancelled" },
+  ] as const)("reports a queued steer unread until $outcome", ({ status }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      fake.setClearQueue({ steering: ["Steer behind a command"], followUp: [] });
+      fake.setStreaming(false);
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      const providerTurnId =
+        running.type === "provider_turn.updated" ? running.providerTurn.id : undefined;
+      assert.isDefined(providerTurnId);
+      fake.setStreaming(true);
+      yield* fake.emit({ type: "agent_start" });
+
+      const messageId = "message:thread-pi-test:queued-steer" as never;
+      yield* runtime.steerTurn({
+        threadId: THREAD_ID,
+        runId: RunId.make("run:thread-pi-test:1"),
+        providerThread,
+        providerTurnId: providerTurnId!,
+        message: {
+          messageId,
+          text: "Steer behind a command",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      const queued = yield* takeEvent((event) => event.type === "steer.updated");
+      assert.deepInclude(queued, { messageId, status: "pending" });
+
+      if (status === "completed") {
+        yield* fake.emit({ type: "message_start", message: { role: "user" } });
+      } else {
+        yield* runtime.interruptTurn({ providerThread, providerTurnId: providerTurnId! });
+        yield* fake.takeRequest("abort");
+        fake.setStreaming(false);
+        yield* fake.emit({ type: "agent_settled", aborted: true });
+      }
+      const settled = yield* takeEvent((event) => event.type === "steer.updated");
+      assert.deepInclude(settled, { messageId, status });
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
