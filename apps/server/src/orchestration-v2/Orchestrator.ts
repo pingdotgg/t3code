@@ -1101,7 +1101,13 @@ function rootProviderThreadsForProvider(
 }
 
 function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
-  return run.status === "completed" || run.status === "failed" || run.status === "interrupted";
+  return (
+    run.status === "completed" ||
+    run.status === "failed" ||
+    run.status === "interrupted" ||
+    // A queued request cancelled before it started never reached any provider.
+    (run.status === "cancelled" && run.startedAt !== null)
+  );
 }
 
 function lastDeliveredRunForProviderThread(
@@ -1169,9 +1175,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: OrchestrationV2ServerCommand,
     providerInstanceId: ProviderInstanceId,
   ) {
-    const { driver } = yield* providerAdapters
-      .get(providerInstanceId)
-      .pipe(mapDispatchError(command));
+    const adapter = yield* providerAdapters.get(providerInstanceId).pipe(mapDispatchError(command));
+    const { driver } = adapter;
+    if (driver === "opencode") {
+      const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
+      return capabilities.turns.supportsNativeGoals === true ? driver : undefined;
+    }
     return driver === "codex" || driver === "claudeAgent" ? driver : undefined;
   });
 
@@ -6177,14 +6186,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
-    // Codex and Claude own /goal; elsewhere it is ordinary text that cannot steer.
+    // Native goal commands must not steer an existing turn.
     const parsedGoalCommand = parseGoalCommand(command);
     const goalCommand =
       parsedGoalCommand === null ||
       (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
         ? null
         : parsedGoalCommand;
-    let goalStopRunId: RunId | undefined;
+    let queuedRunStop:
+      | { readonly runId: RunId; readonly reason: string; readonly skipsHeldQueue?: true }
+      | undefined;
     if (goalCommand !== null) {
       // A goal command never joins a running turn. One that starts or ends goal
       // work stops the run and goes first in the queue; the rest wait. A send
@@ -6210,7 +6221,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
           !(yield* stopReachedRun(command, command.threadId, target.id))
         ) {
-          goalStopRunId = target.id;
+          queuedRunStop = { runId: target.id, reason: "Stopped to apply /goal" };
         }
         dispatchMode = { type: "queue_after_active" };
       }
@@ -6269,6 +6280,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         generation: delivery.generation,
         taskIds: delivery.taskIds,
       };
+    }
+    // A provider that can stop a turn but not restart it with new input runs a
+    // restart as the next turn: first in the queue, with the running turn stopped.
+    if (dispatchMode.type === "restart_active" && !isNativeMaintenanceCommand(command)) {
+      const targetRunId = dispatchMode.targetRunId;
+      const target = projection.runs.find((run) => run.id === targetRunId);
+      const providerSessionId = projection.providerThreads.find(
+        (candidate) => candidate.id === target?.providerThreadId,
+      )?.providerSessionId;
+      const turns = projection.providerSessions.find((session) => session.id === providerSessionId)
+        ?.capabilities.turns;
+      const targetMessage = projection.messages.find(
+        (message) => message.id === target?.userMessageId,
+      );
+      if (
+        target?.status === "running" &&
+        turns !== undefined &&
+        turns.supportsInterrupt &&
+        turns.supportsQueuedMessages &&
+        !turns.supportsSteeringByInterruptRestart &&
+        (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
+        !(yield* stopReachedRun(command, command.threadId, target.id))
+      ) {
+        // The restart replaces the stopped turn, so an older held queue does not hold it.
+        queuedRunStop = {
+          runId: target.id,
+          reason: "Stopped to send a new message",
+          skipsHeldQueue: true,
+        };
+        dispatchMode = { type: "queue_after_active" };
+      }
     }
     // Steer mailbox deliveries, delegated task questions, and command notices
     // into an active goal under the thread lock: queued behind a long turn or a
@@ -6433,14 +6475,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const shouldQueue =
       startsOrQueuesRun &&
       (queueBehindRun !== undefined || (drainBlocksStart && dispatchMode.type !== "defer_start"));
-    // An explicit pick queued ahead reaches the thread only when its run starts. A goal
-    // command that stops the active run goes first, so nothing queued applies before it.
+    // An explicit pick queued ahead reaches the thread only when its run starts. A goal or
+    // restart command that stops the active run goes first, so nothing queued applies before it.
     // Buffered provider wakes drain output their own provider already produced.
     const incomingMessage = { ...command, delegatedCompletion };
     if (
       shouldQueue &&
       command.modelSelection === undefined &&
-      goalStopRunId === undefined &&
+      queuedRunStop === undefined &&
       !followsCurrentConversation(incomingMessage) &&
       !isBufferedProviderNotification(incomingMessage)
     ) {
@@ -6597,11 +6639,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         activeAttemptId: attemptId,
         status: "queued",
         ...(worktreeMissingRun !== undefined ||
-        (heldRunsToRelease.length === 0 && queueIsHeld && !wakeSkipsHold)
+        (heldRunsToRelease.length === 0 &&
+          queueIsHeld &&
+          !wakeSkipsHold &&
+          queuedRunStop?.skipsHeldQueue !== true)
           ? { queueHeld: true }
           : {}),
         queuePosition:
-          goalStopRunId !== undefined
+          queuedRunStop !== undefined
             ? 1
             : Math.max(
                 0,
@@ -6759,15 +6804,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         });
       }
-      if (goalStopRunId !== undefined) {
+      if (queuedRunStop !== undefined) {
         return yield* stopRunForQueuedCommand({
           command,
           events,
           effects,
           projection: yield* getProjectionWithPendingEvents(command.threadId, events),
           queuedRunId: runId,
-          targetRunId: goalStopRunId,
-          reason: "Stopped to apply /goal",
+          targetRunId: queuedRunStop.runId,
+          reason: queuedRunStop.reason,
           now,
         });
       }
@@ -8561,12 +8606,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (!startsAttempt) return;
     const child = yield* projectionStore.getThread(command.threadId);
     const parentThreadId = child.lineage.parentThreadId;
+    // A send with no sender thread comes from a client acting for the owner, like a user send.
     if (
       child.lineage.relationshipToParent !== "subagent" ||
       parentThreadId === null ||
       (command.notification === undefined &&
         command.createdBy !== "user" &&
         command.usageLimitContinuationOfRunId === undefined &&
+        command.senderThreadId !== undefined &&
         command.senderThreadId !== parentThreadId)
     )
       return;
