@@ -32,7 +32,15 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     widthStorageKey,
   });
   if (!sheet) {
-    return <RightPanelTabs {...tabs} mode="inline" maximized={maximized} inlineSize={inlineSize} />;
+    return (
+      <RightPanelTabs
+        {...tabs}
+        widthStorageKey={widthStorageKey}
+        mode="inline"
+        maximized={maximized}
+        inlineSize={inlineSize}
+      />
+    );
   }
   return (
     <RightPanelSheet
@@ -42,6 +50,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     >
       <RightPanelTabs
         {...tabs}
+        widthStorageKey={widthStorageKey}
         mode="sheet"
         inlineSize={inlineSize}
         layoutControls={layoutControls}

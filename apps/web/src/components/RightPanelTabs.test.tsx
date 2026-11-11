@@ -189,15 +189,39 @@ describe("pull request attention pulse", () => {
 
   it("baselines without pulsing when the panel scope changes for the same PR", () => {
     expect(
-      nextPullRequestAttentionPulse(baseline, {
-        scope: "thread-b",
-        id: "pull-request:project:repo:1",
-        requestId: 5,
-      }),
+      nextPullRequestAttentionPulse(
+        { ...baseline, key: 1 },
+        {
+          scope: "thread-b",
+          id: "pull-request:project:repo:1",
+          requestId: 5,
+        },
+      ),
     ).toEqual({
       scope: "thread-b",
       surfaceId: "pull-request:project:repo:1",
       requestId: 5,
+      key: 0,
+    });
+    expect(nextPullRequestAttentionPulse({ ...baseline, key: 1 }, null)).toEqual({
+      scope: null,
+      surfaceId: null,
+      requestId: 0,
+      key: 0,
+    });
+    expect(
+      nextPullRequestAttentionPulse(
+        { ...baseline, key: 1 },
+        {
+          scope: "thread-a",
+          id: "pull-request:project:repo:2",
+          requestId: 1,
+        },
+      ),
+    ).toEqual({
+      scope: "thread-a",
+      surfaceId: "pull-request:project:repo:2",
+      requestId: 1,
       key: 0,
     });
   });

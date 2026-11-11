@@ -1041,7 +1041,7 @@ export function nextPullRequestAttentionPulse(
   if (focused === null) {
     return current.surfaceId === null && current.scope === null
       ? current
-      : { scope: null, surfaceId: null, requestId: 0, key: current.key };
+      : { scope: null, surfaceId: null, requestId: 0, key: 0 };
   }
   const sameSurface = current.scope === focused.scope && current.surfaceId === focused.id;
   if (sameSurface && current.requestId !== focused.requestId) {
@@ -1057,7 +1057,7 @@ export function nextPullRequestAttentionPulse(
       scope: focused.scope,
       surfaceId: focused.id,
       requestId: focused.requestId,
-      key: current.key,
+      key: 0,
     };
   }
   return current;
