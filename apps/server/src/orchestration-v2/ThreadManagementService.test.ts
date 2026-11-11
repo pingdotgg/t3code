@@ -14,7 +14,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
-  type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
@@ -34,7 +33,6 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { planClaudeSkillDispatch } from "../provider/Drivers/ClaudeSkillDispatch.ts";
-import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -709,19 +707,63 @@ it.effect.each([
 
 // https://git.cafe/pingdotgg/t3code/issues/24667
 const SHELL_TEXT = 'Run printf "%s" "$HOME" > /tmp/report.txt, then budget $20, $1.5k, and $5M.';
+const J = "\u2060";
 it.effect.each([
-  { text: "PREFIX: $technical-writing mid-sentence. SUFFIX", mode: "auto", agent: true },
-  { text: "PREFIX: €technical-writing mid-sentence. SUFFIX", mode: "steer", agent: true },
-  { text: "/technical-writing PREFIX: report the text.", mode: "auto", agent: true },
-  { text: `${SHELL_TEXT} Use $technical-writing now.`, mode: "steer", agent: true },
-  { text: SHELL_TEXT, mode: "auto", agent: true },
-  { text: "/tmp/report.txt holds the output. SUFFIX", mode: "steer", agent: true },
-  { text: 'Keep "$TECH_DIR" and use ($technical-writing).', mode: "auto", agent: true },
-  { text: "See [$technical-writing](/skills/writing/SKILL.md).", mode: "steer", agent: true },
-  { text: "PREFIX: $technical-writing mid-sentence. SUFFIX", mode: "auto", agent: false },
+  {
+    text: "PREFIX: $technical-writing mid-sentence. SUFFIX",
+    sent: `PREFIX: $${J}technical-writing mid-sentence. SUFFIX`,
+    mode: "auto",
+    agent: true,
+  },
+  {
+    text: "PREFIX: €technical-writing mid-sentence. SUFFIX",
+    sent: `PREFIX: €${J}technical-writing mid-sentence. SUFFIX`,
+    mode: "steer",
+    agent: true,
+  },
+  // A project skill the server has not scanned.
+  { text: "Run $prepare-pr next.", sent: `Run $${J}prepare-pr next.`, mode: "auto", agent: true },
+  {
+    text: "/technical-writing PREFIX: report the text.",
+    sent: `${J}/technical-writing PREFIX: report the text.`,
+    mode: "auto",
+    agent: true,
+  },
+  {
+    text: `${SHELL_TEXT} Use $technical-writing now.`,
+    sent: `${SHELL_TEXT} Use $${J}technical-writing now.`,
+    mode: "steer",
+    agent: true,
+  },
+  { text: SHELL_TEXT, sent: SHELL_TEXT, mode: "auto", agent: true },
+  {
+    text: "/tmp/report.txt holds the output. SUFFIX",
+    sent: "/tmp/report.txt holds the output. SUFFIX",
+    mode: "steer",
+    agent: true,
+  },
+  { text: "/tmp holds the output.", sent: `${J}/tmp holds the output.`, mode: "auto", agent: true },
+  {
+    text: 'Keep "$TECH_DIR" and use ($technical-writing).',
+    sent: `Keep "$TECH_DIR" and use ($${J}technical-writing).`,
+    mode: "auto",
+    agent: true,
+  },
+  {
+    text: "See [$technical-writing](/skills/writing/SKILL.md).",
+    sent: `See [$${J}technical-writing](/skills/writing/SKILL.md).`,
+    mode: "steer",
+    agent: true,
+  },
+  {
+    text: "PREFIX: $technical-writing mid-sentence. SUFFIX",
+    sent: "PREFIX: $technical-writing mid-sentence. SUFFIX",
+    mode: "auto",
+    agent: false,
+  },
 ] as const)(
   "sendToThread with agent=$agent mode=$mode keeps skill dispatch only for the user: $text",
-  ({ text, mode, agent }) =>
+  ({ text, sent: expected, mode, agent }) =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project:thread-management:agent-skill-mention");
       const threadId = ThreadId.make("thread:thread-management:agent-skill-mention");
@@ -765,14 +807,6 @@ it.effect.each([
         ),
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(layerReceiptsTest),
-        Layer.provide(
-          ProviderRegistryMock.layer([
-            {
-              instanceId: ProviderInstanceId.make("codex"),
-              skills: [{ name: "technical-writing", path: "/skills/technical-writing" }],
-            } as unknown as ServerProvider,
-          ]),
-        ),
       );
       const service = yield* ThreadManagementService.ThreadManagementService.pipe(
         Effect.provide(layerTest),
@@ -797,22 +831,21 @@ it.effect.each([
       expect(sent.delivery).toBe(steering ? "steered" : "queued");
 
       const [providerText = ""] = sentTexts;
-      const skills = new Map([["technical-writing", { path: "/skills/technical-writing" }]]);
+      expect(providerText).toBe(expected);
+      const names = ["technical-writing", "prepare-pr"];
+      const skills = new Map(names.map((name) => [name, { path: `/skills/${name}` }]));
       // Claude: a currency-sign mention becomes `/name`, and a leading `/name` runs natively.
       // Codex: the same mention pattern is rewritten to `$name`, and Codex expands `$name` even
       // inside punctuation or a `[$name](path)` link.
       const dispatchesSkill =
         planClaudeSkillDispatch(providerText, skills) !== undefined ||
-        /^\s*\/technical-writing(?:\s|$)/u.test(providerText) ||
-        [...providerText.matchAll(SKILL_MENTION_PATTERN)].some(
-          ([, , name]) => name === "technical-writing",
+        names.some(
+          (name) => providerText.startsWith(`/${name} `) || providerText.includes(`$${name}`),
         ) ||
-        providerText.includes("$technical-writing");
-      expect(dispatchesSkill).toBe(!agent && text.includes("technical-writing"));
-      // Only a word joiner right after the skill's sigil or leading slash may change.
-      expect(providerText).toBe(
-        agent ? text.replace(/([\p{Sc}/])(technical-writing)/gu, "$1\u2060$2") : text,
-      );
+        [...providerText.matchAll(SKILL_MENTION_PATTERN)].some(([, , name = ""]) =>
+          names.includes(name),
+        );
+      expect(dispatchesSkill).toBe(!agent);
     }),
 );
 

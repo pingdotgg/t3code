@@ -42,7 +42,6 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as Clock from "effect/Clock";
@@ -66,27 +65,19 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
-// Another agent's message must not invoke the recipient's skills. A word joiner breaks a leading
-// `/name` and any mention naming one of its skills, including `$name` inside punctuation or
-// `[$name](path)`, which Codex also reads. Shell vars, amounts, and paths stay byte-identical.
-const LEADING_SLASH_COMMAND = /^\s*\/(?=[^\s/]+(?:\s|$))/u;
-const CODEX_SKILL_MENTION = /\$([a-zA-Z0-9_:-]+)/gu;
+// Another agent's message must not invoke the recipient's skills, which may be project-local and
+// unknown here. A word joiner after a sigil breaks any skill-shaped mention (Codex reads `$name`
+// even inside punctuation); one before a leading `/word` stops Claude's native command without
+// touching the word. Uppercase shell vars, amounts, and paths stay byte-identical.
+const SKILL_SIGIL = /\p{Sc}(?=[a-z])/gu;
+const LEADING_SLASH_COMMAND = /^(\s*)(?=\/[^\s/]+(?:\s|$))/u;
 
-function breakAgentSkillSyntax(text: string, skillNames: ReadonlySet<string>): string {
-  return text
-    .replace(SKILL_MENTION_PATTERN, (match, _prefix: string, name: string) =>
-      skillNames.has(name) ? `${match.slice(0, -name.length)}\u2060${name}` : match,
-    )
-    .replace(CODEX_SKILL_MENTION, (match, name: string) =>
-      skillNames.has(name) ? `$\u2060${name}` : match,
-    )
-    .replace(LEADING_SLASH_COMMAND, "$&\u2060");
-}
+const breakAgentSkillSyntax = (text: string) =>
+  text.replace(SKILL_SIGIL, "$&\u2060").replace(LEADING_SLASH_COMMAND, "$1\u2060");
 
 export interface ThreadManagementProvenance {
   readonly createdBy: OrchestrationV2Actor;
@@ -602,24 +593,6 @@ const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
-  const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
-
-  const recipientSkillNames = (instanceId: ProviderInstanceId) =>
-    Option.match(providerRegistry, {
-      onNone: () => Effect.succeed(new Set<string>()),
-      onSome: (registry) =>
-        registry.getProviders.pipe(
-          Effect.map((providers) => {
-            const provider = providers.find((candidate) => candidate.instanceId === instanceId);
-            return new Set(
-              [provider?.skills ?? [], ...(provider?.workspaceSnapshots ?? []).map((s) => s.skills)]
-                .flat()
-                .map((skill) => skill.name),
-            );
-          }),
-        ),
-    });
-
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
       receipts.getByCommandId(input.commandId).pipe(
@@ -896,15 +869,7 @@ const make = Effect.gen(function* () {
       messageId: input.messageId,
       ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
       ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
-      text:
-        input.senderThreadId === undefined
-          ? input.text
-          : breakAgentSkillSyntax(
-              input.text,
-              yield* recipientSkillNames(
-                input.modelSelection?.instanceId ?? target.thread.modelSelection.instanceId,
-              ),
-            ),
+      text: input.senderThreadId === undefined ? input.text : breakAgentSkillSyntax(input.text),
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),
