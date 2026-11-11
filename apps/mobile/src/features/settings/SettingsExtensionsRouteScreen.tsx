@@ -57,9 +57,10 @@ function MobileExtensionManager({
     supported ? extensionEnvironment.state({ environmentId, input: {} }) : null,
   );
   const permission = useAtomValue(extensionEnvironment.install.permissionAtom(environmentId));
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<boolean | null>(null);
   if (!supported) return <Text>Update T3 Code on {label} to use extensions.</Text>;
   const entries = query.data ?? [];
+  const showInstall = adding ?? (entries.length === 0 && query.data !== null);
   return (
     <View className="gap-4">
       <View className="flex-row items-center justify-between gap-3">
@@ -73,14 +74,14 @@ function MobileExtensionManager({
           </Text>
         </View>
         <Button
-          label={adding ? "Cancel" : "Add extension"}
-          icon={adding ? "xmark" : "plus"}
+          label={showInstall ? "Cancel" : "Add extension"}
+          icon={showInstall ? "xmark" : "plus"}
           size="compact"
           disabled={!permission}
-          onPress={() => setAdding(!adding)}
+          onPress={() => setAdding(!showInstall)}
         />
       </View>
-      {(adding || (entries.length === 0 && query.data !== null)) && (
+      {showInstall && (
         <MobileExtensionInstallForm
           environmentId={environmentId}
           baseDirectory={serverConfig.settings.addProjectBaseDirectory}

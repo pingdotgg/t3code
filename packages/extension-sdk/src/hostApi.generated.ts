@@ -1623,6 +1623,7 @@ export type ThreadSnapshot = {
       readonly status: Wire28;
       readonly queuePosition?: number | null | undefined;
       readonly queueHeld?: Wire6;
+      readonly steerWhenReadyRunId?: Wire8;
       readonly requestedAt: string;
       readonly startedAt: string | null;
       readonly completedAt: string | null;

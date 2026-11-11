@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 
 const Id = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/));
 const ObjectValue = Schema.Record(Schema.String, Schema.Unknown);
@@ -111,7 +112,12 @@ export class ExtensionError extends Schema.TaggedError<ExtensionError>()("Extens
     "install-failed",
     "storage-failed",
   ]),
-  cause: Schema.optional(Schema.Defect()),
+  cause: Schema.optional(Schema.Unknown).pipe(
+    Schema.decodeTo(Schema.optional(Schema.Unknown), {
+      decode: SchemaGetter.passthrough(),
+      encode: SchemaGetter.omit(),
+    }),
+  ),
   detail: Schema.optional(Schema.String),
 }) {
   override get message() {

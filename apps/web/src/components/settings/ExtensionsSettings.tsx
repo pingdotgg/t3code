@@ -41,9 +41,10 @@ function ExtensionManager({ environmentId }: { environmentId: EnvironmentId }) {
     supported ? extensionEnvironment.state({ environmentId, input: {} }) : null,
   );
   const permission = useAtomValue(extensionEnvironment.install.permissionAtom(environmentId));
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<boolean | null>(null);
   if (!supported) return <p>Update T3 Code on this environment to use extensions.</p>;
   const entries = query.data ?? [];
+  const showInstall = adding ?? (entries.length === 0 && query.data !== null);
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -56,15 +57,15 @@ function ExtensionManager({ environmentId }: { environmentId: EnvironmentId }) {
         </div>
         <Button
           size="sm"
-          variant={adding ? "outline" : "default"}
+          variant={showInstall ? "outline" : "default"}
           disabled={!permission}
-          onClick={() => setAdding(!adding)}
+          onClick={() => setAdding(!showInstall)}
         >
           <PlusIcon />
-          {adding ? "Cancel" : "Add extension"}
+          {showInstall ? "Cancel" : "Add extension"}
         </Button>
       </div>
-      {(adding || (entries.length === 0 && query.data !== null)) && (
+      {showInstall && (
         <ExtensionInstallForm
           environmentId={environmentId}
           baseDirectory={environment?.serverConfig?.settings.addProjectBaseDirectory}

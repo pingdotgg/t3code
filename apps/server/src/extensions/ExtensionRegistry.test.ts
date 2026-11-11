@@ -1,4 +1,6 @@
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { ExtensionError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off -- Subprocess integration fixtures exercise the real unsandboxed host.
 import * as NodeFSP from "node:fs/promises";
@@ -9,6 +11,8 @@ import { it, expect } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import { ExtensionProcess } from "./ExtensionProcess.ts";
 import { ExtensionRegistry } from "./ExtensionRegistry.ts";
+
+const encodeExtensionError = Schema.encodeUnknownSync(Schema.toCodecJson(ExtensionError));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
@@ -58,7 +62,7 @@ it.live(
     let received = 0;
     context.onEvent(async ({data}) => {if (data.hang) await new Promise(() => {}); received++;});
     context.registerCommand('crash', () => {process.exit(13);});
-    context.registerCommand('echo', (input) => ({input, greeting: context.settings.greeting, received}));
+    context.registerCommand('echo', (input) => {if (input?.hang) while (true) {} return {input, greeting: context.settings.greeting, received};});
     context.registerTool('host', async () => ({pid: process.pid, value: await context.callT3('test', {})}));
   }};`,
         );
@@ -142,6 +146,35 @@ it.live(
             ).toHaveLength(1);
           }
           await registry.manage(manifest.id, "reload");
+          {
+            const request = ExtensionProcess.prototype.request;
+            using _invocations = vi
+              .spyOn(ExtensionProcess.prototype, "request")
+              .mockImplementation(function (this: ExtensionProcess, operation, payload, timeout) {
+                return request.call(
+                  this,
+                  operation,
+                  payload,
+                  operation === "invoke" ? 100 : timeout,
+                );
+              });
+            await expect(
+              registry.invoke({
+                id: manifest.id,
+                kind: "command",
+                name: "echo",
+                input: { hang: true },
+              }),
+            ).rejects.toMatchObject({ reason: "runtime-failed" });
+            expect(registry.list()[0]).toMatchObject({
+              status: "failed",
+              diagnostic: expect.stringContaining("timed out"),
+            });
+            await expect(
+              registry.invoke({ id: manifest.id, kind: "command", name: "echo", input: null }),
+            ).rejects.toMatchObject({ reason: "not-running" });
+          }
+          await registry.manage(manifest.id, "reload");
           await expect(
             registry.invoke({ id: manifest.id, kind: "command", name: "crash", input: null }),
           ).rejects.toMatchObject({ reason: "runtime-failed" });
@@ -176,9 +209,12 @@ it.live(
             NodePath.join(source, "t3-extension.json"),
             JSON.stringify({ ...manifest, apiVersion: 99 }),
           );
-          await expect(restored.install(source, "local")).rejects.toMatchObject({
-            reason: "invalid-manifest",
-          });
+          const invalid = await restored.install(source, "local").catch((cause: unknown) => cause);
+          expect(invalid).toBeInstanceOf(ExtensionError);
+          const encoded = encodeExtensionError(invalid);
+          expect(encoded).toMatchObject({ reason: "invalid-manifest" });
+          expect(encoded).not.toHaveProperty("cause");
+          expect(encoded).not.toHaveProperty("detail");
         } finally {
           await restored?.close();
           await registry.close();

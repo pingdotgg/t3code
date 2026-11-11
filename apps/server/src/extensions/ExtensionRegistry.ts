@@ -43,7 +43,7 @@ const error = (operation: string, id: string, reason: ExtensionError["reason"], 
     operation,
     id,
     reason,
-    ...(cause === undefined ? {} : { cause, detail: extensionDiagnostic(cause) }),
+    ...(cause === undefined ? {} : { cause }),
   });
 
 export class ExtensionRegistry {
@@ -481,6 +481,16 @@ export class ExtensionRegistry {
     try {
       return await host.request("invoke", input);
     } catch (cause) {
+      if (isRequestTimeout(cause) && this.processes.get(input.id) === host) {
+        this.eventLanes.get(host)?.close();
+        this.processes.delete(input.id);
+        this.states.set(input.id, {
+          status: "failed",
+          diagnostic: `${cause.message} Reload to restart.`,
+        });
+        this.changed();
+        await host.terminate();
+      }
       throw error("invoke", input.id, "runtime-failed", cause);
     }
   }

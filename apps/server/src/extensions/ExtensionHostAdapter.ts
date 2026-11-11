@@ -25,7 +25,6 @@ import * as FileSystem from "effect/FileSystem";
 import { extensionHostEntry } from "./hostEntry.ts";
 import type { ExtensionHostLaunch } from "./ExtensionProcess.ts";
 import { hostApiSchemas } from "./hostApiSchemas.ts";
-import { extensionDiagnostic } from "./diagnostic.ts";
 
 const decodeThread = Schema.decodeUnknownEffect(Schema.Struct({ threadId: ThreadId }));
 const decodeCommand = Schema.decodeUnknownEffect(Schema.toCodecJson(OrchestrationV2Command));
@@ -85,10 +84,11 @@ export const layer = Layer.effect(
           }
           case "orchestration.dispatch": {
             const command = yield* decodeCommand(input);
-            return yield* ThreadMessageIntake.dispatchCommand(command).pipe(
-              Effect.provide(context),
-              Effect.flatMap(encodeDispatch),
-            );
+            return yield* (
+              command.type === "prepared-run.retry"
+                ? (yield* ThreadLaunchService.ThreadLaunchService).retryPreparation(command)
+                : ThreadMessageIntake.dispatchCommand(command)
+            ).pipe(Effect.provide(context), Effect.flatMap(encodeDispatch));
           }
           case "settings.get":
             return yield* Effect.flatMap(settings.getSettings, encodeSettings);
@@ -114,7 +114,6 @@ export const layer = Layer.effect(
                 id: "host",
                 reason: "runtime-failed",
                 cause,
-                detail: extensionDiagnostic(cause),
               }),
           ),
         ),
@@ -134,7 +133,7 @@ export const layer = Layer.effect(
                   operation: "host",
                   id: "runtime",
                   reason: "runtime-failed",
-                  detail: extensionDiagnostic(cause),
+                  cause,
                 }),
             });
             const env = { ...environment };
@@ -182,11 +181,8 @@ export const layer = Layer.effect(
                 operation: "install",
                 id: source,
                 reason: "install-failed",
-                detail:
-                  `npm exited with ${result.code ?? "no exit code"}${result.timedOut ? " (timed out)" : ""}. ${result.stderr || result.stdout}`.slice(
-                    0,
-                    8192,
-                  ),
+                detail: `npm exited with ${result.code ?? "no exit code"}${result.timedOut ? " (timed out)" : ""}.`,
+                cause: new Error(result.stderr || result.stdout),
               });
           }),
           { signal },

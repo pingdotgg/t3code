@@ -1,6 +1,5 @@
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { extensionDiagnostic } from "./diagnostic.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as Deferred from "effect/Deferred";
 import {
@@ -82,7 +81,6 @@ export const layer = Layer.effect(
                 id,
                 reason: "runtime-failed",
                 cause,
-                detail: extensionDiagnostic(cause),
               }),
       });
     const registry = new ExtensionRegistry(`${config.stateDir}/extensions`, {

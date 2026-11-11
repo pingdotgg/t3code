@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -9,7 +10,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import { ExtensionError } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
-import { extensionDiagnostic } from "./diagnostic.ts";
 
 export const NODE_VERSION = "26.12.1";
 // Pinned from https://nodejs.org/dist/v26.12.1/SHASUMS256.txt, reviewed with runtime updates.
@@ -42,6 +42,7 @@ const archives: Readonly<Record<string, { suffix: string; sha256: string }>> = {
 const failure = (detail: string) =>
   new ExtensionError({ operation: "runtime", id: "node", reason: "install-failed", detail });
 const installLock = Semaphore.makeUnsafe(1);
+const isExtensionError = Schema.is(ExtensionError);
 
 export const ensure = Effect.fn("ManagedNodeRuntime.ensure")(function* (baseDirectory: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -134,7 +135,13 @@ export const ensure = Effect.fn("ManagedNodeRuntime.ensure")(function* (baseDire
       maxOutputBytes: 8192,
     });
     if (extracted.code !== 0)
-      return yield* failure(`Could not extract Node.js: ${extracted.stderr}`);
+      return yield* new ExtensionError({
+        operation: "runtime",
+        id: "node",
+        reason: "install-failed",
+        detail: "Could not extract the Node.js archive.",
+        cause: new Error(extracted.stderr),
+      });
     const unpacked = path.join(stage, name);
     yield* validate(unpacked);
     yield* fs.writeFileString(path.join(unpacked, ".verified"), archive.sha256);
@@ -150,7 +157,7 @@ export const ensure = Effect.fn("ManagedNodeRuntime.ensure")(function* (baseDire
           operation: "runtime",
           id: key,
           reason: "install-failed",
-          detail: extensionDiagnostic(cause),
+          detail: isExtensionError(cause) ? cause.detail : undefined,
           cause,
         }),
     ),
