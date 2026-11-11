@@ -946,8 +946,6 @@ interface ActiveCursorTurn {
   readonly assistant: ActiveCursorTextStream;
   assistantReply: CursorTransportFailure;
   readonly reasoning: ActiveCursorTextStream;
-  /** The user text this run sent, before runtime instructions; absent for /compress. */
-  readonly prompt: string | undefined;
   interrupted: boolean;
   finalized: boolean;
   /** The agent's latest turn ended and no new work has started since. */
@@ -1005,11 +1003,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly agent: string;
           readonly orchestration: boolean;
           readonly device: boolean;
-        } | null>(null);
-        // Cursor drops a cancelled run from the conversation, so the next message carries its prompt.
-        const interruptedPrompt = yield* Ref.make<{
-          readonly agent: string;
-          readonly text: string;
         } | null>(null);
         const warnedUnsupportedSandbox = yield* Ref.make(false);
         const activeTurn = yield* Ref.make<ActiveCursorTurn | null>(null);
@@ -2199,12 +2192,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   threadDisposition,
                 },
           );
-          if (input.status === "interrupted" && input.context.prompt !== undefined) {
-            yield* Ref.set(interruptedPrompt, {
-              agent: input.context.run.agentId,
-              text: input.context.prompt,
-            });
-          }
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
@@ -2297,7 +2284,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           mcpServers: Record<string, McpServerConfig> | undefined,
           hasDeviceTools: boolean,
           delivered: { readonly orchestration: boolean; readonly device: boolean },
-          interrupted: string | undefined,
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
@@ -2317,7 +2303,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 .map((skill) => skill.name),
             );
           }
-          const newText = t3OrchestrationPrompt({
+          const userText = t3OrchestrationPrompt({
             prompt: yield* providerMessageTextWithAttachmentPaths({
               text:
                 cursorSkillNames === undefined
@@ -2332,10 +2318,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             orchestrationDelivered: delivered.orchestration,
             deviceInstructionsDelivered: delivered.device,
           });
-          const userText =
-            interrupted === undefined
-              ? newText
-              : `Your previous turn was interrupted and is missing from your history. Some of its work may already be done. Its request was:\n\n${interrupted}\n\nThe new message, which may continue or change that request:\n\n${newText}`;
           const images = yield* Effect.forEach(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),
             (attachment: ChatAttachment) =>
@@ -2406,13 +2388,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               known?.agent === agent.nativeThreadId
                 ? known
                 : { orchestration: turnInput.runOrdinal > 1, device: false };
-            const interrupted = yield* Ref.get(interruptedPrompt);
             const { message, prompt } = yield* resolveUserMessage(
               turnInput,
               mcpServers,
               hasDeviceTools,
               delivered,
-              interrupted?.agent === agent.nativeThreadId ? interrupted.text : undefined,
             );
             const compacted = prompt === undefined;
             const pendingUpdates: Array<InteractionUpdate> = [];
@@ -2442,9 +2422,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
               device: !compacted && hasDeviceTools,
             });
-            if (!compacted) {
-              yield* Ref.set(interruptedPrompt, null);
-            }
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();
             const providerTurnId = idAllocator.derive.providerTurn({
@@ -2469,7 +2446,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 current: null,
                 nextSegment: 0,
               },
-              prompt,
               interrupted: false,
               finalized: false,
               turnEnded: false,
@@ -2631,6 +2607,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             selection.instanceId === adapterOptions.instanceId
               ? cursorContextWindowTokens(selection, adapterOptions.getModels?.() ?? [])
               : undefined,
+          retainsInterruptedTurnHistory: false,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ensureThread: Effect.fn("CursorAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {

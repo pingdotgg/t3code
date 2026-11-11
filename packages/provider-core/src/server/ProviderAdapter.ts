@@ -651,6 +651,8 @@ export interface ProviderAdapterV2SessionRuntime {
     modelSelection: ModelSelection,
     cwd?: string | null,
   ) => number | undefined;
+  /** False when cancellation removes the run from native history; replay its persisted activity. */
+  readonly retainsInterruptedTurnHistory?: false;
   readonly canReuseContextUsage?: (previous: ModelSelection, next: ModelSelection) => boolean;
   readonly ensureThread: (
     input: ProviderAdapterV2EnsureThreadInput,

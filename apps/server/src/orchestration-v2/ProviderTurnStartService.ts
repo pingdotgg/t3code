@@ -916,11 +916,27 @@ export const layer: Layer.Layer<
           previousUsage,
           knownModelWindow,
         });
+        const discardedAttemptIds = new Set(
+          session.retainsInterruptedTurnHistory === false
+            ? projection.providerTurns
+                .filter((turn) => turn.status === "interrupted" || turn.status === "cancelled")
+                .map((turn) => turn.runAttemptId)
+            : [],
+        );
+        const discardedRunIds = new Set(
+          projection.attempts
+            .filter(
+              (source) =>
+                source.providerThreadId === providerThread.id && discardedAttemptIds.has(source.id),
+            )
+            .map((source) => source.runId),
+        );
         const settledHandoffs = projection.contextHandoffs.filter(
           (handoff) =>
             handoff.toProviderThreadId === providerThread.id &&
             handoff.delivery?.nativeThreadId === loadedProviderThread.nativeThreadRef?.nativeId &&
-            handoff.delivery?.status !== "pending",
+            handoff.delivery?.status !== "pending" &&
+            !(handoff.targetRunId === run.id && discardedRunIds.has(run.id)),
         );
         const deliveredItemIds = new Set(
           settledHandoffs.flatMap((handoff) => handoff.delivery?.itemIds ?? []),
@@ -934,7 +950,9 @@ export const layer: Layer.Layer<
         );
         const acceptedAttempts = projection.attempts.filter(
           (source) =>
-            source.providerThreadId === providerThread.id && deliveredAttemptIds.has(source.id),
+            source.providerThreadId === providerThread.id &&
+            deliveredAttemptIds.has(source.id) &&
+            !discardedAttemptIds.has(source.id),
         );
         const nativeInputRunIds = new Set(
           acceptedAttempts
@@ -1003,10 +1021,16 @@ export const layer: Layer.Layer<
         const missedRuns = projection.runs.filter(
           (source) =>
             !resumeFellBack &&
-            source.ordinal < run.ordinal &&
+            source.ordinal <= run.ordinal &&
             source.providerThreadId === providerThread.id &&
-            (source.status === "failed" || source.status === "interrupted") &&
-            !deliveredAttemptIds.has(source.activeAttemptId),
+            (source.id === run.id
+              ? discardedRunIds.has(source.id)
+              : ((source.status === "failed" || source.status === "interrupted") &&
+                  !deliveredAttemptIds.has(source.activeAttemptId)) ||
+                ((source.status === "failed" ||
+                  source.status === "interrupted" ||
+                  source.status === "cancelled") &&
+                  discardedRunIds.has(source.id))),
         );
         const missedRunIds = new Set(missedRuns.map((source) => source.id));
         return {
@@ -1046,7 +1070,8 @@ export const layer: Layer.Layer<
                   (item) =>
                     item.runId !== null &&
                     missedRunIds.has(item.runId) &&
-                    !coveredItemIds.has(item.id) &&
+                    (item.runId === run.id || !coveredItemIds.has(item.id)) &&
+                    !(item.type === "user_message" && item.messageId === message.id) &&
                     historicalMessage(item) !== null,
                 );
           const retryHandoff =

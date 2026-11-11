@@ -107,6 +107,7 @@ function makeTestAdapter(input: {
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
+  readonly retainsInterruptedTurnHistory?: false;
   readonly canReuseContextUsage?: ProviderAdapter.ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
   readonly tokenUsageByRunOrdinal?: Readonly<
     Record<number, Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">>
@@ -157,6 +158,9 @@ function makeTestAdapter(input: {
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
           events: Stream.fromPubSub(events),
+          ...(input.retainsInterruptedTurnHistory === undefined
+            ? {}
+            : { retainsInterruptedTurnHistory: input.retainsInterruptedTurnHistory }),
           ...(input.pendingBackgroundWork === undefined
             ? {}
             : {
@@ -1606,15 +1610,17 @@ describe("orchestration v2 provider switching", () => {
         ["interrupted", true, false, true],
         ["cancelled", false, false, false],
         ["cancelled", true, true, false],
+        ["interrupted", false, false, false, true],
+        ["interrupted", true, false, false, true],
       ] as const
     ).map(
-      ([status, queued, returning, native]) =>
+      ([status, queued, returning, native, discardsInterruptedHistory = false]) =>
         [
-          `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
-          { status, queued, returning, native },
+          `${status} context ${queued ? "through the queue" : "immediately"} to ${discardsInterruptedHistory ? "the same" : returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
+          { status, queued, returning, native, discardsInterruptedHistory },
         ] as const,
     ),
-  )("hands off %s", ([, { status, queued, returning, native }]) =>
+  )("hands off %s", ([, { status, queued, returning, native, discardsInterruptedHistory }]) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace(`handoff-${status}-${queued}-${returning}`);
@@ -1624,7 +1630,11 @@ describe("orchestration v2 provider switching", () => {
         const release = yield* Deferred.make<void>();
         const sourceOrdinal = returning ? 2 : 1;
         const sourceSelection = returning ? CLAUDE_MODEL_SELECTION : CODEX_MODEL_SELECTION;
-        const targetSelection = returning ? CODEX_MODEL_SELECTION : CLAUDE_MODEL_SELECTION;
+        const targetSelection = discardsInterruptedHistory
+          ? sourceSelection
+          : returning
+            ? CODEX_MODEL_SELECTION
+            : CLAUDE_MODEL_SELECTION;
         const originalPrompt = "Keep the release marker violet and preserve the existing API.";
         const partialResponse = "I checked the API and found the release configuration.";
         const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(
@@ -1646,6 +1656,9 @@ describe("orchestration v2 provider switching", () => {
                 : {}),
               ...(modelSelection.instanceId === sourceSelection.instanceId
                 ? {
+                    ...(discardsInterruptedHistory
+                      ? { retainsInterruptedTurnHistory: false as const }
+                      : {}),
                     failedRunOrdinals: new Set(status === "failed" ? [sourceOrdinal] : []),
                     interruptedRunOrdinals: new Set(
                       status === "interrupted" ? [sourceOrdinal] : [],
@@ -1731,12 +1744,14 @@ describe("orchestration v2 provider switching", () => {
           const projection = yield* orchestrator.getThreadProjection(threadId);
           const targetRun = projection.runs.at(-1)!;
           const handoff = projection.contextHandoffs.find(
-            (candidate) => candidate.id === targetRun.contextHandoffId,
+            (candidate) => candidate.targetRunId === targetRun.id,
           );
           assert.isDefined(handoff);
           assert.equal(
             handoff?.strategy,
-            returning ? "delta_since_target_last_seen" : "full_thread_summary",
+            returning || discardsInterruptedHistory
+              ? "delta_since_target_last_seen"
+              : "full_thread_summary",
           );
           assert.deepEqual(handoff?.coveredRunOrdinals, {
             from: sourceOrdinal,

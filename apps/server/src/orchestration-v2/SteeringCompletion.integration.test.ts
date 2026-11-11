@@ -493,6 +493,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   interruptTurn: Effect.Effect<void> = Effect.void,
   steeringAcceptsAttachments = true,
   nativeGoals?: boolean,
+  retainsInterruptedTurnHistory?: false,
 ) {
   const driver = ProviderDriverKind.make(nativeGoals === undefined ? "codex" : "opencode");
   const cwd = yield* checkpointWorkspace(name);
@@ -562,6 +563,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
             updatedAt: now,
             lastError: null,
           },
+          ...(retainsInterruptedTurnHistory === undefined ? {} : { retainsInterruptedTurnHistory }),
           events: Stream.fromQueue(events),
           ensureThread: ({ threadId }) =>
             Effect.succeed({
@@ -1033,6 +1035,116 @@ it.effect(
         }).pipe(Effect.provide(layer));
       }),
     ),
+);
+
+it.effect("restores partial activity when a steer restarts a discarded native turn", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        "steering-discarded-history",
+        true,
+        false,
+        Effect.void,
+        true,
+        undefined,
+        false,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = yield* startFirstTurn;
+        const first = started[0]!;
+        const now = yield* DateTime.now;
+        const base = {
+          threadId,
+          runId: first.runId,
+          nodeId: first.rootNodeId,
+          providerThreadId: first.providerThread.id,
+          providerTurnId: ProviderTurnId.make(`provider-turn:${first.attemptId}`),
+          nativeItemRef: null,
+          parentItemId: null,
+          status: "completed" as const,
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        };
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("progress"),
+              type: "turn-item.updated",
+              threadId,
+              runId: first.runId,
+              occurredAt: now,
+              payload: {
+                ...base,
+                id: TurnItemId.make("progress"),
+                ordinal: 2,
+                type: "assistant_message",
+                messageId: MessageId.make("progress"),
+                text: "Selected marker violet-731 and output drive /Volumes/Storage.",
+                streaming: false,
+              },
+            },
+            {
+              id: EventId.make("command"),
+              type: "turn-item.updated",
+              threadId,
+              runId: first.runId,
+              occurredAt: now,
+              payload: {
+                ...base,
+                id: TurnItemId.make("command"),
+                ordinal: 3,
+                type: "command_execution",
+                input: "read configuration",
+                output: "Found workspace alpha",
+                exitCode: 0,
+              },
+            },
+          ],
+        });
+        const steer = Effect.fn("SteeringContinuityTest.steer")(function* (id: string) {
+          const running = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(id),
+            threadId,
+            messageId: MessageId.make(`message:${id}`),
+            text: id,
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "steer_active", targetRunId: first.runId },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* worker.drain();
+          yield* Fiber.join(running);
+        });
+        yield* steer("Use /Volumes/Expansion instead");
+        assert.equal(started[1]?.runId, first.runId);
+        const restored = started[1]!.message.text;
+        assert.include(restored, "first");
+        assert.include(restored, "violet-731");
+        assert.include(restored, "/Volumes/Storage");
+        assert.include(restored, "Found workspace alpha");
+        assert.include(restored, "User message:\nUse /Volumes/Expansion instead");
+        yield* steer("Keep that drive");
+        assert.include(started[2]!.message.text, "violet-731");
+        assert.include(started[2]!.message.text, "Use /Volumes/Expansion instead");
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
 );
 
 it.effect("restarts the turn for an image when native steering takes text only", () =>
