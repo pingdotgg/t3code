@@ -1263,6 +1263,13 @@ export function VoiceSettingsPanel() {
       }}
     >
       <SettingsSection id="voice-input" title="Input">
+        {settingsScope !== null ? (
+          <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
+            Voice settings are saved on this device and ignore the scope above, except the shared
+            dictionary and cleanup model. Audio is recorded here and sent to the environment you
+            transcribe with.
+          </p>
+        ) : null}
         <SettingsRow
           {...searchableSetting("voice-microphone")}
           title="Microphone"
