@@ -914,6 +914,7 @@ export const layer = Layer.effect(
         // prompt per interval. A failed read falls through to the normal send.
         if (
           trigger === "scheduled" &&
+          active.schedule.type !== "once" &&
           active.threadId !== null &&
           (yield* hasQueuedOccurrence(active.id, ThreadId.make(active.threadId)).pipe(
             Effect.orElseSucceed(() => false),

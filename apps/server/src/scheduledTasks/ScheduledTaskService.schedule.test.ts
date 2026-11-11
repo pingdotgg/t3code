@@ -274,15 +274,17 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
         yield* Effect.flatten(Ref.get(runDueWork));
       }
 
-      const queuedOccurrences = Ref.get(thread).pipe(
-        Effect.map(
-          ({ runs, messages }) =>
-            runs
-              .filter((run) => run.status === "queued")
-              .map((run) => messages.find((message) => message.id === run.userMessageId))
-              .filter((message) => message?.scheduledTaskId === task.id).length,
-        ),
-      );
+      const queuedOccurrencesOf = (taskId: typeof task.id) =>
+        Ref.get(thread).pipe(
+          Effect.map(
+            ({ runs, messages }) =>
+              runs
+                .filter((run) => run.status === "queued")
+                .map((run) => messages.find((message) => message.id === run.userMessageId))
+                .filter((message) => message?.scheduledTaskId === taskId).length,
+          ),
+        );
+      const queuedOccurrences = queuedOccurrencesOf(task.id);
       expect(yield* queuedOccurrences).toBe(1);
       // Skipped intervals still move the schedule forward.
       const [listed] = (yield* service.list()).tasks;
@@ -304,6 +306,27 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
       yield* TestClock.adjust("61 seconds");
       yield* Effect.flatten(Ref.get(runDueWork));
       expect(yield* queuedOccurrences).toBe(1);
+
+      // A one-time task's only scheduled occurrence still sends behind a queued Run now.
+      const { task: once } = yield* service.upsert(
+        yield* decodeUpsertInput({
+          id: "scheduled-task:busy-thread-once",
+          title: "Check once",
+          prompt: "Check once",
+          enabled: true,
+          schedule: { type: "once", runAt: "2026-07-01T09:05:00.000Z" },
+          projectId: "project-busy-thread",
+          threadId: "thread:busy",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+      yield* service.runNow({ id: once.id });
+      yield* TestClock.adjust("61 seconds");
+      yield* Effect.flatten(Ref.get(runDueWork));
+      expect(yield* queuedOccurrencesOf(once.id)).toBe(2);
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
