@@ -76,9 +76,9 @@ const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
 ]);
 const HOST_SUSPEND_GRACE_MS = 60 * 1000;
 
-// Timers keep counting while Windows and macOS sleep, so an overshoot past the grace restarts the wait.
-// Monotonic matches the timer's clock, so Linux (which pauses both) never restarts. Untraced: every
-// provider event re-arms the idle timer.
+// Where the timer clock counts host sleep, a timer fires on wake far past due. The monotonic clock is
+// that same clock, so an overshoot past the grace means the host slept and the wait restarts; where
+// both pause, it never restarts. Untraced: every provider event re-arms the idle timer.
 const sleepWhileAwake = Effect.fnUntraced(function* (ms: number): Effect.fn.Return<void> {
   const startedAtNanos = yield* Clock.monotonicTimeNanos;
   yield* Effect.sleep(Duration.millis(ms));
