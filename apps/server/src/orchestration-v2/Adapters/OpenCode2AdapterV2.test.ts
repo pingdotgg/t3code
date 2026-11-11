@@ -3266,7 +3266,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
-        // The session now runs in `moved`; a server left in WORK is invisible to it.
         out("mcp.remove", { server, "location[directory]": WORK }),
         reply("mcp.remove", null),
       ]);
