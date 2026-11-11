@@ -109,6 +109,8 @@ export function WorktreesDirectoryRow() {
   );
 }
 
+type SaveOptions = Parameters<ReturnType<typeof useUpdateScopedSettings>>[1];
+
 function RetentionControl({
   label,
   value,
@@ -571,12 +573,12 @@ export function WorktreeCleanupSection() {
   // A policy locks these through worktreeCleanup, which also reaches each project's own rules.
   const lockablePath = (key: keyof WorktreeCleanupRules) =>
     isProjectScope ? ["worktreeCleanup"] : ["worktreeCleanup", `storageCleanup.${key}`];
-  const update = (patch: Partial<StorageCleanupSettings>, onFailed?: () => void) =>
-    updateSettings({ storageCleanup: patch }, { onFailed });
-  const updateWorktree = (patch: Partial<WorktreeCleanupRules>, onFailed: () => void) =>
+  const update = (patch: Partial<StorageCleanupSettings>, options?: SaveOptions) =>
+    updateSettings({ storageCleanup: patch }, options);
+  const updateWorktree = (patch: Partial<WorktreeCleanupRules>, options?: SaveOptions) =>
     isProjectScope
-      ? updateSettings({ worktreeCleanup: { mode: "custom", rules: patch } }, { onFailed })
-      : update(patch, onFailed);
+      ? updateSettings({ worktreeCleanup: { mode: "custom", rules: patch } }, options)
+      : update(patch, options);
 
   if (
     isProjectScope &&
@@ -688,7 +690,7 @@ export function WorktreeCleanupSection() {
                   label="Delete inactive worktrees"
                   value={settings.worktreeAfterDays}
                   onChange={(worktreeAfterDays, onFailed) =>
-                    updateWorktree({ worktreeAfterDays }, onFailed)
+                    updateWorktree({ worktreeAfterDays }, { onFailed })
                   }
                 />
               }
@@ -722,7 +724,7 @@ export function WorktreeCleanupSection() {
                         value={settings.worktreeSettledAfterDays}
                         minimum={0}
                         onChange={(worktreeSettledAfterDays, onFailed) =>
-                          updateWorktree({ worktreeSettledAfterDays }, onFailed)
+                          updateWorktree({ worktreeSettledAfterDays }, { onFailed })
                         }
                       />
                     }
@@ -824,8 +826,8 @@ export function StorageCleanupSections() {
       ? "Mixed across selected machines"
       : undefined;
   if (scope.kind === "project" || scope.kind === "checkout") return null;
-  const update = (patch: Partial<StorageCleanupSettings>, onFailed: () => void) =>
-    updateSettings({ storageCleanup: patch }, { onFailed });
+  const update = (patch: Partial<StorageCleanupSettings>, options: SaveOptions) =>
+    updateSettings({ storageCleanup: patch }, options);
   const databaseStorageNotice = (
     <DatabaseStorageNotice
       environments={connectedEnvironments.filter(
@@ -861,7 +863,7 @@ export function StorageCleanupSections() {
                 label="Delete old browser artifacts"
                 value={settings.browserArtifactsAfterDays}
                 onChange={(browserArtifactsAfterDays, onFailed) =>
-                  update({ browserArtifactsAfterDays }, onFailed)
+                  update({ browserArtifactsAfterDays }, { onFailed })
                 }
               />
             }
@@ -878,7 +880,7 @@ export function StorageCleanupSections() {
               <RetentionControl
                 label="Delete old rotated logs"
                 value={settings.logsAfterDays}
-                onChange={(logsAfterDays, onFailed) => update({ logsAfterDays }, onFailed)}
+                onChange={(logsAfterDays, onFailed) => update({ logsAfterDays }, { onFailed })}
               />
             }
           />
