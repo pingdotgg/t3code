@@ -399,7 +399,11 @@ const make = Effect.gen(function* () {
     thread: OrchestrationV2ThreadShell,
     target: ResolvedTarget,
   ) {
-    if (threadPullRequestsOf(thread).some((link) => threadPullRequestKeysEqual(link, target))) {
+    if (
+      threadPullRequestsOf(thread).some(
+        (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
+      )
+    ) {
       return;
     }
     yield* engine

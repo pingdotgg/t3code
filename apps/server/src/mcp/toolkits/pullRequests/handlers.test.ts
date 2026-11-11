@@ -815,39 +815,44 @@ describe("source control tools", () => {
     }),
   );
 
-  it.effect("opens a PR from the thread's worktree, links it, and makes it a draft", () =>
-    Effect.gen(function* () {
-      const actions: Array<PullRequestActionInput> = [];
-      const opened: Array<string> = [];
-      const harness = yield* makeHarness({
-        thread: { ...makeThread([]), worktreePath: "/workspace/worktree" },
-        git: {
-          createPullRequest: (input) =>
-            Effect.sync(() => opened.push(input.cwd)).pipe(
-              Effect.as({
-                status: "created" as const,
-                url: "https://github.com/t3tools/t3code/pull/43",
-                number: 43,
-                baseBranch: "main",
-                headBranch: "tools",
-                title: input.title,
-              }),
-            ),
-        },
-        pullRequests: { runAction: (input) => Effect.sync(() => void actions.push(input)) },
-      });
-      const result = yield* harness.call("pull_request_create", {
-        title: "Add tools",
-        body: "Adds tools.",
-        draft: true,
-      });
-      expect(result).toMatchObject({ number: 43, created: true });
-      expect(opened).toEqual(["/workspace/worktree"]);
-      expect(actions).toMatchObject([{ number: 43, action: "draft" }]);
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
-        { type: "thread.pull-request.link", number: 43, source: "created" },
-      ]);
-    }),
+  it.effect(
+    "opens a PR from the thread's worktree, links it even if dismissed, and drafts it",
+    () =>
+      Effect.gen(function* () {
+        const actions: Array<PullRequestActionInput> = [];
+        const opened: Array<string> = [];
+        const harness = yield* makeHarness({
+          thread: {
+            ...makeThread([makeLink(43, { source: "stack-dismissed" })]),
+            worktreePath: "/workspace/worktree",
+          },
+          git: {
+            createPullRequest: (input) =>
+              Effect.sync(() => opened.push(input.cwd)).pipe(
+                Effect.as({
+                  status: "created" as const,
+                  url: "https://github.com/t3tools/t3code/pull/43",
+                  number: 43,
+                  baseBranch: "main",
+                  headBranch: "tools",
+                  title: input.title,
+                }),
+              ),
+          },
+          pullRequests: { runAction: (input) => Effect.sync(() => void actions.push(input)) },
+        });
+        const result = yield* harness.call("pull_request_create", {
+          title: "Add tools",
+          body: "Adds tools.",
+          draft: true,
+        });
+        expect(result).toMatchObject({ number: 43, created: true });
+        expect(opened).toEqual(["/workspace/worktree"]);
+        expect(actions).toMatchObject([{ number: 43, action: "draft" }]);
+        expect(yield* Ref.get(harness.commands)).toMatchObject([
+          { type: "thread.pull-request.link", number: 43, source: "created" },
+        ]);
+      }),
   );
 
   it.effect("replies to and resolves a review thread, and refuses resolving without one", () =>

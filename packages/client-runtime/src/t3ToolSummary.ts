@@ -466,18 +466,46 @@ export function summarizeT3ToolCalls(
     case "list-repo-prs":
       label = phrase("Listed", "list", `pull requests${selected.length === 1 ? "" : ` ${times}`}`);
       break;
-    case "create-pr":
-      label = phrase("Opened", "open", quantity(selected.length, "pull request"));
+    case "create-pr": {
+      // An open PR for the branch is returned rather than duplicated.
+      const existing = selected.filter((call) => call.output?.created === false).length;
+      const opened = selected.length - existing;
+      label =
+        opened === 0
+          ? phrase("Found", "open", quantity(existing, "open pull request"))
+          : phrase(
+              "Opened",
+              "open",
+              `${quantity(opened, "pull request")}${existing > 0 ? `, found ${existing} open` : ""}`,
+            );
       break;
+    }
     case "update-pr":
       label = phrase("Updated", "update", quantity(selected.length, "pull request"));
       break;
     case "respond-pr":
       label = phrase("Responded", "respond", `on pull requests ${times}`);
       break;
-    case "merge-pr":
-      label = phrase("Merged", "merge", quantity(selected.length, "pull request"));
+    case "merge-pr": {
+      // Auto-merge leaves the PR open until its checks pass.
+      const queued = selected.filter(
+        (call) => call.input?.auto === true && call.output?.state !== "merged",
+      ).length;
+      const merged = selected.length - queued;
+      label =
+        merged === 0
+          ? phrase(
+              "Turned on auto-merge for",
+              "turn on auto-merge for",
+              quantity(queued, "pull request"),
+            )
+          : phrase(
+              "Merged",
+              "merge",
+              `${quantity(merged, "pull request")}${queued > 0 ? `, auto-merge on ${queued}` : ""}`,
+            );
       break;
+    }
     case "browser":
       label = phrase("Used", "use", `browser ${times}`);
       break;

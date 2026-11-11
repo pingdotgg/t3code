@@ -1175,6 +1175,12 @@ const worldPullRequests = (sample: Sample) => {
   return Array.isArray(prs) ? prs.filter(isRecord) : [];
 };
 
+/** World fixtures spell states as GitHub does (`MERGED`) or as T3 does (`merged`). */
+const worldState = (pr: Readonly<Record<string, unknown>> | undefined) => {
+  const state = valueText(pr?.state ?? "open").toLowerCase();
+  return state === "merged" || state === "closed" ? state : "open";
+};
+
 /**
  * The PR for the sample's branch: the world's, else the one a create would open. A case that
  * mocks `gh pr create` names that URL, so the T3 tool opens the same number.
@@ -1310,7 +1316,7 @@ export const t3Default = (
                   world?.title ?? sample.testCase.setup.world?.commits?.[0]?.subject,
                 ),
                 body: valueText(world?.body ?? ""),
-                state: "open",
+                state: worldState(world),
                 isDraft: false,
                 author: "user",
                 headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
@@ -1342,6 +1348,9 @@ export const t3Default = (
               })),
             }
           : {}),
+        ...(sections.includes("diff")
+          ? { diff: { patch: valueText(world?.diff ?? ""), truncated: false, nextCursor: null } }
+          : {}),
         ...(sections.includes("conversation")
           ? {
               conversation: {
@@ -1354,23 +1363,27 @@ export const t3Default = (
           : {}),
       };
     }
-    case "pull_request_list":
+    case "pull_request_list": {
+      const state = valueText(input.state ?? "open");
       return {
-        pullRequests: worldPullRequests(sample).map((pr) => ({
-          number: Number(pr.number),
-          title: valueText(pr.title),
-          url: pullRequest(sample.repo, { number: pr.number }).url,
-          author: "user",
-          headBranch: valueText(pr.headRefName),
-          baseBranch: "main",
-          state: "open",
-          isDraft: false,
-          reviewDecision: null,
-          checksState: null,
-          updatedAt: "2026-10-27T10:00:00Z",
-        })),
+        pullRequests: worldPullRequests(sample)
+          .filter((pr) => state === "all" || worldState(pr) === state)
+          .map((pr) => ({
+            number: Number(pr.number),
+            title: valueText(pr.title),
+            url: pullRequest(sample.repo, { number: pr.number }).url,
+            author: "user",
+            headBranch: valueText(pr.headRefName),
+            baseBranch: "main",
+            state: worldState(pr),
+            isDraft: false,
+            reviewDecision: null,
+            checksState: null,
+            updatedAt: "2026-10-27T10:00:00Z",
+          })),
         truncated: false,
       };
+    }
     case "pull_request_update":
       return pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number });
     case "pull_request_respond":

@@ -751,6 +751,35 @@ it("replays earlier capability results with the model under test as the caller",
   }
 });
 
+it("lists and reads world PRs in their own state, with the diff when asked", () => {
+  const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+  const prs = [
+    { number: 5, state: "MERGED", headRefName: "old", title: "Old", diff: "+old" },
+    { number: 6, headRefName: "new", title: "New" },
+  ];
+  const sample = makeSample(
+    { ...childCase, setup: { ...childCase.setup, world: { ...childCase.setup.world, prs } } },
+    base,
+  );
+  const listed = (state?: string) =>
+    (
+      t3Default(sample, "pull_request_list", state === undefined ? {} : { state }) as {
+        pullRequests: Array<{ number: number; state: string }>;
+      }
+    ).pullRequests.map((pr) => [pr.number, pr.state]);
+  assert.deepEqual(listed(), [[6, "open"]]);
+  assert.deepEqual(listed("all"), [
+    [5, "merged"],
+    [6, "open"],
+  ]);
+  const read: Readonly<Record<string, unknown>> = t3Default(sample, "pull_request_read", {
+    number: 5,
+    sections: ["summary", "diff"],
+  });
+  assert.deepEqual(read.diff, { patch: "+old", truncated: false, nextCursor: null });
+  assert.propertyVal(read.summary, "state", "merged");
+});
+
 it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {
   const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
   const sample = makeSample(childCase, base);
