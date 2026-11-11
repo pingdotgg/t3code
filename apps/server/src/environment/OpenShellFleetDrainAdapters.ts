@@ -340,17 +340,20 @@ export const execDrainGitBundle = (input: {
       Effect.gen(function* () {
         const maxBytes = input.maxBytes ?? MAX_DRAIN_BUNDLE_BYTES;
         const root = shellQuote(workspaceRoot);
-        const revs = `--branches --glob='refs/t3/*' --not --remotes`;
+        const revs = `HEAD --branches --glob='refs/t3/*'`;
         const exported = yield* input.exec(sandboxName, [
           "sh",
           "-c",
-          // An empty bundle is not a failure: it means the mirror already has
-          // every ref (git would refuse to write it), and the drain acks it.
+          // HEAD carries a detached commit; subtract only origin, so a commit
+          // fetched from another remote is not a missing prerequisite.
+          // An empty export means the mirror has everything and acks.
           `b="\${TMPDIR:-/tmp}/t3-fleet-drain-$$.bundle"; ` +
-            `if [ "$(git -C ${root} rev-list --count ${revs})" -eq 0 ]; then exit 0; fi; ` +
-            `git -C ${root} bundle create "$b" ${revs} || exit $?; ` +
-            // The cap is enforced before base64, so an oversized bundle never
-            // crosses exec as one string (it would exceed V8's string limit).
+            `if [ "$(git -C ${root} rev-list --count ${revs} --not --remotes=origin)" -eq 0 ]; then exit 0; fi; ` +
+            `git -C ${root} bundle create "$b" ${revs} --not --remotes=origin || exit $?; ` +
+            // The cap is checked before base64, so an oversized bundle never
+            // crosses exec as one string.
+            // shortcut: without origin remote-tracking refs there is no
+            // baseline, so a large checkout needs force removal.
             `if [ "$(wc -c <"$b" | tr -d '[:space:]')" -gt ${maxBytes} ]; then rm -f "$b"; exit 4; fi; ` +
             `base64 "$b"; rc=$?; rm -f "$b"; exit $rc`,
         ]);

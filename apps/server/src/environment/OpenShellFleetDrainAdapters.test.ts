@@ -274,9 +274,11 @@ describe("execDrainGitBundle", () => {
       expect(line).toContain("rev-list --count");
       expect(line).toContain("bundle create");
       expect(line).toContain("--branches");
+      expect(line).toContain("HEAD --branches");
       expect(line).toContain("--glob='refs/t3/*'");
-      expect(line).toContain("--not --remotes");
+      expect(line).toContain("--not --remotes=origin");
       expect(line).not.toContain("--all");
+      expect(line).not.toContain("--not --remotes ");
       expect(line).not.toContain("push");
       expect(line).toContain("'/work/a'");
     }),
