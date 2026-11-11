@@ -3,7 +3,8 @@
 Home and thread routes share the [root native stack](../../apps/mobile/src/Stack.tsx)
 so UIKit can animate the header within one navigation controller. The iPad sidebar
 has its own stack. Splitting Home and threads between controllers loses that
-continuous transition.
+continuous transition. How the stack becomes columns, sheets and panes is in
+[Mobile layout](./mobile-layout.md).
 
 ## Selecting versus drilling in
 
@@ -12,7 +13,7 @@ Opening a page has two intents, and each has one action:
 - **Select** shows a thread or pull request as the workspace's only page, the
   way a list row does. Everything that selects (rows, the command palette,
   compose, notifications, deep links) uses
-  [`selectWorkspaceDetail`](../../apps/mobile/src/features/workspace/workspace-detail-selection.ts),
+  [`selectWorkspaceDetail`](../../apps/mobile/src/features/layout/workspace/workspace-detail-selection.ts),
   which the root stack's router handles. The resulting stack is the same on
   phones, collapsed splits, and expanded splits. Only route keys differ: the
   page already showing keeps its key, so the detail column updates in place
@@ -33,7 +34,7 @@ and would unmount its header configuration, which hides the navigation bar.
 
 ## UIKit constraints
 
-The [react-native-screens patch](../../patches/react-native-screens@4.26.2.patch)
+The [react-native-screens fork](../operations/mobile-screens-fork.md)
 preserves behavior that is easy to break when changing native headers:
 
 - The brand belongs in `headerTitle`. On iOS 26.5, UIKit morphs a background-free
@@ -60,9 +61,8 @@ preserves behavior that is easy to break when changing native headers:
   passes, which left threads shifted under the bar. Lint rejects
   `ScrollViewMarker` imported anywhere else.
 
-The patch adds native header props that require code generation and a new binary.
-Patch rebuild guidance lives in the
-[mobile development README](../../apps/mobile/README.md#development).
+The fork adds native header props that require code generation and a new binary.
+See the [fork build instructions](../operations/mobile-screens-fork.md).
 
 ## Native media presentations
 

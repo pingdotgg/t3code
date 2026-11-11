@@ -40,6 +40,7 @@ export function CommandOutputPanel(props: {
   const text = data?.output.text ?? "";
   const { resolvedTheme } = useTheme();
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pins the output scroller's scrollTop to the bottom after each commit while the user follows
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (element && followRef.current) element.scrollTop = element.scrollHeight;
@@ -53,31 +54,27 @@ export function CommandOutputPanel(props: {
   // Parse after all hooks to preserve the text/theme compiler cache.
   const spans = terminalOutputSpans(text, TERMINAL_PALETTES[resolvedTheme]);
   return (
-    <div>
-      {data?.output.truncated ? (
-        <div className="text-muted-foreground italic">Earlier output not shown</div>
-      ) : null}
-      <div
-        ref={scrollRef}
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          followRef.current =
-            element.scrollHeight - element.scrollTop - element.clientHeight <= FOLLOW_SLACK_PX;
-        }}
-        className="max-h-80 overflow-auto text-muted-foreground"
-      >
-        {spans.map((span, index) =>
-          span.style === null ? (
-            span.text
-          ) : (
-            // Spans never reorder and are rebuilt on each update.
-            // oxlint-disable-next-line react/no-array-index-key
-            <span key={index} style={span.style}>
-              {span.text}
-            </span>
-          ),
-        )}
-      </div>
+    <div
+      ref={scrollRef}
+      onScroll={(event) => {
+        const element = event.currentTarget;
+        followRef.current =
+          element.scrollHeight - element.scrollTop - element.clientHeight <= FOLLOW_SLACK_PX;
+      }}
+      className="max-h-80 overflow-auto text-muted-foreground"
+    >
+      {data?.output.truncated ? <div className="italic">Earlier output not shown</div> : null}
+      {spans.map((span, index) =>
+        span.style === null ? (
+          span.text
+        ) : (
+          // Spans never reorder and are rebuilt on each update.
+          // oxlint-disable-next-line react/no-array-index-key
+          <span key={index} style={span.style}>
+            {span.text}
+          </span>
+        ),
+      )}
     </div>
   );
 }
