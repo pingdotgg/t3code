@@ -104,7 +104,6 @@ import {
   useDiffPanelStore,
 } from "~/diffPanelStore";
 import { useClientSettings } from "~/hooks/useSettings";
-import { sourceControlEnvironment } from "~/state/sourceControl";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { isTerminalFocused } from "~/lib/terminalFocus";
