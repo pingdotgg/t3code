@@ -1,13 +1,14 @@
 import type { AssistantCitation } from "@t3tools/contracts";
 import { withAssistantCitationComment } from "@t3tools/shared/assistantCitations";
 import { PencilIcon, QuoteIcon, TextCursorInputIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AssistantCitationQuote } from "./AssistantCitationChip";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 
 export function AssistantCitationTray(props: Parameters<typeof CitationTrayContents>[0]) {
   return props.citations.length ? <CitationTrayContents {...props} /> : null;
@@ -25,16 +26,43 @@ function CitationTrayContents({
   const [voiceSetupOpen, setVoiceSetupOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
+  const draftCommentRef = useRef<string | null>(null);
+  const saveComment = (index: number, comment: string) => {
+    onChange(
+      citations.map((item, i) =>
+        i === index ? withAssistantCitationComment(item, comment) : item,
+      ),
+    );
+    draftCommentRef.current = null;
+    setEditing(null);
+  };
+  const settleDraft = (reason: string) => {
+    const dismissal = resolveAssistantCitationCommentDismissal({
+      reason,
+      draft: draftCommentRef.current,
+      savedComment: editing === null ? undefined : citations[editing]?.comment,
+    });
+    if (dismissal.kind === "keep-open") return false;
+    if (dismissal.kind === "commit" && editing !== null) saveComment(editing, dismissal.comment);
+    draftCommentRef.current = null;
+    setEditing(null);
+    return true;
+  };
   const remove = (index: number) => {
     onChange(citations.filter((_, i) => i !== index));
+    draftCommentRef.current = null;
     setEditing(null);
   };
   return (
     <div className="mb-2 flex w-fit items-center overflow-hidden rounded-full border border-border">
       <Popover
         open={open && !voiceSetupOpen}
-        onOpenChange={(next) => {
+        onOpenChange={(next, details) => {
           if (voiceSetupOpen) return;
+          if (!next && !settleDraft(details.reason)) {
+            details.cancel();
+            return;
+          }
           setOpen(next);
         }}
       >
@@ -65,16 +93,14 @@ function CitationTrayContents({
                     <AssistantCitationCommentEditor
                       citation={citation}
                       onVoiceSetupOpenChange={setVoiceSetupOpen}
+                      onDraftChange={(comment) => {
+                        draftCommentRef.current = comment;
+                      }}
                       onSubmit={(comment) => {
-                        onChange(
-                          citations.map((item, i) =>
-                            i === index ? withAssistantCitationComment(item, comment) : item,
-                          ),
-                        );
-                        setEditing(null);
+                        saveComment(index, comment);
                         return true;
                       }}
-                      onCancel={() => setEditing(null)}
+                      onCancel={() => settleDraft("escape-key")}
                       moveLabel="Insert inline"
                       moveAriaLabel={`Insert annotation ${index + 1} inline`}
                       onMove={
@@ -95,7 +121,9 @@ function CitationTrayContents({
                               aria-label={`Edit annotation ${index + 1}`}
                               variant="ghost"
                               size="icon-xs"
-                              onClick={() => setEditing(index)}
+                              onClick={() => {
+                                if (settleDraft("none")) setEditing(index);
+                              }}
                             />
                           }
                         >
