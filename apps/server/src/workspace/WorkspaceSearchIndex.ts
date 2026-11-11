@@ -296,8 +296,6 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
         // Content indexing costs CPU/memory; path-only consumers use the lightweight index.
         disableContentIndexing: variant !== "content",
         aiMode: false,
-        enableFsRootScanning: true,
-        enableHomeDirScanning: true,
       }),
     catch: (cause) =>
       new WorkspaceSearchIndexCreateFailed({
