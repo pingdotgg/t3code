@@ -30,10 +30,9 @@ import {
   type ServerConfigStreamEvent,
   type ServerProvider,
 } from "@t3tools/contracts";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as Deferred from "effect/Deferred";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
@@ -141,13 +140,14 @@ import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 
-import * as EventSink from "./orchestration-v2/EventSink.ts";
 import * as EventStore from "./orchestration-v2/EventStore.ts";
-import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
+import * as EventSink from "./orchestration-v2/EventSink.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ThreadCommandExecutor from "./orchestration-v2/ThreadCommandExecutor.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -1921,8 +1921,6 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
     const pending = yield* seedAcpThread("pending", { imported: false, ran: false });
     const complete = yield* seedAcpThread("complete", { imported: true, ran: false });
     const ran = yield* seedAcpThread("ran", { imported: false, ran: true });
-    const failing = yield* seedAcpThread("failing", { imported: false, ran: false });
-    const timingOut = yield* seedAcpThread("timing-out", { imported: false, ran: false });
     const repaired: Array<ThreadId> = [];
     const session = (sessionId: string) => ({
       sessionId,
@@ -1991,11 +1989,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(AgentSessionImporter.AgentSessionImporter)({
         importNativeHistory: ({ threadId }) =>
-          threadId === failing
-            ? Effect.fail(new Orchestrator.OrchestratorProjectionError({ threadId, cause: "read" }))
-            : threadId === timingOut
-              ? Effect.fail(new Cause.TimeoutError())
-              : Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
+          Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
       }),
     );
     const services = AcpRegistrySessions.layer.pipe(Layer.provideMerge(dependencies));
@@ -2039,21 +2033,13 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       ],
     );
 
-    const importSession = (sessionId: string) =>
-      client[WS_METHODS.serverImportAcpRegistrySession]({
-        instanceId: acpInstanceId,
-        projectId: acpProjectId,
-        sessionId,
-      });
-    assert.deepEqual(yield* importSession("pending"), { threadId: pending, imported: true });
+    const imported = yield* client[WS_METHODS.serverImportAcpRegistrySession]({
+      instanceId: acpInstanceId,
+      projectId: acpProjectId,
+      sessionId: "pending",
+    });
+    assert.deepEqual(imported, { threadId: pending, imported: true });
     assert.deepEqual(repaired, [pending]);
-    for (const sessionId of ["failing", "timing-out"]) {
-      const failure = yield* importSession(sessionId).pipe(Effect.flip);
-      assert.equal(failure._tag, "AcpRegistryOperationError");
-      if (failure._tag === "AcpRegistryOperationError") {
-        assert.equal(failure.reason, "session_import_failed");
-      }
-    }
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

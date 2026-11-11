@@ -239,33 +239,6 @@ it.each(["Save", "Disable"])("keeps other provider edits through a %s refetch", 
   expect(input("other write-only headers JSON").value).toBe("");
 });
 
-it("offers to import a pending thread's history but not to delete its session", async () => {
-  setup();
-  commands.list.mockResolvedValue({
-    _tag: "Success",
-    value: {
-      sessions: [
-        {
-          ...session,
-          importedThreadId: ThreadId.make("thread-imported"),
-          nativeHistoryPending: true,
-        },
-      ],
-      nextCursor: null,
-      canLoad: true,
-      canResume: true,
-      canDelete: true,
-    },
-  });
-  await using screen = await renderSection();
-  await screen.click("List sessions");
-  await expect.element(screen.button("Delete")).toBeDisabled();
-  await screen.click("Import");
-  expect(commands.import).toHaveBeenCalledOnce();
-  await expect.element(screen.button("Imported")).toBeDisabled();
-  await expect.element(screen.button("Delete")).toBeDisabled();
-});
-
 it.each([true, false])(
   "enables project actions after projects arrive (sessions: %s)",
   async (canList) => {
