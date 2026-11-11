@@ -6,8 +6,8 @@ import { encodeGrayscalePng, fetchCourseReference } from "./referenceFetch.ts";
 const lookup = (async (hostname: string) => {
   const blocked: Record<string, string> = {
     "private.example": "127.0.0.1",
-    "shared.example": "100.100.100.100",
-    "zero.example": "0.0.0.0",
+    "shared.com": "100.100.100.100",
+    "zero.com": "0.0.0.0",
   };
   return [{ address: blocked[hostname] ?? "93.184.216.34", family: 4 as const }];
 }) as never;
@@ -30,17 +30,15 @@ describe("course reference fetch", () => {
     }),
   );
 
-  it.effect.each(["shared.example", "zero.example"])(
-    "rejects special resolved address %s",
-    (host) =>
-      Effect.gen(function* () {
-        const blocked = yield* fetchCourseReference({
-          url: `https://${host}/solution.pdf`,
-          lookup,
-          fetchImpl: () => Promise.resolve(new Response("", { status: 200 })),
-        }).pipe(Effect.flip);
-        assert.include(blocked.message, "private network");
-      }),
+  it.effect.each(["shared.com", "zero.com"])("rejects special resolved address %s", (host) =>
+    Effect.gen(function* () {
+      const blocked = yield* fetchCourseReference({
+        url: `https://${host}/solution.pdf`,
+        lookup,
+        fetchImpl: () => Promise.resolve(new Response("", { status: 200 })),
+      }).pipe(Effect.flip);
+      assert.include(blocked.message, "private network");
+    }),
   );
 
   it.effect("rejects private hosts and private redirect targets", () =>

@@ -12,6 +12,12 @@ export class CourseReferenceFetchError extends Schema.TaggedError<CourseReferenc
   { message: Schema.String },
 ) {}
 
+class ReferenceBlockedError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+  }
+}
+
 export interface ReferenceImage {
   readonly type: "image";
   readonly data: string;
@@ -34,10 +40,16 @@ const MAX_BYTES = 25 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 
 const validateUrl = (raw: string | URL) => {
-  const url = typeof raw === "string" ? new URL(raw) : raw;
+  let url: URL;
+  try {
+    url = typeof raw === "string" ? new URL(raw) : raw;
+  } catch {
+    throw new ReferenceBlockedError("Only public http(s) URLs without userinfo are allowed.");
+  }
   if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password)
-    throw new Error("Only public http(s) URLs without userinfo are allowed.");
-  if (!isPublicFaviconHost(url.hostname)) throw new Error("The URL host is not public.");
+    throw new ReferenceBlockedError("Only public http(s) URLs without userinfo are allowed.");
+  if (!isPublicFaviconHost(url.hostname))
+    throw new ReferenceBlockedError("The URL host is not public.");
   return url;
 };
 
@@ -47,7 +59,7 @@ const checkedDispatcher = async (
 ) => {
   const addresses = await lookup(hostname, { all: true, verbatim: true });
   if (!addresses.length || addresses.some(({ address }) => !isPublicFaviconHost(address)))
-    throw new Error("The URL resolves to a private network address.");
+    throw new ReferenceBlockedError("The URL resolves to a private network address.");
   const address = addresses[0]!;
   return {
     ips: addresses.map(({ address }) => address),
@@ -218,73 +230,77 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
   return yield* Effect.tryPromise({
     try: async () => {
       const fetchImpl = input.fetchImpl ?? fetch;
-      let url = driveRewrite(validateUrl(input.url));
+      let url = new URL("http://invalid.local/");
       let response: Response | undefined;
       const hops: { url: string; status: number | null; ips: string[] }[] = [];
-      for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-        const checked = await checkedDispatcher(url.hostname, input.lookup);
-        response = await fetchImpl(url.toString(), {
-          redirect: "manual",
-          dispatcher: checked.dispatcher,
-          signal: AbortSignal.timeout(30_000),
-        } as unknown as RequestInit);
-        hops.push({ url: url.toString(), status: response.status, ips: checked.ips });
-        if (![301, 302, 303, 307, 308].includes(response.status)) break;
-        const location = response.headers.get("location");
-        if (!location || hop === MAX_REDIRECTS) throw new Error("Too many redirects.");
-        url = driveRewrite(validateUrl(new URL(location, url.toString())));
+      let body: Buffer | undefined;
+      let failure: unknown;
+      try {
+        url = driveRewrite(validateUrl(input.url));
+        for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+          const checked = await checkedDispatcher(url.hostname, input.lookup);
+          response = await fetchImpl(url.toString(), {
+            redirect: "manual",
+            dispatcher: checked.dispatcher,
+            signal: AbortSignal.timeout(30_000),
+          } as unknown as RequestInit);
+          hops.push({ url: url.toString(), status: response.status, ips: checked.ips });
+          if (![301, 302, 303, 307, 308].includes(response.status)) break;
+          const location = response.headers.get("location");
+          if (!location || hop === MAX_REDIRECTS) throw new Error("Too many redirects.");
+          url = driveRewrite(validateUrl(new URL(location, url.toString())));
+        }
+        if (!response) throw new Error("No response.");
+        body = await readBody(response);
+        const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+        if (contentType.includes("pdf") || url.pathname.toLowerCase().endsWith(".pdf")) {
+          const pages = [
+            ...new Set(
+              (input.pages?.length ? input.pages : [1, 2, 3, 4]).filter((page) => page >= 1),
+            ),
+          ].slice(0, 4);
+          return { url: url.toString(), ...(await extractPdf(body, pages)) };
+        }
+        const html = body.toString("utf8");
+        const title = html
+          .match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+          ?.replace(/\s+/g, " ")
+          .trim();
+        const text = html
+          .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 20_000);
+        const links = [...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
+          .slice(0, 300)
+          .map((match) => ({
+            href: new URL(match[1]!, url).toString(),
+            text: match[2]!
+              .replace(/<[^>]+>/g, "")
+              .replace(/\s+/g, " ")
+              .trim(),
+          }));
+        return { url: url.toString(), ...(title ? { title } : {}), text, links };
+      } catch (cause) {
+        failure = cause;
+        throw cause;
+      } finally {
+        if (input.audit)
+          await auditDownload(input.audit, {
+            url: input.url,
+            hops,
+            status: response?.status ?? null,
+            bytes: body?.byteLength ?? 0,
+            contentType: response?.headers.get("content-type") ?? null,
+            ...(body === undefined ? {} : { body }),
+            ...(failure instanceof ReferenceBlockedError ? { blocked: failure.reason } : {}),
+            ...(failure !== undefined && !(failure instanceof ReferenceBlockedError)
+              ? { error: String(failure) }
+              : {}),
+          });
       }
-      if (!response) throw new Error("No response.");
-      const body = await readBody(response);
-      if (input.audit)
-        await auditDownload(input.audit, {
-          url: input.url,
-          hops,
-          status: response.status,
-          bytes: body.byteLength,
-          contentType: response.headers.get("content-type"),
-          body,
-        });
-      const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-      if (contentType.includes("pdf") || url.pathname.toLowerCase().endsWith(".pdf")) {
-        const pages = [
-          ...new Set(
-            (input.pages?.length ? input.pages : [1, 2, 3, 4]).filter((page) => page >= 1),
-          ),
-        ].slice(0, 4);
-        return { url: url.toString(), ...(await extractPdf(body, pages)) };
-      }
-      const html = body.toString("utf8");
-      const title = html
-        .match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
-        ?.replace(/\s+/g, " ")
-        .trim();
-      const text = html
-        .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 20_000);
-      const links = [...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
-        .slice(0, 300)
-        .map((match) => ({
-          href: new URL(match[1]!, url).toString(),
-          text: match[2]!
-            .replace(/<[^>]+>/g, "")
-            .replace(/\s+/g, " ")
-            .trim(),
-        }));
-      return { url: url.toString(), ...(title ? { title } : {}), text, links };
     },
-    catch: (cause) => {
-      if (input.audit)
-        void auditDownload(input.audit, {
-          url: input.url,
-          ...(String(cause).match(/public|private|userinfo/i)
-            ? { blocked: String(cause) }
-            : { error: String(cause) }),
-        });
-      return new CourseReferenceFetchError({ message: String(cause) });
-    },
+    catch: (cause) => new CourseReferenceFetchError({ message: String(cause) }),
   });
 });
