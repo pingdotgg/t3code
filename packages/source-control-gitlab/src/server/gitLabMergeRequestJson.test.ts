@@ -125,6 +125,37 @@ describe("decodeMergeRequestListJson", () => {
 });
 
 describe("decodeMergeRequestDetailJson", () => {
+  it("preserves a required rebase while CI is running or successful", () => {
+    for (const status of ["running", "success"]) {
+      const detail = expectSuccess(
+        decodeMergeRequestDetailJson(
+          detailJson({
+            merge_status: "cannot_be_merged",
+            detailed_merge_status: "need_rebase",
+            has_conflicts: false,
+            head_pipeline: { status },
+          }),
+        ),
+      );
+      expect(detail.rebaseRequired).toBe(true);
+      expect(detail.mergeability).toBe("unknown");
+    }
+  });
+
+  it("distinguishes a cleared rebase blocker from an inconclusive merge check", () => {
+    expect(
+      expectSuccess(
+        decodeMergeRequestDetailJson(detailJson({ detailed_merge_status: "mergeable" })),
+      ).rebaseRequired,
+    ).toBe(false);
+    for (const detailed_merge_status of [undefined, "checking", "ci_still_running"]) {
+      expect(
+        expectSuccess(decodeMergeRequestDetailJson(detailJson({ detailed_merge_status })))
+          .rebaseRequired,
+      ).toBeUndefined();
+    }
+  });
+
   it("reads the description, file count and pipeline", () => {
     const detail = expectSuccess(
       decodeMergeRequestDetailJson(
