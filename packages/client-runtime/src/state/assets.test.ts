@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   type AssetCreateUrlResult,
   type AssetResource,
+  AssetWorkspaceAssetNotFoundError,
   EnvironmentId,
   ThreadId,
   WS_METHODS,
@@ -232,6 +233,97 @@ describe("asset URL requests", () => {
           yield* Queue.take(harness.started);
         }
         expect(harness.maxInFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
+      }),
+    ),
+  );
+});
+
+describe("desktop-local media fallback", () => {
+  it.effect("never serves a relative markdown image from this desktop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const remote = EnvironmentId.make("remote");
+        const local = EnvironmentId.make("local");
+        const calls: EnvironmentId[] = [];
+        const supervisors = new Map<
+          EnvironmentId,
+          EnvironmentSupervisor.EnvironmentSupervisor["Service"]
+        >();
+        for (const environmentId of [remote, local]) {
+          const client = {
+            [WS_METHODS.assetsCreateUrl]: ({ resource }: { readonly resource: AssetResource }) => {
+              calls.push(environmentId);
+              return environmentId === remote
+                ? Effect.fail(new AssetWorkspaceAssetNotFoundError({ resource }))
+                : Effect.succeed({ relativeUrl: "/api/assets/local/report.png", expiresAt: 1 });
+            },
+          };
+          supervisors.set(
+            environmentId,
+            EnvironmentSupervisor.EnvironmentSupervisor.of({
+              target: new PrimaryConnectionTarget({
+                environmentId,
+                label: environmentId,
+                httpBaseUrl: `https://${environmentId}.test`,
+                wsBaseUrl: `wss://${environmentId}.test`,
+              }),
+              state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+                ...AVAILABLE_CONNECTION_STATE,
+                desired: true,
+                network: "online",
+                phase: "connected",
+                attempt: 1,
+                generation: 1,
+              }),
+              session: yield* SubscriptionRef.make(
+                Option.some({ client } as unknown as RpcSession.RpcSession),
+              ),
+              prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+              connect: Effect.void,
+              disconnect: Effect.void,
+              retryNow: Effect.void,
+            }),
+          );
+        }
+        type Registry = EnvironmentRegistry.EnvironmentRegistry["Service"];
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor;
+        const run: Registry["run"] = (id, effect) =>
+          Effect.provideService(effect, supervisor, supervisors.get(id)!);
+        const followStream: Registry["followStream"] = (id, stream) =>
+          Stream.provideService(stream, supervisor, supervisors.get(id)!);
+        const environments = EnvironmentRegistry.EnvironmentRegistry.of({
+          run,
+          followStream,
+        } as unknown as Registry);
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const assets = createAssetEnvironmentAtoms(
+          Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments)),
+          Atom.make({ environmentId: local, httpBaseUrl: "https://local.test" }),
+        );
+        const threadId = ThreadId.make("remote-thread");
+        const resolve = (resource: AssetResource) =>
+          AtomRegistry.getResult(
+            registry,
+            assets.createUrl({ environmentId: remote, input: { resource } }),
+            { suspendOnWaiting: true },
+          );
+        const path = "/repo/docs/report.png";
+
+        expect((yield* resolve({ _tag: "media-file", threadId, path })).relativeUrl).toBe(
+          "https://local.test/api/assets/local/report.png",
+        );
+        expect(calls).toEqual([remote, local]);
+
+        calls.length = 0;
+        const hostOnly = yield* Effect.result(
+          resolve({ _tag: "media-file", threadId, path, hostOnly: true }),
+        );
+        expect(hostOnly).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "AssetWorkspaceAssetNotFoundError" },
+        });
+        expect(calls).toEqual([remote]);
       }),
     ),
   );
