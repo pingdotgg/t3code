@@ -638,8 +638,7 @@ export class QrSegment {
   public readonly numChars: int;
   private readonly bitData: Array<bit>;
 
-  // The character count (numChars) must agree with the mode and the bit buffer length,
-  // but the constraint isn't checked.
+  // numChars must match the mode and bit-buffer length; not checked.
   public constructor(
     mode: QrSegmentMode,
 
