@@ -1,7 +1,6 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
-import { slashWindowsDrivePath } from "@t3tools/shared/path";
 import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
 
 // Light mode uses a darker pierre-light so syntax stays readable on every code surface.
@@ -191,11 +190,11 @@ export function getRenderablePatch(
 
 /** Uses the parser-decoded filename, including Git's quoted and escaped names. */
 export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
-  return slashWindowsDrivePath(fileDiff.name ?? fileDiff.prevName ?? "");
+  return fileDiff.name ?? fileDiff.prevName ?? "";
 }
 
 export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string {
-  return slashWindowsDrivePath(fileDiff.prevName ?? fileDiff.name ?? "");
+  return fileDiff.prevName ?? fileDiff.name ?? "";
 }
 
 /** Includes change type to distinguish deletion/addition pairs for file-to-symlink changes. */
