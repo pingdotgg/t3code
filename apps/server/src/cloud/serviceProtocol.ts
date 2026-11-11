@@ -6,9 +6,10 @@ import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 export const SERVICE_LAUNCHER_PROTOCOL = 4 as const;
 /** Launchers this runtime runs under. Protocol 3 has the same IPC and durable format, and
     refusing it stops every remote update until someone opens a shell on the host. */
+export type SupportedLauncherProtocol = 3 | typeof SERVICE_LAUNCHER_PROTOCOL;
 export const isSupportedLauncherProtocol = (
   protocol: unknown,
-): protocol is 3 | typeof SERVICE_LAUNCHER_PROTOCOL =>
+): protocol is SupportedLauncherProtocol =>
   protocol === 3 || protocol === SERVICE_LAUNCHER_PROTOCOL;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
 export const SERVICE_ENV_FILE = "service.env";
@@ -64,7 +65,7 @@ export interface ServiceState {
 }
 
 export interface ServiceLauncherContext {
-  readonly protocol: typeof SERVICE_LAUNCHER_PROTOCOL;
+  readonly protocol: SupportedLauncherProtocol;
   readonly childVersion: string;
   readonly update?: ServiceUpdateRecord;
 }
@@ -276,7 +277,7 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
     return undefined;
   }
   return {
-    protocol: SERVICE_LAUNCHER_PROTOCOL,
+    protocol: parsed.protocol,
     childVersion: parsed.childVersion,
     ...(update === undefined ? {} : { update }),
   };

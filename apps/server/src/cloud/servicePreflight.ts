@@ -1,13 +1,17 @@
 import packageJson from "../../package.json" with { type: "json" };
 import { BUILD_MIGRATION_HEAD, recordedMigrations } from "../persistence/databaseMigrationHead.ts";
-import { isSupportedLauncherProtocol, SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
+import {
+  isSupportedLauncherProtocol,
+  SERVICE_LAUNCHER_PROTOCOL,
+  type SupportedLauncherProtocol,
+} from "./serviceProtocol.ts";
 
 export type ServicePreflightResult =
   | {
       readonly status: "ready";
       readonly version: string;
-      /** The launcher protocol the caller named: a released server accepts only its own. */
-      readonly launcherProtocol: 3 | typeof SERVICE_LAUNCHER_PROTOCOL;
+      /** The launcher protocol the server named; it accepts no other in reply. */
+      readonly launcherProtocol: SupportedLauncherProtocol;
     }
   | {
       readonly status: "blocked";
@@ -65,21 +69,20 @@ function newerRecordedMigrations(databasePath: string): ReadonlyArray<string> | 
     : recorded.filter(({ id }) => id > BUILD_MIGRATION_HEAD).map(({ id, name }) => `${id}_${name}`);
 }
 
-export function decodeServicePreflightResult(value: unknown): ServicePreflightResult | undefined {
+export function decodeServicePreflightResult(
+  value: unknown,
+  launcherProtocol: SupportedLauncherProtocol,
+): ServicePreflightResult | undefined {
   if (typeof value !== "object" || value === null) {
     return undefined;
   }
   const record = value as Record<string, unknown>;
   if (
     record.status === "ready" &&
-    record.launcherProtocol === SERVICE_LAUNCHER_PROTOCOL &&
+    record.launcherProtocol === launcherProtocol &&
     typeof record.version === "string"
   ) {
-    return {
-      status: "ready",
-      version: record.version,
-      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-    };
+    return { status: "ready", version: record.version, launcherProtocol };
   }
   if (
     record.status === "blocked" &&
