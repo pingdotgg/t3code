@@ -28,8 +28,7 @@ export const readGtkPrimaryPasteEnabled = Effect.gen(function* () {
   Effect.orElseSucceed(() => true),
 );
 
-/** @public */
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   // Resolved before any window exists so the first preload never sees a provisional value.
   const enabled =

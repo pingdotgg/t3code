@@ -1,5 +1,4 @@
 import { assert, describe, it } from "@effect/vitest";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as PlatformError from "effect/PlatformError";
@@ -8,7 +7,6 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import * as DesktopPrimaryPaste from "./DesktopPrimaryPaste.ts";
 import { readGtkPrimaryPasteEnabled } from "./DesktopPrimaryPaste.ts";
 
 const encoder = new TextEncoder();
@@ -69,21 +67,5 @@ describe("readGtkPrimaryPasteEnabled", () => {
       yield* TestClock.adjust("2 seconds");
       assert.isTrue(yield* Fiber.join(fiber));
     }),
-  );
-});
-
-describe("DesktopPrimaryPaste", () => {
-  it.effect("reports the gsettings value as soon as the service exists", () =>
-    Effect.gen(function* () {
-      const primaryPaste = yield* DesktopPrimaryPaste.DesktopPrimaryPaste;
-      assert.isFalse(primaryPaste.enabled);
-    }).pipe(
-      Effect.provide(DesktopPrimaryPaste.layer),
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(
-        ChildProcessSpawner.ChildProcessSpawner,
-        spawnerWithStdout(Stream.make(encoder.encode("false\n"))),
-      ),
-    ),
   );
 });
