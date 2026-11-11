@@ -13,7 +13,7 @@ import {
   nextThreadAnnouncement,
   type ThreadActivitySnapshot,
   type ThreadAnnouncementMemory,
-} from "./threadActivityAnnouncement";
+} from "./threadActivityAnnouncement.ts";
 
 const firstRun = RunId.make("run-1");
 const secondRun = RunId.make("run-2");

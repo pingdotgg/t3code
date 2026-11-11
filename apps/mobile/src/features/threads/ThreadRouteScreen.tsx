@@ -28,6 +28,7 @@ import {
   AuthTerminalReadScope,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  isProviderNativeSubagentThread,
   MessageId,
   ThreadId,
   type ProjectScript,
@@ -122,6 +123,8 @@ import {
   type ThreadInspectorPresentation,
 } from "./thread-inspector-preview";
 import { useStartSideChat } from "./useStartSideChat";
+import { threadActivitySnapshot } from "./threadStatusAnnouncement";
+import { useThreadStatusAnnouncements } from "./useThreadStatusAnnouncements";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
@@ -377,6 +380,20 @@ function ThreadRouteContent(
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
+  useThreadStatusAnnouncements({
+    threadKey:
+      selectedThread === null || isProviderNativeSubagentThread(selectedThread.source)
+        ? null
+        : scopedThreadKey(selectedThread.environmentId, selectedThread.id),
+    ...threadActivitySnapshot({
+      approvalRequestId: requests.activePendingApproval?.requestId ?? null,
+      userInputRequestId: requests.activePendingUserInput?.requestId ?? null,
+      shell: selectedThread,
+      working: composer.activeWorkStartedAt !== null || composer.isCompacting,
+      run: composer.selectedThreadAnnouncedRun,
+    }),
+    detailBehind: composer.selectedThreadDetailBehindShell,
+  });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const resumeThreadQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, {
     label: "resume queue",
