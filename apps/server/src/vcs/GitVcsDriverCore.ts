@@ -3278,12 +3278,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : [];
     // Empty status can mean untracked files are hidden; retain the full scan.
     const untracked = yield* prepareUntrackedReviewIndex(cwd, pathspecs);
-    if (untracked === null) {
+    if (untracked === null || untracked.omitted) {
       return yield* new GitCommandError({
         operation: "GitVcsDriver.readBranchChangeTotals",
         command: "git ls-files",
         cwd,
-        detail: "Too many untracked files to count.",
+        detail: "Untracked files exceed the review input limits.",
       });
     }
     const readNumstat = (ref: string) =>

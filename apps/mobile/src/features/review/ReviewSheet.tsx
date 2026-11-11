@@ -6,7 +6,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
-import type { ReviewSectionItem } from "./reviewModel";
+import { UNTRACKED_OMITTED_NOTICE, type ReviewSectionItem } from "./reviewModel";
 import { useReviewHeaderPresentation } from "./useReviewHeaderPresentation";
 import { type Ref, type ReactElement, useImperativeHandle, useRef, useState } from "react";
 import {
@@ -766,7 +766,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
                       Platform.OS === "android" && "mt-2 text-center",
                     )}
                   >
-                    {selectedSection.subtitle ?? "This diff is empty."}
+                    {selectedSection.source?.untrackedOmitted
+                      ? UNTRACKED_OMITTED_NOTICE
+                      : (selectedSection.subtitle ?? "This diff is empty.")}
                   </Text>
                 </View>
               ) : parsedDiff.kind === "raw" ? (

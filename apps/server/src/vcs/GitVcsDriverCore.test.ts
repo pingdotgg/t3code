@@ -2671,7 +2671,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             : ["README.md", "ordinary.txt"],
         );
         const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
-        assert.strictEqual(status.branchChanges?.insertions, symlinksSupported ? 3 : 2);
+        assert.isUndefined(status.branchChanges);
         const oversized = yield* driver.getReviewDiffPreview({
           cwd,
           file: { path: "large.data", previousPath: null, sourceKind: "working-tree" },
