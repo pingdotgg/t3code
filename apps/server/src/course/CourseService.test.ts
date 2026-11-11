@@ -167,6 +167,29 @@ describe("CourseService", () => {
         });
         const result = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
         assert.deepStrictEqual(result.problemSets[0]?.references, refs);
+        assert.deepStrictEqual(
+          (yield* service.get({ id: course.id })).problemSets?.[0]?.references,
+          [{ label: "B scan", url: "https://example.com/b" }],
+        );
+      }),
+    ),
+  );
+
+  it.effect("rejects unknown problem sets", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const course = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            kind: "ocw",
+            title: "Unknown pset",
+            source: "source",
+            units: [{ title: "Week", section: "Week" }],
+            problemSets: [{ title: "Pset 1", section: "Week", text: "Problem" }],
+          },
+        });
+        const failure = yield* service.problems({ courseId: course.id, pset: 2 }).pipe(Effect.flip);
+        assert.include(String(failure), "Problem set 2 was not found");
       }),
     ),
   );

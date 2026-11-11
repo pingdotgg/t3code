@@ -58,12 +58,22 @@ describe("course download audit", () => {
       const dir = await NodeFSP.mkdtemp(NodePath.join("/tmp", "course-audit-retention-"));
       const auditDir = NodePath.join(dir, "audit");
       await NodeFSP.mkdir(auditDir);
-      await NodeFSP.writeFile(NodePath.join(auditDir, "downloads-2020-01.jsonl"), "old\n");
+      const monthName = (offset: number) => {
+        const date = new Date();
+        date.setUTCDate(1);
+        date.setUTCMonth(date.getUTCMonth() - offset);
+        return `downloads-${date.toISOString().slice(0, 7)}.jsonl`;
+      };
+      const twoMonthsAgo = monthName(2);
+      const threeMonthsAgo = monthName(3);
+      await NodeFSP.writeFile(NodePath.join(auditDir, twoMonthsAgo), "old\n");
+      await NodeFSP.writeFile(NodePath.join(auditDir, threeMonthsAgo), "old\n");
       await auditDownload({ stateDir: dir }, { url: "https://example.com/ok" });
-      const [currentName] = await NodeFSP.readdir(auditDir);
-      assert.match(currentName!, /^downloads-\d{4}-\d{2}\.jsonl$/);
-      assert.notStrictEqual(currentName, "downloads-2020-01.jsonl");
-      const current = NodePath.join(auditDir, currentName!);
+      const currentName = monthName(0);
+      assert.include(await NodeFSP.readdir(auditDir), currentName);
+      assert.include(await NodeFSP.readdir(auditDir), twoMonthsAgo);
+      assert.notInclude(await NodeFSP.readdir(auditDir), threeMonthsAgo);
+      const current = NodePath.join(auditDir, currentName);
       await NodeFSP.truncate(current, 100 * 1024 * 1024 + 1);
       await NodeFSP.utimes(current, 0, 0);
       await auditDownload({ stateDir: dir }, { url: "https://example.com/capped" });
