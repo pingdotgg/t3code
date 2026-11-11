@@ -31,6 +31,7 @@ import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
   makeOpenCode2ModelLoader,
+  makeOpenCode2AgentLoader,
   makePendingOpenCodeProvider,
   openCode2CommandsToServerProviderSlashCommands,
   openCode2SkillsToServerProviderSkills,
@@ -359,6 +360,21 @@ export const OpenCodeDriver: ProviderDriver<
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
       openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
     );
+    const loadOpenCode2Agents = yield* makeOpenCode2AgentLoader(
+      openCode2Server.withConnection(({ client }) =>
+        client.agent.list({ location: { directory: host.paths.cwd } }).pipe(
+          Effect.map((response) => response.data),
+          Effect.mapError(
+            (cause) =>
+              new OpenCodeRuntime.OpenCodeRuntimeError({
+                operation: "agent.list",
+                detail: "The OpenCode server could not list its agents.",
+                cause,
+              }),
+          ),
+        ),
+      ),
+    );
     const listOpenCode2Workspace = (cwd: string) =>
       openCode2Server.withConnection(({ client, events }) =>
         Effect.gen(function* () {
@@ -438,6 +454,7 @@ export const OpenCodeDriver: ProviderDriver<
           host.paths.cwd,
           runtimeProbe.refresh,
           loadOpenCode2Models,
+          loadOpenCode2Agents,
         ).pipe(
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),

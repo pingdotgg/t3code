@@ -20,6 +20,14 @@ OpenCode 2 converts the shared OpenCode database to its own format the first tim
 runs. Don't run OpenCode 1.x and 2.x side by side on the same machine. Threads you
 started on 1.x continue on 2.x.
 
+Use the model options' **Agent** selector to choose a visible primary OpenCode
+agent, such as Coder, Researcher, or Reviewer. Refresh provider status after changing
+your OpenCode agents. Subagent-only and hidden agents do not appear in this list.
+Agent discovery uses the environment server's working directory; project-local
+agents in other directories may not appear. If an agent refresh fails, T3 Code
+keeps the last known agent choices, reports a warning, and retries in the background.
+With no agent selected, T3 Code uses `build`.
+
 ## Compaction
 
 OpenCode compacts long conversations itself, and T3 Code has no setting for it. On

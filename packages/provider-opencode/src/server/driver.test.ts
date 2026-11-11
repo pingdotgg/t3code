@@ -1,3 +1,4 @@
+import { Agent } from "@opencode/schema/agent";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -413,7 +414,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.effect.each(["probe", "error", "empty"] as const)(
+  it.effect.each(["probe", "error", "empty", "agents"] as const)(
     "recovers discovery without a manual refresh after %s",
     (initialCatalog) =>
       Effect.gen(function* () {
@@ -428,6 +429,20 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         let modelReads = 0;
         const replies = {
           ...OPENCODE_2_RESPONSES,
+          "/api/agent": {
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              location: { directory: "/work" },
+              data: [
+                Agent.Info.default(Agent.ID.make("build")),
+                {
+                  ...Agent.Info.default(Agent.ID.make("assistant2")),
+                  name: Agent.Name.make("Assistant 2"),
+                },
+              ],
+            }),
+          },
           "/api/provider": {
             status: 200,
             contentType: "application/json",
@@ -472,10 +487,23 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
                 }),
               );
             }
+            if (
+              new URL(request.url).pathname === "/api/agent" &&
+              initialCatalog === "agents" &&
+              !catalogAvailable
+            ) {
+              return HttpClientResponse.fromWeb(
+                request,
+                new Response('{"_tag":"InternalServerError","message":"agents unavailable"}', {
+                  status: 500,
+                  headers: { "content-type": "application/json" },
+                }),
+              );
+            }
             if (new URL(request.url).pathname === "/api/model") {
               modelReads += 1;
               yield* Deferred.await(releaseCatalog);
-              if (!catalogAvailable) {
+              if (!catalogAvailable && initialCatalog !== "agents") {
                 return HttpClientResponse.fromWeb(
                   request,
                   new Response(
@@ -501,7 +529,8 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           Stream.filter(
             (snapshot) =>
               snapshot.installed &&
-              snapshot.status === (initialCatalog === "empty" ? "warning" : "error"),
+              snapshot.status ===
+                (initialCatalog === "empty" || initialCatalog === "agents" ? "warning" : "error"),
           ),
           Stream.take(1),
           Stream.runCollect,
@@ -512,14 +541,18 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         yield* TestClock.adjust("5 seconds");
         const [failed] = Array.from(yield* Fiber.join(initial));
         assert.strictEqual(failed?.auth.status, "unknown");
-        assert.deepStrictEqual(failed?.models, []);
+        if (initialCatalog !== "agents") assert.deepStrictEqual(failed?.models, []);
         if (initialCatalog === "probe") assert.strictEqual(failed?.version, null);
         assert.strictEqual(discoveryLogs.length, 1);
         assert.strictEqual(discoveryLogs[0]?.providerInstanceId, "opencode-test");
         assert.strictEqual(discoveryLogs[0]?.serverMode, "external");
         assert.strictEqual(
           discoveryLogs[0]?.phase,
-          initialCatalog === "probe" ? "version" : "models",
+          initialCatalog === "probe"
+            ? "version"
+            : initialCatalog === "agents"
+              ? "agents"
+              : "models",
         );
 
         catalogAvailable = true;
@@ -538,6 +571,16 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           ["opencode/big-pickle"],
         );
 
+        const agentOptions = (snapshot: typeof ready) => {
+          const descriptor = snapshot?.models[0]?.capabilities?.optionDescriptors?.find(
+            (option) => option.id === "agent",
+          );
+          return descriptor?.type === "select" ? descriptor.options : [];
+        };
+        assert.deepStrictEqual(agentOptions(ready), [
+          { id: "build", label: "build", isDefault: true },
+          { id: "assistant2", label: "Assistant 2" },
+        ]);
         const readsAfterRecovery = modelReads;
         yield* TestClock.adjust("15 minutes");
         assert.strictEqual(modelReads, readsAfterRecovery);

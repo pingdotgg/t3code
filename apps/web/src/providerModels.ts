@@ -78,8 +78,9 @@ function withoutPlanAgentOption(caps: ModelCapabilities): ModelCapabilities {
       const currentValue =
         descriptor.currentValue && options.some((option) => option.id === descriptor.currentValue)
           ? descriptor.currentValue
-          : (options.find((option) => option.isDefault)?.id ?? options[0]?.id);
-      return [{ ...descriptor, options, ...(currentValue ? { currentValue } : {}) }];
+          : options.find((option) => option.isDefault)?.id;
+      const { currentValue: _previousValue, ...rest } = descriptor;
+      return [{ ...rest, options, ...(currentValue ? { currentValue } : {}) }];
     }),
   };
 }

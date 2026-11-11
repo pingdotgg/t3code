@@ -467,9 +467,11 @@ const nativeGoal = (status: "active" | "paused" | "complete") => ({
 });
 
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
-  it.effect("switches the session's model and variant before a turn that changed them", () =>
+  it.effect("switches the session's agent, model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
+        out("session.switchAgent", { sessionID: SESSION, agent: "researcher" }),
+        reply("session.switchAgent", null),
         out("session.switchModel", {
           sessionID: SESSION,
           model: { providerID: "openrouter", id: "deepseek/deepseek-v4-flash", variant: "high" },
@@ -489,7 +491,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         turnInput(thread, {
           instanceId,
           model: "openrouter/deepseek/deepseek-v4-flash",
-          options: [{ id: "variant", value: "high" }],
+          options: [
+            { id: "variant", value: "high" },
+            { id: "agent", value: "researcher" },
+          ],
         }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
