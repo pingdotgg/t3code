@@ -1615,6 +1615,28 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
       });
     }
   }
+  // No row or node of this run is in the window.
+  const settledCheckpointId = CheckpointId.make("checkpoint:settled-leaf-nodes:earlier-run");
+  yield* store.apply({
+    id: EventId.make("event:settled-leaf-nodes:earlier-run-checkpoint"),
+    type: "checkpoint.captured",
+    threadId,
+    occurredAt: now,
+    payload: {
+      id: settledCheckpointId,
+      threadId,
+      scopeId: CheckpointScopeId.make("scope:settled-leaf-nodes:root"),
+      runId: RunId.make("run:settled-leaf-nodes:earlier"),
+      nodeId: NodeId.make("node:settled-leaf-nodes:earlier-root"),
+      parentCheckpointId: null,
+      ordinalWithinScope: 1,
+      appRunOrdinal: 1,
+      ref: CheckpointRef.make("refs/t3/settled-leaf-nodes/1"),
+      status: "ready",
+      files: [],
+      capturedAt: now,
+    },
+  });
   const nodeNames = (records: { readonly nodes: ReadonlyArray<{ readonly id: string }> }) =>
     records.nodes
       .map((node) => node.id.replace("node:settled-leaf-nodes:", ""))
@@ -1643,6 +1665,11 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   assert.deepEqual(
     liveWindow.plans.map((plan) => plan.id),
     [PlanId.make("plan:settled-leaf-nodes:active-run-todo")],
+  );
+  // Clients show the diff of the last finished turn from this record.
+  assert.deepEqual(
+    liveWindow.checkpoints.map((checkpoint) => checkpoint.id),
+    [settledCheckpointId],
   );
 
   const subagents = [

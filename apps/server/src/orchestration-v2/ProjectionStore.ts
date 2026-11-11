@@ -3110,7 +3110,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       SELECT 1 FROM orchestration_v2_projection_run_attempts
                       WHERE run_id = live.run_id AND status = 'superseded'
                     )
-                  ORDER BY live.ordinal ASC LIMIT 1
+                  ORDER BY +live.ordinal ASC LIMIT 1
                 ), visible_tail AS (
                   SELECT ordinal FROM (
                     SELECT ordinal FROM eligible
@@ -3851,6 +3851,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = ${threadId}
               AND (status IN ('pending','capturing')
                 OR (run_id IS NULL AND ordinal_within_scope = 0 AND status = 'ready')
+                -- The diff of the last finished turn stays in reach while a long run is at work.
+                OR checkpoint_id = (
+                  SELECT checkpoint_id FROM orchestration_v2_projection_checkpoints
+                  WHERE thread_id = ${threadId} AND status = 'ready'
+                    AND app_run_ordinal IS NOT NULL
+                  ORDER BY app_run_ordinal DESC LIMIT 1
+                )
                 OR checkpoint_id IN (SELECT value FROM json_each(${cohortCheckpointIds}))
                 OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
                 OR node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
