@@ -32,15 +32,18 @@ static const char *const kwallet_entries[][3] = {
 
 /* libsecret keeps the normal desktop unlock prompt. A cancelled unlock can
  * still return a locked item, so callers check the item before reading it. */
-static GList *search(const SecretSchema *schema, GHashTable *attributes, GError **error) {
+static GList *search(const SecretSchema *schema, GHashTable *attributes, SecretSearchFlags flags,
+                     GError **error) {
     GList *items = secret_service_search_sync(
-        NULL, schema, attributes, SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, error);
+        NULL, schema, attributes, flags | SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL,
+        error);
     g_hash_table_unref(attributes);
     return items;
 }
 
-/* A KWallet migration can leave an older item with the same server and user.
- * Chromium writes a key only when it finds none, so the newest one is live. */
+/* A KWallet migration can leave an older item with the same server and user,
+ * so the KWallet search asks for every match. Chromium writes a key only when
+ * it finds none, so the newest one is live. */
 static GList *newest_first(GList *items) {
     GList *newest = items;
     for (GList *link = items; link != NULL; link = link->next) {
@@ -56,15 +59,16 @@ int main(int argc, char **argv) {
     g_set_application_name("T3 Code");
 
     GError *error = NULL;
-    GList *items = search(
-        &chromium_schema, secret_attributes_build(&chromium_schema, "application", argv[1], NULL), &error);
+    GList *items = search(&chromium_schema,
+                          secret_attributes_build(&chromium_schema, "application", argv[1], NULL),
+                          SECRET_SEARCH_NONE, &error);
     for (gsize i = 0; error == NULL && items == NULL && i < G_N_ELEMENTS(kwallet_entries); i++) {
         if (strcmp(argv[1], kwallet_entries[i][0]) != 0) continue;
         items = newest_first(search(&kwallet_schema,
                                     secret_attributes_build(&kwallet_schema, "server",
                                                             kwallet_entries[i][1], "user",
                                                             kwallet_entries[i][2], NULL),
-                                    &error));
+                                    SECRET_SEARCH_ALL, &error));
     }
 
     int status = READ_FAILED;

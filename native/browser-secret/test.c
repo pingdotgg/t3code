@@ -21,13 +21,15 @@ static SecretItem *kwallet_item(const char *value, guint64 modified) {
 }
 
 /* A migrated wallet returns its stale item before the key Chromium rewrote. */
-static GList *search_kwallet(GHashTable *attributes) {
+static GList *search_kwallet(GHashTable *attributes, SecretSearchFlags flags) {
     const char *server = g_hash_table_lookup(attributes, "server");
     const char *user = g_hash_table_lookup(attributes, "user");
     for (gsize i = 0; i < G_N_ELEMENTS(kwallet_items); i++) {
         if (g_strcmp0(server, kwallet_items[i][1]) == 0 && g_strcmp0(user, kwallet_items[i][2]) == 0) {
             scenario = "kwallet";
             GList *items = g_list_append(NULL, kwallet_item("stale", 1));
+            /* Like libsecret, return only the first match unless asked for all. */
+            if (!(flags & SECRET_SEARCH_ALL)) return items;
             return g_list_append(items, kwallet_item("live \xc3\xa9\xe2\x82\xac", 2));
         }
     }
@@ -37,7 +39,7 @@ static GList *search_kwallet(GHashTable *attributes) {
 GList *__wrap_secret_service_search_sync(SecretService *service, const SecretSchema *schema,
                                        GHashTable *attributes, SecretSearchFlags flags,
                                        GCancellable *cancellable, GError **error) {
-    if (!g_hash_table_contains(attributes, "application")) return search_kwallet(attributes);
+    if (!g_hash_table_contains(attributes, "application")) return search_kwallet(attributes, flags);
     g_assert_null(service);
     g_assert_null(cancellable);
     g_assert_cmpstr(schema->name, ==, "chrome_libsecret_os_crypt_password_v2");
