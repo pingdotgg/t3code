@@ -507,6 +507,7 @@ const resolveBunGlobalLatestVersion = Effect.fn("resolveBunGlobalLatestVersion")
   // A missing row reads the same whether bun is current or its registry failed, so npm decides.
   return outdated ? parseBunOutdatedLatestVersion(outdated, packageName) : null;
 });
+
 const MiseInstall = Schema.Struct({
   install_path: Schema.String,
   requested_version: Schema.optional(Schema.NullOr(Schema.String)),
