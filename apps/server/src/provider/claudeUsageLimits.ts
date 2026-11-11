@@ -27,7 +27,7 @@ const WINDOWS: Readonly<
 };
 
 /** Reuse probed display names for streamed bucket types so mid-turn updates target the same row. */
-const OVERAGE_INCLUDED_EVENT_TYPE = "seven_day_overage_included";
+export const OVERAGE_INCLUDED_EVENT_TYPE = "seven_day_overage_included";
 
 // The SDK does not yet type the spend budget returned by `get_usage`.
 const SpendMoney = Schema.Struct({
