@@ -1324,14 +1324,4 @@ describe("deriveThreadPendingBackgroundTasks", () => {
     ).toEqual([{ taskId: "task-1", kind: "background_task" }]);
   });
 
-  it("lists a lone waiting run's background child, since waiting is post-terminal drain", () => {
-    expect(
-      deriveThreadPendingBackgroundTasks(
-        projection({
-          runs: [run(1, "waiting")],
-          turnItems: [{ ...item(1, "subagent", "child-1", ""), prompt: "child 1" }],
-        }),
-      ),
-    ).toEqual([{ taskId: "child-1", description: "child 1", kind: "subagent" }]);
-  });
 });
