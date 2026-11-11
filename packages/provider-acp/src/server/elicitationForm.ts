@@ -188,30 +188,81 @@ export function parseElicitationForm(
       : [],
   );
   const fields = new Map<string, Field>();
-  const questions: OrchestrationV2UserInputQuestion[] = [];
+  const parsedFields: Array<{
+    readonly id: string;
+    readonly property: Readonly<Record<string, unknown>>;
+    readonly options: Option[];
+  }> = [];
   for (const [id, value] of Object.entries(unknownRecord(schema?.properties) ?? {})) {
     const property = unknownRecord(value);
     const parsed = property === undefined ? undefined : parseField(property);
     // Question ids must survive the contract's trim to round-trip answers.
     if (property === undefined || parsed === undefined || text(id) !== id) return undefined;
     fields.set(id, parsed.field);
-    questions.push({
-      id,
-      header: text(property.title) ?? `Question ${questions.length + 1}`,
-      question: text(property.description) ?? message,
-      options: parsed.options,
-      ...(parsed.field.kind === "text" || parsed.field.kind === "number"
-        ? {}
-        : { allowCustomAnswer: false }),
-      ...(parsed.field.kind === "multiChoice" ? { multiSelect: true } : {}),
-    });
+    parsedFields.push({ id, property, options: parsed.options });
   }
+  // Agents such as OMP pair an optional choice with an optional `<id>__other` text field.
+  // Hide the companion and route custom answers into it.
+  const companions = new Map<string, string>();
+  for (const [id, field] of fields) {
+    const companion = `${id}__other`;
+    if (
+      (field.kind === "choice" || field.kind === "multiChoice") &&
+      fields.get(companion)?.kind === "text" &&
+      !required.has(id) &&
+      !required.has(companion)
+    ) {
+      companions.set(id, companion);
+    }
+  }
+  const hidden = new Set(companions.values());
+  const questions = parsedFields
+    .filter(({ id }) => !hidden.has(id))
+    .map(({ id, property, options }, index): OrchestrationV2UserInputQuestion => {
+      const kind = fields.get(id)?.kind;
+      return {
+        id,
+        header: text(property.title) ?? `Question ${index + 1}`,
+        question: text(property.description) ?? message,
+        options,
+        ...(kind === "text" || kind === "number" || companions.has(id)
+          ? {}
+          : { allowCustomAnswer: false }),
+        ...(kind === "multiChoice" ? { multiSelect: true } : {}),
+      };
+    });
+  const routeCompanions = (answers: ProviderUserInputAnswers): Map<string, unknown> => {
+    const routed = new Map(Object.entries(answers));
+    for (const [id, companion] of companions) {
+      const field = fields.get(id);
+      if (field?.kind !== "choice" && field?.kind !== "multiChoice") continue;
+      const answer = routed.get(id);
+      const entries: unknown[] =
+        typeof answer === "string" ? [answer] : Array.isArray(answer) ? answer : [];
+      const custom = entries.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && !field.values.has(entry) && entry.trim().length > 0,
+      );
+      if (custom.length > 0) routed.set(companion, custom.join(", "));
+      if (field.kind === "choice") {
+        if (custom.length > 0) routed.delete(id);
+      } else if (custom.length > 0 || typeof answer === "string") {
+        // Clients submit typed text as a string, even when it names a listed option.
+        routed.set(
+          id,
+          entries.filter((entry) => typeof entry === "string" && field.values.has(entry)),
+        );
+      }
+    }
+    return routed;
+  };
   return {
     questions,
-    content: (answers) => {
+    content: (rawAnswers) => {
+      const answers = routeCompanions(rawAnswers);
       const entries: Array<[string, EffectAcpSchema.ElicitationContentValue]> = [];
       for (const [id, field] of fields) {
-        const typed = Object.hasOwn(answers, id) ? typedAnswer(field, answers[id]) : undefined;
+        const typed = answers.has(id) ? typedAnswer(field, answers.get(id)) : undefined;
         if (typed !== undefined) entries.push([id, typed]);
         else if (required.has(id)) return undefined;
       }
