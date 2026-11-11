@@ -102,6 +102,79 @@ interface RunningHost {
   readonly helpers: DeviceHost.DeviceHostReady["helpers"];
 }
 
+const MISSING_DEVELOPER_DIRECTORY =
+  /unable to (?:get active developer directory|find utility "simctl")|invalid (?:active developer path|developer directory)|no developer tools/i;
+
+const xcodeSelectionGuidance = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const environment = yield* HostProcess.Environment;
+  const applications = yield* fs
+    .readDirectory("/Applications")
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  const xcodes = applications
+    .filter((name) => /^Xcode.*\.app$/.test(name))
+    .toSorted((a, b) => (a === "Xcode.app" ? -1 : b === "Xcode.app" ? 1 : a.localeCompare(b)));
+  for (const xcode of xcodes) {
+    const developerPath = `/Applications/${xcode}/Contents/Developer`;
+    if (!(yield* fs.exists(developerPath).pipe(Effect.orElseSucceed(() => false)))) continue;
+    const quotedPath = `'${developerPath.replaceAll("'", "'\"'\"'")}'`;
+    return environment.DEVELOPER_DIR
+      ? `Change DEVELOPER_DIR to ${quotedPath}, or unset it and select that directory with xcode-select, then restart T3 Code.`
+      : `Select the installed Xcode developer directory by running sudo xcode-select -s ${quotedPath}, then check again.`;
+  }
+  return (
+    "Install Xcode, or if it is installed outside /Applications, run sudo xcode-select -s with its Contents/Developer path, then check again." +
+    (environment.DEVELOPER_DIR
+      ? " Change or unset DEVELOPER_DIR, which overrides xcode-select, then restart T3 Code."
+      : "")
+  );
+});
+
+/** Runs a bounded Xcode probe; returns its stdout, or a reason when it cannot be used. */
+const xcodeProbe = Effect.fn("LocalDeviceHost.xcodeProbe")(function* (
+  command: string,
+  args: ReadonlyArray<string>,
+) {
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const label = [command, ...args].join(" ");
+  const result = yield* runner
+    .run({ command, args, timeout: Duration.seconds(15) })
+    .pipe(Effect.result);
+  if (result._tag === "Failure") {
+    const error = result.failure;
+    const notFound =
+      error._tag === "ProcessSpawnError" &&
+      PlatformError.isPlatformError(error.cause) &&
+      error.cause.reason._tag === "NotFound";
+    return notFound
+      ? { reason: `Xcode command line tools were not found. ${yield* xcodeSelectionGuidance}` }
+      : { reason: `Could not run ${label}: ${error.message}` };
+  }
+  const { code, stdout, stderr } = result.success;
+  if (code === 0) return { stdout };
+  if (MISSING_DEVELOPER_DIRECTORY.test(stderr))
+    return { reason: `${label} cannot find a usable Xcode. ${yield* xcodeSelectionGuidance}` };
+  if (/license agreements?/i.test(stderr))
+    return {
+      reason: `${label} failed: the Xcode license agreements have not been accepted. Open Xcode to review and accept them, then check again.`,
+    };
+  return {
+    reason: `${label} failed${code === null ? "" : ` (exit code ${code})`}. Run ${label} in Terminal for details.`,
+  };
+});
+
+const iosSimulatorReason = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) !== "darwin") return "iOS Simulators need macOS with Xcode.";
+  const fs = yield* FileSystem.FileSystem;
+  // The macOS xcrun stub opens an installer when no developer directory exists, so check first.
+  const selection = yield* xcodeProbe("xcode-select", ["--print-path"]);
+  if (selection.reason !== undefined) return selection.reason;
+  const developerPath = selection.stdout.trim();
+  if (!developerPath || !(yield* fs.exists(developerPath).pipe(Effect.orElseSucceed(() => false))))
+    return `The selected Xcode developer directory is missing. ${yield* xcodeSelectionGuidance}`;
+  return (yield* xcodeProbe("xcrun", ["simctl", "help"])).reason ?? null;
+});
+
 const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   platform: DevicePlatform,
 ): Effect.fn.Return<
@@ -109,99 +182,7 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   never,
   FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner
 > {
-  const hostPlatform = yield* HostProcess.Platform;
-  if (platform === "ios") {
-    if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
-    const fs = yield* FileSystem.FileSystem;
-    const environment = yield* HostProcess.Environment;
-    const setupGuidance = Effect.gen(function* () {
-      const applications = yield* fs
-        .readDirectory("/Applications")
-        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-      const xcodes = applications
-        .filter((name) => /^Xcode.*\.app$/.test(name))
-        .toSorted((a, b) => (a === "Xcode.app" ? -1 : b === "Xcode.app" ? 1 : a.localeCompare(b)));
-      for (const xcode of xcodes) {
-        const developerPath = `/Applications/${xcode}/Contents/Developer`;
-        if (!(yield* fs.exists(developerPath).pipe(Effect.orElseSucceed(() => false)))) continue;
-        const quotedPath = `'${developerPath.replaceAll("'", "'\"'\"'")}'`;
-        return environment.DEVELOPER_DIR
-          ? `Change DEVELOPER_DIR to ${quotedPath}, or unset it and select that directory with xcode-select, then restart T3 Code.`
-          : `Select the installed Xcode developer directory by running sudo xcode-select -s ${quotedPath}, then check again.`;
-      }
-      return (
-        "Install Xcode, or if it is installed outside /Applications, run sudo xcode-select -s with its Contents/Developer path, then check again." +
-        (environment.DEVELOPER_DIR
-          ? " Change or unset DEVELOPER_DIR, which overrides xcode-select, then restart T3 Code."
-          : "")
-      );
-    });
-    const runner = yield* ProcessRunner.ProcessRunner;
-    // The macOS xcrun stub can open an installer when no developer directory exists.
-    const selection = yield* runner
-      .run({ command: "xcode-select", args: ["--print-path"], timeout: Duration.seconds(15) })
-      .pipe(Effect.result);
-    if (selection._tag === "Failure") {
-      const error = selection.failure;
-      if (error._tag === "ProcessSpawnError" && PlatformError.isPlatformError(error.cause)) {
-        if (error.cause.reason._tag === "NotFound")
-          return `Xcode command line tools were not found. ${yield* setupGuidance}`;
-        if (error.cause.reason._tag === "PermissionDenied")
-          return "Could not run xcode-select: permission denied. Check your Xcode command line tools permissions.";
-      }
-      return `Could not run xcode-select: ${error.message}`;
-    }
-    if (selection.success.code !== 0) {
-      if (
-        /unable to get active developer directory|invalid (?:active developer path|developer directory)|no developer tools/i.test(
-          selection.success.stderr,
-        )
-      )
-        return `The selected Xcode developer directory is missing or invalid. ${yield* setupGuidance}`;
-      if (/permission denied|operation not permitted/i.test(selection.success.stderr))
-        return "xcode-select failed: permission denied. Check your Xcode command line tools permissions.";
-      return selection.success.code === null
-        ? "xcode-select ended without an exit code. Run xcode-select --print-path in Terminal for details."
-        : `xcode-select failed (exit code ${selection.success.code}). Run xcode-select --print-path in Terminal for details.`;
-    }
-    const developerPath = selection.success.stdout.trim();
-    if (!developerPath) return `No Xcode developer directory is selected. ${yield* setupGuidance}`;
-    const selectedExists = yield* fs.exists(developerPath).pipe(Effect.result);
-    if (selectedExists._tag === "Failure")
-      return selectedExists.failure.reason._tag === "PermissionDenied"
-        ? "Could not check the selected Xcode developer directory: permission denied. Check its permissions."
-        : "Could not check the selected Xcode developer directory. Check that it is accessible.";
-    if (!selectedExists.success)
-      return `The selected Xcode developer directory is missing or invalid. ${yield* setupGuidance}`;
-    const result = yield* runner
-      .run({ command: "xcrun", args: ["simctl", "help"], timeout: Duration.seconds(15) })
-      .pipe(Effect.result);
-    if (result._tag === "Failure") {
-      const error = result.failure;
-      if (error._tag === "ProcessSpawnError" && PlatformError.isPlatformError(error.cause)) {
-        if (error.cause.reason._tag === "NotFound")
-          return "Xcode command line tools were not found.";
-        if (error.cause.reason._tag === "PermissionDenied")
-          return "Could not run xcrun simctl: permission denied. Check your Xcode command line tools permissions.";
-      }
-      return `Could not run xcrun simctl: ${error.message}`;
-    }
-    const { code, stderr } = result.success;
-    if (code === 0) return null;
-    if (
-      /unable to find utility "simctl"|invalid (?:active developer path|developer directory)|no developer tools|unable to get active developer directory/i.test(
-        stderr,
-      )
-    )
-      return `xcrun cannot find simctl. ${yield* setupGuidance}`;
-    if (/license agreements?/i.test(stderr))
-      return "xcrun simctl failed: the Xcode license agreements have not been accepted. Open Xcode to review and accept them, then check again.";
-    if (/permission denied|operation not permitted/i.test(stderr))
-      return "xcrun simctl failed: permission denied. Check your Xcode command line tools permissions.";
-    return code === null
-      ? "xcrun simctl ended without an exit code. Run xcrun simctl help in Terminal for details."
-      : `xcrun simctl failed (exit code ${code}). Run xcrun simctl help in Terminal for details.`;
-  }
+  if (platform === "ios") return yield* iosSimulatorReason;
   const sdk = yield* androidSdk;
   if (!sdk.root)
     return "Android SDK was not found. Install it with Android Studio or set ANDROID_HOME to your SDK directory.";

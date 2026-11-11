@@ -616,6 +616,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
   });
 
+  const stillListing = (host: DeviceHost.DeviceHost["Service"]) =>
+    readDeviceSettings.pipe(
+      Effect.map((settings) => settings.enabled && hosts.get(host.id) === host),
+    );
+
   const list: DeviceService["Service"]["list"] = Effect.gen(function* () {
     if (!(yield* readDeviceSettings).enabled) return (yield* SynchronizedRef.get(stateRef)).state;
     yield* Effect.forEach(
@@ -623,7 +628,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       (host) =>
         Effect.gen(function* () {
           const summary = yield* host.summary;
-          if (!(yield* readDeviceSettings).enabled || hosts.get(host.id) !== host) return;
+          if (!(yield* stillListing(host))) return;
           if (!cannotRunLocally(summary)) {
             yield* refresh(yield* readiness(host.id));
             return;
@@ -631,7 +636,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           // Unavailable local hosts never start a hub, so refresh their diagnostics here.
           yield* lifecycleLock.withPermit(
             Effect.gen(function* () {
-              if (!(yield* readDeviceSettings).enabled || hosts.get(host.id) !== host) return;
+              if (!(yield* stillListing(host))) return;
               yield* publish((state) => ({
                 ...state,
                 hosts: state.hosts.map((candidate) =>
@@ -644,7 +649,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           Effect.catch((error) =>
             lifecycleLock.withPermit(
               Effect.gen(function* () {
-                if (!(yield* readDeviceSettings).enabled || hosts.get(host.id) !== host) return;
+                if (!(yield* stillListing(host))) return;
                 yield* setHostStatus(host.id, {
                   status: "failed",
                   detail:
