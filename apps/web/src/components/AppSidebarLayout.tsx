@@ -9,7 +9,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { useLocation, useRouter, type AnyRouter } from "@tanstack/react-router";
+import { useLocation, useParams, useRouter, type AnyRouter } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 
 import { moveWorkspaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
@@ -53,6 +53,7 @@ import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import { selectFocusedTab } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
 import { isLayoutDragActive } from "../layout/layoutDrag";
@@ -536,6 +537,15 @@ export function AppSidebarLayout({
     usePanelAnimationSettings();
   const pathname = useLocation({ select: (location) => location.pathname });
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
+  // Each chat suppresses its own panels (SurfaceHost). React propagates a context change past
+  // nested providers, so a flip here on a chat switch would re-render every mounted chat twice.
+  const onChatRoute = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params) !== null,
+  });
+  const pagePanelAnimationsSuppressed = usePanelNavigationSuppression(
+    onChatRoute ? "chat" : pathname,
+  );
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isOnDesignSystem =
     DesignSystemSidebarNav !== null &&
@@ -616,7 +626,7 @@ export function AppSidebarLayout({
   }, [isMacosDesktop, windowControlsHidden]);
 
   return (
-    <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
+    <PanelAnimationSuppressionProvider value={pagePanelAnimationsSuppressed}>
       <div
         className={cn(
           "contents",
