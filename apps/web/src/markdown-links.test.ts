@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isLocalEditorFileHref,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
@@ -10,6 +11,37 @@ import {
   markdownFileEditorTarget,
   resolveMarkdownFileHostPath,
 } from "./markdownFileHostPath";
+
+describe("isLocalEditorFileHref", () => {
+  it("accepts absolute file deep links of known editors", () => {
+    for (const href of [
+      "cursor://file/Users/me/repo/file.md:186",
+      "vscode://file/Users/me/repo/file.md:3:7",
+      "vscode-insiders://file/Users/me/repo/file.md",
+      "VSCODE://file/C:/Users/me/repo/file.md:3",
+    ]) {
+      expect(isLocalEditorFileHref(href), href).toBe(true);
+    }
+  });
+
+  it("rejects other hosts, userinfo, relative paths, and unknown schemes", () => {
+    for (const href of [
+      "cursor://anysphere.cursor-deeplink/prompt?text=hi",
+      "vscode://user@file/Users/me/repo/file.md",
+      "vscode://file:8080/Users/me/repo/file.md",
+      "vscode://vscode-remote/ssh-remote+example.com/home/user/project",
+      "cursor://file",
+      "cursor:file/Users/me/repo/file.md",
+      "foo://file/Users/me/repo/file.md",
+      "zed://file/Users/me/repo/file.md",
+      "javascript:alert(1)",
+      "./file.md",
+      "",
+    ]) {
+      expect(isLocalEditorFileHref(href), href).toBe(false);
+    }
+  });
+});
 
 describe("rewriteMarkdownFileUriHref", () => {
   it("preserves encoded octets so file paths are decoded only once later", () => {
@@ -65,11 +97,23 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     expect(resolveInlineCodeFileLinkMeta("AGENTS.md", "/Users/julius/project")).toBeNull();
   });
 
+  it("opens a line range at its first line and keeps the range for the label", () => {
+    expect(resolveInlineCodeFileLinkMeta("src/http.ts:42-64", "/repo")).toMatchObject({
+      targetPath: "/repo/src/http.ts:42",
+      line: 42,
+      endLine: 64,
+    });
+  });
+
   it("does not treat arbitrary name:digits shapes as files", () => {
     expect(resolveInlineCodeFileLinkMeta("error:1", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("TODO:12", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("exit:0", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("port:3000", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("port:3000-3010", "/Users/julius/project")).toBeNull();
+    expect(
+      resolveInlineCodeFileLinkMeta("localhost:3000-3010", "/Users/julius/project"),
+    ).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("http:80", "/Users/julius/project")).toBeNull();
   });
 

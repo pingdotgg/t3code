@@ -9,7 +9,7 @@ description: Apply Better Auth schema changes at deploy, or manage the schema yo
 // worker.ts
 import { BetterAuth } from "@alchemy.run/better-auth";
 import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 const AuthDb = Cloudflare.D1.Database("AuthDb");
@@ -37,7 +37,7 @@ This auth-only Worker declares an optional `timezone` column on the user model. 
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import AuthApi from "./worker.ts";
 
