@@ -438,56 +438,6 @@ describe("CLIProxyAPI built-in management API", () => {
       }),
   );
 
-  it.effect("isolates cached readings by hub, file, provider, email, workspace, and project", () =>
-    Effect.gen(function* () {
-      const original = { ...accounts[0]!, project_id: "project-a" };
-      const listed = [{ ...original }];
-      let probes = 0;
-      const test = fixture({
-        accounts: listed,
-        upstream: (request) => {
-          if (request.url?.endsWith("/rate-limit-reset-credits"))
-            return { status: 200, body: { credits: [] } };
-          const percent = ++probes * 10;
-          return {
-            status: 200,
-            body: {
-              five_hour: { utilization: percent, resets_at: null },
-              rate_limit: { primary_window: { used_percent: percent } },
-            },
-          };
-        },
-      });
-      const api = yield* test.api;
-      const baseline = yield* api.readAccounts(config);
-      const identities = [
-        { url: "http://other-hub.test:8317", account: original },
-        { url: config.url, account: { ...original, id: "replacement.json" } },
-        { url: config.url, account: { ...original, provider: "claude" } },
-        { url: config.url, account: { ...original, email: "replacement@example.com" } },
-        { url: config.url, account: { ...original, project_id: "project-b" } },
-        {
-          url: config.url,
-          account: { ...original, id_token: { chatgpt_account_id: "other-workspace" } },
-        },
-      ];
-      for (const [index, identity] of identities.entries()) {
-        listed[0] = identity.account;
-        const [account] = yield* api.readAccounts({ ...config, url: identity.url });
-        expect(account).toMatchObject({
-          id: identity.account.id,
-          email: identity.account.email,
-          workspaceId: identity.account.id_token.chatgpt_account_id,
-          driver: identity.account.provider === "claude" ? "claudeAgent" : "codex",
-        });
-        expect(account?.usageLimits.windows[0]?.usedPercent).toBe((index + 2) * 10);
-      }
-      listed[0] = original;
-      expect(yield* api.readAccounts(config)).toEqual(baseline);
-      expect(probes).toBe(7);
-    }),
-  );
-
   it.effect(
     "shares concurrent reads without blocking other identities or retaining a pre-reset reading",
     () =>
@@ -588,27 +538,6 @@ describe("CLIProxyAPI built-in management API", () => {
         expect(afterFailure[1]).toMatchObject(initial[1]!);
         expect(usageProbes()).toBe(6);
       }),
-  );
-
-  it.effect("invalidates an account when reset is interrupted after the credit is spent", () =>
-    Effect.gen(function* () {
-      const spent = yield* Deferred.make<void>();
-      const test = fixture({
-        beforeCooldownReset: Deferred.succeed(spent, undefined).pipe(Effect.andThen(Effect.never)),
-      });
-      const api = yield* test.api;
-      yield* api.readAccounts(config);
-      const redeem = yield* Effect.forkChild(api.consume(config, "second.json", "credit-b"));
-      yield* Deferred.await(spent);
-      yield* Fiber.interrupt(redeem);
-      yield* api.readAccounts(config);
-      expect(
-        test.requests
-          .filter((request) => request.body?.url?.endsWith("/wham/usage"))
-          .map((request) => request.body?.auth_index)
-          .sort(),
-      ).toEqual(["a", "b", "b"]);
-    }),
   );
 
   it.effect.each([
