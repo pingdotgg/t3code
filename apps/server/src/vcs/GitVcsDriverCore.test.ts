@@ -5530,8 +5530,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
                       pathOrDescriptor: target,
                     });
                   }),
-            writeFileString: (target, contents) =>
-              Effect.sync(() => NodeFS.writeFileSync(target, contents)),
           }),
           Effect.provide(layerServerConfig),
         );
