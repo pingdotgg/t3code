@@ -102,8 +102,10 @@ describe("makeRelayChannels", () => {
         csp: "sandbox allow-scripts allow-forms allow-popups allow-downloads",
         clearSiteData: null,
       });
-      // A browser's PDF viewer will not load in a sandboxed document.
-      expect((yield* get(port, `${prefix}/file.pdf`)).csp).toBeNull();
+      // Any account can link an environment, so even its PDFs never render with the relay origin.
+      expect((yield* get(port, `${prefix}/file.pdf`)).csp).toBe(
+        "sandbox allow-scripts allow-forms allow-popups allow-downloads",
+      );
       expect(yield* get(port, "/v1/metadata")).toEqual({
         status: 200,
         body: "relay api",

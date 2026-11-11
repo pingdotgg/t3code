@@ -266,11 +266,10 @@ export const makeRelayChannels = () => {
     );
     // Every carried environment shares the relay's origin, and anyone can link one: its responses
     // may not run script with that origin or set cookies the relay and other environments would
-    // see. A PDF viewer refuses a sandboxed frame, and nosniff keeps a PDF from rendering as HTML.
-    const isPdf = contentType?.split(";")[0]?.trim().toLowerCase() === "application/pdf";
+    // see. PDFs stay sandboxed too, so a browser shows them only as downloads, not inline.
     const headers: Record<string, string> = {
       ...forwarded,
-      ...(isPdf ? {} : { "content-security-policy": CARRIED_CONTENT_SECURITY_POLICY }),
+      "content-security-policy": CARRIED_CONTENT_SECURITY_POLICY,
       "x-content-type-options": "nosniff",
     };
     // A root-relative redirect from the environment stays under its prefix.
