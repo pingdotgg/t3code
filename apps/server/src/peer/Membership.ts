@@ -429,14 +429,34 @@ const make = Effect.gen(function* () {
       entry.access === "revoked" || limit === undefined
         ? entry.access
         : narrowerAccess(entry.access, limit);
-    yield* sql`
-        INSERT INTO tailnet_device_policy (environment_id, access, stamp_json, updated_by)
-        VALUES (${entry.environmentId}, ${access}, ${stampJson}, ${entry.updatedAt.node})
-        ON CONFLICT (environment_id) DO UPDATE SET
-          access = excluded.access,
-          stamp_json = excluded.stamp_json,
-          updated_by = excluded.updated_by
-      `;
+    yield* writePolicyRow(entry.environmentId, access, stampJson, entry.updatedAt.node);
+  });
+
+  const writePolicyRow = (
+    environmentId: EnvironmentId,
+    access: TailnetDeviceAccess,
+    stampJson: string,
+    updatedBy: EnvironmentId,
+  ) => sql`
+    INSERT INTO tailnet_device_policy (environment_id, access, stamp_json, updated_by)
+    VALUES (${environmentId}, ${access}, ${stampJson}, ${updatedBy})
+    ON CONFLICT (environment_id) DO UPDATE SET
+      access = excluded.access,
+      stamp_json = excluded.stamp_json,
+      updated_by = excluded.updated_by
+  `;
+
+  /**
+   * The older build's level for a machine outside the roster: its link here only, or none once
+   * that is forgotten. A roster entry is already mirrored by its own writes and outranks it here.
+   */
+  const writeLegacyLocal = Effect.fn("Membership.writeLegacyLocal")(function* (
+    environmentId: EnvironmentId,
+    access: TailnetDeviceAccess,
+  ) {
+    if (Option.isSome(yield* member(environmentId))) return;
+    const at = yield* stamp;
+    yield* writePolicyRow(environmentId, access, yield* encodeStamp(at), at.node);
   });
 
   const write = (entry: NetworkMember) =>
@@ -559,7 +579,11 @@ const make = Effect.gen(function* () {
           label = excluded.label,
           node_id = excluded.node_id,
           access = excluded.access
-      `.pipe(Effect.mapError(storageError));
+      `.pipe(
+        Effect.andThen(writeLegacyLocal(input.environmentId, input.access)),
+        sql.withTransaction,
+        Effect.mapError(storageError),
+      );
       yield* changed();
     },
   );
@@ -567,6 +591,8 @@ const make = Effect.gen(function* () {
   const forgetLocal: Membership["Service"]["forgetLocal"] = Effect.fn("Membership.forgetLocal")(
     function* (environmentId) {
       yield* sql`DELETE FROM network_local_members WHERE environment_id = ${environmentId}`.pipe(
+        Effect.andThen(writeLegacyLocal(environmentId, "revoked")),
+        sql.withTransaction,
         Effect.mapError(storageError),
       );
       yield* changed();

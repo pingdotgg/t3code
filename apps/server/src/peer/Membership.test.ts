@@ -110,4 +110,36 @@ describe("the access an older build sees", () => {
       expect(yield* legacy(studio)).toEqual([["approval-required", phone]]);
     }).pipe(Effect.provide(layerMembership)),
   );
+
+  effectIt.effect("follows machines linked here only, and forgetting one", () =>
+    Effect.gen(function* () {
+      const membership = yield* Membership.Membership;
+      const sql = yield* SqlClient.SqlClient;
+      const legacy = (environmentId: EnvironmentId) =>
+        sql<{ readonly access: string }>`
+          SELECT access FROM tailnet_device_policy WHERE environment_id = ${environmentId}
+        `.pipe(Effect.map((rows) => rows.map((row) => row.access)));
+
+      yield* membership.putLocal({
+        environmentId: box,
+        label: "Box",
+        nodeId: "n-box",
+        access: "read-only",
+      });
+      expect(yield* legacy(box)).toEqual(["read-only"]);
+      // Forgotten here, it is let in nowhere, not at the older build's default.
+      yield* membership.forgetLocal(box);
+      expect(yield* legacy(box)).toEqual(["revoked"]);
+
+      // A member's own entry decides, whatever link it also has here.
+      yield* membership.put({
+        environmentId: studio,
+        label: "Studio",
+        nodeId: null,
+        access: "auto",
+      });
+      yield* membership.forgetLocal(studio);
+      expect(yield* legacy(studio)).toEqual(["auto"]);
+    }).pipe(Effect.provide(layerMembership)),
+  );
 });

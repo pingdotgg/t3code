@@ -1836,6 +1836,36 @@ describe("removing and leaving", () => {
     }),
   );
 
+  it.live(
+    "a session kept on leave, opened through another member, ends on rejoin if its app was removed",
+    () =>
+      Effect.gen(function* () {
+        const { a, b, c } = yield* threeDevices;
+        const phone = yield* pairApp(a, [b, c], {
+          label: "Phone",
+          scopes: AuthStandardClientScopes,
+        });
+        // The phone reaches the headless box only through the laptop.
+        const opened = yield* a.devices.openDevice(box.environmentId, {
+          scopes: AuthStandardClientScopes,
+          subject: `${NETWORK_APP_SUBJECT_PREFIX}${phone.appId}`,
+        });
+        const { access_token } = yield* c.redeem(opened.credential);
+        const caller = yield* c.sessions.verify(access_token);
+
+        yield* c.devices.leave({ sessionId: caller.sessionId });
+        expect(Exit.isSuccess(yield* Effect.exit(c.sessions.verify(access_token)))).toBe(true);
+
+        // While the box is out, the phone is removed from the network; the box rejoins.
+        yield* a.devices.setAppAccess(phone.appId, "revoked");
+        yield* c.devices.allowJoin;
+        yield* a.devices.admit(box.environmentId, "full-access");
+
+        expect(yield* c.membership.appAccessOf(phone.appId)).toEqual(Option.some("revoked"));
+        expect(Exit.isFailure(yield* Effect.exit(c.sessions.verify(access_token)))).toBe(true);
+      }),
+  );
+
   it.live("the last full-access machine cannot leave others stranded", () =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;

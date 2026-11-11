@@ -386,6 +386,25 @@ const make = Effect.gen(function* () {
   }, Effect.mapError(storageError));
 
   /**
+   * Ends app sessions here whose app is not live in `apps`: a machine that rejoins after leaving
+   * kept sessions it can no longer check against what was revoked or replaced meanwhile.
+   */
+  const cutAppsNotIn = Effect.fn("TailnetDevices.cutAppsNotIn")(function* (
+    apps: ReadonlyArray<NetworkApp>,
+  ) {
+    const live = new Set(apps.filter((app) => app.access !== "revoked").map((app) => app.appId));
+    const active = yield* auth.listSessions();
+    yield* Effect.forEach(
+      active.filter((session) => {
+        const appId = appIdOf(session.subject);
+        return appId !== undefined && !live.has(appId);
+      }),
+      (session) => sessions.revoke(session.sessionId),
+      { discard: true },
+    );
+  }, Effect.mapError(storageError));
+
+  /**
    * Linked environments is on, and this is not a dev server: each worktree has a fresh
    * environment that must never join the owner's network.
    */
@@ -1615,6 +1634,7 @@ const make = Effect.gen(function* () {
           return false;
         }
         yield* membership.adopt({ members: offered.members, apps: offered.apps });
+        yield* cutAppsNotIn(offered.apps);
         yield* seedLimits(
           offered.members
             .map((member) => member.environmentId)
