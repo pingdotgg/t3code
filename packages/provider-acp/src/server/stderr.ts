@@ -1,4 +1,4 @@
-export const ACP_STDERR_TAIL_MAX_CHARS = 4_096;
+const ACP_STDERR_TAIL_MAX_CHARS = 4_096;
 
 const PAIRING_URL_PATTERN = /https?:\/\/[^\s]*\/pair#[^\s]*/gi;
 const SIGN_IN_URL_PATTERN = /https?:\/\/accounts\.google\.com[^\s]*/gi;
@@ -6,7 +6,7 @@ const BEARER_TOKEN_PATTERN = /\bBearer\s+[A-Za-z0-9._\-+=/]+/gi;
 const BASIC_AUTH_PATTERN = /\bAuthorization:\s*Basic\s+\S+/gi;
 const API_KEY_HEADER_PATTERN = /\bx-api-key:\s*\S+/gi;
 const SECRET_TOKEN_PATTERN =
-  /\b(?:sk-[A-Za-z0-9][A-Za-z0-9-]{7,}|ghp_[A-Za-z0-9]+|xox[a-zA-Z]-[A-Za-z0-9-]+)\b/g;
+  /\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}|ghp_[A-Za-z0-9]+|xox[a-zA-Z]-[A-Za-z0-9-]+)\b/g;
 
 export function appendAcpStderrTail(current: string, chunk: string): string {
   const next = `${current}${chunk}`;

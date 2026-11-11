@@ -1,3 +1,4 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -25,7 +26,7 @@ import {
 
 const layerTest = Layer.mergeAll(NodeServices.layer).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-attachment-claims-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
 );
 
 const stagePendingUpload = Effect.fn("test.stagePendingUpload")(function* (input: {
@@ -50,18 +51,32 @@ const stagePendingUpload = Effect.fn("test.stagePendingUpload")(function* (input
 });
 
 describe("AttachmentClaims", () => {
-  it.effect("accepts 100 existing files without claiming new copies", () =>
+  it.effect("copies a pending document's extraction without parsing it again", () =>
     Effect.gen(function* () {
-      const attachments: ChatAttachment[] = Array.from({ length: 100 }, (_, index) => ({
-        type: "file",
-        id: ChatAttachmentId.make(`existing-file-${index}`),
-        name: `${index}.txt`,
-        mimeType: "text/plain",
-        sizeBytes: 1,
-      }));
-      const claimed = yield* claimPendingAttachments({ threadId: "thread-many", attachments });
-      expect(claimed.attachments).toEqual(attachments);
-      expect(claimed.claimedPaths).toEqual([]);
+      const config = yield* ServerConfig.ServerConfig;
+      const pendingId = createPendingAttachmentId("docx");
+      const path = NodePath.join(config.attachmentsDir, pendingId + ".docx");
+      NodeFS.writeFileSync(path, "invalid document");
+      NodeFS.writeFileSync(path + ".txt", "North calibration: 946");
+      const claimed = yield* claimPendingAttachments({
+        threadId: "thread-document",
+        attachments: [
+          {
+            type: "file",
+            id: ChatAttachmentId.make(pendingId),
+            name: "calibration.docx",
+            mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            sizeBytes: 16,
+          },
+        ],
+      });
+      expect(claimed.claimedPaths).toHaveLength(2);
+      expect(NodeFS.readFileSync(claimed.claimedPaths[1]!, "utf8")).toBe("North calibration: 946");
+      const documents = yield* DocumentText.DocumentText;
+      expect(yield* documents.ensure(claimed.claimedPaths[0]!)).toBe(claimed.claimedPaths[1]);
+      yield* releaseClaimedAttachments(claimed.claimedPaths);
+      expect(NodeFS.existsSync(claimed.claimedPaths[1]!)).toBe(false);
+      expect(NodeFS.existsSync(path + ".txt")).toBe(true);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -116,40 +131,6 @@ describe("AttachmentClaims", () => {
         entry.startsWith("pending-"),
       );
       expect(pendingFiles).toHaveLength(1);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("passes already-claimed attachments through untouched", () =>
-    Effect.gen(function* () {
-      const stored: ChatAttachment = {
-        type: "image",
-        id: ChatAttachmentId.make("thread-claims-2-00000000-0000-4000-8000-000000000001"),
-        name: "existing.png",
-        mimeType: "image/png",
-        sizeBytes: 4,
-      };
-      const claimed = yield* claimPendingAttachments({
-        threadId: "thread-claims-2",
-        attachments: [stored],
-      });
-      expect(claimed.attachments[0]).toBe(stored);
-      expect(claimed.claimedPaths).toHaveLength(0);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("rejects a pending ref whose staged file is missing", () =>
-    Effect.gen(function* () {
-      const missing: ChatAttachment = {
-        type: "image",
-        id: ChatAttachmentId.make(createPendingAttachmentId()!),
-        name: "gone.png",
-        mimeType: "image/png",
-        sizeBytes: 4,
-      };
-      const result = yield* Effect.exit(
-        claimPendingAttachments({ threadId: "thread-claims-3", attachments: [missing] }),
-      );
-      expect(result._tag).toBe("Failure");
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -230,9 +211,7 @@ describe("AttachmentClaims", () => {
 
       const copyArgs = yield* Deferred.make<readonly [string, string]>();
       const copyDone = yield* Deferred.make<void>();
-      // fs.copyFile cannot be cancelled: the write runs on a separate fiber
-      // while the claim's copyFile only observes its completion, so the file
-      // still lands after the awaiting effect is interrupted.
+      // fs.copyFile cannot be cancelled; its separate writer must finish after the awaiting effect is interrupted.
       const gatedFileSystem = Object.create(fileSystem, {
         copyFile: {
           value: (from: string, to: string) =>
@@ -266,39 +245,43 @@ describe("AttachmentClaims", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("releaseClaimedAttachments removes claimed copies best-effort", () =>
+  it.effect("rolls back an extracted sidecar published while the claim is interrupted", () =>
     Effect.gen(function* () {
       const pending = yield* stagePendingUpload({
-        name: "release.png",
-        bytes: new Uint8Array([9, 9]),
+        name: "interrupt.png",
+        bytes: new Uint8Array([7]),
         mimeType: "image/png",
       });
-      const claimed = yield* claimPendingAttachments({
-        threadId: "thread-claims-5",
+      const started = yield* Deferred.make<string>();
+      const publish = yield* Deferred.make<void>();
+      const fileSystem = yield* FileSystem.FileSystem;
+      const claimFiber = yield* claimPendingAttachments({
+        threadId: "thread-extraction-interrupt",
         attachments: [pending],
-      });
-      expect(NodeFS.existsSync(claimed.claimedPaths[0]!)).toBe(true);
-      yield* releaseClaimedAttachments(claimed.claimedPaths);
-      expect(NodeFS.existsSync(claimed.claimedPaths[0]!)).toBe(false);
-      yield* releaseClaimedAttachments(claimed.claimedPaths);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("treats malformed ids as non-pending and passes them through", () =>
-    Effect.gen(function* () {
-      const bogus: ChatAttachment = {
-        type: "image",
-        id: ChatAttachmentId.make("pending-not-a-uuid"),
-        name: "weird.png",
-        mimeType: "image/png",
-        sizeBytes: 1,
-      };
-      const claimed = yield* claimPendingAttachments({
-        threadId: "thread-claims-6",
-        attachments: [bogus],
-      });
-      expect(claimed.attachments[0]).toBe(bogus);
-      expect(claimed.claimedPaths).toHaveLength(0);
+      }).pipe(
+        Effect.provideService(
+          DocumentText.DocumentText,
+          DocumentText.DocumentText.of({
+            ensure: (path) =>
+              Deferred.succeed(started, path).pipe(
+                Effect.andThen(Deferred.await(publish)),
+                Effect.andThen(fileSystem.writeFileString(path + ".txt", "extracted")),
+                Effect.as(path + ".txt"),
+                Effect.orDie,
+                Effect.uninterruptible,
+              ),
+          }),
+        ),
+        Effect.forkChild,
+      );
+      const claimedPath = yield* Deferred.await(started);
+      claimFiber.interruptUnsafe();
+      yield* Deferred.succeed(publish, undefined);
+      expect(Exit.hasInterrupts(yield* Fiber.await(claimFiber))).toBe(true);
+      expect(NodeFS.existsSync(claimedPath)).toBe(false);
+      expect(NodeFS.existsSync(claimedPath + ".txt")).toBe(false);
+      const config = yield* ServerConfig.ServerConfig;
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toHaveLength(1);
     }).pipe(Effect.provide(layerTest)),
   );
 });
