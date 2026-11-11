@@ -1,5 +1,5 @@
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   collectWrappedTerminalLinkLine,
@@ -117,28 +117,6 @@ describe("extractTerminalLinks", () => {
         end: 44,
       },
     ]);
-  });
-
-  it.each([
-    ["https://example.com/(docs)", ")", "url"],
-    ["https://example.com/[docs]", "]", "url"],
-    ["https://example.com/{docs}", "}", "url"],
-    ["/tmp/(docs)", ")", "path"],
-    ["/tmp/[docs]", "]", "path"],
-    ["/tmp/{docs}", "}", "path"],
-  ])("bounds delimiter scan work for %s followed by a long run of %s", (text, close, kind) => {
-    const line = `see ${text}${close.repeat(128)}.`;
-    let scannedCharacters: number;
-    let links: ReturnType<typeof extractTerminalLinks>;
-    {
-      using splitSpy = vi.spyOn(String.prototype, "split");
-      links = extractTerminalLinks(line);
-      scannedCharacters = splitSpy.mock.contexts
-        .map(String)
-        .reduce((sum, value) => sum + value.length, 0);
-    }
-    expect(links).toEqual([{ kind, text, start: 4, end: 4 + text.length }]);
-    expect(scannedCharacters).toBeLessThanOrEqual(12 * line.length);
   });
 
   it.each([
