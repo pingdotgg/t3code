@@ -1048,7 +1048,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
 });
 
 describe("AntigravityAdapterV2 runtime mode ceiling", () => {
-  const modesSetFor = (pickedMode: string) =>
+  const modesSetFor = (pickedMode: string, strictModelOptions = false) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -1099,6 +1099,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
           interactionMode: "default",
           cwd: process.cwd(),
           maxRuntimeMode: "auto-accept-edits",
+          ...(strictModelOptions ? { strictModelOptions } : {}),
         }),
       });
       return modesSet;
@@ -1106,9 +1107,12 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
 
   it.effect("does not apply a picked session mode above the policy ceiling", () =>
     Effect.gen(function* () {
-      assert.deepEqual(yield* modesSetFor("yolo"), ["default"]);
-      // A mode under the ceiling is still the user's to pick.
-      assert.deepEqual(yield* modesSetFor("auto_edit"), ["default", "auto_edit"]);
+      // A delegated task approved on a mode above the ceiling runs narrower instead of failing.
+      for (const strict of [false, true]) {
+        assert.deepEqual(yield* modesSetFor("yolo", strict), ["default"]);
+        // A mode under the ceiling is still the user's to pick.
+        assert.deepEqual(yield* modesSetFor("auto_edit", strict), ["default", "auto_edit"]);
+      }
     }),
   );
 });

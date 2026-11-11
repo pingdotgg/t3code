@@ -556,7 +556,10 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     ),
     // The generic option loop runs after the model write, and an agent write
     // there would put the agent's own model back.
-    ownedModelOptionIds: ["reasoningEffort", KIRO_AGENT_CONFIG_ID],
+    ownedModelOptions: [
+      { id: "reasoningEffort", nativeId: KIRO_EFFORT_CONFIG_ID },
+      { id: KIRO_AGENT_CONFIG_ID, nativeId: KIRO_AGENT_CONFIG_ID },
+    ],
     // With Autopilot off (Supervised) Kiro asks the user to accept a turn's
     // changes before it ends. T3's runtime policy answers its per-tool prompts
     // either way, and a runtime-mode change reopens the session to reapply it.

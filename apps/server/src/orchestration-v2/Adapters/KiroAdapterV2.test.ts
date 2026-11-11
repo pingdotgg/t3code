@@ -300,6 +300,7 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
   /** Option selections (e.g. reasoningEffort) for the session and `startTurn`. */
   readonly options?: ModelSelection["options"];
   readonly runtimeMode?: RuntimeMode;
+  readonly strictModelOptions?: boolean;
   /** Holds the script's inbound frames at labels the test releases. */
   readonly replayGate?: ProviderReplayGate;
   readonly testHooks?: Parameters<typeof makeKiroAdapterV2>[0]["testHooks"];
@@ -380,6 +381,9 @@ const runKiroScript = Effect.fn("runKiroScript")(function* (input: {
     runtimeMode: input.runtimeMode ?? "approval-required",
     interactionMode: "default",
     cwd: replayDir,
+    ...(input.strictModelOptions === undefined
+      ? {}
+      : { strictModelOptions: input.strictModelOptions }),
   });
   yield* Effect.gen(function* () {
     const session = yield* adapter.openSession({
@@ -956,6 +960,60 @@ describe("KiroAdapterV2 agents", () => {
           yield* startTurn;
           assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
         }),
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+});
+
+describe("KiroAdapterV2 delegated task options", () => {
+  const agentOptions = [modeOption, kiroModelOption("auto"), autopilotOption("on")];
+  it.effect.each([
+    {
+      name: "an agent the session does not list",
+      options: [{ id: "mode", value: "deleted-agent" }],
+      frames: [],
+    },
+    {
+      name: "an effort the model does not offer",
+      options: reasoning("xhigh"),
+      model: "claude-opus-4.6",
+      frames: [
+        setConfig("model", "claude-opus-4.6"),
+        configResult([
+          modeOption,
+          kiroModelOption("claude-opus-4.6"),
+          autopilotOption("on"),
+          effortOption("high", CLAUDE_4_6_EFFORT_LEVELS),
+        ]),
+      ],
+    },
+  ])("does not start a delegated task on $name, which Kiro would skip", (input) =>
+    Effect.gen(function* () {
+      const refused = yield* runKiroScript({
+        scenario: `strict-${input.options[0]!.id}`,
+        strictModelOptions: true,
+        options: input.options,
+        ...(input.model === undefined ? {} : { model: input.model }),
+        frames: [
+          outbound("initialize"),
+          answer("initialize", KIRO_V3_INITIALIZE),
+          outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+          answer("session/new", sessionSetup(agentOptions)),
+          ...input.frames,
+          setConfig("autopilot", "off"),
+          configResult([
+            modeOption,
+            kiroModelOption(input.model ?? "auto"),
+            autopilotOption("off"),
+            ...(input.model === undefined ? [] : [effortOption("high", CLAUDE_4_6_EFFORT_LEVELS)]),
+          ]),
+          ...closeSession,
+        ],
+        drive: () => Effect.void,
+      }).pipe(Effect.flip);
+      assert.equal(
+        (refused as { readonly cause?: { readonly _tag?: string } }).cause?._tag,
+        "AcpModelOptionError",
+      );
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });

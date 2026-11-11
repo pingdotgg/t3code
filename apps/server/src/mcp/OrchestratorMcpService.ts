@@ -1,4 +1,5 @@
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   CommandId,
   type EnvironmentId,
   type RunId,
@@ -2595,6 +2596,13 @@ const make = Effect.gen(function* () {
           parent.thread.modelSelection,
           input.target,
         );
+        // The receiver resolves the default to whatever it runs then, which no card can name.
+        if (proposed?.model === ANTIGRAVITY_DEFAULT_MODEL) {
+          return yield* failure(
+            "target_required",
+            `${ANTIGRAVITY_DEFAULT_MODEL} names whichever model that environment picks when the task starts. Pass a concrete target.model from orchestrator_capabilities with this environmentId.`,
+          );
+        }
         if (proposed === undefined) {
           return yield* failure(
             "target_required",

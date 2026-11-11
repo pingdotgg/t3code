@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   CommandId,
   ContextTransferId,
   EnvironmentId,
@@ -3178,6 +3179,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       readonly parentModesNarrowOnAsk?: boolean;
       /** The thread's selection, as `t3_thread_configure` leaves it, while its run keeps its own. */
       readonly threadSelection?: Parameters<typeof parentProjection>[1];
+      /** What the parent's thread and run start on, instead of `inherited`. */
+      readonly selection?: Parameters<typeof parentProjection>[1];
     }) =>
       Effect.gen(function* () {
         const commands: Array<OrchestrationV2ServerCommand> = [];
@@ -3199,13 +3202,14 @@ describe("OrchestratorMcpService provider resolution", () => {
         const delegations = () =>
           commands.filter((command) => command.type === "delegated_task.request");
         const parent = () => {
-          const projection = parentProjection(delegations().length > 0 ? [task] : [], inherited);
+          const selection = input.selection ?? inherited;
+          const projection = parentProjection(delegations().length > 0 ? [task] : [], selection);
           return {
             ...projection,
             thread: {
               ...projection.thread,
               ...parentModes,
-              modelSelection: input.threadSelection ?? inherited,
+              modelSelection: input.threadSelection ?? selection,
             },
             runs: projection.runs.map((run) =>
               parentRunEnded ? { ...run, status: "completed" } : run,
@@ -3265,6 +3269,8 @@ describe("OrchestratorMcpService provider resolution", () => {
                   name: model,
                   isCustom: false,
                   capabilities: null,
+                  // The probe marks its current model as the default, which a running task need not be on.
+                  ...(model === "other-model" ? { aliases: [ANTIGRAVITY_DEFAULT_MODEL] } : {}),
                 })),
                 {
                   slug: "ultracode-model",
@@ -3555,6 +3561,45 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         assert.deepEqual(approvals(), []);
         assert.equal(remoteDelegations.length, 1);
+
+        // The receiver resolves this default when the task starts, so no card can name it.
+        const unresolved = { instanceId: codexInstanceId, model: ANTIGRAVITY_DEFAULT_MODEL };
+        for (const [selection, target] of [
+          [unresolved, { environmentId: remoteEnvironmentId }],
+          [inherited, { environmentId: remoteEnvironmentId, model: ANTIGRAVITY_DEFAULT_MODEL }],
+        ] as const) {
+          const run = yield* harness({ decide: () => "approved", selection });
+          const refused = yield* delegate(run.service, target, "remote-default").pipe(Effect.flip);
+          assert.propertyVal(refused, "code", "target_required");
+          assert.deepEqual(run.approvals(), []);
+          assert.deepEqual(run.remoteDelegations, []);
+        }
+        // A parent on that default names no model a concrete target matches, so the user is asked.
+        const concrete = yield* harness({ decide: () => "approved", selection: unresolved });
+        yield* delegate(
+          concrete.service,
+          { environmentId: remoteEnvironmentId, model: "other-model" },
+          "remote-concrete",
+        ).pipe(Effect.result);
+        const concreteProposed = { instanceId: codexInstanceId, model: "other-model" };
+        assert.deepEqual(
+          concrete
+            .approvals()
+            .map(
+              (command) =>
+                command.type === "delegation_approval.record" && [
+                  command.current,
+                  command.proposed,
+                ],
+            ),
+          [[unresolved, concreteProposed]],
+        );
+        assert.deepEqual(
+          concrete.remoteDelegations.map(
+            (delegated) => (delegated as { modelSelection: unknown }).modelSelection,
+          ),
+          [concreteProposed],
+        );
       }),
     );
   });

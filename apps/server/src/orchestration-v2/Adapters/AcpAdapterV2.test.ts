@@ -5822,6 +5822,132 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  const approvedAgent = { id: "agent", value: "example" } as const;
+  it.effect.each([
+    { name: "an option the session lacks", options: [{ id: "missing", value: "x" }] },
+    { name: "a value the option does not offer", options: [{ id: "agent", value: "other" }] },
+    { name: "a value the agent rejects", options: [approvedAgent], set: "reject" },
+    { name: "a value the agent leaves unchanged", options: [approvedAgent], set: "ignore" },
+    { name: "an idle update resets the option", options: [approvedAgent], set: "drift" },
+    {
+      name: "a value a later option's write resets",
+      options: [approvedAgent, { id: "mode", value: "code" }],
+      set: "reset",
+    },
+    {
+      name: "a permitted session mode the agent does not offer",
+      options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: "missing" }],
+    },
+  ] as const)(
+    "a delegated task's session fails on $name, which an ordinary session skips",
+    ({ options, ...agent }) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("acp-test-strict-options");
+        let resetAgent: () => Effect.Effect<unknown, EffectAcpErrors.AcpError> = () => Effect.void;
+        let prompts = 0;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION: "1" },
+              wrapRuntime: (runtime) => {
+                resetAgent = () => runtime.setConfigOption("agent", "");
+                return {
+                  ...runtime,
+                  prompt: (...args) => {
+                    prompts += 1;
+                    return runtime.prompt(...args);
+                  },
+                  setConfigOption: (configId, value, setOptions) => {
+                    const write = runtime.setConfigOption(configId, value, setOptions);
+                    if (!("set" in agent) || agent.set === "drift") return write;
+                    if (agent.set === "reset") {
+                      // The mode write's snapshot puts the agent back to its default.
+                      return configId === "mode"
+                        ? write.pipe(Effect.andThen(runtime.setConfigOption("agent", "")))
+                        : write;
+                    }
+                    if (configId !== "agent") return write;
+                    return agent.set === "reject"
+                      ? Effect.fail(EffectAcpErrors.AcpRequestError.invalidParams("Mock refusal"))
+                      : Effect.succeed({ configOptions: [] });
+                  },
+                };
+              },
+            }),
+          },
+          selfInvocation: yield* resolveSelfInvocation(),
+        });
+        const modelSelection = {
+          instanceId,
+          model: "default",
+          options,
+        } satisfies ModelSelection;
+        const open = (strictModelOptions: boolean) =>
+          Effect.gen(function* () {
+            const threadId = ThreadId.make(`thread-acp-strict-options-${strictModelOptions}`);
+            const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+              ...(strictModelOptions ? { strictModelOptions } : {}),
+            });
+            const session = yield* adapter.openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make(
+                `provider-session-acp-strict-options-${strictModelOptions}`,
+              ),
+              modelSelection,
+              runtimePolicy,
+            });
+            if (strictModelOptions && "set" in agent && agent.set === "drift") {
+              const providerThread = yield* session.ensureThread({
+                threadId,
+                modelSelection,
+                runtimePolicy,
+              });
+              yield* resetAgent();
+              yield* session.startTurn(
+                makeTurnInput({
+                  threadId,
+                  providerThread,
+                  instanceId,
+                  modelSelection,
+                  runtimePolicy,
+                  now: yield* DateTime.now,
+                }),
+              );
+            }
+          }).pipe(Effect.scoped);
+
+        yield* open(false);
+        const result = yield* open(true).pipe(Effect.result);
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(
+            result.failure._tag,
+            "set" in agent && agent.set === "drift"
+              ? "ProviderAdapterTurnStartError"
+              : "ProviderAdapterOpenSessionError",
+          );
+          assert.equal(
+            (result.failure.cause as { readonly _tag?: string })._tag,
+            "AcpModelOptionError",
+          );
+        }
+        assert.equal(prompts, 0);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("terminalizes an empty successful foreground Bash tool when the turn completes", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
