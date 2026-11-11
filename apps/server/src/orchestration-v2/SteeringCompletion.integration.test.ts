@@ -1591,6 +1591,7 @@ const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
     "events" | "started" | "startFirstTurn"
   >,
   siblingFinishesFirst: boolean,
+  userRunBeforeWake = false,
 ) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -1692,6 +1693,24 @@ const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
     })),
   });
   yield* finishTurn(origin);
+  // The wake queues behind a user run that started after the origin run finished.
+  if (userRunBeforeWake) {
+    const userRunning = yield* watchTurnRunning(2);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("command:user-run"),
+      threadId,
+      messageId: MessageId.make("message:user-run"),
+      text: "unrelated question",
+      attachments: [],
+      modelSelection: runSelection,
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* worker.drain();
+    yield* Fiber.join(userRunning);
+  }
 
   const completeTask = (taskId: NodeId) =>
     orchestrator.dispatch({
@@ -1725,19 +1744,55 @@ const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
     createdBy: "agent",
     creationSource: "server",
   });
-  const wakeRunning = yield* watchTurnRunning(2);
+  const wakeOrdinal = userRunBeforeWake ? 3 : 2;
+  const wakeRunning = yield* watchTurnRunning(wakeOrdinal);
+  if (userRunBeforeWake) yield* finishTurn(harness.started[1]!);
   yield* orchestrator.resumeQueuedRuns;
   yield* worker.drain();
   yield* Fiber.join(wakeRunning);
-  const wake = harness.started[1]!;
+  const wake = harness.started[wakeOrdinal - 1]!;
   assert.equal(wake.message.messageId, firstDelivery.messageId);
+  if (userRunBeforeWake) {
+    // The wake's run holds a compaction, so the window starts at the user run and drops the origin.
+    const compactedAt = yield* DateTime.now;
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("event:wake-compaction"),
+          type: "turn-item.updated" as const,
+          threadId,
+          runId: wake.runId,
+          nodeId: wake.rootNodeId,
+          occurredAt: compactedAt,
+          payload: {
+            id: TurnItemId.make("item:wake-compaction"),
+            threadId,
+            runId: wake.runId,
+            nodeId: wake.rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1_000,
+            status: "completed" as const,
+            title: null,
+            startedAt: compactedAt,
+            completedAt: compactedAt,
+            updatedAt: compactedAt,
+            type: "compaction" as const,
+            driver,
+          },
+        },
+      ],
+    });
+  }
 
   if (siblingFinishesFirst) {
     yield* completeTask(siblingTaskId);
   }
 
   // The provider cannot steer natively, so the steer restarts the wake run.
-  const steeredRunning = yield* watchTurnRunning(3);
+  const steeredRunning = yield* watchTurnRunning(wakeOrdinal + 1);
   yield* orchestrator.dispatch({
     type: "message.dispatch",
     commandId: CommandId.make("command:steer-wake"),
@@ -1752,7 +1807,7 @@ const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
   });
   yield* worker.drain();
   yield* Fiber.join(steeredRunning);
-  const steered = harness.started[2]!;
+  const steered = harness.started[wakeOrdinal]!;
   assert.equal(steered.runId, wake.runId);
   assert.equal(
     (yield* orchestrator.getThreadProjection(threadId)).attempts.find(
@@ -1833,6 +1888,28 @@ it.effect("wakes the parent for a sibling result after a steer restarts the comp
           tasks.get(firstTaskId),
           "delivered",
           "the steered wake run's own task stays claimed after that run completed",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  ),
+);
+
+it.effect("settles a steered completion wake whose parent run is before the last compaction", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* nextTurnSelectionHarness("steered-wake-after-compaction", true, false);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const { threadId, steered, firstTaskId, finishTurn } = yield* restartCompletionWake(
+          harness,
+          false,
+          true,
+        );
+        yield* finishTurn(steered);
+        const tasks = (yield* orchestrator.getThreadProjection(threadId)).subagents;
+        assert.equal(
+          tasks.find((task) => task.id === firstTaskId)?.completionDelivery?.state,
+          "delivered",
         );
       }).pipe(Effect.provide(harness.layer));
     }),

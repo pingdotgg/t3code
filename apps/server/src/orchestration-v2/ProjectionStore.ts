@@ -3320,18 +3320,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       keepRunIds: ReadonlyArray<RunId>,
     ) {
       // Starts at the last prompt before the compaction: a model switch is measured from the
-      // last run whose prompt the timeline shows, and `/compact` runs are not shown.
+      // last run `modelSwitchSince` counts, so `/compact` and async-answer runs are skipped
+      // unless a context handoff shows them.
       const [compaction] = yield* sql<{ readonly from_ordinal: number }>`
           SELECT COALESCE(
             (SELECT previous.ordinal FROM orchestration_v2_projection_runs AS previous
              WHERE previous.thread_id = ${threadId} AND previous.ordinal < latest.ordinal
                AND previous.status NOT IN ('queued', 'rolled_back')
-               AND CASE WHEN json_valid(previous.payload_json) THEN NOT EXISTS (
-                 SELECT 1 FROM orchestration_v2_projection_messages AS prompt
-                 WHERE prompt.message_id = json_extract(previous.payload_json, '$.userMessageId')
-                   AND prompt.role = 'user'
-                   AND coalesce(json_array_length(prompt.payload_json, '$.attachments'), 0) = 0
-                   AND ${trimmedLowerText(sql.literal("prompt.payload_json"))} = ${IDLE_COMPACTION_TEXT}
+               AND CASE WHEN json_valid(previous.payload_json) THEN (
+                 json_extract(previous.payload_json, '$.contextHandoffId') IS NOT NULL
+                 OR NOT (
+                   json_extract(previous.payload_json, '$.userMessageId') LIKE 'async-answer:%'
+                   OR EXISTS (
+                     SELECT 1 FROM orchestration_v2_projection_messages AS prompt
+                     WHERE prompt.message_id = json_extract(previous.payload_json, '$.userMessageId')
+                       AND prompt.role = 'user'
+                       AND coalesce(json_array_length(prompt.payload_json, '$.attachments'), 0) = 0
+                       AND ${trimmedLowerText(sql.literal("prompt.payload_json"))} = ${IDLE_COMPACTION_TEXT}
+                   )
+                 )
                ) ELSE 0 END
              ORDER BY previous.ordinal DESC
              LIMIT 1),
