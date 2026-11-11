@@ -100,6 +100,8 @@ describe("claudeResetCreditsToContract", () => {
             clears: ["seven_day", "seven_day_overage_included", ""],
           }),
           grant({ id: "spent", clears: ["seven_day"], resets_left: 0 }),
+          grant({ id: "weekly_b", clears: ["seven_day"], resets_left: 2 }),
+          grant({ id: "model_weekly", clears: ["seven_day_overage_included"] }),
         ],
       },
       NOW,
@@ -115,11 +117,12 @@ describe("claudeResetCreditsToContract", () => {
       ]),
     ).toEqual([
       ["session_a", "5-hour reset", 1, ["five_hour"], undefined],
-      ["weekly_a", "Weekly reset", 1, ["seven_day"], undefined],
+      ["weekly_a", "Weekly reset", 3, ["seven_day"], undefined],
+      ["model_weekly", "Weekly reset", 1, ["seven_day_fable"], "Fable"],
       ["fable_a", "Fable reset", 2, ["seven_day_fable"], "Fable"],
       ["full_a", "Full reset", 1, ["seven_day"], undefined],
     ]);
-    expect(credits).toMatchObject({ availableCount: 5, nextCreditId: "weekly_a" });
+    expect(credits).toMatchObject({ availableCount: 8, nextCreditId: "weekly_a" });
   });
 
   it("offers nothing to redeem without a usable next grant or an eligible account", () => {
