@@ -78,9 +78,9 @@ describe("fleetSeatCommandTarget", () => {
 
 describe("fleetSeatAddressabilityHint", () => {
   it.each([
-    ["ready", "Addressable on Box."],
+    ["ready", "Open on Box"],
     ["connecting", "Connecting to Box…"],
-    ["unavailable", "Connect to Box to address this seat from here."],
+    ["unavailable", "Connect to Box to open this seat."],
   ] as const)("explains %s", (addressability, hint) => {
     expect(fleetSeatAddressabilityHint(addressability, "Box")).toBe(hint);
   });

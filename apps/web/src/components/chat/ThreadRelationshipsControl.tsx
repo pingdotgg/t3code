@@ -263,8 +263,7 @@ function currentSubagent<Agent extends RuntimeSubagent>(
 
 /**
  * A task delegated to a linked environment. It has no thread here, so it opens
- * the seat there when this client is connected to that environment — the same
- * fleet address used to queue or send without leaving the team surface.
+ * the seat there when this client is connected to that environment.
  */
 function RemoteSubagentRow(props: {
   readonly agent: RemoteSubagent;
@@ -329,7 +328,7 @@ function RemoteSubagentRow(props: {
             title={title}
             hint={
               addressable
-                ? `Addressable on ${remoteChild.label}. Open to queue or send.`
+                ? `Open on ${remoteChild.label}`
                 : fleetSeatAddressabilityHint(addressability, remoteChild.label)
             }
           />

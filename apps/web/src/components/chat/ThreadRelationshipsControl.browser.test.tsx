@@ -329,7 +329,7 @@ it("shows a remote subagent's full title in its tooltip even when its environmen
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
   );
   expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
-    "Connect to Remote VM with a long machine name in the office to address this seat from here.",
+    "Connect to Remote VM with a long machine name in the office to open this seat.",
   );
 
   await row.click({ force: true });

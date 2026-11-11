@@ -15,8 +15,8 @@ import type { EnvironmentConnectionPhase } from "./connection/presentation.ts";
 import type { StartThreadTurnInput } from "./operations/commands.ts";
 
 /**
- * A specialist or thread seat addressed across environments, like OpenRig's
- * `--host` target: identity is the environment, not the route that reached it.
+ * Remote `{environmentId, threadId}` addressing for connected environments.
+ * Infrastructure only — not a finished human “queue remotely” UX.
  */
 export type FleetSeatAddress = ScopedThreadRef;
 
@@ -75,8 +75,9 @@ export type FleetQueueCreateMessage = {
 };
 
 /**
- * Queue a new turn on an existing seat without navigating away. Uses the same
- * `message.dispatch` queue path as the composer (`dispatchMode: "queue"`).
+ * Builds a `startTurn` input with `dispatchMode: "queue"` for a seat on a
+ * connected environment. Callers still need Connect-to-environment UX before
+ * presenting this as a product action.
  */
 export function fleetQueueCreateTurnInput(input: {
   readonly seat: FleetSeatAddress;
@@ -105,10 +106,10 @@ export function fleetSeatAddressabilityHint(
 ): string {
   switch (addressability) {
     case "ready":
-      return `Addressable on ${label}.`;
+      return `Open on ${label}`;
     case "connecting":
       return `Connecting to ${label}…`;
     case "unavailable":
-      return `Connect to ${label} to address this seat from here.`;
+      return `Connect to ${label} to open this seat.`;
   }
 }
