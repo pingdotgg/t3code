@@ -899,9 +899,15 @@ function queueTailModelSelection(
   );
 }
 
+/**
+ * The provider's latest run stopped on its usage limit and nothing ran after it.
+ * With `now` (automatic starts), a run on another provider since does not lift
+ * a reported reset still in the future; an unknown reset is lifted, as transient 429s are.
+ */
 function usageLimitHoldsQueue(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: ModelSelection["instanceId"],
+  now?: DateTime.Utc,
 ): boolean {
   let latestSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
   for (const session of projection.providerSessions) {
@@ -913,10 +919,16 @@ function usageLimitHoldsQueue(
       latestSession = session;
     }
   }
-  return (
-    usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
-      ?.providerInstanceId === providerInstanceId
+  const limited = usageLimitBlockedRun(
+    projection.runs.filter((run) => run.providerInstanceId === providerInstanceId),
+    projection.turnItems,
+    latestSession?.lastError ?? null,
   );
+  if (limited === null) return false;
+  if (latestExecutedRun(projection.runs)?.id === limited.id) return true;
+  if (now === undefined) return false;
+  const resetAt = latestRootProviderFailure(limited, projection.turnItems)?.resetAt;
+  return resetAt != null && Date.parse(resetAt) > DateTime.toEpochMillis(now);
 }
 
 function latestStableRun(
@@ -1036,12 +1048,16 @@ function latestContextTransfer(
 }
 
 export function shouldPrepareLegacyImportHandoff(input: {
+  readonly hasNativeHistory?: boolean;
   readonly hasCompletedRun: boolean;
   readonly historyOrigin: OrchestrationV2AppThread["historyOrigin"];
   readonly legacyImportItemCount: number;
 }): boolean {
   return (
-    input.historyOrigin === "v1_import" && !input.hasCompletedRun && input.legacyImportItemCount > 0
+    input.historyOrigin === "v1_import" &&
+    !input.hasNativeHistory &&
+    !input.hasCompletedRun &&
+    input.legacyImportItemCount > 0
   );
 }
 
@@ -1920,6 +1936,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly failedRunId?: RunId;
         readonly endedRunId?: RunId;
         readonly queuedRunId?: RunId;
+        readonly userStarted?: boolean;
       },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
@@ -1951,7 +1968,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: modelSelection.instanceId,
       };
       // A limited provider would fail and consume every waiting message.
-      if (usageLimitHoldsQueue(projection, queuedRun.providerInstanceId)) {
+      if (
+        usageLimitHoldsQueue(
+          projection,
+          queuedRun.providerInstanceId,
+          options?.userStarted === true ? undefined : yield* DateTime.now,
+        )
+      ) {
         return;
       }
       // Waits without a hold: lowering the thread's mode starts the queue again.
@@ -6939,6 +6962,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           nativeThreadId: `pending:${runId}`,
         });
       const legacyImportHandoff = shouldPrepareLegacyImportHandoff({
+        hasNativeHistory:
+          activeProviderThread?.driver === "acpRegistry" &&
+          activeProviderThread.nativeThreadRef !== null,
         historyOrigin: projection.thread.historyOrigin,
         hasCompletedRun: latestCompletedRun !== undefined,
         legacyImportItemCount: legacyImportItems.length,
@@ -14009,10 +14035,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     if (command.type === "queue.resume" || command.type === "queued-run.start") {
       yield* mapDispatchError(command)(
-        startNextQueuedRun(
-          command.threadId,
-          command.type === "queued-run.start" ? { queuedRunId: command.runId } : undefined,
-        ),
+        startNextQueuedRun(command.threadId, {
+          userStarted: true,
+          ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
+        }),
       );
     }
     return {
@@ -14229,10 +14255,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (command.type === "thread.runtime-mode.set" && runtimeModeCeiling !== undefined)
     ) {
       yield* mapDispatchError(command)(
-        startNextQueuedRun(
-          command.threadId,
-          command.type === "queued-run.start" ? { queuedRunId: command.runId } : undefined,
-        ),
+        startNextQueuedRun(command.threadId, {
+          userStarted: command.type !== "thread.runtime-mode.set",
+          ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
+        }),
       );
     }
     if (

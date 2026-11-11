@@ -909,7 +909,7 @@ export const evaluate = async (
   const params = {
     expression: input.expression,
     awaitPromise: input.awaitPromise ?? true,
-    returnByValue: input.returnByValue ?? true,
+    returnByValue: true,
   };
   // The devtools console's replMode allows top-level await but returns a trailing promise unawaited,
   // so it only retries what the page's parser rejected. A parse error has a scriptId but no stack and
