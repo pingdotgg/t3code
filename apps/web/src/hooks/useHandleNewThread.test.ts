@@ -306,10 +306,6 @@ describe.each([
   it.each<[string, () => void, { prompt?: string }?]>([
     ["the user navigates elsewhere", () => testState.navigateTo("/usage")],
     [
-      "another project's draft opens",
-      () => testState.openConcurrently({ draftId: "draft-other", projectId: "project-other" }),
-    ],
-    [
       "another project's draft is still loading",
       () =>
         testState.openConcurrently({

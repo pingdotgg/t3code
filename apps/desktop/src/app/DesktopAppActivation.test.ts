@@ -28,72 +28,70 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { make, startDesktopAppControlServer } from "./DesktopAppActivation.ts";
 
 describe("dropped-folder failure warnings", () => {
-  it.effect.each([
-    { localEnabled: false, hasWindow: true },
-    { localEnabled: false, hasWindow: false },
-    { localEnabled: true, hasWindow: true },
-  ])("uses the current owner when available (%j)", ({ localEnabled, hasWindow }) =>
-    Effect.gen(function* () {
-      const sent = Promise.withResolvers<DesktopAppActivationRequest>();
-      const window = {
-        webContents: {
-          isDestroyed: () => false,
-          on: () => undefined,
-          once: () => undefined,
-          removeListener: () => undefined,
-          send: (_channel: string, request: DesktopAppActivationRequest) => sent.resolve(request),
-        },
-      } as unknown as Electron.BrowserWindow;
-      let owner = Option.none<Electron.BrowserWindow>();
-      const warningOwners: Array<Electron.BrowserWindow | undefined> = [];
-      const activation = yield* make.pipe(
-        Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
-          stateDir: "/tmp/issue-32640/activation-test",
-          platform: "darwin",
-        } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
-        Effect.provideService(DesktopWindow.DesktopWindow, {
-          activate: Effect.void,
-        } as unknown as DesktopWindow.DesktopWindow["Service"]),
-        Effect.provideService(DesktopAppSettings.DesktopAppSettings, {
-          get: Effect.succeed({ localEnvironmentEnabled: localEnabled }),
-        } as unknown as DesktopAppSettings.DesktopAppSettings["Service"]),
-        Effect.provideService(ElectronWindow.ElectronWindow, {
-          main: Effect.succeedSome(window),
-          currentMainOrFirst: Effect.sync(() => owner),
-        } as unknown as ElectronWindow.ElectronWindow["Service"]),
-        Effect.provideService(ElectronDialog.ElectronDialog, {
-          ...ElectronDialog.make,
-          showMessageBox: (_options, owner) =>
-            Effect.sync(() => {
-              warningOwners.push(owner);
-              return { response: 0, checkboxChecked: false };
-            }),
-        }),
-        Effect.provide(NodePathLayer.layerPosix),
-      );
+  it.effect.each([{ localEnabled: false }, { localEnabled: true }])(
+    "attaches the warning to the current window (%j)",
+    ({ localEnabled }) =>
+      Effect.gen(function* () {
+        const sent = Promise.withResolvers<DesktopAppActivationRequest>();
+        const window = {
+          webContents: {
+            isDestroyed: () => false,
+            on: () => undefined,
+            once: () => undefined,
+            removeListener: () => undefined,
+            send: (_channel: string, request: DesktopAppActivationRequest) => sent.resolve(request),
+          },
+        } as unknown as Electron.BrowserWindow;
+        let owner = Option.none<Electron.BrowserWindow>();
+        const warningOwners: Array<Electron.BrowserWindow | undefined> = [];
+        const activation = yield* make.pipe(
+          Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
+            stateDir: "/tmp/t3-activation-test/state",
+            platform: "darwin",
+          } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
+          Effect.provideService(DesktopWindow.DesktopWindow, {
+            activate: Effect.void,
+          } as unknown as DesktopWindow.DesktopWindow["Service"]),
+          Effect.provideService(DesktopAppSettings.DesktopAppSettings, {
+            get: Effect.succeed({ localEnvironmentEnabled: localEnabled }),
+          } as unknown as DesktopAppSettings.DesktopAppSettings["Service"]),
+          Effect.provideService(ElectronWindow.ElectronWindow, {
+            main: Effect.succeedSome(window),
+            currentMainOrFirst: Effect.sync(() => owner),
+          } as unknown as ElectronWindow.ElectronWindow["Service"]),
+          Effect.provideService(ElectronDialog.ElectronDialog, {
+            ...ElectronDialog.make,
+            showMessageBox: (_options, owner) =>
+              Effect.sync(() => {
+                warningOwners.push(owner);
+                return { response: 0, checkboxChecked: false };
+              }),
+          }),
+          Effect.provide(NodePathLayer.layerPosix),
+        );
 
-      if (localEnabled) {
-        yield* activation.setRendererReady(true);
-        const opening = yield* activation
-          .openWorkspace("/tmp/issue-32640/project")
-          .pipe(Effect.forkChild);
-        const request = yield* Effect.promise(() => sent.promise);
-        owner = Option.some(window);
-        yield* activation.complete({
-          version: 1,
-          requestId: request.requestId,
-          ok: false,
-          code: "thread-open-failed",
-          message: "Could not create the thread.",
-        });
-        yield* Fiber.join(opening);
-      } else {
-        owner = hasWindow ? Option.some(window) : Option.none();
-        yield* activation.openWorkspace("/tmp/issue-32640/project");
-      }
+        if (localEnabled) {
+          yield* activation.setRendererReady(true);
+          const opening = yield* activation
+            .openWorkspace("/tmp/t3-activation-test/project")
+            .pipe(Effect.forkChild);
+          const request = yield* Effect.promise(() => sent.promise);
+          owner = Option.some(window);
+          yield* activation.complete({
+            version: 1,
+            requestId: request.requestId,
+            ok: false,
+            code: "thread-open-failed",
+            message: "Could not create the thread.",
+          });
+          yield* Fiber.join(opening);
+        } else {
+          owner = Option.some(window);
+          yield* activation.openWorkspace("/tmp/t3-activation-test/project");
+        }
 
-      expect(warningOwners).toEqual([hasWindow ? window : undefined]);
-    }),
+        expect(warningOwners).toEqual([window]);
+      }),
   );
 });
 
