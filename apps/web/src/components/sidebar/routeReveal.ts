@@ -1,5 +1,7 @@
 import { useRef } from "react";
 
+import { observeResize } from "~/lib/observeResize";
+
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 
 // AppSidebarLayout owns this so drawer and Settings remounts preserve the chosen project scope.
@@ -32,10 +34,20 @@ export function completeSidebarRouteReveal(reveal: SidebarRouteReveal): void {
 // The row can mount after the route, once its shells arrive, so its ref scrolls.
 export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string | null) {
   const mountRevealOwed = useRef(true);
+  const stopWaitingForHiddenRow = useRef<(() => void) | null>(null);
   pendingSidebarRouteReveal(reveal, routeKey);
-  return (row: HTMLElement | null, rowKey: string) => {
+  const revealRow = (row: HTMLElement | null, rowKey: string) => {
     if (row === null) return;
+    stopWaitingForHiddenRow.current?.();
     if (reveal.pendingKey !== rowKey && !mountRevealOwed.current) return;
+    // The closed narrow sheet keeps rows mounted but hidden, and opening it does not
+    // re-render them, so wait for the row to get a box before spending the reveal.
+    if (row.getClientRects().length === 0) {
+      stopWaitingForHiddenRow.current = observeResize(row, () => {
+        if (row.isConnected && row.getClientRects().length > 0) revealRow(row, rowKey);
+      });
+      return;
+    }
     completeSidebarRouteReveal(reveal);
     mountRevealOwed.current = false;
     // A row under the pointer was just clicked, so it is in view; scrolling it would force a
@@ -43,6 +55,7 @@ export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string 
     if (row.matches(":hover")) return;
     row.scrollIntoView({ block: "nearest" });
   };
+  return revealRow;
 }
 
 type RevealableThread = Parameters<typeof filterSidebarV2VisibleThreads>[0][number];

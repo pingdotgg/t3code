@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { Sidebar, SidebarProvider, SidebarTrigger, useSidebar } from "../ui/sidebar";
 import { type SidebarRouteReveal, useActiveRowReveal } from "./routeReveal";
 
 const ROW_HEIGHT_PX = 24;
@@ -26,6 +27,12 @@ function RevealList(props: {
       ))}
     </ul>
   );
+}
+
+// Reads the sidebar context like the real thread list, so opening the sheet re-renders it.
+function SheetRevealList(props: Parameters<typeof RevealList>[0]) {
+  useSidebar();
+  return <RevealList {...props} />;
 }
 
 const rowKeys = (count: number) => Array.from({ length: count }, (_, index) => `thread-${index}`);
@@ -140,5 +147,24 @@ describe("useActiveRowReveal", () => {
       { router: false },
     );
     await expect.element(screen.getByText("thread-40", { exact: true })).toBeInViewport();
+  });
+
+  it("reveals the open thread when the closed narrow sheet opens", async () => {
+    await page.viewport(390, 844);
+    const reveal = newReveal();
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar>
+          <SheetRevealList reveal={reveal} rowKeys={rowKeys(50)} activeKey="thread-40" />
+        </Sidebar>
+        <SidebarTrigger />
+      </SidebarProvider>,
+      // No router: the route arrives as the activeKey prop.
+      { router: false },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+
+    await expect.element(page.getByText("thread-40", { exact: true })).toBeInViewport();
   });
 });
