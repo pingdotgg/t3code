@@ -288,17 +288,11 @@ interface Recording {
   readonly framesInFlight: Set<Promise<void>>;
 }
 
-// Only a human viewer supplies credentials; the agent tool schema has no such fields.
-type DialogAnswer = PreviewAutomationDialogInput & {
-  readonly username?: string;
-  readonly password?: string;
-};
-
 interface PendingDialog {
   readonly type: string;
   readonly message: string;
   readonly defaultValue: string;
-  readonly accept: (input: DialogAnswer) => Promise<void>;
+  readonly accept: (input: PreviewAutomationDialogInput) => Promise<void>;
   readonly dismiss: () => Promise<void>;
 }
 
@@ -585,7 +579,7 @@ const make = Effect.gen(function* () {
       });
   };
 
-  const resolveDialog = async (tab: ServerTab, input: DialogAnswer) => {
+  const resolveDialog = async (tab: ServerTab, input: PreviewAutomationDialogInput) => {
     const dialog = tab.dialog;
     if (!dialog) throw new Error("No dialog is pending.");
     let answered = false;
