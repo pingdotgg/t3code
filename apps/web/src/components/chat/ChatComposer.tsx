@@ -3071,6 +3071,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         promptRef.current = insertion.prompt;
         setComposerCursor(nextCollapsedCursor);
         setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
+        if (isComposerCollapsedMobile) setIsComposerFocused(true);
         window.requestAnimationFrame(() => {
           composerEditorRef.current?.focusAt(nextCollapsedCursor);
         });
@@ -3144,6 +3145,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerEnvironmentContexts,
       focusComposer,
       focusEditorAtEndStable,
+      isComposerCollapsedMobile,
       environmentId,
       primaryEnvironmentId,
       isChoiceOnlyPendingQuestion,
