@@ -93,7 +93,7 @@ export default mergeConfig(
         ? ["src/bin.ts"]
         : packExecutable
           ? ["src/binMain.ts"]
-          : ["src/bin.ts", "src/claude-history-worker.ts"],
+          : ["src/bin.ts", "src/claude-history-worker.ts", "src/course/course-pdf-worker.ts"],
       outDir: packBootstrap ? "dist-exe" : packExecutable ? cliAssetDir : "dist",
       sourcemap: !packExecutable,
       clean: true,

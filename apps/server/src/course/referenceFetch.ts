@@ -1,11 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off schemaClassMissingBrand:off
 import * as NodeDnsPromises from "node:dns/promises";
-import * as NodeZlib from "node:zlib";
+import { readFile } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
+import { spawn as nodeSpawn } from "node:child_process";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Agent, fetch as undiciFetch } from "undici";
 import { isPublicFaviconHost } from "@t3tools/shared/hostClassification";
 import { auditDownload, type DownloadAuditContext } from "./downloadAudit.ts";
+export { encodeGrayscalePng } from "./course-pdf-worker.ts";
 
 export class CourseReferenceFetchError extends Schema.TaggedError<CourseReferenceFetchError>()(
   "CourseReferenceFetchError",
@@ -39,9 +42,6 @@ export interface ReferenceFetchResult {
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
-const MAX_PDF_IMAGE_PIXELS = 16 * 1024 * 1024;
-const MAX_PDF_TOTAL_PIXELS = 64 * 1024 * 1024;
-const MAX_PDF_IMAGE_OPS_PER_PAGE = 8;
 const PDF_TIMEOUT_MS = 30_000;
 
 const validateUrl = (raw: string | URL) => {
@@ -122,161 +122,77 @@ const driveRewrite = (url: URL) => {
   return new URL(`https://drive.google.com/uc?export=download&id=${encodeURIComponent(match[1]!)}`);
 };
 
-const chunk = (name: string, body: Uint8Array) => {
-  const type = Buffer.from(name);
-  const out = Buffer.alloc(12 + body.length);
-  out.writeUInt32BE(body.length, 0);
-  type.copy(out, 4);
-  Buffer.from(body).copy(out, 8);
-  out.writeUInt32BE(NodeZlib.crc32(Buffer.concat([type, Buffer.from(body)])), body.length + 8);
-  return out;
-};
-export const encodeGrayscalePng = (pixels: Uint8Array, width: number, height: number) => {
-  const rows = Buffer.alloc((width + 1) * height);
-  for (let y = 0; y < height; y += 1) {
-    rows[y * (width + 1)] = 0;
-    rows.set(pixels.subarray(y * width, (y + 1) * width), y * (width + 1) + 1);
-  }
-  return Buffer.concat([
-    Buffer.from("89504e470d0a1a0a", "hex"),
-    chunk(
-      "IHDR",
-      (() => {
-        const h = Buffer.alloc(13);
-        h.writeUInt32BE(width, 0);
-        h.writeUInt32BE(height, 4);
-        h[8] = 8;
-        h[9] = 0;
-        return h;
-      })(),
-    ),
-    chunk("IDAT", NodeZlib.deflateSync(rows)),
-    chunk("IEND", Buffer.alloc(0)),
-  ]);
-};
+const workerScript = () =>
+  import.meta.url.endsWith(".ts")
+    ? resolvePath(new URL("./course-pdf-worker.ts", import.meta.url).pathname)
+    : resolvePath(new URL("./course-pdf-worker.mjs", import.meta.url).pathname);
 
-const imageToPng = (image: { width: number; height: number; kind: number; data: Uint8Array }) => {
-  const scale = Math.min(1, 1200 / image.width);
-  const width = Math.max(1, Math.round(image.width * scale));
-  const height = Math.max(1, Math.round(image.height * scale));
-  const pixels = new Uint8Array(width * height);
-  const channels = image.kind === 3 ? 4 : image.kind === 2 ? 3 : 1;
-  for (let y = 0; y < height; y += 1)
-    for (let x = 0; x < width; x += 1) {
-      const sx = Math.min(image.width - 1, Math.floor(x / scale));
-      const sy = Math.min(image.height - 1, Math.floor(y / scale));
-      const at = (sy * image.width + sx) * channels;
-      pixels[y * width + x] =
-        image.kind === 1
-          ? image.data[sy * Math.ceil(image.width / 8) + (sx >> 3)]! & (128 >> (sx & 7))
-            ? 0
-            : 255
-          : Math.round(
-              0.299 * image.data[at]! + 0.587 * image.data[at + 1]! + 0.114 * image.data[at + 2]!,
-            );
-    }
-  return { data: encodeGrayscalePng(pixels, width, height).toString("base64"), width, height };
-};
-
-const estimatePdfImages = (bytes: Uint8Array) => {
-  const source = Buffer.from(bytes).toString("latin1");
-  let count = 0;
-  let pixels = 0;
-  for (const dictionary of source.matchAll(
-    /<<[\s\S]{0,2500}?\/Subtype\s*\/Image[\s\S]{0,2500}?>>/g,
-  )) {
-    const width = Number(dictionary[0].match(/\/Width\s+(\d+)/)?.[1] ?? 0);
-    const height = Number(dictionary[0].match(/\/Height\s+(\d+)/)?.[1] ?? 0);
-    if (width > 0 && height > 0) {
-      count += 1;
-      pixels += width * height;
+const childRssBytes = async (pid: number): Promise<number | undefined> => {
+  // The watchdog is deliberately outside Effect so it can kill a blocked worker.
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- inspect the host platform for RSS polling.
+  if (process.platform === "linux") {
+    try {
+      const statm = await readFile(`/proc/${pid}/statm`, "utf8");
+      return Number(statm.trim().split(/\s+/)[1]) * 4096;
+    } catch {
+      return undefined;
     }
   }
-  return { count, pixels };
-};
-
-export const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<number>) => {
-  // @ts-expect-error pdfjs-dist ships no types for its worker module.
-  await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const document = await pdfjs.getDocument({
-    data: new Uint8Array(bytes),
-    isOffscreenCanvasSupported: false,
-    maxImageSize: MAX_PDF_IMAGE_PIXELS,
-  }).promise;
-  const pages: { page: number; text: string }[] = [];
-  const images: ReferenceImage[] = [];
-  let textRemaining = 20_000;
-  let remainingPixels = MAX_PDF_TOTAL_PIXELS;
-  let skippedImages = 0;
-  const estimated = estimatePdfImages(bytes);
-  const skipPdfImages =
-    estimated.count > MAX_PDF_IMAGE_OPS_PER_PAGE || estimated.pixels > MAX_PDF_TOTAL_PIXELS;
-  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const content = await page.getTextContent();
-    if (!requested.includes(pageNumber)) continue;
-    const pageText = content.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, textRemaining);
-    textRemaining -= pageText.length;
-    pages.push({ page: pageNumber, text: pageText });
-    if (skipPdfImages) {
-      skippedImages += estimated.count;
-      continue;
-    }
-    const ops = await page.getOperatorList();
-    const candidates = ops.fnArray
-      .map((fn: number, i: number) => ({ fn, args: ops.argsArray[i] }))
-      .filter((x: { fn: number }) => x.fn === pdfjs.OPS.paintImageXObject);
-    let largest: { width: number; height: number; kind: number; data: Uint8Array } | undefined;
-    for (const [candidateIndex, candidate] of candidates.entries()) {
-      if (candidateIndex >= MAX_PDF_IMAGE_OPS_PER_PAGE) {
-        skippedImages += candidates.length - candidateIndex;
-        break;
-      }
-      const id = candidate.args[0];
-      const objects = String(id).startsWith("g_") ? page.commonObjs : page.objs;
-      const image = await new Promise<any>((resolve) => objects.get(id, resolve));
-      if (!image) continue;
-      const pixels = image.width * image.height;
-      if (pixels > remainingPixels) {
-        skippedImages += 1;
-        continue;
-      }
-      if (!largest || pixels > largest.width * largest.height) largest = image;
-    }
-    if (largest) {
-      const png = imageToPng(largest);
-      images.push({ type: "image", mimeType: "image/png", ...png });
-      remainingPixels -= largest.width * largest.height;
-    }
-  }
-  const destroy = Reflect.get(document, "destroy");
-  if (typeof destroy === "function") await destroy.call(document);
-  return {
-    pageCount: document.numPages,
-    pages,
-    images,
-    ...(skippedImages ? { skippedImages } : {}),
-  };
-};
-
-const extractPdfWithTimeout = (bytes: Uint8Array, requested: ReadonlyArray<number>) => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error("PDF extraction exceeded the 30 second limit.")),
-      PDF_TIMEOUT_MS,
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- inspect the host platform for RSS polling.
+  if (process.platform === "darwin") {
+    const { execFile } = await import("node:child_process");
+    return new Promise((resolve) =>
+      execFile("ps", ["-o", "rss=", "-p", String(pid)], (error, stdout) =>
+        resolve(error ? undefined : Number(stdout.trim()) * 1024),
+      ),
     );
-  });
-  return Promise.race([extractPdf(bytes, requested), timeout]).finally(() => {
-    if (timer !== undefined) clearTimeout(timer);
-  });
+  }
+  // Windows has no portable RSS query here; its extraction guard is the timeout.
+  return undefined;
 };
+
+export const runPdfWorker = async (
+  bytes: Uint8Array,
+  requested: ReadonlyArray<number>,
+  spawnImpl: typeof nodeSpawn = nodeSpawn,
+) => {
+  const args = import.meta.url.endsWith(".ts")
+    ? ["--experimental-strip-types", workerScript()]
+    : ["__course-pdf"];
+  const child = spawnImpl(process.execPath, args, { stdio: ["pipe", "pipe", "pipe"] });
+  const output: Buffer[] = [];
+  child.stdout?.on("data", (value: Buffer) => output.push(value));
+  child.stdin?.end(
+    JSON.stringify({ bytes: Buffer.from(bytes).toString("base64"), pages: requested }),
+  );
+  let killed = false;
+  const kill = () => {
+    if (child.exitCode === null && !child.killed) {
+      killed = true;
+      child.kill("SIGKILL");
+    }
+  };
+  const timer = setTimeout(kill, PDF_TIMEOUT_MS);
+  const rssTimer = setInterval(() => {
+    void childRssBytes(child.pid ?? 0).then((rss) => {
+      if (rss !== undefined && rss > 1.5 * 1024 * 1024 * 1024) kill();
+    });
+  }, 200);
+  try {
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (status) => resolve(status));
+    });
+    if (killed || code !== 0) throw new Error("PDF too large or slow to read");
+    return JSON.parse(Buffer.concat(output).toString("utf8")) as Omit<ReferenceFetchResult, "url">;
+  } finally {
+    clearTimeout(timer);
+    clearInterval(rssTimer);
+    if (child.exitCode === null && !child.killed) child.kill("SIGKILL");
+  }
+};
+
+export const extractPdf = runPdfWorker;
 
 export const fetchCourseReference = Effect.fn("course.fetchReference")(function* (input: {
   readonly url: string;
@@ -342,7 +258,7 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
               (input.pages?.length ? input.pages : [1, 2, 3, 4]).filter((page) => page >= 1),
             ),
           ].slice(0, 4);
-          return { url: url.toString(), ...(await extractPdfWithTimeout(body, pages)) };
+          return { url: url.toString(), ...(await extractPdf(body, pages)) };
         }
         const html = body.toString("utf8");
         const title = html
