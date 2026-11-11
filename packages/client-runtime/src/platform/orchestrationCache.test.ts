@@ -107,7 +107,7 @@ describe("orchestration cache envelopes", () => {
       const decoded = Effect.try({
         try: () => decodeStoredShellSnapshotSync({ ...encodedShell, schemaVersion: 1 }),
         catch: (cause) => new TestCacheDecodeError({ message: String(cause) }),
-      }).pipe(Effect.map(Option.some));
+      }).pipe(Effect.asSome);
 
       const result = yield* decodeOrDiscardOrchestrationCache(
         decoded,

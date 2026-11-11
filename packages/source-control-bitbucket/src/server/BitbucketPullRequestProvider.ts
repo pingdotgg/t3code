@@ -2,6 +2,7 @@ import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3to
 import * as Effect from "effect/Effect";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
+import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
 import {
   PullRequestProviderError,
@@ -9,6 +10,7 @@ import {
   type ProviderChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
+  type ProviderChangeRequestSummary,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
@@ -21,13 +23,15 @@ const CAPABILITIES: PullRequestCapabilities = {
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
   reactions: false,
+  mentions: false,
+  referenceSigils: [],
   review: {
     inlineComment: true,
     reply: true,
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: false },
   edit: { changeRequest: true, comment: true },
   // Bitbucket PR properties are shared, not per-reader viewed marks.
   viewedFiles: "environment",
@@ -59,7 +63,10 @@ export function bitbucketViewerPermissions(input: {
 export function bitbucketProviderFailure(
   error: BitbucketPullRequestApi.BitbucketPullRequestApiError,
 ): PullRequestProviderFailure {
-  if (error._tag === "BitbucketResponseError" && error.status === 401) {
+  if (
+    (error._tag === "BitbucketResponseError" && error.status === 401) ||
+    error._tag === "SettingsSecretUnresolvedError"
+  ) {
     return { reason: "unauthenticated" };
   }
   if (error._tag === "SourceControlRateLimitPausedError") {
@@ -107,8 +114,25 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
   };
 }
 
+/** The write's reply has no `closed_on`, line counts, or conflict state, so those stay absent. */
+function toActionSummary(pullRequest: BitbucketPullRequest): ProviderChangeRequestSummary {
+  return {
+    number: pullRequest.number,
+    title: pullRequest.title,
+    url: pullRequest.url,
+    author: pullRequest.author,
+    headBranch: pullRequest.headBranch,
+    baseBranch: pullRequest.baseBranch,
+    state: pullRequest.state,
+    isDraft: pullRequest.isDraft,
+    updatedAt: pullRequest.updatedAt,
+    ...(pullRequest.headSha ? { headSha: pullRequest.headSha } : {}),
+  };
+}
+
 export const make = Effect.gen(function* () {
   const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+  const servesHost = yield* BitbucketApi.BitbucketServesHost.pipe(Effect.orDie);
 
   const fail =
     (operation: string) => (error: BitbucketPullRequestApi.BitbucketPullRequestApiError) =>
@@ -116,7 +140,7 @@ export const make = Effect.gen(function* () {
         provider: SourceControlProviderKind.make("bitbucket"),
         operation,
         ...bitbucketProviderFailure(error),
-        detail: error.detail,
+        detail: error._tag === "SettingsSecretUnresolvedError" ? error.message : error.detail,
         cause: error,
       });
 
@@ -148,6 +172,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
+    servesHost,
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     readsPublicHostWithoutCheckout: true,
 
@@ -180,6 +205,20 @@ export const make = Effect.gen(function* () {
       Effect.all([api.getPullRequest(input), api.listChecks(input)], { concurrency: 2 }).pipe(
         Effect.map(([pullRequest, checks]) => ({ state: pullRequest.state, checks })),
         Effect.mapError(fail("getChangeRequestChecks")),
+      ),
+
+    getChangeRequestPreview: (input) =>
+      api.getPullRequest({ repository: input.repository, number: input.number }).pipe(
+        Effect.mapError(fail("getChangeRequestPreview")),
+        Effect.map((pullRequest) => ({
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          author: pullRequest.author,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+          createdAt: pullRequest.createdAt,
+        })),
       ),
 
     getChangeRequest: (input) => {
@@ -296,7 +335,10 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
-        .pipe(Effect.mapError(fail("runAction"))),
+        .pipe(
+          Effect.mapError(fail("runAction")),
+          Effect.map((pullRequest) => pullRequest && toActionSummary(pullRequest)),
+        ),
 
     updateChangeRequest: (input) =>
       api

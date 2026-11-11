@@ -247,6 +247,10 @@ fn captures_pinned_window_through_real_fd_and_cleans_scripts() {
     let mut pixels = vec![0; decoder.output_buffer_size().unwrap()];
     decoder.next_frame(&mut pixels).unwrap();
     assert_eq!(pixels, [0x11, 0x22, 0x33, 255, 0x44, 0x55, 0x66, 255]);
+    let png = std::fs::read(f.directory.join("capture.png")).unwrap();
+    let idat = png.windows(4).position(|tag| tag == b"IDAT").unwrap();
+    // zlib FLEVEL 1 selects levels 2-5; the slow default level 6 reports 2.
+    assert_eq!(png[idat + 5] >> 6, 1);
 }
 
 #[test]

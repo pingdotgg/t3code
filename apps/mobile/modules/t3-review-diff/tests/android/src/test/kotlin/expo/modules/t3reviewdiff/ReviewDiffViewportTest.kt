@@ -23,6 +23,30 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], manifest = Config.NONE)
 class ReviewDiffViewportTest {
   @Test
+  fun immediateNavigationStopsAnActiveFling() {
+    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+    val view = T3ReviewDiffView(activity, AppContext())
+    val scroller = view.javaClass.getDeclaredField("verticalScroller").apply {
+      isAccessible = true
+    }.get(view) as android.widget.OverScroller
+    try {
+      scroller.fling(0, 100, 0, 2000, 0, 0, 0, 10000)
+      assertTrue(!scroller.isFinished)
+      view.scrollToTop(false)
+      view.computeScroll()
+      val canvas = view.getChildAt(0)
+      val offset = canvas.javaClass.getDeclaredMethod("verticalOffset").apply {
+        isAccessible = true
+      }.invoke(canvas)
+      assertEquals(0, offset)
+      assertTrue(scroller.isFinished)
+    } finally {
+      view.cleanup()
+      activity.finish()
+    }
+  }
+
+  @Test
   fun resetDiscardsOldRowsAndPendingDecodeBeforePublishingTheNewDestination() {
     val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
     val appContext = AppContext()

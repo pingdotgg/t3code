@@ -1,5 +1,5 @@
 /** Keep bundler externals aligned with the staged production dependency list. */
-export const DESKTOP_RUNTIME_EXTERNAL_PREFIXES = [
+const DESKTOP_RUNTIME_EXTERNAL_PREFIXES = [
   "@napi-rs/keyring",
   "@crowecawcaw/xa11y",
   "@clerk/electron-passkeys",
