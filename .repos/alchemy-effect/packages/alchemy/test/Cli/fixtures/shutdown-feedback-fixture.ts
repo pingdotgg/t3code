@@ -15,10 +15,7 @@ Effect.runSync(installShutdownFeedback);
 
 // Simulates a teardown that takes this long after the first SIGINT. Without
 // it the fixture never exits on its own (a hanging cleanup).
-const exitAfter = Number.parseInt(
-  process.env.SHUTDOWN_FIXTURE_EXIT_AFTER_MS ?? "",
-  10,
-);
+const exitAfter = Number.parseInt(process.env.SHUTDOWN_FIXTURE_EXIT_AFTER_MS ?? "", 10);
 if (Number.isFinite(exitAfter)) {
   process.once("SIGINT", () => {
     setTimeout(() => process.exit(0), exitAfter);
