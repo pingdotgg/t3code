@@ -90,7 +90,8 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 
 interface StatusLabel {
-  readonly label: string;
+  // Null when the icon and timer carry the status on their own.
+  readonly label: string | null;
   readonly icon: AppSymbolName;
   readonly className: string;
   readonly iconTintClassName: string;
@@ -115,13 +116,13 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     iconTintClassName: "accent-adaptive-fuchsia-600-300",
   },
   working: {
-    label: "Working",
+    label: null,
     icon: "circle.dashed",
     className: "text-adaptive-sky-600-400",
     iconTintClassName: "accent-adaptive-sky-600-400",
   },
   waiting: {
-    label: "Waiting",
+    label: null,
     icon: "circle.dashed.inset.filled",
     className: "text-foreground-muted",
     iconTintClassName: "accent-foreground-muted",
@@ -725,7 +726,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 }) {
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const titleTypography = useScaledTextRole("body");
+  const metadataTypography = useScaledTextRole("label");
   const projectIconSize = Math.round(36 * fontScale);
+  const machineIconSize = metadataTypography.fontSize * fontScale;
   // Android's nonlinear system text scaling can differ from the fontScale estimate.
   const [androidTitleLineHeight, setTitleLineHeight] = useState(
     titleTypography.lineHeight * fontScale,
@@ -797,7 +800,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const messagePreview = resolveThreadListMessagePreview(thread);
-  const contextLabel = props.project?.title ?? props.environmentLabel ?? null;
+  const projectTitle = props.project?.title ?? null;
+  const contextLabel =
+    projectTitle != null && props.environmentLabel != null
+      ? `${projectTitle}, ${props.environmentLabel}`
+      : (projectTitle ?? props.environmentLabel ?? null);
   const wakeLabel =
     snoozedRow && props.snoozeWakeLabelText !== undefined ? props.snoozeWakeLabelText : null;
   const timeLabel = wakeLabel ?? props.timeLabel;
@@ -949,12 +956,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               subactions: [
                 {
                   id: "auto-settle:enabled",
-                  title: "Enabled",
+                  title: "Follow settings",
                   state: thread.autoSettleDisabledAt == null ? "on" : "off",
                 },
                 {
                   id: "auto-settle:disabled",
-                  title: "Disabled",
+                  title: "Never",
                   state: thread.autoSettleDisabledAt == null ? "off" : "on",
                 },
               ],
@@ -1310,10 +1317,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         )}
         {pr ? (
           <Pressable
-            className="-m-1.5 p-1.5"
+            // Padding cancelled by negative margin grows the touch target into
+            // the row padding without moving the badge.
+            className="-m-2.5 flex-row items-center gap-1 p-2.5"
             accessibilityRole="button"
             accessibilityLabel={prBadgeLabel ?? undefined}
             onPress={handleOpenPullRequests}
+            // Handle long-press so opening the iOS row menu cannot also open the PR on release.
             onLongPress={() => undefined}
             style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
           >
@@ -1336,6 +1346,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                       : "accent-adaptive-violet-600-400"
               }
             />
+            <Text
+              accessibilityLabel={pr.accessibilityLabel}
+              className={cn("text-xs", pr.textClassName)}
+              style={{ fontFamily: MONO_FONT }}
+            >
+              {pr.label}
+            </Text>
           </Pressable>
         ) : null}
         <SymbolView
@@ -1443,18 +1460,44 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {thread.title}
           </Text>
-          {contextLabel != null ? (
-            <Text
-              className={cn(
-                "text-[13px]",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.mutedForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {contextLabel}
-            </Text>
+          {projectTitle != null || props.environmentLabel != null ? (
+            <View className="flex-row items-center gap-1">
+              {props.environmentLabel != null && props.environmentMachine ? (
+                <EnvironmentMachineSymbol
+                  kind={props.environmentMachine}
+                  size={machineIconSize}
+                  tintColorClassName={
+                    selected
+                      ? selectedThreadRowColors.mutedIconTintClassName
+                      : rowAppearance.tertiaryIconTintClassName
+                  }
+                />
+              ) : null}
+              <Text
+                className={cn(
+                  "min-w-0 shrink text-[13px]",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.mutedForegroundClassName,
+                )}
+                numberOfLines={1}
+              >
+                {projectTitle}
+                {projectTitle != null && props.environmentLabel != null ? "  ·  " : null}
+                {props.environmentLabel != null ? (
+                  <Text
+                    className={cn(
+                      "text-[13px]",
+                      selected
+                        ? selectedThreadRowColors.mutedForegroundClassName
+                        : rowAppearance.tertiaryForegroundClassName,
+                    )}
+                  >
+                    {props.environmentLabel}
+                  </Text>
+                ) : null}
+              </Text>
+            </View>
           ) : null}
           {props.searchMatch ? (
             <ThreadSearchMatchExcerpt
