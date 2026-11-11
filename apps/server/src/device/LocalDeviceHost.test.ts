@@ -154,7 +154,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
 });
 
 describe("AgentDevice startup", () => {
-  it.live("restarts a cached daemon that no longer answers its health check", () =>
+  it.effect("restarts a cached daemon that no longer answers its health check", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       let attempts = 0;
@@ -189,7 +189,7 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live.each([
+  it.effect.each([
     ["fails", processOutput(1)],
     ["times out", processOutput(0, "", "", true)],
   ] as const)("still restarts an unresponsive daemon when its stop %s", ([, result]) =>
@@ -218,7 +218,7 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("keeps a busy daemon that misses a health probe", () =>
+  it.effect("keeps a busy daemon that misses a health probe", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       let attempts = 0;

@@ -572,7 +572,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       // would race its live lock and wedge every later start.
       for (let attempt = 1; attempt <= DAEMON_HEALTH_ATTEMPTS; attempt++) {
         if (yield* probe) return toEndpoint(existing.value);
-        if (attempt < DAEMON_HEALTH_ATTEMPTS) yield* Effect.sleep(Duration.millis(DAEMON_POLL_MS));
       }
       // Stop through agent-device while daemon.json still names the process; once
       // the file is gone it reports "not-running" and the daemon keeps daemon.lock.
