@@ -91,6 +91,7 @@ export function AndroidScreenHeader(props: {
                   {props.backCountLabel ? (
                     <View
                       accessible={false}
+                      importantForAccessibility="no-hide-descendants"
                       className="min-h-[22px] min-w-[22px] items-center justify-center rounded-full bg-foreground px-1.5"
                       style={{ marginStart: -4 }}
                     >
