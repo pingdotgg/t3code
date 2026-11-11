@@ -12,7 +12,7 @@ type PreparedBrowserTranscription = PreparedVoiceTranscription & {
 
 export function createBrowserPcmCapture(
   input: {
-    readonly getMicrophoneId: () => string;
+    readonly getMicrophoneId: () => string | Promise<string>;
     readonly onLevel: (level: number) => void;
     readonly onDurationLimit: () => void;
     readonly onError: (message: string) => void;
@@ -59,7 +59,8 @@ export function createBrowserPcmCapture(
       if (recordingUri) URL.revokeObjectURL(recordingUri);
       recordingUri = null;
       chunks = [];
-      const microphoneId = input.getMicrophoneId();
+      const microphoneId = await input.getMicrophoneId();
+      captureSignal.throwIfAborted();
       const captured = await new Promise<MediaStream>((resolve, reject) => {
         const onAbort = () => reject(captureSignal.reason);
         const permission = navigator.mediaDevices.getUserMedia({

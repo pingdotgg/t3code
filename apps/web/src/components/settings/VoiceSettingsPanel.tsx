@@ -53,7 +53,16 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
-import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
+import {
+  listAudioInputs,
+  updateMicrophoneOrder,
+  type BrowserMicrophone,
+} from "../../speech/browserMicrophones";
+import {
+  microphoneOrder,
+  preferredMicrophoneId,
+  rememberMicrophones,
+} from "../../speech/microphoneOrder";
 import { preferredSpeechLanguages } from "../../speech/preferredSpeechLanguages";
 import {
   chooseAudioDestination,
@@ -110,6 +119,7 @@ import {
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import { MicrophoneOrderList } from "./MicrophoneOrderList";
 import { MicrophoneTest } from "./MicrophoneTest";
 import { CloudVoiceConfiguration } from "./CloudVoiceConfiguration";
 import { ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
@@ -140,7 +150,6 @@ function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
     />
   );
 }
-const SYSTEM_DEFAULT = "system-default";
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 const SHORTCUT_MODES: Record<VoiceShortcutMode, { label: string; hint: string }> = {
   auto: { label: "Auto", hint: "Tap to toggle, hold to talk" },
@@ -1196,7 +1205,9 @@ export function VoiceSettingsPanel() {
   const refreshMicrophones = useStableCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     try {
-      setMicrophones(await listBrowserMicrophones());
+      const devices = await listAudioInputs();
+      setMicrophones(devices);
+      updateMicrophoneOrder((order) => rememberMicrophones(order, devices));
     } catch {
       setMicrophones([]);
     }
@@ -1218,11 +1229,8 @@ export function VoiceSettingsPanel() {
       (member) => member.environmentId === target?.environmentId && member.id === target.projectId,
     ) ?? members?.[0];
 
-  const selectedMicrophone = settings.voiceMicrophone;
-  const selectedMicrophoneLabel = selectedMicrophone
-    ? (microphones.find((device) => device.deviceId === selectedMicrophone)?.label ??
-      "Selected microphone (unavailable)")
-    : "System default";
+  const order = microphoneOrder(settings);
+  const selectedMicrophone = preferredMicrophoneId(order, microphones);
   const environmentChoices = environments.map((environment) => ({
     environment,
     value: JSON.stringify(["environment", environment.environmentId]),
@@ -1281,55 +1289,35 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("voice-microphone")}
           title="Microphone"
-          description="System default follows your operating system."
+          description="Voice input uses the first connected microphone in this list."
           control={
-            <div className="flex w-full min-w-0 items-center gap-1.5 @min-[32rem]/settings-row:w-auto">
-              <Select
-                value={selectedMicrophone ? `device:${selectedMicrophone}` : SYSTEM_DEFAULT}
-                onValueChange={(value) => {
-                  if (value)
-                    void updateClientSettings({
-                      voiceMicrophone:
-                        value === SYSTEM_DEFAULT ? "" : value.slice("device:".length),
-                    });
-                }}
-              >
-                <SelectTrigger
-                  size="sm"
-                  aria-label="Microphone"
-                  className="@min-[32rem]/settings-row:max-w-56"
-                >
-                  <SelectValue>{selectedMicrophoneLabel}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value={SYSTEM_DEFAULT}>System default</SelectItem>
-                  {microphones.map((device) => (
-                    <SelectItem key={device.deviceId} value={`device:${device.deviceId}`}>
-                      {device.label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon-sm"
-                      aria-label="Refresh microphones"
-                      onClick={() => void refreshMicrophones()}
-                    >
-                      <RefreshCwIcon />
-                    </Button>
-                  }
-                />
-                <TooltipPopup>Refresh microphones</TooltipPopup>
-              </Tooltip>
-            </div>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="Refresh microphones"
+                    onClick={() => void refreshMicrophones()}
+                  >
+                    <RefreshCwIcon />
+                  </Button>
+                }
+              />
+              <TooltipPopup>Refresh microphones</TooltipPopup>
+            </Tooltip>
           }
+        >
+          <div className="mt-3 pb-2">
+            <MicrophoneOrderList order={order} devices={microphones} />
+          </div>
+        </SettingsRow>
+        <MicrophoneTest
+          key={selectedMicrophone}
+          microphoneId={selectedMicrophone}
+          onMicrophoneAccess={() => void refreshMicrophones()}
         />
-        <MicrophoneTest key={selectedMicrophone} microphoneId={selectedMicrophone} />
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
           title="Dictation shortcut"

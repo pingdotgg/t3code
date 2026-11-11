@@ -29,7 +29,14 @@ type Capture = {
  * device: no environment, transcriber, or provider is involved, so a silent result points
  * at the microphone rather than at transcription.
  */
-export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
+export function MicrophoneTest({
+  microphoneId,
+  onMicrophoneAccess,
+}: {
+  microphoneId: string;
+  /** Labels and device ids become readable once the browser grants access. */
+  onMicrophoneAccess: () => void;
+}) {
   const [phase, setPhase] = useState<"idle" | "starting" | "recording" | "ready">("idle");
   const [recording, setRecording] = useState<{ url: string; duration: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +99,7 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
         return;
       }
       current.stream = stream;
+      onMicrophoneAccess();
       const recorder = new MediaRecorder(stream);
       current.recorder = recorder;
       const chunks: Blob[] = [];

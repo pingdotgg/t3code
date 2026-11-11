@@ -1,5 +1,9 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
+import {
+  listBrowserMicrophones,
+  updateMicrophoneOrder,
+  type BrowserMicrophone,
+} from "../../speech/browserMicrophones";
 import type {
   EnvironmentId,
   EnvironmentSpeechModel,
@@ -9,7 +13,12 @@ import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon, MicIcon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings } from "../../hooks/useSettings";
+import {
+  microphoneOrder,
+  preferMicrophone,
+  preferredMicrophoneId,
+} from "../../speech/microphoneOrder";
 import { useEnvironment } from "../../state/environments";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useEnvironmentScope } from "../../state/session";
@@ -38,8 +47,9 @@ export function VoiceInputSetup(props: {
   const navigate = useNavigate();
   const environment = useEnvironment(props.environmentId);
   const canManage = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
-  const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
+  const order = useClientSettings(microphoneOrder);
   const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
+  const selectedMicrophone = preferredMicrophoneId(order, microphones);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
   const refreshMicrophones = useStableCallback(async () => {
@@ -154,11 +164,18 @@ export function VoiceInputSetup(props: {
                   value={selectedMicrophone ? `device:${selectedMicrophone}` : "system-default"}
                   disabled={loadingMicrophones}
                   onValueChange={(value) => {
-                    if (value)
-                      void updateClientSettings({
-                        voiceMicrophone:
-                          value === "system-default" ? "" : value.slice("device:".length),
-                      });
+                    if (!value) return;
+                    const deviceId = value.slice("device:".length);
+                    const label =
+                      microphones.find((device) => device.deviceId === deviceId)?.label ?? "";
+                    updateMicrophoneOrder((order) =>
+                      preferMicrophone(
+                        order,
+                        value === "system-default"
+                          ? { kind: "default" }
+                          : { kind: "device", deviceId, label },
+                      ),
+                    );
                   }}
                 >
                   <SelectTrigger
