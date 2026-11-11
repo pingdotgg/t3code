@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   remote: null as unknown,
 }));
 vi.mock(import("../../state/entities"), () => ({
-  useThreadShell: ((ref: { environmentId: string } | null) =>
+  useLinkedThreadShell: ((ref: { environmentId: string } | null) =>
     ref?.environmentId === "remote" ? state.remote : null) as never,
   useThreadRefs: (enabled = true) =>
     enabled
