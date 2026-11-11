@@ -1069,7 +1069,8 @@ export function ThreadRelationshipsPanel(props: {
                   <ThreadDetailsControl
                     size="sm"
                     variant="ghost"
-                    className="flex-1"
+                    multiline
+                    className="min-h-10 flex-1 sm:min-h-10"
                     aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus)}`}
                     onClick={() => openThread(threadId)}
                   />
@@ -1194,7 +1195,7 @@ export function ThreadRelationshipsPanel(props: {
           data-thread-relationships-panel
         >
           {hasRelatives ? (
-            <div className="flex flex-col has-[>ul:first-child]:pt-1 has-[>ul:last-child]:pb-1">
+            <>
               {delegatedFrom === undefined ? null : (
                 <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
                   <DelegatedFromRow
@@ -1227,7 +1228,7 @@ export function ThreadRelationshipsPanel(props: {
                   threads
                 </div>
               ) : null}
-            </div>
+            </>
           ) : null}
         </ThreadDetailsSection>
       ) : null}
