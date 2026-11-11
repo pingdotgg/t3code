@@ -433,6 +433,8 @@ export function PullRequestThreadReplyForm({
   completionScope,
   pending,
   className,
+  initialReply = "",
+  onReplyChange,
   onReply,
   onSent,
 }: {
@@ -442,11 +444,18 @@ export function PullRequestThreadReplyForm({
   completionScope: PullRequestCompletionScope | null;
   pending: boolean;
   className?: string;
+  /** Lets a parent keep the draft when this form remounts elsewhere. */
+  initialReply?: string;
+  onReplyChange?: (reply: string) => void;
   onReply: (body: string) => Promise<boolean>;
   onSent?: () => void;
 }) {
-  const [replying, setReplying] = useState(false);
-  const [reply, setReply] = useState("");
+  const [replying, setReplying] = useState(initialReply.length > 0);
+  const [reply, setReplyState] = useState(initialReply);
+  const setReply = (next: string) => {
+    setReplyState(next);
+    onReplyChange?.(next);
+  };
   const sendingRef = useRef(false);
   const replyRef = useRef<HTMLTextAreaElement>(null);
 

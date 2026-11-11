@@ -192,6 +192,10 @@ export function PullRequestComposer({
               onCommentAction={onCommentAction}
               onCommented={onCommented}
               onClose={() => setOpen(false)}
+              onQuoted={() => {
+                setRequestedMode("comment");
+                setOpen(true);
+              }}
             />
           </div>
         ) : null}

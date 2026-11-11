@@ -31,6 +31,7 @@ export function PullRequestCommentForm({
   onCommentAction,
   onCommented,
   onClose,
+  onQuoted,
 }: {
   environmentId: EnvironmentId;
   /** False while the form stays mounted but hidden; dictation is cancelled then. */
@@ -46,33 +47,37 @@ export function PullRequestCommentForm({
   ) => Promise<{ readonly commentPosted: boolean }>;
   onCommented: () => void;
   onClose: () => void;
+  /** A quote deferred past a successful post lands after `onClose`, so the form asks to be shown again. */
+  onQuoted: () => void;
 }) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
   const locked = submitting !== null || actionPending;
   const [answeredQuoteRequest, setAnsweredQuoteRequest] = useState(quoteRequest);
+  const [pendingQuotes, setPendingQuotes] = useState<ReadonlyArray<string>>([]);
   const [caretAfterQuote, setCaretAfterQuote] = useState(false);
-  // A successful post clears the draft, so a quote waits until posting settles.
-  if (quoteRequest !== answeredQuoteRequest && !locked) {
+  if (quoteRequest !== answeredQuoteRequest) {
     setAnsweredQuoteRequest(quoteRequest);
-    if (quoteRequest) {
-      setBody((draft) =>
-        draft.trim().length === 0
-          ? quoteRequest.text
-          : `${draft.trimEnd()}\n\n${quoteRequest.text}`,
-      );
-      setCaretAfterQuote(true);
-    }
+    if (quoteRequest) setPendingQuotes((quotes) => [...quotes, quoteRequest.text]);
   }
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the DOM caret after a quote the textarea just received
+  // A successful post clears the draft, so quotes wait until posting settles.
+  if (pendingQuotes.length > 0 && !locked) {
+    setPendingQuotes([]);
+    setBody((draft) =>
+      [draft.trimEnd(), ...pendingQuotes].filter((part) => part.length > 0).join("\n\n"),
+    );
+    setCaretAfterQuote(true);
+  }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals the composer and moves the DOM caret after a quote lands
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!caretAfterQuote || !textarea) return;
     setCaretAfterQuote(false);
+    onQuoted();
     textarea.focus({ preventScroll: true });
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     textarea.scrollTop = textarea.scrollHeight;
-  }, [caretAfterQuote, textareaRef]);
+  }, [caretAfterQuote, textareaRef, onQuoted]);
   const speech = useTextFieldSpeech({
     environmentId,
     projectId: reference.projectId,
