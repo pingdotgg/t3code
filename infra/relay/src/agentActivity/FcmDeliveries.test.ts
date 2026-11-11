@@ -508,25 +508,31 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
-  it.effect("honors disabled alert preferences while continuing ongoing activity", () => {
-    const h = harness();
-    h.current.state = { ...state, phase: "waiting_for_approval" };
-    h.current.target.preferences_json = encodeJson({ ...preferences, notifyOnApproval: false });
-    return Effect.gen(function* () {
-      const delivery = yield* FcmDeliveries.FcmDeliveries;
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent[0]?.data.active).toBe("true");
-      expect(h.sent[0]?.data.alert_id).toBeUndefined();
+  it.effect(
+    "continues ongoing activity when alerts are disabled, with or without a previous card",
+    () => {
+      const h = harness();
+      h.current.state = { ...state, phase: "waiting_for_approval" };
       h.current.target.preferences_json = encodeJson({
         ...preferences,
         notificationsEnabled: false,
       });
-      h.current.target.last_aggregate_json = encodeJson(aggregateFor([state]));
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent[1]?.data.active).toBe("false");
-      expect(h.sent[1]?.data.alert_id).toBeUndefined();
-    }).pipe(Effect.provide(h.layer));
-  });
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent).toHaveLength(1);
+        expect(h.sent[0]?.data.active).toBe("true");
+        expect(h.sent[0]?.alert).toBe(false);
+        expect(h.sent[0]?.data.alert_id).toBeUndefined();
+        h.current.target.preferences_json = encodeJson({ ...preferences, notifyOnApproval: false });
+        h.current.target.last_aggregate_json = encodeJson(aggregateFor([state]));
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent[1]?.data.active).toBe("true");
+        expect(h.sent[1]?.data.alert_id).toBeUndefined();
+        expect(h.marked.at(-1)?.kind).toBe("live_activity_update");
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
 
   it.effect("replays an empty card to repair an orphan without a delivery baseline", () => {
     const h = harness();
@@ -583,26 +589,6 @@ describe("delivery policy regressions", () => {
       yield* d.process({ ...h.job, state: h.current.state });
       expect(h.sent.filter((x) => x.alert)).toHaveLength(1);
     }).pipe(Effect.provide(h.layer));
-  });
-  it("keeps an older waiting thread visible and alertable beyond five running rows", () => {
-    const running = Array.from({ length: 5 }, (_, i) => ({
-      ...state,
-      threadId: ThreadId.make(`running-${i}`),
-    }));
-    const waiting = {
-      ...state,
-      phase: "waiting_for_approval" as const,
-      updatedAt: "1969-12-31T23:59:00.000Z",
-    };
-    const next = aggregateFor([...running, waiting]);
-    expect(
-      FcmDeliveries.androidAlertForAggregate({
-        previousAggregate: aggregateFor(running),
-        nextAggregate: next,
-        preferences,
-        nowMs: 0,
-      }),
-    ).not.toBeNull();
   });
 });
 

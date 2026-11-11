@@ -49,33 +49,68 @@ const failures = {
       "ChatGPT could not authorize this connection. Check the client and sharing permissions.",
   },
 };
-export function classifyCodexManagedError(value: unknown) {
-  let text: string;
-  try {
-    text = typeof value === "string" ? value : JSON.stringify(value);
-  } catch {
-    return undefined;
-  }
-  if (typeof text !== "string") return undefined;
-  for (const [code, failure] of Object.entries(failures)) {
-    if (!text.includes(code)) continue;
-    if (code === "subscription_sharing_unsupported_capability") {
-      if (text.includes("tool 'namespace'"))
-        return {
-          ...failure,
-          code,
-          message:
-            "Codex sent a tool namespace that ChatGPT sharing does not support. Use another provider for this request.",
-        };
-      if (text.includes("additional_tools"))
-        return {
-          ...failure,
-          code,
-          message:
-            "Codex sent an input item that ChatGPT sharing does not support. Use another provider for this request.",
-        };
+const usageLimitCodes = new Set<string>([
+  "subscription_sharing_usage_limit_exceeded",
+  "subscription_sharing_workplace_individual_usage_limit_exceeded",
+]);
+
+function unwrapError(value: unknown): unknown {
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return value;
     }
-    return { ...failure, code };
   }
-  return undefined;
+  return typeof value === "object" && value !== null && "error" in value ? value.error : value;
+}
+
+function isManagedCode(value: unknown): value is keyof typeof failures {
+  return typeof value === "string" && Object.hasOwn(failures, value);
+}
+
+function sharingCode(value: unknown) {
+  const error = unwrapError(value);
+  const code = typeof error === "object" && error !== null && "code" in error ? error.code : error;
+  return isManagedCode(code) ? code : undefined;
+}
+
+export function classifyCodexManagedError(value: unknown) {
+  const error = unwrapError(value);
+  const messages =
+    typeof error === "string"
+      ? [error]
+      : typeof error === "object" && error !== null
+        ? [
+            "message" in error ? error.message : null,
+            "additionalDetails" in error ? error.additionalDetails : null,
+          ].filter((message): message is string => typeof message === "string")
+        : [];
+  const code =
+    sharingCode(error) ??
+    messages.map(sharingCode).find((code) => code !== undefined) ??
+    // Codex can stream ChatGPT's sharing-limit prose without its code.
+    (messages.some((message) =>
+      message.includes("has reached their Subscription Sharing usage limit"),
+    )
+      ? "subscription_sharing_usage_limit_exceeded"
+      : undefined);
+  if (code === undefined) return undefined;
+  const failure = { ...failures[code], code, usageLimit: usageLimitCodes.has(code) };
+  const text = messages.join(" ");
+  if (code === "subscription_sharing_unsupported_capability") {
+    if (text.includes("tool 'namespace'"))
+      return {
+        ...failure,
+        message:
+          "Codex sent a tool namespace that ChatGPT sharing does not support. Use another provider for this request.",
+      };
+    if (text.includes("additional_tools"))
+      return {
+        ...failure,
+        message:
+          "Codex sent an input item that ChatGPT sharing does not support. Use another provider for this request.",
+      };
+  }
+  return failure;
 }

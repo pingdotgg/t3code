@@ -34,11 +34,7 @@ export const Router = ({ children }: { children: ReactNode }) => {
     setPath(new URL(to, location.origin).pathname);
     window.scrollTo(0, 0);
   };
-  return (
-    <RouterContext.Provider value={{ path, navigate }}>
-      {children}
-    </RouterContext.Provider>
-  );
+  return <RouterContext.Provider value={{ path, navigate }}>{children}</RouterContext.Provider>;
 };
 
 export const useRouter = () => useContext(RouterContext);
@@ -72,5 +68,4 @@ export const segments = (path: string): string[] =>
   path.split("/").filter(Boolean).map(decodeURIComponent);
 
 /** Builds a pathname from raw segments, encoding each. */
-export const href = (...parts: string[]): string =>
-  "/" + parts.map(encodeURIComponent).join("/");
+export const href = (...parts: string[]): string => "/" + parts.map(encodeURIComponent).join("/");

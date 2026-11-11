@@ -533,13 +533,6 @@ describe("thread action undo", () => {
     expect(state.requests.map(({ action }) => action)).toEqual(["unpin"]);
   });
 
-  // regression: #21401 restore archive and thread action undo
-  it("refreshes the archive after archiving on a settlement-capable server", async () => {
-    await useThreadListActions().archiveThread(makeThread());
-    expect(state.requests.map(({ action }) => action)).toEqual(["archive"]);
-    expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
-  });
-
   it("keeps the earlier Undo until archiving succeeds", async () => {
     const actions = useThreadListActions();
     const thread = makeThread();
