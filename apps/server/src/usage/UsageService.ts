@@ -39,7 +39,7 @@ import type {
   TranscriptUsageFormat,
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -441,9 +441,10 @@ export const make = Effect.gen(function* () {
   /**
    * Reads run concurrently, and the caller stores updates in walk order rather
    * than completion order: saved records of deleted transcripts aggregate in
-   * cache order, where the first copy of a duplicate wins.
+   * cache order, where the first copy of a duplicate wins. Untraced: a scan
+   * reads thousands of files, so scanTranscriptDir records the counts instead.
    */
-  const readFileRecords = Effect.fn("UsageService.readFileRecords")(function* (
+  const readFileRecords = Effect.fnUntraced(function* (
     filePath: string,
     size: number,
     mtimeMs: number,
@@ -547,7 +548,6 @@ export const make = Effect.gen(function* () {
     readonly hostId?: string;
     readonly status?: UsageSource["status"];
     readonly message?: string;
-    readonly action?: UsageSource["action"];
     readonly files:
       | readonly {
           readonly path: string;
@@ -603,6 +603,10 @@ export const make = Effect.gen(function* () {
       return { path, records, malformedRecords };
     });
     const unread = failedPaths + read.filter((file) => file.failed).length;
+    yield* Effect.annotateCurrentSpan({
+      "usage.files": files.length,
+      "usage.files_parsed": read.filter((file) => file.update !== undefined).length,
+    });
     return {
       provider,
       dir,
@@ -739,6 +743,7 @@ export const make = Effect.gen(function* () {
       rates,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
       modelAliases: resolveModelAliases(settings.usageModelAliases),
+      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     });
 
     const sources: UsageSource[] = [];
@@ -811,7 +816,7 @@ export const make = Effect.gen(function* () {
 
     for (const [
       index,
-      { provider, dir, volumeId, files, status, message, action, refreshing, hostId: sourceHostId },
+      { provider, dir, volumeId, files, status, message, refreshing, hostId: sourceHostId },
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
@@ -875,7 +880,6 @@ export const make = Effect.gen(function* () {
                 .filter(Boolean)
                 .join(" ")
             : sourceMessage,
-        ...(action ? { action } : {}),
         ...(refreshing ? { refreshing } : {}),
       });
     }
@@ -897,6 +901,7 @@ export const make = Effect.gen(function* () {
       sources,
       pricing: summaryPricing,
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
+      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     } satisfies UsageSummary;
   });
 
@@ -913,9 +918,15 @@ export const make = Effect.gen(function* () {
       settings,
       input.awaitRefresh === true,
       input.preferCached === true && input.awaitRefresh !== true,
+      input.modelFilter ?? null,
     ]);
 
-  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+  const readSummary = Effect.fn("UsageService.readSummary")(function* (
+    requested: UsageSummaryInput,
+  ) {
+    const { modelFilter: requestedFilter, ...unfiltered } = requested;
+    const modelFilter = canonicalModelFilter(requestedFilter);
+    const input = modelFilter === undefined ? unfiltered : { ...unfiltered, modelFilter };
     const settings = yield* readSettings;
     const key = scanKey(input, settings);
     const deferred = yield* Effect.uninterruptible(
