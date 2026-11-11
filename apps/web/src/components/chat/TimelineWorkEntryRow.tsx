@@ -1,5 +1,9 @@
 import type { TimelineRow } from "./timelineRowContext";
-import { THINKING_PREVIEW_PLUGINS, THOUGHT_PREVIEW_PLUGINS, THOUGHT_PREVIEW_SOURCE_MAX_LENGTH } from "./TimelineWorkEntryRow.logic";
+import {
+  THINKING_PREVIEW_PLUGINS,
+  THOUGHT_PREVIEW_PLUGINS,
+  THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
+} from "./TimelineWorkEntryRow.logic";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { MESSAGE_HEADING_LEVEL } from "./TimelineRowParts";
 import {

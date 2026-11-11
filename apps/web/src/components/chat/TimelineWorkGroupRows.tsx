@@ -1,4 +1,8 @@
-import { THINKING_PREVIEW_PLUGINS, THOUGHT_PREVIEW_PLUGINS, THOUGHT_PREVIEW_SOURCE_MAX_LENGTH } from "./TimelineWorkEntryRow.logic";
+import {
+  THINKING_PREVIEW_PLUGINS,
+  THOUGHT_PREVIEW_PLUGINS,
+  THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
+} from "./TimelineWorkEntryRow.logic";
 import {
   type TimelinePendingRequest,
   type TimelineRow,
@@ -968,11 +972,14 @@ function WorkingWindowView({
       observer?.disconnect();
     };
   }, [open, head]);
-  const { workGroupViewState, onToggleWorkEntry } = ctx;
+  const { workGroupViewState, onToggleWorkEntry, onWorkEntryContentReady } = ctx;
   // Entries opened in the history keep their state, and toggling one keeps the bar in place.
   const groupView = (() => ({
     state: workGroupViewState,
-    onToggleEntry: (collapsed: boolean, entryId: string) => onToggleWorkEntry("working-indicator-row", collapsed, entryId),
+    onToggleEntry: (collapsed: boolean, entryId: string) =>
+      onToggleWorkEntry("working-indicator-row", collapsed, entryId),
+    onContentReady: (entryId: string) =>
+      onWorkEntryContentReady?.("working-indicator-row", entryId),
   }))();
   const headEnd = history ? Math.min(history.head, history.tailStart) : 0;
   const unmounted = history ? history.tailStart - headEnd : 0;

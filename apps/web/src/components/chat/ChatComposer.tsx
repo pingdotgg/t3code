@@ -3666,6 +3666,7 @@ export function ChatComposer(props: ChatComposerProps) {
                   pendingAction={requestCard && requestCardHost ? null : pendingPrimaryAction}
                   isRunning={phase === "running"}
                   canInterrupt={canInterrupt}
+                  runId={activeThread?.runtime?.activeRunId ?? null}
                   followUpBehavior={followUpBehavior}
                   canSteer={canSteer}
                   alternateShortcutLabel={shortcutLabelForCommand(

@@ -198,7 +198,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         >
           <span aria-hidden className="size-2.5 rounded-xs bg-error-foreground" />
         </TooltipTrigger>
-        <TooltipPopup>{stopPhase === "pending" ? "Stopping…" : stopPhase === "landed" ? "Stopped" : "Interrupt"}</TooltipPopup>
+        <TooltipPopup>
+          {stopPhase === "pending" ? "Stopping…" : stopPhase === "landed" ? "Stopped" : "Interrupt"}
+        </TooltipPopup>
       </Tooltip>
     </ComposerSendPill>
   );
