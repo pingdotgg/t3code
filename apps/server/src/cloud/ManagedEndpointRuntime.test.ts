@@ -912,6 +912,36 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
+  it.effect("starts the connector without the host's GODEBUG setting", () =>
+    Effect.gen(function* () {
+      const spawned: Array<ChildProcess.StandardCommand> = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("Expected standard command.");
+          }
+          spawned.push(command);
+          const handle = makeHandle({ pid: 700, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        layerRelayClientAvailable,
+        unusedHttpClient,
+        emptySecretStoreLayer,
+        { GODEBUG: "tlskyber=0" },
+      );
+      yield* runtime.applyConfig(tunnelConfig);
+
+      const { env, extendEnv } = spawned[0]!.options;
+      expect(extendEnv).not.toBe(true);
+      expect(env?.GODEBUG).toBeUndefined();
+      expect(env?.TUNNEL_TOKEN).toBe(tunnelConfig.connectorToken);
+    }),
+  );
+
   it.effect("supervises the active connector and restarts it after process exit", () =>
     Effect.gen(function* () {
       const spawned: Array<number> = [];
