@@ -15,6 +15,13 @@ import {
 } from "./threadWorkflows.ts";
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
 import {
+  deriveUsageLimitNoticeRows,
+  presentRunStop,
+  withoutUsageLimitNoticeRows,
+  type RunStopPresentation,
+  type UsageLimitNoticeRows,
+} from "./threadExecution.ts";
+import {
   deriveThreadCheckpointSummaries,
   type ThreadCheckpointSummary,
 } from "./threadCheckpoints.ts";
@@ -33,6 +40,7 @@ import {
   type PendingThreadRequests,
 } from "./threadRequests.ts";
 import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
+import { getProjectionArrayReplacementIndex } from "./orchestrationV2Projection.ts";
 
 const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItems"] = Object.freeze(
   [],
@@ -40,6 +48,38 @@ const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItem
 const EMPTY_THREAD_STRUCTURE_TURN_ITEMS: ReadonlyArray<ThreadStructureVisibleTurnItem> =
   Object.freeze([]);
 const EMPTY_CHECKPOINT_SUMMARIES: ReadonlyArray<ThreadCheckpointSummary> = Object.freeze([]);
+
+/**
+ * Changes when the agent may have changed the workspace, so file views and host images refresh.
+ * File tools are explicit; commands, MCP or dynamic tools and subagents are included because
+ * they can mutate the workspace without reporting the paths they touched.
+ */
+export function deriveWorkspaceMutationId(
+  visibleTurnItems: ReadonlyArray<ThreadStructureVisibleTurnItem>,
+  latestCheckpointCompletedAt: string | null,
+) {
+  let itemId: string | null = null;
+  for (let index = visibleTurnItems.length - 1; index >= 0; index -= 1) {
+    const item = visibleTurnItems[index]?.item;
+    if (!item) continue;
+    if (
+      item.type !== "command_execution" &&
+      item.type !== "file_change" &&
+      item.type !== "dynamic_tool" &&
+      item.type !== "subagent"
+    ) {
+      continue;
+    }
+    if (item.status === "pending" || item.status === "running" || item.status === "waiting") {
+      continue;
+    }
+    itemId = item.id;
+    break;
+  }
+  return itemId === null && latestCheckpointCompletedAt === null
+    ? null
+    : JSON.stringify([itemId, latestCheckpointCompletedAt]);
+}
 
 type TurnItem = OrchestrationV2ThreadProjection["turnItems"][number];
 type VisibleTurnItem = OrchestrationV2ThreadProjection["visibleTurnItems"][number];
@@ -123,6 +163,49 @@ function sameTurnItemStructure(previous: TurnItem, next: TurnItem): boolean {
   return sameApartFromStripped(sameTurnItem, previous, structure, next);
 }
 
+function sameProjectionArray<T>(
+  previous: ReadonlyArray<T>,
+  next: ReadonlyArray<T>,
+  same: (previous: T, next: T) => boolean,
+): boolean {
+  if (previous === next) return true;
+  if (previous.length !== next.length) return false;
+  const replacedIndex = getProjectionArrayReplacementIndex(previous, next);
+  if (replacedIndex !== undefined) return same(previous[replacedIndex]!, next[replacedIndex]!);
+  return previous.every((item, index) => same(item, next[index]!));
+}
+
+function sameVisibleTurnItemStructure(before: VisibleTurnItem, after: VisibleTurnItem): boolean {
+  return (
+    before === after ||
+    (before.position === after.position &&
+      before.visibility === after.visibility &&
+      before.sourceThreadId === after.sourceThreadId &&
+      before.sourceItemId === after.sourceItemId &&
+      sameTurnItemStructure(before.item, after.item))
+  );
+}
+
+function isStreamingAssistantMessage(visibleItem: VisibleTurnItem): boolean {
+  return visibleItem.item.type === "assistant_message" && visibleItem.item.streaming;
+}
+
+/** Whether `next` only streams more text into assistant messages that were already streaming. */
+function sameApartFromStreamedAssistantText(
+  previous: OrchestrationV2ThreadProjection["visibleTurnItems"],
+  next: OrchestrationV2ThreadProjection["visibleTurnItems"],
+): boolean {
+  return sameProjectionArray(
+    previous,
+    next,
+    (before, after) =>
+      before === after ||
+      (isStreamingAssistantMessage(before) &&
+        isStreamingAssistantMessage(after) &&
+        sameVisibleTurnItemStructure(before, after)),
+  );
+}
+
 /**
  * Whether `previous` and `next` have the same ThreadStructure: they differ
  * only by text streamed into existing assistant and reasoning items or by a
@@ -156,32 +239,14 @@ export function sameThreadStructure(
   ) {
     return false;
   }
-  if (
-    previous.turnItems.length !== next.turnItems.length ||
-    previous.visibleTurnItems.length !== next.visibleTurnItems.length
-  ) {
-    return false;
-  }
-  for (let index = 0; index < next.turnItems.length; index += 1) {
-    if (!sameTurnItemStructure(previous.turnItems[index]!, next.turnItems[index]!)) {
-      return false;
-    }
-  }
-  for (let index = 0; index < next.visibleTurnItems.length; index += 1) {
-    const before = previous.visibleTurnItems[index]!;
-    const after = next.visibleTurnItems[index]!;
-    if (before === after) continue;
-    if (
-      before.position !== after.position ||
-      before.visibility !== after.visibility ||
-      before.sourceThreadId !== after.sourceThreadId ||
-      before.sourceItemId !== after.sourceItemId ||
-      !sameTurnItemStructure(before.item, after.item)
-    ) {
-      return false;
-    }
-  }
-  return true;
+  return (
+    sameProjectionArray(previous.turnItems, next.turnItems, sameTurnItemStructure) &&
+    sameProjectionArray(
+      previous.visibleTurnItems,
+      next.visibleTurnItems,
+      sameVisibleTurnItemStructure,
+    )
+  );
 }
 
 export function createEnvironmentThreadDetailAtoms<E>(
@@ -193,8 +258,8 @@ export function createEnvironmentThreadDetailAtoms<E>(
   const threadStateValueAtomFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
     return Atom.make((get) =>
-      Option.getOrElse(
-        AsyncResult.value(get(threadStateAtom(ref.environmentId, ref.threadId))),
+      AsyncResult.getOrElse(
+        get(threadStateAtom(ref.environmentId, ref.threadId)),
         () => EMPTY_ENVIRONMENT_THREAD_STATE,
       ),
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-state-value:${key}`));
@@ -233,17 +298,43 @@ export function createEnvironmentThreadDetailAtoms<E>(
           projection: toThreadStructure(next.projection),
         };
       }
-      // Compared against the latest projection, a delta only compares the item it replaced.
+      // Comparing the latest projection lets consecutive replacements bypass history scans.
       previousProjection = next?.projection ?? null;
       return previous;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-quiet-thread:${key}`));
   });
 
+  // Read from the structure so streamed text does not rescan runs and turn items.
+  const usageLimitNoticeRowsAtomFamily = Atom.family((key: string) => {
+    let previous: EnvironmentThreadStructure | null = null;
+    let value: UsageLimitNoticeRows | null = null;
+    return Atom.make((get) => {
+      const thread = get(quietThreadAtomFamily(key));
+      if (thread !== previous) {
+        previous = thread;
+        value = thread === null ? null : deriveUsageLimitNoticeRows(thread.projection);
+      }
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-usage-limit-notice:${key}`));
+  });
+
+  // Presentation only: the projection keeps every row for other readers.
   const visibleTurnItemsAtomFamily = Atom.family((key: string) => {
     const projectQuestionHistory = createQuestionHistoryProjector();
+    let previousRows: OrchestrationV2ThreadProjection["visibleTurnItems"] | null = null;
+    let previousNotice: UsageLimitNoticeRows | null = null;
+    let previous = EMPTY_VISIBLE_TURN_ITEMS;
     return Atom.make((get): OrchestrationV2ThreadProjection["visibleTurnItems"] => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
-      return projection === null ? EMPTY_VISIBLE_TURN_ITEMS : projectQuestionHistory(projection);
+      if (projection === null) return EMPTY_VISIBLE_TURN_ITEMS;
+      const rows = projectQuestionHistory(projection);
+      const notice = get(usageLimitNoticeRowsAtomFamily(key));
+      if (rows !== previousRows || notice !== previousNotice) {
+        previousRows = rows;
+        previousNotice = notice;
+        previous = withoutUsageLimitNoticeRows(rows, notice);
+      }
+      return previous;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-visible-turn-items:${key}`));
   });
 
@@ -258,6 +349,32 @@ export function createEnvironmentThreadDetailAtoms<E>(
       Atom.setIdleTTL(0),
       Atom.withLabel(`environment-quiet-thread-visible-turn-items:${key}`),
     );
+  });
+
+  // Holds while only streamed assistant text moves, so the timeline re-renders on structure;
+  // each streaming message reads its text through assistantMessageTextAtom.
+  const timelineVisibleTurnItemsAtomFamily = Atom.family((key: string) => {
+    let previous = EMPTY_VISIBLE_TURN_ITEMS;
+    return Atom.make((get) => {
+      const next = get(visibleTurnItemsAtomFamily(key));
+      if (!sameApartFromStreamedAssistantText(previous, next)) previous = next;
+      return previous;
+    }).pipe(
+      Atom.setIdleTTL(0),
+      Atom.withLabel(`environment-thread-timeline-visible-turn-items:${key}`),
+    );
+  });
+
+  const assistantMessageTextAtomFamily = Atom.family((key: string) => {
+    const separator = key.lastIndexOf("\u0000");
+    const thread = key.slice(0, separator);
+    const itemId = key.slice(separator + 1);
+    return Atom.make((get) => {
+      const item = get(visibleTurnItemsAtomFamily(thread)).find(
+        (visibleItem) => visibleItem.item.id === itemId,
+      )?.item;
+      return item?.type === "assistant_message" ? item.text : null;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-assistant-message-text:${key}`));
   });
 
   const queueWorkflowAtomFamily = Atom.family((key: string) => {
@@ -287,6 +404,32 @@ export function createEnvironmentThreadDetailAtoms<E>(
       }
       return value;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-queue:${key}`));
+  });
+  const runStopAtomFamily = Atom.family((key: string) => {
+    let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems"> | null = null;
+    let stop: RunStopPresentation | null = null;
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      if (projection === null) {
+        previous = null;
+        stop = null;
+      } else if (
+        projection.runs !== previous?.runs ||
+        projection.turnItems !== previous?.turnItems
+      ) {
+        const { runs, turnItems } = projection;
+        previous = { runs, turnItems };
+        const next = presentRunStop(previous);
+        if (
+          next?.state !== stop?.state ||
+          next?.runId !== stop?.runId ||
+          next?.requestedAt !== stop?.requestedAt ||
+          next?.background !== stop?.background
+        )
+          stop = next;
+      }
+      return stop;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-run-stop:${key}`));
   });
   const queuedCountAtomFamily = Atom.family((key: string) => {
     let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> | null = null;
@@ -403,6 +546,12 @@ export function createEnvironmentThreadDetailAtoms<E>(
       Atom.withLabel(`environment-thread-status:${key}`),
     ),
   );
+  const sequenceAtomFamily = Atom.family((key: string) =>
+    Atom.make((get) => get(threadStateValueAtomFamily(key)).sequence).pipe(
+      Atom.setIdleTTL(0),
+      Atom.withLabel(`environment-thread-sequence:${key}`),
+    ),
+  );
   const errorAtomFamily = Atom.family((key: string) =>
     Atom.make((get) => Option.getOrNull(get(threadStateValueAtomFamily(key)).error)).pipe(
       Atom.setIdleTTL(0),
@@ -416,13 +565,25 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ),
   );
 
+  const workspaceMutationIdAtomFamily = Atom.family((key: string) =>
+    Atom.make((get) =>
+      deriveWorkspaceMutationId(
+        get(quietVisibleTurnItemsAtomFamily(key)),
+        get(checkpointSummariesAtomFamily(key)).at(-1)?.completedAt ?? null,
+      ),
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-workspace-mutation-id:${key}`)),
+  );
+
   return {
     worktreePathAtom: (ref: ScopedThreadRef) => worktreePathAtomFamily(threadKey(ref)),
+    workspaceMutationIdAtom: (ref: ScopedThreadRef) =>
+      workspaceMutationIdAtomFamily(threadKey(ref)),
     updatedAtAtom: (ref: ScopedThreadRef) => updatedAtAtomFamily(threadKey(ref)),
     lastVisitedAtAtom: (ref: ScopedThreadRef) => lastVisitedAtAtomFamily(threadKey(ref)),
     pendingRequestsAtom: (ref: ScopedThreadRef) => pendingRequestsAtomFamily(threadKey(ref)),
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),
+    runStopAtom: (ref: ScopedThreadRef) => runStopAtomFamily(threadKey(ref)),
     turnSubagentsAtom: (ref: ScopedThreadRef) => turnSubagentsAtomFamily(threadKey(ref)),
     checkpointSummariesAtom: (ref: ScopedThreadRef) =>
       checkpointSummariesAtomFamily(threadKey(ref)),
@@ -432,7 +593,12 @@ export function createEnvironmentThreadDetailAtoms<E>(
     visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),
     quietVisibleTurnItemsAtom: (ref: ScopedThreadRef) =>
       quietVisibleTurnItemsAtomFamily(threadKey(ref)),
+    timelineVisibleTurnItemsAtom: (ref: ScopedThreadRef) =>
+      timelineVisibleTurnItemsAtomFamily(threadKey(ref)),
+    assistantMessageTextAtom: (ref: ScopedThreadRef, itemId: string) =>
+      assistantMessageTextAtomFamily(`${threadKey(ref)}\u0000${itemId}`),
     statusAtom: (ref: ScopedThreadRef) => statusAtomFamily(threadKey(ref)),
+    sequenceAtom: (ref: ScopedThreadRef) => sequenceAtomFamily(threadKey(ref)),
     errorAtom: (ref: ScopedThreadRef) => errorAtomFamily(threadKey(ref)),
     historyAtom: (ref: ScopedThreadRef) => historyAtomFamily(threadKey(ref)),
   };

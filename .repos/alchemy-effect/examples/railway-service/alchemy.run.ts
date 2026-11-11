@@ -1,3 +1,4 @@
+import * as Railway from "@alchemy.run/railway";
 /**
  * A Railway project that exercises every resource and binding:
  *
@@ -31,7 +32,6 @@
  */
 import * as Alchemy from "alchemy";
 import * as Output from "alchemy/Output";
-import * as Railway from "alchemy/Railway";
 import * as Effect from "effect/Effect";
 import Api from "./src/api.ts";
 import { Echo } from "./src/echo.ts";
