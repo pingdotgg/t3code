@@ -86,12 +86,19 @@ const compact = (schema: Json, optional: boolean): Json => {
         : compact(value, false);
   }
   if (Array.isArray(result.anyOf)) {
-    const branches = result.anyOf
+    const flat = result.anyOf
       .flatMap((branch) => (isBareAnyOf(branch) ? branch.anyOf : [branch]))
-      .filter((branch) => !(optional && isNullSchema(branch)) && !isJsonStringSchema(branch));
+      .filter((branch) => !isJsonStringSchema(branch));
+    // Effect gives every optional property one `null` branch; a declared `NullOr` adds another.
+    const nulls = flat.filter(isNullSchema).length - (optional ? 1 : 0);
+    const branches = flat.filter((branch) => !isNullSchema(branch));
     const { anyOf: _anyOf, ...rest } = result;
     const only = branches.length === 1 ? branches[0] : mergeTaggedObjects(branches);
-    result = Predicate.isObject(only) ? { ...only, ...rest } : { ...rest, anyOf: branches };
+    const merged = Predicate.isObject(only) ? only : { anyOf: branches };
+    result =
+      nulls > 0
+        ? { ...rest, anyOf: [...(isBareAnyOf(merged) ? merged.anyOf : [merged]), { type: "null" }] }
+        : { ...merged, ...rest };
   }
   return result;
 };
@@ -99,7 +106,7 @@ const compact = (schema: Json, optional: boolean): Json => {
 /**
  * The input schema T3 advertises for a tool. Drops JSON noise that every thread pays for:
  * `additionalProperties: true`, safe-integer bounds, nested `anyOf`, JSON-string fallbacks, and
- * the `null` branch of optional properties. A tagged union of objects becomes one object.
+ * the `null` branch Effect adds to optional properties. A tagged union of objects becomes one object.
  * Decoding still uses the full schema, so each tag's own required fields still apply.
  */
 export const advertisedJsonSchema = (tool: Tool.Any) =>
