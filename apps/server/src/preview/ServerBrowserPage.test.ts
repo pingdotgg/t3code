@@ -5,7 +5,16 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 
@@ -269,6 +278,67 @@ describe("server browser element refs", () => {
     await ServerBrowserPage.click(page, { selector: 'button[data-example=" >> aria-ref=e1"]' });
     expect(await page.locator("button").textContent()).toBe("saved");
   });
+
+  it("evaluates top-level await and returns the last expression's value", async () => {
+    await page.setContent("<title>Ready</title>");
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "await Promise.resolve(); document.title" },
+      5_000,
+    );
+    expect(result).toBe("Ready");
+  });
+
+  it("still awaits the promise an async function returns", async () => {
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "(async () => { await 0; return 1 })()" },
+      5_000,
+    );
+    expect(result).toBe(1);
+  });
+
+  it("does not rerun an expression whose SyntaxError is thrown at runtime", async () => {
+    const evaluation = ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "window.runs = (window.runs ?? 0) + 1; new Function('await 0')" },
+      5_000,
+    );
+    await expect(evaluation).rejects.toThrow("await is only valid");
+    expect(await page.evaluate("window.runs")).toBe(1);
+  });
+
+  it("does not rerun an expression whose awaited browser call rejects with a SyntaxError", async () => {
+    let posts = 0;
+    await page.route("http://preview.test/**", (route) => {
+      if (route.request().method() === "POST") posts++;
+      return route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" });
+    });
+    await page.goto("http://preview.test/");
+    const evaluation = ServerBrowserPage.evaluate(
+      cdp,
+      {
+        expression:
+          "(async () => { const r = await fetch('/api', { method: 'POST' }); return r.json() })()",
+      },
+      5_000,
+    );
+    await expect(evaluation).rejects.toThrow("is not valid JSON");
+    expect(posts).toBe(1);
+  });
+
+  it("returns the result of a top-level await expression that reloads the page", async () => {
+    await page.route("http://preview.test/", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" }),
+    );
+    await page.goto("http://preview.test/");
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "await 0; location.reload(); ({ clicked: true })" },
+      5_000,
+    );
+    expect(result).toEqual({ clicked: true });
+  });
 });
 
 describe("server browser snapshot screenshot", () => {
@@ -309,10 +379,11 @@ describe("server browser snapshot screenshot", () => {
   const screenshotOf = async (html: string) => {
     const page = await context.newPage();
     await page.setContent(html);
-    const { screenshot } = await ServerBrowserPage.snapshot({
+    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot({
       page,
       cdp: await context.newCDPSession(page),
       renderScale: 2,
+      fullScreenshot: true,
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
@@ -335,7 +406,7 @@ describe("server browser snapshot screenshot", () => {
         Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
       );
     })()`)) as Array<[number, number, number, number]>;
-    return { screenshot, pixels };
+    return { screenshot, fullScreenshot, pixels };
   };
   const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
     blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
@@ -350,12 +421,13 @@ describe("server browser snapshot screenshot", () => {
   });
 
   it("captures a plain page at the shrunk size with its content in place", async () => {
-    const { screenshot, pixels } = await screenshotOf(halves(""));
+    const { screenshot, fullScreenshot, pixels } = await screenshotOf(halves(""));
 
     expect({
       size: [screenshot.width, screenshot.height],
+      fullSize: [fullScreenshot?.width, fullScreenshot?.height],
       colors: pixels.map(colorOf),
-    }).toEqual({ size: [1280, 800], colors: ["blue", "red", "red"] });
+    }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
   });
 
   it("shrinks the screenshot of an XML document, whose createElement makes no canvas", async () => {
@@ -411,6 +483,40 @@ describe("server browser drag", () => {
       expect(unobserved).toEqual([]);
     } finally {
       process.off("unhandledRejection", onUnhandled);
+    }
+  });
+});
+
+describe("server browser evaluate", () => {
+  it("does not retry a parse error that arrives after the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const classic = Promise.withResolvers<unknown>();
+      const send = vi.fn((method: string) =>
+        method === "Runtime.evaluate" ? classic.promise : Promise.resolve({}),
+      );
+      const cdp = { send } as unknown as CDPSession;
+      const evaluation = ServerBrowserPage.evaluate(cdp, { expression: "await 0; 1" }, 10);
+      const rejected = expect(evaluation).rejects.toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      await rejected;
+      classic.resolve({
+        result: { type: "object" },
+        exceptionDetails: {
+          text: "Uncaught",
+          scriptId: "4",
+          exception: { type: "object", className: "SyntaxError" },
+        },
+      });
+      await classic.promise;
+      expect(send.mock.calls.map(([method]) => method)).toEqual([
+        "Runtime.evaluate",
+        "Runtime.terminateExecution",
+      ]);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

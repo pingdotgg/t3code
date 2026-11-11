@@ -24,7 +24,9 @@ const CODEX_FOLLOW_UP_NAME = "codex-followup";
 const CODEX_ARTIFACT_TEMPLATE_NAME = "artifact-template";
 const WEB_CITATION_OPEN = "\uE200";
 // OpenAI web-search citations: U+E200 "cite" (U+E202 id)+ U+E201. T3 has no sources for the ids.
-const WEB_CITATION_MARKER = /[ \t]?\uE200cite\uE202[^\uE200\uE201]*\uE201/gu;
+const WEB_CITATION_MARKER = /([ \t]?)\uE200cite\uE202[^\uE200\uE201]*\uE201/gu;
+// Past any closing emphasis or code delimiters, nothing the space separates follows.
+const DROPS_PRECEDING_SPACE = /[*_~`]*(?:\s|[.,;:!?)\]]|$)/uy;
 
 export const CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES = [
   "dataCodexArtifactTemplate",
@@ -250,42 +252,90 @@ function renderArtifactTemplate(node: MarkdownAstNode, source: string): void {
   delete node.url;
 }
 
-function webCitationReplacement(marker: string, followingCharacter: string | undefined): string {
-  const separator = marker[0];
-  return (separator === " " || separator === "\t") && followingCharacter?.trim() ? separator : "";
+function webCitationReplacement(
+  space: string,
+  text: string,
+  contentStart: number | undefined,
+): string {
+  if (contentStart === undefined) return "";
+  DROPS_PRECEDING_SPACE.lastIndex = contentStart;
+  return DROPS_PRECEDING_SPACE.test(text) ? "" : space;
 }
 
-function followingInlineOffset(
+// The inline node after `node.children[childIndex]`, looking past closing syntax up to the block.
+function followingInline(
   node: MarkdownAstNode,
   childIndex: number,
-  followingOffset: number | undefined,
-): number | undefined {
-  const nextStart = node.children?.[childIndex + 1]?.position?.start.offset;
-  if (nextStart !== undefined) return nextStart;
+  following: MarkdownAstNode | undefined,
+): MarkdownAstNode | undefined {
+  const next = node.children?.[childIndex + 1];
+  if (next !== undefined) return next;
   return node.type === "paragraph" || node.type === "heading" || node.type === "tableCell"
     ? undefined
-    : followingOffset;
+    : following;
+}
+
+// Opening syntax is not content: `:codex-followup[blue]` starts with "b", not ":".
+function inlineContentStart(node: MarkdownAstNode | undefined): number | undefined {
+  let leaf = node;
+  while (leaf?.children?.[0] !== undefined) leaf = leaf.children[0];
+  return leaf?.position?.start.offset;
+}
+
+function removeWebCitationMarkers(text: string, source = "", following?: MarkdownAstNode): string {
+  return text.replace(WEB_CITATION_MARKER, (marker, space: string, offset: number) => {
+    const markerEnd = offset + marker.length;
+    return markerEnd < text.length
+      ? webCitationReplacement(space, text, markerEnd)
+      : webCitationReplacement(space, source, inlineContentStart(following));
+  });
+}
+
+// A kept space for a marker that ends its text goes after any closing syntax: `**red** blue`.
+function collectWebCitationMarkers(
+  source: string,
+  start: number,
+  end: number,
+  matches: DirectiveMatch[],
+  following?: MarkdownAstNode,
+): void {
+  for (const marker of source.slice(start, end).matchAll(WEB_CITATION_MARKER)) {
+    const markerStart = start + marker.index;
+    const markerEnd = markerStart + marker[0].length;
+    const space = marker[1] ?? "";
+    if (markerEnd < end) {
+      matches.push({
+        start: markerStart,
+        end: markerEnd,
+        markdown: webCitationReplacement(space, source, markerEnd),
+      });
+      continue;
+    }
+    matches.push({ start: markerStart, end: markerEnd, markdown: "" });
+    const insertAt = following?.position?.start.offset;
+    const separator = webCitationReplacement(space, source, inlineContentStart(following));
+    if (separator && insertAt !== undefined) {
+      matches.push({ start: insertAt, end: insertAt, markdown: separator });
+    }
+  }
 }
 
 function transformCodexDirectives(
   node: MarkdownAstNode,
   source: string,
   insideLink = false,
-  followingOffset?: number,
+  following?: MarkdownAstNode,
 ): void {
   if (node.type === "text" && node.value?.includes(WEB_CITATION_OPEN)) {
-    node.value = node.value.replace(WEB_CITATION_MARKER, (marker, offset: number, text: string) =>
-      webCitationReplacement(
-        marker,
-        text[offset + marker.length] ??
-          (followingOffset === undefined ? undefined : source[followingOffset]),
-      ),
-    );
+    node.value = removeWebCitationMarkers(node.value, source, following);
     return;
   }
   // GFM autolinks take a marker that directly follows a bare URL into the href.
-  if (node.type === "link" && node.url?.includes(WEB_CITATION_OPEN)) {
-    node.url = node.url.replace(WEB_CITATION_MARKER, "");
+  if (
+    (node.type === "link" || node.type === "definition") &&
+    node.url?.includes(WEB_CITATION_OPEN)
+  ) {
+    node.url = removeWebCitationMarkers(node.url);
   }
   if (node.type === "textDirective" && node.name === CODEX_FILE_CITATION_NAME) {
     renderFileCitation(node, source, insideLink);
@@ -305,7 +355,7 @@ function transformCodexDirectives(
       child,
       source,
       childrenInsideLink,
-      followingInlineOffset(node, childIndex, followingOffset),
+      followingInline(node, childIndex, following),
     );
   }
 }
@@ -343,25 +393,13 @@ function collectDirectiveMatches(
   node: MarkdownAstNode,
   source: string,
   matches: DirectiveMatch[],
-  followingOffset?: number,
+  following?: MarkdownAstNode,
 ): void {
   const start = node.position?.start.offset;
   const end = node.position?.end.offset;
   if (start !== undefined && end !== undefined) {
     if (node.type === "text") {
-      for (const marker of source.slice(start, end).matchAll(WEB_CITATION_MARKER)) {
-        const markerStart = start + marker.index;
-        const markerEnd = markerStart + marker[0].length;
-        const separatorOffset = markerEnd < end ? markerEnd : followingOffset;
-        const separator = webCitationReplacement(
-          marker[0],
-          separatorOffset === undefined ? undefined : source[separatorOffset],
-        );
-        matches.push({ start: markerStart, end: markerEnd, markdown: "" });
-        if (separator && separatorOffset !== undefined) {
-          matches.push({ start: separatorOffset, end: separatorOffset, markdown: separator });
-        }
-      }
+      collectWebCitationMarkers(source, start, end, matches, following);
       return;
     }
     if (node.data?.codexFileCitationMarkdown !== undefined) {
@@ -371,6 +409,10 @@ function collectDirectiveMatches(
     if (node.data?.codexArtifactTemplate !== undefined) {
       matches.push({ start, end, template: node.data.codexArtifactTemplate });
       return;
+    }
+    if (node.type === "link" || node.type === "definition") {
+      const destinationStart = node.children?.at(-1)?.position?.end.offset ?? start;
+      collectWebCitationMarkers(source, destinationStart, end, matches);
     }
     const labelStart = node.children?.[0]?.position?.start.offset;
     const labelEnd = node.children?.at(-1)?.position?.end.offset;
@@ -382,12 +424,7 @@ function collectDirectiveMatches(
     }
   }
   for (const [childIndex, child] of (node.children ?? []).entries()) {
-    collectDirectiveMatches(
-      child,
-      source,
-      matches,
-      followingInlineOffset(node, childIndex, followingOffset),
-    );
+    collectDirectiveMatches(child, source, matches, followingInline(node, childIndex, following));
   }
 }
 
