@@ -106,10 +106,6 @@ The offered action depends on how the server runs:
 | **Copy update command**    | Run the command on the named host to update the detected global npm install, then restart the server with your usual options.                                                                   |
 | **Copy relaunch command**  | Stop the command-line server on its host and relaunch with the copied command, keeping your usual subcommand and options. This does not update an installed `t3` command.                       |
 
-For older background services, run `t3 update --yes` or `t3 service install` locally
-once and restart when prompted; deferring can leave the service stopped after a
-crash or restart until you run `t3 service restart`.
-
 On the host, run:
 
 ```sh
@@ -121,6 +117,11 @@ asks before restarting the background service; if you decline, run
 `t3 service restart` when you are ready. For a server you started by hand,
 stop it and start it again afterwards with your usual options such as `--host`
 or `--tailscale-serve`.
+
+A background service installed by an older release refuses **Update server**
+until you update it once on the host and let that update restart it. If you
+decline the restart, the service can stay down after a crash or reboot until you
+run `t3 service restart`.
 
 If you run the server with `npx` rather than an installed `t3`, there is
 nothing to update on the host: stop the server and relaunch it as

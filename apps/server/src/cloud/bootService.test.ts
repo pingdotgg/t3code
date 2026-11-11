@@ -743,8 +743,8 @@ process.disconnect();
         const installing = yield* newer
           .install({ start: false })
           .pipe(Effect.ensuring(Effect.sync(() => milestone.resolve())), Effect.forkChild);
-        // Either observe real OS contention or let an uncoordinated installer finish
-        // before releasing the stale snapshot. The latter deterministically loses C.
+        // Resume the launcher once the installer contends for the unit lease, or once an
+        // uncoordinated installer has finished, which makes the stale snapshot win.
         yield* Effect.promise(() => milestone.promise);
         child.send("resume");
         yield* Fiber.join(installing);
