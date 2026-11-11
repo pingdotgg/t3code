@@ -178,3 +178,30 @@ describe("buildPendingUserInputAnswers", () => {
     });
   });
 });
+
+it.each([
+  ["single-select", singleSelectQuestion, ["Orchestration-first"], '"Orchestration-first"'],
+  [
+    "multi-select",
+    {
+      ...singleSelectQuestion,
+      multiSelect: true,
+      options: [{ label: "Server" }, { label: "Web" }],
+    },
+    ["Server", "Web"],
+    '["Server","Web"]',
+  ],
+])("sends a %s answer to a question with the id __proto__", (_kind, question, selected, json) => {
+  const answers = buildPendingUserInputAnswers(
+    [
+      { ...question, id: "__proto__" },
+      { ...singleSelectQuestion, id: "name" },
+    ],
+    {
+      ["__proto__"]: { selectedOptionValues: selected },
+      name: { selectedOptionValues: ["Orchestration-first"] },
+    },
+  );
+
+  expect(JSON.stringify(answers)).toBe(`{"__proto__":${json},"name":"Orchestration-first"}`);
+});
