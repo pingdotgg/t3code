@@ -211,7 +211,7 @@ export interface DiffScrollPosition {
 
 // Session-only and read imperatively: scroll capture runs per frame and nothing renders from it.
 export const diffScrollPositions = new Map<string, DiffScrollPosition>();
-/** The last external file reveal each diff scope acted on, so returning to it does not repeat it. */
+/** The last external file reveal each thread acted on, so returning to it does not repeat it. */
 export const handledDiffReveals = new Map<string, string>();
 
 export function selectThreadDiffPanelSelection(

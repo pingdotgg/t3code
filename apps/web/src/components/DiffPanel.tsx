@@ -735,15 +735,21 @@ export default function DiffPanel({
   // holds the file, then not again until a new request, so it does not undo what the user did since.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals an externally requested file in the diff viewer, retrying as the diff DOM loads
   useEffect(() => {
-    if (!selectedFilePath) return;
-    const scope = collapseScopeKey ?? reviewSectionId;
-    const key = JSON.stringify([selectedFilePath, selectedFileRevealRequestId]);
-    if (handledDiffReveals.get(scope) === key) return;
+    const thread = routeThreadRef
+      ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
+      : "";
+    // A selection without a file ends the request; the next one restarts its id at 1.
+    if (!selectedFilePath) {
+      handledDiffReveals.delete(thread);
+      return;
+    }
+    const key = JSON.stringify([reviewSectionId, selectedFilePath, selectedFileRevealRequestId]);
+    if (handledDiffReveals.get(thread) === key) return;
     if (revealDiffFile(selectedFilePath)) {
-      handledDiffReveals.set(scope, key);
+      handledDiffReveals.set(thread, key);
     }
   }, [
-    collapseScopeKey,
+    routeThreadRef,
     reviewSectionId,
     selectedFilePath,
     selectedFileRevealRequestId,
