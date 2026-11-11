@@ -86,7 +86,10 @@ export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"]) =>
     provider: DRIVER_KIND,
     npmPackageName: generation === "v2" ? "@opencode/cli" : "opencode-ai",
     nativeUpdate: {
-      args: ["upgrade"],
+      // `isOpenCodeNativeCommandPath` is the curl installer's own binary. Name the
+      // method so OpenCode does not have to infer it from `process.execPath`, which
+      // fails when the binary is launched through a wrapper or shim.
+      args: ["upgrade", "--method", "curl"],
       isCommandPath: isOpenCodeNativeCommandPath,
       requiresCommandPath: true,
     },

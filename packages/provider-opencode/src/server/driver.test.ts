@@ -751,6 +751,8 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         assert.isNull((yield* resolveUpdate(generation, launcher)).update);
         assert.deepStrictEqual((yield* resolveUpdate(generation, native)).update?.args, [
           "upgrade",
+          "--method",
+          "curl",
         ]);
       }
     }),
