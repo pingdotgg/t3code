@@ -157,10 +157,14 @@ function LocalVersionStatusLabel() {
 
 /** Environments lists the machines this app connects to; access covers who may reach one of them. */
 export function ConnectionsSettings({ view }: { readonly view: "environments" | "access" }) {
-  return view === "access" ? (
-    <AccessSettings />
-  ) : (
-    <ConnectionsSettingsContent view="environments" accessEnvironmentId={null} />
+  return view === "access" ? <AccessSettings /> : <EnvironmentsSettings />;
+}
+
+/** The environments page opens with this machine's overview. */
+function EnvironmentsSettings() {
+  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  return (
+    <ConnectionsSettingsContent view="environments" accessEnvironmentId={primaryEnvironmentId} />
   );
 }
 
@@ -1603,14 +1607,14 @@ function ConnectionsSettingsContent({
             </DialogPopup>
           </Dialog>
         </>
-      ) : (
+      ) : showsAccess ? (
         <SettingsSection {...searchableSetting("connections-environment")}>
           <SettingsRow
             title="No environment selected"
             description="Connect an environment to view its settings and access."
           />
         </SettingsSection>
-      )}
+      ) : null}
     </>
   );
 
