@@ -21,16 +21,13 @@ interface CaptureTarget {
   releasePointerCapture(pointerId: number): void;
   closest(selector: string): Element | null;
 }
-interface Gesture {
-  readonly pointerId: number;
+interface Gesture extends PointerInput {
   readonly pointerType: string;
   readonly target: CaptureTarget;
   readonly direction: Direction;
-  origin: { x: number; y: number };
   frame: PreviewMiniPlayerFrame;
-  source: PreviewMiniPlayerSize;
-  last: { x: number; y: number };
   currentFrame: PreviewMiniPlayerFrame;
+  source: PreviewMiniPlayerSize;
   moved: boolean;
 }
 type Commit = (frame: PreviewMiniPlayerFrame, direction: Direction) => void;
@@ -39,21 +36,21 @@ interface Space {
   readonly source: PreviewMiniPlayerSize;
 }
 
-// Computed CSS geometry preserves fractional coordinates in the player's local space.
-function readRenderedFrame(target: CaptureTarget): PreviewMiniPlayerFrame | null {
-  const preview = target.closest("[data-preview-mini-player]");
-  if (!preview) return null;
-  const style = getComputedStyle(preview);
-  const frame = {
-    x: Number.parseFloat(style.left),
-    y: Number.parseFloat(style.top),
-    width: Number.parseFloat(style.width),
-    height: Number.parseFloat(style.height),
+// Rendering derives height from the live source ratio, so a source change mid-resize would move the
+// anchored edge. Refit the gesture's frames to the new ratio around the edges it holds fixed.
+function followSource(active: Gesture, space: Space | null) {
+  if (!space) return;
+  const { source } = space;
+  if (source.width === active.source.width && source.height === active.source.height) return;
+  active.source = source;
+  const refit = (frame: PreviewMiniPlayerFrame) => {
+    const height = (frame.width * source.height) / source.width;
+    const north = active.direction?.includes("north") ?? false;
+    return { ...frame, height, y: north ? frame.y + frame.height - height : frame.y };
   };
-  if (!Object.values(frame).every(Number.isFinite) || frame.width <= 0 || frame.height <= 0) {
-    return null;
-  }
-  return frame;
+  active.frame = refit(active.frame);
+  active.currentFrame = refit(active.currentFrame);
+  if (active.direction !== null) active.moved = true;
 }
 
 export function createPreviewMiniPlayerGesture() {
@@ -63,6 +60,7 @@ export function createPreviewMiniPlayerGesture() {
     const active = gesture;
     if (!active) return;
     gesture = null;
+    followSource(active, space);
     if (space && active.moved) {
       const { x, y } = resolvePreviewMiniPlayerFrame({
         width: active.currentFrame.width,
@@ -89,8 +87,19 @@ export function createPreviewMiniPlayerGesture() {
     ) {
       if (gesture && !gesture.target.hasPointerCapture(gesture.pointerId)) gesture = null;
       if (event.button !== 0 || gesture) return false;
-      const frame = readRenderedFrame(event.currentTarget);
-      if (!frame) return false;
+      const preview = event.currentTarget.closest("[data-preview-mini-player]");
+      if (!preview) return false;
+      // Computed CSS geometry preserves fractional coordinates in the player's local space.
+      const style = getComputedStyle(preview);
+      const frame = {
+        x: Number.parseFloat(style.left),
+        y: Number.parseFloat(style.top),
+        width: Number.parseFloat(style.width),
+        height: Number.parseFloat(style.height),
+      };
+      if (!Object.values(frame).every(Number.isFinite) || frame.width <= 0 || frame.height <= 0) {
+        return false;
+      }
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
@@ -99,12 +108,12 @@ export function createPreviewMiniPlayerGesture() {
       gesture = {
         pointerId: event.pointerId,
         pointerType: event.pointerType,
+        clientX: event.clientX,
+        clientY: event.clientY,
         target: event.currentTarget,
-        origin: { x: event.clientX, y: event.clientY },
         frame,
-        source,
-        last: { x: event.clientX, y: event.clientY },
         currentFrame: frame,
+        source,
         direction,
         moved: false,
       };
@@ -118,23 +127,10 @@ export function createPreviewMiniPlayerGesture() {
         return;
       }
       if (!space) return;
-      if (
-        active.source.width !== space.source.width ||
-        active.source.height !== space.source.height
-      ) {
-        // The player re-rendered at the new source ratio; continue from what is on screen.
-        const rendered = readRenderedFrame(active.target);
-        if (rendered) {
-          active.frame = rendered;
-          active.currentFrame = rendered;
-          active.origin = active.last;
-        }
-      }
-      active.source = space.source;
-      const delta = { x: event.clientX - active.origin.x, y: event.clientY - active.origin.y };
+      followSource(active, space);
+      const delta = { x: event.clientX - active.clientX, y: event.clientY - active.clientY };
       if (!active.moved && Math.hypot(delta.x, delta.y) < HANDLE_TAP_SLOP_PX) return;
       active.moved = true;
-      active.last = { x: event.clientX, y: event.clientY };
       active.currentFrame =
         active.direction === null
           ? {
