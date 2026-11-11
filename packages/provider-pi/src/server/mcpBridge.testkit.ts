@@ -127,6 +127,7 @@ export async function loadMcpBridge(
     },
     pi: {
       on: (name: string, handler: AgentStartHook) => handlers.set(name, handler),
+      registerCommand: () => {},
       registerTool: (tool: RegisteredTool) => {
         if (options.allowsTool && !options.allowsTool(tool.name)) return;
         const index = tools.findIndex((current) => current.name === tool.name);

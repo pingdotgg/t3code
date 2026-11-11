@@ -73,6 +73,7 @@ import {
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
+import { FileLinksExpect, gradeFileLinks } from "./file-link-grading.ts";
 import {
   AGENT_DEVICE_SHELL,
   deviceFailure,
@@ -156,6 +157,8 @@ export type SampleRun = {
   readonly finalText?: string;
   /** PRs linked to the thread when the sample ends, by the agent or by T3. */
   readonly linked?: ReadonlyArray<string>;
+  /** The thread's working directory, which chat resolves relative file pills against. */
+  readonly cwd?: string;
   /** The `agent-device` commands T3's device_open returned, prior turns included. */
   readonly launchers?: ReadonlyArray<string>;
 };
@@ -224,6 +227,8 @@ const McpToolUseExpect = Schema.Struct({
    * files request_secret returned were read. See `SecretExpect` in secret-grading.ts.
    */
   secret: Schema.optional(SecretExpect),
+  /** File pills in the final answer resolve against the thread cwd to `world.files` entries. */
+  fileLinks: Schema.optional(FileLinksExpect),
 });
 
 /**
@@ -1069,7 +1074,7 @@ const codexModel = (id: string) => ({ id, options: [{ id: "reasoningEffort", val
 const PROVIDERS = [
   {
     providerInstanceId: "claudeAgent",
-    models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-haiku-5-5"].map(
+    models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-haiku-5-5"].map(
       claudeModel,
     ),
   },
@@ -1325,10 +1330,10 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
     return typeof id === "string"
       ? {
           ...thread,
-          link: formatThreadLink({
-            environmentId: EVAL_ENVIRONMENT_ID,
-            threadId: ThreadId.make(id),
-          }),
+          link: formatThreadLink(
+            { environmentId: EVAL_ENVIRONMENT_ID, threadId: ThreadId.make(id) },
+            typeof thread.title === "string" ? thread.title : undefined,
+          ),
         }
       : thread;
   };
@@ -1742,6 +1747,10 @@ const withOptionsObject = (input: unknown) => {
 };
 
 /** What the user wrote in the case's thread: its context, prior user turns and the prompt. */
+/** `world.files` keys: paths relative to the thread cwd, or absolute. */
+export const worldFilePaths = ({ setup }: Pick<McpToolUseCase, "setup">) =>
+  Object.keys(isRecord(setup.world?.files) ? setup.world.files : {});
+
 export const pastedText = ({ prompt, setup }: Pick<McpToolUseCase, "prompt" | "setup">) =>
   [
     setup.context ?? "",
@@ -1774,7 +1783,12 @@ const withPage = (tool: string, input: unknown, files: ReadonlyMap<string, strin
 };
 
 /** `pasted` is the thread's user text (`pastedText`), for request_secret's `value`. */
-export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") => {
+export const gradeSample = (
+  expect: McpToolUseCase["expect"],
+  run: SampleRun,
+  pasted = "",
+  worldFiles: ReadonlyArray<string> = [],
+) => {
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
   const written = scriptsBefore(run.calls, true);
@@ -1874,6 +1888,14 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
     add("linkedNumbers", exact === valueText(expect.linkedNumbers.toSorted((a, b) => a - b)));
   }
   checks.push(...gradeDevice(expect.device, run));
+  checks.push(
+    ...gradeFileLinks(
+      expect.fileLinks,
+      run.stopReason === "end_turn" ? run.finalText : undefined,
+      run.cwd,
+      worldFiles,
+    ),
+  );
   checks.push(...gradeSecret(expect.secret, run, pasted));
   return checks;
 };
@@ -2244,6 +2266,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     text: said.join("\n\n"),
     stopReason,
     finalText,
+    cwd: base.environment.cwd,
     linked: [...sample.linked],
     ...(sample.devices ? { launchers: [...sample.devices.launchers] } : {}),
     usage,
@@ -2605,7 +2628,12 @@ const main = Effect.gen(function* () {
           ),
         }),
         onSuccess: (sample) => {
-          const checks = gradeSample(testCase.expect, sample, pastedText(testCase));
+          const checks = gradeSample(
+            testCase.expect,
+            sample,
+            pastedText(testCase),
+            worldFilePaths(testCase),
+          );
           const { secret } = testCase.expect;
           return {
             ...identity,
