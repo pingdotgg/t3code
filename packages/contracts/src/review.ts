@@ -65,6 +65,8 @@ export const ReviewDiffPreviewSource = Schema.Struct({
   diffHash: TrimmedNonEmptyString,
   truncated: Schema.Boolean,
   patchesDeferred: Schema.optionalKey(Schema.Boolean),
+  // Untracked files past the review size budget are left out of the diff, files and totals.
+  untrackedOmitted: Schema.optionalKey(Schema.Boolean),
   files: Schema.optionalKey(Schema.Array(ReviewDiffFileStat)),
 });
 export type ReviewDiffPreviewSource = typeof ReviewDiffPreviewSource.Type;

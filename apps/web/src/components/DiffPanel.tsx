@@ -1308,10 +1308,18 @@ export default function DiffPanel({
                   : "Showing tracked changes. Checking untracked files..."}
               </p>
             )}
+            {isGitSelection && selectedGitSource?.untrackedOmitted && (
+              <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
+                Some untracked files are too large to review. They are not shown or counted.
+              </p>
+            )}
             {isSelectedPatchTruncated && !lazySource && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
                 This preview exceeds the size limit. Changes shown are incomplete.
-                {isGitSelection && selectedGitSource?.files && !preview?.incomplete
+                {isGitSelection &&
+                selectedGitSource?.files &&
+                !preview?.incomplete &&
+                !selectedGitSource.untrackedOmitted
                   ? " Totals include all changes."
                   : ""}
               </p>

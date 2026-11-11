@@ -664,14 +664,20 @@ export function buildReviewParsedDiff(
   }
 }
 
+export const UNTRACKED_OMITTED_NOTICE =
+  "Some untracked files are too large to review. They are not shown or counted.";
+
 export function applyReviewDiffMetadata(
   previewDiff: ReviewParsedDiff,
-  selectedSection: Pick<ReviewSectionItem, "files" | "truncated"> | null,
+  selectedSection: Pick<ReviewSectionItem, "files" | "truncated" | "source"> | null,
 ): ReviewParsedDiff {
   if (previewDiff.kind === "empty") return previewDiff;
+  const untrackedOmitted = selectedSection?.source?.untrackedOmitted === true;
   const notice = selectedSection?.truncated
-    ? `This preview exceeds the size limit. Changes shown are incomplete.${selectedSection.files ? " Counts include all changes." : ""}`
-    : previewDiff.notice;
+    ? `This preview exceeds the size limit. Changes shown are incomplete.${selectedSection.files && !untrackedOmitted ? " Counts include all changes." : ""}`
+    : untrackedOmitted
+      ? UNTRACKED_OMITTED_NOTICE
+      : previewDiff.notice;
   if (previewDiff.kind !== "files" || !selectedSection?.files) return { ...previewDiff, notice };
   const totals = selectedSection.files.reduce(
     (total, file) => ({

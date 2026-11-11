@@ -6,6 +6,7 @@ import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
 import { getCachedReviewParsedDiff } from "./reviewState";
 import {
   applyReviewDiffMetadata,
+  UNTRACKED_OMITTED_NOTICE,
   buildReviewParsedDiff,
   type ReviewParsedDiff,
   type ReviewRenderableFile,
@@ -225,7 +226,7 @@ export function useReviewDiffData(input: {
       fileCount: files.length,
       additions: files.reduce((total, file) => total + file.additions, 0),
       deletions: files.reduce((total, file) => total + file.deletions, 0),
-      notice: null,
+      notice: lazySource.untrackedOmitted ? UNTRACKED_OMITTED_NOTICE : null,
     };
   }, [lazySource, previewDiff, selectedSection, patches]);
   const headerDiffSummary = useMemo(

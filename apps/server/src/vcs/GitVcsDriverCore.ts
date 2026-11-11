@@ -3610,7 +3610,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
       return { ...patch, files: stat.files };
     });
-    const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
+    const [dirtyTrackedResult, baseResult, untrackedOmitted] = yield* Effect.gen(function* () {
       const untracked = input.trackedOnly
         ? { env: undefined, omitted: false }
         : yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
@@ -3627,13 +3627,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               ],
               { concurrency: 2 },
             );
-      if (untracked?.omitted === false) return [dirty, base] as const;
-      // Too many untracked files drops per-file totals; omitted oversized files only mark it partial.
+      if (untracked !== null) return [dirty, base, untracked.omitted] as const;
       const incomplete = (ref: string | null, result: typeof dirty) =>
-        ref === null
-          ? result
-          : { ...result, stdoutTruncated: true, files: untracked ? result.files : undefined };
-      return [incomplete(dirtyRef, dirty), incomplete(review.mergeBase, base)] as const;
+        ref === null ? result : { ...result, files: undefined, stdoutTruncated: true };
+      return [incomplete(dirtyRef, dirty), incomplete(review.mergeBase, base), false] as const;
     }).pipe(Effect.scoped);
     const dirtyFiles = dirtyTrackedResult.files;
     const baseFiles = baseResult.files;
@@ -3655,6 +3652,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...(dirtyFiles === undefined ? {} : { files: dirtyFiles }),
         diffHash: dirtyDiffHash,
         truncated: dirtyTrackedResult.stdoutTruncated,
+        ...(untrackedOmitted ? { untrackedOmitted } : {}),
         ...(input.metadataOnly && !input.file && dirtyFiles !== undefined
           ? { patchesDeferred: true }
           : {}),
@@ -3669,6 +3667,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...(baseFiles === undefined ? {} : { files: baseFiles }),
         diffHash: baseDiffHash,
         truncated: baseResult.stdoutTruncated,
+        ...(untrackedOmitted ? { untrackedOmitted } : {}),
         ...(input.metadataOnly && !input.file && baseFiles !== undefined
           ? { patchesDeferred: true }
           : {}),

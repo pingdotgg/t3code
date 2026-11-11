@@ -2663,7 +2663,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
         const source = preview.sources.find((item) => item.kind === "working-tree")!;
-        assert.isTrue(source.truncated);
+        assert.isTrue(source.untrackedOmitted);
         assert.deepStrictEqual(
           source.files?.map((file) => file.path),
           symlinksSupported
@@ -2676,7 +2676,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           cwd,
           file: { path: "large.data", previousPath: null, sourceKind: "working-tree" },
         });
-        assert.isTrue(oversized.sources[0]!.truncated);
+        assert.isTrue(oversized.sources[0]!.untrackedOmitted);
         assert.isEmpty(oversized.sources[0]!.diff);
       }),
     );
