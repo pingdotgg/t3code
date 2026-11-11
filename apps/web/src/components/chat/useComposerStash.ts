@@ -456,14 +456,12 @@ export function useComposerStash(input: {
       });
       return;
     }
-    const rawPrompt = promptRef.current;
-    const lastToken = collectComposerPromptInlineTokens(rawPrompt).at(-1);
+    const trimmedPrompt = promptRef.current.trim();
     // A trailing chip only parses with whitespace after it, so keep one space to restore it.
-    const prompt =
-      (lastToken?.type === "mention" || lastToken?.type === "skill") &&
-      rawPrompt.slice(lastToken.end).trim().length === 0
-        ? `${rawPrompt.trim()} `
-        : rawPrompt.trim();
+    const endsWithChip =
+      collectComposerPromptInlineTokens(promptRef.current).at(-1)?.end ===
+      promptRef.current.trimEnd().length;
+    const prompt = endsWithChip ? `${trimmedPrompt} ` : trimmedPrompt;
     const attachmentDraft = readAttachmentDraft();
     const images = [...attachmentDraft.images];
     const files = [...attachmentDraft.files];
