@@ -21,6 +21,8 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as Etag from "effect/http/Etag";
@@ -173,6 +175,18 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
         ),
       );
 
+    const readTranscriptError = Context.get(
+      services,
+      ThreadManagementService.ThreadManagementService,
+    )
+      .getThreadTranscript(thread.id)
+      .pipe(
+        Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+          getEnvironmentId: Effect.succeed(environmentId),
+        }),
+        Effect.flip,
+      );
+
     const emptyResponse = yield* read(thread.id);
     expect(emptyResponse.status).toBe(200);
     expect(
@@ -227,22 +241,40 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       });
       const response = yield* read(thread.id);
       expect(response.status).toBe(expectedStatus);
-      if (expectedStatus === 400) {
-        const error = yield* Context.get(services, ThreadManagementService.ThreadManagementService)
-          .getThreadTranscript(thread.id)
-          .pipe(
-            Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
-              getEnvironmentId: Effect.succeed(environmentId),
-            }),
-            Effect.flip,
-          );
-        expect(error).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
-        expect(yield* Effect.promise(() => response.json())).toMatchObject({
-          _tag: "EnvironmentRequestInvalidError",
-          reason: "thread_transcript_too_large",
-        });
+      if (expectedStatus === 200) {
+        const exported = yield* decodeTranscript(yield* Effect.promise(() => response.json()));
+        expect(exported.items[0]?.item).toMatchObject({ output: boundaryOutput });
+        continue;
       }
+      expect(yield* readTranscriptError).toBeInstanceOf(
+        ThreadManagementService.ThreadTranscriptTooLargeError,
+      );
+      expect(yield* Effect.promise(() => response.json())).toMatchObject({
+        _tag: "EnvironmentRequestInvalidError",
+        reason: "thread_transcript_too_large",
+      });
     }
+
+    // Far above the limit the stored size alone rejects the export: its only read is that size.
+    const sql = Context.get(services, SqlClient.SqlClient);
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items
+      SET payload_json = json_set(
+        payload_json, '$.output', printf('%.*c', ${2 * PROVIDER_SEND_TURN_MAX_FILE_BYTES}, 'x')
+      )
+      WHERE turn_item_id = ${items[1]!.id}
+    `;
+    const reads: Array<string> = [];
+    expect(
+      yield* readTranscriptError.pipe(
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          reads.push(statement.compile()[0]);
+          return Effect.succeed(statement);
+        }),
+      ),
+    ).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
+    expect(reads).toEqual([expect.stringContaining("octet_length(payload_json)")]);
+    expect((yield* read(thread.id)).status).toBe(400);
 
     expect((yield* read(ThreadId.make("missing"))).status).toBe(404);
     allowed = false;

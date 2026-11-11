@@ -217,6 +217,11 @@ export class ThreadManagementThreadNotFoundError extends Schema.TaggedError<Thre
   }
 }
 
+// An exported row is its stored payload plus a wrapper, so stored bytes are a floor for the export
+// unless decoding drops fields. Twice the limit covers that, and the exact check still decides
+// every export near the limit.
+const TRANSCRIPT_EARLY_REJECT_BYTES = 2 * PROVIDER_SEND_TURN_MAX_FILE_BYTES;
+
 export class ThreadTranscriptTooLargeError extends Schema.TaggedError<ThreadTranscriptTooLargeError>()(
   "ThreadTranscriptTooLargeError",
   { threadId: ThreadId },
@@ -681,7 +686,11 @@ const make = Effect.gen(function* () {
     );
   const getThreadTranscript = Effect.fn("orchestrationV2.threadManagement.getThreadTranscript")(
     function* (threadId: ThreadId) {
-      const { projection } = yield* getThreadSnapshot(threadId);
+      yield* ensureProjectionTranscript(threadId);
+      if ((yield* orchestrator.getTranscriptByteFloor(threadId)) > TRANSCRIPT_EARLY_REJECT_BYTES) {
+        return yield* new ThreadTranscriptTooLargeError({ threadId });
+      }
+      const { projection } = yield* orchestrator.getThreadSnapshot(threadId);
       const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
       const transcript = {
         threadId: projection.thread.id,

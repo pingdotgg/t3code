@@ -472,6 +472,10 @@ export interface ProjectionStoreV2Shape {
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
+  /** Stored bytes of the turn items every transcript export includes. Reads no payload. */
+  readonly getTranscriptByteFloor: (
+    threadId: ThreadId,
+  ) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Child threads of the thread's app-owned tasks, in task order, without decoding the tasks. */
   readonly listAppOwnedChildThreadIds: (
@@ -713,6 +717,7 @@ export interface ProjectionStoreV2Shape {
     },
     ProjectionStoreV2Error
   >;
+  /** Context handoffs come without `history` and `delivery`; no window reader uses them. */
   readonly getThreadSnapshotWindow: (
     threadId: ThreadId,
     options: {
@@ -3872,7 +3877,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE thread_id = ${threadId} ORDER BY rowid ASC
               `
               : sql<PayloadRow>`
-                SELECT payload_json FROM orchestration_v2_projection_context_handoffs AS handoff
+                -- Megabytes on a long thread, and projectContextHandoffForWire drops both.
+                SELECT json_remove(payload_json, '$.history', '$.delivery') AS payload_json
+                FROM orchestration_v2_projection_context_handoffs AS handoff
                 WHERE handoff.thread_id = ${threadId}
                   AND (
                     handoff.status IN ('pending', 'ready')
@@ -5750,6 +5757,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         count: number;
       }>`SELECT COUNT(*) AS count FROM orchestration_v2_projection_messages WHERE thread_id = ${threadId}`.pipe(
         Effect.map((rows) => rows[0]?.count ?? 0),
+        Effect.mapError(controlReadError(threadId)),
+      );
+    // Skips every row createOrchestrationV2TurnItemVisibility can hide, so the sum never counts a
+    // row the export leaves out. Rows a fork inherits are left out; they only add to the export.
+    // octet_length reads the row header, not the payload.
+    const getTranscriptByteFloor: ProjectionStoreV2Shape["getTranscriptByteFloor"] = (threadId) =>
+      sql<{ bytes: number }>`
+        SELECT COALESCE(SUM(octet_length(payload_json)), 0) AS bytes
+        FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${threadId}
+          AND type NOT IN ('user_message', 'run_interrupt_result')
+          AND (run_id IS NULL OR run_id NOT IN (
+            SELECT run_id FROM orchestration_v2_projection_runs
+            WHERE thread_id = ${threadId} AND status = 'rolled_back'
+          ))
+      `.pipe(
+        Effect.map((rows) => rows[0]?.bytes ?? 0),
         Effect.mapError(controlReadError(threadId)),
       );
     const getSubagentCount: ProjectionStoreV2Shape["getSubagentCount"] = (threadId) =>
@@ -7783,6 +7807,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
+      getTranscriptByteFloor: readOnReader(getTranscriptByteFloor),
       getSubagentCount: readOnReader(getSubagentCount),
       listAppOwnedChildThreadIds: readOnReader(listAppOwnedChildThreadIds),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
