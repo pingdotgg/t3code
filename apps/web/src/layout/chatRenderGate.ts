@@ -1,9 +1,12 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { createContext } from "react";
 import { flushSync } from "react-dom";
 
 import { useComposerDraftStore } from "../composerDraftStore";
 import { readThreadShell } from "../state/entities";
 import type { ThreadRouteTarget } from "../threadRoutes";
+
+export const DeferredChatContext = createContext(false);
 
 /** A focused chat waiting for first render must intercept and replay its keys, or shortcuts can fall
  * through to desktop window actions. */

@@ -13,7 +13,7 @@ import { evaluateWhenNode } from "@t3tools/shared/keybindingMatching";
 import { useEffect } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
-import { resolveShortcutCommand } from "../keybindings";
+import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
 import { isKeybindingCaptureTarget } from "../lib/keybindingCapture";
 import { isModalDialogOpen } from "../lib/modalDialog";
@@ -296,14 +296,21 @@ export function useLayoutKeyboardCommands(): void {
       // A focused chat waiting for its first render must mount before replaying its shortcuts or
       // typed text; the overview retains its own keyboard ownership.
       const layout = useLayoutStore.getState().layout;
+      const focusedTabId = selectFocusedTab(layout)?.id ?? null;
+      const typingInChat =
+        event.target instanceof Element &&
+        event.target.closest("[data-layout-tab-id]")?.getAttribute("data-layout-tab-id") ===
+          focusedTabId;
       const waitingChatTabId =
         command === null
-          ? isTypedText(event) &&
-            !isEditableFocused(event.target) &&
-            !useLayoutStore.getState().overviewOpen
-            ? (selectFocusedTab(layout)?.id ?? null)
+          ? !MODIFIER_KEYS.has(event.key) &&
+            !useLayoutStore.getState().overviewOpen &&
+            (typingInChat || (isTypedText(event) && !isEditableFocused(event.target)))
+            ? focusedTabId
             : null
-          : !isLayoutCommand(command) && !CHAT_FREE_COMMANDS.has(command)
+          : !isLayoutCommand(command) &&
+              !CHAT_FREE_COMMANDS.has(command) &&
+              threadJumpIndexFromCommand(command) === null
             ? answeringChatTabId(layout, command)
             : null;
       if (renderWaitingChatNow(waitingChatTabId)) {
@@ -320,8 +327,10 @@ export function useLayoutKeyboardCommands(): void {
           bubbles: true,
           cancelable: true,
         });
-        // Unhandled, the key keeps its native meaning, as it would have.
-        if (!(event.target ?? window).dispatchEvent(replay)) event.preventDefault();
+        // A promoted draft's keyed editor can unmount while the selected chat lands.
+        const replayTarget =
+          event.target instanceof Node && event.target.isConnected ? event.target : window;
+        if (!replayTarget.dispatchEvent(replay)) event.preventDefault();
         return;
       }
       // A surface tab whose thread's chat is not open answers its thread's

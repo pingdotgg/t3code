@@ -485,10 +485,8 @@ function Sidebar({
         <Sheet onOpenChange={setOpenMobile} open={openMobile}>
           <SheetPopup
             ref={setMobileSheetElement}
-            // The sheet paints the popover surface. In light, black chrome it is
-            // chrome like the desktop sidebar, so it takes the black, grain and keycaps.
             className={cn(
-              "w-(--sidebar-width) max-w-none p-0 text-sidebar-foreground [.black-chrome_&]:bg-(--app-chrome-background) [.black-chrome_&]:surface-grain [.black-chrome_&]:[--kbd-background:initial]",
+              "w-(--sidebar-width) max-w-none bg-(--app-chrome-background) bg-(image:--surface-grain) p-0 surface-grain text-sidebar-foreground [.black-chrome_&]:[--kbd-background:initial]",
               className,
             )}
             data-mobile="true"
@@ -742,7 +740,7 @@ function SidebarRail({
               /* A collapsed offcanvas rail overlaps the native scrollbar on Windows and Linux. */
               "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
               "[[data-panel-animations=true]_&]:transition-all [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
-              "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
+              "touch-none in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
               "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
               "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
               "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
