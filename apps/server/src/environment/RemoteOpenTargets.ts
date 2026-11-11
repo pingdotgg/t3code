@@ -5,9 +5,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as TailscaleStatusCache from "./TailscaleStatusCache.ts";
-
 import { makeStaleWhileRevalidate } from "./staleWhileRevalidate.ts";
+import * as TailscaleStatusCache from "./TailscaleStatusCache.ts";
 
 const SSH_PORT = 22;
 const TARGETS_CACHE_TTL = "60 seconds";
