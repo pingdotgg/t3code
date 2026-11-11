@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contract
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { Root } from "mdast";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
@@ -14,15 +15,15 @@ const HOSTED_PREFIX = `${DEFAULT_HOSTED_APP_URL}/threads/`;
 const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
 // Every inline link is taken whole, so a hosted URL in another link's label or href stays as written.
-// Labels and destinations stop at the next `[`, while titles may contain literal brackets.
+// Labels and non-thread destinations stop at the next `[`, while titles may contain literal brackets.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`\[(?<label>(?:[^[\]\\\n]|\\.)*)\]\((?:<(?<angleHref>[^\s<>[]*)>|(?<href>[^\s<>)[]*))(?<title>\s+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\))[ \t]*)?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`\[(?<label>(?:[^[\]\\\n]|\\.)*)\]\((?:<(?<angleHref>t3-thread:\/\/v[12]\/[^\s<>]*|[^\s<>[]*)>|(?<href>t3-thread:\/\/v[12]\/[^\s<>)]*|[^\s<>)[]*))(?<title>\s+(?:"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|\((?:\\[^\n]|[^()\\\n])*\))[ \t]*)?\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<![\w%/?#=&.:@+-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
   "g",
 );
 
-const codeParser = unified().use(remarkParse).freeze();
+const codeParser = unified().use(remarkParse).use(remarkGfm).freeze();
 
-// Let CommonMark own block precedence and complete backtick runs. Only offsets are used:
+// Let GFM own block precedence and complete backtick runs. Only offsets are used:
 // links still follow the bounded policy above, and untouched source is never serialized.
 function codeRanges(markdown: string) {
   const ranges: Array<{ start: number; end: number; inline: boolean }> = [];

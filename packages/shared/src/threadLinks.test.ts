@@ -119,15 +119,21 @@ describe("thread links", () => {
       relabelThreadLinks("[Kept label](<t3-thread://v2/local/t1>)", local, () => undefined),
     ).toBe("Kept label");
     expect(threadLinkRefs("[a](<t3-thread://v2/there/t2>)", local)).toEqual([ref("there", "t2")]);
-    for (const threadId of ["mcp:launch:qa(1)", "mcp:launch:qa)"]) {
+    for (const [threadId, destination] of [
+      ["mcp:launch:qa(1)", "<t3-thread://v2/there/mcp:launch:qa(1)>"],
+      ["mcp:launch:qa)", "<t3-thread://v2/there/mcp:launch:qa)>"],
+      ["task[1]", "t3-thread://v2/there/task[1]"],
+    ]) {
       const thread = ref("there", threadId);
       const link = formatThreadLink(thread, "Original");
-      expect(link).toBe(`[Original](<t3-thread://v2/there/${threadId}>)`);
-      expect(threadLinkRefs(link, local)).toEqual([thread]);
-      expect(relabelThreadLinks(link, local, () => "Renamed")).toBe(
-        `[Renamed](<t3-thread://v2/there/${threadId}>)`,
-      );
-      expect(relabelThreadLinks(link, local, () => undefined)).toBe("Original");
+      expect(link).toBe(`[Original](${destination})`);
+      for (const written of [link, `[Original](<t3-thread://v2/there/${threadId}>)`]) {
+        expect(threadLinkRefs(written, local)).toEqual([thread]);
+        expect(relabelThreadLinks(written, local, () => "Renamed")).toBe(
+          `[Renamed](${destination})`,
+        );
+        expect(relabelThreadLinks(written, local, () => undefined)).toBe("Original");
+      }
     }
   });
 
@@ -390,14 +396,16 @@ describe("Markdown code boundaries", () => {
     expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(markdown);
   });
 
-  it.each(["`a`` LINK", "before ~~~inline LINK", "`unclosed\n\nLINK"])(
-    "keeps links live outside actual code: %s",
-    (source) => {
-      const markdown = source.replace("LINK", link);
-      expect(threadLinkRefs(markdown, local)).toEqual([ref("env", "thread")]);
-      expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(
-        markdown.replace(link, "[Title](t3-thread://v2/env/thread)"),
-      );
-    },
-  );
+  it.each([
+    "`a`` LINK",
+    "before ~~~inline LINK",
+    "`unclosed\n\nLINK",
+    "| A | B |\n| --- | --- |\n| ` | first |\n| LINK | second |\n| ` | third |",
+  ])("keeps links live outside actual code: %s", (source) => {
+    const markdown = source.replace("LINK", link);
+    expect(threadLinkRefs(markdown, local)).toEqual([ref("env", "thread")]);
+    expect(relabelThreadLinks(markdown, local, () => "Title")).toBe(
+      markdown.replace(link, "[Title](t3-thread://v2/env/thread)"),
+    );
+  });
 });
