@@ -141,6 +141,7 @@ export interface EnvironmentThreadShell {
   readonly title: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly modelSelection: OrchestrationV2ThreadShell["modelSelection"];
+  readonly nextTurnModelSelection?: OrchestrationV2ThreadShell["nextTurnModelSelection"];
   readonly runtimeMode: OrchestrationV2ThreadShell["runtimeMode"];
   readonly interactionMode: OrchestrationV2ThreadShell["interactionMode"];
   readonly branch: string | null;
@@ -288,6 +289,7 @@ export function presentThreadShell(
         : thread.title,
     providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
+    nextTurnModelSelection: thread.nextTurnModelSelection ?? null,
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     branch: thread.branch,

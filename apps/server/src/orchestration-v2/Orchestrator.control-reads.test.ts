@@ -217,19 +217,25 @@ it.effect.each(
       assert.ok(Result.isFailure(outcome));
       assert.instanceOf(outcome.failure, Orchestrator.OrchestratorProviderSelectionBusyError);
     } else if (active && selectionChange === "instance") {
-      // Cross-harness / create_with_handoff stages the seat while the turn keeps running.
+      // Cross-harness / create_with_handoff stages next-turn while the turn keeps running.
       assert.ok(Result.isSuccess(outcome));
-      assert.deepEqual(after.thread.modelSelection, target);
-      assert.equal(after.thread.providerInstanceId, target.instanceId);
+      assert.deepEqual(after.thread.modelSelection, before.thread.modelSelection);
+      assert.equal(after.thread.providerInstanceId, before.thread.providerInstanceId);
+      assert.deepEqual(after.thread.nextTurnModelSelection, target);
       assert.deepEqual(after.runs, before.runs);
       assert.deepEqual(after.providerTurns, before.providerTurns);
       assert.deepEqual(after.providerSessions, before.providerSessions);
       assert.deepEqual(
         yield* outbox.listByCommandId(commandId),
         [],
-        "a staged seat switch must not detach the live provider session mid-turn",
+        "a staged next-turn switch must not detach the live provider session mid-turn",
       );
       assert.isAbove(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+      assert.isTrue(
+        after.turnItems.some(
+          (item) => item.type === "system_notice" && item.title === "Provider switch staged",
+        ),
+      );
     } else {
       assert.ok(Result.isSuccess(outcome));
       assert.deepEqual(after.thread.modelSelection, target);

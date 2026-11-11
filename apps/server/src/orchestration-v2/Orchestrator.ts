@@ -116,7 +116,7 @@ import {
   ContextHandoffServiceV2,
   readForkHistoryItems,
   readInheritedHandoffItems,
-  runtimeSeatSwitchContext,
+  providerHandoffIdentity,
   visibleConversationItems,
   visibleDeltaRunOrdinals,
 } from "./ContextHandoffService.ts";
@@ -2399,7 +2399,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     coveredRuns.map((run) => run.id),
                   )),
                 ],
-                seat: runtimeSeatSwitchContext({
+                identity: providerHandoffIdentity({
                   thread: projection.thread,
                   fromProviderInstanceId: latestHandoffRun.providerInstanceId,
                   toProviderInstanceId: queuedRun.providerInstanceId,
@@ -3956,6 +3956,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
         ? yield* Effect.gen(function* () {
+            const currentThread = providerContext!.thread;
+            // Restoring the live selection cancels a staged next-turn switch.
+            if (
+              modelSelectionsEqual(command.modelSelection, currentThread.modelSelection) &&
+              currentThread.nextTurnModelSelection != null
+            ) {
+              return {
+                instanceChanged: false,
+                releaseProviderSessionIds: [] as ReadonlyArray<never>,
+                transition: { type: "reuse" as const },
+                stageNextTurn: false,
+                clearNextTurn: true,
+              };
+            }
             yield* providerAdapters.get(command.modelSelection.instanceId).pipe(
               Effect.mapError(
                 (cause) =>
@@ -3977,10 +3991,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 turnItemTypes: [],
               });
               if (projection.runs.some(isActiveRun)) {
-                // OpenRig set-runtime: stage a cross-harness seat switch without cutting the
-                // live occupant. Selection moves now; session detach waits for the handoff turn.
+                // Cross-harness switch: stage next-turn selection; keep the live occupant.
+                // Session detach waits until the handoff turn applies it.
                 if (plan.transition.type === "create_with_handoff") {
-                  return { ...plan, releaseProviderSessionIds: [] };
+                  return {
+                    ...plan,
+                    releaseProviderSessionIds: [],
+                    stageNextTurn: true,
+                    clearNextTurn: false,
+                  };
                 }
                 return yield* new OrchestratorProviderSelectionBusyError({
                   commandId: command.commandId,
@@ -3988,7 +4007,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 });
               }
             }
-            return plan;
+            return { ...plan, stageNextTurn: false, clearNextTurn: false };
           })
         : null;
 
@@ -4546,10 +4565,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return { ...thread, interactionMode: command.interactionMode, updatedAt: now };
         case "thread.model-selection.set":
         case "provider.switch":
+          if (providerSwitchPlan?.clearNextTurn === true) {
+            return { ...thread, nextTurnModelSelection: null, updatedAt: now };
+          }
+          if (providerSwitchPlan?.stageNextTurn === true) {
+            return {
+              ...thread,
+              nextTurnModelSelection: command.modelSelection,
+              updatedAt: now,
+            };
+          }
           return {
             ...thread,
             providerInstanceId: command.modelSelection.instanceId,
             modelSelection: command.modelSelection,
+            nextTurnModelSelection: null,
             updatedAt: now,
           };
       }
@@ -4616,11 +4646,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.interaction-mode.set":
           return "thread.interaction-mode-updated" as const;
         case "thread.model-selection.set":
-          return thread.providerInstanceId === command.modelSelection.instanceId
+          return providerSwitchPlan?.stageNextTurn === true ||
+            providerSwitchPlan?.clearNextTurn === true ||
+            thread.providerInstanceId === command.modelSelection.instanceId
             ? ("thread.model-selection-updated" as const)
             : ("thread.provider-switched" as const);
         case "provider.switch":
-          return "thread.provider-switched" as const;
+          return providerSwitchPlan?.stageNextTurn === true ||
+            providerSwitchPlan?.clearNextTurn === true
+            ? ("thread.model-selection-updated" as const)
+            : ("thread.provider-switched" as const);
       }
     })();
     yield* emit(
@@ -4633,6 +4668,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: updatedThread,
     });
+    if (
+      (command.type === "thread.model-selection.set" || command.type === "provider.switch") &&
+      (providerSwitchPlan?.stageNextTurn === true || providerSwitchPlan?.clearNextTurn === true)
+    ) {
+      const noticeProjection = yield* loadProjectionForCommand(command, ["runs"], {
+        turnItemTypes: [],
+      });
+      const activeRun = noticeProjection.runs.findLast(isActiveRun);
+      if (activeRun !== undefined) {
+        const from = thread.modelSelection;
+        const to = command.modelSelection;
+        const staged = providerSwitchPlan.stageNextTurn === true;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: activeRun.id,
+          ...(activeRun.rootNodeId === null ? {} : { nodeId: activeRun.rootNodeId }),
+          providerInstanceId: activeRun.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: idAllocator.derive.runSignalTurnItem({
+              runId: activeRun.id,
+              signal: staged
+                ? `provider-switch-staged:${to.instanceId}:${to.model}`
+                : `provider-switch-cancelled:${from.instanceId}:${from.model}`,
+            }),
+            threadId: command.threadId,
+            runId: activeRun.id,
+            nodeId: activeRun.rootNodeId,
+            providerThreadId: activeRun.providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 0,
+            status: "completed",
+            title: staged ? "Provider switch staged" : "Provider switch cancelled",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "system_notice",
+            message: staged
+              ? `Next turn will switch from ${from.instanceId} (${from.model}) to ${to.instanceId} (${to.model}). The current turn keeps running.`
+              : `Cancelled the staged switch. Staying on ${from.instanceId} (${from.model}).`,
+          },
+        });
+      }
+    }
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
@@ -5812,7 +5897,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   .map((run) => run.id),
           ),
           runs: input.projection.runs,
-          seat: runtimeSeatSwitchContext({
+          identity: providerHandoffIdentity({
             thread: input.projection.thread,
             fromProviderInstanceId: targetRun.providerInstanceId,
             toProviderInstanceId: input.modelSelection.instanceId,
@@ -6312,7 +6397,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = applyToProjection(projection, event);
     }
-    let modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    let modelSelection =
+      command.modelSelection ??
+      projection.thread.nextTurnModelSelection ??
+      projection.thread.modelSelection;
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
@@ -7035,7 +7123,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const now = yield* DateTime.now;
     if (
       !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-      projection.thread.providerInstanceId !== modelSelection.instanceId
+      projection.thread.providerInstanceId !== modelSelection.instanceId ||
+      projection.thread.nextTurnModelSelection != null
     ) {
       yield* emit(
         events,
@@ -7052,6 +7141,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...projection.thread,
           providerInstanceId: modelSelection.instanceId,
           modelSelection,
+          nextTurnModelSelection: null,
           updatedAt: now,
         },
       });
@@ -7840,7 +7930,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   : "delta_since_target_last_seen",
               items: providerSwitchItems,
               runs: projection.runs,
-              seat: runtimeSeatSwitchContext({
+              identity: providerHandoffIdentity({
                 thread: projection.thread,
                 fromProviderInstanceId: latestHandoffRun.providerInstanceId,
                 toProviderInstanceId: modelSelection.instanceId,

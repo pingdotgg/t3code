@@ -258,17 +258,17 @@ it("covers the run range of a very long delta", () => {
   );
 });
 
-it("frames a runtime seat switch with durable identity and place", () => {
-  const threadId = ThreadId.make("thread:seat-switch");
-  const coverage = ContextHandoffService.makeRuntimeSeatSwitchCoverage({
+it("frames a provider switch with durable thread identity and place", () => {
+  const threadId = ThreadId.make("thread:provider-switch");
+  const coverage = ContextHandoffService.makeProviderHandoffIdentityCoverage({
     threadId,
     coveredRunOrdinals: { from: 1, to: 3 },
-    items: [importedItem({ role: "user", id: "seat-user", text: "Keep going", ordinal: 1 })],
-    seat: ContextHandoffService.runtimeSeatSwitchContext({
+    items: [importedItem({ role: "user", id: "switch-user", text: "Keep going", ordinal: 1 })],
+    identity: ContextHandoffService.providerHandoffIdentity({
       thread: {
         title: "Ship the handoff",
-        worktreePath: "/repo/worktrees/seat",
-        branch: "agent/seat-switch",
+        worktreePath: "/repo/worktrees/switch",
+        branch: "agent/provider-switch",
       },
       fromProviderInstanceId: ProviderInstanceId.make("codex"),
       toProviderInstanceId: ProviderInstanceId.make("claude"),
@@ -277,25 +277,25 @@ it("frames a runtime seat switch with durable identity and place", () => {
     }),
   });
 
-  assert.include(coverage, "Runtime seat switch.");
-  assert.include(coverage, `Seat thread: ${threadId}.`);
+  assert.include(coverage, "Provider switch.");
+  assert.include(coverage, `Thread: ${threadId}.`);
   assert.include(coverage, "Title: Ship the handoff.");
-  assert.include(coverage, "Place: /repo/worktrees/seat (branch agent/seat-switch).");
+  assert.include(coverage, "Workspace: /repo/worktrees/switch (branch agent/provider-switch).");
   assert.include(coverage, "Harness: codex → claude.");
-  assert.include(coverage, "Open queued runs on this seat: 2.");
+  assert.include(coverage, "Open queued runs on this thread: 2.");
   assert.include(coverage, "Switch reason: Codex usage window.");
   assert.include(coverage, "Native conversation starts fresh");
   assert.include(coverage, "Provider context handoff.");
 });
 
-it.layer(layerTest)("ContextHandoffService provider seat handoff", (it) => {
-  it.effect("embeds seat framing in the provider handoff summary", () =>
+it.layer(layerTest)("ContextHandoffService provider identity handoff", (it) => {
+  it.effect("embeds thread identity framing in the provider handoff summary", () =>
     Effect.gen(function* () {
       const service = yield* ContextHandoffService.ContextHandoffServiceV2;
       const handoff = yield* service.prepareProviderHandoff({
-        threadId: ThreadId.make("thread:seat-handoff"),
-        targetRunId: RunId.make("run:seat-handoff"),
-        transferId: ContextTransferId.make("transfer:seat-handoff"),
+        threadId: ThreadId.make("thread:identity-handoff"),
+        targetRunId: RunId.make("run:identity-handoff"),
+        transferId: ContextTransferId.make("transfer:identity-handoff"),
         fromProviderThreadIds: [ProviderThreadId.make("provider-thread:codex")],
         toProviderThreadId: ProviderThreadId.make("provider-thread:claude"),
         fromProviderInstanceId: ProviderInstanceId.make("codex"),
@@ -305,14 +305,14 @@ it.layer(layerTest)("ContextHandoffService provider seat handoff", (it) => {
         items: [
           importedItem({
             role: "user",
-            id: "seat-handoff-user",
-            text: "Switch harnesses without losing the seat",
+            id: "identity-handoff-user",
+            text: "Switch harnesses without losing the thread",
             ordinal: 1,
           }),
         ],
-        seat: ContextHandoffService.runtimeSeatSwitchContext({
+        identity: ContextHandoffService.providerHandoffIdentity({
           thread: {
-            title: "Seat handoff",
+            title: "Identity handoff",
             worktreePath: "/repo",
             branch: "main",
           },
@@ -323,10 +323,10 @@ it.layer(layerTest)("ContextHandoffService provider seat handoff", (it) => {
       });
 
       assert.equal(handoff.strategy, "full_thread_summary");
-      assert.include(handoff.summaryText, "Runtime seat switch.");
-      assert.include(handoff.summaryText, "Title: Seat handoff.");
-      assert.include(handoff.summaryText, "Place: /repo (branch main).");
-      assert.include(handoff.summaryText, "Switch harnesses without losing the seat");
+      assert.include(handoff.summaryText, "Provider switch.");
+      assert.include(handoff.summaryText, "Title: Identity handoff.");
+      assert.include(handoff.summaryText, "Workspace: /repo (branch main).");
+      assert.include(handoff.summaryText, "Switch harnesses without losing the thread");
       assert.include(handoff.history?.coverage ?? "", "Harness: codex → claude.");
     }),
   );

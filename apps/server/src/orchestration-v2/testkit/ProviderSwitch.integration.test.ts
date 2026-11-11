@@ -1746,11 +1746,11 @@ describe("orchestration v2 provider switching", () => {
             from: sourceOrdinal,
             to: sourceOrdinal,
           });
-          assert.include(handoff?.summaryText ?? "", "Runtime seat switch.");
+          assert.include(handoff?.summaryText ?? "", "Provider switch.");
           assert.include(handoff?.summaryText ?? "", "Title: Interrupted provider handoff.");
           assert.include(
             handoff?.summaryText ?? "",
-            `Place: ${cwd} (branch agent/runtime-seat-switch).`,
+            `Workspace: ${cwd} (branch agent/runtime-seat-switch).`,
           );
           const delivered = (yield* Ref.get(capturedTurns)).at(-1)!;
           const history = yield* Ref.get(injectedHistory);
@@ -1758,7 +1758,7 @@ describe("orchestration v2 provider switching", () => {
           assert.include(deliveredHistory, originalPrompt);
           assert.include(deliveredHistory, partialResponse);
           assert.include(deliveredHistory, `run-status=${status}`);
-          assert.include(deliveredHistory, "Runtime seat switch.");
+          assert.include(deliveredHistory, "Provider switch.");
           if (native) {
             assert.equal(delivered.text, "Continue");
             assert.notInclude(deliveredHistory, '"text":"Continue"');
