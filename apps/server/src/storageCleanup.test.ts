@@ -632,8 +632,26 @@ const submoduleCleanupFixture = () =>
 it.live("removes clean submodules recursively, including deinitialized repositories", () =>
   runCleanupTest(
     Effect.gen(function* () {
-      const { service, fs, repo, worktree, submodule, command, recordSubmodules } =
-        yield* submoduleCleanupFixture();
+      const fs = yield* FileSystem.FileSystem;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      let editedDuringClean = false;
+      const { service, repo, worktree, submodule, command, recordSubmodules, setPolicy } =
+        yield* submoduleCleanupFixture().pipe(
+          Effect.provideService(GitVcsDriver.GitVcsDriver, {
+            ...git,
+            execute: (input) =>
+              git.execute(input).pipe(
+                Effect.tap(() => {
+                  if (input.args[0] !== "clean") return Effect.void;
+                  editedDuringClean = true;
+                  return fs.writeFileString(`${input.cwd}/tracked.txt`, "late edit\n");
+                }),
+              ),
+          }),
+        );
+      setPolicy("tracked-changes");
+      yield* fs.writeFileString(`${worktree}/notes.txt`, "untracked\n");
+      yield* fs.writeFileString(`${worktree}/.env`, "ignored\n");
       yield* command(submodule, [
         "-c",
         "protocol.file.allow=always",
@@ -646,6 +664,11 @@ it.live("removes clean submodules recursively, including deinitialized repositor
       yield* command(submodule, ["submodule", "deinit", "stored"]);
       const admin = (yield* command(worktree, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
       const report = yield* service.runNow;
+      if (editedDuringClean) {
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("late edit\n");
+        expect(report.entries.find((entry) => entry.path === worktree)?.outcome).toBe("kept");
+        return;
+      }
       expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
         outcome: "removed",
       });

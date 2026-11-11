@@ -1212,8 +1212,8 @@ const make = Effect.gen(function* () {
               const changes = yield* localChangesReason(worktreePath, settings);
               if (changes !== null) return keep(changes);
             }
-            // Submodule checks can retain the worktree, so do not discard its files before them.
-            if (settings.worktreeKeepWhen === "tracked-changes")
+            // Forced removal already discards local files; do not widen its final-check window.
+            if (settings.worktreeKeepWhen === "tracked-changes" && !submodules.force)
               yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
             yield* removeLinkedWorktree({
               operation: "StorageCleanup.cleanupGit",
