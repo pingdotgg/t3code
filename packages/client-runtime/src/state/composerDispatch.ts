@@ -15,10 +15,11 @@ export function resolveComposerDispatchMode(input: {
   return defaultAction;
 }
 
-// Automatic compaction keeps accepting input; only explicit compaction blocks it.
-export function isExplicitCompactionActive(input: {
+// Automatic compaction takes steers only where the provider says a steer leaves it running.
+export function compactionBlocksSteering(input: {
   readonly compactCommandIsActive: boolean;
   readonly compactionRunning: boolean;
+  readonly steersDuringCompaction: boolean;
   readonly run: { readonly userMessageId: string } | undefined;
   readonly messages:
     | ReadonlyArray<{
@@ -29,7 +30,9 @@ export function isExplicitCompactionActive(input: {
     | undefined;
 }): boolean {
   if (input.compactCommandIsActive) return true;
-  if (!input.compactionRunning || input.run === undefined) return false;
+  if (!input.compactionRunning) return false;
+  if (!input.steersDuringCompaction) return true;
+  if (input.run === undefined) return false;
   const message = input.messages?.find((message) => message.id === input.run?.userMessageId);
   return (
     (message?.attachments?.length ?? 0) === 0 &&

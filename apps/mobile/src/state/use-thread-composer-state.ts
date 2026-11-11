@@ -6,6 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { shouldCompactBeforeSend } from "@t3tools/client-runtime/state/context-window";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
   deriveProviderSubagentStatus,
@@ -84,7 +85,7 @@ import {
 } from "./use-composer-drafts";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import {
-  isExplicitCompactionActive,
+  compactionBlocksSteering,
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -361,14 +362,14 @@ export function useThreadComposerState(input: {
         item.runId === activeRunId && item.type === "compaction" && item.status === "running",
     );
   const isCompacting = compactCommandIsActive || compactionRunning;
-  const explicitCompactionIsActive = isExplicitCompactionActive({
+  const compactionBlocksSteer = compactionBlocksSteering({
     compactCommandIsActive,
     compactionRunning,
+    steersDuringCompaction: threadSteersDuringCompaction(selectedThreadProjection?.projection),
     run: selectedThreadProjection?.projection.runs.find((run) => run.id === activeRunId),
     messages: selectedThreadMessages,
   });
-  const canSteerActiveTurn =
-    queueWorkflow?.canPromoteToSteer === true && !explicitCompactionIsActive;
+  const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true && !compactionBlocksSteer;
   // A stop or a restart holds the queue, completion wakes included, until it
   // is resumed; the queue sheet lists only the user's own messages.
   const queueHeld = queueWorkflow?.isHeld === true;
