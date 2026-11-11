@@ -517,7 +517,12 @@ export default function ChatView(props: ChatViewProps) {
     shellExists: serverThread !== null,
     status: threadStatus,
   });
-  const threadDetailLoading = threadSyncPhase === "loading";
+  const threadDetailLoading =
+    resolveThreadSyncPhase({
+      detailExists: serverProjection !== null,
+      shellExists: serverThread !== null,
+      status: threadStatus,
+    }) === "loading";
   // Held back briefly, so a quick sync does not flash a status line at the end of the timeline.
   const delayedThreadSyncPhase = useDelayedStatus(routeThreadKey, threadSyncPhase);
   const activeProviderThread = serverProjection?.providerThreads.find(
@@ -922,7 +927,7 @@ export default function ChatView(props: ChatViewProps) {
           title: parentSubagentThread?.title ?? "Parent thread",
         };
   const threadError = isServerThread
-    ? (threadDetailError ?? localServerError ?? serverRuntime?.lastError ?? null)
+    ? (localServerError ?? threadDetailError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
   const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
   const visibleThreadError = shouldShowThreadErrorBanner(
