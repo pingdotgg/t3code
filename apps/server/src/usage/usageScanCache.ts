@@ -7,18 +7,21 @@ import type {
 import * as Schema from "effect/Schema";
 
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
+import { mergeUsageCopies } from "./usageAggregation.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 10 as const;
+const USAGE_SCAN_CACHE_VERSION = 12 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
  * An older server sharing that directory cannot read a newer cache and would
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
- * both.
+ * the newer one; older files are removed once it is saved.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v10.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v12.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v11.json",
+  "usage-scan-cache-v10.json",
   "usage-scan-cache-v9.json",
   "usage-scan-cache-v8.json",
   "usage-scan-cache-v7.json",
@@ -133,32 +136,28 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
   };
 }
 
-/** Memoizes immutable entries by identity; growing intern tables preserve indexes, retaining unused strings until restart. */
+/** Yields the document in pieces so large caches never become one string; growing intern tables preserve indexes, retaining unused strings until restart. */
 export function makeScanCacheWriter(): (
   cache: ScanCache,
   extra: Readonly<Record<string, unknown>>,
-) => string {
+) => Iterable<string> {
   const tables = makeInternTables();
-  const fragments = new WeakMap<CachedFile, string>();
-  return (cache, extra) => {
-    const files: string[] = [];
-    for (const [path, entry] of cache) {
-      let fragment = fragments.get(entry);
-      if (fragment === undefined) {
-        fragment = JSON.stringify(serializeFile(entry, tables));
-        fragments.set(entry, fragment);
-      }
-      files.push(`${JSON.stringify(path)}:${fragment}`);
+  function* encode(entries: readonly (readonly [string, CachedFile])[], extra: object) {
+    yield '{"files":{';
+    for (const [index, [path, entry]] of entries.entries()) {
+      yield `${index === 0 ? "" : ","}${JSON.stringify(path)}:${JSON.stringify(serializeFile(entry, tables))}`;
     }
     // Encoded after the files, which may have added to the intern tables.
-    const head = JSON.stringify({
+    const tail = JSON.stringify({
       ...extra,
       version: USAGE_SCAN_CACHE_VERSION,
       models: tables.models,
       sessions: tables.sessions,
     });
-    return `${head.slice(0, -1)},"files":{${files.join(",")}}}`;
-  };
+    yield `},${tail.slice(1)}`;
+  }
+  // Snapshot now: the encoding runs later, while the file is written.
+  return (cache, extra) => encode([...cache], extra);
 }
 
 function isRecordArray(value: unknown): value is readonly unknown[] {
@@ -291,16 +290,19 @@ export function decodeScanCache(
       continue;
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
-    // v9 repairs skipped initial Codex requests; clean v8 entries can still resume.
-    // v10 adds Claude advisor calls, which no older Claude entry holds.
+    // v9 and v11 repair skipped Codex requests; clean v8+ entries stay served while unchanged.
+    // v10 adds Claude advisor calls; before v12 a repeated Claude key kept its first, possibly partial, copy.
     const legacy =
-      (entry.p === "claude" && version < 10) ||
+      (entry.p === "claude" && version < 12) ||
       (format.state !== undefined &&
         (version < 6 ||
-          (entry.p === "codex" && (version < 8 || (version < 9 && malformedRecords > 0)))));
+          (entry.p === "codex" && (version < 8 || (version < 11 && malformedRecords > 0)))));
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
+    // Before v11 a clean scan could end past an interrupted request whose usage its state dropped,
+    // so a grown file re-parses whole instead of resuming.
+    const resumable = !legacy && !(entry.p === "codex" && version < 11);
 
     const provider = entry.p;
     const records = decodeRecords(entry.r, provider);
@@ -314,14 +316,14 @@ export function decodeScanCache(
       records,
       tailRecords,
       malformedRecords,
-      position: legacy
-        ? { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null }
-        : {
+      position: resumable
+        ? {
             resumeOffset: entry.o,
             guardLength: entry.gl,
             guardHash: entry.gh,
             state: entry.cs,
-          },
+          }
+        : { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
     });
   }
 
@@ -353,16 +355,18 @@ export function pruneScanCache(cache: ScanCache, retentionCutoffMs: number): num
   return removed;
 }
 
-/** Mutates seen; share it across incremental line/tail batches to deduplicate the whole file. */
-export function dedupeWithinFile(
-  records: readonly UsageRecord[],
-  seen: Set<string> = new Set(),
-): readonly UsageRecord[] {
+/** Pass only newline-terminated records: an unterminated tail can still change, so the aggregator merges it per scan. */
+export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
   const kept: UsageRecord[] = [];
+  const firstIndex = new Map<string, number>();
   for (const record of records) {
     if (record.dedupeKey !== null) {
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
+      const index = firstIndex.get(record.dedupeKey);
+      if (index !== undefined) {
+        kept[index] = mergeUsageCopies(kept[index]!, record);
+        continue;
+      }
+      firstIndex.set(record.dedupeKey, kept.length);
     }
     kept.push(record);
   }

@@ -1,4 +1,4 @@
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Redacted from "effect/Redacted";
 
 export const VOLUME_PATH = "/data";
