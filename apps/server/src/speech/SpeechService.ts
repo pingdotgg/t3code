@@ -405,6 +405,28 @@ const make = Effect.gen(function* () {
     }
   };
 
+  // The loader already retries "auto" on the CPU; a chosen device needs the person's fallback.
+  const loadSelected = async (
+    modelPath: string,
+    definition: SpeechModel,
+    signal: AbortSignal,
+    settings: { speechAcceleration: SpeechAcceleration; speechAccelerationFallback: boolean },
+  ) => {
+    try {
+      return await loadModel(modelPath, definition, signal, settings.speechAcceleration);
+    } catch (cause) {
+      const { speechAcceleration, speechAccelerationFallback } = settings;
+      if (speechAcceleration === "auto" || !speechAccelerationFallback) throw cause;
+      if (signal.aborted || isSpeechError(cause)) throw cause;
+      return await loadModel(
+        modelPath,
+        definition,
+        signal,
+        speechAcceleration === "cpu" ? "auto" : "cpu",
+      );
+    }
+  };
+
   const speechError = (operation: string, cause: unknown): SpeechError =>
     isSpeechError(cause) ? cause : new SpeechOperationError({ operation, cause });
 
@@ -569,11 +591,11 @@ const make = Effect.gen(function* () {
           Effect.andThen(installedModelPath(selectedModel(settings))),
           Effect.flatMap((modelPath) =>
             attempt("model preparation", (signal) =>
-              loadModel(
+              loadSelected(
                 modelPath,
                 selectedModel(settings),
                 AbortSignal.any([signal, lifetime.signal]),
-                settings.speechAcceleration,
+                settings,
               ),
             ).pipe(
               Effect.timeout("2 minutes"),
@@ -620,11 +642,11 @@ const make = Effect.gen(function* () {
             const modelPath = yield* installedModelPath(definition);
             const loaded = yield* Effect.tryPromise({
               try: (signal) =>
-                loadModel(
+                loadSelected(
                   modelPath,
                   definition,
                   AbortSignal.any([signal, lifetime.signal]),
-                  settings.speechAcceleration,
+                  settings,
                 ),
               catch: (cause) => speechError("model preparation", cause),
             });
@@ -762,7 +784,7 @@ const make = Effect.gen(function* () {
     let correct = makeSpeechTextCorrector(customWords, dictionary);
     const modelPath = yield* installedModelPath(definition);
     let streamModel = yield* attempt(operation, () =>
-      loadModel(modelPath, definition, signal, settings.speechAcceleration),
+      loadSelected(modelPath, definition, signal, settings),
     );
     loaded = streamModel;
     const vadPath = yield* silenceModelPath(streamModel, options);

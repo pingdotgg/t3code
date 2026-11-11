@@ -752,25 +752,27 @@ it.effect.each([
   ([acceleration, other]) =>
     Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      for (const fallback of [false, true]) {
-        loadNative.mockClear();
-        const failure = new Error("device failed");
-        native.transcribe.mockRejectedValueOnce(failure);
-        yield* speech.updateAcceleration(acceleration, fallback);
-        const result = yield* Effect.result(
-          speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
-        );
-        if (fallback) expect(Result.isSuccess(result) && result.success).toBe("hello");
-        else
-          expect(Result.isFailure(result) && result.failure).toMatchObject({
-            _tag: "SpeechOperationError",
-            operation: "inference",
-            cause: failure,
-          });
-        expect(loadNative.mock.calls.map((call) => call[3])).toEqual(
-          fallback ? [acceleration, other] : [acceleration],
-        );
-      }
+      for (const failing of ["model preparation", "inference"] as const)
+        for (const fallback of [false, true]) {
+          loadNative.mockClear();
+          const failure = new Error("device failed");
+          if (failing === "inference") native.transcribe.mockRejectedValueOnce(failure);
+          else loadNative.mockRejectedValueOnce(failure);
+          yield* speech.updateAcceleration(acceleration, fallback);
+          const result = yield* Effect.result(
+            speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
+          );
+          if (fallback) expect(Result.isSuccess(result) && result.success).toBe("hello");
+          else
+            expect(Result.isFailure(result) && result.failure).toMatchObject({
+              _tag: "SpeechOperationError",
+              operation: failing,
+              cause: failure,
+            });
+          expect(loadNative.mock.calls.map((call) => call[3])).toEqual(
+            fallback ? [acceleration, other] : [acceleration],
+          );
+        }
     }).pipe(Effect.provide(layer)),
 );
 
