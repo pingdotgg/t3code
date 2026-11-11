@@ -2031,66 +2031,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     it.effect.each([
-      { label: "removes the tracking branch it created", movedMeanwhile: false },
-      { label: "keeps a tracking branch another client moved", movedMeanwhile: true },
-    ])("$label when the checkout fails", ({ movedMeanwhile }) =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        const layerDriver = yield* GitVcsDriver.GitVcsDriver;
-        const remote = yield* makeTmpDir("git-remote-");
-        yield* git(remote, ["init", "--bare"]);
-        yield* git(cwd, ["remote", "add", "origin", remote]);
-        yield* git(cwd, ["checkout", "-b", "feature"]);
-        yield* writeTextFile(cwd, "README.md", "feature\n");
-        yield* git(cwd, ["commit", "-am", "feature"]);
-        yield* git(cwd, ["push", "-u", "origin", "feature"]);
-        yield* writeTextFile(cwd, "README.md", "moved\n");
-        yield* git(cwd, ["commit", "-am", "moved"]);
-        const movedCommit = yield* git(cwd, ["rev-parse", "HEAD"]);
-        yield* git(cwd, ["checkout", initialBranch]);
-        yield* git(cwd, ["branch", "-D", "feature"]);
-        yield* writeTextFile(cwd, "README.md", "uncommitted work\n");
-        const branches = yield* layerDriver.listLocalBranchNames(cwd);
-        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const spawner = ChildProcessSpawner.make((command) =>
-          movedMeanwhile &&
-          ChildProcess.isStandardCommand(command) &&
-          command.args[0] === "checkout"
-            ? layerDriver
-                .execute({
-                  operation: "GitVcsDriver.test.moveBranch",
-                  cwd,
-                  args: ["update-ref", "refs/heads/feature", movedCommit],
-                  timeoutMs: 10_000,
-                })
-                .pipe(Effect.orDie, Effect.andThen(delegate.spawn(command)))
-            : delegate.spawn(command),
-        );
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provide(layerServerConfig),
-        );
-
-        yield* driver.switchRef({ cwd, refName: "origin/feature" }).pipe(Effect.flip);
-
-        assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
-        if (movedMeanwhile) {
-          assert.equal(yield* git(cwd, ["rev-parse", "refs/heads/feature"]), movedCommit);
-          assert.equal(yield* git(cwd, ["config", "branch.feature.remote"]), "origin");
-        } else {
-          assert.deepEqual(yield* driver.listLocalBranchNames(cwd), branches);
-          assert.equal(
-            yield* git(cwd, ["config", "--get-regexp", "^branch\\.feature\\."]).pipe(
-              Effect.orElseSucceed(() => ""),
-            ),
-            "",
-          );
-        }
-      }),
-    );
-
-    it.effect.each([
       // Git cannot tell a missing revision from a missing file in these.
       { label: "an argument that may be a path", args: ["log", "-1", "missing"] },
       {
