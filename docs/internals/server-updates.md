@@ -19,15 +19,19 @@ release tag. Installation and preflight happen in staging before publishing an
 immutable runtime. Preflight checks the launcher protocol because a target that
 needs new rollback guarantees cannot safely run under an older launcher. A remote
 update replaces only the child, so upgrading the launcher requires a local service
-update with a restart.
+update with a restart. Every installed launcher is therefore one protocol behind
+after a bump, and a target that refuses the previous protocol stops remote updates
+for every existing service. Refuse it only when the child cannot work under it.
+Protocol 4 changed the launcher alone, so its runtime still runs under protocol 3.
 
 After a commit or rollback the launcher points the unit at the selected runtime and
 reloads the manager, so the next service start runs that version's launcher; the
 protocol check is what makes that safe. Each start after a finished update retries this, because
 a previous reload may have failed, and leaves a unit naming a newer runtime or another
-T3 home alone. Until a deferred local upgrade restarts, systemd (before daemon-reload)
-and launchd (before bootstrap) can respawn the old launcher, which the new runtime
-refuses to run under.
+T3 home alone. A protocol-3 launcher does none of this: its unit keeps naming the
+runtime that installed it. Until a deferred local upgrade restarts, systemd (before
+daemon-reload) and launchd (before bootstrap) can respawn the old launcher, which
+rejects the state the new installer wrote.
 
 ## Commit boundary
 
