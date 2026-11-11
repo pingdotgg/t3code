@@ -202,7 +202,7 @@ describe("installRelayTelemetryEnabled", () => {
       yield* installRelayTelemetryEnabled().pipe(
         Effect.provideService(HostProcess.Environment, env),
         Effect.provide(
-          Layer.mergeAll(DesktopIpc.layer(ipcMain), DesktopManagedPolicy.layerTest(policy)),
+          Layer.mergeAll(DesktopIpc.layerTest(ipcMain), DesktopManagedPolicy.layerTest(policy)),
         ),
       );
       const event = { returnValue: undefined as unknown };
