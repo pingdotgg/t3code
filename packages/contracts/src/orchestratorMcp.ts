@@ -130,6 +130,10 @@ export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 export const OrchestratorMcpRuntimeMode = Schema.Union([Schema.Literal("inherit"), RuntimeMode]);
 export type OrchestratorMcpRuntimeMode = typeof OrchestratorMcpRuntimeMode.Type;
 
+// Children always run in their caller's interaction mode. The field stays so an
+// explicit mode from an older caller fails decoding instead of being dropped.
+export const OrchestratorMcpInteractionMode = Schema.Literal("inherit");
+
 export const OrchestratorMcpTaskRole = Schema.Literals([
   "implementation",
   "research",
@@ -187,6 +191,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
         "Omit unless the user asks for a supervised child. Narrow modes pause for human approval, not read-only. Above yours is rejected.",
     }),
   ),
+  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 
@@ -264,6 +269,7 @@ export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
   title: Schema.optional(OrchestratorMcpTitle),
   target: Schema.optional(OrchestratorMcpTarget),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
+  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
 export type OrchestratorMcpCreateThreadRequest = typeof OrchestratorMcpCreateThreadRequest.Type;
 

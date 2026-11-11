@@ -15,6 +15,7 @@ import {
   ProjectId,
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
+  OrchestratorMcpInteractionMode,
   OrchestratorMcpFailure,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -136,6 +137,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     title: TrimmedNonEmptyString,
     modelSelection: Schema.optional(ModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
+    interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
     workspaceStrategy: Schema.optional(
       OrchestrationV2ThreadLaunchWorkspaceStrategy.annotate({
         description:

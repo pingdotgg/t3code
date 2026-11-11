@@ -244,6 +244,7 @@ type DelegateTaskInput = {
   timeoutMs?: number;
   clientRequestId?: string;
   runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
+  interactionMode?: "inherit";
 };
 ```
 
@@ -349,6 +350,7 @@ type CreateThreadsInput = {
       model?: string;
     };
     runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
+    interactionMode?: "inherit";
   }>;
   clientRequestId?: string;
 };
@@ -536,6 +538,8 @@ results use the latest assistant content from the final work turn.
   mode. It may not escalate privileges.
 - A child always runs in its caller's interaction mode. Agents cannot choose
   one: the server does not know whether the user's client shows plan mode.
+  `interactionMode` accepts only `"inherit"`, so an explicit mode from an older
+  caller is refused rather than silently dropped.
 - Thread tools take any thread in the environment as a target. For a thread
   caller, list and search cover one project: its own unless `projectId` is given.
 - A tool that changes another thread needs the calling thread's live run, and

@@ -1509,10 +1509,6 @@ it.effect(
         expect(yield* start("approval-required/plan", { runtimeMode: "auto" })).toBe(
           "runtime_mode_escalation_denied",
         );
-        // An interaction mode is not an argument: one sent anyway is dropped.
-        expect(yield* start("auto-accept-edits/plan", { interactionMode: "default" })).toBe(
-          "auto-accept-edits/plan",
-        );
         // A broader header changes nothing: the approved ceiling still holds.
         expect(yield* start("full-access/default")).toBe("auto/default");
         expect(yield* start("full-access/default", { runtimeMode: "full-access" })).toBe(
