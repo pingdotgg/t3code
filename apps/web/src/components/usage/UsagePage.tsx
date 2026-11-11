@@ -462,6 +462,7 @@ export function UsagePage() {
           <span className="@7xl/usage-header:hidden">
             <UsageRangePicker
               compact
+              showRange={periodDays === null}
               window={window}
               onChange={(sinceDay, untilDay) => setRange({ kind: "days", sinceDay, untilDay })}
             />
@@ -723,10 +724,13 @@ function UsageRangePicker({
   window,
   onChange,
   compact = false,
+  showRange = false,
 }: {
   readonly window: UsageSummaryInput;
   readonly onChange: (sinceDay: string, untilDay: string) => void;
   readonly compact?: boolean;
+  /** Show the range beside the compact icon when no period toggle represents it. */
+  readonly showRange?: boolean;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const today = new Intl.DateTimeFormat("en-CA", {
@@ -739,6 +743,7 @@ function UsageRangePicker({
   const [since, setSince] = useState<string>(window.sinceDay);
   const [until, setUntil] = useState<string>(window.untilDay);
   const valid = since !== "" && until !== "" && since <= until && until <= today;
+  const formattedWindow = formatWindow(window);
   return (
     <Popover
       open={open}
@@ -752,15 +757,19 @@ function UsageRangePicker({
     >
       {compact ? (
         <PopoverTrigger
-          render={<Button size="icon-sm" variant="ghost" />}
-          aria-label={`Choose dates, now ${formatWindow(window)}`}
-          title={formatWindow(window)}
+          render={<Button size={showRange ? "compact" : "icon-sm"} variant="ghost" />}
+          aria-label={`Choose dates, now ${formattedWindow}`}
+          title={showRange ? undefined : formattedWindow}
         >
           <CalendarDaysIcon aria-hidden />
+          {showRange ? formattedWindow : null}
         </PopoverTrigger>
       ) : (
-        <PopoverTrigger render={<InlineButton tone="muted" />} aria-label="Choose dates">
-          {formatWindow(window)}
+        <PopoverTrigger
+          render={<InlineButton tone="muted" />}
+          aria-label={`Choose dates, now ${formattedWindow}`}
+        >
+          {formattedWindow}
         </PopoverTrigger>
       )}
       <PopoverPopup side="bottom" align={compact ? "end" : "start"}>
