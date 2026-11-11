@@ -3,6 +3,7 @@ import {
   COMPOSER_CONTEXT_MAX_RECORDS,
   type ComposerContextRecord,
   getProviderAttachmentLimitError,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type OrchestrationMessageContext,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
@@ -125,12 +126,16 @@ export function mergeQueuedMessages(
     .map((text) => (isAttachmentOnlyBootstrapPrompt(text) ? "" : text.trim()))
     .filter((text) => text.length > 0)
     .join("\n\n");
+  const text = restoreAttachmentOnlyBootstrapPrompt(
+    ultrathink ? `Ultrathink:\n${body}` : body,
+    attachments.length > 0,
+  );
+  if (text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+    return { _tag: "Blocked", reason: "Queued messages are too long to send as one." };
+  }
   return {
     _tag: "Merged",
-    text: restoreAttachmentOnlyBootstrapPrompt(
-      ultrathink ? `Ultrathink:\n${body}` : body,
-      attachments.length > 0,
-    ),
+    text,
     attachments,
     context: messages.some((message) => message.context !== undefined)
       ? { version: 1, records }

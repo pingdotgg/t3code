@@ -8600,6 +8600,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       "Queued messages carry too much context to send as one.",
       { context: bulkyAnnotationContext("first") },
     ],
+    [
+      "more text than one message can carry",
+      { text: "b".repeat(60_000) },
+      "Queued messages are too long to send as one.",
+      { text: "a".repeat(60_000) },
+    ],
     ["a command", { text: "/review" }, "Commands are sent on their own."],
     [
       "a fresh-session message",

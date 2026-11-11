@@ -315,11 +315,18 @@ describe("thread workflows", () => {
           {
             id: "active",
             status,
+            modelSelection: { instanceId: "codex", model: "gpt-5.4" },
             providerThreadId: "provider-thread",
             activeAttemptId: "attempt-active",
             ordinal: 1,
           },
-          { id: "queued", status: "queued", userMessageId: "message", ordinal: 2 },
+          {
+            id: "queued",
+            status: "queued",
+            userMessageId: "message",
+            modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+            ordinal: 2,
+          },
         ],
         messages: [{ id: "message", text: "Queued" }],
         providerTurns: [
@@ -402,10 +409,16 @@ describe("thread workflows", () => {
     },
     { name: "a stopped thread", activeStatus: "completed", asOne: null, each: null },
     {
-      name: "a turn not yet steerable",
+      name: "merged text exceeding the provider limit",
+      second: { text: "x".repeat(120_000) },
+      asOne: "Queued messages are too long to send as one.",
+      each: null,
+    },
+    {
+      name: "a turn still starting",
       activeStatus: "starting",
-      asOne: "The current turn can't take messages right now.",
-      each: "The current turn can't take messages right now.",
+      asOne: null,
+      each: null,
     },
     {
       name: "a guest's message",
