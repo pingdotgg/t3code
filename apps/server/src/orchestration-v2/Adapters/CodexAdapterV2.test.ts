@@ -1375,6 +1375,74 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  it.effect("keeps native image views available to the clients", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "image-view-thread";
+      const nativeTurnId = "image-view-turn";
+      const imagePath = "file:///workspace/reference.png";
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "image-view",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Show the reference." }),
+            ...(["started", "completed"] as const).map((phase) => ({
+              type: "emit_inbound" as const,
+              label: `image ${phase}`,
+              frame: {
+                method: `item/${phase}`,
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  item: { type: "imageView", id: "image-view", path: imagePath },
+                  ...(phase === "started" ? { startedAtMs: 1 } : { completedAtMs: 2 }),
+                },
+              },
+            })),
+            {
+              type: "emit_inbound",
+              label: "turn completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("image-view-attempt"),
+          text: "Show the reference.",
+        }),
+      );
+      yield* harness.firstTerminal;
+      const images = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(images, 1);
+      assert.equal(images[0]?.viewedImagePath, imagePath);
+      assert.equal(images[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["before", "after"] as const)(
     "rejects a previous run's native turn when it completes %s the new start response",
     (completionOrder) =>
