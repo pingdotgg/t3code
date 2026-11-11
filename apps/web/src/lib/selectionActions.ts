@@ -68,11 +68,11 @@ export function resolveChatSelectionActionPosition({
   const maxY = viewport.height - actionSize.height - 8;
   const pinTop = Math.max(8, Math.min(Math.max(8, outerBounds.top) + 8, maxY));
   const pinBottom = Math.max(8, Math.min(outerBounds.bottom - actionSize.height - 8, maxY));
-  if (!nearRelease(pinTop)) return { x, y: pinTop };
+  if (!pointer || !nearRelease(pinTop)) return { x, y: pinTop };
   if (!nearRelease(pinBottom)) return { x, y: pinBottom };
   // A chat area too short for either pin: step sideways off the release point.
-  const right = pointer!.x + 16;
-  const left = Math.max(8, pointer!.x - actionSize.width - 16);
+  const right = pointer.x + 16;
+  const left = Math.max(8, pointer.x - actionSize.width - 16);
   return {
     x: right + actionSize.width <= viewport.width - 8 ? right : left,
     y: pinTop,
