@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, SourceControlProviderKind, ThreadId } from "@t3tools/contracts";
 import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
 
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
@@ -23,7 +23,7 @@ function makeProject(environmentId: EnvironmentId, overrides: Partial<Project> =
         remoteName: "origin",
         remoteUrl: "https://github.com/owner/repo.git",
       },
-      provider: "github",
+      provider: SourceControlProviderKind.make("github"),
       owner: "owner",
       name: "repo",
       displayName: "owner/repo",
