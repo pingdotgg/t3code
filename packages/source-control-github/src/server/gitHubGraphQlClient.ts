@@ -217,12 +217,15 @@ const layerProtocol = GraphQLProtocol.layerHttp({
 export const layer = Layer.merge(GitHubGraphQlAuth.layer, layerProtocol);
 
 /** Isolate credentials/rate-limit scopes; transport URLs already separate hosts. */
-export const batchKey = (context: Context.Context<GitHubGraphQlTarget>) =>
-  JSON.stringify([
-    Context.getOrElse(context, GitHubRequestPolicy.PinnedGitHubCredential, () => null)
-      ?.credentialFingerprint ?? null,
+export const batchKey = (context: Context.Context<GitHubGraphQlTarget>) => {
+  const pinned = Context.getOrElse(context, GitHubRequestPolicy.PinnedGitHubCredential, () => null);
+  return JSON.stringify([
+    pinned?.credentialFingerprint ?? null,
     Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
+    // An unpinned (app) batch falls back to one checkout's login, so checkouts must not share one.
+    pinned === null ? (Context.get(context, GitHubGraphQlTarget).cwd ?? null) : null,
   ]);
+};
 
 /**
  * Pin before joining a resolver: its batch key must reflect the token that will send it. The

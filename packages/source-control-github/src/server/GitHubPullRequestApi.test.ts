@@ -1129,6 +1129,57 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("hands app-refused reads to each checkout's own login", () =>
+    Effect.gen(function* () {
+      mockedAppToken.mockReturnValue(Effect.succeedSome("app"));
+      mockedCredential.mockImplementation((host, cwd) =>
+        Effect.succeed({ token: Redacted.make("token" + cwd), fingerprint: host + ":" + cwd }),
+      );
+      const owner: Record<number, string> = { 7: "Bearer token/work", 8: "Bearer token/personal" };
+      mockedExecute.mockImplementation((call) => {
+        if (call.kind !== "graphql") return Effect.die("Expected a GraphQL read");
+        const aliases = Object.keys(call.variables ?? {}).flatMap((key) => {
+          const match = /^_(\d+)_number$/.exec(key);
+          return match === null ? [] : [[match[1]!, Number(call.variables?.[key])] as const];
+        });
+        const data: Record<string, unknown> = {};
+        const errors: Array<unknown> = [];
+        for (const [alias, number] of aliases) {
+          if (owner[number] === call.authorization) {
+            data[`_${alias}_repository`] = {
+              pullRequest: coreResponse({
+                number,
+                headRefName: "feat/" + number,
+                latestReviews: { nodes: [] },
+              }).data.repository.pullRequest,
+            };
+          } else {
+            data[`_${alias}_repository`] = null;
+            errors.push({
+              type: "NOT_FOUND",
+              path: [`_${alias}_repository`],
+              message: "Could not resolve to a Repository.",
+            });
+          }
+        }
+        return Effect.succeed(output(encodeJson({ data, errors })));
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const reads = yield* Effect.forEach(
+        [
+          { cwd: "/work", repository: "acme/web", number: 7 },
+          { cwd: "/personal", repository: "octo/site", number: 8 },
+        ],
+        (read) => cli.getPullRequestSummary({ ...read, host: "github.com" }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const summaries = yield* Fiber.join(reads);
+
+      expect(summaries.map((summary) => summary.headBranch)).toEqual(["feat/7", "feat/8"]);
+    }),
+  );
+
   it.effect("batches linked pull requests with their checkout credentials", () =>
     Effect.gen(function* () {
       mockedCredential.mockImplementation((host, cwd) =>
