@@ -66,13 +66,20 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
           },
         });
         expect(yield* find()).toBeUndefined();
-        // A separate T3 Claude home skips user settings, so T3 must add the hooks itself.
+        // With no loaded settings running it, T3 adds the hooks itself.
         expect(yield* find([])).toBe(labsScript);
-        // Project and local settings load either way, and a repo can enable Nadir there.
-        const projectSettings = path.join(hostHome, "repo", ".claude", "settings.local.json");
-        yield* touch(projectSettings);
+        // A repo can enable Nadir too. The highest file naming the plugin decides it.
+        const localSettings = path.join(hostHome, "repo", ".claude", "settings.local.json");
+        const projectSettings = path.join(hostHome, "repo", ".claude", "settings.json");
+        yield* touch(localSettings);
+        yield* writeJson(localSettings, { enabledPlugins: { "nadir-route@nadir": true } });
+        expect(yield* find([localSettings])).toBeUndefined();
+        yield* writeJson(localSettings, { enabledPlugins: { "nadir-route@nadir": false } });
         yield* writeJson(projectSettings, { enabledPlugins: { "nadir-route@nadir": true } });
-        expect(yield* find([projectSettings])).toBeUndefined();
+        expect(yield* find([localSettings, projectSettings])).toBe(labsScript);
+        expect(yield* find([projectSettings, localSettings])).toBeUndefined();
+        // A disabled plugin does not cancel hooks a lower file wires.
+        expect(yield* find([localSettings, userSettings])).toBeUndefined();
 
         // A plugin installed only under the host's own Claude home is found from a separate one.
         const separateHome = yield* fileSystem.makeTempDirectoryScoped();

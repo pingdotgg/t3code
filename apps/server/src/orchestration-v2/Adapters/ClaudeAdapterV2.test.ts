@@ -95,6 +95,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
@@ -4405,6 +4406,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           ),
         ),
+    );
+
+    it.effect("skips Nadir compaction when a custom home's settings already run it", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-nadir-" });
+        const hostHome = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-host-home-" });
+        const script = path.join(home, "nadir", "context_session.py");
+        yield* fileSystem.makeDirectory(path.dirname(script), { recursive: true });
+        yield* fileSystem.writeFileString(script, "");
+        const injectsNadir = Effect.scoped(
+          Effect.gen(function* () {
+            const harness = yield* makeWakeHarnessWithOptions({
+              settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+            });
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("attempt-nadir-custom-home"),
+                text: "Run git status.",
+                attachments: [],
+              }),
+            );
+            return JSON.stringify(harness.getOpenedOptions()?.settings ?? {}).includes(script);
+          }),
+        ).pipe(
+          Effect.provide(ServerSettings.layerTest({ nadirCompaction: true })),
+          Effect.provideService(HostProcess.HomeDirectory, hostHome),
+          Effect.provideService(SpawnExecutableResolution, () => "/usr/bin/python3"),
+        );
+        assert.isTrue(yield* injectsNadir);
+        yield* fileSystem.writeFileString(
+          path.join(home, "settings.json"),
+          JSON.stringify({ enabledPlugins: { "nadir-route@nadir": true } }),
+        );
+        assert.isFalse(yield* injectsNadir);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
     );
 
     // regression: #21806 only a missing custom settings file is benign; bad policy fails

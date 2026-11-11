@@ -5055,17 +5055,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         Effect.orElseSucceed(() => false),
       );
       if (!enabled) return undefined;
-      // A separate Claude home skips user settings; project and local settings always load.
-      const userSettings = path.join(homePath, "settings.json");
-      const settingsFiles = (yield* settingsFilesByPrecedence(cwd)).filter(
-        (file) => !customHome || file !== userSettings,
-      );
+      // The query loads every source, and a custom home's settings.json is its user settings.
       const script = yield* findNadirCompactionScript({
         fileSystem,
         path,
         claudeHome: homePath,
         hostHome,
-        settingsFiles,
+        settingsFiles: yield* settingsFilesByPrecedence(cwd),
       });
       if (script === undefined) {
         yield* Effect.logDebug("Nadir compaction skipped: not installed, or Claude Code runs it");

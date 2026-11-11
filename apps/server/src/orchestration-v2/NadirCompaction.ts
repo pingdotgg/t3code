@@ -26,9 +26,8 @@ const field = (value: unknown, key: string): unknown =>
 
 const SCRIPT = "context_session.py";
 
-/** Whether Claude Code settings already run Nadir's compaction, as `npx nadir-labs` installs it. */
-function runsNadirCompaction(settings: unknown): boolean {
-  if (field(field(settings, "enabledPlugins"), PLUGIN_ID) === true) return true;
+/** Whether a settings file wires Nadir's compaction script, as `npx nadir-labs` installs it. */
+function wiresNadirScript(settings: unknown): boolean {
   const hooks = field(settings, "hooks");
   return (
     typeof hooks === "object" &&
@@ -37,6 +36,15 @@ function runsNadirCompaction(settings: unknown): boolean {
       .flat()
       .some((matcher) => JSON.stringify(field(matcher, "hooks") ?? []).includes(SCRIPT))
   );
+}
+
+/** Whether settings files, highest precedence first, already run Nadir's compaction. */
+function runsNadirCompaction(settingsByPrecedence: ReadonlyArray<unknown>): boolean {
+  // The highest file that names the plugin decides it; hooks from every file run.
+  const plugin = settingsByPrecedence
+    .map((settings) => field(field(settings, "enabledPlugins"), PLUGIN_ID))
+    .find((enabled) => enabled !== undefined);
+  return plugin === true || settingsByPrecedence.some(wiresNadirScript);
 }
 
 /**
@@ -49,13 +57,12 @@ export const findNadirCompactionScript = Effect.fn("NadirCompaction.findScript")
   readonly path: Path.Path;
   readonly claudeHome: string;
   readonly hostHome: string;
-  /** The user, project and local settings files Claude Code loads for this session. */
+  /** The settings files Claude Code loads for this session, highest precedence first. */
   readonly settingsFiles: ReadonlyArray<string>;
 }) {
   const { fileSystem, path, claudeHome } = input;
-  for (const file of input.settingsFiles) {
-    if (runsNadirCompaction(yield* readJson(fileSystem, file))) return undefined;
-  }
+  const settings = yield* Effect.forEach(input.settingsFiles, (file) => readJson(fileSystem, file));
+  if (runsNadirCompaction(settings)) return undefined;
   const homes = [claudeHome, path.join(input.hostHome, ".claude")];
   const pluginScripts: string[] = [];
   for (const home of homes) {
