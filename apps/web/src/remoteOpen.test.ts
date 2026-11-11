@@ -186,6 +186,30 @@ describe("buildRemoteOpenUrl", () => {
     ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo");
   });
 
+  it("keeps a plus in the SSH username through Remote-SSH's authority parsing", () => {
+    const url = buildRemoteOpenUrl({
+      editor: "vscode",
+      host: "ssh.example.com",
+      username: "vm+demo",
+      absolutePath: "/workspace/project",
+    });
+    // VS Code decodes the authority, then Remote-SSH (0.129) takes `authority.split("+")[1]` and
+    // reads it as hex-encoded JSON `{ hostName, user }` or as `user@host`.
+    const authority = decodeURIComponent(new URL(url ?? "").pathname.split("/")[1] ?? "");
+    const destination = authority.split("+")[1] ?? "";
+    const hexBytes = /^(?:[0-9a-f]{2})+$/i.test(destination)
+      ? destination.match(/../g)?.map((byte) => Number.parseInt(byte, 16))
+      : undefined;
+    const resolved =
+      hexBytes === undefined
+        ? destination.match(/^(?:(?<user>.*)@)?(?<hostName>.+?)$/)?.groups
+        : JSON.parse(new TextDecoder().decode(new Uint8Array(hexBytes)));
+    expect({ user: resolved?.user, hostName: resolved?.hostName }).toEqual({
+      user: "vm+demo",
+      hostName: "ssh.example.com",
+    });
+  });
+
   it("drops the Windows drive letter for Zed", () => {
     expect(
       buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "C:\\Users\\theo" }),
