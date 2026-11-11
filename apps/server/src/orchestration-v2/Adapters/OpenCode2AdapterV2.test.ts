@@ -1214,7 +1214,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.each(["remove", "lookup", "output"] as const)(
+  it.effect.each(["remove", "lookup", "output", "timeout"] as const)(
     "continues recovering and stopping native work when shell %s fails",
     (failure) =>
       Effect.gen(function* () {
@@ -1234,7 +1234,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           out("shell.output", { id }),
           reply("shell.output", response({ output: "", cursor: 0, size: 0, truncated: false })),
         ];
-        const { runtime, thread } = yield* resumed(
+        const gate = makeProviderReplayGate(["recovery-pending", "polled"]);
+        const recovery = yield* resumed(
           [
             ...backgroundLaunch(CHILD),
             ...output(ids[0]!),
@@ -1258,29 +1259,74 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ],
           {
             version: "2.2.1",
+            replayGate: gate,
             shellRecovery: [
               out("shell.list", "<any>"),
               reply("shell.list", response(ids.map(info))),
-              ...ids.flatMap((id) => [
-                out("shell.get", { id }),
-                reply(
-                  "shell.get",
-                  id === ids[0] && failure === "lookup"
-                    ? { status: 500, body: {} }
-                    : response(info(id)),
-                ),
-                ...(id === ids[0] && failure === "lookup"
-                  ? []
-                  : id === ids[0] && failure === "output"
-                    ? [
-                        out("shell.output", { id }),
-                        reply("shell.output", { status: 500, body: {} }),
-                      ]
-                    : output(id)),
-              ]),
+              ...(failure === "timeout"
+                ? [
+                    out("shell.get", { id: ids[0] }),
+                    reply("shell.get", "<hang>"),
+                    event(
+                      "session.execution.succeeded",
+                      { sessionID: "ses_unrelated" },
+                      "recovery-pending",
+                    ),
+                    ...ids.map((id) => out("shell.output", { id })),
+                    ...ids.map(() =>
+                      reply(
+                        "shell.output",
+                        response({ output: "", cursor: 0, size: 0, truncated: false }),
+                      ),
+                    ),
+                    event("session.execution.succeeded", { sessionID: "ses_unrelated" }, "polled"),
+                  ]
+                : ids.flatMap((id) => [
+                    out("shell.get", { id }),
+                    reply(
+                      "shell.get",
+                      id === ids[0] && failure === "lookup"
+                        ? { status: 500, body: {} }
+                        : response(info(id)),
+                    ),
+                    ...(id === ids[0] && failure === "lookup"
+                      ? []
+                      : id === ids[0] && failure === "output"
+                        ? [
+                            out("shell.output", { id }),
+                            reply("shell.output", { status: 500, body: {} }),
+                          ]
+                        : output(id)),
+                  ])),
             ],
           },
+        ).pipe(Effect.forkScoped);
+        if (failure === "timeout") {
+          yield* Effect.promise(() => gate.waitForReached("recovery-pending"));
+          yield* TestClock.adjust("5 seconds");
+        }
+        const { runtime, thread } = yield* Fiber.join(recovery);
+        const recovered = yield* runtime.events.pipe(
+          Stream.takeUntil(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.pendingBackgroundTasks?.length === 2,
+          ),
+          Stream.runCollect,
         );
+        assert.sameMembers(
+          recovered.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+              ? [event.turnItem.nativeItemRef?.nativeId]
+              : [],
+          ),
+          ids,
+        );
+        if (failure === "timeout") {
+          gate.release("recovery-pending");
+          yield* Effect.promise(() => gate.waitForReached("polled"));
+          gate.release("polled");
+        }
         const watch = yield* watchBackgroundTurn(runtime);
         yield* runtime.startTurn(withLineage(thread));
         yield* watch.attached;
@@ -1587,26 +1633,119 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     event("session.execution.started", { sessionID: CHILD }),
   ];
 
-  it.effect("settles a background subagent that fails, so no work is left pending", () =>
-    Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed([
-        ...launchedAndRunning,
-        // The parent turn ends, and the background child fails: it reports
-        // nothing back, so its call has to end with the failure.
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        event("session.execution.failed", {
-          sessionID: CHILD,
-          error: { type: "provider.quota", message: "Rate limit exceeded." },
-        }),
-      ]);
-      const watch = yield* watchCalls(runtime, thread);
-      yield* runtime.startTurn(withLineage(thread));
-      yield* watch.until(
-        () => watch.calls.get("Sleep")?.status === "failed" && watch.state.roster?.length === 0,
-      );
-      assert.deepEqual(watch.state.roster, []);
-      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-    }).pipe(Effect.scoped),
+  it.effect.each([false, true])(
+    "settles a failed background subagent with recovered child=%s",
+    (recoveredChild) =>
+      Effect.gen(function* () {
+        const ids = yield* IdAllocator.IdAllocatorV2.pipe(Effect.provide(IdAllocator.layer));
+        const childThreadId = ids.derive.threadFromProviderThread({
+          driver: OPENCODE_PROVIDER,
+          nativeThreadId: CHILD,
+          providerInstanceId: instanceId,
+        });
+        const childProviderThread = {
+          ...providerThread(yield* DateTime.now),
+          id: ids.derive.providerThread({
+            driver: OPENCODE_PROVIDER,
+            nativeThreadId: CHILD,
+            providerInstanceId: instanceId,
+          }),
+          appThreadId: childThreadId,
+          nativeThreadRef: {
+            driver: OPENCODE_PROVIDER,
+            nativeId: CHILD,
+            strength: "strong" as const,
+          },
+        };
+        const shell = {
+          id: "sh_old_child",
+          command: "echo done",
+          status: "exited",
+          exit: 0,
+          cwd: WORK,
+          shell: "/bin/sh",
+          file: "/remote/output",
+          metadata: { sessionID: CHILD },
+          time: { started: 1, completed: 2 },
+        };
+        const response = (data: unknown) => ({ location: { directory: WORK }, data });
+        const { runtime, thread } = yield* resumed(
+          [
+            ...(recoveredChild
+              ? [
+                  out("session.get", { sessionID: CHILD }),
+                  replyData("session.get", sessionInfo({ id: CHILD })),
+                  out("permission.list", { sessionID: CHILD }),
+                  replyData("permission.list", []),
+                  out("session.form.list", { sessionID: CHILD }),
+                  replyData("session.form.list", []),
+                  out("shell.list", "<any>"),
+                  reply("shell.list", response([shell])),
+                  out("shell.get", { id: shell.id }),
+                  reply("shell.get", response(shell)),
+                  out("shell.output", { id: shell.id }),
+                  reply(
+                    "shell.output",
+                    response({ output: "done", cursor: 4, size: 4, truncated: false }),
+                  ),
+                  out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+                  reply("session.update", null),
+                ]
+              : []),
+            ...launchedAndRunning,
+            // The parent turn ends, and the background child fails: it reports
+            // nothing back, so its call has to end with the failure.
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            event("session.execution.failed", {
+              sessionID: CHILD,
+              error: { type: "provider.quota", message: "Rate limit exceeded." },
+            }),
+          ],
+          recoveredChild ? { version: "2.2.1" } : undefined,
+        );
+        if (recoveredChild)
+          yield* runtime.resumeThread({
+            providerThread: childProviderThread,
+            threadId: childThreadId,
+            modelSelection: bigPickle,
+            runtimePolicy: policy(),
+          });
+        const childUpdates: Array<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
+        > = [];
+        const watch = yield* watchCalls(
+          {
+            ...runtime,
+            events: runtime.events.pipe(
+              Stream.tap((event) =>
+                Effect.sync(() => {
+                  if (
+                    event.type === "provider_thread.updated" &&
+                    event.providerThread.id === childProviderThread.id &&
+                    event.providerThread.ownerNodeId !== null
+                  )
+                    childUpdates.push(event);
+                }),
+              ),
+            ),
+          },
+          thread,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* watch.until(
+          () => watch.calls.get("Sleep")?.status === "failed" && watch.state.roster?.length === 0,
+        );
+        assert.includeMembers(
+          childUpdates.map((event) => event.providerThread.status),
+          ["active", "idle"],
+        );
+        assert.isFalse(
+          childUpdates.some((event) => event.sessionScoped === true),
+          "reattached child status must route through the parent run",
+        );
+        assert.deepEqual(watch.state.roster, []);
+        assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      }).pipe(Effect.scoped),
   );
 
   // regression: #21979 a failed background subagent pinned its thread as busy

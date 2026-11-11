@@ -906,6 +906,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         cursor: number;
         startedAt?: DateTime.Utc;
         recoveredRunId?: RunId | null;
+        published?: boolean;
       }
     >();
 
@@ -1637,6 +1638,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ...(exit === undefined ? {} : { exitCode: exit }),
           },
         });
+        shell.published = true;
         return;
       }
       shell.turn.tools.set(shell.toolId, shell.tool);
@@ -1646,6 +1648,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         metadata: { shellID: id, exit },
       });
       shell.turn.tools.delete(shell.toolId);
+      shell.published = true;
     });
 
     const stopShell = Effect.fn("OpenCode2Adapter.stopShell")(function* (id: string) {
@@ -1776,7 +1779,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         lock.withPermit(
           effect.pipe(
             Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.ensuring(syncRosterAncestors(state)),
+            Effect.ensuring(
+              Effect.gen(function* () {
+                for (const [id, shell] of shells) {
+                  if (
+                    shell.running &&
+                    shell.published !== true &&
+                    sessionsOf(state).includes(shell.state)
+                  )
+                    yield* emitShell(id, "running");
+                }
+                yield* syncRosterAncestors(state);
+              }),
+            ),
           ),
         ),
     );
@@ -1879,6 +1894,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const child =
         previous ?? newThreadState(childId, providerThread, call.state.directory, subagent);
       child.subagent = subagent;
+      child.sessionScopedBackground = false;
       child.model = info?.model ?? child.model;
       child.providerThread = withReportedModel(providerThread, child.model);
       child.directory = call.state.directory;
@@ -1918,6 +1934,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (child.active !== undefined && status !== "completed") {
           yield* finishTurn(child, { status: "interrupted" });
         }
+        child.sessionScopedBackground = false;
         child.providerThread = {
           ...child.providerThread,
           status: "idle",
@@ -1965,6 +1982,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn.before = subagent.queued;
       subagent.queued = undefined;
       child.active = turn;
+      child.sessionScopedBackground = false;
       yield* emit({
         type: "node.updated",
         driver,
