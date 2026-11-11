@@ -568,6 +568,9 @@ const makeLaptop = (
         Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) => SubscriptionRef.update(offers, (seen) => [...seen, request]),
           take: Effect.never,
+          settle: () => Effect.void,
+          progress: () => Effect.succeed({ pending: 0, settles: 0 }),
+          awaitSettle: () => Effect.void,
         }),
       ),
     );

@@ -510,6 +510,9 @@ const makeAdapter = Effect.fnUntraced(function* (
       Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
         ...continuationRequests,
         take: Effect.never,
+        settle: () => Effect.void,
+        progress: () => Effect.succeed({ pending: 0, settles: 0 }),
+        awaitSettle: () => Effect.void,
       }),
     );
   }

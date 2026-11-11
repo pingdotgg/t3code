@@ -395,6 +395,8 @@ export const layerProduction = Layer.mergeAll(
     ),
   ),
   layerProviderContinuationWorkerProvided,
+  // MCP run checks await this instance's pending wake turns; memoization shares it with the worker.
+  ProviderContinuationRequests.layer,
   layerAgentSessionImporterProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
 ).pipe(

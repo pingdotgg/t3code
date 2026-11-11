@@ -4,14 +4,20 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   ProviderInstanceId,
+  ProviderDriverKind,
   ProviderInteractionMode,
+  ProviderThreadId,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
@@ -356,6 +362,74 @@ it.effect("refuses a change when the calling thread cannot be read", () =>
       ),
     ),
   ),
+);
+
+it.effect("reads a waking caller's modes after its continuation starts the run", () =>
+  Effect.gen(function* () {
+    const shell = yield* Ref.make(liveThreadShell(fullAccessThreadId, { activeRunId: null }));
+    const waiting = yield* Deferred.make<void>();
+    const settled = yield* Deferred.make<void>();
+    const outcome = yield* call("writes_environment", fullAccess).pipe(
+      Effect.provide(
+        probeServer(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: () => Ref.get(shell),
+          }),
+        ),
+      ),
+      Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+        offer: () => Effect.void,
+        take: Effect.never,
+        settle: () => Effect.void,
+        progress: () => Effect.succeed({ pending: 1, settles: 0 }),
+        awaitSettle: () =>
+          Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(settled))),
+      }),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(waiting);
+    // The wake turn's run starts after the user lowered the thread's modes.
+    yield* Ref.set(
+      shell,
+      liveThreadShell(fullAccessThreadId, { runtimeMode: "approval-required" }),
+    );
+    yield* Deferred.succeed(settled, undefined);
+    expect(yield* Fiber.join(outcome)).toBe("capability_denied");
+  }),
+);
+
+it.effect("lets a waking caller act once its run starts, while later continuations queue", () =>
+  Effect.gen(function* () {
+    const continuations = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    const continuation = (threadId: ThreadId) => ({
+      threadId,
+      providerThreadId: ProviderThreadId.make(`provider-thread:${threadId}`),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      detail: null,
+    });
+    // The native wake, then another thread's slow continuation.
+    yield* continuations.offer(continuation(fullAccessThreadId));
+    yield* continuations.offer(continuation(supervisedThreadId));
+    const shell = yield* Ref.make(liveThreadShell(fullAccessThreadId, { activeRunId: null }));
+    const shellRead = yield* Deferred.make<void>();
+    const outcome = yield* call("writes_environment", fullAccess).pipe(
+      Effect.provide(
+        probeServer(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: () =>
+              Ref.get(shell).pipe(Effect.tap(() => Deferred.succeed(shellRead, undefined))),
+          }),
+        ),
+      ),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(shellRead);
+    // A delegated completion is offered while the wake's dispatch commits its run and settles.
+    yield* continuations.offer(continuation(fullAccessThreadId));
+    yield* Ref.set(shell, liveThreadShell(fullAccessThreadId));
+    yield* continuations.settle(fullAccessThreadId);
+    expect(yield* Fiber.join(outcome)).toBe("ran");
+  }).pipe(Effect.provide(ProviderContinuationRequests.layer)),
 );
 
 const box = EnvironmentId.make("environment-box");
