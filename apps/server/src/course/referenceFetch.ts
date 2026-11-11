@@ -93,7 +93,7 @@ export const checkedDispatcher = async (
     dispatcher: blocked
       ? undefined
       : new Agent({
-          connect: { lookup: pinnedLookup },
+          connect: { lookup: pinnedLookup as never },
         }),
     blocked,
   };
