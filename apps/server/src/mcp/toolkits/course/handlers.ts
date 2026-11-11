@@ -218,10 +218,15 @@ const handlers = {
   course_reference_fetch: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
-      yield* McpInvocationContext.requireThreadScope(scope, "course_reference_fetch");
+      const { thread } = yield* McpInvocationContext.requireThreadScope(
+        scope,
+        "course_reference_fetch",
+      );
+      const config = yield* ServerConfig.ServerConfig;
       return yield* fetchCourseReference({
         url: input.url,
         ...(input.pages === undefined ? {} : { pages: input.pages }),
+        audit: { stateDir: config.stateDir, threadId: thread.threadId, courseId: null },
       }).pipe(Effect.mapError(fail));
     }),
   ),

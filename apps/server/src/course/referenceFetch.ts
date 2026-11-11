@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Agent } from "undici";
 import { isPublicFaviconHost, isPrivateNetworkHost } from "@t3tools/shared/hostClassification";
+import { auditDownload, type DownloadAuditContext } from "./downloadAudit.ts";
 
 export class CourseReferenceFetchError extends Schema.TaggedError<CourseReferenceFetchError>()(
   "CourseReferenceFetchError",
@@ -194,6 +195,7 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
   readonly pages?: ReadonlyArray<number>;
   readonly fetchImpl?: typeof fetch;
   readonly lookup?: typeof NodeDnsPromises.lookup;
+  readonly audit?: DownloadAuditContext;
 }): Generator<
   Effect.Effect<ReferenceFetchResult, CourseReferenceFetchError>,
   ReferenceFetchResult,
@@ -220,6 +222,15 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
       }
       if (!response) throw new Error("No response.");
       const body = await readBody(response);
+      if (input.audit)
+        await auditDownload(input.audit, {
+          url: input.url,
+          hops,
+          status: response.status,
+          bytes: body.byteLength,
+          contentType: response.headers.get("content-type"),
+          body,
+        });
       const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
       if (contentType.includes("pdf") || url.pathname.toLowerCase().endsWith(".pdf")) {
         const pages = [
@@ -252,6 +263,7 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
       return { url: url.toString(), ...(title ? { title } : {}), text, links };
     },
     catch: (cause) => {
+      if (input.audit) void auditDownload(input.audit, { url: input.url, error: String(cause) });
       return new CourseReferenceFetchError({ message: String(cause) });
     },
   });

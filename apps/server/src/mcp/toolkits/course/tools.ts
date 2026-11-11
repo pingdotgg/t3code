@@ -139,6 +139,7 @@ const CourseReferenceFetchTool = Tool.make("course_reference_fetch", {
   dependencies: [
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
+    ServerConfig.ServerConfig,
   ],
 })
   .annotate(Tool.Title, "Fetch course reference")
