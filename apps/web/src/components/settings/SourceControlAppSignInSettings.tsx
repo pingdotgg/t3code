@@ -101,7 +101,9 @@ export function SourceControlAppSignInSettings({
     readHostCredentialSettings(settings, definition.kind),
   );
   const signedIn = (signIns[host] ?? "").length > 0;
-  const tokenOverrides = (tokens[host] ?? "").length > 0;
+  const token = tokens[host];
+  // A token read from a secret provider overrides the sign-in like a saved one.
+  const tokenOverrides = typeof token === "string" ? token.length > 0 : token !== undefined;
   const canSignIn = useAtomValue(
     sourceControlEnvironment.startSignIn.permissionAtom(environmentId),
   );
@@ -169,7 +171,7 @@ export function SourceControlAppSignInSettings({
           />
         </span>
       ) : tokenOverrides ? (
-        "Signed in, but the token saved below is used until you remove it."
+        "Signed in, but the token saved below is used while it can be read."
       ) : (
         "Signed in"
       );
