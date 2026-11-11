@@ -38,6 +38,7 @@ import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 import * as DeviceService from "../device/DeviceService.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1538,4 +1539,101 @@ it.effect(
         expect(yield* start("root/default")).toBe(400);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("lists preview and device tools only to credentials granting them", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const scopeFor = (
+        capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
+      ): McpInvocationContext.McpThreadInvocationScope => ({
+        environmentId,
+        requestNamespace: "provider-session",
+        thread: {
+          threadId: ThreadId.make("thread-provider"),
+          providerSessionId: "provider-session",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        },
+        client: undefined,
+        capabilities: new Set(capabilities),
+        issuedAt: 1,
+      });
+      const scopes = new Map([
+        ["noneToken", scopeFor([])],
+        ["previewToken", scopeFor(["preview"])],
+        ["deviceToken", scopeFor(["device"])],
+      ]);
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        Layer.mergeAll(
+          McpHttpServer.layerPreviewToolkit,
+          McpHttpServer.layerPreviewControlsRegistration,
+          McpHttpServer.layerDeviceToolkit,
+        ),
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (token) => Effect.succeed(scopes.get(token)),
+          }),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            McpToolAccessTestkit.liveThreadsLayer,
+            PreviewAutomationBroker.layer,
+            Layer.mock(PreviewManager.PreviewManager)({}),
+            Layer.mock(DeviceService.DeviceService)({}),
+            Layer.mock(ProjectService.ProjectService)({}),
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" }),
+          ),
+        ),
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const listedTools = (token: string) =>
+        Effect.gen(function* () {
+          const headers = {
+            accept: "application/json, text/event-stream",
+            authorization: `Bearer ${token}`,
+          };
+          const initialize = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+              "application/json",
+            ),
+          });
+          const listed = yield* httpClient.post("/mcp", {
+            headers: {
+              ...headers,
+              "mcp-session-id": initialize.headers["mcp-session-id"]!,
+              "mcp-protocol-version": "2025-06-18",
+            },
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+              "application/json",
+            ),
+          });
+          const body = (yield* listed.json) as {
+            readonly result: { readonly tools: ReadonlyArray<{ readonly name: string }> };
+          };
+          return body.result.tools.map((tool) => tool.name);
+        });
+
+      expect(yield* listedTools("noneToken")).toEqual([]);
+      const previewTools = yield* listedTools("previewToken");
+      expect(previewTools).toEqual(
+        expect.arrayContaining(["preview_status", "preview_snapshot", "t3_preview_list"]),
+      );
+      expect(previewTools.some((name) => name.startsWith("device_"))).toBe(false);
+      expect((yield* listedTools("deviceToken")).toSorted()).toEqual([
+        "device_close",
+        "device_list",
+        "device_open",
+        "device_screenshot",
+      ]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

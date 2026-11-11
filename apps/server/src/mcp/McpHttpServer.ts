@@ -1117,6 +1117,29 @@ const provideRegistrationServices = <Services>() =>
   );
 
 /**
+ * Offers a capability's tools only to credentials that grant it; `EnabledWhen`
+ * gates calls as well as `tools/list`. Handlers keep their own checks.
+ */
+const offeredWith = Effect.fn("McpHttpServer.offeredWith")(function* <A, E, R>(
+  capability: McpInvocationContext.McpCapability | undefined,
+  registration: Effect.Effect<A, E, R>,
+) {
+  if (capability === undefined) return yield* registration;
+  const server = yield* McpServer.McpServer;
+  const granted = McpInvocationContext.grantedCapability(capability);
+  const gatedServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function (options) {
+      return server.addTool({
+        ...options,
+        annotations: Context.add(options.annotations, McpSchema.EnabledWhen, granted),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, gatedServer));
+});
+
+/**
  * Tools declare their handler services as request-level dependencies. Those
  * built with the server are provided here; `McpInvocationContext` is left to
  * the transport, whose auth middleware resolves it per request.
@@ -1124,11 +1147,15 @@ const provideRegistrationServices = <Services>() =>
 export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, RX>(
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
+  capability?: McpInvocationContext.McpCapability,
 ) =>
   Layer.effectDiscard(
-    withToolAnalytics(
-      withToolSpans(
-        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    offeredWith(
+      capability,
+      withToolAnalytics(
+        withToolSpans(
+          withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        ),
       ),
     ),
   ).pipe(
@@ -1144,8 +1171,9 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
 const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, EX, RX>(
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
+  capability?: McpInvocationContext.McpCapability,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(withToolSpans(register))).pipe(
+  Layer.effectDiscard(offeredWith(capability, withToolAnalytics(withToolSpans(register)))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
@@ -1157,11 +1185,13 @@ export const layerHtmlToolkit = Layer.mergeAll(
 const layerPreviewStandardToolkitRegistration = toolkitRegistration(
   PreviewStandardToolkit,
   PreviewHandlers.layerStandard,
+  "preview",
 );
 
 const layerPreviewSnapshotRegistration = imageToolRegistration(
   registerPreviewSnapshot(),
   PreviewHandlers.layerSnapshot,
+  "preview",
 );
 
 export const layerPreviewToolkit = Layer.mergeAll(
@@ -1181,9 +1211,10 @@ const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeHandlers.layer,
 ).pipe(Layer.provide(WorktreeMcpService.layer));
 
-const layerPreviewControlsRegistration = toolkitRegistration(
+export const layerPreviewControlsRegistration = toolkitRegistration(
   PreviewControlsToolkit,
   PreviewControlsHandlers.layer,
+  "preview",
 );
 
 const layerEnvironmentToolkit = toolkitRegistration(
@@ -1206,11 +1237,13 @@ export const layerPullRequestsToolkit = toolkitRegistration(
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
   DeviceHandlers.layerStandard,
+  "device",
 );
 
 const layerDeviceScreenshotRegistration = imageToolRegistration(
   registerDeviceScreenshot(),
   DeviceHandlers.layerScreenshot,
+  "device",
 );
 
 export const layerDeviceToolkit = Layer.mergeAll(
