@@ -394,11 +394,12 @@ export const make = Effect.gen(function* () {
           );
           return { iterations, changedFiles };
         });
-        const [{ iterations, changedFiles }] = yield* Effect.all(
-          [pushes, dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)(read)],
-          { concurrency: "unbounded" },
-        );
-        const pullRequest = yield* dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE)(read);
+        const datedRead = dated(input, AzureDevOpsPullRequestCli.ACTIVITY_MAX_AGE);
+        const [{ iterations, changedFiles }] = yield* Effect.all([pushes, datedRead(read)], {
+          concurrency: "unbounded",
+        });
+        // The thread read is fresh now; dating again only folds in the push times just listed.
+        const pullRequest = yield* datedRead(read);
         // The trial merge's lastMergeSourceCommit can lag behind a new source push.
         const headSha = iterations.at(-1)?.headCommit;
         const detail: ProviderChangeRequestDetail = {
