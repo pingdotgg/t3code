@@ -1140,8 +1140,7 @@ export const t3Default = (
             ...newThread(request, isRecord(request) ? request.prompt : undefined),
             createdBy: "agent",
             creationSource: "mcp",
-            providerInstanceId:
-              target.providerInstanceId ?? (sample.base.codex ? "codex" : "claudeAgent"),
+            providerInstanceId: target.providerInstanceId ?? inheritedInstance(sample),
             model: target.model ?? sample.base.model,
           };
         }),
@@ -1162,8 +1161,7 @@ export const t3Default = (
         status: "running",
         workState: "working",
         hasPendingChildRuns: false,
-        providerInstanceId:
-          target.providerInstanceId ?? (sample.base.codex ? "codex" : "claudeAgent"),
+        providerInstanceId: target.providerInstanceId ?? inheritedInstance(sample),
         model: target.model ?? sample.base.model,
         summary: null,
         hasPendingQuestion: false,
@@ -1300,6 +1298,16 @@ const EVAL_ENVIRONMENT_ID = EnvironmentId.make("eeeeeeee-eeee-4eee-8eee-eeeeeeee
 const unsavedSecretNote = (Contracts as Record<string, unknown>).SECRET_REQUEST_UNSAVED_NOTE as
   | Readonly<Record<string, string>>
   | undefined;
+
+/** The account a call without a target inherits: the case's capabilities mock, else the harness's. */
+const inheritedInstance = ({ base, testCase }: Sample) => {
+  const mocked = testCase.setup.mocks?.orchestrator_capabilities;
+  return isRecord(mocked) && typeof mocked.inheritedProviderInstanceId === "string"
+    ? mocked.inheritedProviderInstanceId
+    : base.codex
+      ? "codex"
+      : "claudeAgent";
+};
 
 /** Fields T3 adds to real thread and task results, applied to mocks and defaults alike. */
 const withProductFields = (name: string, value: unknown, child: boolean): unknown => {
