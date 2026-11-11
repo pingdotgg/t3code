@@ -280,6 +280,7 @@ process.exit(0);
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-layout-" });
       const statePath = path.join(root, "runtime", "service-state.json");
       const contents = '{ "protocol": 2, "activeVersion": "1.0.0" }';
+      yield* fs.makeDirectory(path.dirname(statePath), { recursive: true });
       yield* fs.writeFileString(statePath, contents);
       const childCount = spawnedChildren.length;
 
