@@ -1,3 +1,4 @@
+import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
@@ -96,13 +97,13 @@ import {
   ArrowRightIcon,
   BotIcon,
   Minimize2Icon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   Clock3Icon,
   MessageSquareIcon,
   MessagesSquareIcon,
 } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Skeleton } from "../ui/skeleton";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
@@ -222,6 +223,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   },
 } as const satisfies MaintainScrollAtEndOptions;
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
+const EMPTY_TIMELINE_ENTRIES: ReadonlyArray<TimelineEntry> = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
   ...TIMELINE_MAINTAIN_SCROLL_AT_END,
   animated: true,
@@ -544,6 +546,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
+  const screenReaderAnnouncements = useClientSettings(
+    (settings) => settings.screenReaderAnnouncements,
+  );
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
   const revealedMessageId = citationRequest?.citation.messageId ?? null;
@@ -922,6 +927,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         };
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
+  const [minimapAtEnd, setMinimapAtEnd] = useState(false);
   const handleAnchorReady = (info: { anchorIndex: number | undefined }) => {
     if (anchorMessageId !== null && info.anchorIndex !== undefined) {
       onAnchorReady(anchorMessageId, info.anchorIndex);
@@ -992,17 +998,27 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapCurrentIndex((current) =>
       current === nextCurrentIndex ? current : nextCurrentIndex,
     );
+    // The exact bottom, not the follow re-arm zone: Next can still scroll inside that zone.
+    setMinimapAtEnd(
+      viewport !== undefined &&
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 1,
+    );
   });
 
   const minimapRefreshFrameRef = useRef<number | null>(null);
-  const scheduleMinimapRefresh = () => {
+  const scheduleMinimapRefresh = useStableCallback(() => {
     if (minimapRefreshFrameRef.current !== null) return;
     // LegendList recycles row containers before React commits their positions.
     minimapRefreshFrameRef.current = requestAnimationFrame(() => {
       minimapRefreshFrameRef.current = null;
       refreshMinimap();
     });
-  };
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the minimap skips refreshes until the restore commits, and the restore can land without a scroll event
+  useLayoutEffect(() => {
+    if (!restoringThreadPosition) scheduleMinimapRefresh();
+  }, [restoringThreadPosition, scheduleMinimapRefresh]);
 
   // The measurement the last remember wrote, so a follow release can rewrite
   // it without reading render state from a listener.
@@ -1098,9 +1114,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const attachTimelineViewportElement = (viewportElement: HTMLDivElement | null) => {
     setTimelineViewportElement(viewportElement);
     if (!viewportElement) return;
-    const stopObserving = observeResize(viewportElement, () =>
-      measureTimelineGutter(viewportElement),
-    );
+    const stopObserving = observeResize(viewportElement, () => {
+      measureTimelineGutter(viewportElement);
+      scheduleMinimapRefresh();
+    });
     return () => {
       stopObserving();
       setTimelineViewportElement(null);
@@ -1201,6 +1218,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
       runId={announcedRun?.runId ?? null}
       runStatus={announcedRun?.status ?? null}
       detailBehind={detailBehindShell}
+      level={screenReaderAnnouncements}
+      entries={screenReaderAnnouncements === "status" ? EMPTY_TIMELINE_ENTRIES : timelineEntries}
+      workspaceRoot={workspaceRoot}
     />
   );
   const listHeaderLeadingContent =
@@ -1243,7 +1263,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef.current = list;
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
     registerTimeline?.(scrollNode);
-    const viewport = scrollNode ? attachTimelineViewport(scrollNode) : null;
+    const viewport = scrollNode
+      ? attachTimelineViewport(scrollNode, (frame) => {
+          const rowId = frame.closest<HTMLElement>("[data-timeline-row-id]")?.dataset.timelineRowId;
+          if (rowId && list) {
+            list.cancelScroll();
+            list.anchorVisibleContent({ key: rowId });
+          }
+        })
+      : null;
     viewportRef.current = viewport;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);
@@ -1479,6 +1507,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               maintainScrollAtEndThreshold={1}
               onScroll={handleScroll}
               onItemSizeChanged={scheduleMinimapRefresh}
+              onMetricsChange={scheduleMinimapRefresh}
               className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
               ListHeaderComponent={listHeader}
               ListFooterComponent={timelineListFooter}
@@ -1488,6 +1517,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               hasPersistentGutter={minimapHasPersistentGutter}
               hitStripWidth={minimapHitStripWidth}
               currentIndex={minimapCurrentIndex}
+              atEnd={minimapAtEnd}
               stripMap={minimapStripMap}
               onWheel={forwardMinimapWheel}
               onSelect={(item) => {
@@ -1590,7 +1620,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                     row.kind === "event" ||
                     row.kind === "attempt-fold" ||
                     row.kind === "html-render" ||
-                    row.kind === "mcp-app"
+                    row.kind === "mcp-app" ||
+                    row.kind === "viewed-images"
                   ? "pb-2"
                   : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
@@ -1643,6 +1674,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
+      {row.kind === "viewed-images" ? <ViewedImagesTimelineRow row={row} /> : null}
       {row.kind === "mcp-app" ? <McpAppTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
@@ -1860,10 +1892,11 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
         aria-busy={loading}
         className="flex w-full cursor-pointer select-none items-center gap-2 rounded-card border border-transparent surface-card px-2.5 py-2 text-left transition-colors hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
-        <MorphIcon
-          className="size-3.5 shrink-0 text-muted-foreground"
-          icon={row.expanded ? ChevronDown : ChevronRight}
-        />
+        {row.expanded ? (
+          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
         <span className="text-xs font-medium text-foreground">
           {row.label}
           {error ? <span className="block text-error-foreground">{error}</span> : null}
