@@ -129,9 +129,13 @@ function makeSession(
         return { result: { value: [] } };
       }
       if (method === "Page.addScriptToEvaluateOnNewDocument") frame?.recording.resolve();
-      if (method === "Input.dispatchKeyEvent" && (input as { commands?: unknown }).commands) {
-        if (focusedFrame) focusedFrame.copy = keyCopy || focusedFrame.copy;
-        else pageCopy = keyCopy || pageCopy;
+      // The recorder drops its last copy on every copy or cut key it sees.
+      if (
+        method === "Input.dispatchKeyEvent" &&
+        ["copy", "cut"].includes((input as { commands?: Array<string> }).commands?.[0] ?? "")
+      ) {
+        if (focusedFrame) focusedFrame.copy = keyCopy;
+        else pageCopy = keyCopy;
       }
       if (method === "Runtime.evaluate" && (input as { contextId?: number }).contextId === 7) {
         const value = frame ? frame.copy : pageCopy;

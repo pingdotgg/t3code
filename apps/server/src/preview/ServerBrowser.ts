@@ -427,6 +427,7 @@ const CLIPBOARD_WORLD = "t3-preview-clipboard";
 // Chromium shares its clipboard across contexts; capture real copy/cut keys in a page-inaccessible world instead.
 const CLIPBOARD_SCRIPT = `(() => {
   let keying = false;
+  let keyedAt = 0;
   let copied = "";
   // The same Ctrl or Cmd + C or X that editingCommand sends as copy or cut.
   addEventListener("keydown", (event) => {
@@ -434,6 +435,7 @@ const CLIPBOARD_SCRIPT = `(() => {
     const key = event.key.toLowerCase();
     if (key !== "c" && key !== "x") return;
     keying = true;
+    keyedAt = Date.now();
     copied = "";
     setTimeout(() => { keying = false; });
   }, true);
@@ -460,8 +462,9 @@ const CLIPBOARD_SCRIPT = `(() => {
     addEventListener(type, snapshot, true);
     addEventListener(type, replace);
   }
-  globalThis.takeCopy = () => {
-    const text = copied;
+  // Only a key dispatched at or after since made this copy; older ones are stale.
+  globalThis.takeCopy = (since) => {
+    const text = keyedAt >= since ? copied : "";
     copied = "";
     return text;
   };
@@ -1310,7 +1313,7 @@ const make = Effect.gen(function* () {
     await recordCopies(cdp).catch(constVoid);
   };
 
-  const takeSessionCopies = async (cdp: CDPSession) => {
+  const takeSessionCopies = async (cdp: CDPSession, since: number) => {
     const tree = await cdp.send("Page.getFrameTree").catch(() => null);
     if (!tree) return [];
     const frameIds = (node: typeof tree.frameTree): Array<string> => [
@@ -1324,7 +1327,7 @@ const make = Effect.gen(function* () {
           .then(({ executionContextId }) =>
             cdp.send("Runtime.evaluate", {
               contextId: executionContextId,
-              expression: "globalThis.takeCopy?.()",
+              expression: `globalThis.takeCopy?.(${since})`,
               returnByValue: true,
             }),
           )
@@ -1336,9 +1339,9 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const takeCopiedText = async (tab: ServerTab) => {
+  const takeCopiedText = async (tab: ServerTab, since: number) => {
     const copies = await Promise.all(
-      [tab.cdp, ...tab.frameSessions.values()].map(takeSessionCopies),
+      [tab.cdp, ...tab.frameSessions.values()].map((cdp) => takeSessionCopies(cdp, since)),
     );
     return copies.flat().find((text) => text.length > 0);
   };
@@ -2447,7 +2450,7 @@ const make = Effect.gen(function* () {
         const copying =
           !tab.desktop && (command?.commands[0] === "copy" || command?.commands[0] === "cut");
 
-        if (copying) await takeCopiedText(tab);
+        const since = Date.now();
         await session.send("Input.dispatchKeyEvent", {
           type: text ? "keyDown" : "rawKeyDown",
           key,
@@ -2461,10 +2464,12 @@ const make = Effect.gen(function* () {
           ),
         });
         viewer.pressedKeys.set(code || key, { key, code });
-        if (copying) {
-          const copied = await takeCopiedText(tab);
-          if (copied) viewer.push({ _tag: "clipboard", text: copied });
-        }
+        // Read outside the input queue: a busy frame answers late and must not hold later input.
+        if (copying)
+          return async () => {
+            const copied = await takeCopiedText(tab, since);
+            if (copied) viewer.push({ _tag: "clipboard", text: copied });
+          };
         return;
       }
       case "text":
@@ -2721,8 +2726,9 @@ const make = Effect.gen(function* () {
                   : {}),
               });
             } else {
-              const dispatch = (input: Record<string, unknown>) =>
-                dispatchViewerInput(tab, session, viewer, input);
+              const dispatch = async (input: Record<string, unknown>) => {
+                await dispatchViewerInput(tab, session, viewer, input);
+              };
               if (
                 message.type === "mouse" &&
                 message.action === "move" &&
@@ -2749,7 +2755,10 @@ const make = Effect.gen(function* () {
                   }),
                 );
               } else {
-                await tab.control.human(viewer.id, () => dispatch(message));
+                const readCopy = await tab.control.human(viewer.id, () =>
+                  dispatchViewerInput(tab, session, viewer, message),
+                );
+                await readCopy?.();
               }
             }
           } catch {
