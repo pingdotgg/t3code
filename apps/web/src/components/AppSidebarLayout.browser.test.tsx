@@ -20,6 +20,8 @@ async function renderMacosDesktopLayout({ fullscreen }: { fullscreen: boolean })
         return () => listeners.delete(listener);
       },
       onMenuAction: () => () => {},
+      onTrackpadScrollBegin: () => () => {},
+      onTrackpadScrollEnd: () => () => {},
       getClientSettings: async () => null,
       getLocalEnvironmentBootstraps: () => [],
     }),
