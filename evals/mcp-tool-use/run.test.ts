@@ -1152,6 +1152,27 @@ it.effect("reads the branch's PR only once the agent has opened it", () =>
     yield* call("b", "pull_request_create", { title: "Feature", body: "Body" });
     assert.isNotTrue((yield* call("c", "pull_request_read", {})).is_error);
 
+    // A stack's next layer, checked out in the shell, opens its own PR once.
+    const layerPr = (id: string) =>
+      call(id, "pull_request_create", { title: "Layer", body: "Body" }).pipe(
+        Effect.map((result) => /\/pull\/(\d+)/.exec(String(result.content))?.[1]),
+      );
+    const first = /\/pull\/(\d+)/.exec([...sample.linked].join(" "))?.[1];
+    sample.shell.push({
+      tool: "Bash",
+      input: { command: "git checkout -b layer-2 2>&1" },
+      output: "",
+    });
+    const layer = yield* layerPr("b2");
+    assert.notEqual(layer, first);
+    assert.equal(yield* layerPr("b3"), layer);
+    sample.shell.push({
+      tool: "Bash",
+      input: { command: "git checkout main -- src/a.ts && git checkout feature" },
+      output: "",
+    });
+    assert.equal(yield* layerPr("b4"), first);
+
     // A case that mocks the create still opens the PR it names.
     const url = "https://github.com/acme/app/pull/125";
     const mocks = { pull_request_create: { number: 125, url, created: true } };

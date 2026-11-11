@@ -868,6 +868,23 @@ const branchPullRequestCreatedBy = (entry: ShellEntry, branch: string | undefine
     .map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]))
     .find((number) => number > 0);
 };
+/** The branch the agent last checked out or switched to in the shell, else the world's. */
+const checkedOutBranch = (sample: Sample) => {
+  let branch = sample.testCase.setup.world?.branch ?? "";
+  for (const entry of sample.shell) {
+    const command = isRecord(entry.input) ? valueText(entry.input.command) : "";
+    for (const part of command.replace(/\s\d?>&\d/g, "").split(/[;&|\n]+/)) {
+      // `git checkout <ref> -- <paths>` restores files and stays on the branch.
+      if (/\s--(\s|$)/.test(part)) continue;
+      const match = /\bgit (?:checkout|switch)\s+(?:-[bcBC]\s+)?([A-Za-z0-9][\w./-]*)\s*$/.exec(
+        part.trim(),
+      );
+      if (match !== null) branch = match[1]!;
+    }
+  }
+  return branch;
+};
+
 /**
  * One sample's state. ToolSearch adds loaded schemas to `tools`, like Claude Code. `shell` is the
  * history the simulator keeps consistent with; `linked`, `nextTask` and `threads` do the same for
@@ -883,6 +900,8 @@ type Sample = {
   readonly linked: Set<string>;
   /** The branch PR the agent opened in this sample, which links alone do not prove. */
   openedPullRequest: number | undefined;
+  /** PRs pull_request_create opened from branches other than the world's, by branch. */
+  readonly openedByBranch: Map<string, number>;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
   /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
@@ -938,6 +957,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     shell,
     shellUsage: emptyUsage(),
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
+    openedByBranch: new Map(),
     openedPullRequest:
       shell
         .map((entry) => branchPullRequestCreatedBy(entry, testCase.setup.world?.branch))
@@ -1349,6 +1369,25 @@ export const t3Default = (
       };
     }
     case "pull_request_create": {
+      const checkedOut = checkedOutBranch(sample);
+      if (checkedOut !== sample.testCase.setup.world?.branch) {
+        // Another layer of a stack: its own PR, opened once per branch like the real tool.
+        const known = worldPullRequests(sample).find((pr) => pr.headRefName === checkedOut);
+        const opened = sample.openedByBranch.get(checkedOut);
+        const number =
+          known !== undefined
+            ? Number(known.number)
+            : (opened ??
+              Math.max(
+                branchPullRequest(sample).number,
+                ...sample.openedByBranch.values(),
+                ...[...sample.linked].map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]) || 0),
+              ) + 1);
+        sample.openedByBranch.set(checkedOut, number);
+        const target = pullRequest(sample.repo, { number });
+        sample.linked.add(target.url);
+        return { ...target, created: known === undefined && opened === undefined };
+      }
       const { number, created } = branchPullRequest(sample);
       const target = pullRequest(sample.repo, { number });
       sample.linked.add(target.url);
