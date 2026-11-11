@@ -415,6 +415,15 @@ type ChatViewProps =
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 
+// Mirrors the server's isForkableSourceRunStatus; a run still in progress cannot be forked.
+const FORKABLE_RUN_STATUSES = new Set([
+  "completed",
+  "waiting",
+  "failed",
+  "interrupted",
+  "cancelled",
+]);
+
 export default function ChatView(props: ChatViewProps) {
   const {
     environmentId,
@@ -2709,22 +2718,27 @@ export default function ChatView(props: ChatViewProps) {
         if (!event.repeat) copyActiveThreadReference();
       },
       "thread.fork": ({ event }) => {
-        if (event.repeat) return;
         if (routeThreadDetailRef === null) return false;
         const latest = readThreadVisibleTurnItems(routeThreadDetailRef).findLast(
-          (projectedItem) =>
-            projectedItem.item.type === "assistant_message" &&
-            canForkProjectedAssistantItem({
-              projectedItem,
-              capabilities: readV2ItemSupport({
-                environmentId,
-                sourceThreadId: projectedItem.sourceThreadId,
-                sourceItemId: projectedItem.sourceItemId,
-              }).providerSession?.capabilities,
-            }),
+          (projectedItem) => {
+            if (projectedItem.item.type !== "assistant_message") return false;
+            const support = readV2ItemSupport({
+              environmentId,
+              sourceThreadId: projectedItem.sourceThreadId,
+              sourceItemId: projectedItem.sourceItemId,
+            });
+            return (
+              (support.run === null || FORKABLE_RUN_STATUSES.has(support.run.status)) &&
+              canForkProjectedAssistantItem({
+                projectedItem,
+                capabilities: support.providerSession?.capabilities,
+              })
+            );
+          },
         );
         const runId = latest?.item.runId;
         if (latest === undefined || runId == null) return false;
+        if (event.repeat) return;
         void onForkFromRunStable({ sourceThreadId: latest.sourceThreadId, runId });
       },
       "chat.find": () => {
