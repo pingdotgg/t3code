@@ -1976,6 +1976,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
             id: acpProjectId,
             title: "ACP",
             workspaceRoot: "/workspace/acp",
+            trackedFolders: [],
             defaultModelSelection: null,
             scripts: [],
             createdAt: "2026-10-23T00:00:00.000Z",
