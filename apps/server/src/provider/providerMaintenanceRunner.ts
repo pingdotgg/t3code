@@ -123,6 +123,8 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           .spawn(
             ChildProcess.make(resolved.command, resolved.args, {
               shell: resolved.shell,
+              // Nothing answers an update command, so one that reads stdin must see EOF, not wait.
+              stdin: "ignore",
               ...env,
             }),
           )
@@ -262,18 +264,20 @@ function commandOutput(result: ProviderMaintenanceCommandResult): string | null 
   return truncateText(output, UPDATE_OUTPUT_MAX_BYTES);
 }
 
-// Updaters print their reason last, usually on stderr.
-function lastOutputLine(result: ProviderMaintenanceCommandResult): string | null {
-  for (const output of [result.stderr, result.stdout]) {
-    const line = output
+// Updaters report on stderr, but may follow their error with hints (`claude update`
+// ends with "Try running claude doctor"), so prefer the last line naming an error.
+function failureReason(result: ProviderMaintenanceCommandResult): string | null {
+  const streams = [result.stderr, result.stdout].map((output) =>
+    output
       .split(/\r\n|\r|\n/)
       .map(toProgressLine)
-      .findLast(Boolean);
-    if (line) {
-      return line;
-    }
-  }
-  return null;
+      .filter((line) => line !== null),
+  );
+  return (
+    streams.map((lines) => lines.findLast((line) => /error|fail/i.test(line))).find(Boolean) ??
+    streams.map((lines) => lines.at(-1)).find(Boolean) ??
+    null
+  );
 }
 
 function failureMessage(result: ProviderMaintenanceCommandResult): string {
@@ -284,7 +288,7 @@ function failureMessage(result: ProviderMaintenanceCommandResult): string {
     result.exitCode !== null && result.exitCode !== 0
       ? `Update command exited with code ${result.exitCode}`
       : "Update command failed";
-  const reason = lastOutputLine(result);
+  const reason = failureReason(result);
   return reason ? `${summary}: ${reason}` : `${summary}.`;
 }
 
