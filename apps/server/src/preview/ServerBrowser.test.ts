@@ -2799,8 +2799,8 @@ it.live.each([
               expect(yield* answerAs(scope).pipe(Effect.flip)).toMatchObject({
                 reason: "humanControl",
               });
-              // The person answers in the native window.
-              popup.sessions[0]!.emit("Page.javascriptDialogClosed");
+              // The person answers in the native window, which Playwright's own session reports.
+              popup.page.emit("dialogclosed", pendingDialog);
               answered.resolve();
               const answeredStatus = yield* broker.invoke<PreviewAutomationStatus>({
                 scope,

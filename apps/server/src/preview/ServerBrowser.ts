@@ -930,6 +930,12 @@ const make = Effect.gen(function* () {
       tab.dialog = dialog;
       broadcastControl(tab);
     });
+    // A person can answer a native window's dialog before this tab's own CDP session listens.
+    page.on("dialogclosed", (dialog) => {
+      if (tab.dialog !== dialog) return;
+      tab.dialog = null;
+      broadcastControl(tab);
+    });
     if (desktop) {
       cdp.on("Page.javascriptDialogClosed", () => {
         tab.dialog = null;
@@ -1407,6 +1413,9 @@ const make = Effect.gen(function* () {
       // Keep native dialogs pending even when this popup never becomes an automation tab.
       popup.on("dialog", (dialog) => {
         pendingDialog.current = dialog;
+      });
+      popup.on("dialogclosed", (dialog) => {
+        if (pendingDialog.current === dialog) pendingDialog.current = null;
       });
     }
     if (opener.closing) return refuse();
