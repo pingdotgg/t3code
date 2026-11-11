@@ -1341,7 +1341,7 @@ export default function GitActionsControl({
     );
     if (pushRemoteChoices) {
       setPendingPushRemoteAction({
-        input: { ...input, skipDefaultBranchPrompt: true },
+        input,
         choices: pushRemoteChoices,
       });
       return;
