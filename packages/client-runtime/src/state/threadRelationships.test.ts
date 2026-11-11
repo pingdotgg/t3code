@@ -7,6 +7,7 @@ import {
   immediateThreadRelationships,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
+  threadPopOutAvailability,
   threadRelationshipRowStatus,
 } from "./threadRelationships.ts";
 
@@ -205,6 +206,76 @@ describe("thread relationships", () => {
         }),
       ]),
     );
+  });
+
+  it("shows a popped-out child to its former parent instead of as its subagent", () => {
+    const parent = ThreadId.make("thread-parent");
+    const child = ThreadId.make("thread-popped");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: parent,
+          status: "completed",
+          forkedFrom: null,
+          lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+        },
+        {
+          id: child,
+          status: "running",
+          forkedFrom: { type: "node", nodeId: "task" },
+          lineage: {
+            rootThreadId: parent,
+            parentThreadId: null,
+            relationshipToParent: null,
+            detachedFrom: { threadId: parent },
+          },
+        },
+      ] as never,
+      projection: {
+        thread: { id: parent },
+        subagents: [{ childThreadId: child, status: "completed" }],
+        contextTransfers: [{ sourceThreadId: parent, targetThreadId: child, status: "consumed" }],
+      } as never,
+    });
+    const edgeTo = (from: ThreadId) =>
+      immediateThreadRelationships(graph, from).map((row) => [row.edge.kind, row.edge.status]);
+    expect(edgeTo(parent)).toEqual([["popped_out", "running"]]);
+    expect(edgeTo(child)).toEqual([["popped_out", "running"]]);
+    expect(graph.edges.some((edge) => edge.kind === "subagent")).toBe(false);
+  });
+
+  it.each([
+    ["an idle delegated child whose tasks reported", {}, [], "available"],
+    ["a running child", { status: "running" }, [], "blocked"],
+    ["a child waiting on a question", { pendingRuntimeRequest: {} }, [], "blocked"],
+    [
+      "a child whose result has not reached its parent",
+      {},
+      [{ status: "completed", completionDelivery: { state: "pending" } }],
+      "blocked",
+    ],
+    ["a provider's own subagent", { creationSource: "provider" }, [], "unsupported"],
+    [
+      "a top-level thread",
+      { lineage: { parentThreadId: null, relationshipToParent: null } },
+      [],
+      "unsupported",
+    ],
+  ])("pop-out for %s", (_name, overrides, tasks, expected) => {
+    const thread = {
+      creationSource: "server",
+      lineage: {
+        parentThreadId: "parent",
+        relationshipToParent: "subagent",
+        rootThreadId: "parent",
+      },
+      activityRunStatus: null,
+      status: "idle",
+      pendingRuntimeRequest: null,
+      pendingBackgroundTasks: [],
+      ...overrides,
+    };
+    expect(threadPopOutAvailability(thread as never, tasks as never)).toBe(expected);
   });
 
   it("keeps the live shell when an archived snapshot contains the same thread id", () => {

@@ -199,6 +199,17 @@ export async function navigateAfterThreadDeletion(navigate: () => Promise<void>)
   }
 }
 
+export function usePopOutThread() {
+  const popOutThreadMutation = useOrchestrationCommand(threadEnvironment.popOut, {
+    reportFailure: false,
+  });
+  return (target: ScopedThreadRef) =>
+    popOutThreadMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId },
+    });
+}
+
 function useMarkThreadUnread() {
   const markThreadUnreadMutation = useAtomCommand(threadEnvironment.markUnread, {
     reportFailure: false,
