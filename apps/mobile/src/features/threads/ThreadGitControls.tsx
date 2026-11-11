@@ -168,9 +168,9 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     const { shortLabel, singular } = sourceControlClients.get(
       gitStatus?.sourceControlProvider?.kind,
     ).changeRequest;
-    const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
+    const prUrl = gitStatus?.pr?.url;
     if (!prUrl) {
-      Dialog.alert(`No open ${shortLabel}`, `This branch does not have an open ${singular}.`);
+      Dialog.alert(`No ${shortLabel}`, `This branch does not have a ${singular}.`);
       return;
     }
     if (!(await openPullRequest(prUrl))) {

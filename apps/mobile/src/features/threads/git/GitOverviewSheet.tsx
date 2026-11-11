@@ -128,9 +128,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   ).changeRequest;
 
   const openExistingPr = async () => {
-    const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
+    const prUrl = gitStatus.data?.pr?.url;
     if (!prUrl) {
-      Dialog.alert(`No open ${shortLabel}`, `This branch does not have an open ${singular}.`);
+      Dialog.alert(`No ${shortLabel}`, `This branch does not have a ${singular}.`);
       return;
     }
     if (!(await openPullRequest(prUrl))) {
