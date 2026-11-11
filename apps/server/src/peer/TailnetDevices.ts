@@ -1,5 +1,6 @@
 import {
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   type AuthEnvironmentScope,
@@ -843,7 +844,7 @@ const make = Effect.gen(function* () {
   )(function* (request, payload) {
     const caller = yield* authenticateMember(request, payload.from);
     const self = yield* selfDescriptor;
-    // An app of the network gets its own access here, whatever the machine relaying for it holds.
+    // The narrowest of the app's own access and what the relaying machine may do here.
     let ceiling: AuthMcpClientAccess = caller.access;
     if (payload.appId !== undefined) {
       const app = yield* membership.appAccessOf(payload.appId);
@@ -852,7 +853,7 @@ const make = Effect.gen(function* () {
           message: "That app is not in this network.",
         });
       }
-      ceiling = app.value;
+      ceiling = Membership.narrowerAccess(caller.access, app.value);
     }
     // The asking app's own grant, within that ceiling.
     const allowed = new Set<AuthGrantScope>(clientScopesFor(ceiling));
@@ -889,7 +890,13 @@ const make = Effect.gen(function* () {
       });
     }
     const access = yield* membership.accessOf(environmentId);
-    if (Option.isSome(access) && access.value === "revoked") {
+    if (Option.isNone(access)) {
+      return yield* new TailnetDevicesError({
+        reason: "unknown_device",
+        message: "That machine is not in your network.",
+      });
+    }
+    if (access.value === "revoked") {
       return yield* new TailnetDevicesError({
         reason: "revoked",
         message: "That device is revoked. Restore it to open it.",
@@ -898,6 +905,25 @@ const make = Effect.gen(function* () {
     const appId = caller.subject.startsWith(NETWORK_APP_SUBJECT_PREFIX)
       ? caller.subject.slice(NETWORK_APP_SUBJECT_PREFIX.length)
       : undefined;
+    // An app the network admitted opens members at its own access, read-only included. Any other
+    // session needs to manage access here, as creating a pairing link does.
+    if (appId === undefined) {
+      if (!caller.scopes.includes(AuthAccessWriteScope)) {
+        return yield* new TailnetDevicesError({
+          reason: "forbidden",
+          message:
+            "Only an app in your network, or one that manages access, can open another machine.",
+        });
+      }
+    } else {
+      const app = yield* membership.appAccessOf(appId);
+      if (Option.isNone(app) || app.value === "revoked") {
+        return yield* new TailnetDevicesError({
+          reason: "forbidden",
+          message: "This app is no longer in your network. Pair it again.",
+        });
+      }
+    }
     const ask = Effect.gen(function* () {
       const resolved = yield* links.resolve(environmentId);
       const authorized = HttpClient.mapRequest(

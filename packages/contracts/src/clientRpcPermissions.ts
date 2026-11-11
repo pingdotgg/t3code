@@ -80,8 +80,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.tailnetDevicesSetAccess]: AuthAccessWriteScope,
   [WS_METHODS.tailnetDevicesAdmit]: AuthAccessWriteScope,
   [WS_METHODS.tailnetDevicesSetAppAccess]: AuthAccessWriteScope,
-  // Hands the app a session on another device, as a pairing link does.
-  [WS_METHODS.tailnetDevicesOpenDevice]: AuthAccessWriteScope,
+  // A session on another member, never past the caller's own grant; the server decides who may.
+  [WS_METHODS.tailnetDevicesOpenDevice]: AuthOrchestrationReadScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

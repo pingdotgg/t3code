@@ -161,6 +161,8 @@ describe("command permissions", () => {
   it.effect.each([
     { method: WS_METHODS.serverRunStorageCleanup, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
+    // A read-only app of the device network opens other members; the server caps the grant.
+    { method: WS_METHODS.tailnetDevicesOpenDevice, scope: AuthOrchestrationReadScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -226,7 +228,6 @@ describe("command permissions", () => {
     WS_METHODS.tailnetDevicesSetAccess,
     WS_METHODS.tailnetDevicesAdmit,
     WS_METHODS.tailnetDevicesSetAppAccess,
-    WS_METHODS.tailnetDevicesOpenDevice,
   ])("requires the destination access grant for %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {

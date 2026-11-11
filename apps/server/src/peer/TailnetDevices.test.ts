@@ -945,6 +945,73 @@ describe("apps of the network", () => {
       }),
   );
 
+  it.live("a read-only app opens another member read-only, changing nothing in the network", () =>
+    Effect.gen(function* () {
+      const { a, b } = yield* twoMembers;
+      yield* a.devices.inviteApp({ label: "Phone", scopes: readScopes });
+      const [app] = yield* a.membership.apps;
+      const subject = `${NETWORK_APP_SUBJECT_PREFIX}${app!.appId}`;
+      const roster = Effect.gen(function* () {
+        return [
+          yield* a.membership.members,
+          yield* a.membership.apps,
+          yield* b.membership.members,
+          yield* b.membership.apps,
+        ];
+      });
+      const before = yield* roster;
+
+      const opened = yield* a.devices.openDevice(studio.environmentId, {
+        scopes: readScopes,
+        subject,
+      });
+
+      expect(opened.environmentId).toBe(studio.environmentId);
+      const [minted] = yield* b.pairingLinks;
+      expect(minted?.subject).toBe(subject);
+      expect(minted?.permissions?.toSorted()).toEqual(readScopes.toSorted());
+      expect(yield* roster).toEqual(before);
+    }),
+  );
+
+  it.live("caps a full-access app at what the relaying machine may do on the destination", () =>
+    Effect.gen(function* () {
+      const { a, b } = yield* twoMembers;
+      yield* a.devices.inviteApp({ scopes: AuthStandardClientScopes });
+      const [app] = yield* a.membership.apps;
+      yield* b.devices.setAccess(laptop.environmentId, "read-only", "user");
+
+      yield* a.devices.openDevice(studio.environmentId, {
+        scopes: AuthStandardClientScopes,
+        subject: `${NETWORK_APP_SUBJECT_PREFIX}${app!.appId}`,
+      });
+
+      const [minted] = yield* b.pairingLinks;
+      expect(minted?.permissions?.toSorted()).toEqual(readScopes.toSorted());
+    }),
+  );
+
+  it.live(
+    "a read-only session outside the network opens nothing, and nothing opens a non-member",
+    () =>
+      Effect.gen(function* () {
+        const { a, b } = yield* twoMembers;
+        const plain = yield* a.devices
+          .openDevice(studio.environmentId, { scopes: readScopes, subject: "one-time-token" })
+          .pipe(Effect.flip);
+        const outsider = yield* a.devices
+          .openDevice(box.environmentId, {
+            scopes: AuthStandardClientScopes,
+            subject: "browser-session",
+          })
+          .pipe(Effect.flip);
+
+        expect(plain.reason).toBe("forbidden");
+        expect(outsider.reason).toBe("unknown_device");
+        expect(yield* b.pairingLinks).toEqual([]);
+      }),
+  );
+
   it.live("only a full-access member invites or changes an app", () =>
     Effect.gen(function* () {
       const { a, b } = yield* twoMembers;
