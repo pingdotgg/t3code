@@ -11,12 +11,15 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
+import { remarkKeepOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
 import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
+
+export { remarkEnableOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 
 type MarkdownImageHastNode = {
   type?: string;
@@ -230,6 +233,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkKeepAutolinkSuffixes,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
+  remarkKeepOrderedListNumbers,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
   remarkBreakAroundImageLines,
@@ -242,6 +246,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkKeepAutolinkSuffixes,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
+  remarkKeepOrderedListNumbers,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
   remarkBreakAroundImageLines,

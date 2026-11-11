@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { deriveReportedModelSelection } from "@t3tools/client-runtime/state/thread-execution";
 
@@ -18,7 +19,7 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   guessThreadLinkRef,
-  hasThreadLinks,
+  prepareThreadLinks,
   parseThreadLinkHref,
   relabelThreadLinks,
   threadLinkCandidates,
@@ -230,12 +231,13 @@ export function useSideChats(ref: ScopedThreadRef) {
 }
 
 export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
+  const prepared = useMemo(() => prepareThreadLinks(markdown), [markdown]);
   const titles = useAtomValue(
-    hasThreadLinks(markdown)
-      ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
+    prepared.matches.length > 0
+      ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(prepared, environmentId).map(threadKey)))
       : EMPTY_THREAD_LINK_TITLES_ATOM,
   );
-  return relabelThreadLinks(markdown, environmentId, (ref) => titles.get(threadKey(ref)));
+  return relabelThreadLinks(prepared, environmentId, (ref) => titles.get(threadKey(ref)));
 }
 
 /** Keyed reads; every thread is read only to place a v1 link its message's environment lacks. */

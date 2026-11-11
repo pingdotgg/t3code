@@ -194,6 +194,10 @@ Where you can edit a description, you can also tick its checkboxes from the Summ
 (the Overview tab on mobile).
 GitLab calls these merge requests.
 
+A link to part of a pull request opens that part: a comment or review is marked in the activity, a
+changed-line link opens the file at those lines, a checks link opens the checks, and a commit link
+opens that commit's changes. On web and desktop, hovering a comment or commit link previews it.
+
 On mobile, **Pull requests** lists reviews across your connected environments. Open a review
 to read its description, activity, commits, and changed files. Line comments stay as drafts
 until you submit the review. **Work on PR** opens a chat with the review attached; sending
