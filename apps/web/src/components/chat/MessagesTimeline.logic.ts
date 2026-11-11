@@ -1123,6 +1123,8 @@ function deriveTurnFolds(input: {
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
+    // Folded dividers lose their place in the turn, so only the latest stays visible.
+    const visibleCompactionId = group.entries.findLast(timelineEntryIsCompaction)?.id;
     for (const [index, entry] of group.entries.entries()) {
       if (entry.id === group.terminalEntry?.id) {
         continue;
@@ -1136,7 +1138,7 @@ function deriveTurnFolds(input: {
         continue;
       }
       if (
-        isCompaction ||
+        entry.id === visibleCompactionId ||
         timelineEntryIsPersistentResourceCard(entry) ||
         input.liveSubagentEntryIds.has(entry.id) ||
         input.completeSupersededReplyEntryIds.has(entry.id)

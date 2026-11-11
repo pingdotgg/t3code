@@ -248,6 +248,43 @@ it.each(["/compact", "Continue"])(
   },
 );
 
+it("keeps only the latest compaction divider visible when a turn that compacted twice folds", () => {
+  const compaction = (id: string, ordinal: number, beforeTokenCount: number) => ({
+    ...base(id, "2026-06-20T00:00:03.000Z", ordinal),
+    type: "compaction" as const,
+    driver: ProviderDriverKind.make("claude"),
+    status: "completed" as const,
+    beforeTokenCount,
+    afterTokenCount: 20_000,
+  });
+  const feed = buildThreadFeed([
+    projected(userMessage(), 0),
+    projected(compaction("first-compaction", 1, 100_000), 1),
+    projected(command(), 2),
+    projected(compaction("second-compaction", 3, 90_000), 3),
+  ]);
+  const latestRun = {
+    runId,
+    status: "completed" as const,
+    startedAt: "2026-06-20T00:00:01.000Z",
+    completedAt: "2026-06-20T00:00:03.000Z",
+  };
+  const compactionsIn = (rows: ReadonlyArray<ThreadFeedEntry>) =>
+    rows.flatMap((entry) =>
+      entry.type === "activity-group"
+        ? entry.activities.flatMap(({ projectedItem: { item } }) =>
+            item.type === "compaction" ? [item.beforeTokenCount] : [],
+          )
+        : [],
+    );
+  const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+  expect(collapsed.filter((entry) => entry.type === "run-fold")).toHaveLength(1);
+  expect(compactionsIn(collapsed)).toEqual([90_000]);
+  expect(compactionsIn(deriveThreadFeedPresentation(feed, latestRun, new Set([runId])))).toEqual([
+    100_000, 90_000,
+  ]);
+});
+
 it("binds a persisted resume answer only to the next compaction in its run", () => {
   const requestId = RuntimeRequestId.make("resume-compaction");
   const question = projected(
