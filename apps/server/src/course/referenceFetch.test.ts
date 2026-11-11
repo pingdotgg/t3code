@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { encodeGrayscalePng, fetchCourseReference } from "./referenceFetch.ts";
+import { encodeGrayscalePng, extractPdf, fetchCourseReference } from "./referenceFetch.ts";
 
 const lookup = (async (hostname: string) => {
   const blocked: Record<string, string> = {
@@ -73,5 +73,17 @@ describe("course reference fetch", () => {
     assert.deepStrictEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
     assert.strictEqual(Buffer.from(png).readUInt32BE(16), 2);
     assert.strictEqual(Buffer.from(png).readUInt32BE(20), 2);
+  });
+
+  it("skips PDF images over the decoder pixel limit", async () => {
+    const pdf =
+      "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n" +
+      "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n" +
+      "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /XObject << /Im 5 0 R >> >> /Contents 4 0 R >> endobj\n" +
+      "4 0 obj << /Length 33 >> stream\nq 100 0 0 100 0 0 cm /Im Do Q\nendstream endobj\n" +
+      "5 0 obj << /Type /XObject /Subtype /Image /Width 32000 /Height 32000 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length 8 >> stream\nx\x9c\x03\x00\x00\x00\x00\x01\nendstream endobj\n" +
+      "trailer << /Root 1 0 R /Size 6 >>\n%%EOF";
+    const result = await extractPdf(Buffer.from(pdf), [1]);
+    assert.strictEqual(result.images.length, 0);
   });
 });

@@ -38,6 +38,8 @@ export interface ReferenceFetchResult {
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
+const MAX_PDF_IMAGE_PIXELS = 16 * 1024 * 1024;
+const PDF_TIMEOUT_MS = 30_000;
 
 const validateUrl = (raw: string | URL) => {
   let url: URL;
@@ -176,13 +178,14 @@ const imageToPng = (image: { width: number; height: number; kind: number; data: 
   return { data: encodeGrayscalePng(pixels, width, height).toString("base64"), width, height };
 };
 
-const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<number>) => {
+export const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<number>) => {
   // @ts-expect-error pdfjs-dist ships no types for its worker module.
   await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const document = await pdfjs.getDocument({
     data: new Uint8Array(bytes),
     isOffscreenCanvasSupported: false,
+    maxImageSize: MAX_PDF_IMAGE_PIXELS,
   }).promise;
   const pages: { page: number; text: string }[] = [];
   const images: ReferenceImage[] = [];
@@ -219,6 +222,17 @@ const extractPdf = async (bytes: Uint8Array, requested: ReadonlyArray<number>) =
   if (typeof destroy === "function") await destroy.call(document);
   return { pageCount: document.numPages, pages, images };
 };
+
+const extractPdfWithTimeout = (bytes: Uint8Array, requested: ReadonlyArray<number>) =>
+  Promise.race([
+    extractPdf(bytes, requested),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error("PDF extraction exceeded the 30 second limit.")),
+        PDF_TIMEOUT_MS,
+      ),
+    ),
+  ]);
 
 export const fetchCourseReference = Effect.fn("course.fetchReference")(function* (input: {
   readonly url: string;
@@ -268,7 +282,7 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
               (input.pages?.length ? input.pages : [1, 2, 3, 4]).filter((page) => page >= 1),
             ),
           ].slice(0, 4);
-          return { url: url.toString(), ...(await extractPdf(body, pages)) };
+          return { url: url.toString(), ...(await extractPdfWithTimeout(body, pages)) };
         }
         const html = body.toString("utf8");
         const title = html
