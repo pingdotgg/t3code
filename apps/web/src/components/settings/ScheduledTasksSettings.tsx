@@ -35,6 +35,7 @@ import {
   WEBHOOK_FILTER_OPS,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { scheduledTaskDestinationThreads } from "@t3tools/client-runtime/scheduled-task-destinations";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
@@ -98,7 +99,6 @@ import {
   changeDraftProject,
   moveDraftToThread,
   scheduleDraftErrors,
-  scheduledTaskDestinationThreads,
   toDateTimeLocalValue,
   webhookDeliveryLabel,
   defaultScheduledTaskProjectId,
