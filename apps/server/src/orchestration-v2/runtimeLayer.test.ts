@@ -8213,6 +8213,8 @@ const layerScratchPromotionTest = ScratchThreadPromotion.layer.pipe(
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       scratchRoot: Effect.succeedSome(SCRATCH_ROOT),
       isScratchProject: (projectId) => Effect.succeed(projectId === SCRATCH_PROJECT_ID),
+      isScratchThreadFolder: (folder) =>
+        Effect.succeed(folder.slice(0, folder.lastIndexOf("/")) === SCRATCH_ROOT),
       namedProjectsRoot: "/projects",
     }),
   ),

@@ -99,6 +99,7 @@ export class ManagedProjectFolders extends Context.Service<
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
     readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
+    readonly isScratchThreadFolder: (folder: string) => Effect.Effect<boolean>;
     readonly folderForThread: (input: {
       readonly projectId: ProjectId;
       readonly threadId: ThreadId;
@@ -326,6 +327,19 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const isScratchThreadFolder: ManagedProjectFolders["Service"]["isScratchThreadFolder"] =
+    Effect.fn("ManagedProjectFolders.isScratchThreadFolder")(function* (folder) {
+      const root = yield* scratchRoot;
+      if (Option.isNone(root)) return false;
+      const parent = path.dirname(folder);
+      if (parent === root.value) return true;
+      // folderForThread allocates under the real path; older folders sit under the configured one.
+      return yield* fileSystem.realPath(root.value).pipe(
+        Effect.map((realRoot) => parent === realRoot),
+        Effect.orElseSucceed(() => false),
+      );
+    });
+
   const folderForThread: ManagedProjectFolders["Service"]["folderForThread"] = Effect.fn(
     "ManagedProjectFolders.folderForThread",
   )(function* (input) {
@@ -335,9 +349,13 @@ const make = Effect.gen(function* () {
     const date = DateTime.formatIso(yield* DateTime.now).slice(0, 10);
     const words = folderWords(input.text);
     const id = input.threadId.toLowerCase().replace(/[^a-z0-9]/g, "");
-    const folderFor = (idPart: string) =>
-      path.join(root.value, [date, words, idPart].filter(Boolean).join("-"));
     yield* makeScratchFolder(root.value);
+    // Provider sandboxes reject writable roots with a symlink component; the project keeps the configured path.
+    const realRoot = yield* fileSystem
+      .realPath(root.value)
+      .pipe(Effect.mapError((cause) => new ScratchFolderError({ folder: root.value, cause })));
+    const folderFor = (idPart: string) =>
+      path.join(realRoot, [date, words, idPart].filter(Boolean).join("-"));
     const fullFolder = folderFor(id);
     return yield* claimFreeFolder(
       (attempt) =>
@@ -475,6 +493,7 @@ const make = Effect.gen(function* () {
     scratchRoot,
     ensureScratchProject,
     isScratchProject,
+    isScratchThreadFolder,
     folderForThread,
     namedProjectsRoot,
     createNamedProject,
