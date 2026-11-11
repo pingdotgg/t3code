@@ -1,4 +1,4 @@
-import { parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
+import { csvPreviewFormat, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import {
   LARGE_TEXT_MAX_BYTES,
   LARGE_TEXT_MAX_ROWS,
@@ -12,7 +12,7 @@ const chunks: { start: number; blob: Blob }[] = [];
 const offsets: Uint32Array[] = [new Uint32Array(65536)];
 let entries = 1;
 let size = 0;
-let delimiter: "," | "\t" | null = null;
+let delimiter: "," | ";" | "\t" | null = null;
 let complete = false;
 let columns = 1;
 function reply(value: TextPreviewResult) {
@@ -51,6 +51,7 @@ async function page(index: number) {
         maxRows: PREVIEW_PAGE_ROWS,
         maxColumns: LARGE_TEXT_MAX_COLUMNS,
         maxCellLength: 1024 * 1024,
+        detectCsv: false,
       }).rows
     : text
         .replace(/\r?\n$|\r$/, "")
@@ -89,8 +90,32 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
   let rowColumns = 1;
   let first = false;
   try {
+    let prefix: Uint8Array<ArrayBuffer> | undefined;
+    if (delimiter === ",") {
+      const parts: Uint8Array<ArrayBuffer>[] = [];
+      let length = 0;
+      let quoted = false;
+      let ended = false;
+      while (!ended || parts.at(-1)?.at(-1) === 13) {
+        const next = await reader.read();
+        if (next.done) break;
+        parts.push(next.value);
+        length += next.value.length;
+        for (const byte of next.value) {
+          if (byte === 34) quoted = !quoted;
+          if (!quoted && (byte === 10 || byte === 13)) ended = true;
+        }
+        if (length > 1024 * 1024) ended = true;
+      }
+      prefix = new Uint8Array(await new Blob(parts).arrayBuffer());
+      const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(prefix);
+      const format = csvPreviewFormat(text);
+      delimiter = format.delimiter;
+      set(0, new TextEncoder().encode(text.slice(0, format.offset)).length);
+    }
     while (true) {
-      const { value, done } = await reader.read();
+      const { value, done } = prefix ? { value: prefix, done: false } : await reader.read();
+      prefix = undefined;
       if (done) break;
       if (size + value.length > LARGE_TEXT_MAX_BYTES)
         throw new Error("Text previews support files up to 256 MB.");
@@ -98,6 +123,7 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
       for (let i = 0; i < value.length; i++) {
         const byte = value[i]!;
         const pos = size + i;
+        if (pos < at(0)) continue;
         if (
           (pos === 0 && byte === 239) ||
           (pos === 1 && byte === 187) ||

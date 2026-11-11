@@ -12,13 +12,18 @@ export function filePreviewDelimiter(file: { name: string; mimeType?: string }):
 
 export function parseDelimitedPreview(
   text: string,
-  delimiter: "," | "\t",
-  limits: { maxRows: number; maxColumns: number; maxCellLength: number } = {
+  delimiter: "," | ";" | "\t",
+  limits: { maxRows: number; maxColumns: number; maxCellLength: number; detectCsv?: boolean } = {
     maxRows: 100,
     maxColumns: 30,
     maxCellLength: 2000,
   },
 ) {
+  if (delimiter === "," && limits.detectCsv !== false) {
+    const format = csvPreviewFormat(text);
+    delimiter = format.delimiter;
+    text = text.slice(format.offset);
+  }
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = "";
@@ -70,4 +75,20 @@ export function parseDelimitedPreview(
     rows.push(row);
   }
   return { rows, truncated: truncated || quoted };
+}
+
+export function csvPreviewFormat(text: string) {
+  const directive = /^\ufeff?sep=([,;\t])(?:\r\n|\n|\r|$)/i.exec(text);
+  if (directive) {
+    return { delimiter: directive[1] as "," | ";" | "\t", offset: directive[0].length };
+  }
+  let commas = 0;
+  let semicolons = 0;
+  for (const match of text.matchAll(/"(?:[^"]|"")*"|([,;\r\n])/g)) {
+    const separator = match[1];
+    if (separator === "\r" || separator === "\n") break;
+    if (separator === ",") commas++;
+    if (separator === ";") semicolons++;
+  }
+  return { delimiter: semicolons > commas ? (";" as const) : ("," as const), offset: 0 };
 }

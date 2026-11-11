@@ -7,6 +7,24 @@ describe("delimited file previews", () => {
     expect(filePreviewDelimiter({ name: "a.tsv", mimeType: "application/unknown" })).toBe("\t");
   });
   it("preserves quoted separators, escaped quotes, blank cells and line breaks", () => {
+    expect(parseDelimitedPreview("a;b\r\n1;2,5", ",").rows).toEqual([
+      ["a", "b"],
+      ["1", "2,5"],
+    ]);
+    expect(parseDelimitedPreview('\ufeffsep=;\r\na;b\r\n"1;2";2,5', ",").rows).toEqual([
+      ["a", "b"],
+      ["1;2", "2,5"],
+    ]);
+    expect(parseDelimitedPreview('name,notes\nAlice,"a;b;c"', ",").rows).toEqual([
+      ["name", "notes"],
+      ["Alice", "a;b;c"],
+    ]);
+    expect(parseDelimitedPreview('"a, b";notes\nAlice;"say ""hi""\nagain"', ",").rows).toEqual([
+      ["a, b", "notes"],
+      ["Alice", 'say "hi"\nagain'],
+    ]);
+    expect(parseDelimitedPreview("a,b;c", ",").rows).toEqual([["a", "b;c"]]);
+    expect(parseDelimitedPreview("a;b\tvalue", "\t").rows).toEqual([["a;b", "value"]]);
     expect(
       parseDelimitedPreview('\ufeffname,notes,empty\r\n"A, B","say ""hi""\nagain",\r\n', ","),
     ).toEqual({
