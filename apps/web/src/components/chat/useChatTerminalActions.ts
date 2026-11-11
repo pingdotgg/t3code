@@ -199,7 +199,10 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     focusActiveDrawerTerminal(activeThreadRef);
   };
   const runProjectScript = async (
-    script: Pick<ProjectScript, "id" | "name" | "command" | "autoOpenPreview" | "previewUrl">,
+    script: Pick<
+      ProjectScript,
+      "id" | "name" | "command" | "autoOpenPreview" | "previewUrl" | "stopOnSettle"
+    >,
     options?: {
       cwd?: string;
       env?: Record<string, string>;
