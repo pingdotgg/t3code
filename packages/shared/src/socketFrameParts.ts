@@ -13,9 +13,10 @@ const SOCKET_FRAME_PART_BYTES = 48 * 1024;
 
 // No JSON message starts with a record separator. It marks every part but the last.
 const PART_PREFIX = "\u001e";
-// Binary frames are raw deflate, whose first byte can never be 0x1e: it would declare
-// the reserved block type 0b11.
+// Binary frames are raw deflate, whose first byte can never be 0x1e or 0x1f: both declare
+// the reserved block type 0b11. Every binary part carries one, as its data is arbitrary.
 const BINARY_PART_PREFIX = 0x1e;
+const BINARY_LAST_PART_PREFIX = 0x1f;
 
 // The RPC client only counts frames that decode to messages as liveness, and
 // ignores pongs, so each held-back part reads to it as one.
@@ -53,13 +54,16 @@ function splitBinarySocketFrame(
   if (frame.length <= partBytes) return [frame];
   const parts: Array<Uint8Array> = [];
   let start = 0;
-  for (; frame.length - start > partBytes; start += partBytes - 1) {
+  for (; frame.length - start >= partBytes; start += partBytes - 1) {
     const part = new Uint8Array(partBytes);
     part[0] = BINARY_PART_PREFIX;
     part.set(frame.subarray(start, start + partBytes - 1), 1);
     parts.push(part);
   }
-  return Arr.append(parts, frame.subarray(start));
+  const last = new Uint8Array(frame.length - start + 1);
+  last[0] = BINARY_LAST_PART_PREFIX;
+  last.set(frame.subarray(start), 1);
+  return Arr.append(parts, last);
 }
 
 /** Server side: sends frames longer than one part as consecutive parts. */
@@ -103,8 +107,8 @@ export function joinSocketFrameParts(socket: Socket.Socket): Socket.Socket {
           pendingBinary.push(frame.subarray(1));
           return PART_RECEIVED_FRAME;
         }
-        if (pendingBinary.length === 0) return frame;
-        pendingBinary.push(frame);
+        if (frame[0] !== BINARY_LAST_PART_PREFIX) return frame;
+        pendingBinary.push(frame.subarray(1));
         const whole = new Uint8Array(pendingBinary.reduce((size, part) => size + part.length, 0));
         let offset = 0;
         for (const part of pendingBinary) {
