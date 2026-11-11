@@ -8,6 +8,9 @@ import * as NodeURL from "node:url";
 
 import { cachedTestTasks, matchesTestPath, relativeTestPath } from "./cached-tests.ts";
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- These tests exercise the actual host platform.
+const isWindows = process.platform === "win32";
+
 describe("cachedTestTasks", () => {
   it("selects every test for a checkout-root path", () => {
     const root = NodePath.resolve(import.meta.dirname, "../..");
@@ -30,11 +33,12 @@ describe("cachedTestTasks", () => {
       );
     }
   });
-  it("matches mixed-case file and directory filters when case is ignored", () => {
+  it("uses the host platform by default when matching mixed-case paths", () => {
     const file = "apps/server/src/auth/Utils.test.ts";
     for (const filter of ["Apps/Server/src/auth/utils.test.ts", "Apps/Server"]) {
       expect(matchesTestPath(file, [filter], true)).toBe(true);
       expect(matchesTestPath(file, [filter], false)).toBe(false);
+      expect(matchesTestPath(file, [filter])).toBe(isWindows);
     }
   });
   it("keeps a file's cache task stable when unrelated tests are added", () => {
@@ -105,8 +109,7 @@ describe("cachedTestTasks", () => {
       );
       return value.tasks.filter((task) => "CacheHit" in task.result).length;
     };
-    // oxlint-disable-next-line t3code/no-global-process-runtime -- The child Vite process runs on the host platform.
-    const expectedHits = (count: number) => (process.platform === "win32" ? 0 : count);
+    const expectedHits = (count: number) => (isWindows ? 0 : count);
     try {
       await NodeFSP.mkdir(NodePath.join(directory, "node_modules"));
       await NodeFSP.symlink(
