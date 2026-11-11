@@ -1456,8 +1456,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
       fileLinkChip,
       resolvedTheme,
     } = use(ChatMarkdownRendererContext);
+    // A `<picture>`'s source for this theme, resolved like any other image.
+    const themeSrc = node?.properties?.[resolvedTheme === "dark" ? "dataDarkSrc" : "dataLightSrc"];
     const selected = useThreadFilePath(
-      String(node?.properties?.dataLocalSrc ?? src ?? ""),
+      String(
+        typeof themeSrc === "string" ? themeSrc : (node?.properties?.dataLocalSrc ?? src ?? ""),
+      ),
       cwd,
       environmentId,
     );
@@ -1471,8 +1475,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label}</span>
       );
     }
-    // A `<picture>`'s source for this theme, resolved like any other image.
-    const themeSrc = node?.properties?.[resolvedTheme === "dark" ? "dataDarkSrc" : "dataLightSrc"];
     const localSrc = typeof themeSrc === "string" ? undefined : node?.properties?.dataLocalSrc;
     const markdownTitle = node?.properties?.dataMarkdownTitle;
     const standalone = node?.properties?.dataStandalone === true;

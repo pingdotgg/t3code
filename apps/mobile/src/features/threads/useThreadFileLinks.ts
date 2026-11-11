@@ -128,14 +128,22 @@ export function useThreadFileBindings(urls: ReadonlyArray<string>) {
             input: { threadId, path: splitFilePathPosition(path).path },
           }),
         );
+      const missing = (path: string) => {
+        const result = read(path);
+        return result._tag === "Success" && !result.waiting && result.value === null;
+      };
       const candidateResult = read(candidate);
-      const rootResult = root === null ? null : read(root);
+      const rootPath = root === null ? null : splitFilePathPosition(root).path;
       if (
         candidateResult._tag === "Success" &&
         !candidateResult.waiting &&
         candidateResult.value?.kind === "file" &&
-        (rootResult === null ||
-          (rootResult._tag === "Success" && !rootResult.waiting && rootResult.value === null))
+        // The server reports unreadable paths as missing too, so the root's folder must be missing as well.
+        (rootPath === null ||
+          (missing(rootPath) &&
+            missing(
+              rootPath.slice(0, Math.max(rootPath.lastIndexOf("/"), rootPath.lastIndexOf("\\"))),
+            )))
       ) {
         selected.set(href, fileLinkHref(candidate));
       }

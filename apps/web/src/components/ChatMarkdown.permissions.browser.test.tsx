@@ -20,6 +20,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../test/render";
 import { FileMetadataThreadContext } from "../hooks/FileMetadataThreadProvider";
+import { HostImageUrlContext } from "./chat/hostImageUrl";
 import { useRightPanelStore } from "../rightPanelStore";
 import { ThreadFilePathsContext } from "../threadFilePathsContext";
 
@@ -346,6 +347,7 @@ it("acts on a verified thread file and yields to a root file that appears", asyn
 
   await expectPanel("docs/readme.md");
   await settleMetadata("/work/docs/readme.md", AsyncResult.success(null));
+  await settleMetadata("/work/docs", AsyncResult.success(null));
   const candidateResults: MetadataResult[] = [
     AsyncResult.success(null),
     AsyncResult.failure(Cause.fail(new Error("Metadata failed"))),
@@ -376,7 +378,7 @@ it("acts on a verified thread file and yields to a root file that appears", asyn
   await expectPanel("docs/readme.md");
 });
 
-it("does not treat pending, failed, existing, or unreadable root metadata as missing", async () => {
+it("does not treat pending, failed, existing, unreadable, or possibly denied root metadata as missing", async () => {
   using _setup = setup();
   const candidate = "/other/docs/guide.md";
   await settleMetadata(candidate, AsyncResult.success({ kind: "file" }));
@@ -409,6 +411,10 @@ it("does not treat pending, failed, existing, or unreadable root metadata as mis
     state.canRead = true;
     for (const listener of state.listeners) listener();
   });
+  // The server also reports a file it may not stat as missing; an existing folder keeps the root.
+  await settleMetadata("/work/docs", AsyncResult.success({ kind: "directory" }));
+  await expectPanel("docs/guide.md");
+  await settleMetadata("/work/docs", AsyncResult.success(null));
   await expectPanel(candidate);
 });
 
@@ -430,4 +436,32 @@ it("verifies a rootless candidate and keeps the authored label", async () => {
     await act(async () => screen.anchor().click());
     expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, candidate, 12);
   }
+});
+
+it("verifies a <picture>'s theme source, not its fallback image", async () => {
+  using _setup = setup();
+  const candidate = "/other/docs/fallback.png";
+  await settleMetadata(candidate, AsyncResult.success({ kind: "file" }));
+  await settleMetadata("/work/docs/fallback.png", AsyncResult.success(null));
+  await settleMetadata("/work/docs", AsyncResult.success(null));
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <HostImageUrlContext value={(path) => `https://host.test/image#${path}`}>
+        <FileMetadataThreadContext value={threadRef}>
+          <ThreadFilePathsContext value={createThreadFilePathIndex([candidate])}>
+            <ChatMarkdown
+              cwd="/work"
+              threadRef={threadRef}
+              text={
+                '<picture><source media="(prefers-color-scheme: light)" srcset="docs/themed.png"><source media="(prefers-color-scheme: dark)" srcset="docs/themed.png"><img src="docs/fallback.png" alt="Shot"></picture>'
+              }
+            />
+          </ThreadFilePathsContext>
+        </FileMetadataThreadContext>
+      </HostImageUrlContext>
+    </RegistryContext.Provider>,
+  );
+  await expect
+    .element(screen.getByAltText("Shot"))
+    .toHaveAttribute("src", "https://host.test/image#/work/docs/themed.png");
 });
