@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"],
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": true,
+    "tsBuildInfoFile": "../.cache/tsconfig.scripts.tsbuildinfo",
+    "types": ["node"]
+  },
+  "references": [
+    { "path": "../submodules/distilled/packages/aws/tsconfig.json" },
+    { "path": "../packages/aws/tsconfig.json" }
+  ]
+}

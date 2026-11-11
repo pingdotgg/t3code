@@ -10,17 +10,17 @@ export function NativeAppBar(props: {
   readonly title: ReactElement;
   readonly navigationIcon?: ReactElement;
   readonly actions?: ReactElement;
-  /** Shorter bar for a one-row title. */
-  readonly singleLine?: boolean;
+  /** Compose nodes laid out by the bar itself, so they never wait on a React Native measure. */
+  readonly nativeActions?: ReactElement;
 }) {
   const { colors } = useControlTheme();
-  const layout = useToolbarLayout(false, props.singleLine);
+  const layout = useToolbarLayout();
   return (
     // The bar's height is fixed, so React Native lays out the screen below it from the first frame
     // instead of at zero height until Compose has measured and reported the bar.
     <NativeThemeHost style={{ width: "100%", height: layout.height }}>
       <TopAppBar
-        applyWindowInsets={false}
+        windowInsets={{}}
         // Every header shares the list toolbar's height, so titles line up across panes.
         modifiers={[fillMaxWidth(), height(layout.height)]}
         colors={{
@@ -36,9 +36,10 @@ export function NativeAppBar(props: {
             <RNHostView matchContents>{props.navigationIcon}</RNHostView>
           </TopAppBar.NavigationIcon>
         ) : null}
-        {props.actions ? (
+        {props.actions || props.nativeActions ? (
           <TopAppBar.Actions>
-            <RNHostView matchContents>{props.actions}</RNHostView>
+            {props.nativeActions}
+            {props.actions ? <RNHostView matchContents>{props.actions}</RNHostView> : null}
           </TopAppBar.Actions>
         ) : null}
       </TopAppBar>
