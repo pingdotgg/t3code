@@ -334,10 +334,15 @@ function CollapsedComment({
                 <CommentBody className="mt-2" comment={comment} editing={editing} />
               )}
               {replies ? <div className="mt-3">{replies}</div> : null}
-              {replyForm}
             </div>
           ) : null}
         </CollapsiblePanel>
+        {/* Stays mounted while collapsed so an unsent reply survives. */}
+        {replyForm ? (
+          <div hidden={!open} className="px-3 pb-3">
+            {replyForm}
+          </div>
+        ) : null}
         {moreReplies ? <div className="px-3 pb-3">{moreReplies}</div> : null}
       </article>
     </Collapsible>
@@ -875,7 +880,7 @@ export function PullRequestSummaryTab({
           replyCount={item.kind === "thread" ? item.replies.length + item.moreReplies : 0}
           replies={replies}
           moreReplies={moreReplies}
-          replyForm={thread ? threadReplyForm(thread) : null}
+          replyForm={thread ? threadReplyForm(thread, "mt-0") : null}
           onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
           reactionBar={reactionBarFor(comment)}
           resolveButton={resolveButtonFor(thread)}
