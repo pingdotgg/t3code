@@ -16,15 +16,10 @@
  * devDependencies (catalog), so no separate install is needed.
  */
 
-const WORKER_URL = (process.env.WORKER_URL ?? process.argv[2] ?? "").replace(
-  /\/$/,
-  "",
-);
+const WORKER_URL = (process.env.WORKER_URL ?? process.argv[2] ?? "").replace(/\/$/, "");
 const N = Number(process.env.BENCH_N ?? 2);
 const CONCURRENCY = Number(process.env.BENCH_CONCURRENCY ?? N);
-const REQUEST_TIMEOUT_MS = Number(
-  process.env.BENCH_REQUEST_TIMEOUT_MS ?? 240_000,
-);
+const REQUEST_TIMEOUT_MS = Number(process.env.BENCH_REQUEST_TIMEOUT_MS ?? 240_000);
 // When set, benchmark how fast native surfaces a fatal crash (the baseline
 // Alchemy's fail-fast behaviour is compared against) instead of cold start.
 const CRASH = process.env.BENCH_CRASH === "1";
@@ -56,17 +51,15 @@ const wait = async (url: string) => {
   throw new Error("worker never became ready");
 };
 
-const boot = async (
-  name: string,
-): Promise<{ sample?: Sample; failure?: string }> => {
+const boot = async (name: string): Promise<{ sample?: Sample; failure?: string }> => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const start = Date.now();
   try {
-    const res = await fetch(
-      `${WORKER_URL}/start?name=${encodeURIComponent(name)}`,
-      { headers: { connection: "close" }, signal: controller.signal },
-    );
+    const res = await fetch(`${WORKER_URL}/start?name=${encodeURIComponent(name)}`, {
+      headers: { connection: "close" },
+      signal: controller.signal,
+    });
     const body = await res.text();
     const outside = Date.now() - start;
     if (res.status !== 200) {
@@ -93,25 +86,20 @@ const runPool = async (
 ): Promise<Array<{ sample?: Sample; failure?: string }>> => {
   const results: Array<{ sample?: Sample; failure?: string }> = [];
   let next = 0;
-  const workers = Array.from(
-    { length: Math.min(concurrency, names.length) },
-    async () => {
-      while (next < names.length) {
-        const i = next++;
-        results[i] = await boot(names[i]);
-      }
-    },
-  );
+  const workers = Array.from({ length: Math.min(concurrency, names.length) }, async () => {
+    while (next < names.length) {
+      const i = next++;
+      results[i] = await boot(names[i]);
+    }
+  });
   await Promise.all(workers);
   return results;
 };
 
 const stats = (xs: number[]) => {
-  if (xs.length === 0)
-    return { min: 0, max: 0, mean: 0, p50: 0, p90: 0, p95: 0, p99: 0 };
+  if (xs.length === 0) return { min: 0, max: 0, mean: 0, p50: 0, p90: 0, p95: 0, p99: 0 };
   const s = [...xs].sort((a, b) => a - b);
-  const pct = (p: number) =>
-    s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))];
+  const pct = (p: number) => s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))];
   return {
     min: s[0],
     max: s[s.length - 1],
@@ -132,10 +120,10 @@ const crashAttempt = async (
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const start = Date.now();
   try {
-    const res = await fetch(
-      `${WORKER_URL}/crashloop?name=${encodeURIComponent(name)}`,
-      { headers: { connection: "close" }, signal: controller.signal },
-    );
+    const res = await fetch(`${WORKER_URL}/crashloop?name=${encodeURIComponent(name)}`, {
+      headers: { connection: "close" },
+      signal: controller.signal,
+    });
     const body = await res.text();
     const outside = Date.now() - start;
     const parsed = JSON.parse(body) as { ms?: number; ok?: boolean };
@@ -149,16 +137,11 @@ const crashAttempt = async (
 
 const runCrash = async () => {
   const nonce = crypto.randomUUID().slice(0, 8);
-  const names = Array.from(
-    { length: CRASH_N },
-    (_, i) => `crash-${nonce}-${i}`,
-  );
+  const names = Array.from({ length: CRASH_N }, (_, i) => `crash-${nonce}-${i}`);
   const results = await Promise.all(names.map(crashAttempt));
   const outside = stats(results.map((r) => r.outside));
   const inside = stats(
-    results
-      .map((r) => r.inside)
-      .filter((m): m is number => typeof m === "number"),
+    results.map((r) => r.inside).filter((m): m is number => typeof m === "number"),
   );
   const sec = (n: number) => `${(n / 1000).toFixed(1)}s`;
   const failed = results.filter((r) => !r.ok).length;
@@ -189,18 +172,12 @@ const main = async () => {
   const names = Array.from({ length: N }, (_, i) => `${nonce}-${i}`);
   const outcomes = await runPool(names, CONCURRENCY);
 
-  const samples = outcomes
-    .map((o) => o.sample)
-    .filter((s): s is Sample => s !== undefined);
-  const failures = outcomes
-    .map((o) => o.failure)
-    .filter((f): f is string => f !== undefined);
+  const samples = outcomes.map((o) => o.sample).filter((s): s is Sample => s !== undefined);
+  const failures = outcomes.map((o) => o.failure).filter((f): f is string => f !== undefined);
 
   const outside = stats(samples.map((s) => s.outside));
   const inside = stats(
-    samples
-      .map((s) => s.inside)
-      .filter((m): m is number => typeof m === "number"),
+    samples.map((s) => s.inside).filter((m): m is number => typeof m === "number"),
   );
   const sec = (n: number) => `${(n / 1000).toFixed(1)}s`;
 

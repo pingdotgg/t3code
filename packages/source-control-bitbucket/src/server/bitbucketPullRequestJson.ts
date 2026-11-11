@@ -1,7 +1,9 @@
+import {
+  trimOptionalString as trimmed,
+  toIsoUtc,
+} from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
-import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
-import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -174,19 +176,6 @@ export interface BitbucketPullRequest {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly reviewerIds: ReadonlyArray<string>;
   readonly reviews: ReadonlyArray<PullRequestComment>;
-}
-
-function trimmed(value: string | null | undefined): string | null {
-  const text = value?.trim() ?? "";
-  return text.length > 0 ? text : null;
-}
-
-/** Normalize Bitbucket's microsecond `+00:00` timestamps to `Z` for cross-host string sorting. */
-function toIsoUtc(value: string): string {
-  return Option.match(DateTime.make(value), {
-    onNone: () => value,
-    onSome: DateTime.formatIso,
-  });
 }
 
 function toActor(raw: Schema.Schema.Type<typeof RawUserSchema> | null | undefined) {
