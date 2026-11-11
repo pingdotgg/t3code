@@ -17,7 +17,6 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "./HostProcess.ts";
 
 import * as RelayClient from "./relayClient.ts";
