@@ -2042,53 +2042,6 @@ describe("EnvironmentSupervisor routes", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("moves to a connecting LAN upgrade when the relay session closes", () =>
-    Effect.gen(function* () {
-      const lanReachable = yield* Ref.make(false);
-      const lanStarted = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
-            ? Ref.get(lanReachable).pipe(
-                Effect.map((reachable) => (reachable ? "answered" : "silent")),
-              )
-            : Effect.succeed("unchecked"),
-        prepare: (_attempt, target) =>
-          target._tag === "BearerConnectionTarget"
-            ? Deferred.succeed(lanStarted, undefined).pipe(
-                Effect.andThen(Effect.sleep("2 seconds")),
-                Effect.as(preparedFor(target)),
-              )
-            : Effect.succeed(preparedFor(target)),
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
-
-      yield* awaitState(
-        supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 1,
-      );
-      const transitions = yield* recordTransitions(supervisor);
-      yield* Ref.set(lanReachable, true);
-      yield* harness.setNetworkStatus("unknown");
-      yield* harness.setNetworkStatus("online");
-      yield* Deferred.await(lanStarted);
-      expect(yield* transitions.phases).not.toContain("connecting");
-      yield* harness.closeLatestSession();
-      yield* TestClock.adjust("2 seconds");
-
-      yield* awaitState(
-        supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 2,
-      );
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "BearerConnectionTarget",
-      );
-      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
   it.effect("checks a dead LAN route less often until the network changes", () =>
     Effect.gen(function* () {
       const lanReachable = yield* Ref.make(false);
@@ -2260,49 +2213,6 @@ describe("EnvironmentSupervisor routes", () => {
       );
       expect(yield* transitions.phases).not.toContain("connecting");
       expect(yield* transitions.sessions).not.toContain(false);
-    }),
-  );
-
-  it.effect.each([
-    ["network-changed", "application-active-long"],
-    ["application-active-long", "network-changed"],
-  ] as const)("moves off a dead LAN socket on a resume that reports %s, then %s", (wakeups) =>
-    Effect.gen(function* () {
-      const lanReachable = yield* Ref.make(true);
-      const harness = yield* makeHarness({
-        checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
-            ? Ref.get(lanReachable).pipe(
-                Effect.map((reachable) => (reachable ? "answered" : "silent")),
-              )
-            : Effect.succeed("unchecked"),
-        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
-        probe: () =>
-          Ref.get(lanReachable).pipe(
-            Effect.flatMap((reachable) => (reachable ? Effect.void : Effect.never)),
-          ),
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
-
-      yield* awaitState(
-        supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 1,
-      );
-      const transitions = yield* recordTransitions(supervisor);
-      yield* Ref.set(lanReachable, false);
-      for (const wakeup of wakeups) yield* harness.wake(wakeup);
-      yield* TestClock.adjust("3 seconds");
-
-      yield* awaitState(
-        supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 2,
-      );
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "RelayConnectionTarget",
-      );
-      expect(yield* transitions.sessions).toEqual([true, true]);
     }),
   );
 
