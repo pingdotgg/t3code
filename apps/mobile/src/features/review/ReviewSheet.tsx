@@ -344,7 +344,8 @@ function ReviewFileNavigator({ files, sectionId, onSelectFile, ref }: ReviewFile
         <LegendList
           renderScrollComponent={NativeScrollView}
           data={files}
-          extraData={selectedFileId}
+          // Rows keep their callback until extraData changes; it reads collapsed files.
+          extraData={[selectedFileId, handleSelectFile]}
           keyExtractor={(file) => file.id}
           estimatedItemSize={64}
           recycleItems
