@@ -54,6 +54,33 @@ describe("CourseService", () => {
     ),
   );
 
+  it.effect("stores problem text separately and reveals solutions only on request", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const course = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            kind: "ocw",
+            title: "Mechanics",
+            source: "https://ocw.mit.edu/courses/mechanics/",
+            attribution: "MIT OpenCourseWare, Mechanics, CC BY-NC-SA 4.0",
+            units: [{ title: "Week 1", section: "Week 1" }],
+            problemSets: [
+              { title: "Pset 1", section: "Week 1", text: "Problem", solution: "Solution" },
+            ],
+          },
+        });
+        assert.isFalse(JSON.stringify(course).includes("Problem"));
+        const before = yield* service.problems({ courseId: course.id, pset: 1 });
+        assert.strictEqual(before.problemSets[0]?.text, "Problem");
+        assert.isUndefined(before.problemSets[0]?.solution);
+        const revealed = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
+        assert.strictEqual(revealed.problemSets[0]?.solution, "Solution");
+        assert.strictEqual(revealed.attribution, "MIT OpenCourseWare, Mechanics, CC BY-NC-SA 4.0");
+      }),
+    ),
+  );
+
   it.effect("returns only the transcript window", () =>
     withService((service) =>
       Effect.gen(function* () {
@@ -217,6 +244,49 @@ describe("CourseService", () => {
             },
           }),
           repaired,
+        );
+      }),
+    ),
+  );
+
+  it.effect("backfills problem sets and remaps worked examples during repair", () =>
+    withService((service) =>
+      Effect.gen(function* () {
+        const initial = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            kind: "ocw",
+            title: "Backfill",
+            source: "source",
+            units: [{ title: "A" }, { title: "B" }],
+          },
+        });
+        yield* service.update({
+          courseId: initial.id,
+          unit: 2,
+          position: { unit: 2 },
+          plan: "kept",
+        });
+        const repaired = yield* service.add({
+          lessonThreadId: threadId,
+          ingested: {
+            kind: "ocw",
+            title: "Backfill",
+            source: "source",
+            units: [
+              { title: "B", section: "Week" },
+              { title: "A", section: "Week" },
+            ],
+            problemSets: [
+              { title: "Pset", section: "Week", text: "Problem", workedExampleUnits: [2] },
+            ],
+          },
+        });
+        assert.strictEqual(repaired.position?.unit, 1);
+        assert.deepStrictEqual(repaired.problemSets?.[0]?.workedExampleUnits, [2]);
+        assert.strictEqual(
+          (yield* service.problems({ courseId: repaired.id, pset: 1 })).problemSets[0]?.text,
+          "Problem",
         );
       }),
     ),

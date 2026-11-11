@@ -100,9 +100,30 @@ const CoursePrepareTool = Tool.make("course_prepare", {
     OrchestratorMcpService.OrchestratorMcpService,
   ],
 }).annotate(Tool.Title, "Prepare course");
+const CourseProblemsTool = Tool.make("course_problems", {
+  description:
+    "Assign and grade a course problem set. With unit, list that unit's section problem sets; with pset, return its problem text. Without either, list all sets. Problem text is visible without reveal, but never call reveal or state an answer until the learner has given a final answer. On request, give one smallest-next-step hint at a time and never the final value. With reveal and pset, return the official solution when present; otherwise say no official solution exists, use the listed worked examples, and say plainly: graded against my own worked solution, not MIT's. Include the course attribution in every result.",
+  parameters: Schema.Struct({
+    unit: Schema.optional(Schema.Int),
+    pset: Schema.optional(Schema.Int),
+    reveal: Schema.optional(Schema.Boolean),
+    courseId: Schema.optional(CourseId),
+  }),
+  success: Schema.Unknown,
+  failure: OrchestratorMcpFailure,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    CourseService.CourseService,
+    ThreadManagementService.ThreadManagementService,
+  ],
+})
+  .annotate(Tool.Title, "Course problems")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
 export const CourseToolkit = Toolkit.make(
   CourseAddTool,
   CourseReadTool,
   CourseUpdateTool,
   CoursePrepareTool,
+  CourseProblemsTool,
 );

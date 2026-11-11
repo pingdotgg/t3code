@@ -116,14 +116,62 @@ describe("course ingestion parsers", () => {
       ],
       ["static_resources/cap.vtt", "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nVectors"],
       ["resources/2/data.json", JSON.stringify({ resourcetype: "PDF", title: "Reading" })],
+      [
+        "pages/week/data.json",
+        JSON.stringify({
+          title: "Week 1",
+          content: '<a href="../../resources/pset/index.html">Pset</a>',
+        }),
+      ],
+      [
+        "pages/assignments/data.json",
+        JSON.stringify({
+          title: "Assignments",
+          content:
+            '<tr><td><a href="../../resources/pset/index.html">Pset</a></td><td><a href="../../pages/first/child/index.html">Lecture 1</a></td></tr>',
+        }),
+      ],
+      [
+        "resources/pset/data.json",
+        JSON.stringify({
+          resourcetype: "Document",
+          title: "Problem Set 1",
+          learning_resource_types: ["Assignments"],
+          file: "/courses/tiny/pset.pdf",
+        }),
+      ],
+      [
+        "resources/solution/data.json",
+        JSON.stringify({
+          resourcetype: "Document",
+          title: "Problem Set 1 Solution",
+          learning_resource_types: ["Problem Set Solutions"],
+          file: "/courses/tiny/solution.pdf",
+        }),
+      ],
+      ["pages/week/index.html", ""],
+      ["index.html", '<a href="pages/week/index.html">Week 1</a>'],
     ]);
-    const course = parseOcwZipEntries(entries, "https://ocw.mit.edu/courses/tiny/");
+    const course = parseOcwZipEntries(
+      entries,
+      "https://ocw.mit.edu/courses/tiny/",
+      new Map([
+        ["pset.pdf", "problem text"],
+        ["solution.pdf", "solution text"],
+      ]),
+    );
     expect(course.title).toBe("18.06 Tiny Linear Algebra");
     expect(course.units).toEqual([
       { title: "Lecture 1", youtubeId: "abc", text: "[00:00] Vectors" },
       { title: "Lecture 2" },
     ]);
     expect(course.attribution).toContain("CC BY-NC-SA 4.0");
+    expect(course.problemSets?.[0]).toMatchObject({
+      title: "Problem Set 1",
+      text: "problem text",
+      solution: "solution text",
+      section: "Week 1",
+    });
   });
 
   it("orders OCW videos by section and child page order without a gallery", () => {
@@ -131,7 +179,7 @@ describe("course ingestion parsers", () => {
       ["course/pages/second/index.html", '<a href="pages/second/">Wrong index</a>'],
       [
         "course/index.html",
-        '<a href="./pages/first/index.html">First</a><a href="./pages/second/index.html">Second</a><a href="./pages/first/index.html">Again</a>',
+        '<a href="./pages/first/index.html">First</a><a href="./pages/second/index.html">Second</a><a href="./pages/week/index.html">Week</a><a href="./pages/first/index.html">Again</a>',
       ],
       ["course/pages/second/child/data.json", JSON.stringify({ title: "Second child" })],
       [
@@ -241,7 +289,13 @@ describe("course ingestion parsers", () => {
         "https://ocw.mit.edu/courses/tiny/",
       );
       expect(course.units.map((unit) => unit.title)).toEqual(["Lecture 0", "Lecture 1"]);
+      expect(course.units[0]?.section).toBe("Other");
       expect(course.units[1]?.text).toBe("[00:00] Tiny caption");
+      expect(course.problemSets?.map((pset) => [pset.title, pset.text, pset.solution])).toEqual([
+        ["Problem Set 1", "Chapter One\n\nChapter Two", "Chapter One\n\nChapter Two"],
+        ["Problem Set 2", "Chapter One\n\nChapter Two", undefined],
+      ]);
+      expect(course.problemSets?.[0]?.workedExampleUnits).toEqual([1]);
     }),
   );
 

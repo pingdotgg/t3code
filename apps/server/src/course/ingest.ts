@@ -20,6 +20,15 @@ export interface IngestedUnit {
   readonly pages?: readonly [number, number];
   /** `[mm:ss] text` lines (one per ~30 s) for video units, plain page text for PDF units. Absent when fetched lazily. */
   readonly text?: string;
+  readonly section?: string;
+}
+
+export interface IngestedProblemSet {
+  readonly title: string;
+  readonly section?: string;
+  readonly text: string;
+  readonly solution?: string;
+  readonly workedExampleUnits?: readonly number[];
 }
 
 export interface IngestedCourse {
@@ -31,6 +40,7 @@ export interface IngestedCourse {
   /** Credit line to show, e.g. "MIT OpenCourseWare 18.06, CC BY-NC-SA 4.0". */
   readonly attribution?: string;
   readonly units: ReadonlyArray<IngestedUnit>;
+  readonly problemSets?: ReadonlyArray<IngestedProblemSet>;
 }
 
 export interface IngestOptions {
@@ -197,6 +207,7 @@ const licenseName = (license: string) => {
 export const parseOcwZipEntries = (
   entries: ReadonlyMap<string, string | Uint8Array>,
   source: string,
+  pdfTexts: ReadonlyMap<string, string> = new Map(),
 ): IngestedCourse => {
   const dataEntries = [...entries.entries()].filter(([name]) => /(?:^|\/)data\.json$/i.test(name));
   const records = dataEntries.map(([name, raw]) => ({
@@ -244,8 +255,12 @@ export const parseOcwZipEntries = (
   );
   const pageOrder = new Map<string, number>();
   const pageContent = new Map<string, string>();
+  const pageSection = new Map<string, string>();
+  const sectionTitles = new Map<string, string>();
   for (const section of sections) {
     const page = pages.get(section);
+    const sectionTitle = stringValue(page?.title);
+    if (sectionTitle) sectionTitles.set(section, sectionTitle);
     const children = [
       ...new Set(
         [
@@ -262,6 +277,7 @@ export const parseOcwZipEntries = (
       if (title && !pageOrder.has(title)) pageOrder.set(title, pageOrder.size);
       if (title && !pageContent.has(title))
         pageContent.set(title, stringValue(pages.get(slug)?.content) ?? "");
+      if (title) pageSection.set(title, sectionTitle ?? section);
     }
   }
   const order = (record: Record<string, unknown>) => {
@@ -308,8 +324,96 @@ export const parseOcwZipEntries = (
     const youtubeId = resourceYoutubeId(record);
     if (youtubeId) (unit as { youtubeId: string }).youtubeId = youtubeId;
     if (captionText) (unit as { text: string }).text = captionText;
+    const parent = stringValue(record.parent_title);
+    const section = parent ? pageSection.get(parent) : undefined;
+    if (section) (unit as { section: string }).section = section;
     units.push(unit);
   }
+  const resourceRecords = records.filter(({ name }) =>
+    /(?:^|\/)resources\/[^/]+\/data\.json$/i.test(name),
+  );
+  const psetRecords = resourceRecords.filter(({ record }) => {
+    if (stringValue(record.resourcetype)?.toLowerCase() !== "document") return false;
+    const title = stringValue(record.title) ?? "";
+    const types = String(record.learning_resource_types ?? "").toLowerCase();
+    return (
+      !types.includes("solution") &&
+      !/solution/i.test(title) &&
+      (types.includes("assignment") ||
+        types.includes("problem set") ||
+        /problem\s*set/i.test(title))
+    );
+  });
+  const solutionRecords = resourceRecords.filter(({ record }) => {
+    if (stringValue(record.resourcetype)?.toLowerCase() !== "document") return false;
+    const title = stringValue(record.title) ?? "";
+    const types = String(record.learning_resource_types ?? "").toLowerCase();
+    return types.includes("solution") || /solution/i.test(title);
+  });
+  const resourceSection = new Map<string, string>();
+  for (const [pagePath, record] of pages) {
+    if (pagePath === "assignments") continue;
+    const section = sectionTitles.get(pagePath.split("/")[0]!);
+    if (!section) continue;
+    for (const match of (stringValue(record.content) ?? "").matchAll(/resources\/([^/]+)\//gi))
+      resourceSection.set(match[1]!, section);
+  }
+  const fileName = (record: Record<string, unknown>) => {
+    const file = stringValue(record.file);
+    return file ? NodePath.basename(file) : undefined;
+  };
+  const solutionByNumber = new Map<string, string>();
+  for (const { record } of solutionRecords) {
+    const title = stringValue(record.title) ?? "";
+    const number = title.match(/(?:problem\s*set|pset)\s*(\d+)/i)?.[1];
+    const text = fileName(record) ? pdfTexts.get(fileName(record)!) : undefined;
+    if (number && text) solutionByNumber.set(number, text);
+  }
+  const assignments = pages.get("assignments");
+  const workedPages = new Map<string, string[]>();
+  for (const row of (stringValue(assignments?.content) ?? "").matchAll(/<tr[\s\S]*?<\/tr>/gi)) {
+    const pset = row[0].match(/resources\/([^/]+)\//i)?.[1];
+    if (!pset) continue;
+    workedPages.set(
+      pset,
+      [...row[0].matchAll(/href=["'][^"']*?pages\/(.+?)\/index\.html/gi)].map((match) => match[1]!),
+    );
+  }
+  const titleToUnit = new Map(units.map((unit, index) => [unit.title, index + 1]));
+  const problemSets = psetRecords
+    .toSorted((a, b) => {
+      const number = (record: Record<string, unknown>) =>
+        Number(
+          (stringValue(record.title) ?? "").match(/(?:problem\s*set|pset)\s*(\d+)/i)?.[1] ?? 0,
+        );
+      return number(a.record) - number(b.record);
+    })
+    .flatMap(({ name, record }) => {
+      const title = stringValue(record.title);
+      const text = fileName(record) ? pdfTexts.get(fileName(record)!) : undefined;
+      if (!title || text === undefined) return [];
+      const folder = name.match(/resources\/([^/]+)\/data\.json$/i)?.[1];
+      const number = title.match(/(?:problem\s*set|pset)\s*(\d+)/i)?.[1];
+      const workedExampleUnits = (workedPages.get(folder ?? "") ?? [])
+        .map((page) => stringValue(pages.get(page)?.title))
+        .flatMap((workedTitle) => {
+          const unit = workedTitle ? titleToUnit.get(workedTitle) : undefined;
+          return unit === undefined ? [] : [unit];
+        });
+      return [
+        {
+          title,
+          ...(folder && resourceSection.get(folder)
+            ? { section: resourceSection.get(folder)! }
+            : {}),
+          text,
+          ...(number && solutionByNumber.has(number)
+            ? { solution: solutionByNumber.get(number)! }
+            : {}),
+          ...(workedExampleUnits.length ? { workedExampleUnits } : {}),
+        },
+      ];
+    });
   return {
     kind: "ocw",
     title,
@@ -317,6 +421,7 @@ export const parseOcwZipEntries = (
     ...(license ? { license } : {}),
     attribution: `MIT OpenCourseWare, ${title}${license ? `, ${licenseName(license)}` : ""}`,
     units,
+    ...(problemSets.length ? { problemSets } : {}),
   };
 };
 
@@ -326,6 +431,47 @@ const readStream = async (stream: NodeJS.ReadableStream): Promise<Uint8Array> =>
     chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
   return Buffer.concat(chunks);
 };
+
+const extractPdfPages = Effect.fn("course.extractPdfPages")(function* (bytes: Uint8Array) {
+  const pdfjs = yield* Effect.tryPromise({
+    try: async () => {
+      // The server bundle has no pdf.worker.mjs beside pdf.mjs; importing it sets globalThis.pdfjsWorker.
+      // @ts-expect-error pdfjs-dist ships no types for its worker module.
+      await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+      return import("pdfjs-dist/legacy/build/pdf.mjs");
+    },
+    catch: (cause) =>
+      new CourseIngestError({ message: `Could not load the PDF reader: ${String(cause)}` }),
+  });
+  const document = yield* Effect.tryPromise({
+    try: () => pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise,
+    catch: (cause) =>
+      new CourseIngestError({ message: `Could not open the PDF: ${String(cause)}` }),
+  });
+  const pages: string[] = [];
+  let extracted = 0;
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const text = yield* Effect.tryPromise({
+      try: async () => {
+        const page = await document.getPage(pageNumber);
+        const content = await page.getTextContent();
+        return content.items
+          .map((item) => ("str" in item ? item.str : ""))
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim();
+      },
+      catch: (cause) =>
+        new CourseIngestError({
+          message: `Could not extract PDF page ${pageNumber}: ${String(cause)}`,
+        }),
+    });
+    const clipped = text.slice(0, Math.max(0, MAX_PDF_TEXT - extracted));
+    extracted += clipped.length;
+    pages.push(clipped);
+  }
+  return { document, pages };
+});
 
 /** Parse an OCW zip using the repository's yauzl wrapper. */
 export const parseOcwZip = (zipPath: string, source: string) =>
@@ -347,7 +493,11 @@ export const parseOcwZip = (zipPath: string, source: string) =>
         )
           indexEntry = entry;
         if (/(?:^|\/)index\.html$/i.test(entry.fileName)) continue;
-        if (!/(?:^|\/)data\.json$|\.(?:vtt|srt)$/i.test(entry.fileName)) continue;
+        if (
+          !/(?:^|\/)data\.json$|\.(?:vtt|srt)$/i.test(entry.fileName) &&
+          !/(?:pset|problem|solution|assignment)[^/]*\.pdf$/i.test(entry.fileName)
+        )
+          continue;
         if (entry.uncompressedSize > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES) continue;
         totalUncompressed += entry.uncompressedSize;
         if (totalUncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES)
@@ -370,7 +520,13 @@ export const parseOcwZip = (zipPath: string, source: string) =>
           yield* tryIo("Could not read the OCW zip", () => readStream(stream)),
         );
       }
-      return parseOcwZipEntries(entries, source);
+      const pdfTexts = new Map<string, string>();
+      for (const [name, bytes] of entries) {
+        if (!/\.pdf$/i.test(name)) continue;
+        const extracted = yield* extractPdfPages(bytes);
+        pdfTexts.set(NodePath.basename(name), extracted.pages.join("\n\n"));
+      }
+      return parseOcwZipEntries(entries, source, pdfTexts);
     }),
   );
 
@@ -507,26 +663,13 @@ const ingestYoutube = Effect.fn("course.ingestYoutube")(function* (
 });
 
 const extractPdf = Effect.fn("course.extractPdf")(function* (source: string) {
-  const pdfjs = yield* Effect.tryPromise({
-    try: async () => {
-      // The server bundle has no pdf.worker.mjs beside pdf.mjs; importing it sets globalThis.pdfjsWorker.
-      // @ts-expect-error pdfjs-dist ships no types for its worker module.
-      await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
-      return import("pdfjs-dist/legacy/build/pdf.mjs");
-    },
-    catch: (cause) =>
-      new CourseIngestError({ message: `Could not load the PDF reader: ${String(cause)}` }),
-  });
   const bytes = yield* Effect.tryPromise({
     try: () => NodeFSP.readFile(source),
     catch: (cause) =>
       new CourseIngestError({ message: `Could not read the PDF: ${String(cause)}` }),
   });
-  const document = yield* Effect.tryPromise({
-    try: () => pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise,
-    catch: (cause) =>
-      new CourseIngestError({ message: `Could not open the PDF: ${String(cause)}` }),
-  });
+  const extractedPdf = yield* extractPdfPages(new Uint8Array(bytes));
+  const document = extractedPdf.document;
   const metadata = yield* tryIo("PDF metadata", () => document.getMetadata()).pipe(
     Effect.orElseSucceed(() => ({ info: {} })),
   );
@@ -536,29 +679,6 @@ const extractPdf = Effect.fn("course.extractPdf")(function* (source: string) {
   const outline = yield* tryIo("PDF outline", () => document.getOutline()).pipe(
     Effect.orElseSucceed(() => null),
   );
-  const pageText = new Map<number, string>();
-  let extracted = 0;
-  const getPageText = (pageNumber: number) =>
-    Effect.tryPromise({
-      try: async () => {
-        if (pageText.has(pageNumber)) return pageText.get(pageNumber) ?? "";
-        const page = await document.getPage(pageNumber);
-        const content = await page.getTextContent();
-        const text = content.items
-          .map((item) => ("str" in item ? item.str : ""))
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim();
-        const clipped = text.slice(0, Math.max(0, MAX_PDF_TEXT - extracted));
-        extracted += clipped.length;
-        pageText.set(pageNumber, clipped);
-        return clipped;
-      },
-      catch: (cause) =>
-        new CourseIngestError({
-          message: `Could not extract PDF page ${pageNumber}: ${String(cause)}`,
-        }),
-    });
   const pageCount = document.numPages;
   const starts: Array<{ title: string; page: number }> = [];
   for (const item of Array.isArray(outline) ? outline : []) {
@@ -592,7 +712,8 @@ const extractPdf = Effect.fn("course.extractPdf")(function* (source: string) {
   const units: IngestedUnit[] = [];
   for (const range of ranges) {
     const parts: string[] = [];
-    for (let page = range.from; page <= range.to; page += 1) parts.push(yield* getPageText(page));
+    for (let page = range.from; page <= range.to; page += 1)
+      parts.push(extractedPdf.pages[page - 1] ?? "");
     units.push({ title: range.title, pages: [range.from, range.to], text: parts.join("\n\n") });
   }
   return { kind: "pdf", title, source, units } satisfies IngestedCourse;
