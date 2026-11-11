@@ -923,6 +923,17 @@ const makeForwardedAgentHarness = Effect.fn("makeForwardedAgentHarness")(functio
   yield* fs.writeFileString(fakeSsh, FAKE_SSH_SCRIPT);
   const nodeScriptPath = path.join(root, "server.cjs");
   yield* fs.writeFileString(nodeScriptPath, FAKE_SERVER_SCRIPT);
+  // Launch prefers the recorded port. Left to the default 3773, it can be
+  // answered by another process before the fake server is listening.
+  const stateDir = path.join(
+    home,
+    ".t3",
+    "ssh-launch",
+    yield* remoteStateKey({ alias: "devbox", hostname: "devbox", username: "t3", port: 22 }),
+  );
+  yield* fs.makeDirectory(stateDir, { recursive: true });
+  const remotePort = yield* NetService.make().reserveLoopbackPort();
+  yield* fs.writeFileString(path.join(stateDir, "port"), `${remotePort}\n`);
   const readServer = fs
     .readFileString(path.join(home, ".t3", "fake-server.json"))
     .pipe(
@@ -1012,7 +1023,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       () =>
         Effect.gen(function* () {
           const harness = yield* makeForwardedAgentHarness().pipe(
-            Effect.provide(NodeServices.layer),
+            Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           );
           const staleBaseUrls = new Set<string>();
           yield* Effect.gen(function* () {
