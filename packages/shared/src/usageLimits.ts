@@ -726,6 +726,36 @@ export function resetCreditChoices(
   ];
 }
 
+/** Enabled instances signed in to the account a reset credit belongs to. */
+export function resetCreditInstanceIds(
+  input: ProviderConsumeResetCreditInput,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+): ReadonlyArray<ProviderInstanceId> {
+  const enabled = providers.filter((provider) => provider.enabled);
+  const resolveKey = accountKeyResolver([
+    ...enabled.map(nativeReport),
+    ...sources.flatMap((source) => source.accounts),
+  ]);
+  const signedInTo = (account: AccountReport | undefined) => {
+    const key = account ? resolveKey(account) : null;
+    return key === null
+      ? []
+      : enabled.flatMap((provider) =>
+          resolveKey(nativeReport(provider)) === key ? [provider.instanceId] : [],
+        );
+  };
+  if ("sourceId" in input) {
+    return signedInTo(
+      sources
+        .find((source) => source.id === input.sourceId)
+        ?.accounts.find((account) => account.id === input.accountId),
+    );
+  }
+  const redeemedOn = enabled.find((provider) => provider.instanceId === input.instanceId);
+  return [...new Set([input.instanceId, ...signedInTo(redeemedOn && nativeReport(redeemedOn))])];
+}
+
 export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;

@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthProvidersManageScope,
   AuthSessionId,
   AuthSourceControlWriteScope,
   EnvironmentId,
@@ -14,6 +15,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   SourceControlRepositoryError,
+  UsageLimitSourceId,
   WS_METHODS,
   WsRpcGroup,
   WsServerRefreshProvidersRpc,
@@ -1618,6 +1620,138 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
     ),
     Effect.scoped,
   ),
+);
+
+it.effect.each([
+  { redeemedOn: "an instance", outcome: "reset", recorded: true },
+  { redeemedOn: "a hub", outcome: "reset", recorded: true },
+  { redeemedOn: "an instance", outcome: "nothingToReset", recorded: false },
+  { redeemedOn: "an instance", outcome: "reset", recorded: true, recordFails: true },
+] as const)(
+  "a reset credit redeemed on $redeemedOn with outcome $outcome ends limit waits: $recorded",
+  ({ redeemedOn, outcome, recorded, recordFails }) =>
+    Effect.gen(function* () {
+      const provider = (id: string, email: string) =>
+        ({
+          instanceId: ProviderInstanceId.make(id),
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          auth: { status: "authenticated", email },
+        }) as ServerProvider;
+      const sourceId = UsageLimitSourceId.make("hub");
+      const resets =
+        yield* Queue.unbounded<
+          Parameters<Orchestrator.OrchestratorV2["Service"]["recordLimitReset"]>[0]
+        >();
+      const exits = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
+      const redeem = TestClock.adjust("5 seconds").pipe(Effect.as(outcome));
+      const services = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          recordLimitReset: (input) =>
+            Queue.offer(resets, input).pipe(
+              Effect.andThen(recordFails ? Effect.die("store unavailable") : Effect.void),
+            ),
+        }),
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          getInstance: () =>
+            Effect.succeed({ enabled: true, consumeResetCredit: () => redeem } as never),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([
+            provider("codex", "same@example.com"),
+            provider("codex-second-home", "same@example.com"),
+            provider("codex-other-account", "other@example.com"),
+          ]),
+        }),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({
+          consumeResetCredit: () => redeem.pipe(Effect.map((outcome) => ({ outcome }))),
+          current: Effect.succeed([
+            {
+              id: sourceId,
+              kind: "cliproxy",
+              label: "Hub",
+              checkedAt: "2026-11-11T00:00:00.000Z",
+              accounts: [
+                {
+                  id: "pooled",
+                  driver: ProviderDriverKind.make("codex"),
+                  email: "same@example.com",
+                  usageLimits: { checkedAt: "2026-11-11T00:00:00.000Z", windows: [] },
+                },
+              ],
+            },
+          ]),
+        }),
+        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      );
+      const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
+      }).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("reset-credit-test"),
+              subject: "reset-credit-test",
+              method: "browser-session-cookie",
+              scopes: [AuthProvidersManageScope],
+            },
+            {},
+            yield* ServerBrowser.ServerBrowser,
+            () => Effect.void,
+            { secretReferences: true },
+          ).pipe(
+            Layer.provide(services),
+            Layer.merge(RpcAuthorization.layer([AuthProvidersManageScope])),
+          ),
+        ),
+      );
+      const startedAt = yield* DateTime.now;
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId("redeem"),
+        tag: WS_METHODS.providerConsumeResetCredit,
+        payload:
+          redeemedOn === "a hub"
+            ? { sourceId, accountId: "pooled", creditId: "credit" }
+            : { instanceId: ProviderInstanceId.make("codex") },
+        headers: Headers.empty,
+      });
+      // The credit is spent either way, so the redemption reports its outcome.
+      assert.deepEqual(yield* Queue.take(exits), Exit.succeed({ outcome }));
+      assert.deepEqual(
+        yield* Queue.clear(resets),
+        recorded
+          ? [
+              {
+                providerInstanceIds: [
+                  ProviderInstanceId.make("codex"),
+                  ProviderInstanceId.make("codex-second-home"),
+                ],
+                // A run that failed while the provider was redeeming is not counted as reset.
+                failedBefore: startedAt,
+              },
+            ]
+          : [],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+      Effect.scoped,
+    ),
 );
 
 // Pruned history cannot be replayed: a cursor below the boundary must resync from a snapshot,

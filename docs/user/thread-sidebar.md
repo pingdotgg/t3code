@@ -268,6 +268,13 @@ the snooze. Enable **Snooze until limits reset** in thread behavior settings to
 snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
+Using a banked reset from [**Usage → Limits**](./usage.md#track-subscription-limits)
+counts as the reset for threads that account stopped in the same environment:
+their snooze until reset ends and scheduled continuations start right away. A
+thread you snoozed yourself stays snoozed and continues when it wakes. If the
+reset did not refill the limit that stopped a thread, its continuation stops on
+that limit again.
+
 On web and desktop, use **Agents** to follow work delegated to subagents.
 On mobile, open a subagent from its conversation card or **Agents**. On iOS
 layouts with an inspector, its thread opens beside the parent. Maximize it to

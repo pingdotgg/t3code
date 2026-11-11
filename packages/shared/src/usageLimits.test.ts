@@ -21,6 +21,7 @@ import {
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
+  resetCreditInstanceIds,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -1160,6 +1161,42 @@ describe("/usage-limits", () => {
       accountId: "oss",
       creditId: "oss-credit",
     });
+  });
+
+  it("finds the instances signed in to the account a reset credit was redeemed for", () => {
+    const instance = (id: string, email?: string, extra: Partial<ServerProvider> = {}) =>
+      provider({
+        instanceId: ProviderInstanceId.make(id),
+        auth: { status: "authenticated", ...(email ? { email } : {}) },
+        ...extra,
+      });
+    const providers = [
+      selected,
+      instance("second-home", "same@example.com"),
+      instance("disabled", "same@example.com", { enabled: false }),
+      instance("other-account", "other@example.com"),
+      instance("claude", "same@example.com", { driver: ProviderDriverKind.make("claudeAgent") }),
+      instance("signed-out"),
+    ];
+    const hub = (accountId: string) => ({
+      sourceId: sources[0]!.id,
+      accountId,
+      creditId: "credit",
+    });
+    expect(resetCreditInstanceIds({ instanceId: selected.instanceId }, providers, [])).toEqual([
+      "codex",
+      "second-home",
+    ]);
+    // An account nothing else can be matched to still covers the instance it was redeemed on.
+    expect(
+      resetCreditInstanceIds({ instanceId: ProviderInstanceId.make("signed-out") }, providers, []),
+    ).toEqual(["signed-out"]);
+    expect(resetCreditInstanceIds(hub("duplicate"), providers, sources)).toEqual([
+      "codex",
+      "second-home",
+    ]);
+    expect(resetCreditInstanceIds(hub("oss"), providers, sources)).toEqual([]);
+    expect(resetCreditInstanceIds(hub("removed"), providers, sources)).toEqual([]);
   });
 
   it("gives a hub credit to no native row when its email is signed in to two workspaces", () => {

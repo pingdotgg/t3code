@@ -77,6 +77,7 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   ProjectMutationError,
+  type ProviderConsumeResetCreditInput,
   ProviderUploadFeedbackError,
   ProviderSetupError,
   RelayClientInstallFailedError,
@@ -271,6 +272,7 @@ import {
 } from "@t3tools/shared/socketFrameParts";
 import { isTelemetryIdHash } from "@t3tools/shared/telemetryId";
 import {
+  resetCreditInstanceIds,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
@@ -1899,6 +1901,23 @@ export const layerWsRpc = (
           ),
         );
 
+      // The credit is already spent, so a failure here must not fail its redemption.
+      const endLimitWaits = Effect.fn("ws.providers.endLimitWaits")(
+        function* (input: ProviderConsumeResetCreditInput, failedBefore: DateTime.Utc) {
+          yield* orchestrationEngine.recordLimitReset({
+            providerInstanceIds: resetCreditInstanceIds(
+              input,
+              yield* providerRegistry.getProviders,
+              yield* usageLimitSources.current,
+            ),
+            failedBefore,
+          });
+        },
+        Effect.catchCause((cause) =>
+          Effect.logWarning("limit recovery skipped after a usage reset", { cause }),
+        ),
+      );
+
       const loadServerConfig = Effect.fn("ws.loadServerConfig")(function* (options: {
         readonly usageLimitsCommand: boolean;
         readonly workspaceSnapshotsOnDemand: boolean;
@@ -2633,7 +2652,12 @@ export const layerWsRpc = (
         [WS_METHODS.providerConsumeResetCredit]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
-            if ("sourceId" in input) return yield* usageLimitSources.consumeResetCredit(input);
+            const startedAt = yield* DateTime.now;
+            if ("sourceId" in input) {
+              const result = yield* usageLimitSources.consumeResetCredit(input);
+              if (result.outcome === "reset") yield* endLimitWaits(input, startedAt);
+              return result;
+            }
             const instance = yield* providerInstances.getInstance(input.instanceId);
             if (instance === undefined || !instance.enabled) {
               return yield* new ProviderSetupError({
@@ -2660,6 +2684,7 @@ export const layerWsRpc = (
                   }),
               ),
             );
+            if (outcome === "reset") yield* endLimitWaits(input, startedAt);
             return { outcome };
           }),
         [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),
