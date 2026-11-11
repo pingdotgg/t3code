@@ -13,17 +13,17 @@ import {
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 
-export const MANAGED_ENDPOINT_GRACE_PERIOD_MINUTES = 5;
+const MANAGED_ENDPOINT_GRACE_PERIOD_MINUTES = 5;
 // Never-connected tunnels may still be pairing; allow an hour.
-export const MANAGED_ENDPOINT_INACTIVE_GRACE_PERIOD_MINUTES = 60;
-export const MANAGED_ENDPOINT_SWEEP_PAGE_SIZE = 100;
-export const MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT = 100;
-export const MANAGED_ENDPOINT_SWEEP_LIST_REQUEST_LIMIT = 10;
+const MANAGED_ENDPOINT_INACTIVE_GRACE_PERIOD_MINUTES = 60;
+const MANAGED_ENDPOINT_SWEEP_PAGE_SIZE = 100;
+export const MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT = 250;
+const MANAGED_ENDPOINT_SWEEP_LIST_REQUEST_LIMIT = 10;
 const MANAGED_ENDPOINT_LEGACY_AGE_BUCKET_DAYS = [7, 30, 90] as const;
 // Hosts without recovery cannot replace deleted tunnels; allow a longer absence.
 const MANAGED_ENDPOINT_LEGACY_GRACE_PERIOD_DAYS = 7;
-// Parallelize to fit the cron budget, but stay below Hyperdrive's shared 20-connection limit.
-export const MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY = 4;
+// Each delete holds a Hyperdrive connection for ~2s; stay well below the 40 request handlers share.
+const MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY = 8;
 // Leave time under the cron's two-minute limit to finish deletions and record counters.
 const MANAGED_ENDPOINT_SWEEP_DELETE_BUDGET_MS = 90_000;
 
@@ -147,7 +147,7 @@ const emptyResult = (
   truncated: false,
 });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const tunnels = yield* ManagedEndpointProvider.ManagedEndpointTunnelClient;
   const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;

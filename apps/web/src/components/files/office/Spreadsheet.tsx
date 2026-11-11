@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { observeResize } from "~/lib/observeResize";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -33,6 +34,8 @@ import {
 } from "./sheet-paint";
 import { externalUrl } from "./links";
 
+const isSupersededError = Schema.is(SupersededError);
+
 type Client = ReturnType<typeof createWorkerClient<SheetMethods>>;
 type Opened = {
   engine: Client;
@@ -49,7 +52,7 @@ export default function Spreadsheet(props: {
   const [opened, setOpened] = useState<Opened>();
   const [error, setError] = useState("");
   const picking = useRef<AbortController | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Open the workbook worker and cancel workbook and sheet requests when the source changes or unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Open the workbook worker and cancel workbook and sheet requests when the source changes or unmounts.
   useEffect(() => {
     const controller = new AbortController();
     const worker = new Worker(new URL("./spreadsheet.worker.ts", import.meta.url), {
@@ -163,11 +166,11 @@ function SpreadsheetGrid(props: {
   const [reader, setReader] = useState<{ row: number; col: number; text: string }[]>([]);
   const [active, setActive] = useState({ row: 0, col: 0 });
   const navigate = useRef(onNavigate);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Keep the installed native pointer listener calling the latest navigation handler without restarting the canvas engine.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the installed native pointer listener calling the latest navigation handler without restarting the canvas engine.
   useEffect(() => {
     navigate.current = onNavigate;
   }, [onNavigate]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Own canvas painting, worker requests, resize observation, and native scroll, keyboard, and pointer listeners for this sheet.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own canvas painting, worker requests, resize observation, and native scroll, keyboard, and pointer listeners for this sheet.
   useEffect(() => {
     const root = scroller.current;
     const target = canvas.current;
@@ -264,7 +267,7 @@ function SpreadsheetGrid(props: {
             schedule();
           })
           .catch((cause: unknown) => {
-            if (!(cause instanceof SupersededError) && !controller.signal.aborted)
+            if (!isSupersededError(cause) && !controller.signal.aborted)
               setNotice("These cells could not be drawn.");
           });
       }
