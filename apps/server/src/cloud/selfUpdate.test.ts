@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import { cliArchiveFileName } from "@t3tools/shared/cliRelease";
 import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
@@ -25,8 +26,10 @@ import * as ServerSelfUpdate from "./selfUpdate.ts";
 
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
+  readonly platform?: NodeJS.Platform;
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
+  readonly launcherHelpStdout?: string;
   readonly preflightDuration?: Duration.Input;
   readonly preflightStarted?: Deferred.Deferred<void>;
   readonly beforeDownload?: Effect.Effect<void>;
@@ -48,7 +51,13 @@ const releaseHttpClient = (order: string[], urls: string[], beforeDownload?: Eff
         ).join("");
         return HttpClientResponse.fromWeb(
           request,
-          new Response(`${hex}  t3-1.1.0-linux-x64.tar.gz\n`),
+          new Response(
+            [
+              `${hex}  ${cliArchiveFileName("1.1.0", "linux-x64")}`,
+              `${hex}  ${cliArchiveFileName("1.1.0", "win32-x64")}`,
+              "",
+            ].join("\n"),
+          ),
         );
       }
       if (beforeDownload) yield* beforeDownload;
@@ -62,19 +71,40 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const platform = options.platform ?? "linux";
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
   const order: string[] = [];
   const urls: string[] = [];
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
-        if (input.command === "tar") {
+        if (input.command === "tar" || input.command.toLowerCase().endsWith("tar.exe")) {
           order.push("extract");
           const stagingDir = input.args[input.args.indexOf("-C") + 1];
           if (stagingDir === undefined) return yield* Effect.die("missing tar target");
-          yield* fs.writeFileString(path.join(stagingDir, "t3"), "#!/bin/sh\n").pipe(Effect.orDie);
+          yield* fs
+            .writeFileString(
+              path.join(stagingDir, platform === "win32" ? "t3.exe" : "t3"),
+              "#!/bin/sh\n",
+            )
+            .pipe(Effect.orDie);
           return {
             stdout: "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }
+        if (input.args.includes("__service-launcher") && input.args.includes("--help")) {
+          order.push("launcher-help");
+          return {
+            stdout:
+              options.launcherHelpStdout ??
+              "Options:\n  --base-dir <dir>\n  --log-file <file>\n  --service-unit <unit>\n",
             stderr: "",
             code: ChildProcessSpawner.ExitCode(0),
             timedOut: false,
@@ -148,7 +178,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
       HttpClient.HttpClient,
       options.httpClient ?? releaseHttpClient(order, urls, options.beforeDownload),
     ),
-    Effect.provideService(HostProcess.Platform, "linux"),
+    Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(HostProcess.Architecture, "x64"),
     Effect.provide(
       Layer.merge(
@@ -208,6 +238,25 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
       ).toContain("desktop app");
       expect([...web.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("requires Windows __service-launcher CLI flags before accepting a remote update", () =>
+    Effect.gen(function* () {
+      const legacy = yield* makeHarness({
+        platform: "win32",
+        launcherHelpStdout: "Options:\n  --help\n",
+      });
+      expect(
+        (yield* legacy.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
+      ).toBe("t3@1.1.0 does not support the Windows background service launcher.");
+      expect(legacy.order).toEqual(["download", "extract", "preflight", "launcher-help"]);
+
+      const modern = yield* makeHarness({ platform: "win32" });
+      expect((yield* modern.selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe(
+        "launcher-id",
+      );
+      expect(modern.order).toEqual(["download", "extract", "preflight", "launcher-help", "accept"]);
     }),
   );
 

@@ -5,6 +5,7 @@ import * as NodeSqlite from "node:sqlite";
 
 import { SERVER_EXIT_CODE_STATE_DIR_OWNED } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -21,10 +22,12 @@ import {
 } from "./cloud/bootService.ts";
 import { ServiceLauncherHostProcess } from "./cloud/serviceLauncherClient.ts";
 import {
+  SERVER_OWNER_LEASE_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
   compareExactServiceVersions,
+  decodeServiceLauncherContext,
   serviceStateActiveVersion,
 } from "./cloud/serviceProtocol.ts";
 import * as ProcessRunner from "./processRunner.ts";
@@ -72,6 +75,15 @@ const isSqliteBusy = (cause: unknown) =>
   cause instanceof Error &&
   (("errcode" in cause && cause.errcode === 5) ||
     ("code" in cause && cause.code === "SQLITE_BUSY"));
+
+const persistServerOwnerLease = (
+  filePath: string,
+  lease: { readonly ownerId: string; readonly pendingUpdateId?: string },
+) =>
+  writeFileStringAtomically({
+    filePath,
+    contents: `${JSON.stringify(lease)}\n`,
+  });
 
 // Pre-lock servers publish only runtime state; require start-time proof of PID reuse before treating it as stale.
 const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
@@ -256,6 +268,17 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
   if (olderServiceHome !== undefined) {
     return yield* new OlderBootServiceError({ baseDir: olderServiceHome });
   }
+  const rawLauncherContext = (yield* HostProcess.Environment)[SERVICE_LAUNCHER_CONTEXT_ENV];
+  const launcherContext =
+    (yield* ServiceLauncherHostProcess).connected && rawLauncherContext !== undefined
+      ? decodeServiceLauncherContext(rawLauncherContext)
+      : undefined;
+  const pendingUpdateId =
+    launcherContext?.update?.status === "pending" ? launcherContext.update.id : undefined;
+  yield* persistServerOwnerLease(NodePath.join(stateDir, SERVER_OWNER_LEASE_FILE), {
+    ownerId,
+    ...(pendingUpdateId === undefined ? {} : { pendingUpdateId }),
+  }).pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
 
   yield* Effect.gen(function* () {
     let lost = lock.replacedDuringAcquire;

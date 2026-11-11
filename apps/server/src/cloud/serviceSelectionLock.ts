@@ -21,7 +21,11 @@ export async function acquireServiceSelectionLock(selectionPath: string): Promis
     try {
       NodeFS.rmdirSync(lock);
     } catch (error) {
-      if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? ""))
+      if (
+        !["ENOENT", "ENOTEMPTY", "EEXIST", "EBUSY"].includes(
+          (error as NodeJS.ErrnoException).code ?? "",
+        )
+      )
         throw error;
     }
   };
@@ -37,8 +41,11 @@ export async function acquireServiceSelectionLock(selectionPath: string): Promis
           removeEmptyLock();
         };
       } catch (error) {
-        if (!["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? ""))
-          throw error;
+        const code = (error as NodeJS.ErrnoException).code ?? "";
+        const windowsContention =
+          (code === "EPERM" || code === "EACCES") &&
+          (NodePath.sep === "\\" || NodeFS.existsSync(lock));
+        if (!["EEXIST", "ENOTEMPTY"].includes(code) && !windowsContention) throw error;
       }
       let owners: string[];
       try {

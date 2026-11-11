@@ -1,21 +1,35 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Cross-process launcher contention uses real filesystem leases and IPC barriers.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import type * as Scope from "effect/Scope";
 import { CliError } from "effect/cli";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
+import {
+  acquireServiceAccountLock,
+  type ControlAclHooks,
+  Launcher,
+  probeServiceLauncher,
+  readServiceState,
+  serviceAccountControlRoot,
+  serviceControlDir,
+  serviceTaskName,
+  serviceTaskNamePath,
+  windowsSystem32Binary,
+  writeServiceState,
+} from "../serviceLauncher.ts";
 import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
@@ -35,7 +49,10 @@ vi.mock("node:fs", async (importOriginal) => {
       try {
         return actual.renameSync(...args);
       } catch (error) {
-        if (["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+        const code = (error as NodeJS.ErrnoException).code ?? "";
+        const existingTargetOnWindows =
+          (code === "EPERM" || code === "EACCES") && actual.existsSync(args[1]);
+        if (["EEXIST", "ENOTEMPTY"].includes(code) || existingTargetOnWindows) {
           leaseObserver.contended(String(args[1]));
         }
         throw error;
@@ -43,6 +60,11 @@ vi.mock("node:fs", async (importOriginal) => {
     },
   };
 });
+
+const trustedTestAcl: ControlAclHooks = {
+  restrictPathAcl: async () => undefined,
+  verifyPathAcl: async () => true,
+};
 
 const windowsTaskOptions = {
   userId: "PC\\theo",
@@ -76,10 +98,48 @@ it("reads the served T3 home back out of a rendered unit, plist, or task", () =>
   ).toBe("/Users/theo/a&b");
   expect(
     BootService.bootServiceBaseDirOf(
-      BootService.renderBootServiceTask(plan("C:\\Users\\theo\\T3 a&b\\"), windowsTaskOptions),
+      BootService.renderBootServiceTask(plan('C:\\Users\\theo\\T3 "a&b"\\'), windowsTaskOptions),
     ),
-  ).toBe("C:\\Users\\theo\\T3 a&b\\");
+  ).toBe('C:\\Users\\theo\\T3 "a&b"\\');
   expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
+});
+
+it("parses Task Scheduler /Query /XML exports with XML entities, multiline whitespace, and unquoted arguments", () => {
+  const exportedXml = [
+    '<?xml version="1.0" encoding="UTF-16"?>',
+    '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
+    "  <Actions Context=&quot;Author&quot;>",
+    "    <Exec>",
+    "      <Command>C:\\Windows\\System32\\conhost.exe</Command>",
+    "      <Arguments>",
+    "        --headless &quot;C:\\Users\\theo\\T3 &apos;Code&apos; &amp; Tools\\runtime\\versions\\1.2.3\\t3.exe&quot;",
+    "        __service-launcher --base-dir",
+    "        &quot;C:\\Users\\theo\\T3 &amp; Home\\\\&quot; --log-file C:\\Users\\theo\\boot.log",
+    "      </Arguments>",
+    "    </Exec>",
+    "  </Actions>",
+    "</Task>",
+  ].join("\r\n");
+
+  expect(BootService.bootServiceProgramOf(exportedXml)).toBe(
+    "C:\\Users\\theo\\T3 'Code' & Tools\\runtime\\versions\\1.2.3\\t3.exe",
+  );
+  expect(BootService.bootServiceBaseDirOf(exportedXml)).toBe("C:\\Users\\theo\\T3 & Home\\");
+
+  const unquotedXml = [
+    "<Task>",
+    "  <Actions>",
+    "    <Exec>",
+    "      <Command>C:\\Windows\\System32\\conhost.exe</Command>",
+    "      <Arguments>--headless C:\\t3\\runtime\\versions\\1.2.3\\t3.exe __service-launcher --base-dir=C:\\Users\\theo\\.t3</Arguments>",
+    "    </Exec>",
+    "  </Actions>",
+    "</Task>",
+  ].join("\n");
+  expect(BootService.bootServiceProgramOf(unquotedXml)).toBe(
+    "C:\\t3\\runtime\\versions\\1.2.3\\t3.exe",
+  );
+  expect(BootService.bootServiceBaseDirOf(unquotedXml)).toBe("C:\\Users\\theo\\.t3");
 });
 
 it("protects the server unit from agents under CPU and memory pressure", () => {
@@ -111,7 +171,7 @@ it.each([
   ],
   [
     "a task",
-    "C:\\Users\\theo\\T3 a&b <c>",
+    'C:\\Users\\theo\\T3 "a&b" <c>\\',
     (plan: BootService.BootServicePlan) =>
       BootService.renderBootServiceTask(plan, windowsTaskOptions),
   ],
@@ -136,6 +196,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-boot-service-test-" });
+  const localAppData = path.join(home, "AppData", "Local");
+  const taskName = serviceTaskName("PC", "theo");
+  const controlDirFor = (targetBaseDir: string) =>
+    serviceControlDir(localAppData, targetBaseDir, { caseInsensitive: platform === "win32" });
   const managerUnitDir = path.join(
     managerXdgConfigHome !== undefined && path.isAbsolute(managerXdgConfigHome)
       ? managerXdgConfigHome
@@ -150,20 +214,31 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   yield* fs.writeFileString(runtime.entryPath, "#!/bin/sh\n");
   yield* fs.writeFileString(runtime.sentinelPath, "1.2.3\n");
 
+  const schtasksExe = windowsSystem32Binary("schtasks.exe", { SystemRoot: "C:\\Windows" });
+  const activeLaunchers = new Set<Launcher>();
   const commands: string[] = [];
   const invocations: ProcessRunner.ProcessRunInput[] = [];
   const timeouts = new Map<string, unknown>();
   const control: {
     failCommand: string | undefined;
-    stateAfterStop?: string;
+    failAllSchtasks?: boolean | undefined;
+    failTaskQuery?: boolean | undefined;
+    queryHresultOverride?: number | undefined;
+    windowsLauncherFlags?: boolean | undefined;
+    stopLaunchersOnTaskEnd?: boolean | undefined;
+    stateAfterStop?: string | undefined;
+    registeredTaskXml?: string | undefined;
+    onBeforeWriteUnit?: (() => Effect.Effect<void>) | undefined;
     linger: string;
     enabled: boolean;
     active: boolean;
+    taskRegistered: boolean;
   } = {
     failCommand: undefined,
     linger: "yes",
     enabled: true,
     active: true,
+    taskRegistered: false,
   };
   const runner = ProcessRunner.ProcessRunner.of({
     run: Effect.fn("test.run_boot_service_command")(function* (
@@ -173,20 +248,104 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       commands.push(command);
       invocations.push(input);
       timeouts.set(command, input.timeout);
-      const failed = command === control.failCommand;
+      const isSchtasks =
+        input.command === "schtasks" || input.command.toLowerCase().endsWith("\\schtasks.exe");
+      const isTaskXmlQuery =
+        input.command.toLowerCase().endsWith("\\powershell.exe") &&
+        input.args.some((arg) => arg.includes("Schedule.Service"));
+      const failed =
+        command === control.failCommand ||
+        (control.failAllSchtasks === true && (isSchtasks || isTaskXmlQuery)) ||
+        (control.failTaskQuery === true && isTaskXmlQuery);
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
-      if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
+      if (!failed && isSchtasks && input.args[0] === "/Create") {
+        const xmlIndex = input.args.indexOf("/XML");
+        const xmlPath = xmlIndex >= 0 ? input.args[xmlIndex + 1] : undefined;
+        const xml =
+          xmlPath === undefined
+            ? ""
+            : yield* fs.readFileString(xmlPath).pipe(Effect.orElseSucceed(() => ""));
+        control.taskRegistered = true;
+        control.enabled = !/<Enabled>\s*false\s*<\/Enabled>/i.test(xml);
+        control.registeredTaskXml = xml;
+      }
+      if (!failed && isSchtasks && input.args[0] === "/Delete") {
+        control.taskRegistered = false;
+        control.registeredTaskXml = undefined;
+      }
+      const setTaskXmlEnabled = (xml: string | undefined, enabled: boolean) => {
+        if (xml === undefined) return undefined;
+        const tag = `<Enabled>${enabled}</Enabled>`;
+        return /<Enabled>\s*(?:true|false)\s*<\/Enabled>/i.test(xml)
+          ? xml.replace(/<Enabled>\s*(?:true|false)\s*<\/Enabled>/i, tag)
+          : xml.replace(/<\/Settings>/i, `    ${tag}\n  </Settings>`);
+      };
+      if (
+        !failed &&
+        (command === "systemctl --user enable t3code.service" ||
+          (isSchtasks && input.args.includes("/ENABLE")))
+      ) {
+        control.enabled = true;
+        control.registeredTaskXml = setTaskXmlEnabled(control.registeredTaskXml, true);
+      }
+      if (!failed && isSchtasks && input.args.includes("/DISABLE")) {
+        control.enabled = false;
+        control.registeredTaskXml = setTaskXmlEnabled(control.registeredTaskXml, false);
+      }
+      if (
+        !failed &&
+        control.stopLaunchersOnTaskEnd === true &&
+        isSchtasks &&
+        input.args[0] === "/End"
+      ) {
+        yield* Effect.promise(() =>
+          Promise.all(Array.from(activeLaunchers, (launcher) => launcher.stop("SIGTERM"))),
+        );
+      }
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
       // A timed-out stop may still stop the service.
       if (command === "systemctl --user stop t3code.service") control.active = false;
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop t3code.service" ||
-          command.startsWith("launchctl bootout --wait "))
+          command.startsWith("launchctl bootout --wait ") ||
+          (isSchtasks && input.args[0] === "/End"))
       ) {
         yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
       }
+      if (
+        control.onBeforeWriteUnit !== undefined &&
+        (command === "systemctl --user stop t3code.service" ||
+          (isSchtasks && input.args[0] === "/End"))
+      ) {
+        yield* control.onBeforeWriteUnit();
+      }
+      const exitCode = isTaskXmlQuery
+        ? failed
+          ? 1
+          : !control.taskRegistered
+            ? 2
+            : 0
+        : isSchtasks &&
+            input.args[0] === "/Query" &&
+            input.args.includes("/HRESULT") &&
+            control.queryHresultOverride !== undefined
+          ? control.queryHresultOverride
+          : failed
+            ? 1
+            : isSchtasks &&
+                (input.args[0] === "/Delete" || input.args[0] === "/Change") &&
+                !control.taskRegistered
+              ? 1
+              : isSchtasks && input.args[0] === "/Query" && !control.taskRegistered
+                ? input.args.includes("/HRESULT")
+                  ? 0x80070002
+                  : 1
+                : (input.args[1] === "is-active" && !control.active) ||
+                    (input.args[1] === "is-enabled" && !control.enabled)
+                  ? 1
+                  : 0;
       return {
         stdout:
           input.command === "busctl"
@@ -200,23 +359,24 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                   "/etc/systemd/user",
                 ],
               })
-            : input.args[0] === "--version"
-              ? `t3 v${/versions[\\/]([^\\/]+)[\\/]/.exec(input.command)?.[1] ?? "1.2.3"}\n`
-              : input.command === "loginctl" && input.args[0] === "show-user"
-                ? `${control.linger}\n`
-                : input.args[1] === "is-enabled"
-                  ? control.enabled
-                    ? "enabled\n"
-                    : "disabled\n"
-                  : "",
+            : isTaskXmlQuery && !failed && control.taskRegistered
+              ? (control.registeredTaskXml ??
+                `<Task><Settings><Enabled>${control.enabled}</Enabled></Settings></Task>\n`)
+              : input.args[0] === "__service-launcher" && input.args[1] === "--help"
+                ? control.windowsLauncherFlags === false
+                  ? "t3 __service-launcher\n"
+                  : "--base-dir --log-file --service-unit\n"
+                : input.args[0] === "--version"
+                  ? `t3 v${/versions[\\/]([^\\/]+)[\\/]/.exec(input.command)?.[1] ?? "1.2.3"}\n`
+                  : input.command === "loginctl" && input.args[0] === "show-user"
+                    ? `${control.linger}\n`
+                    : input.args[1] === "is-enabled"
+                      ? control.enabled
+                        ? "enabled\n"
+                        : "disabled\n"
+                      : "",
         stderr: "",
-        code: ChildProcessSpawner.ExitCode(
-          failed ||
-            (input.args[1] === "is-active" && !control.active) ||
-            (input.args[1] === "is-enabled" && !control.enabled)
-            ? 1
-            : 0,
-        ),
+        code: ChildProcessSpawner.ExitCode(exitCode),
         timedOut: false,
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -231,6 +391,9 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     serviceBaseDir = baseDir,
     insideService = false,
     hostExecPath = "/usr/bin/t3",
+    fallbackReleaseTimeoutMs?: number,
+    envOverrides: Readonly<Record<string, string>> = {},
+    aclOverride: ControlAclHooks = trustedTestAcl,
   ) =>
     Effect.gen(function* () {
       const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
@@ -241,7 +404,11 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         baseDir: serviceBaseDir,
         logsDir: path.join(serviceBaseDir, "userdata", "logs"),
         cliVersion,
-        host: { execPath: hostExecPath },
+        host: {
+          execPath: hostExecPath,
+          acl: aclOverride,
+          ...(fallbackReleaseTimeoutMs === undefined ? {} : { fallbackReleaseTimeoutMs }),
+        },
       });
     }).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -260,23 +427,97 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 HOME: home,
                 ...(xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: xdgConfigHome }),
                 USERPROFILE: home,
-                LOCALAPPDATA: path.join(home, "AppData", "Local"),
+                LOCALAPPDATA: localAppData,
                 USERDOMAIN: "PC",
                 USERNAME: "theo",
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
-                ...(insideService ? { T3_BOOT_SERVICE_UNIT: "t3code.service" } : {}),
+                ...(insideService
+                  ? {
+                      T3_BOOT_SERVICE_UNIT:
+                        platform === "win32"
+                          ? BootService.BOOT_SERVICE_TASK_FILE
+                          : platform === "darwin"
+                            ? BootService.BOOT_SERVICE_PLIST_FILE
+                            : BootService.BOOT_SERVICE_UNIT_FILE,
+                    }
+                  : {}),
+                ...envOverrides,
               },
             }),
           ),
         ),
       ),
     );
+  const spawnLauncher = (version: string, acceptUpdate = false) =>
+    Effect.gen(function* () {
+      const dbPath = path.join(baseDir, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
+      yield* fs.writeFileString(dbPath, "db");
+      const childScript = [
+        'process.on("message", (m) => { if (m.type === "stop" || m.type === "update-accepted") process.exit(0); });',
+        `process.send({ type: "request-update", targetVersion: "9.9.9", dbPath: ${JSON.stringify(dbPath)} });`,
+        "setInterval(() => {}, 10000);",
+      ].join("\n");
+      for (const candidate of [version, "9.9.9"]) {
+        const hostBin = pinnedRuntimePaths(
+          path,
+          baseDir,
+          candidate,
+          path.sep === "\\" ? "win32" : "linux",
+        );
+        yield* fs.makeDirectory(hostBin.versionDir, { recursive: true });
+        yield* fs.writeFileString(hostBin.entryPath, childScript, { mode: 0o755 });
+        yield* fs.writeFileString(hostBin.sentinelPath, `${candidate}\n`);
+      }
+      const ready = Promise.withResolvers<void>();
+      const state = yield* Effect.promise(() => readServiceState(statePath));
+      const controlDir = controlDirFor(baseDir);
+      const launcher = new Launcher(baseDir, state, {
+        controlDir,
+        acl: trustedTestAcl,
+        stopChildOverIpc: true,
+        spawnCommand: (entryPath) => {
+          if (acceptUpdate && entryPath.includes("9.9.9")) {
+            ready.resolve();
+          }
+          return { command: process.execPath, args: [entryPath] };
+        },
+        backupSpaceProbe: {
+          readFreeBytes: () => {
+            if (!acceptUpdate) {
+              ready.resolve();
+            }
+            return Promise.resolve(acceptUpdate ? Number.MAX_SAFE_INTEGER : 0);
+          },
+          canClone: () => Promise.resolve(false),
+        },
+      });
+      activeLaunchers.add(launcher);
+      const running = launcher.run().finally(() => {
+        activeLaunchers.delete(launcher);
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() =>
+          launcher
+            .stop("SIGTERM")
+            .then(() => running)
+            .catch(() => undefined),
+        ),
+      );
+      yield* Effect.promise(() => Promise.race([ready.promise, running]));
+      return { launcher, running, controlDir };
+    });
   const service = yield* makeService();
   return {
     service,
     makeService,
+    spawnLauncher,
+    controlDirFor,
+    localAppData,
+    taskName,
+    schtasksExe,
     fs,
     home,
     baseDir,
@@ -1015,6 +1256,12 @@ process.disconnect();
         "systemctl --user daemon-reload",
         "systemctl --user restart t3code.service",
       ]);
+
+      // `restart` runs `stop` before registering recovery so a failed stop does not immediately restart.
+      commands.length = 0;
+      control.failCommand = "systemctl --user stop t3code.service";
+      expect((yield* service.restart.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+      expect(commands).not.toContain("systemctl --user restart t3code.service");
     }),
   );
 
@@ -1087,69 +1334,376 @@ process.disconnect();
     }),
   );
 
-  it.effect("installs, reports a stopped launcher, and uninstalls on Windows", () =>
-    Effect.gen(function* () {
-      const { service, fs, statePath, commands, runtime } = yield* makeHarness("win32");
-      const path = yield* Path.Path;
-      const plan = yield* service.install();
-      const task = yield* fs.readFileString(plan.unitPath);
+  it.effect(
+    "installs, defers disabled installs, refuses post-stop downgrades, and uninstalls on Windows",
+    () =>
+      Effect.gen(function* () {
+        const {
+          service,
+          makeService,
+          taskName,
+          schtasksExe,
+          control,
+          fs,
+          statePath,
+          commands,
+          runtime,
+        } = yield* makeHarness("win32");
+        const path = yield* Path.Path;
+        const plan = yield* service.install();
+        const task = yield* fs.readFileString(plan.unitPath);
+        const nonQuerySchtasks = () =>
+          commands.filter(
+            (command) =>
+              command.startsWith(`${schtasksExe} `) &&
+              !command.startsWith(`${schtasksExe} /Query `),
+          );
 
-      expect(plan.unitPath).toBe(
-        path.join(path.dirname(plan.baseDir), "AppData", "Local", "t3code", "t3code-task.xml"),
-      );
-      expect(BootService.bootServiceProgramOf(task)).toBe(runtime.entryPath);
-      expect(BootService.bootServiceBaseDirOf(task)).toBe(plan.baseDir);
-      expect(task).toContain("<UserId>PC\\theo</UserId>");
-      expect(task).toContain("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>");
-      expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
-        protocol: SERVICE_LAUNCHER_PROTOCOL,
-        activeVersion: "1.2.3",
-      });
-      expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual([
-        `schtasks /Create /XML ${plan.unitPath} /TN t3code-PC-theo /F`,
-        "schtasks /Run /TN t3code-PC-theo",
-      ]);
-      // No launcher answers the control pipe here.
-      expect(yield* service.status).toMatchObject({
-        installed: true,
-        current: false,
-        problems: ["service-stopped"],
-      });
+        expect(plan.unitPath).toBe(
+          path.join(path.dirname(plan.baseDir), "AppData", "Local", "t3code", "t3code-task.xml"),
+        );
+        expect(BootService.bootServiceProgramOf(task)).toBe(runtime.entryPath);
+        expect(BootService.bootServiceBaseDirOf(task)).toBe(plan.baseDir);
+        expect(task).toContain("<UserId>PC\\theo</UserId>");
+        expect(task).toContain("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>");
+        expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.3",
+        });
+        expect(nonQuerySchtasks()).toEqual([
+          `${schtasksExe} /Create /XML ${plan.unitPath} /TN ${taskName} /F`,
+          `${schtasksExe} /Run /TN ${taskName}`,
+        ]);
+        expect(yield* service.status).toMatchObject({
+          installed: true,
+          current: false,
+          problems: ["service-stopped"],
+        });
 
-      commands.length = 0;
-      expect(yield* service.uninstall).toBe(true);
-      expect(commands).toEqual([
-        "schtasks /Change /TN t3code-PC-theo /DISABLE",
-        "schtasks /End /TN t3code-PC-theo",
-        "schtasks /Delete /TN t3code-PC-theo /F",
-      ]);
-      expect((yield* service.status).installed).toBe(false);
-    }),
+        // Deferred install preserves an enabled task's state, and registers `<Enabled>false</Enabled>`
+        // directly in one `schtasks /Create` call when the task is disabled so the minute trigger never fires.
+        const newer = yield* makeService(undefined, "1.2.4");
+        commands.length = 0;
+        yield* newer.install({ start: false });
+        expect(control.enabled).toBe(true);
+        control.enabled = false;
+        control.registeredTaskXml = control.registeredTaskXml?.replace(
+          /<\/Settings>/i,
+          "    <Enabled>false</Enabled>\n  </Settings>",
+        );
+        const latest = yield* makeService(undefined, "1.2.5");
+        commands.length = 0;
+        yield* latest.install({ start: false });
+        const deferredSchtasks = nonQuerySchtasks();
+        expect(deferredSchtasks).toHaveLength(1);
+        expect(deferredSchtasks[0]).toMatch(
+          new RegExp(
+            `^${schtasksExe.replaceAll("\\", "\\\\")} /Create /XML .+ /TN ${taskName} /F$`,
+          ),
+        );
+        expect(control.enabled).toBe(false);
+        expect(BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath))).toBe(
+          pinnedRuntimePaths(path, plan.baseDir, "1.2.5", "win32").entryPath,
+        );
+
+        // Failed /Run on a disabled+stopped task restores `<Enabled>false</Enabled>`.
+        control.failCommand = `${schtasksExe} /Run /TN ${taskName}`;
+        expect((yield* latest.install().pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+        expect(control.enabled).toBe(false);
+        control.failCommand = undefined;
+
+        // Ordinary install checks state under the control lock after stop so a newer staged version wins.
+        control.stateAfterStop = `{"protocol":${SERVICE_LAUNCHER_PROTOCOL},"activeVersion":"1.2.9"}`;
+        expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+          _tag: "BootServiceDowngradeRefusedError",
+          installedVersion: "1.2.9",
+          targetVersion: "1.2.3",
+        });
+        expect(control.enabled).toBe(false);
+        control.stateAfterStop = undefined;
+        yield* Effect.promise(() =>
+          writeServiceState(statePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.2.3",
+          }),
+        );
+
+        // Uninstall preserves the XML mirror when the task stays registered or Task Scheduler fails,
+        // and removes it when `/Query /HRESULT` confirms the task is absent (0x80070002).
+        control.failCommand = `${schtasksExe} /Delete /TN ${taskName} /F`;
+        expect((yield* service.uninstall.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+        expect(yield* fs.exists(plan.unitPath)).toBe(true);
+        control.failCommand = undefined;
+
+        control.taskRegistered = false;
+        control.failAllSchtasks = true;
+        expect((yield* service.uninstall.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+        expect(yield* fs.exists(plan.unitPath)).toBe(true);
+        control.failAllSchtasks = false;
+
+        commands.length = 0;
+        expect(yield* service.uninstall).toBe(true);
+        expect(commands.filter((command) => command.startsWith(`${schtasksExe} `))).toEqual([
+          `${schtasksExe} /Change /TN ${taskName} /DISABLE`,
+          `${schtasksExe} /Query /TN ${taskName} /HRESULT`,
+          `${schtasksExe} /End /TN ${taskName}`,
+          `${schtasksExe} /Delete /TN ${taskName} /F`,
+          `${schtasksExe} /Query /TN ${taskName} /HRESULT`,
+        ]);
+        expect((yield* service.status).installed).toBe(false);
+      }),
   );
 
-  it.effect("hands an in-service install and restart to Task Scheduler on Windows", () =>
-    Effect.gen(function* () {
-      const { service, fs, statePath, commands, makeService } = yield* makeHarness("win32");
-      const plan = yield* service.install();
-      const inside = yield* makeService(undefined, "1.2.4", undefined, true);
-      const handoff = [
-        `schtasks /Create /XML ${plan.unitPath} /TN t3code-PC-theo /F`,
-        "schtasks /End /TN t3code-PC-theo",
-        "schtasks /Run /TN t3code-PC-theo",
-      ];
-      commands.length = 0;
+  it.effect(
+    "aborts Windows mutations when disabling or querying fails, protects stale mirrors, and round-trips non-ASCII homes",
+    () =>
+      Effect.gen(function* () {
+        const { service, makeService, taskName, schtasksExe, control, fs, home, commands } =
+          yield* makeHarness("win32");
+        const path = yield* Path.Path;
+        const plan = yield* service.install();
+        const nonQuerySchtasks = () =>
+          commands.filter(
+            (command) =>
+              command.startsWith(`${schtasksExe} `) &&
+              !command.startsWith(`${schtasksExe} /Query `),
+          );
 
-      expect(yield* inside.install()).toMatchObject({ handedOff: true, logPath: plan.logPath });
-      expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual(handoff);
-      expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe("1.2.4");
-      expect(
-        yield* fs.readFileString(`${plan.baseDir}/runtime/${SERVICE_RESTART_PENDING_FILE}`),
-      ).toBe("1.2.4\n");
+        // A real `/DISABLE` failure on an existing task aborts before stopping or running recovery.
+        control.failCommand = `${schtasksExe} /Change /TN ${taskName} /DISABLE`;
+        commands.length = 0;
+        expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "disabling the scheduled task",
+        });
+        expect(commands.filter((command) => command.startsWith(`${schtasksExe} `))).toEqual([
+          `${schtasksExe} /Change /TN ${taskName} /DISABLE`,
+          `${schtasksExe} /Query /TN ${taskName} /HRESULT`,
+        ]);
 
-      commands.length = 0;
-      expect(yield* inside.restart).toBe("queued");
-      expect(commands).toEqual(handoff);
-    }),
+        commands.length = 0;
+        expect(yield* service.restart.pipe(Effect.flip)).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "disabling the scheduled task",
+        });
+        expect(commands.filter((command) => command.startsWith(`${schtasksExe} `))).toEqual([
+          `${schtasksExe} /Change /TN ${taskName} /DISABLE`,
+          `${schtasksExe} /Query /TN ${taskName} /HRESULT`,
+        ]);
+        control.failCommand = undefined;
+
+        // If `Schedule.Service` fails, `install`, `restart`, `withStopped`, and `uninstall` fail
+        // closed instead of falling back to a stale mirror or authorizing a blind overwrite.
+        const foreignHome = path.join(home, ".t3-stale-mirror");
+        yield* fs.writeFileString(
+          plan.unitPath,
+          BootService.renderBootServiceTask(
+            {
+              program: [`${foreignHome}/runtime/versions/1.2.3/t3.exe`, "__service-launcher"],
+              baseDir: foreignHome,
+              logPath: `${foreignHome}/userdata/logs/boot-service.log`,
+              unitPath: plan.unitPath,
+            },
+            windowsTaskOptions,
+          ),
+        );
+        // With Task Scheduler healthy, live `registeredTaskXml` (`plan.baseDir`) wins over the
+        // stale foreign local mirror, and `restart` activates the registered task directly rather
+        // than overwriting Task Scheduler from the stale mirror via `/Create /XML`.
+        commands.length = 0;
+        expect(yield* service.restart).toBe("restarted");
+        expect(nonQuerySchtasks()).toEqual([
+          `${schtasksExe} /Change /TN ${taskName} /DISABLE`,
+          `${schtasksExe} /End /TN ${taskName}`,
+          `${schtasksExe} /Change /TN ${taskName} /ENABLE`,
+          `${schtasksExe} /Run /TN ${taskName}`,
+        ]);
+
+        control.failTaskQuery = true;
+        expect(yield* service.install().pipe(Effect.flip)).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "inspecting the scheduled task",
+        });
+        expect(yield* service.restart.pipe(Effect.flip)).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "inspecting the scheduled task",
+        });
+        expect(yield* service.withStopped(Effect.void).pipe(Effect.flip)).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "inspecting the scheduled task",
+        });
+        expect(yield* service.uninstall.pipe(Effect.flip)).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "inspecting the scheduled task",
+        });
+        control.failTaskQuery = false;
+
+        // Even when the local XML mirror is deleted, `Schedule.Service` preserves cross-home
+        // protection, mirrorless `status` fails closed when the query fails, and mirrorless
+        // `restart` re-enables and starts the registered task directly.
+        yield* fs.remove(plan.unitPath);
+        control.failTaskQuery = true;
+        expect(yield* service.status.pipe(Effect.flip)).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "inspecting the scheduled task",
+        });
+        control.failTaskQuery = false;
+        expect((yield* service.status).installed).toBe(true);
+        commands.length = 0;
+        expect(yield* service.restart).toBe("restarted");
+        expect(nonQuerySchtasks()).toEqual([
+          `${schtasksExe} /Change /TN ${taskName} /DISABLE`,
+          `${schtasksExe} /End /TN ${taskName}`,
+          `${schtasksExe} /Change /TN ${taskName} /ENABLE`,
+          `${schtasksExe} /Run /TN ${taskName}`,
+        ]);
+
+        const insideMirrorless = yield* makeService(undefined, "1.2.3", undefined, true);
+        commands.length = 0;
+        expect(yield* insideMirrorless.restart).toBe("queued");
+        expect(nonQuerySchtasks()).toEqual([
+          `${schtasksExe} /Change /TN ${taskName} /ENABLE`,
+          `${schtasksExe} /End /TN ${taskName}`,
+          `${schtasksExe} /Run /TN ${taskName}`,
+        ]);
+        expect(yield* insideMirrorless.withStopped(Effect.void).pipe(Effect.flip)).toMatchObject({
+          _tag: "BootServiceRunningInsideServiceError",
+        });
+
+        const other = yield* makeService(undefined, "1.2.3", path.join(home, ".t3-other"));
+        expect((yield* other.status).otherBaseDir).toBe(plan.baseDir);
+        expect((yield* other.install().pipe(Effect.flip))._tag).toBe(
+          "BootServiceOtherBaseDirError",
+        );
+        expect((yield* other.uninstall.pipe(Effect.flip))._tag).toBe(
+          "BootServiceOtherBaseDirError",
+        );
+
+        // Non-ASCII Windows T3 home paths survive `Schedule.Service` UTF-8 task XML queries intact.
+        expect(yield* service.uninstall).toBe(true);
+        const unicodeHome = path.join(home, "José-Łukasz-用户", ".t3");
+        const unicodeService = yield* makeService(undefined, "1.2.3", unicodeHome);
+        yield* unicodeService.install();
+        expect(yield* unicodeService.status).toMatchObject({
+          installed: true,
+          installedBaseDir: unicodeHome,
+        });
+        expect((yield* unicodeService.status).otherBaseDir).toBeUndefined();
+        yield* unicodeService.install({ allowDowngrade: true });
+        expect(yield* unicodeService.uninstall).toBe(true);
+      }),
+  );
+
+  it.effect(
+    "persists the Windows task name across PC renames, fails closed on unrecognized task XML, and treats transient query errors as unhealthy",
+    () =>
+      Effect.gen(function* () {
+        const {
+          service,
+          makeService,
+          localAppData,
+          taskName,
+          schtasksExe,
+          control,
+          fs,
+          home,
+          commands,
+        } = yield* makeHarness("win32");
+        const path = yield* Path.Path;
+        const persistedTaskPath = serviceTaskNamePath(localAppData);
+        const plan = yield* service.install();
+        expect((yield* fs.readFileString(persistedTaskPath)).trim()).toBe(taskName);
+
+        // Transient query failure when the local mirror exists reports `service-unhealthy` instead
+        // of misclassifying an enabled task as `service-disabled`.
+        control.failTaskQuery = true;
+        expect((yield* service.status).problems).toContain("service-unhealthy");
+        expect((yield* service.status).problems).not.toContain("service-disabled");
+        control.failTaskQuery = false;
+
+        // Live registered `<Actions>` wins over a stale local XML mirror, and an `<Actions>` block
+        // without `--base-dir` fails closed instead of silently overwriting a foreign task.
+        const otherHome = path.join(home, ".t3-live");
+        const otherService = yield* makeService(undefined, "1.2.3", otherHome);
+        control.registeredTaskXml = BootService.renderBootServiceTask(
+          {
+            program: [`${otherHome}/runtime/versions/1.2.3/t3.exe`, "__service-launcher"],
+            baseDir: otherHome,
+            logPath: `${otherHome}/userdata/logs/boot-service.log`,
+            unitPath: plan.unitPath,
+          },
+          windowsTaskOptions,
+        );
+        expect((yield* service.status).otherBaseDir).toBe(otherHome);
+        expect((yield* service.install().pipe(Effect.flip))._tag).toBe(
+          "BootServiceOtherBaseDirError",
+        );
+
+        control.registeredTaskXml = [
+          "<Task>",
+          "  <Settings><Enabled>true</Enabled></Settings>",
+          "  <Actions><Exec><Command>C:\\custom\\daemon.exe</Command><Arguments>--serve</Arguments></Exec></Actions>",
+          "</Task>",
+        ].join("\n");
+        const unrecognized = yield* otherService.install().pipe(Effect.flip);
+        expect(unrecognized).toMatchObject({
+          _tag: "BootServiceOtherBaseDirError",
+          unrecognizedTaskName: taskName,
+        });
+        expect(unrecognized.message).toContain(
+          `Windows scheduled task '${taskName}' has an unrecognized configuration`,
+        );
+        expect((yield* otherService.status).problems).toContain("service-unhealthy");
+        expect((yield* otherService.status).installedBaseDir).toBeUndefined();
+
+        // Restore the task XML for `plan.baseDir` and simulate a workgroup PC rename (`USERDOMAIN`).
+        control.registeredTaskXml = yield* fs.readFileString(plan.unitPath);
+        const afterRename = yield* makeService(
+          undefined,
+          "1.2.3",
+          plan.baseDir,
+          false,
+          "/usr/bin/t3",
+          undefined,
+          { USERDOMAIN: "RENAMED-PC" },
+        );
+        expect((yield* afterRename.status).installed).toBe(true);
+        commands.length = 0;
+        expect(yield* afterRename.uninstall).toBe(true);
+        expect(commands).toContain(`${schtasksExe} /Delete /TN ${taskName} /F`);
+        expect(yield* fs.exists(persistedTaskPath)).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "restores an installed service when install is interrupted after stopping and removes unreadable POSIX units on uninstall",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, commands, control } = yield* makeHarness();
+        const plan = yield* service.install();
+
+        // Fiber interruption after stopping the service still triggers `Effect.onExit` restoration.
+        const stoppedGate = Promise.withResolvers<void>();
+        const holdAfterStop = Promise.withResolvers<void>();
+        control.onBeforeWriteUnit = () =>
+          Effect.promise(async () => {
+            stoppedGate.resolve();
+            await holdAfterStop.promise;
+          });
+        commands.length = 0;
+        const installFiber = yield* Effect.forkChild(service.install());
+        yield* Effect.promise(() => stoppedGate.promise);
+        expect(control.active).toBe(false);
+        yield* Fiber.interrupt(installFiber);
+        control.onBeforeWriteUnit = undefined;
+        expect(control.active).toBe(true);
+        expect(commands).toContain("systemctl --user restart t3code.service");
+
+        // An unreadable (`0o000`) unit file still uninstalls cleanly when the directory is writable.
+        yield* fs.chmod(plan.unitPath, 0o000);
+        expect(yield* service.uninstall).toBe(true);
+        expect(yield* fs.exists(plan.unitPath)).toBe(false);
+      }),
   );
 
   // regression: #8173 keep provider CLIs available in the macOS service
@@ -1190,7 +1744,7 @@ process.disconnect();
   // regression: #17532
   it.effect("puts the runtime an update installs on the launch agent PATH", () =>
     Effect.gen(function* () {
-      const { makeService, fs, baseDir, runtime } = yield* makeHarness("darwin");
+      const { makeService, baseDir, runtime } = yield* makeHarness("darwin");
       const path = yield* Path.Path;
       const previous = runtime.versionDir;
       const installed = pinnedRuntimePaths(path, baseDir, "1.2.4", "darwin").versionDir;
@@ -1204,7 +1758,7 @@ process.disconnect();
       );
       const plan = yield* updated.install();
 
-      expect(yield* fs.readFileString(plan.unitPath)).toContain(
+      expect(yield* FileSystem.FileSystem.use((fs) => fs.readFileString(plan.unitPath))).toContain(
         `    <key>PATH</key>\n    <string>/usr/bin:${installed}:/bin:/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/sbin</string>`,
       );
     }),
@@ -1262,5 +1816,336 @@ process.disconnect();
       expect(yield* fs.exists(markerPath)).toBe(false);
       expect((yield* service.status).current).toBe(true);
     }),
+  );
+});
+
+const runLiveNode = <A, E>(effect: Effect.Effect<A, E, NodeServices.NodeServices | Scope.Scope>) =>
+  Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
+
+describe("boot service Windows control", () => {
+  it.live(
+    "reports unhealthy control locks, falls back to ending the task on stop, and fails closed if wedged",
+    () =>
+      runLiveNode(
+        Effect.gen(function* () {
+          const {
+            service,
+            makeService,
+            spawnLauncher,
+            taskName,
+            schtasksExe,
+            control,
+            fs,
+            commands,
+          } = yield* makeHarness("win32");
+          const path = yield* Path.Path;
+          const plan = yield* service.install();
+          const live = yield* spawnLauncher("1.2.3", false);
+
+          expect(yield* service.status).toMatchObject({
+            installed: true,
+            current: true,
+            problems: [],
+          });
+
+          // Incompatible older runtimes lacking Windows launcher flags fail before stopping the service.
+          control.windowsLauncherFlags = false;
+          expect(yield* service.install({ allowDowngrade: true }).pipe(Effect.flip)).toMatchObject({
+            _tag: "BootServiceCommandError",
+            step: "verifying Windows service launcher support",
+          });
+          expect(yield* Effect.promise(() => probeServiceLauncher(live.controlDir))).toBe(
+            "running",
+          );
+          control.windowsLauncherFlags = true;
+
+          // An occupied lock whose token cannot authenticate reports `service-unhealthy`, not healthy.
+          control.enabled = false;
+          if (control.registeredTaskXml !== undefined) {
+            control.registeredTaskXml = /<Enabled>\s*(?:true|false)\s*<\/Enabled>/i.test(
+              control.registeredTaskXml,
+            )
+              ? control.registeredTaskXml.replace(
+                  /<Enabled>\s*(?:true|false)\s*<\/Enabled>/i,
+                  "<Enabled>false</Enabled>",
+                )
+              : control.registeredTaskXml.replace(
+                  /<\/Settings>/i,
+                  "    <Enabled>false</Enabled>\n  </Settings>",
+                );
+          }
+          const tokenPath = path.join(live.controlDir, "control.token");
+          yield* fs.writeFileString(tokenPath, "corrupt\n");
+          expect(yield* service.status).toMatchObject({
+            current: false,
+            problems: ["service-disabled", "service-unhealthy"],
+          });
+
+          // If `schtasks /End` does not release a wedged lock holder, stop fails closed.
+          const differentlyCasedHome = path.join(path.dirname(plan.baseDir), ".T3");
+          const fastFallback = yield* makeService(
+            undefined,
+            "1.2.3",
+            differentlyCasedHome,
+            false,
+            "/usr/bin/t3",
+            100,
+          );
+          expect((yield* fastFallback.status).otherBaseDir).toBeUndefined();
+          let ranWhileWedged = false;
+          expect(
+            yield* fastFallback
+              .withStopped(
+                Effect.sync(() => {
+                  ranWhileWedged = true;
+                }),
+              )
+              .pipe(Effect.flip),
+          ).toMatchObject({
+            _tag: "BootServiceCommandError",
+            step: "stopping the installed service",
+          });
+          expect(ranWhileWedged).toBe(false);
+
+          // When `schtasks /End` closes the task session and releases the lock, `withStopped`
+          // proceeds and restores the disabled state afterwards.
+          control.stopLaunchersOnTaskEnd = true;
+          commands.length = 0;
+          yield* fastFallback.withStopped(
+            Effect.gen(function* () {
+              expect(yield* Effect.promise(() => probeServiceLauncher(live.controlDir))).toBe(
+                "stopped",
+              );
+            }),
+          );
+          yield* Effect.promise(() => live.running);
+          expect(control.enabled).toBe(false);
+          expect(
+            commands.filter(
+              (command) =>
+                command.startsWith(`${schtasksExe} `) &&
+                !command.startsWith(`${schtasksExe} /Query `),
+            ),
+          ).toEqual([
+            `${schtasksExe} /Change /TN ${taskName} /DISABLE`,
+            `${schtasksExe} /End /TN ${taskName}`,
+            `${schtasksExe} /Change /TN ${taskName} /ENABLE`,
+            `${schtasksExe} /Run /TN ${taskName}`,
+            `${schtasksExe} /Change /TN ${taskName} /DISABLE`,
+          ]);
+        }),
+      ),
+  );
+
+  it.live(
+    "serializes concurrent Windows installs, restarts, and withStopped on the account lock",
+    () =>
+      runLiveNode(
+        Effect.gen(function* () {
+          const { makeService, localAppData, home, commands } = yield* makeHarness("win32");
+          const path = yield* Path.Path;
+          const firstHome = path.join(home, ".t3-first");
+          const first = yield* makeService(undefined, "1.2.3", firstHome);
+          const second = yield* makeService(undefined, "1.2.3", path.join(home, ".t3-second"));
+          const capture = <A, E>(effect: Effect.Effect<A, E>) =>
+            effect.pipe(
+              Effect.map((value) => ({ ok: true as const, value })),
+              Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
+            );
+
+          const outcomes = yield* Effect.all(
+            [capture(first.install()), capture(second.install())],
+            {
+              concurrency: "unbounded",
+            },
+          );
+          const successes = outcomes.filter((outcome) => outcome.ok);
+          const failures = outcomes.filter((outcome) => !outcome.ok);
+          expect(successes).toHaveLength(1);
+          expect(failures).toHaveLength(1);
+          expect(failures[0]?.error._tag).toBe("BootServiceOtherBaseDirError");
+
+          // Ensure `firstHome` is the installed home, then prove both `restart` and `withStopped`
+          // block at `account-task.sqlite` before issuing any `schtasks` command while the lock is held.
+          const installedHome = successes[0]?.value.baseDir ?? firstHome;
+          let attemptedAccountLock = Promise.withResolvers<void>();
+          const contender = yield* makeService(
+            undefined,
+            "1.2.3",
+            installedHome,
+            false,
+            "/usr/bin/t3",
+            undefined,
+            {},
+            {
+              restrictPathAcl: async () => undefined,
+              verifyPathAcl: async (targetPath) => {
+                if (targetPath.endsWith("account-task.sqlite")) {
+                  queueMicrotask(() => attemptedAccountLock.resolve());
+                }
+                return true;
+              },
+            },
+          );
+
+          const accountRoot = serviceAccountControlRoot(localAppData);
+          const lockForRestart = yield* Effect.promise(() =>
+            acquireServiceAccountLock(accountRoot, { acl: trustedTestAcl }),
+          );
+          yield* Effect.addFinalizer(() => Effect.sync(() => lockForRestart.close()));
+          commands.length = 0;
+          const restartFiber = yield* Effect.forkScoped(contender.restart);
+          yield* Effect.promise(() => attemptedAccountLock.promise);
+          expect(commands).toEqual([]);
+          lockForRestart.close();
+          expect(yield* Fiber.join(restartFiber)).toBe("restarted");
+
+          attemptedAccountLock = Promise.withResolvers<void>();
+          const lockForWithStopped = yield* Effect.promise(() =>
+            acquireServiceAccountLock(accountRoot, { acl: trustedTestAcl }),
+          );
+          yield* Effect.addFinalizer(() => Effect.sync(() => lockForWithStopped.close()));
+          commands.length = 0;
+          const withStoppedFiber = yield* Effect.forkScoped(
+            contender.withStopped(Effect.succeed("repair-finished")),
+          );
+          yield* Effect.promise(() => attemptedAccountLock.promise);
+          expect(commands).toEqual([]);
+          lockForWithStopped.close();
+          expect(yield* Fiber.join(withStoppedFiber)).toBe("repair-finished");
+        }),
+      ),
+  );
+
+  it.live(
+    "hands in-service install, restart, and uninstall to Task Scheduler and the control channel",
+    () =>
+      runLiveNode(
+        Effect.gen(function* () {
+          const {
+            service,
+            spawnLauncher,
+            taskName,
+            schtasksExe,
+            control,
+            fs,
+            statePath,
+            commands,
+            makeService,
+          } = yield* makeHarness("win32");
+          const path = yield* Path.Path;
+          const plan = yield* service.install();
+          const inside = yield* makeService(undefined, "1.2.4", undefined, true);
+          const nonQuerySchtasks = () =>
+            commands.filter(
+              (command) =>
+                command.startsWith(`${schtasksExe} `) &&
+                !command.startsWith(`${schtasksExe} /Query `),
+            );
+          const handoff = [
+            `${schtasksExe} /Create /XML ${plan.unitPath} /TN ${taskName} /F`,
+            `${schtasksExe} /End /TN ${taskName}`,
+            `${schtasksExe} /Run /TN ${taskName}`,
+          ];
+
+          // A remote update accepted over IPC blocks an in-service install serialized over control.
+          const pending = yield* spawnLauncher("1.2.3", true);
+          expect(yield* inside.install().pipe(Effect.flip)).toMatchObject({
+            _tag: "BootServiceUpdatePendingError",
+          });
+          yield* Effect.promise(() => pending.launcher.stop("SIGTERM"));
+          yield* Effect.promise(() => pending.running);
+          yield* Effect.promise(() =>
+            writeServiceState(statePath, {
+              protocol: SERVICE_LAUNCHER_PROTOCOL,
+              activeVersion: "1.2.3",
+            }),
+          );
+
+          const active = yield* spawnLauncher("1.2.3", false);
+          commands.length = 0;
+          expect(yield* inside.install()).toMatchObject({ handedOff: true, logPath: plan.logPath });
+          yield* Effect.promise(() => active.running);
+          expect(nonQuerySchtasks()).toEqual(handoff);
+          expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe(
+            "1.2.4",
+          );
+          expect(
+            yield* fs.readFileString(`${plan.baseDir}/runtime/${SERVICE_RESTART_PENDING_FILE}`),
+          ).toBe("1.2.4\n");
+
+          const restarted = yield* spawnLauncher("1.2.4", false);
+          commands.length = 0;
+          expect(yield* inside.restart).toBe("queued");
+          yield* Effect.promise(() => restarted.running);
+          expect(nonQuerySchtasks()).toEqual(handoff);
+
+          // In-service uninstall fails closed BEFORE deleting the task or mirror if the control
+          // channel is unhealthy (for example, a corrupt token), then succeeds once healthy.
+          const uninstalled = yield* spawnLauncher("1.2.4", false);
+          const tokenPath = path.join(uninstalled.controlDir, "control.token");
+          const validToken = yield* fs.readFileString(tokenPath);
+          yield* fs.writeFileString(tokenPath, "corrupt\n");
+          commands.length = 0;
+          expect(yield* inside.uninstall.pipe(Effect.flip)).toMatchObject({
+            _tag: "BootServiceCommandError",
+            step: "stopping the installed service",
+          });
+          expect(control.taskRegistered).toBe(true);
+          expect(yield* fs.exists(plan.unitPath)).toBe(true);
+          expect(nonQuerySchtasks()).toEqual([]);
+
+          yield* fs.writeFileString(tokenPath, validToken);
+          commands.length = 0;
+          expect(yield* inside.uninstall).toBe(true);
+          yield* Effect.promise(() => uninstalled.running);
+          expect(yield* fs.exists(plan.unitPath)).toBe(false);
+          expect((yield* service.status).installed).toBe(false);
+          expect(nonQuerySchtasks()).toEqual([
+            `${schtasksExe} /Change /TN ${taskName} /DISABLE`,
+            `${schtasksExe} /Delete /TN ${taskName} /F`,
+          ]);
+
+          // If a previous in-service uninstall already removed the scheduled task and mirror while
+          // the launcher remained alive with a pending trial, retrying `uninstall` finishes stopping
+          // the launcher and recovers the pre-trial database backup.
+          const dbPath = path.join(plan.baseDir, "userdata", "state.sqlite");
+          const orphanedLauncher = yield* spawnLauncher("1.2.4", true);
+          expect((yield* Effect.promise(() => readServiceState(statePath))).update?.status).toBe(
+            "pending",
+          );
+          yield* fs.writeFileString(dbPath, "corrupted-during-trial");
+          expect(yield* inside.uninstall).toBe(true);
+          yield* Effect.promise(() => orphanedLauncher.running);
+          expect(yield* fs.readFileString(dbPath)).toBe("db");
+          expect((yield* Effect.promise(() => readServiceState(statePath))).update?.status).toBe(
+            "failed",
+          );
+          expect(yield* inside.uninstall).toBe(false);
+
+          // Reinstalling while uninstalled with an unrecovered pending update fails closed and
+          // surfaces the PowerShell foreground recovery command for the installed version.
+          yield* Effect.promise(() =>
+            writeServiceState(statePath, {
+              protocol: SERVICE_LAUNCHER_PROTOCOL,
+              activeVersion: "1.2.4",
+              update: {
+                id: "u-win",
+                fromVersion: "1.2.4",
+                targetVersion: "9.9.9",
+                dbPath,
+                status: "pending",
+              },
+            }),
+          );
+          const pendingError = yield* service.install().pipe(Effect.flip);
+          expect(pendingError).toMatchObject({
+            _tag: "BootServiceUpdatePendingError",
+          });
+          expect(pendingError.message).toContain(
+            `__service-launcher --base-dir '${plan.baseDir.replaceAll("'", "''")}'`,
+          );
+        }),
+      ),
   );
 });

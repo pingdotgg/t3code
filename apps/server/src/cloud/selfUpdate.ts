@@ -270,14 +270,45 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
                       }),
                     );
                   }
-                  return preflight.status === "ready"
-                    ? Effect.void
-                    : Effect.fail(
-                        new PinnedRuntimePreflightBlockedError({
-                          version: targetVersion,
-                          reason: preflight.reason,
-                        }),
-                      );
+                  if (preflight.status !== "ready") {
+                    return Effect.fail(
+                      new PinnedRuntimePreflightBlockedError({
+                        version: targetVersion,
+                        reason: preflight.reason,
+                      }),
+                    );
+                  }
+                  if (platform !== "win32") return Effect.void;
+                  // Pre-Windows-service builds pass protocol-4 preflight yet lack the Task Scheduler
+                  // launcher flags needed after unit repointing at the next sign-in.
+                  return runner
+                    .run({
+                      command: pinnedRuntimeCommand(runtime).command,
+                      args: [...pinnedRuntimeCommand(runtime).args, "__service-launcher", "--help"],
+                      timeout: PREFLIGHT_TIMEOUT,
+                    })
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new PinnedRuntimeInstallError({
+                            step: "verifying Windows service launcher support",
+                            cause,
+                          }),
+                      ),
+                      Effect.flatMap((helpResult) =>
+                        helpResult.code === 0 &&
+                        helpResult.stdout.includes("--base-dir") &&
+                        helpResult.stdout.includes("--log-file") &&
+                        helpResult.stdout.includes("--service-unit")
+                          ? Effect.void
+                          : Effect.fail(
+                              new PinnedRuntimePreflightBlockedError({
+                                version: targetVersion,
+                                reason: `t3@${targetVersion} does not support the Windows background service launcher.`,
+                              }),
+                            ),
+                      ),
+                    );
                 },
               ),
             ),

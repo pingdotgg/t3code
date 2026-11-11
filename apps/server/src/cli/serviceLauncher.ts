@@ -1,5 +1,23 @@
 import { type LauncherOptions, main as runServiceLauncher } from "../serviceLauncher.ts";
 
+/** Parses the Task Scheduler launcher flags without loading the full CLI graph. */
+export function parseServiceLauncherArgs(args: ReadonlyArray<string>): LauncherOptions | undefined {
+  if (args.length % 2 !== 0) return undefined;
+  let baseDir: string | undefined;
+  let logFile: string | undefined;
+  let serviceUnit: string | undefined;
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (value === undefined) return undefined;
+    if (flag === "--base-dir") baseDir = value;
+    else if (flag === "--log-file") logFile = value;
+    else if (flag === "--service-unit") serviceUnit = value;
+    else return undefined;
+  }
+  return { baseDir, logFile, serviceUnit };
+}
+
 export async function runServiceLauncherCli(options?: LauncherOptions): Promise<void> {
   try {
     await runServiceLauncher(options);

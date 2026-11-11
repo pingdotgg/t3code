@@ -32,6 +32,7 @@ export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
 
 export interface UninstallPlan {
   readonly service: boolean;
+  readonly canRecoverOrphanService: boolean;
   readonly versionsDir: string;
   readonly launchers: ReadonlyArray<string>;
   readonly runtimeDir: string | undefined;
@@ -144,17 +145,20 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
   const service = yield* BootService.BootService;
   const status = yield* service.status;
   const servesThisHome =
     status.installedBaseDir !== undefined &&
-    path.resolve(status.installedBaseDir) === path.resolve(input.baseDir);
+    BootService.sameBootServiceBaseDir(path, platform, status.installedBaseDir, input.baseDir);
   const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
   const runtimeDir = path.dirname(versionsDir);
   const launchedAs = (yield* HostProcess.IsExecutable) ? yield* resolveLauncherPath : undefined;
   const launchedFrom = yield* findOwnedLauncher({ launchedAs, versionsDir });
+  const runtimeExists = yield* fs.exists(runtimeDir).pipe(Effect.orElseSucceed(() => false));
   const plan: UninstallPlan = {
     service: status.supported && status.installed && servesThisHome,
+    canRecoverOrphanService: status.supported && !status.installed && runtimeExists,
     versionsDir,
     launchers: [
       ...new Set([
@@ -162,9 +166,7 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
         ...(yield* findRecordedLaunchers(versionsDir)),
       ]),
     ],
-    runtimeDir: (yield* fs.exists(runtimeDir).pipe(Effect.orElseSucceed(() => false)))
-      ? runtimeDir
-      : undefined,
+    runtimeDir: runtimeExists ? runtimeDir : undefined,
     userdataDir: path.join(input.baseDir, "userdata"),
   };
   return plan;
@@ -194,7 +196,41 @@ export const uninstallCommand = Command.make("uninstall", {
   ),
 );
 
-const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
+const preserveUnrecoveredDatabaseBackups = Effect.fn("cli.uninstall.preserve_db_backups")(
+  function* (input: { readonly runtimeDir: string; readonly userdataDir: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const backupRoot = path.join(input.runtimeDir, "db-backup");
+    const entries = yield* fs.readDirectory(backupRoot).pipe(Effect.orElseSucceed(() => []));
+    const preserved = entries.filter((entry) => !entry.endsWith(".staging"));
+    if (preserved.length === 0) return;
+    const destinationRoot = path.join(input.userdataDir, "db-backup");
+    yield* fs.makeDirectory(destinationRoot, { recursive: true }).pipe(
+      Effect.mapError(
+        () =>
+          new CliUninstallError({
+            reason: `Could not preserve pending update database backups under ${destinationRoot}.`,
+          }),
+      ),
+    );
+    for (const entry of preserved) {
+      const source = path.join(backupRoot, entry);
+      const destination = path.join(destinationRoot, entry);
+      yield* fs.remove(destination, { recursive: true, force: true }).pipe(
+        Effect.andThen(fs.rename(source, destination)),
+        Effect.mapError(
+          () =>
+            new CliUninstallError({
+              reason: `Could not preserve pending update database backup ${source} under ${destination}.`,
+            }),
+        ),
+      );
+      yield* Console.log(`Preserved interrupted update database backup at ${destination}.`);
+    }
+  },
+);
+
+export const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   readonly baseDir: string;
   readonly assumeYes: boolean;
 }) {
@@ -243,6 +279,11 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   if (plan.service) {
     yield* service.uninstall;
     yield* Console.log("Removed the background service.");
+  } else if (plan.canRecoverOrphanService) {
+    const stoppedOrphan = yield* service.uninstall;
+    if (stoppedOrphan) {
+      yield* Console.log("Removed the background service.");
+    }
   }
   for (const launcher of plan.launchers) {
     // The prompt can wait a long time; never delete a file that replaced the launcher meanwhile.
@@ -260,6 +301,10 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     yield* Console.log(`Removed ${launcher}.`);
   }
   if (plan.runtimeDir !== undefined) {
+    yield* preserveUnrecoveredDatabaseBackups({
+      runtimeDir: plan.runtimeDir,
+      userdataDir: plan.userdataDir,
+    });
     // Windows refuses to unlink this running executable; a detached shell removes it after exit.
     if (platform === "win32") {
       const runtimeDir = plan.runtimeDir;

@@ -65,6 +65,16 @@ it.live("loads the CLI with its cache settings only when the command needs it", 
     expect(launcher.exitCode).toBe(1);
     expect(launcher.stderr).toContain("[service-launcher] T3CODE_HOME is required");
     expect(launcher.stderr).not.toMatch(/LOADED_CLI_MAIN|CACHE=/);
+    const windowsLauncher = yield* run({}, [
+      "__service-launcher",
+      "--base-dir",
+      "",
+      "--service-unit",
+      "t3code.service",
+    ]);
+    expect(windowsLauncher.exitCode).toBe(1);
+    expect(windowsLauncher.stderr).toContain("[service-launcher] T3CODE_HOME is required");
+    expect(windowsLauncher.stderr).not.toMatch(/LOADED_CLI_MAIN|CACHE=/);
     const launcherHelp = yield* run({ T3CODE_HOME: "" }, ["__service-launcher", "--help"]);
     expect(launcherHelp.exitCode).toBe(0);
     expect(launcherHelp.stderr).toContain("LOADED_CLI_MAIN");

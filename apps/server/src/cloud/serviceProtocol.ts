@@ -14,6 +14,8 @@ export const SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
 /** Marks a repointed unit whose service still runs the old version; launcher startup clears it. */
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
+/** Durable record of the last server-owner lock holder and whether it was a managed update trial. */
+export const SERVER_OWNER_LEASE_FILE = ".server-owner-lease.json";
 
 const unquoteSystemdValue = (raw: string) =>
   (raw.startsWith('"') && raw.endsWith('"')
@@ -21,19 +23,108 @@ const unquoteSystemdValue = (raw: string) =>
     : raw
   ).replaceAll("%%", "%");
 
-const unescapeXmlText = (value: string) =>
-  value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+const XML_NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  quot: '"',
+  apos: "'",
+  lt: "<",
+  gt: ">",
+  amp: "&",
+};
 
-const unquoteWindowsArgument = (raw: string) =>
-  unescapeXmlText(raw).replace(/(\\+)$/, (slashes) => slashes.slice(slashes.length / 2));
+const unescapeXmlText = (value: string) =>
+  value.replaceAll(
+    /&(?:(quot|apos|lt|gt|amp)|#(\d+)|#x([0-9a-fA-F]+));/g,
+    (match, named?: string, dec?: string, hex?: string) => {
+      if (named !== undefined) return XML_NAMED_ENTITIES[named] ?? match;
+      const codePoint =
+        dec !== undefined ? Number.parseInt(dec, 10) : Number.parseInt(hex ?? "", 16);
+      return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : match;
+    },
+  );
+
+// Task Scheduler passes `<Exec>` fields through `ExpandEnvironmentStringsW` with no escape syntax.
+export const hasWindowsTaskEnvironmentExpansion = (value: string): boolean =>
+  /%[^%\r\n]+%/.test(value);
+
+function parseWindowsCommandLine(commandLine: string): ReadonlyArray<string> {
+  const args: string[] = [];
+  let index = 0;
+  while (index < commandLine.length) {
+    while (index < commandLine.length && /\s/.test(commandLine[index]!)) {
+      index += 1;
+    }
+    if (index >= commandLine.length) break;
+    let current = "";
+    let inQuotes = false;
+    while (index < commandLine.length) {
+      const char = commandLine[index]!;
+      if (char === "\\") {
+        let slashes = 0;
+        while (index < commandLine.length && commandLine[index] === "\\") {
+          slashes += 1;
+          index += 1;
+        }
+        if (commandLine[index] === '"') {
+          current += "\\".repeat(Math.floor(slashes / 2));
+          if (slashes % 2 === 0) {
+            if (inQuotes && commandLine[index + 1] === '"') {
+              current += '"';
+              index += 2;
+            } else {
+              inQuotes = !inQuotes;
+              index += 1;
+            }
+          } else {
+            current += '"';
+            index += 1;
+          }
+        } else {
+          current += "\\".repeat(slashes);
+        }
+        continue;
+      }
+      if (char === '"') {
+        if (inQuotes && commandLine[index + 1] === '"') {
+          current += '"';
+          index += 2;
+        } else {
+          inQuotes = !inQuotes;
+          index += 1;
+        }
+        continue;
+      }
+      if (!inQuotes && /\s/.test(char)) break;
+      current += char;
+      index += 1;
+    }
+    args.push(current);
+  }
+  return args;
+}
+
+function readTaskArguments(contents: string): ReadonlyArray<string> | undefined {
+  const actionsScope = /<Actions\b[^>]*>([\s\S]*?)<\/Actions>/i.exec(contents)?.[1] ?? contents;
+  const match = /<Arguments>([\s\S]*?)<\/Arguments>/i.exec(actionsScope)?.[1];
+  return match === undefined ? undefined : parseWindowsCommandLine(unescapeXmlText(match));
+}
 
 export function serviceUnitBaseDirOf(contents: string): string | undefined {
   const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
   if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
   const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
   if (plist !== undefined) return unescapeXmlText(plist);
-  const task = /<Arguments>[^<]* "--base-dir" "([^"]*)"/.exec(contents)?.[1];
-  return task === undefined ? undefined : unquoteWindowsArgument(task);
+  const taskArgs = readTaskArguments(contents);
+  if (taskArgs === undefined) return undefined;
+  const flagIndex = taskArgs.indexOf("--base-dir");
+  const rawBaseDir =
+    flagIndex >= 0 && flagIndex + 1 < taskArgs.length
+      ? taskArgs[flagIndex + 1]
+      : taskArgs.find((arg) => arg.startsWith("--base-dir="))?.slice("--base-dir=".length);
+  return rawBaseDir !== undefined && !hasWindowsTaskEnvironmentExpansion(rawBaseDir)
+    ? rawBaseDir
+    : undefined;
 }
 
 /** The executable an installed unit, plist, or task starts: the launcher's runtime. */
@@ -44,8 +135,13 @@ export function serviceUnitProgramOf(contents: string): string | undefined {
     contents,
   )?.[1];
   if (plist !== undefined) return unescapeXmlText(plist);
-  const task = /<Arguments>--headless "([^"]*)"/.exec(contents)?.[1];
-  return task === undefined ? undefined : unquoteWindowsArgument(task);
+  const taskArgs = readTaskArguments(contents);
+  if (taskArgs === undefined) return undefined;
+  const headlessIndex = taskArgs.indexOf("--headless");
+  const program = headlessIndex >= 0 ? taskArgs[headlessIndex + 1] : undefined;
+  return program !== undefined && !hasWindowsTaskEnvironmentExpansion(program)
+    ? program
+    : undefined;
 }
 
 export interface PendingServiceUpdate {
@@ -108,6 +204,12 @@ const EXACT_SERVICE_VERSION = new RegExp(
 export const isExactServiceVersion = (version: string): boolean =>
   EXACT_SERVICE_VERSION.test(version);
 
+export const isValidServiceUpdateId = (id: string): boolean =>
+  /^[A-Za-z0-9._-]{1,128}$/.test(id) && id !== "." && id !== "..";
+
+const isAbsoluteServiceDatabasePath = (dbPath: string): boolean =>
+  !dbPath.includes("\0") && (dbPath.startsWith("/") || /^[A-Za-z]:[\\/]/.test(dbPath));
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -116,7 +218,7 @@ function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undefined {
   const { id, fromVersion, targetVersion, status } = value;
   if (
     typeof id !== "string" ||
-    id.trim() === "" ||
+    !isValidServiceUpdateId(id) ||
     typeof fromVersion !== "string" ||
     !isExactServiceVersion(fromVersion) ||
     typeof targetVersion !== "string" ||
@@ -125,7 +227,7 @@ function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undefined {
     return undefined;
   }
   if (status === "pending") {
-    return typeof value.dbPath === "string" && value.dbPath.trim() !== ""
+    return typeof value.dbPath === "string" && isAbsoluteServiceDatabasePath(value.dbPath)
       ? { id, fromVersion, targetVersion, dbPath: value.dbPath, status }
       : undefined;
   }

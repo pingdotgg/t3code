@@ -61,6 +61,7 @@ export class ServiceLauncherRejectedError extends Schema.TaggedError<ServiceLaun
 
 interface ServiceLauncherProcess {
   readonly connected: boolean;
+  readonly ipc?: boolean | undefined;
   readonly send: (
     message: ServiceLauncherChildMessage,
     callback?: (error: Error | null) => void,
@@ -75,11 +76,16 @@ interface ServiceLauncherProcess {
   ) => void;
 }
 
+const initialProcessHasIpc = typeof process.send === "function";
+
 export const ServiceLauncherHostProcess = Context.Reference<ServiceLauncherProcess>(
   "t3/cloud/serviceLauncherHostProcess",
   {
     defaultValue: () => ({
-      connected: process.connected && process.send !== undefined,
+      get connected() {
+        return process.connected === true && typeof process.send === "function";
+      },
+      ipc: initialProcessHasIpc,
       send: (message, callback) => {
         if (process.send === undefined) return false;
         return callback === undefined ? process.send(message) : process.send(message, callback);
@@ -114,8 +120,9 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
     const host = yield* ServiceLauncherHostProcess;
     const environment = yield* HostProcess.Environment;
     const currentVersion = options?.currentVersion ?? packageJson.version;
+    const hasIpc = host.ipc ?? host.connected;
     // IPC channels are not inherited; without one, launcher context belongs to an ancestor.
-    const rawContext = host.connected ? environment[SERVICE_LAUNCHER_CONTEXT_ENV] : undefined;
+    const rawContext = hasIpc ? environment[SERVICE_LAUNCHER_CONTEXT_ENV] : undefined;
     const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);
 
     if (rawContext !== undefined && context === undefined) {
@@ -138,18 +145,32 @@ export const resolveServiceLauncherMode = Effect.fn("cloud.service_launcher_clie
   },
 );
 
-/** Completes when the launcher asks this server to stop, which Windows cannot signal. */
+/** Completes when the launcher asks this server to stop or disconnects, including during startup. */
 export const awaitServiceLauncherStop = Effect.fn("cloud.service_launcher_client.await_stop")(
   function* (options?: { readonly currentVersion?: string }) {
     const startup = yield* resolveStartup(options).pipe(Effect.option);
     if (Option.isNone(startup) || !startup.value.managed) return yield* Effect.never;
     const { host } = startup.value;
+    if (!host.connected) return;
     return yield* Effect.callback<void>((resume) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        host.off("message", onMessage);
+        host.off("disconnect", finish);
+        resume(Effect.void);
+      };
       const onMessage = (...args: ReadonlyArray<unknown>) => {
-        if (decodeServiceLauncherParentMessage(args[0])?.type === "stop") resume(Effect.void);
+        if (decodeServiceLauncherParentMessage(args[0])?.type === "stop") finish();
       };
       host.on("message", onMessage);
-      return Effect.sync(() => host.off("message", onMessage));
+      host.on("disconnect", finish);
+      if (!host.connected) finish();
+      return Effect.sync(() => {
+        host.off("message", onMessage);
+        host.off("disconnect", finish);
+      });
     });
   },
 );
@@ -166,6 +187,10 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
     Effect.callback<ServiceLauncherParentMessage, ServiceLauncherClientError>((resume) => {
       if (!managed) {
         resume(Effect.fail(new ServiceLauncherClientError({ operation: "unmanaged" })));
+        return;
+      }
+      if (!host.connected) {
+        resume(Effect.fail(new ServiceLauncherClientError({ operation: "disconnect" })));
         return;
       }
 

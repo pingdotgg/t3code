@@ -6,9 +6,77 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { findOwnedLauncher, findRecordedLaunchers, spawnWindowsRemoval } from "./uninstall.ts";
+import * as BootService from "../cloud/bootService.ts";
+import {
+  findOwnedLauncher,
+  findRecordedLaunchers,
+  runUninstall,
+  spawnWindowsRemoval,
+} from "./uninstall.ts";
 
 it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
+  it.effect(
+    "recovers an orphaned background service and moves unrecovered database backups into userdata",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-uninstall-run-" })
+          .pipe(Effect.flatMap(fs.realPath));
+        const runtimeDir = path.join(root, "runtime");
+        yield* fs.makeDirectory(path.join(runtimeDir, "versions", "1.0.0"), { recursive: true });
+        yield* fs.writeFileString(path.join(runtimeDir, "versions", "1.0.0", "t3"), "");
+        yield* fs.makeDirectory(path.join(runtimeDir, "db-backup", "pending-1"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(runtimeDir, "db-backup", "pending-1", "database"),
+          "saved-pre-trial",
+        );
+        yield* fs.makeDirectory(path.join(runtimeDir, "db-backup", "partial.staging"), {
+          recursive: true,
+        });
+
+        let uninstallCalls = 0;
+        const bootService = BootService.BootService.of({
+          install: () => Effect.die("unexpected install"),
+          restart: Effect.die("unexpected restart"),
+          withStopped: (operation) => operation,
+          uninstall: Effect.sync(() => {
+            uninstallCalls += 1;
+            return true;
+          }),
+          status: Effect.succeed({
+            supported: true,
+            installed: false,
+            current: false,
+            unitPath: path.join(root, "unit", "t3code.service"),
+            logPath: path.join(root, "logs", "boot-service.log"),
+          }),
+        });
+
+        yield* runUninstall({ baseDir: root, assumeYes: true }).pipe(
+          Effect.provideService(BootService.BootService, bootService),
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provideService(HostProcess.IsExecutable, false),
+        );
+
+        assert.equal(uninstallCalls, 1);
+        assert.isFalse(yield* fs.exists(runtimeDir));
+        assert.equal(
+          yield* fs.readFileString(
+            path.join(root, "userdata", "db-backup", "pending-1", "database"),
+          ),
+          "saved-pre-trial",
+        );
+        assert.isFalse(
+          yield* fs.exists(path.join(root, "userdata", "db-backup", "partial.staging")),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("claims only a launcher that points into this home's runtime tree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

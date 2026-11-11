@@ -7,6 +7,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeUtil from "node:util";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
 
@@ -22,7 +23,9 @@ import {
   compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
+  isValidServiceUpdateId,
   parseServiceState,
+  SERVER_OWNER_LEASE_FILE,
   serviceUnitBaseDirOf,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
@@ -31,6 +34,8 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
   SERVICE_UNIT_ENV,
+  serviceStateActiveVersion,
+  serviceStateHasPendingUpdate,
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
@@ -43,8 +48,17 @@ const TERMINATE_GRACE_MS = 5_000;
 // A replacement started by a handoff waits up to two minutes for the stopping launcher.
 const CONTROL_LISTEN_RETRY_MS = 500;
 const CONTROL_LISTEN_ATTEMPTS = 240;
+const CONTROL_HANDSHAKE_TIMEOUT_MS = 5_000;
+const CONTROL_QUERY_TIMEOUT_MS = 5_000;
+// Leave 30s inside BootService STOP_STEP_TIMEOUT (120s) for fallback task termination + lock release.
+const CONTROL_STOP_REQUEST_TIMEOUT_MS = 90_000;
+const CONTROL_MUTATION_TIMEOUT_MS = 120_000;
+const MAX_CONTROL_MESSAGE_BYTES = 16_384;
+const MAX_UNAUTHENTICATED_CONTROL_SOCKETS = 16;
+const MAX_TOTAL_CONTROL_SOCKETS = 64;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
+const IS_WINDOWS = NodePath.sep === "\\";
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -57,8 +71,7 @@ interface ManagedChild {
 
 const runtimePaths = (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
-  const executableName = process.platform === "win32" ? "t3.exe" : "t3";
+  const executableName = IS_WINDOWS ? "t3.exe" : "t3";
   return {
     versionDir,
     entryPath: NodePath.join(versionDir, executableName),
@@ -66,9 +79,9 @@ const runtimePaths = (baseDir: string, version: string) => {
   };
 };
 
-const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
-  command: paths.entryPath,
-  args: ["serve"],
+const runtimeSpawnArguments = (entryPath: string) => ({
+  command: entryPath,
+  args: ["serve"] as ReadonlyArray<string>,
 });
 
 /**
@@ -79,14 +92,155 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
  */
 export interface ServiceUnit {
   readonly path: string;
-  /** systemd keeps a loaded copy of the unit; launchd re-reads the plist at bootstrap. */
+  /** systemd and Task Scheduler keep a loaded copy of the definition; launchd re-reads the plist at bootstrap. */
   readonly reload: () => Promise<void>;
 }
 
-function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): ServiceUnit | undefined {
+export const WINDOWS_QUERY_REGISTERED_TASK_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  "$service = New-Object -ComObject Schedule.Service",
+  "$service.Connect()",
+  "try {",
+  "  $task = $service.GetFolder('\\').GetTask($env:T3_TASK_NAME)",
+  "  $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$task.Xml)",
+  "  $stdout = [Console]::OpenStandardOutput()",
+  "  $stdout.Write($bytes, 0, $bytes.Length)",
+  "  $stdout.Flush()",
+  "} catch {",
+  "  $err = $_.Exception",
+  "  while ($null -ne $err.InnerException) { $err = $err.InnerException }",
+  "  $hr = $err.HResult",
+  "  if ($err -is [System.IO.FileNotFoundException] -or $err -is [System.IO.DirectoryNotFoundException] -or $hr -eq -2147024894 -or $hr -eq -2147024893) {",
+  "    exit 2",
+  "  }",
+  "  throw",
+  "}",
+].join("; ");
+
+const sameInstalledBaseDir = (left: string, right: string, caseInsensitive: boolean): boolean => {
+  if (caseInsensitive) {
+    const looksWindowsDrive = /^[A-Za-z]:[\\/]/.test(left) || /^[A-Za-z]:[\\/]/.test(right);
+    const resolvePath = looksWindowsDrive ? NodePath.win32.resolve : NodePath.resolve;
+    return resolvePath(left).toLowerCase() === resolvePath(right).toLowerCase();
+  }
+  return NodePath.resolve(left) === NodePath.resolve(right);
+};
+
+async function reloadWindowsTaskUnit(input: {
+  readonly unitPath: string;
+  readonly baseDir: string;
+  readonly localAppData: string;
+  readonly userName: string;
+  readonly env: NodeJS.ProcessEnv;
+}): Promise<void> {
+  const taskName = resolvePersistedServiceTaskName(
+    input.localAppData,
+    serviceTaskName(input.env.USERDOMAIN ?? "", input.userName),
+  );
+  let registeredXml: string;
+  try {
+    const queried = await execFileAsync(
+      windowsPowerShellBinary(input.env),
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        WINDOWS_QUERY_REGISTERED_TASK_SCRIPT,
+      ],
+      {
+        env: { ...input.env, T3_TASK_NAME: taskName },
+        windowsHide: true,
+        timeout: 15_000,
+      },
+    );
+    registeredXml = queried.stdout;
+  } catch (error) {
+    if ((error as { readonly code?: unknown }).code === 2) return;
+    throw error;
+  }
+  const registeredBaseDir = serviceUnitBaseDirOf(registeredXml);
+  if (
+    registeredBaseDir === undefined ||
+    !sameInstalledBaseDir(registeredBaseDir, input.baseDir, true)
+  ) {
+    return;
+  }
+  const settings = /<Settings>[\s\S]*?<\/Settings>/i.exec(registeredXml)?.[0] ?? "";
+  const registeredDisabled = /<Enabled>\s*false\s*<\/Enabled>/i.test(settings);
+  const unitContents = await NodeFSP.readFile(input.unitPath, "utf8");
+  const unitSettings = /<Settings>[\s\S]*?<\/Settings>/i.exec(unitContents)?.[0] ?? "";
+  const unitAlreadyDisabled = /<Enabled>\s*false\s*<\/Enabled>/i.test(unitSettings);
+  let tempDisabledPath: string | undefined;
+  try {
+    let xmlPath = input.unitPath;
+    if (registeredDisabled && !unitAlreadyDisabled && /<\/Settings>/i.test(unitContents)) {
+      tempDisabledPath = NodePath.join(
+        NodePath.dirname(input.unitPath),
+        `.service-task-${process.pid}.${NodeCrypto.randomUUID()}.xml`,
+      );
+      await NodeFSP.writeFile(
+        tempDisabledPath,
+        unitContents.replace(/<\/Settings>/i, "    <Enabled>false</Enabled>\n  </Settings>"),
+        { mode: 0o600 },
+      );
+      xmlPath = tempDisabledPath;
+    }
+    await execFileAsync(
+      windowsSystem32Binary("schtasks.exe", input.env),
+      ["/Create", "/XML", xmlPath, "/TN", taskName, "/F"],
+      {
+        env: input.env,
+        windowsHide: true,
+        timeout: 30_000,
+      },
+    );
+  } finally {
+    if (tempDisabledPath !== undefined) {
+      await NodeFSP.rm(tempDisabledPath, { force: true }).catch(() => undefined);
+    }
+  }
+}
+
+function serviceUnitFromEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+  options?: {
+    readonly isWindows?: boolean | undefined;
+    readonly localAppData?: string | undefined;
+    readonly baseDir?: string | undefined;
+  },
+): ServiceUnit | undefined {
   const unitName = env[SERVICE_UNIT_ENV]?.trim();
+  if (
+    !unitName ||
+    unitName === "." ||
+    unitName === ".." ||
+    unitName.includes("/") ||
+    unitName.includes("\\")
+  ) {
+    return undefined;
+  }
+  if (options?.isWindows === true || unitName.endsWith(".xml")) {
+    const localAppData = (options?.localAppData ?? env.LOCALAPPDATA ?? "").trim();
+    const userName = (env.USERNAME ?? "").trim();
+    const baseDir = (options?.baseDir ?? env.T3CODE_HOME ?? "").trim();
+    if (!localAppData || !userName || !baseDir) return undefined;
+    const taskFile = unitName.endsWith(".xml") ? unitName : "t3code-task.xml";
+    const unitPath = NodePath.join(localAppData, "t3code", taskFile);
+    return {
+      path: unitPath,
+      reload: () =>
+        reloadWindowsTaskUnit({
+          unitPath,
+          baseDir,
+          localAppData,
+          userName,
+          env,
+        }),
+    };
+  }
   const home = env.HOME?.trim();
-  if (!unitName || !home) return undefined;
+  if (!home) return undefined;
   if (unitName.endsWith(".plist")) {
     return {
       path: NodePath.join(home, "Library", "LaunchAgents", unitName),
@@ -117,12 +271,13 @@ function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): Servi
   };
 }
 
-// systemd's ExecStart value, or the plist string before the __service-launcher argument.
+// systemd's ExecStart value, the plist string, or the Windows task action before __service-launcher.
 // Only the version segment changes, so quoted or escaped paths stay as rendered.
 // The launch agent's PATH names a versions directory without the executable; leave it.
 const SERVICE_UNIT_PROGRAMS = [
   /^(ExecStart=.*?[\\/]runtime[\\/]versions[\\/])([^\\/\s"]+)([\\/]t3)(?=["\s])/m,
   /(<string>[^<]*?[\\/]runtime[\\/]versions[\\/])([^\\/<]+)([\\/]t3<\/string>\s*<string>__service-launcher<\/string>)/,
+  /(<Actions\b[\s\S]*?<Arguments>--headless\s+(?:"|&quot;)[^<]*?[\\/]runtime[\\/]versions[\\/])([^\\/<"&]+)([\\/]t3(?:\.exe)?(?:"|&quot;)\s+(?:"|&quot;)?__service-launcher\b)/i,
 ] as const;
 
 /**
@@ -146,8 +301,33 @@ function repointServiceUnit(contents: string, version: string): string {
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
 const RESTORE_MARKER = ".restore-pending";
 
-const databaseBackupDir = (baseDir: string, updateId: string) =>
-  NodePath.join(baseDir, "runtime", "db-backup", updateId);
+const databaseBackupDir = (baseDir: string, updateId: string) => {
+  if (!isValidServiceUpdateId(updateId)) {
+    throw new Error(`Invalid service update identifier '${updateId}'.`);
+  }
+  return NodePath.join(baseDir, "runtime", "db-backup", updateId);
+};
+
+function resolvePathForContainment(baseDir: string, candidate: string) {
+  const useWin32 =
+    IS_WINDOWS || /^[A-Za-z]:[\\/]/.test(baseDir) || /^[A-Za-z]:[\\/]/.test(candidate);
+  const pathMod = useWin32 ? NodePath.win32 : NodePath.posix;
+  const normalizeCase = (value: string) => (useWin32 ? value.toLowerCase() : value);
+  if (!pathMod.isAbsolute(baseDir) || !pathMod.isAbsolute(candidate)) return undefined;
+  const resolvedBase = normalizeCase(pathMod.resolve(baseDir));
+  const resolvedCandidate = normalizeCase(pathMod.resolve(candidate));
+  const rel = pathMod.relative(resolvedBase, resolvedCandidate);
+  if (rel === "" || rel.startsWith("..") || pathMod.isAbsolute(rel)) return undefined;
+  const segments = rel.split(/[\\/]+/).filter(Boolean);
+  if (segments.length === 0 || segments.includes("..")) return undefined;
+  return segments;
+}
+
+function isDatabasePathInsideBaseDir(baseDir: string, dbPath: string): boolean {
+  if (dbPath.includes("\0") || baseDir.includes("\0")) return false;
+  const segments = resolvePathForContainment(baseDir, dbPath);
+  return segments !== undefined && segments.length >= 1 && segments[0] !== "runtime";
+}
 
 const databaseBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
   NodePath.join(backupDir, suffix === "" ? "database" : `database${suffix}`);
@@ -337,9 +517,57 @@ export async function databaseBackupBlocker(
 
 // A child-process copy: closing any descriptor this process opens on the database drops the snapshot's POSIX locks.
 async function copyWithoutOpening(source: string, destination: string): Promise<void> {
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
-  if (process.platform === "win32") return NodeFSP.copyFile(source, destination);
+  if (IS_WINDOWS) return NodeFSP.copyFile(source, destination);
   if (!(await runCp([source, destination]))) throw new Error(`cp ${source} failed.`);
+}
+
+const STATE_DIR_OWNED_DURING_BACKUP_CODE = "ERR_T3_STATE_DIR_OWNED_DURING_BACKUP";
+
+const createStateDirOwnedDuringBackupError = (): NodeJS.ErrnoException => {
+  const error: NodeJS.ErrnoException = new Error(
+    "Another T3 Code server owns this T3 home while backing up the database.",
+  );
+  error.code = STATE_DIR_OWNED_DURING_BACKUP_CODE;
+  return error;
+};
+
+const isStateDirOwnedDuringBackupError = (cause: unknown): boolean =>
+  (cause as NodeJS.ErrnoException | undefined)?.code === STATE_DIR_OWNED_DURING_BACKUP_CODE;
+
+async function writeLauncherServerOwnerLease(
+  dbPath: string,
+  pendingUpdateId: string,
+): Promise<void> {
+  const stateDir = NodePath.dirname(dbPath);
+  await NodeFSP.mkdir(stateDir, { recursive: true, mode: 0o700 });
+  await replaceFileDurably(
+    NodePath.join(stateDir, SERVER_OWNER_LEASE_FILE),
+    `${JSON.stringify({ ownerId: "service-launcher", pendingUpdateId })}\n`,
+  );
+}
+
+async function hasConflictingServerOwnerLease(
+  dbPath: string,
+  pendingUpdateId: string,
+): Promise<boolean> {
+  let raw: string;
+  try {
+    raw = await NodeFSP.readFile(
+      NodePath.join(NodePath.dirname(dbPath), SERVER_OWNER_LEASE_FILE),
+      "utf8",
+    );
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(raw) as { readonly pendingUpdateId?: unknown } | null;
+    return (
+      typeof parsed !== "object" || parsed === null || parsed.pendingUpdateId !== pendingUpdateId
+    );
+  } catch {
+    return true;
+  }
 }
 
 // Copies the main file while the server runs; an open read transaction stops SQLite resetting the WAL,
@@ -350,26 +578,28 @@ async function startOnlineDatabaseBackup(
   baseDir: string,
   pending: PendingServiceUpdate,
   probe: Partial<BackupSpaceProbe> = {},
+  log: (message: string) => void = (message) => process.stderr.write(message),
 ): Promise<(() => Promise<void>) | undefined> {
+  if (!(await isDatabaseRestoreTargetInsideBaseDir(baseDir, pending.dbPath))) {
+    return undefined;
+  }
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return undefined;
   const { canClone } = { ...filesystemBackupSpaceProbe, ...probe };
   if (await canClone(pending.dbPath, NodePath.dirname(backupDir)).catch(() => true))
     return undefined;
-  const NodeSqlite = await import("node:sqlite").catch(() => undefined);
-  if (NodeSqlite === undefined) return undefined;
 
   const stagingDir = `${backupDir}.staging`;
   const discardStaging = () =>
     NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
   const fallBack = async (cause: unknown) => {
     await discardStaging();
-    process.stderr.write(
+    log(
       `[service-launcher] Copying the database while the server runs failed; backing it up offline: ${cause instanceof Error ? cause.message : String(cause)}\n`,
     );
     return undefined;
   };
-  let snapshot: InstanceType<typeof NodeSqlite.DatabaseSync> | undefined;
+  let snapshot: NodeSqlite.DatabaseSync | undefined;
   // SQLite keeps -wal beside the resolved file, not beside a symlink to it.
   let dbPath = pending.dbPath;
   const release = () => {
@@ -381,7 +611,11 @@ async function startOnlineDatabaseBackup(
   try {
     await discardStaging();
     await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+    const realBaseDir = await NodeFSP.realpath(baseDir).catch(() => baseDir);
     dbPath = await NodeFSP.realpath(pending.dbPath);
+    if (resolvePathForContainment(realBaseDir, dbPath) === undefined) {
+      throw new Error("Resolved database path escapes the T3 home.");
+    }
     snapshot = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
     const mode = String(snapshot.prepare("PRAGMA journal_mode").get()?.journal_mode);
     if (mode.toLowerCase() !== "wal") throw new Error(`journal_mode is ${mode}, not wal.`);
@@ -395,6 +629,12 @@ async function startOnlineDatabaseBackup(
     return fallBack(cause);
   }
   return async () => {
+    const ownerLock = tryAcquireServerOwnerLock(pending.dbPath);
+    if (ownerLock === undefined) {
+      release();
+      await discardStaging();
+      throw createStateDirOwnedDuringBackupError();
+    }
     try {
       const wal = `${dbPath}-wal`;
       if (!(await pathExists(wal)))
@@ -405,18 +645,28 @@ async function startOnlineDatabaseBackup(
       release();
       await NodeFSP.rename(stagingDir, backupDir);
       await syncDirectory(NodePath.dirname(backupDir));
+      await writeLauncherServerOwnerLease(pending.dbPath, pending.id);
     } catch (cause) {
       release();
       await fallBack(cause);
+    } finally {
+      ownerLock.close();
     }
   };
 }
 
 // Preserve completed backups; restarted trials may already have changed the live database.
 async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
+  if (!(await isDatabaseRestoreTargetInsideBaseDir(baseDir, pending.dbPath))) {
+    throw new Error("Refusing to back up a database path outside the T3 home.");
+  }
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return;
 
+  const ownerLock = tryAcquireServerOwnerLock(pending.dbPath);
+  if (ownerLock === undefined) {
+    throw createStateDirOwnedDuringBackupError();
+  }
   const stagingDir = `${backupDir}.staging`;
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
   await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
@@ -430,9 +680,12 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
     }
     await NodeFSP.rename(stagingDir, backupDir);
     await syncDirectory(NodePath.dirname(backupDir));
+    await writeLauncherServerOwnerLease(pending.dbPath, pending.id);
   } catch (cause) {
     await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
     throw cause;
+  } finally {
+    ownerLock.close();
   }
 }
 
@@ -479,10 +732,33 @@ async function restoreTarget(path: string): Promise<string> {
   throw new Error(`Too many symbolic links resolving ${path}.`);
 }
 
+async function isDatabaseRestoreTargetInsideBaseDir(
+  baseDir: string,
+  dbPath: string,
+): Promise<boolean> {
+  if (!isDatabasePathInsideBaseDir(baseDir, dbPath)) return false;
+  try {
+    const realBaseDir = await NodeFSP.realpath(baseDir).catch(() => baseDir);
+    const mainTarget = await restoreTarget(dbPath);
+    if (resolvePathForContainment(realBaseDir, mainTarget) === undefined) return false;
+    for (const suffix of DB_FILE_SUFFIXES) {
+      const livePath = suffix === "" ? dbPath : `${mainTarget}${suffix}`;
+      const target = await restoreTarget(livePath);
+      if (resolvePathForContainment(realBaseDir, target) === undefined) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function restoreDatabaseBackup(
   baseDir: string,
   pending: PendingServiceUpdate,
 ): Promise<void> {
+  if (!(await isDatabaseRestoreTargetInsideBaseDir(baseDir, pending.dbPath))) {
+    throw new Error("Refusing to restore a database path outside the T3 home.");
+  }
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (!(await pathExists(backupDir))) return;
 
@@ -600,8 +876,15 @@ async function terminateChild(
   overIpc: boolean,
 ): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
+  let resend: NodeJS.Timeout | undefined;
   if (overIpc) {
     await sendMessage(child, { type: "stop" }).catch(() => child.kill(signal));
+    // A child stopped while importing its entrypoint may not have attached its IPC listener yet.
+    resend = setInterval(() => {
+      if (child.exitCode === null && child.signalCode === null && child.connected) {
+        void sendMessage(child, { type: "stop" }).catch(() => undefined);
+      }
+    }, 200);
   } else {
     child.kill(signal);
   }
@@ -609,77 +892,1473 @@ async function terminateChild(
   try {
     await waitForExit(child);
   } finally {
+    if (resend !== undefined) clearInterval(resend);
     clearTimeout(force);
   }
 }
 
-/** Task Scheduler names are machine-wide, so each Windows account runs its own task. */
-export const serviceTaskName = (domain: string, userName: string) => `t3code-${domain}-${userName}`;
+const sanitizeTaskNamePart = (value: string) => value.trim().replaceAll(/[\\/:*?"<>|]+/g, "_");
 
-/** Keyed by T3 home, so only the launcher serving that home can answer. */
-export const serviceControlPipePath = (baseDir: string) =>
-  `\\\\.\\pipe\\t3code-service-${NodeCrypto.createHash("sha256")
-    .update(NodePath.resolve(baseDir).toLowerCase())
+/** Task Scheduler names are machine-wide, so each Windows account runs its own collision-free task. */
+export const serviceTaskName = (domain: string, userName: string) => {
+  const trimmedDomain = domain.trim();
+  const trimmedUser = userName.trim();
+  const safeDomain = sanitizeTaskNamePart(trimmedDomain);
+  const safeUser = sanitizeTaskNamePart(trimmedUser);
+  const label = (safeDomain === "" ? safeUser : `${safeDomain}-${safeUser}`).slice(0, 64);
+  const suffix = NodeCrypto.createHash("sha256")
+    .update(`${trimmedDomain.toLowerCase()}\0${trimmedUser.toLowerCase()}`)
     .digest("hex")
-    .slice(0, 16)}`;
+    .slice(0, 8);
+  return `t3code-${label}-${suffix}`;
+};
 
-const isMissingControl = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
+const BOOT_SERVICE_TASK_NAME_FILE = "t3code-task-name";
 
-/** Asks the launcher to stop and resolves once it has exited; false when none was running. */
-export function requestServiceLauncherStop(controlPath: string): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    let connected = false;
-    const socket = NodeNet.connect(controlPath, () => {
-      connected = true;
-      // Not end(): a half-close makes the launcher close the socket before it has stopped.
-      socket.write("stop\n");
-    });
-    socket.on("data", () => undefined);
-    socket.on("error", (error) => {
-      if (!connected) {
-        if (isMissingControl(error)) resolve(false);
-        else reject(error);
+export const isValidServiceTaskName = (value: string): boolean =>
+  /^t3code-[^\r\n/\\:*?"<>|]{1,80}$/.test(value);
+
+export const serviceTaskNamePath = (localAppData: string) =>
+  NodePath.join(localAppData, "t3code", BOOT_SERVICE_TASK_NAME_FILE);
+
+function resolvePersistedServiceTaskName(localAppData: string, fallbackTaskName: string): string {
+  try {
+    const persisted = NodeFS.readFileSync(serviceTaskNamePath(localAppData), "utf8").trim();
+    return isValidServiceTaskName(persisted) ? persisted : fallbackTaskName;
+  } catch {
+    return fallbackTaskName;
+  }
+}
+
+export const serviceAccountControlRoot = (localAppData: string) =>
+  NodePath.join(localAppData, "t3code", "control");
+
+/** Stored under user-private `%LOCALAPPDATA%` rather than `baseDir`, which may be shared. */
+export const serviceControlDir = (
+  localAppData: string,
+  baseDir: string,
+  options?: { readonly caseInsensitive?: boolean | undefined },
+) => {
+  const resolved = NodePath.resolve(baseDir);
+  const normalized = (options?.caseInsensitive ?? IS_WINDOWS) ? resolved.toLowerCase() : resolved;
+  const id = NodeCrypto.createHash("sha256").update(normalized).digest("hex").slice(0, 24);
+  return NodePath.join(serviceAccountControlRoot(localAppData), id);
+};
+
+export interface ControlAclHooks {
+  readonly restrictPathAcl: (targetPath: string, isDirectory: boolean) => Promise<void>;
+  readonly verifyPathAcl: (targetPath: string, isDirectory: boolean) => Promise<boolean>;
+  readonly verifyPathsAcl?:
+    | ((
+        targets: ReadonlyArray<{ readonly path: string; readonly isDirectory: boolean }>,
+      ) => Promise<boolean>)
+    | undefined;
+}
+
+export function windowsSystem32Binary(
+  name: string,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+): string {
+  const systemRoot = (environment.SystemRoot ?? "").trim() || "C:\\Windows";
+  return NodePath.win32.join(systemRoot, "System32", name);
+}
+
+export function windowsPowerShellBinary(
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+): string {
+  const systemRoot = (environment.SystemRoot ?? "").trim() || "C:\\Windows";
+  return NodePath.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
+/**
+ * Verifies a full Windows security descriptor SDDL (`O:...D:...`) is owned by `SYSTEM`,
+ * `Administrators`, or the current user SID, is protected from inheritance (`D:P`), and grants
+ * access only to `SYSTEM`, `Administrators`, and the current user SID (with `OI`+`CI` on directories).
+ */
+export function isPrivateWindowsControlSddl(
+  sddlText: string,
+  userSid: string,
+  options?: {
+    readonly isDirectory?: boolean | undefined;
+    readonly allowLocalAdminAlias?: boolean | undefined;
+  },
+): boolean {
+  const expectedUser = userSid.trim().toUpperCase();
+  if (!/^S-1-[0-9-]+$/.test(expectedUser)) return false;
+  const allowLocalAdminAlias = options?.allowLocalAdminAlias === true;
+  const allowedTrustees = new Set([
+    "SY",
+    "S-1-5-18",
+    "BA",
+    "S-1-5-32-544",
+    expectedUser,
+    ...(allowLocalAdminAlias ? ["LA"] : []),
+  ]);
+  const isExpectedUserTrustee = (trustee: string) =>
+    trustee === expectedUser || (allowLocalAdminAlias && trustee === "LA");
+  const trimmed = sddlText.replaceAll("\0", "").trim();
+  if (trimmed === "") return false;
+  const sections = Array.from(trimmed.matchAll(/([OGDS]):(.*?)(?=[OGDS]:|$)/gi));
+  if (sections.length === 0 || sections.map((section) => section[0]).join("") !== trimmed) {
+    return false;
+  }
+  let ownerOk = false;
+  let daclOk = false;
+  for (const section of sections) {
+    const tag = section[1]!.toUpperCase();
+    const body = section[2]!.trim();
+    if (tag === "O") {
+      if (ownerOk || !allowedTrustees.has(body.toUpperCase())) return false;
+      ownerOk = true;
+    } else if (tag === "D") {
+      if (daclOk) return false;
+      const match = /^([A-Z]*)((?:\([^()]+\))+)$/i.exec(body);
+      if (match === null) return false;
+      const flags = (match[1] ?? "").toUpperCase();
+      const aceList = match[2] ?? "";
+      if (!flags.includes("P")) return false;
+      const aces = Array.from(aceList.matchAll(/\(([^()]+)\)/g), (aceMatch) => aceMatch[1]!);
+      if (aces.length === 0) return false;
+      let hasUserFullControl = false;
+      for (const ace of aces) {
+        const parts = ace.split(";");
+        if (parts.length !== 6) return false;
+        const aceType = (parts[0] ?? "").trim().toUpperCase();
+        const aceFlags = (parts[1] ?? "").trim().toUpperCase();
+        const rights = (parts[2] ?? "").trim().toUpperCase();
+        const trustee = (parts[5] ?? "").trim().toUpperCase();
+        if (aceType !== "A" || !allowedTrustees.has(trustee)) return false;
+        if (isExpectedUserTrustee(trustee)) {
+          if (
+            options?.isDirectory === true &&
+            (!aceFlags.includes("OI") || !aceFlags.includes("CI"))
+          ) {
+            return false;
+          }
+          if (rights === "FA" || rights === "GA" || rights === "0X1F01FF") {
+            hasUserFullControl = true;
+          }
+        }
       }
-    });
-    socket.once("close", () => {
-      if (connected) resolve(true);
-    });
-  });
+      if (!hasUserFullControl) return false;
+      daclOk = true;
+    }
+  }
+  return ownerOk && daclOk;
 }
 
-export function serviceLauncherIsRunning(controlPath: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = NodeNet.connect(controlPath, () => {
-      socket.destroy();
-      resolve(true);
+const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
+let cachedWindowsIdentityPromise:
+  | Promise<{ readonly sid: string; readonly allowLocalAdminAlias: boolean }>
+  | undefined;
+
+function readCurrentWindowsIdentity(): Promise<{
+  readonly sid: string;
+  readonly allowLocalAdminAlias: boolean;
+}> {
+  cachedWindowsIdentityPromise ??= execFileAsync(
+    windowsPowerShellBinary(),
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $la = try { ([System.Security.Principal.SecurityIdentifier]::new('LA')).Value } catch { '' }; [Console]::Out.Write(\"$sid`n$la\")",
+    ],
+    {
+      windowsHide: true,
+      timeout: 10_000,
+    },
+  )
+    .then(({ stdout }) => {
+      const [rawSid = "", rawLocalAdminSid = ""] = stdout.split(/\r?\n/);
+      const sid = rawSid.trim();
+      const localAdminSid = rawLocalAdminSid.trim();
+      if (!/^S-1-[0-9-]+$/i.test(sid)) {
+        throw new Error("Could not resolve current Windows user SID.");
+      }
+      return {
+        sid,
+        allowLocalAdminAlias:
+          localAdminSid !== "" && sid.toUpperCase() === localAdminSid.toUpperCase(),
+      };
+    })
+    .catch((cause) => {
+      cachedWindowsIdentityPromise = undefined;
+      throw cause;
     });
-    // Any error but a missing pipe, such as a busy one, means a launcher holds it.
-    socket.once("error", (error) => resolve(!isMissingControl(error)));
-  });
+  return cachedWindowsIdentityPromise;
 }
+
+const defaultWindowsControlAclHooks: ControlAclHooks = {
+  async restrictPathAcl(targetPath, isDirectory) {
+    const { sid, allowLocalAdminAlias } = await readCurrentWindowsIdentity();
+    const aceFlags = isDirectory ? "OICI" : "";
+    const dacl = `D:P(A;${aceFlags};FA;;;SY)(A;${aceFlags};FA;;;BA)(A;${aceFlags};FA;;;${sid})`;
+    const { stdout } = await execFileAsync(
+      windowsPowerShellBinary(),
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $acl = Get-Acl -LiteralPath $env:T3_ACL_TARGET; $acl.SetSecurityDescriptorSddlForm($env:T3_ACL_SDDL, [System.Security.AccessControl.AccessControlSections]::Access); Set-Acl -LiteralPath $env:T3_ACL_TARGET -AclObject $acl; [Console]::Out.Write((Get-Acl -LiteralPath $env:T3_ACL_TARGET).Sddl)",
+      ],
+      {
+        env: { ...process.env, T3_ACL_TARGET: targetPath, T3_ACL_SDDL: dacl },
+        windowsHide: true,
+        timeout: 15_000,
+      },
+    );
+    if (!isPrivateWindowsControlSddl(stdout, sid, { isDirectory, allowLocalAdminAlias })) {
+      throw createControlRejectedError("unauthorized");
+    }
+  },
+  async verifyPathAcl(targetPath, isDirectory) {
+    const { sid, allowLocalAdminAlias } = await readCurrentWindowsIdentity();
+    try {
+      const { stdout } = await execFileAsync(
+        windowsPowerShellBinary(),
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::Out.Write((Get-Acl -LiteralPath $env:T3_ACL_TARGET).Sddl)",
+        ],
+        {
+          env: { ...process.env, T3_ACL_TARGET: targetPath },
+          windowsHide: true,
+          timeout: 15_000,
+        },
+      );
+      return isPrivateWindowsControlSddl(stdout, sid, { isDirectory, allowLocalAdminAlias });
+    } catch {
+      return false;
+    }
+  },
+  async verifyPathsAcl(targets) {
+    if (targets.length === 0) return true;
+    if (targets.length === 1) {
+      return defaultWindowsControlAclHooks.verifyPathAcl(targets[0]!.path, targets[0]!.isDirectory);
+    }
+    const { sid, allowLocalAdminAlias } = await readCurrentWindowsIdentity();
+    try {
+      const { stdout } = await execFileAsync(
+        windowsPowerShellBinary(),
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $paths = @(ConvertFrom-Json -InputObject $env:T3_ACL_TARGETS); $sddls = foreach ($p in $paths) { (Get-Acl -LiteralPath ([string]$p)).Sddl }; [Console]::Out.Write(($sddls -join \"`n\"))",
+        ],
+        {
+          env: { ...process.env, T3_ACL_TARGETS: JSON.stringify(targets.map((item) => item.path)) },
+          windowsHide: true,
+          timeout: 15_000,
+        },
+      );
+      const lines = stdout.split(/\r?\n/);
+      if (lines.length !== targets.length) return false;
+      return targets.every((target, index) =>
+        isPrivateWindowsControlSddl(lines[index] ?? "", sid, {
+          isDirectory: target.isDirectory,
+          allowLocalAdminAlias,
+        }),
+      );
+    } catch {
+      return false;
+    }
+  },
+};
+
+const resolveControlAclHooks = (override?: ControlAclHooks): ControlAclHooks | undefined =>
+  override ?? (IS_WINDOWS ? defaultWindowsControlAclHooks : undefined);
+
+const isMissingControl = (error: unknown) => {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ECONNREFUSED";
+};
+
+const isSqliteBusy = (cause: unknown) =>
+  cause instanceof Error &&
+  (("errcode" in cause && cause.errcode === 5) ||
+    ("code" in cause && cause.code === "SQLITE_BUSY"));
+
+const CONTROL_REJECTED_UNAUTHORIZED_CODE = "ERR_T3_CONTROL_UNAUTHORIZED";
+const CONTROL_REJECTED_CODE = "ERR_T3_CONTROL_REJECTED";
+const CONTROL_CLOSED_EARLY_CODE = "ERR_T3_CONTROL_CLOSED_EARLY";
+const CONTROL_LAUNCHER_MISMATCH_CODE = "ERR_T3_CONTROL_LAUNCHER_MISMATCH";
+const CONTROL_ABORTED_CODE = "ABORT_ERR";
+
+function createControlError(message: string, code: string): NodeJS.ErrnoException {
+  const error: NodeJS.ErrnoException = new Error(message);
+  error.code = code;
+  return error;
+}
+
+const createControlRejectedError = (reason: string) =>
+  createControlError(
+    `Service launcher rejected control request (${reason}).`,
+    reason === "unauthorized" ? CONTROL_REJECTED_UNAUTHORIZED_CODE : CONTROL_REJECTED_CODE,
+  );
+
+const createControlClosedEarlyError = () =>
+  createControlError(
+    "Service launcher closed control connection before replying.",
+    CONTROL_CLOSED_EARLY_CODE,
+  );
+
+const createControlLauncherMismatchError = () =>
+  createControlError(
+    "Service launcher control reply did not match the published launcher instance.",
+    CONTROL_LAUNCHER_MISMATCH_CODE,
+  );
+
+const createControlAbortedError = () =>
+  createControlError("Service launcher control operation was aborted.", CONTROL_ABORTED_CODE);
+
+const isTransientControlClose = (error: unknown) => {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === CONTROL_CLOSED_EARLY_CODE || code === "ECONNRESET" || code === "EPIPE";
+};
+
+export const isServiceControlUnauthorizedError = (error: unknown): boolean =>
+  (error as NodeJS.ErrnoException | undefined)?.code === CONTROL_REJECTED_UNAUTHORIZED_CODE;
+
+export const isServiceControlLauncherMismatchError = (error: unknown): boolean =>
+  (error as NodeJS.ErrnoException | undefined)?.code === CONTROL_LAUNCHER_MISMATCH_CODE;
 
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
 const restartPendingPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
+const controlLockPath = (controlDir: string) => NodePath.join(controlDir, "lock.sqlite");
+const controlTokenPath = (controlDir: string) => NodePath.join(controlDir, "control.token");
+const controlEndpointPath = (controlDir: string) => NodePath.join(controlDir, "endpoint.json");
+
+async function waitForControlDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted === true) throw createControlAbortedError();
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(createControlAbortedError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Exclusive SQLite transaction lock (`BEGIN EXCLUSIVE`), matching `server-owner.sqlite`: the OS
+ * releases the file lock automatically if the holder crashes or is terminated, and the file is
+ * never unlinked.
+ */
+function tryAcquireSqliteExclusiveLock(
+  lockPath: string,
+  fileMode = 0o600,
+): { readonly close: () => void } | undefined {
+  NodeFS.mkdirSync(NodePath.dirname(lockPath), { recursive: true, mode: 0o700 });
+  if (!NodeFS.existsSync(lockPath)) {
+    NodeFS.closeSync(NodeFS.openSync(lockPath, "a", fileMode));
+  }
+  const db = new NodeSqlite.DatabaseSync(lockPath);
+  try {
+    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+    return {
+      close: () => {
+        try {
+          db.close();
+        } catch {
+          // Already closed.
+        }
+      },
+    };
+  } catch (cause) {
+    try {
+      db.close();
+    } catch {
+      // Ignore close error after failed BEGIN EXCLUSIVE.
+    }
+    if (isSqliteBusy(cause)) return undefined;
+    throw cause;
+  }
+}
+
+/** Acquires the same `server-owner.sqlite` lock held by foreground and service servers. */
+function tryAcquireServerOwnerLock(dbPath: string): { readonly close: () => void } | undefined {
+  return tryAcquireSqliteExclusiveLock(
+    NodePath.join(NodePath.dirname(dbPath), "server-owner.sqlite"),
+    0o644,
+  );
+}
+
+export function probeControlLockHeld(controlDir: string): boolean {
+  const lockPath = controlLockPath(controlDir);
+  if (!NodeFS.existsSync(lockPath)) return false;
+  const lock = tryAcquireSqliteExclusiveLock(lockPath);
+  if (lock === undefined) return true;
+  lock.close();
+  return false;
+}
+
+async function acquireSqliteExclusiveLock(
+  lockPath: string,
+  options: {
+    readonly timeoutMs: number;
+    readonly retryMs: number;
+    readonly signal?: AbortSignal | undefined;
+    readonly onRetry?: ((attempt: number) => void) | undefined;
+  },
+): Promise<{ readonly close: () => void }> {
+  const deadline = performance.now() + Math.max(0, options.timeoutMs);
+  for (let attempt = 1; ; attempt++) {
+    if (options.signal?.aborted === true) throw createControlAbortedError();
+    const lock = tryAcquireSqliteExclusiveLock(lockPath);
+    if (lock !== undefined) return lock;
+    options.onRetry?.(attempt);
+    const remainingMs = deadline - performance.now();
+    if (remainingMs <= 0) break;
+    await waitForControlDelay(Math.min(options.retryMs, remainingMs), options.signal);
+  }
+  throw new Error("Timed out waiting to acquire the service launcher control lock.");
+}
+
+async function verifyControlPathsAcl(
+  targets: ReadonlyArray<{ readonly path: string; readonly isDirectory: boolean }>,
+  acl?: ControlAclHooks,
+): Promise<boolean> {
+  if (acl === undefined || targets.length === 0) return true;
+  if (acl.verifyPathsAcl !== undefined) {
+    return acl.verifyPathsAcl(targets);
+  }
+  for (const target of targets) {
+    if (!(await acl.verifyPathAcl(target.path, target.isDirectory))) return false;
+  }
+  return true;
+}
+
+async function ensurePrivateControlLockReady(
+  directoryPath: string,
+  lockFileName: string,
+  acl?: ControlAclHooks,
+): Promise<string> {
+  await NodeFSP.mkdir(directoryPath, { recursive: true, mode: 0o700 });
+  if (acl !== undefined && !(await acl.verifyPathAcl(directoryPath, true))) {
+    await acl.restrictPathAcl(directoryPath, true);
+  }
+  const lockPath = NodePath.join(directoryPath, lockFileName);
+  if (!NodeFS.existsSync(lockPath)) {
+    NodeFS.closeSync(NodeFS.openSync(lockPath, "a", 0o600));
+  }
+  if (acl !== undefined && !(await acl.verifyPathAcl(lockPath, false))) {
+    await acl.restrictPathAcl(lockPath, false);
+  }
+  return lockPath;
+}
+
+async function verifyControlLockAcl(controlDir: string, acl?: ControlAclHooks): Promise<boolean> {
+  if (acl === undefined || !NodeFS.existsSync(controlDir)) return true;
+  const lockPath = controlLockPath(controlDir);
+  return verifyControlPathsAcl(
+    [
+      { path: controlDir, isDirectory: true },
+      ...(NodeFS.existsSync(lockPath) ? [{ path: lockPath, isDirectory: false }] : []),
+    ],
+    acl,
+  );
+}
+
+export async function acquireServiceAccountLock(
+  accountControlRoot: string,
+  options: {
+    readonly timeoutMs?: number | undefined;
+    readonly signal?: AbortSignal | undefined;
+    readonly acl?: ControlAclHooks | undefined;
+  } = {},
+): Promise<{ readonly close: () => void }> {
+  const acl = resolveControlAclHooks(options.acl);
+  const lockPath = await ensurePrivateControlLockReady(
+    accountControlRoot,
+    "account-task.sqlite",
+    acl,
+  );
+  return acquireSqliteExclusiveLock(lockPath, {
+    timeoutMs: options.timeoutMs ?? CONTROL_MUTATION_TIMEOUT_MS,
+    retryMs: 50,
+    signal: options.signal,
+  });
+}
+
+async function readVerifiedControlToken(
+  controlDir: string,
+  acl: ControlAclHooks | undefined,
+  alreadyVerifiedAcl = false,
+): Promise<string | undefined> {
+  const targetPath = controlTokenPath(controlDir);
+  if (!NodeFS.existsSync(targetPath)) return undefined;
+  if (!alreadyVerifiedAcl && acl !== undefined && !(await acl.verifyPathAcl(targetPath, false))) {
+    return undefined;
+  }
+  try {
+    const token = (await NodeFSP.readFile(targetPath, "utf8")).trim();
+    if (!/^[0-9a-f]{64}$/.test(token)) return undefined;
+    return token;
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EACCES" || code === "EPERM") return undefined;
+    throw cause;
+  }
+}
+
+async function ensureControlToken(controlDir: string, acl?: ControlAclHooks): Promise<string> {
+  await NodeFSP.mkdir(controlDir, { recursive: true, mode: 0o700 });
+  if (acl !== undefined && !(await acl.verifyPathAcl(controlDir, true))) {
+    await acl.restrictPathAcl(controlDir, true);
+  }
+  const existing = await readVerifiedControlToken(controlDir, acl);
+  if (existing !== undefined) return existing;
+  const targetPath = controlTokenPath(controlDir);
+  const tempPath = NodePath.join(
+    controlDir,
+    `.control-token.${process.pid}.${NodeCrypto.randomUUID()}`,
+  );
+  const token = NodeCrypto.randomBytes(32).toString("hex");
+  let handle: NodeFSP.FileHandle | undefined;
+  try {
+    // Created inside the verified `OICI` private directory before writing secret bytes.
+    handle = await NodeFSP.open(tempPath, "wx", 0o600);
+    await handle.writeFile(`${token}\n`, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    if (acl !== undefined) {
+      await acl.restrictPathAcl(tempPath, false);
+    }
+    try {
+      await NodeFSP.rename(tempPath, targetPath);
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code !== "EACCES" && code !== "EPERM") throw cause;
+      await NodeFSP.rm(targetPath, { force: true });
+      await NodeFSP.rename(tempPath, targetPath);
+    }
+    await syncDirectory(controlDir);
+    if (acl !== undefined && !(await acl.verifyPathAcl(targetPath, false))) {
+      throw new Error("Could not verify owner-only Windows ACL on service control token.");
+    }
+    return token;
+  } finally {
+    await handle?.close().catch(() => undefined);
+    await NodeFSP.rm(tempPath, { force: true }).catch(() => undefined);
+  }
+}
+
+interface ControlEndpoint {
+  readonly port: number;
+  readonly launcherId: string;
+}
+
+async function readControlEndpoint(controlDir: string): Promise<ControlEndpoint | undefined> {
+  try {
+    const raw = await NodeFSP.readFile(controlEndpointPath(controlDir), "utf8");
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      typeof (parsed as { readonly port?: unknown }).port !== "number" ||
+      !Number.isInteger((parsed as { readonly port: number }).port) ||
+      (parsed as { readonly port: number }).port < 1 ||
+      (parsed as { readonly port: number }).port > 65_535 ||
+      typeof (parsed as { readonly launcherId?: unknown }).launcherId !== "string"
+    ) {
+      throw createControlError("Invalid service launcher control endpoint.", CONTROL_REJECTED_CODE);
+    }
+    return parsed as ControlEndpoint;
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw cause;
+  }
+}
+
+async function writeControlEndpoint(
+  controlDir: string,
+  endpoint: ControlEndpoint,
+  acl?: ControlAclHooks,
+): Promise<void> {
+  const targetPath = controlEndpointPath(controlDir);
+  const tempPath = NodePath.join(
+    controlDir,
+    `.endpoint.${process.pid}.${NodeCrypto.randomUUID()}.tmp`,
+  );
+  try {
+    await NodeFSP.writeFile(tempPath, `${JSON.stringify(endpoint)}\n`, { mode: 0o600 });
+    if (acl !== undefined) {
+      await acl.restrictPathAcl(tempPath, false);
+    }
+    await NodeFSP.rename(tempPath, targetPath);
+  } finally {
+    await NodeFSP.rm(tempPath, { force: true }).catch(() => undefined);
+  }
+}
+
+const computeControlMac = (
+  token: string,
+  domain: "req" | "res",
+  serverNonce: string,
+  clientNonce: string,
+  body: string,
+) =>
+  NodeCrypto.createHmac("sha256", token)
+    .update(`${domain}\0${serverNonce}\0${clientNonce}\0${body}`)
+    .digest("hex");
+
+function hexDigestsMatch(expectedHex: string, provided: unknown): boolean {
+  if (typeof provided !== "string" || provided.length !== expectedHex.length) return false;
+  const expectedBytes = Buffer.from(expectedHex, "utf8");
+  const providedBytes = Buffer.from(provided, "utf8");
+  return (
+    expectedBytes.length === providedBytes.length &&
+    NodeCrypto.timingSafeEqual(expectedBytes, providedBytes)
+  );
+}
+
+export type ControlStageInstallResult =
+  | { readonly status: "staged"; readonly launcherId?: string }
+  | { readonly status: "update-pending"; readonly installedVersion?: string }
+  | { readonly status: "downgrade-refused"; readonly installedVersion: string };
+
+type LauncherStageInstallResult = ControlStageInstallResult | { readonly status: "not-running" };
+
+type ControlReply =
+  | {
+      readonly ok: true;
+      readonly launcherId: string;
+      readonly result?: LauncherStageInstallResult;
+    }
+  | {
+      readonly ok: false;
+      readonly error: string;
+    };
+
+/**
+ * Connects over loopback TCP (`127.0.0.1`) rather than a Windows named pipe so connecting and
+ * writing never expose a named-pipe security token to `ImpersonateNamedPipeClient`, and binds
+ * both request and response MACs to fresh per-connection server and client nonces.
+ */
+async function sendControlRequestToPort(
+  port: number,
+  token: string | undefined,
+  payload: Record<string, unknown>,
+  options: {
+    readonly expectedLauncherId?: string | undefined;
+    readonly waitForClose?: boolean | undefined;
+    readonly timeoutMs: number;
+    readonly signal?: AbortSignal | undefined;
+  },
+): Promise<ControlReply | undefined> {
+  if (options.signal?.aborted === true) throw createControlAbortedError();
+  if (token === undefined) throw createControlRejectedError("unauthorized");
+  return new Promise((resolve, reject) => {
+    let connected = false;
+    let buffer = "";
+    let serverNonce: string | undefined;
+    let clientNonce: string | undefined;
+    let reply: ControlReply | undefined;
+    let failure: Error | undefined;
+    const failWith = (error: Error) => {
+      if (failure === undefined) failure = error;
+      socket.destroy();
+    };
+    const socket = NodeNet.createConnection({ host: "127.0.0.1", port }, () => {
+      connected = true;
+    });
+    const onAbort = () => {
+      failWith(createControlAbortedError());
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    const deadline = setTimeout(() => {
+      failWith(new Error("Timed out waiting for the service launcher control channel."));
+    }, options.timeoutMs);
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      if (reply !== undefined || failure !== undefined) return;
+      if (buffer.length + chunk.length > MAX_CONTROL_MESSAGE_BYTES) {
+        failWith(new Error("Service launcher control message exceeded maximum size."));
+        return;
+      }
+      buffer += chunk;
+      for (;;) {
+        const newline = buffer.indexOf("\n");
+        if (newline === -1) return;
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (serverNonce === undefined) {
+          try {
+            const challenge = JSON.parse(line) as { readonly nonce?: unknown };
+            if (typeof challenge.nonce !== "string" || !/^[0-9a-f]{32}$/.test(challenge.nonce)) {
+              failWith(new Error("Service launcher sent an invalid control challenge."));
+              return;
+            }
+            serverNonce = challenge.nonce;
+            clientNonce = NodeCrypto.randomBytes(16).toString("hex");
+            const body = JSON.stringify(payload);
+            const mac = computeControlMac(token, "req", serverNonce, clientNonce, body);
+            // Not end(): when waiting for exit, a half-close closes the socket before shutdown completes.
+            socket.write(
+              `${JSON.stringify({ snonce: serverNonce, cnonce: clientNonce, payload: body, mac })}\n`,
+            );
+          } catch (cause) {
+            failWith(cause instanceof Error ? cause : new Error(String(cause)));
+            return;
+          }
+          continue;
+        }
+        try {
+          const envelope = JSON.parse(line) as {
+            readonly body?: unknown;
+            readonly mac?: unknown;
+          };
+          if (
+            clientNonce === undefined ||
+            typeof envelope.body !== "string" ||
+            !hexDigestsMatch(
+              computeControlMac(token, "res", serverNonce, clientNonce, envelope.body),
+              envelope.mac,
+            )
+          ) {
+            failWith(createControlRejectedError("unauthorized"));
+            return;
+          }
+          const parsed = JSON.parse(envelope.body) as ControlReply;
+          if (parsed.ok === false) {
+            failWith(createControlRejectedError(parsed.error));
+            return;
+          }
+          if (
+            options.expectedLauncherId !== undefined &&
+            parsed.launcherId !== options.expectedLauncherId
+          ) {
+            failWith(createControlLauncherMismatchError());
+            return;
+          }
+          reply = parsed;
+          if (options.waitForClose !== true) {
+            clearTimeout(deadline);
+            socket.destroy();
+            resolve(parsed);
+          }
+          return;
+        } catch (cause) {
+          failWith(cause instanceof Error ? cause : new Error(String(cause)));
+          return;
+        }
+      }
+    });
+    socket.on("error", (error) => {
+      if (!connected) {
+        clearTimeout(deadline);
+        options.signal?.removeEventListener("abort", onAbort);
+        if (failure !== undefined) reject(failure);
+        else if (isMissingControl(error)) resolve(undefined);
+        else reject(error);
+      } else if (failure === undefined && reply === undefined) {
+        failure = error;
+      }
+    });
+    socket.once("close", () => {
+      clearTimeout(deadline);
+      options.signal?.removeEventListener("abort", onAbort);
+      if (failure !== undefined) {
+        reject(failure);
+        return;
+      }
+      if (!connected) return;
+      if (reply !== undefined) {
+        resolve(reply);
+      } else {
+        reject(createControlClosedEarlyError());
+      }
+    });
+  });
+}
+
+export interface ControlRequestOptions {
+  readonly waitForClose?: boolean | undefined;
+  readonly timeoutMs?: number | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly acl?: ControlAclHooks | undefined;
+}
+
+async function readVerifiedEndpointAndToken(
+  controlDir: string,
+  acl?: ControlAclHooks,
+): Promise<{ readonly endpoint: ControlEndpoint; readonly token: string | undefined } | undefined> {
+  const endpointPath = controlEndpointPath(controlDir);
+  if (!NodeFS.existsSync(endpointPath)) return undefined;
+  const tokenPath = controlTokenPath(controlDir);
+  if (!NodeFS.existsSync(tokenPath)) {
+    throw createControlRejectedError("unauthorized");
+  }
+  if (
+    !(await verifyControlPathsAcl(
+      [
+        { path: endpointPath, isDirectory: false },
+        { path: tokenPath, isDirectory: false },
+      ],
+      acl,
+    ))
+  ) {
+    throw createControlRejectedError("unauthorized");
+  }
+  const endpoint = await readControlEndpoint(controlDir);
+  if (endpoint === undefined) return undefined;
+  const token = await readVerifiedControlToken(controlDir, acl, true);
+  return { endpoint, token };
+}
+
+async function sendControlRequest(
+  controlDir: string,
+  payload: Record<string, unknown>,
+  options: ControlRequestOptions & { readonly skipLockAclVerify?: boolean | undefined } = {},
+): Promise<ControlReply | undefined> {
+  if (options.signal?.aborted === true) throw createControlAbortedError();
+  const acl = resolveControlAclHooks(options.acl);
+  if (options.skipLockAclVerify !== true && !(await verifyControlLockAcl(controlDir, acl))) {
+    throw createControlRejectedError("unauthorized");
+  }
+  if (!probeControlLockHeld(controlDir)) return undefined;
+  const verified = await readVerifiedEndpointAndToken(controlDir, acl);
+  if (verified === undefined) return undefined;
+  const timeoutMs =
+    options.timeoutMs ??
+    (options.waitForClose === true
+      ? CONTROL_STOP_REQUEST_TIMEOUT_MS
+      : payload.type === "stage-install"
+        ? CONTROL_MUTATION_TIMEOUT_MS
+        : CONTROL_QUERY_TIMEOUT_MS);
+  try {
+    return await sendControlRequestToPort(verified.endpoint.port, verified.token, payload, {
+      expectedLauncherId: verified.endpoint.launcherId,
+      waitForClose: options.waitForClose,
+      timeoutMs,
+      signal: options.signal,
+    });
+  } catch (error) {
+    // Home-scoped requests (`payload.launcherId === undefined`) intentionally retry once onto a
+    // replacement launcher that acquired this home's lock during handoff; instance-targeted
+    // `signalServiceLauncherStop` carries `launcherId`, which a replacement safely ignores.
+    if (
+      (!isTransientControlClose(error) && !isServiceControlLauncherMismatchError(error)) ||
+      !probeControlLockHeld(controlDir)
+    ) {
+      throw error;
+    }
+    if (!(await verifyControlLockAcl(controlDir, acl))) {
+      throw createControlRejectedError("unauthorized");
+    }
+    const retryVerified = await readVerifiedEndpointAndToken(controlDir, acl);
+    if (retryVerified === undefined) return undefined;
+    return sendControlRequestToPort(retryVerified.endpoint.port, retryVerified.token, payload, {
+      expectedLauncherId: retryVerified.endpoint.launcherId,
+      waitForClose: options.waitForClose,
+      timeoutMs,
+      signal: options.signal,
+    });
+  }
+}
+
+/** Waits until no process holds the per-home control lock. */
+export async function waitForServiceLauncherRelease(
+  controlDir: string,
+  options: {
+    readonly timeoutMs?: number | undefined;
+    readonly signal?: AbortSignal | undefined;
+    readonly acl?: ControlAclHooks | undefined;
+  } = {},
+): Promise<void> {
+  const acl = resolveControlAclHooks(options.acl);
+  if (!(await verifyControlLockAcl(controlDir, acl))) {
+    throw createControlRejectedError("unauthorized");
+  }
+  const timeoutMs = options.timeoutMs ?? CONTROL_MUTATION_TIMEOUT_MS;
+  const deadline = performance.now() + Math.max(0, timeoutMs);
+  for (;;) {
+    if (options.signal?.aborted === true) throw createControlAbortedError();
+    if (!probeControlLockHeld(controlDir)) return;
+    const remainingMs = deadline - performance.now();
+    if (remainingMs <= 0) break;
+    await waitForControlDelay(Math.min(50, remainingMs), options.signal);
+  }
+  throw new Error("Timed out waiting for the service launcher to release its control lock.");
+}
+
+/** Asks the launcher to stop and resolves once its control lock is released; false when none was running. */
+export async function requestServiceLauncherStop(
+  controlDir: string,
+  options: Omit<ControlRequestOptions, "waitForClose"> & {
+    readonly publishTimeoutMs?: number | undefined;
+  } = {},
+): Promise<boolean> {
+  const acl = resolveControlAclHooks(options.acl);
+  if (!(await verifyControlLockAcl(controlDir, acl))) {
+    throw createControlRejectedError("unauthorized");
+  }
+  if (!probeControlLockHeld(controlDir)) return false;
+  const publishDeadline = performance.now() + Math.max(0, options.publishTimeoutMs ?? 5_000);
+  for (;;) {
+    const reply = await sendControlRequest(
+      controlDir,
+      { type: "stop", wait: true },
+      { ...options, acl, waitForClose: true, skipLockAclVerify: true },
+    );
+    if (reply !== undefined) {
+      await waitForServiceLauncherRelease(controlDir, {
+        timeoutMs: 5_000,
+        signal: options.signal,
+        acl,
+      });
+      return true;
+    }
+    if (!probeControlLockHeld(controlDir)) return true;
+    const remainingMs = publishDeadline - performance.now();
+    if (remainingMs <= 0) break;
+    await waitForControlDelay(Math.min(50, remainingMs), options.signal);
+  }
+  throw new Error("Timed out waiting for the starting service launcher to publish its endpoint.");
+}
+
+/** Enqueues a graceful launcher stop without waiting for process exit; targets a specific instance when given. */
+export async function signalServiceLauncherStop(
+  controlDir: string,
+  launcherId?: string,
+  options: Omit<ControlRequestOptions, "waitForClose"> & {
+    readonly uninstall?: boolean | undefined;
+  } = {},
+): Promise<boolean> {
+  const reply = await sendControlRequest(
+    controlDir,
+    {
+      type: "stop",
+      wait: false,
+      ...(launcherId === undefined ? {} : { launcherId }),
+      ...(options.uninstall === true ? { uninstall: true } : {}),
+    },
+    options,
+  );
+  return reply !== undefined;
+}
+
+/** Reads the active launcher instance identifier, or undefined when none is listening. */
+export async function queryServiceLauncherId(
+  controlDir: string,
+  options: Omit<ControlRequestOptions, "waitForClose"> = {},
+): Promise<string | undefined> {
+  const reply = await sendControlRequest(controlDir, { type: "identify" }, options);
+  return reply?.ok === true ? reply.launcherId : undefined;
+}
+
+const STOPPED_DB_DIGEST_FILE = "stopped-db-digest.json";
+const MAX_FULL_FINGERPRINT_BYTES = 64 * 1024 * 1024;
+const FINGERPRINT_CHUNK_BYTES = 64 * 1024;
+
+interface StoppedDatabaseFileFingerprint {
+  readonly suffix: string;
+  readonly exists: boolean;
+  readonly size?: number | undefined;
+  readonly mtimeNs?: string | undefined;
+  readonly sha256?: string | undefined;
+}
+
+async function fingerprintDatabaseFiles(
+  dbPath: string,
+): Promise<ReadonlyArray<StoppedDatabaseFileFingerprint>> {
+  const mainTarget = await restoreTarget(dbPath).catch(() => dbPath);
+  const entries: StoppedDatabaseFileFingerprint[] = [];
+  const chunk = Buffer.allocUnsafe(FINGERPRINT_CHUNK_BYTES);
+  for (const suffix of DB_FILE_SUFFIXES) {
+    const livePath = suffix === "" ? mainTarget : `${mainTarget}${suffix}`;
+    let handle: NodeFSP.FileHandle | undefined;
+    try {
+      const stat = await NodeFSP.stat(livePath, { bigint: true });
+      handle = await NodeFSP.open(livePath, "r");
+      const size = Number(stat.size);
+      const hash = NodeCrypto.createHash("sha256");
+      if (size <= MAX_FULL_FINGERPRINT_BYTES) {
+        let offset = 0;
+        while (offset < size) {
+          const toRead = Math.min(FINGERPRINT_CHUNK_BYTES, size - offset);
+          const { bytesRead } = await handle.read(chunk, 0, toRead, offset);
+          if (bytesRead === 0) break;
+          hash.update(chunk.subarray(0, bytesRead));
+          offset += bytesRead;
+        }
+      } else {
+        const headLen = Math.min(FINGERPRINT_CHUNK_BYTES, size);
+        const tailOffset = Math.max(headLen, size - FINGERPRINT_CHUNK_BYTES);
+        const tailLen = Math.max(0, size - tailOffset);
+        if (headLen > 0) {
+          const { bytesRead } = await handle.read(chunk, 0, headLen, 0);
+          hash.update(chunk.subarray(0, bytesRead));
+        }
+        if (tailLen > 0) {
+          const { bytesRead } = await handle.read(chunk, 0, tailLen, tailOffset);
+          hash.update(chunk.subarray(0, bytesRead));
+        }
+      }
+      entries.push({
+        suffix,
+        exists: true,
+        size,
+        mtimeNs: stat.mtimeNs.toString(),
+        sha256: hash.digest("hex"),
+      });
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+        entries.push({ suffix, exists: false });
+      } else {
+        throw cause;
+      }
+    } finally {
+      await handle?.close().catch(() => undefined);
+    }
+  }
+  return entries;
+}
+
+async function recordStoppedPendingDatabaseFingerprint(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+): Promise<void> {
+  if (
+    !isValidServiceUpdateId(pending.id) ||
+    !(await isDatabaseRestoreTargetInsideBaseDir(baseDir, pending.dbPath))
+  ) {
+    return;
+  }
+  const backupDir = databaseBackupDir(baseDir, pending.id);
+  if (!(await pathExists(backupDir))) return;
+  const files = await fingerprintDatabaseFiles(pending.dbPath);
+  await replaceFileDurably(
+    NodePath.join(backupDir, STOPPED_DB_DIGEST_FILE),
+    `${JSON.stringify({ updateId: pending.id, files })}\n`,
+  );
+}
+
+async function stoppedDigestMatchesCurrentDatabase(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+  options?: { readonly requireDigest?: boolean | undefined },
+): Promise<boolean> {
+  const backupDir = databaseBackupDir(baseDir, pending.id);
+  const digestPath = NodePath.join(backupDir, STOPPED_DB_DIGEST_FILE);
+  let rawDigest: string;
+  try {
+    rawDigest = await NodeFSP.readFile(digestPath, "utf8");
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+      return options?.requireDigest !== true;
+    }
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(rawDigest) as {
+      readonly updateId?: unknown;
+      readonly files?: unknown;
+    } | null;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      parsed.updateId !== pending.id ||
+      !Array.isArray(parsed.files)
+    ) {
+      return false;
+    }
+    const current = await fingerprintDatabaseFiles(pending.dbPath);
+    return JSON.stringify(current) === JSON.stringify(parsed.files);
+  } catch {
+    return false;
+  }
+}
+
+async function canSafelyRestoreStoppedTrialBackup(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+): Promise<boolean> {
+  if (
+    !isValidServiceUpdateId(pending.id) ||
+    !(await isDatabaseRestoreTargetInsideBaseDir(baseDir, pending.dbPath))
+  ) {
+    return false;
+  }
+  if (await hasConflictingServerOwnerLease(pending.dbPath, pending.id)) {
+    return false;
+  }
+  if (await databaseRestorePending(baseDir, pending)) {
+    return true;
+  }
+  return stoppedDigestMatchesCurrentDatabase(baseDir, pending, { requireDigest: true });
+}
+
+async function acquirePendingDatabaseOwnerLock(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+): Promise<{ readonly acquired: true; readonly close: () => void } | { readonly acquired: false }> {
+  const ownerLockPath = NodePath.join(NodePath.dirname(pending.dbPath), "server-owner.sqlite");
+  if (
+    !(await pathExists(databaseBackupDir(baseDir, pending.id))) &&
+    !NodeFS.existsSync(ownerLockPath)
+  ) {
+    return { acquired: true, close: () => undefined };
+  }
+  const lock = tryAcquireServerOwnerLock(pending.dbPath);
+  return lock === undefined ? { acquired: false } : { acquired: true, close: lock.close };
+}
+
+/**
+ * Recovers an interrupted trial update after `service uninstall` stops the launcher so releasing
+ * the home to `t3 serve` or desktop mode starts from a consistent database when stop history is
+ * proven clean, while preserving both copies whenever foreground work or a crash makes it ambiguous.
+ */
+export async function recoverServiceLauncherUninstall(input: {
+  readonly baseDir: string;
+  readonly controlDir?: string | undefined;
+  readonly timeoutMs?: number | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly acl?: ControlAclHooks | undefined;
+}): Promise<void> {
+  const acl = resolveControlAclHooks(input.acl);
+  if (input.controlDir !== undefined && !(await verifyControlLockAcl(input.controlDir, acl))) {
+    throw createControlRejectedError("unauthorized");
+  }
+  const statePath = NodePath.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
+  const lockHeld = input.controlDir !== undefined && probeControlLockHeld(input.controlDir);
+  if (!lockHeld) {
+    let initialStateText: string | undefined;
+    try {
+      initialStateText = await NodeFSP.readFile(statePath, "utf8");
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw cause;
+    }
+    if (parseServiceState(initialStateText)?.update?.status !== "pending") return;
+  }
+  const runUnderControlLock = async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (input.controlDir === undefined) return fn();
+    const lockPath = await ensurePrivateControlLockReady(input.controlDir, "lock.sqlite", acl);
+    const lock = await acquireSqliteExclusiveLock(lockPath, {
+      timeoutMs: input.timeoutMs ?? CONTROL_MUTATION_TIMEOUT_MS,
+      retryMs: 50,
+      signal: input.signal,
+    });
+    try {
+      return await fn();
+    } finally {
+      lock.close();
+    }
+  };
+  await runUnderControlLock(async () => {
+    const release = await acquireServiceSelectionLock(statePath);
+    try {
+      let stateText: string;
+      try {
+        stateText = await NodeFSP.readFile(statePath, "utf8");
+      } catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw cause;
+      }
+      const parsed = parseServiceState(stateText);
+      if (parsed?.update?.status !== "pending") return;
+      const pending = parsed.update;
+      const validTarget =
+        isValidServiceUpdateId(pending.id) &&
+        (await isDatabaseRestoreTargetInsideBaseDir(input.baseDir, pending.dbPath));
+      if (!validTarget) {
+        await writeServiceState(statePath, {
+          ...parsed,
+          activeVersion: pending.fromVersion,
+          update: terminalUpdate({ pending, status: "failed", reason: "service-uninstalled" }),
+        });
+        await NodeFSP.rm(stopMarkerPath(input.baseDir), { force: true }).catch(() => undefined);
+        return;
+      }
+      const serverOwnerLock = await acquirePendingDatabaseOwnerLock(input.baseDir, pending);
+      if (!serverOwnerLock.acquired) {
+        await writeServiceState(statePath, {
+          ...parsed,
+          activeVersion: pending.fromVersion,
+          update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
+        });
+        return;
+      }
+      try {
+        const hasBackup = await pathExists(databaseBackupDir(input.baseDir, pending.id));
+        const restored =
+          hasBackup && (await canSafelyRestoreStoppedTrialBackup(input.baseDir, pending));
+        if (restored) {
+          await restoreDatabaseBackup(input.baseDir, pending);
+        }
+        await writeServiceState(statePath, {
+          ...parsed,
+          activeVersion: pending.fromVersion,
+          update: terminalUpdate({ pending, status: "failed", reason: "service-uninstalled" }),
+        });
+        await NodeFSP.rm(stopMarkerPath(input.baseDir), { force: true }).catch(() => undefined);
+        if (restored) {
+          await discardDatabaseBackup(input.baseDir, pending.id).catch(() => undefined);
+        }
+      } finally {
+        serverOwnerLock.close();
+      }
+    } finally {
+      release();
+    }
+  });
+}
+
+function throwIfControlAborted(signal?: AbortSignal): void {
+  if (signal?.aborted === true) throw createControlAbortedError();
+}
+
+async function restorePreviousRestartPending(
+  targetPath: string,
+  previousContents: string | undefined,
+): Promise<void> {
+  if (previousContents === undefined) {
+    await NodeFSP.rm(targetPath, { force: true }).catch(() => undefined);
+  } else {
+    await NodeFSP.writeFile(targetPath, previousContents, { mode: 0o600 }).catch(() => undefined);
+  }
+}
+
+async function stageOfflineInstall(
+  baseDir: string,
+  version: string,
+  allowDowngrade: boolean,
+  signal?: AbortSignal,
+): Promise<ControlStageInstallResult> {
+  const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
+  const release = await acquireServiceSelectionLock(statePath);
+  try {
+    let previousStateText: string | undefined;
+    try {
+      previousStateText = await NodeFSP.readFile(statePath, "utf8");
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+    }
+    if (previousStateText !== undefined) {
+      const installedVersion = serviceStateActiveVersion(previousStateText);
+      if (serviceStateHasPendingUpdate(previousStateText)) {
+        return {
+          status: "update-pending",
+          ...(installedVersion === undefined ? {} : { installedVersion }),
+        };
+      }
+      if (
+        installedVersion !== undefined &&
+        !allowDowngrade &&
+        compareExactServiceVersions(version, installedVersion) < 0
+      ) {
+        return { status: "downgrade-refused", installedVersion };
+      }
+    }
+    const restartPending = restartPendingPath(baseDir);
+    const previousRestartPending = await NodeFSP.readFile(restartPending, "utf8").catch(
+      () => undefined,
+    );
+    await NodeFSP.mkdir(NodePath.join(baseDir, "runtime"), { recursive: true, mode: 0o700 });
+    throwIfControlAborted(signal);
+    await NodeFSP.writeFile(restartPending, `${version}\n`, { mode: 0o600 });
+    if (signal?.aborted === true) {
+      await restorePreviousRestartPending(restartPending, previousRestartPending);
+      throw createControlAbortedError();
+    }
+    await writeServiceState(statePath, {
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      activeVersion: version,
+    });
+    return { status: "staged" };
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Atomically checks and stages a CLI service install through the running launcher's transition
+ * queue, or while holding the per-home SQLite control lock when no launcher is running.
+ */
+export async function stageServiceLauncherInstall(input: {
+  readonly controlDir: string;
+  readonly baseDir: string;
+  readonly version: string;
+  readonly allowDowngrade?: boolean | undefined;
+  readonly timeoutMs?: number | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly acl?: ControlAclHooks | undefined;
+}): Promise<ControlStageInstallResult> {
+  if (!isExactServiceVersion(input.version)) {
+    throw new Error(`Invalid target service version '${input.version}'.`);
+  }
+  const allowDowngrade = input.allowDowngrade === true;
+  const acl = resolveControlAclHooks(input.acl);
+  const timeoutMs = input.timeoutMs ?? CONTROL_MUTATION_TIMEOUT_MS;
+  const deadline = performance.now() + Math.max(0, timeoutMs);
+  const lockPath = await ensurePrivateControlLockReady(input.controlDir, "lock.sqlite", acl);
+  for (;;) {
+    if (input.signal?.aborted === true) throw createControlAbortedError();
+    const lock = tryAcquireSqliteExclusiveLock(lockPath);
+    if (lock !== undefined) {
+      try {
+        await NodeFSP.rm(controlEndpointPath(input.controlDir), { force: true }).catch(
+          () => undefined,
+        );
+        return await stageOfflineInstall(
+          input.baseDir,
+          input.version,
+          allowDowngrade,
+          input.signal,
+        );
+      } finally {
+        lock.close();
+      }
+    }
+    const remainingBeforeSendMs = deadline - performance.now();
+    if (remainingBeforeSendMs <= 0) break;
+    let reply: ControlReply | undefined;
+    try {
+      reply = await sendControlRequest(
+        input.controlDir,
+        {
+          type: "stage-install",
+          version: input.version,
+          allowDowngrade,
+        },
+        {
+          timeoutMs: remainingBeforeSendMs,
+          signal: input.signal,
+          acl,
+          skipLockAclVerify: true,
+        },
+      );
+    } catch (error) {
+      if (!isTransientControlClose(error) && !isMissingControl(error)) throw error;
+      const remainingAfterErrorMs = deadline - performance.now();
+      if (remainingAfterErrorMs <= 0) break;
+      await waitForControlDelay(Math.min(50, remainingAfterErrorMs), input.signal);
+      continue;
+    }
+    if (reply?.ok === true && reply.result !== undefined && reply.result.status !== "not-running") {
+      return reply.result;
+    }
+    const remainingMs = deadline - performance.now();
+    if (remainingMs <= 0) break;
+    await waitForControlDelay(Math.min(50, remainingMs), input.signal);
+  }
+  throw new Error("Timed out acquiring service launcher control lock to stage install.");
+}
+
+export type ServiceLauncherProbeStatus = "running" | "unhealthy" | "stopped";
+
+/**
+ * Distinguishes an authenticated running launcher (`"running"`), a stopped launcher (`"stopped"`),
+ * and an occupied or unauthenticated control lock (`"unhealthy"`).
+ */
+export async function probeServiceLauncher(
+  controlDir: string,
+  options: {
+    readonly timeoutMs?: number | undefined;
+    readonly signal?: AbortSignal | undefined;
+    readonly acl?: ControlAclHooks | undefined;
+  } = {},
+): Promise<ServiceLauncherProbeStatus> {
+  const acl = resolveControlAclHooks(options.acl);
+  try {
+    if (!(await verifyControlLockAcl(controlDir, acl))) return "unhealthy";
+  } catch {
+    return "unhealthy";
+  }
+  const deadline = performance.now() + Math.max(0, options.timeoutMs ?? 1_500);
+  for (;;) {
+    let lockHeld: boolean;
+    try {
+      lockHeld = probeControlLockHeld(controlDir);
+    } catch {
+      return "unhealthy";
+    }
+    if (!lockHeld) return "stopped";
+    try {
+      const reply = await sendControlRequest(
+        controlDir,
+        { type: "identify" },
+        {
+          timeoutMs: Math.min(
+            CONTROL_QUERY_TIMEOUT_MS,
+            Math.max(250, deadline - performance.now()),
+          ),
+          signal: options.signal,
+          acl,
+          skipLockAclVerify: true,
+        },
+      );
+      if (reply?.ok === true && reply.launcherId !== undefined) return "running";
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === CONTROL_ABORTED_CODE) throw error;
+      try {
+        return probeControlLockHeld(controlDir) ? "unhealthy" : "stopped";
+      } catch {
+        return "unhealthy";
+      }
+    }
+    const remainingMs = deadline - performance.now();
+    if (remainingMs <= 0) break;
+    await waitForControlDelay(Math.min(100, remainingMs), options.signal);
+  }
+  try {
+    return probeControlLockHeld(controlDir) ? "unhealthy" : "stopped";
+  } catch {
+    return "unhealthy";
+  }
+}
 
 export class Launcher {
+  readonly #instanceId = NodeCrypto.randomUUID();
   readonly #baseDir: string;
   readonly #statePath: string;
   #state: ServiceState;
   #child: ManagedChild | null = null;
+  #managedPendingTrialId: string | undefined;
   #timer: NodeJS.Timeout | undefined;
   #transitions: Promise<void> = Promise.resolve();
   #stopRequested = false;
   #stopping = false;
+  #uninstalling = false;
   #done = false;
+  #ownsControl: boolean;
+  readonly #stopAbort = new AbortController();
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #serviceUnit: ServiceUnit | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   readonly #output: number | undefined;
-  readonly #controlPath: string | undefined;
+  readonly #controlDir: string | undefined;
+  readonly #controlListenRetryMs: number;
+  readonly #acl: ControlAclHooks | undefined;
+  readonly #onControlAcquired: (() => void) | undefined;
+  readonly #onControlRetry: ((attempt: number) => void) | undefined;
+  readonly #onControlStageQueued:
+    | ((info: { readonly version: string; readonly disconnected: Promise<void> }) => void)
+    | undefined;
+  readonly #onFatalControlOwnerExit: ((error: unknown) => void) | undefined;
   readonly #stopChildOverIpc: boolean;
+  readonly #spawnCommand: (entryPath: string) => {
+    readonly command: string;
+    readonly args: ReadonlyArray<string>;
+  };
 
   constructor(
     baseDir: string,
@@ -690,10 +2369,24 @@ export class Launcher {
       readonly environment?: Readonly<NodeJS.ProcessEnv>;
       /** Launcher and server output, for managers that cannot redirect it. */
       readonly output?: number;
-      /** Where `requestServiceLauncherStop` reaches this launcher. */
-      readonly controlPath?: string;
+      /** Account-private directory holding the SQLite lock, token, and loopback TCP endpoint. */
+      readonly controlDir?: string;
+      readonly controlListenRetryMs?: number;
+      readonly acl?: ControlAclHooks;
+      readonly onControlAcquired?: () => void;
+      readonly onControlRetry?: (attempt: number) => void;
+      readonly onControlStageQueued?: (info: {
+        readonly version: string;
+        readonly disconnected: Promise<void>;
+      }) => void;
+      /** Invoked while still holding the control lock when the active launcher fails fatally. */
+      readonly onFatalControlOwnerExit?: (error: unknown) => void;
       /** Windows `kill()` is TerminateProcess, which skips the server's shutdown finalizers. */
       readonly stopChildOverIpc?: boolean;
+      readonly spawnCommand?: (entryPath: string) => {
+        readonly command: string;
+        readonly args: ReadonlyArray<string>;
+      };
     } = {},
   ) {
     this.#baseDir = baseDir;
@@ -701,11 +2394,22 @@ export class Launcher {
     this.#serviceUnit = options.serviceUnit;
     this.#environment = { ...(options.environment ?? process.env) };
     this.#output = options.output;
-    this.#controlPath = options.controlPath;
-    // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
-    this.#stopChildOverIpc = options.stopChildOverIpc ?? process.platform === "win32";
+    this.#controlDir = options.controlDir;
+    this.#controlListenRetryMs = options.controlListenRetryMs ?? CONTROL_LISTEN_RETRY_MS;
+    this.#acl = resolveControlAclHooks(options.acl);
+    this.#onControlAcquired = options.onControlAcquired;
+    this.#onControlRetry = options.onControlRetry;
+    this.#onControlStageQueued = options.onControlStageQueued;
+    this.#onFatalControlOwnerExit = options.onFatalControlOwnerExit;
+    this.#ownsControl = options.controlDir === undefined;
+    this.#stopChildOverIpc = options.stopChildOverIpc ?? IS_WINDOWS;
+    this.#spawnCommand = options.spawnCommand ?? runtimeSpawnArguments;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
+  }
+
+  get ownsControl(): boolean {
+    return this.#ownsControl;
   }
 
   async run(): Promise<void> {
@@ -715,16 +2419,38 @@ export class Launcher {
     process.once("SIGINT", onSigint);
     try {
       const control =
-        this.#controlPath === undefined
+        this.#controlDir === undefined
           ? undefined
-          : await this.#listenForControl(this.#controlPath);
+          : await this.#listenForControl(
+              this.#controlDir,
+              (publishReady, didPublish) => {
+                // Enqueued before `endpoint.json` is written so any request arriving on the newly
+                // published loopback port runs strictly after persisted state reload + recovery.
+                this.#enqueue(async () => {
+                  await publishReady;
+                  if (!didPublish() || this.#stopRequested) return;
+                  this.#state = await readServiceState(this.#statePath);
+                  await this.#recover();
+                });
+              },
+              () => this.#onControlAcquired?.(),
+            );
       try {
-        // The launcher that held the lock may have moved the state since main read it.
-        if (control !== undefined) this.#state = await readServiceState(this.#statePath);
-        this.#enqueue(() => this.#recover());
+        if (this.#controlDir === undefined && !this.#stopRequested) {
+          this.#enqueue(() => this.#recover());
+        }
         await this.#completion.promise;
+      } catch (error) {
+        if (this.#ownsControl) {
+          try {
+            this.#onFatalControlOwnerExit?.(error);
+          } catch {
+            // Crash cleanup must not mask the original launcher failure.
+          }
+        }
+        throw error;
       } finally {
-        control?.close();
+        await control?.close();
       }
     } finally {
       process.off("SIGTERM", onSigterm);
@@ -732,35 +2458,322 @@ export class Launcher {
     }
   }
 
-  /** Also the single-instance lock: a replacement waits until the stopping launcher releases it. */
-  async #listenForControl(controlPath: string): Promise<{ readonly close: () => void }> {
-    const sockets = new Set<NodeNet.Socket>();
-    const server = NodeNet.createServer((socket) => {
-      sockets.add(socket);
-      socket.once("close", () => sockets.delete(socket));
-      socket.on("error", () => undefined);
-      socket.on("data", (data) => {
-        if (String(data).includes("stop")) void this.stop("SIGTERM");
+  /** Acquires the per-home SQLite lock, verifies the private token, and binds a loopback port once. */
+  async #listenForControl(
+    controlDir: string,
+    beforePublish: (publishReady: Promise<void>, didPublish: () => boolean) => void,
+    onPublished: () => void,
+  ): Promise<{ readonly close: () => Promise<void> } | undefined> {
+    if (this.#stopRequested) return undefined;
+    const lockPath = await ensurePrivateControlLockReady(controlDir, "lock.sqlite", this.#acl);
+    let lock: { readonly close: () => void };
+    try {
+      lock = await acquireSqliteExclusiveLock(lockPath, {
+        timeoutMs: CONTROL_LISTEN_ATTEMPTS * this.#controlListenRetryMs,
+        retryMs: this.#controlListenRetryMs,
+        signal: this.#stopAbort.signal,
+        onRetry: this.#onControlRetry,
       });
-    });
-    for (let attempt = 1; ; attempt++) {
-      const error = await new Promise<NodeJS.ErrnoException | undefined>((resolve) => {
-        server.once("error", resolve);
-        server.listen(controlPath, () => {
-          server.off("error", resolve);
-          resolve(undefined);
+    } catch (error) {
+      if (this.#stopRequested && (error as NodeJS.ErrnoException).code === CONTROL_ABORTED_CODE) {
+        return undefined;
+      }
+      throw error;
+    }
+    if (this.#stopRequested) {
+      lock.close();
+      return undefined;
+    }
+    const sockets = new Set<NodeNet.Socket>();
+    const unauthenticatedSockets = new Set<NodeNet.Socket>();
+    let server: NodeNet.Server | undefined;
+    try {
+      NodeFS.rmSync(controlEndpointPath(controlDir), { force: true });
+      const controlToken = await ensureControlToken(controlDir, this.#acl);
+      server = NodeNet.createServer((socket) => {
+        if (unauthenticatedSockets.size >= MAX_UNAUTHENTICATED_CONTROL_SOCKETS) {
+          const oldest = unauthenticatedSockets.values().next().value;
+          oldest?.destroy();
+        }
+        if (sockets.size >= MAX_TOTAL_CONTROL_SOCKETS) {
+          socket.destroy();
+          return;
+        }
+        sockets.add(socket);
+        unauthenticatedSockets.add(socket);
+        const handshakeDeadline = setTimeout(() => {
+          socket.destroy();
+        }, CONTROL_HANDSHAKE_TIMEOUT_MS);
+        handshakeDeadline.unref();
+        const markAuthenticated = () => {
+          clearTimeout(handshakeDeadline);
+          unauthenticatedSockets.delete(socket);
+        };
+        socket.once("close", () => {
+          clearTimeout(handshakeDeadline);
+          unauthenticatedSockets.delete(socket);
+          sockets.delete(socket);
+        });
+        socket.on("error", () => undefined);
+        socket.setEncoding("utf8");
+        const serverNonce = NodeCrypto.randomBytes(16).toString("hex");
+        let buffer = "";
+        let handled = false;
+        socket.on("data", (chunk: string) => {
+          if (handled) return;
+          if (buffer.length + chunk.length > MAX_CONTROL_MESSAGE_BYTES) {
+            socket.destroy();
+            return;
+          }
+          buffer += chunk;
+          const newline = buffer.indexOf("\n");
+          if (newline === -1) return;
+          handled = true;
+          const line = buffer.slice(0, newline);
+          buffer = "";
+          void this.#handleControlLine(socket, controlToken, serverNonce, line, markAuthenticated);
+        });
+        socket.write(`${JSON.stringify({ nonce: serverNonce })}\n`);
+      });
+      const activeServer = server;
+      await new Promise<void>((resolve, reject) => {
+        activeServer.once("error", reject);
+        activeServer.listen(0, "127.0.0.1", () => {
+          activeServer.off("error", reject);
+          resolve();
         });
       });
-      if (error === undefined) break;
-      if (error.code !== "EADDRINUSE" || attempt >= CONTROL_LISTEN_ATTEMPTS) throw error;
-      await new Promise((resolve) => setTimeout(resolve, CONTROL_LISTEN_RETRY_MS));
+      activeServer.on("error", () => undefined);
+      const address = activeServer.address();
+      if (address === null || typeof address !== "object") {
+        throw new Error("Could not resolve loopback control port.");
+      }
+      let published = false;
+      const publishGate = Promise.withResolvers<void>();
+      this.#ownsControl = true;
+      beforePublish(publishGate.promise, () => published);
+      try {
+        await writeControlEndpoint(
+          controlDir,
+          {
+            port: address.port,
+            launcherId: this.#instanceId,
+          },
+          this.#acl,
+        );
+        published = true;
+      } finally {
+        publishGate.resolve();
+      }
+      if (!this.#stopRequested) {
+        onPublished();
+      }
+      return {
+        close: async () => {
+          await NodeFSP.rm(controlEndpointPath(controlDir), { force: true }).catch(() => undefined);
+          for (const socket of sockets) socket.destroy();
+          await new Promise<void>((resolve) => activeServer.close(() => resolve()));
+          this.#ownsControl = false;
+          lock.close();
+        },
+      };
+    } catch (cause) {
+      this.#ownsControl = false;
+      await NodeFSP.rm(controlEndpointPath(controlDir), { force: true }).catch(() => undefined);
+      for (const socket of sockets) socket.destroy();
+      if (server !== undefined) {
+        const closingServer = server;
+        await new Promise<void>((resolve) => closingServer.close(() => resolve()));
+      }
+      lock.close();
+      throw cause;
     }
-    return {
-      close: () => {
-        server.close();
-        for (const socket of sockets) socket.destroy();
-      },
+  }
+
+  async #handleControlLine(
+    socket: NodeNet.Socket,
+    controlToken: string,
+    serverNonce: string,
+    line: string,
+    markAuthenticated: () => void,
+  ): Promise<void> {
+    const sendSigned = (reply: ControlReply, closeAfterWrite: boolean, macClientNonce: string) => {
+      const body = JSON.stringify(reply);
+      const mac = computeControlMac(controlToken, "res", serverNonce, macClientNonce, body);
+      const wire = `${JSON.stringify({ ok: reply.ok, body, mac })}\n`;
+      if (closeAfterWrite) socket.end(wire);
+      else socket.write(wire);
     };
+    let providedServerNonce: string;
+    let clientNonce: string;
+    let payloadBody: string;
+    let providedMac: unknown;
+    try {
+      const envelope: unknown = JSON.parse(line);
+      if (
+        typeof envelope !== "object" ||
+        envelope === null ||
+        Array.isArray(envelope) ||
+        typeof (envelope as { readonly snonce?: unknown }).snonce !== "string" ||
+        typeof (envelope as { readonly cnonce?: unknown }).cnonce !== "string" ||
+        !/^[0-9a-f]{32}$/.test((envelope as { readonly cnonce: string }).cnonce) ||
+        typeof (envelope as { readonly payload?: unknown }).payload !== "string"
+      ) {
+        sendSigned({ ok: false, error: "invalid-request" }, true, "");
+        return;
+      }
+      providedServerNonce = (envelope as { readonly snonce: string }).snonce;
+      clientNonce = (envelope as { readonly cnonce: string }).cnonce;
+      payloadBody = (envelope as { readonly payload: string }).payload;
+      providedMac = (envelope as { readonly mac?: unknown }).mac;
+    } catch {
+      sendSigned({ ok: false, error: "invalid-json" }, true, "");
+      return;
+    }
+    if (
+      providedServerNonce !== serverNonce ||
+      !hexDigestsMatch(
+        computeControlMac(controlToken, "req", serverNonce, clientNonce, payloadBody),
+        providedMac,
+      )
+    ) {
+      sendSigned({ ok: false, error: "unauthorized" }, true, clientNonce);
+      return;
+    }
+    let request: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(payloadBody);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        sendSigned({ ok: false, error: "invalid-request" }, true, clientNonce);
+        return;
+      }
+      request = parsed as Record<string, unknown>;
+    } catch {
+      sendSigned({ ok: false, error: "invalid-json" }, true, clientNonce);
+      return;
+    }
+    markAuthenticated();
+    if (request.type === "identify") {
+      sendSigned({ ok: true, launcherId: this.#instanceId }, true, clientNonce);
+      return;
+    }
+    if (request.type === "stop") {
+      const targeted = typeof request.launcherId === "string" ? request.launcherId : undefined;
+      if (targeted !== undefined && targeted !== this.#instanceId) {
+        sendSigned({ ok: true, launcherId: this.#instanceId }, true, clientNonce);
+        return;
+      }
+      if (request.uninstall === true) {
+        this.#uninstalling = true;
+      }
+      if (request.wait === true) {
+        sendSigned({ ok: true, launcherId: this.#instanceId }, false, clientNonce);
+        void this.stop("SIGTERM");
+        return;
+      }
+      void this.stop("SIGTERM");
+      sendSigned({ ok: true, launcherId: this.#instanceId }, true, clientNonce);
+      return;
+    }
+    if (request.type === "stage-install" && typeof request.version === "string") {
+      const version = request.version;
+      const allowDowngrade = request.allowDowngrade === true;
+      let clientDisconnected = socket.destroyed;
+      const disconnected = Promise.withResolvers<void>();
+      if (clientDisconnected) {
+        disconnected.resolve();
+      } else {
+        socket.once("close", () => {
+          clientDisconnected = true;
+          disconnected.resolve();
+        });
+      }
+      const isClientDisconnected = () => clientDisconnected || socket.destroyed;
+      const outcome = Promise.withResolvers<LauncherStageInstallResult | undefined>();
+      this.#enqueue(async () => {
+        if (isClientDisconnected()) {
+          outcome.resolve(undefined);
+          return;
+        }
+        try {
+          outcome.resolve(await this.#stageInstall(version, allowDowngrade, isClientDisconnected));
+        } catch (cause) {
+          outcome.reject(cause);
+        }
+      });
+      this.#onControlStageQueued?.({ version, disconnected: disconnected.promise });
+      try {
+        const result = await outcome.promise;
+        if (result !== undefined && !isClientDisconnected()) {
+          sendSigned({ ok: true, launcherId: this.#instanceId, result }, true, clientNonce);
+        }
+      } catch {
+        if (!isClientDisconnected()) {
+          sendSigned({ ok: false, error: "stage-failed" }, true, clientNonce);
+        }
+      }
+      return;
+    }
+    sendSigned({ ok: false, error: "unknown-command" }, true, clientNonce);
+  }
+
+  async #stageInstall(
+    version: string,
+    allowDowngrade: boolean,
+    isClientDisconnected: () => boolean,
+  ): Promise<LauncherStageInstallResult | undefined> {
+    if (!isExactServiceVersion(version)) {
+      throw new Error(`Invalid target service version '${version}'.`);
+    }
+    if (this.#stopping || this.#done) {
+      return { status: "not-running" };
+    }
+    const release = await acquireServiceSelectionLock(this.#statePath);
+    try {
+      let previousStateText: string | undefined;
+      try {
+        previousStateText = await NodeFSP.readFile(this.#statePath, "utf8");
+      } catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+      }
+      const diskVersion =
+        previousStateText === undefined ? undefined : serviceStateActiveVersion(previousStateText);
+      const effectiveVersion = diskVersion ?? this.#state.activeVersion;
+      if (
+        this.#state.update?.status === "pending" ||
+        (previousStateText !== undefined && serviceStateHasPendingUpdate(previousStateText))
+      ) {
+        return {
+          status: "update-pending",
+          ...(effectiveVersion === undefined ? {} : { installedVersion: effectiveVersion }),
+        };
+      }
+      if (!allowDowngrade && compareExactServiceVersions(version, effectiveVersion) < 0) {
+        return { status: "downgrade-refused", installedVersion: effectiveVersion };
+      }
+      const next: ServiceState = {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: version,
+      };
+      const restartPending = restartPendingPath(this.#baseDir);
+      const previousRestartPending = await NodeFSP.readFile(restartPending, "utf8").catch(
+        () => undefined,
+      );
+      await NodeFSP.mkdir(NodePath.join(this.#baseDir, "runtime"), {
+        recursive: true,
+        mode: 0o700,
+      });
+      if (isClientDisconnected()) return undefined;
+      await NodeFSP.writeFile(restartPending, `${version}\n`, { mode: 0o600 });
+      if (isClientDisconnected()) {
+        await restorePreviousRestartPending(restartPending, previousRestartPending);
+        return undefined;
+      }
+      await writeServiceState(this.#statePath, next);
+      return { status: "staged", launcherId: this.#instanceId };
+    } finally {
+      release();
+    }
   }
 
   #terminate(child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals = "SIGTERM") {
@@ -768,8 +2781,12 @@ export class Launcher {
   }
 
   #log(line: string): void {
-    if (this.#output === undefined) process.stderr.write(line);
-    else NodeFS.writeSync(this.#output, line);
+    try {
+      if (this.#output === undefined) process.stderr.write(line);
+      else NodeFS.writeSync(this.#output, line);
+    } catch {
+      // Log write failures must not terminate a running launcher.
+    }
   }
 
   #enqueue(transition: () => Promise<void>): void {
@@ -791,11 +2808,88 @@ export class Launcher {
     this.#completion.reject(error);
   }
 
-  async stop(signal: NodeJS.Signals): Promise<void> {
-    // Write synchronously on signal receipt; a terminating child needs the marker in its finalizer.
+  async #assertSelectionMatchesState(): Promise<void> {
+    const selected = await readServiceState(this.#statePath);
+    // Local installs replace the selection and clear its update record. An old
+    // launcher must not restore its own selection when asked to update again.
+    if (
+      selected.activeVersion !== this.#state.activeVersion ||
+      selected.update?.id !== this.#state.update?.id ||
+      selected.update?.status !== this.#state.update?.status
+    ) {
+      throw new Error("Service selection changed. Restart the service before updating.");
+    }
+  }
+
+  async #recoverPendingUpdateOnUninstall(pending: PendingServiceUpdate): Promise<void> {
+    const managedByThisLauncher = this.#managedPendingTrialId === pending.id;
+    this.#managedPendingTrialId = undefined;
+    const release = await acquireServiceSelectionLock(this.#statePath);
     try {
-      NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
-    } catch {}
+      await this.#assertSelectionMatchesState();
+      const validTarget =
+        isValidServiceUpdateId(pending.id) &&
+        (await isDatabaseRestoreTargetInsideBaseDir(this.#baseDir, pending.dbPath));
+      if (!validTarget) {
+        const next: ServiceState = {
+          ...this.#state,
+          activeVersion: pending.fromVersion,
+          update: terminalUpdate({ pending, status: "failed", reason: "service-uninstalled" }),
+        };
+        await writeServiceState(this.#statePath, next);
+        this.#state = next;
+        await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
+        return;
+      }
+      const serverOwnerLock = await acquirePendingDatabaseOwnerLock(this.#baseDir, pending);
+      if (!serverOwnerLock.acquired) {
+        const next: ServiceState = {
+          ...this.#state,
+          activeVersion: pending.fromVersion,
+          update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
+        };
+        await writeServiceState(this.#statePath, next);
+        this.#state = next;
+        return;
+      }
+      try {
+        const hasBackup = await pathExists(databaseBackupDir(this.#baseDir, pending.id));
+        const restored =
+          hasBackup &&
+          (managedByThisLauncher
+            ? !(await hasConflictingServerOwnerLease(pending.dbPath, pending.id))
+            : await canSafelyRestoreStoppedTrialBackup(this.#baseDir, pending));
+        if (restored) {
+          await restoreDatabaseBackup(this.#baseDir, pending);
+        }
+        const next: ServiceState = {
+          ...this.#state,
+          activeVersion: pending.fromVersion,
+          update: terminalUpdate({ pending, status: "failed", reason: "service-uninstalled" }),
+        };
+        await writeServiceState(this.#statePath, next);
+        this.#state = next;
+        await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
+        if (restored) {
+          await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+        }
+      } finally {
+        serverOwnerLock.close();
+      }
+    } finally {
+      release();
+    }
+  }
+
+  async stop(signal: NodeJS.Signals): Promise<void> {
+    // Only the lock owner writes the stop marker; a waiting replacement must not mark the active server's home.
+    if (this.#ownsControl) {
+      // Write synchronously on signal receipt; a terminating child needs the marker in its finalizer.
+      try {
+        NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
+      } catch {}
+    }
+    this.#stopAbort.abort();
     if (this.#stopRequested || this.#stopping) {
       await this.#completion.promise.catch(() => undefined);
       return;
@@ -808,6 +2902,37 @@ export class Launcher {
       const child = this.#child?.process;
       this.#child = null;
       if (child !== undefined) await this.#terminate(child, signal);
+      if (this.#ownsControl) {
+        const pending = this.#state.update?.status === "pending" ? this.#state.update : undefined;
+        if (this.#uninstalling && pending !== undefined) {
+          await this.#recoverPendingUpdateOnUninstall(pending);
+        } else if (pending !== undefined) {
+          const validTarget =
+            isValidServiceUpdateId(pending.id) &&
+            (await isDatabaseRestoreTargetInsideBaseDir(this.#baseDir, pending.dbPath));
+          const serverOwnerLock = validTarget
+            ? await acquirePendingDatabaseOwnerLock(this.#baseDir, pending)
+            : { acquired: false as const };
+          try {
+            NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
+          } catch {}
+          if (serverOwnerLock.acquired) {
+            try {
+              if (!(await hasConflictingServerOwnerLease(pending.dbPath, pending.id))) {
+                await recordStoppedPendingDatabaseFingerprint(this.#baseDir, pending).catch(
+                  () => undefined,
+                );
+              }
+            } finally {
+              serverOwnerLock.close();
+            }
+          }
+        } else {
+          try {
+            NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
+          } catch {}
+        }
+      }
       this.#done = true;
       this.#completion.resolve();
     });
@@ -822,16 +2947,7 @@ export class Launcher {
   async #selectState(next: ServiceState): Promise<void> {
     const release = await acquireServiceSelectionLock(this.#statePath);
     try {
-      const selected = await readServiceState(this.#statePath);
-      // Local installs replace the selection and clear its update record. An old
-      // launcher must not restore its own selection when asked to update again.
-      if (
-        selected.activeVersion !== this.#state.activeVersion ||
-        selected.update?.id !== this.#state.update?.id ||
-        selected.update?.status !== this.#state.update?.status
-      ) {
-        throw new Error("Service selection changed. Restart the service before updating.");
-      }
+      await this.#assertSelectionMatchesState();
       await writeServiceState(this.#statePath, next);
       this.#state = next;
     } finally {
@@ -865,13 +2981,13 @@ export class Launcher {
         release();
       }
     } catch (error) {
-      process.stderr.write(
+      this.#log(
         `[service-launcher] Could not clear ${restartPending}: ${error instanceof Error ? error.message : String(error)}\n`,
       );
     }
     const update = this.#state.update;
     if (update?.status !== "pending") {
-      if (update !== undefined) {
+      if (update?.status === "committed" && isValidServiceUpdateId(update.id)) {
         await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
       }
       try {
@@ -881,24 +2997,58 @@ export class Launcher {
       }
       return;
     }
+    if (!isValidServiceUpdateId(update.id)) {
+      await this.#returnToPrevious(update, "failed", "invalid-update", undefined, {
+        startupRecovery: true,
+      });
+      return;
+    }
     if (await databaseRestorePending(this.#baseDir, update)) {
-      await this.#returnToPrevious(update, "failed", "rollback-interrupted");
+      await this.#returnToPrevious(update, "failed", "rollback-interrupted", undefined, {
+        startupRecovery: true,
+      });
       return;
     }
     if (!(await runtimeExists(this.#baseDir, update.targetVersion))) {
-      await this.#returnToPrevious(update, "failed", "target-runtime-missing");
+      await this.#returnToPrevious(update, "failed", "target-runtime-missing", undefined, {
+        startupRecovery: true,
+      });
       return;
     }
     await this.#startTrial(update);
   }
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
-    try {
-      await backupDatabaseOnce(this.#baseDir, pending);
-    } catch {
+    if (
+      !isValidServiceUpdateId(pending.id) ||
+      !(await isDatabaseRestoreTargetInsideBaseDir(this.#baseDir, pending.dbPath))
+    ) {
       await this.#returnToPrevious(pending, "failed", "db-backup-failed");
       return;
     }
+    const existingBackup = await pathExists(databaseBackupDir(this.#baseDir, pending.id));
+    if (existingBackup && this.#managedPendingTrialId !== pending.id) {
+      if (
+        (await hasConflictingServerOwnerLease(pending.dbPath, pending.id)) ||
+        !(await stoppedDigestMatchesCurrentDatabase(this.#baseDir, pending))
+      ) {
+        await this.#returnToPrevious(pending, "failed", "live-db-modified", undefined, {
+          startupRecovery: true,
+        });
+        return;
+      }
+    }
+    try {
+      await backupDatabaseOnce(this.#baseDir, pending);
+    } catch (cause) {
+      if (isStateDirOwnedDuringBackupError(cause)) {
+        await this.#idleWhileStateDirOwned();
+        return;
+      }
+      await this.#returnToPrevious(pending, "failed", "db-backup-failed");
+      return;
+    }
+    this.#managedPendingTrialId = pending.id;
     try {
       await this.#startChild(pending.targetVersion, "trial", pending);
     } catch {
@@ -918,7 +3068,7 @@ export class Launcher {
       childVersion: version,
       ...(update === undefined ? {} : { update }),
     };
-    const spawnArguments = runtimeSpawnArguments(paths);
+    const spawnArguments = this.#spawnCommand(paths.entryPath);
     const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
       env: { ...this.#environment, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
       stdio:
@@ -997,8 +3147,11 @@ export class Launcher {
       await reject("Remote updates must select a newer server version.");
       return;
     }
-    if (!NodePath.isAbsolute(message.dbPath)) {
-      await reject("The requested database path is not absolute.");
+    if (
+      !NodePath.isAbsolute(message.dbPath) ||
+      !isDatabasePathInsideBaseDir(this.#baseDir, message.dbPath)
+    ) {
+      await reject("The requested database path must be inside the T3 home.");
       return;
     }
     if (!(await runtimeExists(this.#baseDir, message.targetVersion))) {
@@ -1044,15 +3197,25 @@ export class Launcher {
       return;
     }
     this.#timer = undefined;
+    this.#managedPendingTrialId = pending.id;
     // Anything thrown outside its own fallback still leaves the offline backup to run.
     const finishOnlineBackup = await startOnlineDatabaseBackup(
       this.#baseDir,
       pending,
       this.#backupSpaceProbe,
+      (message) => this.#log(message),
     ).catch(() => undefined);
     this.#child = null;
     await this.#terminate(child.process);
-    await finishOnlineBackup?.();
+    try {
+      await finishOnlineBackup?.();
+    } catch (cause) {
+      if (isStateDirOwnedDuringBackupError(cause)) {
+        await this.#idleWhileStateDirOwned();
+        return;
+      }
+      throw cause;
+    }
     // A stop during a minutes-long copy should not start a trial; restart resumes the pending update.
     if (this.#stopRequested) return;
     await this.#startTrial(pending);
@@ -1073,6 +3236,7 @@ export class Launcher {
       throw new Error("Trial child reported prepared for an unexpected update.");
     }
     this.#clearTimer();
+    this.#managedPendingTrialId = undefined;
     const committed = terminalUpdate({ pending, status: "committed" });
     const next: ServiceState = {
       ...this.#state,
@@ -1110,7 +3274,11 @@ export class Launcher {
         const installedBaseDir = serviceUnitBaseDirOf(contents);
         if (
           installedBaseDir === undefined ||
-          NodePath.resolve(installedBaseDir) !== NodePath.resolve(this.#baseDir)
+          !sameInstalledBaseDir(
+            installedBaseDir,
+            this.#baseDir,
+            IS_WINDOWS || unit.path.endsWith(".xml"),
+          )
         ) {
           return;
         }
@@ -1122,7 +3290,7 @@ export class Launcher {
         release();
       }
     } catch (error) {
-      process.stderr.write(
+      this.#log(
         `[service-launcher] Could not point ${unit.path} at t3@${version}: ${error instanceof Error ? error.message : String(error)}\n`,
       );
     }
@@ -1171,9 +3339,18 @@ export class Launcher {
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 
-  // Stay idle to avoid supervisor restart loops; never restore backups over another owner's possible writes.
+  #enterOwnedStateDirIdle(): void {
+    // Signal listeners alone do not keep Node alive.
+    this.#timer = setInterval(() => {}, 2_147_483_647);
+    this.#log(
+      "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
+    );
+  }
+
+  // Stay idle to avoid supervisor restart loops; preserve backups rather than overwriting or discarding data.
   async #idleWhileStateDirOwned(): Promise<void> {
     this.#clearTimer();
+    this.#managedPendingTrialId = undefined;
     const pending = this.#state.update;
     if (pending?.status === "pending") {
       const next: ServiceState = {
@@ -1182,14 +3359,9 @@ export class Launcher {
         update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
       };
       await this.#selectState(next);
-      await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
       await this.#repointServiceUnit(next.activeVersion);
     }
-    // Signal listeners alone do not keep Node alive.
-    this.#timer = setInterval(() => {}, 2_147_483_647);
-    this.#log(
-      "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
-    );
+    this.#enterOwnedStateDirIdle();
   }
 
   async #returnToPrevious(
@@ -1197,20 +3369,73 @@ export class Launcher {
     status: "rolled-back" | "failed",
     reason: string,
     child?: ManagedChild,
+    options?: { readonly startupRecovery?: boolean | undefined },
   ): Promise<void> {
+    const managedByThisLauncher =
+      this.#managedPendingTrialId === pending.id && options?.startupRecovery !== true;
+    this.#managedPendingTrialId = undefined;
     if (child !== undefined) {
       this.#child = null;
       await this.#terminate(child.process);
     }
-    await restoreDatabaseBackup(this.#baseDir, pending);
-    const outcome = terminalUpdate({ pending, status, reason });
-    const next: ServiceState = {
-      ...this.#state,
-      activeVersion: pending.fromVersion,
-      update: outcome,
-    };
-    await this.#selectState(next);
-    await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+    const release = await acquireServiceSelectionLock(this.#statePath);
+    let enteredOwnedIdle = false;
+    let next: ServiceState;
+    let outcome: Exclude<ServiceUpdateRecord, PendingServiceUpdate>;
+    let restored = false;
+    try {
+      await this.#assertSelectionMatchesState();
+      const validTarget =
+        isValidServiceUpdateId(pending.id) &&
+        (await isDatabaseRestoreTargetInsideBaseDir(this.#baseDir, pending.dbPath));
+      const serverOwnerLock = validTarget
+        ? await acquirePendingDatabaseOwnerLock(this.#baseDir, pending)
+        : { acquired: true as const, close: () => undefined };
+      if (!serverOwnerLock.acquired) {
+        outcome = terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" });
+        next = {
+          ...this.#state,
+          activeVersion: pending.fromVersion,
+          update: outcome,
+        };
+        await writeServiceState(this.#statePath, next);
+        this.#state = next;
+        enteredOwnedIdle = true;
+      } else {
+        try {
+          const hasBackup =
+            validTarget && (await pathExists(databaseBackupDir(this.#baseDir, pending.id)));
+          restored =
+            hasBackup &&
+            (managedByThisLauncher
+              ? !(await hasConflictingServerOwnerLease(pending.dbPath, pending.id))
+              : await canSafelyRestoreStoppedTrialBackup(this.#baseDir, pending));
+          if (restored) {
+            await restoreDatabaseBackup(this.#baseDir, pending);
+          }
+          outcome = terminalUpdate({ pending, status, reason });
+          next = {
+            ...this.#state,
+            activeVersion: pending.fromVersion,
+            update: outcome,
+          };
+          await writeServiceState(this.#statePath, next);
+          this.#state = next;
+          if (restored) {
+            await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+          }
+        } finally {
+          serverOwnerLock.close();
+        }
+      }
+    } finally {
+      release();
+    }
+    if (enteredOwnedIdle) {
+      await this.#repointServiceUnit(next.activeVersion);
+      this.#enterOwnedStateDirIdle();
+      return;
+    }
     try {
       await this.#startChild(next.activeVersion, "active", outcome);
     } finally {
@@ -1224,42 +3449,123 @@ export interface LauncherOptions {
   readonly baseDir?: string | undefined;
   readonly logFile?: string | undefined;
   readonly serviceUnit?: string | undefined;
+  readonly platform?: NodeJS.Platform | undefined;
+  readonly environment?: Readonly<NodeJS.ProcessEnv> | undefined;
+  readonly acl?: ControlAclHooks | undefined;
+  readonly controlListenRetryMs?: number | undefined;
+  readonly spawnCommand?: (entryPath: string) => {
+    readonly command: string;
+    readonly args: ReadonlyArray<string>;
+  };
+  readonly endScheduledTask?: ((taskName: string) => void) | undefined;
 }
 
 export async function main(options: LauncherOptions = {}): Promise<void> {
-  const baseDir = (options.baseDir ?? process.env.T3CODE_HOME)?.trim();
+  const hostEnv = options.environment ?? process.env;
+  const isWindows = options.platform !== undefined ? options.platform === "win32" : IS_WINDOWS;
+  const baseDir = (options.baseDir ?? hostEnv.T3CODE_HOME)?.trim();
   if (baseDir === undefined || baseDir === "") {
     throw new Error("T3CODE_HOME is required by the T3 Code service launcher.");
   }
+  if (options.logFile !== undefined) {
+    NodeFS.mkdirSync(NodePath.dirname(options.logFile), { recursive: true, mode: 0o700 });
+  }
   const output =
     options.logFile === undefined ? undefined : NodeFS.openSync(options.logFile, "a", 0o600);
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
-  const windows = process.platform === "win32";
+  let loggedFatalError = false;
+  const writeFatalError = (cause: unknown) => {
+    if (loggedFatalError || output === undefined) return;
+    loggedFatalError = true;
+    try {
+      NodeFS.writeSync(
+        output,
+        `[service-launcher] ${cause instanceof Error ? cause.message : String(cause)}\n`,
+      );
+    } catch {
+      // Log write failures (for example ENOSPC) must not suppress crash cleanup or mask the error.
+    }
+  };
   try {
-    const environment = await readServiceEnvironment(baseDir, {
-      ...process.env,
+    const managerEnvironment: NodeJS.ProcessEnv = {
+      ...hostEnv,
       T3CODE_HOME: baseDir,
-      ...(options.serviceUnit === undefined ? {} : { T3_BOOT_SERVICE_UNIT: options.serviceUnit }),
-    });
+      ...(options.serviceUnit === undefined ? {} : { [SERVICE_UNIT_ENV]: options.serviceUnit }),
+    };
+    const environment = await readServiceEnvironment(baseDir, managerEnvironment);
+    const configuredLocalAppData = (hostEnv.LOCALAPPDATA ?? "").trim();
+    const userProfile = (hostEnv.USERPROFILE ?? "").trim();
+    const localAppData =
+      configuredLocalAppData !== ""
+        ? configuredLocalAppData
+        : userProfile === ""
+          ? ""
+          : NodePath.join(userProfile, "AppData", "Local");
+    if (isWindows && localAppData === "") {
+      throw new Error("LOCALAPPDATA is required by the T3 Code Windows service launcher.");
+    }
+    const userName = (hostEnv.USERNAME ?? "").trim();
+    const endScheduledTask =
+      options.endScheduledTask ??
+      ((taskName: string) => {
+        NodeChildProcess.spawnSync(
+          windowsSystem32Binary("schtasks.exe", hostEnv),
+          ["/End", "/TN", taskName],
+          {
+            stdio: "ignore",
+            windowsHide: true,
+          },
+        );
+      });
     const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     const state = await readServiceState(statePath);
-    const serviceUnit = serviceUnitFromEnvironment(environment);
-    const launcher = new Launcher(baseDir, state, {
+    const serviceUnit = serviceUnitFromEnvironment(managerEnvironment, {
+      isWindows,
+      localAppData,
+      baseDir,
+    });
+    const activeLauncher = new Launcher(baseDir, state, {
       environment,
       ...(serviceUnit === undefined ? {} : { serviceUnit }),
       ...(output === undefined ? {} : { output }),
-      ...(windows ? { controlPath: serviceControlPipePath(baseDir) } : {}),
+      ...(options.acl === undefined ? {} : { acl: options.acl }),
+      ...(options.controlListenRetryMs === undefined
+        ? {}
+        : { controlListenRetryMs: options.controlListenRetryMs }),
+      ...(options.spawnCommand === undefined ? {} : { spawnCommand: options.spawnCommand }),
+      ...(isWindows
+        ? {
+            controlDir: serviceControlDir(localAppData, baseDir, { caseInsensitive: true }),
+            stopChildOverIpc: true,
+            ...(options.serviceUnit !== undefined && userName !== ""
+              ? {
+                  // Runs while `lock.sqlite` is still held so a replacement launcher cannot own
+                  // the task yet, and flushes the fatal log line before `schtasks /End` kills conhost.
+                  onFatalControlOwnerExit: (cause) => {
+                    try {
+                      writeFatalError(cause);
+                    } finally {
+                      const taskName = resolvePersistedServiceTaskName(
+                        localAppData,
+                        serviceTaskName(hostEnv.USERDOMAIN ?? "", userName),
+                      );
+                      endScheduledTask(taskName);
+                    }
+                  },
+                }
+              : {}),
+          }
+        : {}),
     });
     // Ending a scheduled task kills its console host without a signal; the console read fails instead.
-    const watchConsole = windows && process.stdin.isTTY === true;
-    const onConsoleLost = () => void launcher.stop("SIGTERM");
+    const watchConsole = isWindows && process.stdin.isTTY === true;
+    const onConsoleLost = () => void activeLauncher.stop("SIGTERM");
     if (watchConsole) {
       process.stdin.on("error", () => undefined);
       process.stdin.once("close", onConsoleLost);
       process.stdin.resume();
     }
     try {
-      await launcher.run();
+      await activeLauncher.run();
     } finally {
       if (watchConsole) {
         process.stdin.off("close", onConsoleLost);
@@ -1267,23 +3573,13 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
       }
     }
   } catch (cause) {
-    if (output !== undefined) {
-      NodeFS.writeSync(
-        output,
-        `[service-launcher] ${cause instanceof Error ? cause.message : String(cause)}\n`,
-      );
-    }
-    // Agents the server left behind keep the console host, and so the task, running; ending it
-    // lets the next repeating trigger start the service again.
-    if (windows && options.serviceUnit !== undefined) {
-      const taskName = serviceTaskName(process.env.USERDOMAIN ?? "", process.env.USERNAME ?? "");
-      NodeChildProcess.spawnSync("schtasks", ["/End", "/TN", taskName], {
-        stdio: "ignore",
-        windowsHide: true,
-      });
-    }
+    writeFatalError(cause);
     throw cause;
   } finally {
-    if (output !== undefined) NodeFS.closeSync(output);
+    if (output !== undefined) {
+      try {
+        NodeFS.closeSync(output);
+      } catch {}
+    }
   }
 }

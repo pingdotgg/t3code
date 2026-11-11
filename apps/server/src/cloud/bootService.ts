@@ -18,10 +18,23 @@ import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import * as ProcessRunner from "../processRunner.ts";
 import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
 import {
+  WINDOWS_QUERY_REGISTERED_TASK_SCRIPT,
+  acquireServiceAccountLock,
+  isValidServiceTaskName,
+  probeServiceLauncher,
+  queryServiceLauncherId,
+  recoverServiceLauncherUninstall,
   requestServiceLauncherStop,
-  serviceControlPipePath,
-  serviceLauncherIsRunning,
+  serviceAccountControlRoot,
+  serviceControlDir,
   serviceTaskName,
+  serviceTaskNamePath,
+  signalServiceLauncherStop,
+  stageServiceLauncherInstall,
+  waitForServiceLauncherRelease,
+  windowsPowerShellBinary,
+  windowsSystem32Binary,
+  type ControlAclHooks,
 } from "../serviceLauncher.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -37,17 +50,16 @@ import {
   SERVICE_STATE_FILE,
   SERVICE_UNIT_ENV,
   compareExactServiceVersions,
+  hasWindowsTaskEnvironmentExpansion,
   serviceUnitBaseDirOf as bootServiceBaseDirOf,
+  serviceUnitProgramOf as bootServiceProgramOf,
   parseServiceState,
   serviceStateActiveVersion,
   serviceStateHasPendingUpdate,
   type ServiceState,
 } from "./serviceProtocol.ts";
 
-export {
-  serviceUnitBaseDirOf as bootServiceBaseDirOf,
-  serviceUnitProgramOf as bootServiceProgramOf,
-} from "./serviceProtocol.ts";
+export { bootServiceBaseDirOf, bootServiceProgramOf };
 
 const BOOT_SERVICE_NAME = "t3code";
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
@@ -57,7 +69,12 @@ export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
 /** Task Scheduler keeps its own copy; this one lets status and repair read the task back. */
-const BOOT_SERVICE_TASK_FILE = `${BOOT_SERVICE_NAME}-task.xml`;
+export const BOOT_SERVICE_TASK_FILE = `${BOOT_SERVICE_NAME}-task.xml`;
+const BOOT_SERVICE_UNIT_VALUES = new Set([
+  BOOT_SERVICE_UNIT_FILE,
+  BOOT_SERVICE_PLIST_FILE,
+  BOOT_SERVICE_TASK_FILE,
+]);
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
 function escapeSystemdSpecifiers(value: string): string {
@@ -71,8 +88,9 @@ function quoteSystemdValue(value: string): string {
     : escaped;
 }
 
-/** Windows paths cannot contain `"`; only backslashes before the closing quote need doubling. */
-const quoteWindowsArgument = (value: string) => `"${value.replace(/(\\+)$/, "$1$1")}"`;
+/** Escape embedded quotes and double trailing backslashes per CommandLineToArgvW rules. */
+const quoteWindowsArgument = (value: string) =>
+  `"${value.replaceAll(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
 
 export interface BootServicePlan {
   readonly program: ReadonlyArray<string>;
@@ -186,7 +204,12 @@ export function renderBootServicePlist(
  */
 export function renderBootServiceTask(
   plan: BootServicePlan,
-  options: { readonly userId: string; readonly homeDir: string; readonly conhostPath: string },
+  options: {
+    readonly userId: string;
+    readonly homeDir: string;
+    readonly conhostPath: string;
+    readonly enabled?: boolean;
+  },
 ): string {
   const launcherArguments = [
     ...plan.program,
@@ -195,7 +218,7 @@ export function renderBootServiceTask(
     "--log-file",
     plan.logPath,
     "--service-unit",
-    BOOT_SERVICE_UNIT_FILE,
+    BOOT_SERVICE_TASK_FILE,
   ]
     .map(quoteWindowsArgument)
     .join(" ");
@@ -229,6 +252,7 @@ export function renderBootServiceTask(
     `    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>`,
     `    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>`,
     `    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>`,
+    ...(options.enabled === false ? [`    <Enabled>false</Enabled>`] : []),
     `    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>`,
     `    <Priority>5</Priority>`,
     `  </Settings>`,
@@ -251,17 +275,21 @@ export type BootServiceStep = {
   readonly timeout?: Duration.Input;
 } & (
   | { readonly command: string; readonly args: ReadonlyArray<string> }
-  /** A step no command can do, such as waiting on the Windows launcher's control pipe. */
+  /** A step no command can do, such as waiting on the Windows launcher's control channel. */
   | { readonly run: Effect.Effect<void, BootServiceCommandError> }
 );
 
 /** Must exceed systemd TimeoutStopSec and launchd ExitTimeOut (both 90s) to avoid shutdown races. */
 const STOP_STEP_TIMEOUT = Duration.seconds(120);
+/** Covers both passes of `stopWindowsLauncher` (up to 95s graceful stop + 15s fallback release per pass). */
+const WINDOWS_STOP_STEP_TIMEOUT = Duration.seconds(240);
 
 export interface BootServiceManager {
   readonly kind: "systemd" | "launchd" | "schtasks";
   readonly unitPath: string;
   readonly render: (plan: BootServicePlan) => string;
+  readonly prepareStop: ReadonlyArray<BootServiceStep>;
+  readonly finishStop: ReadonlyArray<BootServiceStep>;
   readonly stop: ReadonlyArray<BootServiceStep>;
   readonly activate: ReadonlyArray<BootServiceStep>;
   readonly restart: ReadonlyArray<BootServiceStep>;
@@ -288,18 +316,21 @@ function systemdManager(input: {
       args: ["--user", "enable", BOOT_SERVICE_UNIT_FILE],
     },
   ];
+  const stop: ReadonlyArray<BootServiceStep> = [
+    {
+      step: "stopping the installed service",
+      command: "systemctl",
+      args: ["--user", "stop", BOOT_SERVICE_UNIT_FILE],
+      timeout: STOP_STEP_TIMEOUT,
+    },
+  ];
   return {
     kind: "systemd",
     unitPath,
     render: renderBootServiceUnit,
-    stop: [
-      {
-        step: "stopping the installed service",
-        command: "systemctl",
-        args: ["--user", "stop", BOOT_SERVICE_UNIT_FILE],
-        timeout: STOP_STEP_TIMEOUT,
-      },
-    ],
+    prepareStop: [],
+    finishStop: stop,
+    stop,
     activate: [
       ...prepareActivation,
       {
@@ -355,6 +386,16 @@ function launchdManager(input: {
   );
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
+  // bootout --wait is undocumented but waits through ExitTimeOut, preventing bootstrap EIO races.
+  const stop: ReadonlyArray<BootServiceStep> = [
+    {
+      step: "stopping the installed launch agent",
+      command: "launchctl",
+      args: ["bootout", "--wait", serviceTarget],
+      optional: true,
+      timeout: STOP_STEP_TIMEOUT,
+    },
+  ];
   // Unloaded jobs may reject bootout/enable. Bootstrap starts RunAtLoad/KeepAlive jobs; kickstart would restart them.
   return {
     kind: "launchd",
@@ -364,16 +405,9 @@ function launchdManager(input: {
         homeDir: input.homeDir,
         environmentPath: input.environmentPath,
       }),
-    // bootout --wait is undocumented but waits through ExitTimeOut, preventing bootstrap EIO races.
-    stop: [
-      {
-        step: "stopping the installed launch agent",
-        command: "launchctl",
-        args: ["bootout", "--wait", serviceTarget],
-        optional: true,
-        timeout: STOP_STEP_TIMEOUT,
-      },
-    ],
+    prepareStop: [],
+    finishStop: stop,
+    stop,
     activate: [
       // A persisted `launchctl disable` override refuses bootstrap; clear it.
       {
@@ -411,7 +445,7 @@ function launchdManager(input: {
 
 export interface WindowsSession {
   readonly localAppData: string;
-  /** `DOMAIN\user`, the account whose logon starts the task. */
+  /** `DOMAIN\\user`, the account whose logon starts the task. */
   readonly userId: string;
   readonly taskName: string;
   readonly systemRoot: string;
@@ -421,27 +455,39 @@ function schtasksManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
   readonly session: WindowsSession;
+  /** Disables the scheduled task unless it is already absent, failing if Task Scheduler rejects it. */
+  readonly disableTask: Effect.Effect<void, BootServiceCommandError>;
   /** Asks the installed launcher to stop and waits for it; Task Scheduler cannot. */
   readonly stopLauncher: Effect.Effect<void, BootServiceCommandError>;
+  /** Removes the scheduled task unless it is already absent, failing if removal leaves it registered. */
+  readonly deleteTask: Effect.Effect<void, BootServiceCommandError>;
 }): BootServiceManager {
   const unitPath = input.path.join(input.session.localAppData, "t3code", BOOT_SERVICE_TASK_FILE);
+  const schtasksBin = windowsSystem32Binary("schtasks.exe", {
+    SystemRoot: input.session.systemRoot,
+  });
+  const conhostBin = windowsSystem32Binary("conhost.exe", {
+    SystemRoot: input.session.systemRoot,
+  });
   const task = ["/TN", input.session.taskName];
   const register = {
     step: "registering the scheduled task",
-    command: "schtasks",
+    command: schtasksBin,
     args: ["/Create", "/XML", unitPath, ...task, "/F"],
   };
-  const run = { step: "starting the service", command: "schtasks", args: ["/Run", ...task] };
+  const run = { step: "starting the service", command: schtasksBin, args: ["/Run", ...task] };
   // Disabled first, or the repeating trigger restarts the task while it should stay stopped.
-  const stop: ReadonlyArray<BootServiceStep> = [
-    {
-      step: "disabling the scheduled task",
-      command: "schtasks",
-      args: ["/Change", ...task, "/DISABLE"],
-      optional: true,
-    },
-    { step: "stopping the installed service", run: input.stopLauncher, timeout: STOP_STEP_TIMEOUT },
+  const prepareStop: ReadonlyArray<BootServiceStep> = [
+    { step: "disabling the scheduled task", run: input.disableTask },
   ];
+  const finishStop: ReadonlyArray<BootServiceStep> = [
+    {
+      step: "stopping the installed service",
+      run: input.stopLauncher,
+      timeout: WINDOWS_STOP_STEP_TIMEOUT,
+    },
+  ];
+  const stop: ReadonlyArray<BootServiceStep> = [...prepareStop, ...finishStop];
   return {
     kind: "schtasks",
     unitPath,
@@ -449,40 +495,35 @@ function schtasksManager(input: {
       renderBootServiceTask(plan, {
         userId: input.session.userId,
         homeDir: input.homeDir,
-        conhostPath: input.path.join(input.session.systemRoot, "System32", "conhost.exe"),
+        conhostPath: conhostBin,
       }),
+    prepareStop,
+    finishStop,
     stop,
     // Registration also enables the task.
     activate: [register, run],
     restart: [
       {
         step: "enabling the scheduled task",
-        command: "schtasks",
+        command: schtasksBin,
         args: ["/Change", ...task, "/ENABLE"],
       },
       { ...run, step: "restarting the service after a failed update" },
     ],
-    // Ending the task kills only its console host; the launcher sees the console close and
-    // stops gracefully while the replacement waits for its control pipe.
+    // `IgnoreNew` ignores `/Run` while the previous console host is active, so `/End` runs first:
+    // the launcher sees the console close and stops gracefully while the replacement waits for the
+    // per-home control lock, and the `PT1M` trigger heals if console close interrupts `/Run`.
     handoff: [
       register,
       {
         step: "ending the scheduled task",
-        command: "schtasks",
+        command: schtasksBin,
         args: ["/End", ...task],
         optional: true,
       },
       { ...run, step: "restarting the service" },
     ],
-    deactivate: [
-      ...stop,
-      {
-        step: "removing the scheduled task",
-        command: "schtasks",
-        args: ["/Delete", ...task, "/F"],
-        optional: true,
-      },
-    ],
+    deactivate: [...stop, { step: "removing the scheduled task", run: input.deleteTask }],
     finalize: [],
   };
 }
@@ -497,7 +538,9 @@ function selectBootServiceManager(input: {
   readonly environmentPath: string;
   readonly windows?: {
     readonly session: WindowsSession;
+    readonly disableTask: Effect.Effect<void, BootServiceCommandError>;
     readonly stopLauncher: Effect.Effect<void, BootServiceCommandError>;
+    readonly deleteTask: Effect.Effect<void, BootServiceCommandError>;
   };
 }): BootServiceManager | undefined {
   if (input.homeDir === "") {
@@ -608,6 +651,7 @@ const BootServiceProblem = Schema.Literals([
   "linger-disabled",
   "service-disabled",
   "service-stopped",
+  "service-unhealthy",
   "restart-pending",
 ]);
 type BootServiceProblem = typeof BootServiceProblem.Type;
@@ -624,6 +668,8 @@ export function formatBootServiceProblem(problem: BootServiceProblem): string {
       return "The service is not enabled to start automatically. Run `t3 service install` to repair it.";
     case "service-stopped":
       return "The service is not running. Check the service log (on Linux, also `systemctl --user status t3code.service`), then run `t3 service install`.";
+    case "service-unhealthy":
+      return "The service is holding its control lock without answering authenticated control requests. Check the service log, then run `t3 service install` to repair it.";
     case "restart-pending":
       return "A newer version is installed but the service is still running the previous one. Run `t3 service restart` to switch.";
   }
@@ -665,14 +711,31 @@ export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootSer
 export const formatBootServiceBaseDirOption = (baseDir: string) =>
   `--base-dir '${baseDir.replaceAll("'", `'"'"'`)}'`;
 
+export function sameBootServiceBaseDir(
+  path: Path.Path,
+  platform: NodeJS.Platform,
+  left: string,
+  right: string,
+): boolean {
+  const normalize = (target: string) => {
+    const resolved = path.resolve(target);
+    return platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(left) === normalize(right);
+}
+
 export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootServiceOtherBaseDirError>()(
   "BootServiceOtherBaseDirError",
   {
     installedBaseDir: Schema.String,
     baseDir: Schema.String,
+    unrecognizedTaskName: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.unrecognizedTaskName !== undefined) {
+      return `The Windows scheduled task '${this.unrecognizedTaskName}' has an unrecognized configuration, so T3 Code did not overwrite or remove it. Inspect it with \`schtasks /Query /TN "${this.unrecognizedTaskName}" /XML\`, or remove it with \`schtasks /Delete /TN "${this.unrecognizedTaskName}" /F\` and retry.`;
+    }
     return `The T3 Code service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`t3 service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
   }
 
@@ -682,9 +745,23 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
   }
 }
 
+export class BootServiceRunningInsideServiceError extends Schema.TaggedError<BootServiceRunningInsideServiceError>()(
+  "BootServiceRunningInsideServiceError",
+  {},
+) {
+  override get message(): string {
+    return "This command must stop the T3 Code background service, so it cannot run from a terminal inside that service. Run it from an external shell on the host machine instead.";
+  }
+
+  override get [CliError.userMessage]() {
+    return this.message;
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
   | BootServiceOtherBaseDirError
+  | BootServiceRunningInsideServiceError
   | BootServiceCommandError
   | BootServiceInstallError
   | BootServicePrerequisiteError
@@ -733,7 +810,16 @@ export class BootService extends Context.Service<
 
 export interface BootServiceHost {
   readonly execPath: string;
+  readonly controlDir?: (baseDir: string) => string;
+  readonly accountControlRoot?: string;
+  readonly acl?: ControlAclHooks;
+  readonly fallbackReleaseTimeoutMs?: number;
 }
+
+type RegisteredWindowsTaskSnapshot =
+  | { readonly state: "present"; readonly xml: string }
+  | { readonly state: "absent" }
+  | { readonly state: "failed" };
 
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly baseDir: string;
@@ -754,13 +840,17 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
-  const runningInsideService =
-    (yield* Config.String(SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
-    BOOT_SERVICE_UNIT_FILE;
+  const runningInsideService = BOOT_SERVICE_UNIT_VALUES.has(
+    (yield* Config.String(SERVICE_UNIT_ENV).pipe(Config.withDefault(""))).trim(),
+  );
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
+  const probe = (command: string, args: ReadonlyArray<string>) =>
+    runner.run({ command, args, timeout: Duration.seconds(5) }).pipe(Effect.option);
+  const succeeded = (result: Option.Option<ProcessRunner.ProcessRunOutput>) =>
+    Option.isSome(result) && result.value.code === 0;
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
   const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
   const xmlSafeInstallerDirectories = installerPath.split(":").filter(
@@ -790,34 +880,298 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     ),
   ).join(":");
 
+  const statOptionalPath = (targetPath: string) =>
+    fs.stat(targetPath).pipe(
+      Effect.asSome,
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed(Option.none<FileSystem.File.Info>()),
+      ),
+      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+    );
+  const readOptionalFileString = (targetPath: string) =>
+    fs.readFileString(targetPath).pipe(
+      Effect.asSome,
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed(Option.none<string>()),
+      ),
+      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+    );
+  const readOptionalUnitFileString = Effect.fn("boot_service.read_optional_unit_file")(function* (
+    targetPath: string,
+  ) {
+    const info = yield* statOptionalPath(targetPath);
+    if (Option.isNone(info) || info.value.type === "Directory") {
+      return Option.none<string>();
+    }
+    return yield* readOptionalFileString(targetPath);
+  });
+
   const systemdUnitDir = platform === "linux" ? yield* readSystemdUnitDirectory() : undefined;
   const windowsVariable = (name: string) =>
     platform === "win32" ? Config.String(name).pipe(Config.withDefault("")) : Config.succeed("");
+  const windowsDomain = (yield* windowsVariable("USERDOMAIN")).trim();
+  const windowsUser = (yield* windowsVariable("USERNAME")).trim();
+  const configuredLocalAppData = (yield* windowsVariable("LOCALAPPDATA")).trim();
+  const windowsLocalAppData =
+    configuredLocalAppData !== ""
+      ? configuredLocalAppData
+      : platform === "win32" && homeDir.trim() !== ""
+        ? path.join(homeDir.trim(), "AppData", "Local")
+        : "";
+  const taskNamePath =
+    platform === "win32" && windowsLocalAppData !== ""
+      ? serviceTaskNamePath(windowsLocalAppData)
+      : "";
+  const persistedTaskName =
+    taskNamePath === ""
+      ? Option.none<string>()
+      : yield* readOptionalFileString(taskNamePath).pipe(
+          Effect.map(
+            Option.flatMap((raw) => {
+              const trimmed = raw.trim();
+              return isValidServiceTaskName(trimmed) ? Option.some(trimmed) : Option.none();
+            }),
+          ),
+          Effect.orElseSucceed(() => Option.none<string>()),
+        );
   const windowsSession: WindowsSession = {
-    localAppData: yield* windowsVariable("LOCALAPPDATA"),
-    userId: `${yield* windowsVariable("USERDOMAIN")}\\${yield* windowsVariable("USERNAME")}`,
-    taskName: serviceTaskName(
-      yield* windowsVariable("USERDOMAIN"),
-      yield* windowsVariable("USERNAME"),
+    localAppData: windowsLocalAppData,
+    userId: windowsDomain === "" ? windowsUser : `${windowsDomain}\\${windowsUser}`,
+    taskName: Option.getOrElse(persistedTaskName, () =>
+      serviceTaskName(windowsDomain, windowsUser),
     ),
-    systemRoot: (yield* windowsVariable("SystemRoot")) || "C:\\Windows",
+    systemRoot: (yield* windowsVariable("SystemRoot")).trim() || "C:\\Windows",
   };
+  const windowsBinEnv = { SystemRoot: windowsSession.systemRoot };
+  const schtasksCommand = windowsSystem32Binary("schtasks.exe", windowsBinEnv);
+  const windowsPowerShellCommand = windowsPowerShellBinary(windowsBinEnv);
+  const resolveControlDir =
+    host.controlDir ??
+    ((targetBaseDir: string) =>
+      serviceControlDir(windowsSession.localAppData, targetBaseDir, {
+        caseInsensitive: platform === "win32",
+      }));
+  const accountControlRoot =
+    host.accountControlRoot ?? serviceAccountControlRoot(windowsSession.localAppData);
+  // Win32 HRESULTs returned by `schtasks /Query /HRESULT` when the task or folder does not exist.
+  const SCHED_TASK_NOT_FOUND_HRESULTS = new Set([0x80070002, 0x80070003]);
+  const windowsTaskHasActions = (contents: string) => /<Actions\b/i.test(contents);
+  const selectEffectiveWindowsUnit = (
+    localUnit: Option.Option<string>,
+    registeredTaskXml: string | undefined,
+  ): Option.Option<string> =>
+    registeredTaskXml !== undefined && windowsTaskHasActions(registeredTaskXml)
+      ? Option.some(registeredTaskXml)
+      : Option.isSome(localUnit)
+        ? localUnit
+        : Option.fromNullishOr(registeredTaskXml);
+  const windowsUnitPath =
+    windowsSession.localAppData === ""
+      ? ""
+      : path.join(windowsSession.localAppData, "t3code", BOOT_SERVICE_TASK_FILE);
+  const queryRegisteredWindowsTask = Effect.fn("cloud.boot_service.query_windows_task")(
+    function* (): Effect.fn.Return<RegisteredWindowsTaskSnapshot> {
+      const queried = yield* runner
+        .run({
+          command: windowsPowerShellCommand,
+          args: [
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            WINDOWS_QUERY_REGISTERED_TASK_SCRIPT,
+          ],
+          env: { T3_TASK_NAME: windowsSession.taskName },
+          timeout: Duration.seconds(15),
+        })
+        .pipe(Effect.option);
+      if (Option.isNone(queried)) return { state: "failed" };
+      if (
+        queried.value.code === 0 &&
+        !queried.value.stdoutInvalidUtf8 &&
+        !queried.value.stdoutTruncated
+      ) {
+        return { state: "present", xml: queried.value.stdout };
+      }
+      if (Number(queried.value.code) === 2) {
+        return { state: "absent" };
+      }
+      return { state: "failed" };
+    },
+  );
   // The unit is per user, so the launcher to stop is the one serving the installed unit's home.
-  const launcherControlPath = (unit: Option.Option<string>) =>
-    serviceControlPipePath(
-      Option.getOrUndefined(Option.flatMapNullishOr(unit, bootServiceBaseDirOf)) ?? input.baseDir,
+  const launcherBaseDir = (unit: Option.Option<string>) =>
+    Option.getOrUndefined(Option.flatMapNullishOr(unit, bootServiceBaseDirOf)) ?? input.baseDir;
+  const disableWindowsTask = Effect.fn("cloud.boot_service.disable_windows_task")(function* () {
+    const runDisable = Effect.gen(function* () {
+      const disabled = yield* runner
+        .run({
+          command: schtasksCommand,
+          args: ["/Change", "/TN", windowsSession.taskName, "/DISABLE"],
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) => new BootServiceCommandError({ step: "disabling the scheduled task", cause }),
+          ),
+        );
+      if (disabled.code === 0) return;
+      const queried = yield* runner
+        .run({
+          command: schtasksCommand,
+          args: ["/Query", "/TN", windowsSession.taskName, "/HRESULT"],
+          timeout: Duration.seconds(5),
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) => new BootServiceCommandError({ step: "disabling the scheduled task", cause }),
+          ),
+        );
+      if (!SCHED_TASK_NOT_FOUND_HRESULTS.has(Number(queried.code) >>> 0)) {
+        return yield* new BootServiceCommandError({
+          step: "disabling the scheduled task",
+          exitCode: Number(disabled.code),
+          stdoutLength: disabled.stdout.length,
+          stderrLength: disabled.stderr.length,
+        });
+      }
+    });
+    if (windowsUnitPath === "") {
+      return yield* runDisable;
+    }
+    // Serialize with `Launcher.#repointServiceUnit` (`reloadWindowsTaskUnit`), releasing before `stopWindowsLauncher`.
+    return yield* Effect.acquireUseRelease(
+      Effect.tryPromise({
+        try: () => acquireServiceSelectionLock(windowsUnitPath),
+        catch: (cause) =>
+          new BootServiceCommandError({ step: "disabling the scheduled task", cause }),
+      }),
+      () => runDisable,
+      (release) => Effect.sync(release),
     );
-  const stopWindowsLauncher = Effect.gen(function* () {
-    const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
+  });
+  const stopWindowsLauncher = Effect.fn("cloud.boot_service.stop_windows_launcher")(function* () {
+    const [localUnit, queriedTask] = yield* Effect.all(
+      [
+        readOptionalUnitFileString(unitPath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new BootServiceCommandError({ step: "stopping the installed service", cause }),
+          ),
+        ),
+        queryRegisteredWindowsTask(),
+      ],
+      { concurrency: "unbounded" },
+    );
+    if (queriedTask.state === "failed") {
+      return yield* new BootServiceCommandError({ step: "stopping the installed service" });
+    }
+    const registeredTaskXml = queriedTask.state === "present" ? queriedTask.xml : undefined;
+    const unit = selectEffectiveWindowsUnit(localUnit, registeredTaskXml);
+    const targetBaseDir = launcherBaseDir(unit);
+    const controlDir = resolveControlDir(targetBaseDir);
+    for (let pass = 0; pass < 2; pass++) {
+      const fallbackToTaskEnd = yield* Effect.tryPromise({
+        try: async (signal) => {
+          try {
+            await requestServiceLauncherStop(controlDir, {
+              signal,
+              acl: host.acl,
+            });
+            return false;
+          } catch (cause) {
+            if (signal.aborted) throw cause;
+            return true;
+          }
+        },
+        catch: (cause) =>
+          new BootServiceCommandError({ step: "stopping the installed service", cause }),
+      });
+      // Agents the server left behind keep its console host, and so the task, running.
+      // When control-channel stop failed (for example, a lost or untrusted token), ending the
+      // task closes conhost stdin so the launcher exits and releases its lock.
+      if (pass === 0 || fallbackToTaskEnd) {
+        yield* runner
+          .run({ command: schtasksCommand, args: ["/End", "/TN", windowsSession.taskName] })
+          .pipe(Effect.ignore);
+      }
+      if (fallbackToTaskEnd) {
+        yield* Effect.tryPromise({
+          try: (signal) =>
+            waitForServiceLauncherRelease(controlDir, {
+              timeoutMs: host.fallbackReleaseTimeoutMs ?? 15_000,
+              signal,
+              acl: host.acl,
+            }),
+          catch: (cause) =>
+            new BootServiceCommandError({ step: "stopping the installed service", cause }),
+        });
+      }
+      const remaining = yield* Effect.tryPromise({
+        try: (signal) =>
+          probeServiceLauncher(controlDir, {
+            signal,
+            acl: host.acl,
+          }),
+        catch: (cause) =>
+          new BootServiceCommandError({ step: "stopping the installed service", cause }),
+      });
+      if (remaining === "stopped") return;
+      if (pass === 1) {
+        return yield* new BootServiceCommandError({
+          step: "stopping the installed service",
+        });
+      }
+    }
+  });
+  const deleteWindowsTask = Effect.fn("cloud.boot_service.delete_windows_task")(function* () {
+    const deleted = yield* runner
+      .run({
+        command: schtasksCommand,
+        args: ["/Delete", "/TN", windowsSession.taskName, "/F"],
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new BootServiceCommandError({ step: "removing the scheduled task", cause }),
+        ),
+      );
+    if (deleted.code === 0) return;
+    // Succeed only when Task Scheduler specifically confirms the task is absent; preserve the
+    // local XML mirror when access errors or an unavailable Task Scheduler prevent verification.
+    const queried = yield* runner
+      .run({
+        command: schtasksCommand,
+        args: ["/Query", "/TN", windowsSession.taskName, "/HRESULT"],
+        timeout: Duration.seconds(5),
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new BootServiceCommandError({ step: "removing the scheduled task", cause }),
+        ),
+      );
+    if (!SCHED_TASK_NOT_FOUND_HRESULTS.has(Number(queried.code) >>> 0)) {
+      return yield* new BootServiceCommandError({
+        step: "removing the scheduled task",
+        exitCode: Number(deleted.code),
+        stdoutLength: deleted.stdout.length,
+        stderrLength: deleted.stderr.length,
+      });
+    }
+  });
+  const signalPreviousWindowsLauncher = Effect.fn(
+    "cloud.boot_service.signal_previous_windows_launcher",
+  )(function* (launcherId: string | undefined) {
+    if (launcherId === undefined) return;
     yield* Effect.tryPromise({
-      try: () => requestServiceLauncherStop(launcherControlPath(unit)),
+      try: (signal) =>
+        signalServiceLauncherStop(resolveControlDir(input.baseDir), launcherId, {
+          signal,
+          acl: host.acl,
+        }),
       catch: (cause) =>
         new BootServiceCommandError({ step: "stopping the installed service", cause }),
-    });
-    // Agents the server left behind keep its console host, and so the task, running.
-    yield* runner
-      .run({ command: "schtasks", args: ["/End", "/TN", windowsSession.taskName] })
-      .pipe(Effect.ignore);
+    }).pipe(Effect.ignore);
   });
   const detectedManager = selectBootServiceManager({
     platform,
@@ -827,20 +1181,114 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     uid,
     path,
     environmentPath,
-    ...(windowsSession.localAppData === "" || windowsSession.userId === "\\"
+    ...(windowsSession.localAppData === "" || windowsUser === ""
       ? {}
-      : { windows: { session: windowsSession, stopLauncher: stopWindowsLauncher } }),
+      : {
+          windows: {
+            session: windowsSession,
+            disableTask: disableWindowsTask(),
+            stopLauncher: stopWindowsLauncher(),
+            deleteTask: deleteWindowsTask(),
+          },
+        }),
   });
   const unitPath = detectedManager?.unitPath ?? "";
+  const isUnrecognizedWindowsTask = (contents: string): boolean =>
+    detectedManager?.kind === "schtasks" &&
+    windowsTaskHasActions(contents) &&
+    bootServiceBaseDirOf(contents) === undefined;
+  const readInstalledUnitSnapshot = Effect.fn("cloud.boot_service.read_installed_unit_snapshot")(
+    function* () {
+      if (unitPath === "") {
+        return {
+          localUnit: Option.none<string>(),
+          queriedTask: { state: "absent" } as RegisteredWindowsTaskSnapshot,
+          registeredTaskXml: undefined,
+          effectiveUnit: Option.none<string>(),
+        };
+      }
+      if (detectedManager?.kind !== "schtasks") {
+        const localUnit = yield* readOptionalUnitFileString(unitPath);
+        return {
+          localUnit,
+          queriedTask: { state: "absent" } as RegisteredWindowsTaskSnapshot,
+          registeredTaskXml: undefined,
+          effectiveUnit: localUnit,
+        };
+      }
+      const [localUnit, queriedTask] = yield* Effect.all(
+        [readOptionalUnitFileString(unitPath), queryRegisteredWindowsTask()],
+        { concurrency: "unbounded" },
+      );
+      const registeredTaskXml = queriedTask.state === "present" ? queriedTask.xml : undefined;
+      const effectiveUnit = selectEffectiveWindowsUnit(localUnit, registeredTaskXml);
+      return {
+        localUnit,
+        queriedTask,
+        registeredTaskXml,
+        effectiveUnit,
+      };
+    },
+  );
+  const withWindowsAccountLock = <A, E, R>(
+    manager: BootServiceManager,
+    effect: Effect.Effect<A, E, R>,
+    mapLockError: (cause: unknown) => E,
+  ): Effect.Effect<A, E, R> =>
+    manager.kind !== "schtasks"
+      ? effect
+      : Effect.scoped(
+          Effect.acquireRelease(
+            Effect.tryPromise({
+              try: (signal) =>
+                acquireServiceAccountLock(accountControlRoot, {
+                  signal,
+                  acl: host.acl,
+                }),
+              catch: mapLockError,
+            }),
+            (lock) => Effect.sync(() => lock.close()),
+          ).pipe(Effect.andThen(effect)),
+        );
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
+  const sameBaseDir = (left: string, right: string) =>
+    sameBootServiceBaseDir(path, platform, left, right);
   const otherBaseDirOf = (unit: string) => {
     const installedBaseDir = bootServiceBaseDirOf(unit);
-    return installedBaseDir !== undefined &&
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
+    return installedBaseDir !== undefined && !sameBaseDir(installedBaseDir, input.baseDir)
       ? installedBaseDir
       : undefined;
+  };
+  const guardWindowsSnapshot = (snapshot: {
+    readonly queriedTask: RegisteredWindowsTaskSnapshot;
+    readonly effectiveUnit: Option.Option<string>;
+  }): Effect.Effect<void, BootServiceCommandError | BootServiceOtherBaseDirError> => {
+    if (detectedManager?.kind === "schtasks" && snapshot.queriedTask.state === "failed") {
+      return Effect.fail(new BootServiceCommandError({ step: "inspecting the scheduled task" }));
+    }
+    if (Option.isSome(snapshot.effectiveUnit)) {
+      if (isUnrecognizedWindowsTask(snapshot.effectiveUnit.value)) {
+        return Effect.fail(
+          new BootServiceOtherBaseDirError({
+            installedBaseDir: "",
+            baseDir: input.baseDir,
+            unrecognizedTaskName: windowsSession.taskName,
+          }),
+        );
+      }
+      const otherBaseDir = otherBaseDirOf(snapshot.effectiveUnit.value);
+      if (otherBaseDir !== undefined) {
+        return Effect.fail(
+          new BootServiceOtherBaseDirError({
+            installedBaseDir: otherBaseDir,
+            baseDir: input.baseDir,
+          }),
+        );
+      }
+    }
+    return Effect.void;
   };
   const writeDurably = (filePath: string, contents: string) =>
     Effect.scoped(
@@ -928,10 +1376,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       { discard: true },
     );
 
-  const probe = (command: string, args: ReadonlyArray<string>) =>
-    runner.run({ command, args, timeout: Duration.seconds(5) }).pipe(Effect.option);
-  const succeeded = (result: Option.Option<ProcessRunner.ProcessRunOutput>) =>
-    Option.isSome(result) && result.value.code === 0;
   const lingerArgs = [
     "show-user",
     ...(uid === undefined ? [] : [String(uid)]),
@@ -998,43 +1442,98 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       (release) => Effect.sync(release),
     );
 
-  // Running means the launcher answers its control pipe: a task can stay running after the
-  // launcher exits, while agents it left behind hold the console host open.
+  // Running means the launcher answers authenticated control requests while holding its lock:
+  // a task can stay running after the launcher exits while orphaned agents hold conhost open,
+  // and an occupied lock that fails authentication reports `service-unhealthy` rather than healthy.
   const readSchtasksProblems = Effect.fn("cloud.boot_service.read_schtasks_problems")(function* (
     unit: Option.Option<string>,
+    prequeriedTask?: RegisteredWindowsTaskSnapshot,
   ) {
-    const [task, running] = yield* Effect.all(
+    const targetBaseDir = launcherBaseDir(unit);
+    const controlDir = resolveControlDir(targetBaseDir);
+    const [task, launcherState] = yield* Effect.all(
       [
-        probe("schtasks", ["/Query", "/TN", windowsSession.taskName, "/XML"]),
-        Effect.promise(() => serviceLauncherIsRunning(launcherControlPath(unit))),
+        prequeriedTask === undefined
+          ? queryRegisteredWindowsTask()
+          : Effect.succeed(prequeriedTask),
+        Effect.tryPromise({
+          try: (signal) =>
+            probeServiceLauncher(controlDir, {
+              signal,
+              acl: host.acl,
+            }),
+          catch: (cause) =>
+            new BootServiceCommandError({ step: "inspecting the installed service", cause }),
+        }).pipe(Effect.orElseSucceed(() => "unhealthy" as const)),
       ],
       { concurrency: "unbounded" },
     );
-    const settings = Option.isSome(task)
-      ? (/<Settings>[\s\S]*?<\/Settings>/.exec(task.value.stdout)?.[0] ?? "")
-      : "";
     const problems: BootServiceProblem[] = [];
-    if (!succeeded(task) || settings.includes("<Enabled>false</Enabled>")) {
+    if (task.state === "present") {
+      const settings = /<Settings>[\s\S]*?<\/Settings>/.exec(task.xml)?.[0] ?? "";
+      if (/<Enabled>\s*false\s*<\/Enabled>/i.test(settings)) {
+        problems.push("service-disabled");
+      }
+    } else if (task.state === "absent") {
       problems.push("service-disabled");
     }
-    if (!running) problems.push("service-stopped");
+    if (launcherState === "stopped") problems.push("service-stopped");
+    else if (launcherState === "unhealthy") problems.push("service-unhealthy");
+    if (
+      (task.state === "failed" || (Option.isSome(unit) && isUnrecognizedWindowsTask(unit.value))) &&
+      !problems.includes("service-unhealthy")
+    ) {
+      problems.push("service-unhealthy");
+    }
     return problems;
   });
+
+  const disableScheduledTaskStep: BootServiceStep = {
+    step: "keeping the scheduled task disabled",
+    run: disableWindowsTask(),
+  };
+
+  const schtasksRestoreSteps = (
+    manager: BootServiceManager,
+    problems: ReadonlyArray<BootServiceProblem>,
+    options?: { readonly mayHaveEnabled?: boolean },
+  ): ReadonlyArray<BootServiceStep> => {
+    const wasEnabled = !problems.includes("service-disabled");
+    if (wasEnabled) return manager.restart;
+    if (problems.includes("service-stopped")) {
+      return options?.mayHaveEnabled === true ? [disableScheduledTaskStep] : [];
+    }
+    return [
+      {
+        step: "restarting the service after a failed update",
+        run: runSteps(manager.restart).pipe(
+          Effect.ensuring(disableWindowsTask().pipe(Effect.ignore)),
+        ),
+      },
+    ];
+  };
 
   const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
     readonly allowDowngrade?: boolean;
     readonly start?: boolean;
   }) {
     const manager = yield* requireManager;
+    if (
+      manager.kind === "schtasks" &&
+      [input.baseDir, logPath, runtimePaths.entryPath, homeDir].some(
+        hasWindowsTaskEnvironmentExpansion,
+      )
+    ) {
+      return yield* new BootServiceInstallError({
+        cause: new Error(
+          "Windows Task Scheduler expands '%NAME%' segments in task action paths without an escape syntax; choose paths without '%...%' segments.",
+        ),
+      });
+    }
     // The unit is per user. Rewriting one that serves another home moves the
     // service onto this home's data, which looks like every thread vanished.
-    const existingUnit = yield* fs.readFileString(unitPath).pipe(Effect.option);
-    const installedBaseDir = Option.isSome(existingUnit)
-      ? otherBaseDirOf(existingUnit.value)
-      : undefined;
-    if (installedBaseDir !== undefined) {
-      return yield* new BootServiceOtherBaseDirError({ installedBaseDir, baseDir: input.baseDir });
-    }
+    const initialSnapshot = yield* readInstalledUnitSnapshot();
+    yield* guardWindowsSnapshot(initialSnapshot);
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -1095,104 +1594,223 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           : new BootServiceInstallError({ cause: error }),
       ),
     );
-    const installed = yield* fs
-      .exists(unitPath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    // Stop outside the selection lock: the launcher may be waiting to acquire it.
-    const start = options?.start !== false;
-    if (installed && start && runningInsideService && manager.kind === "systemd") {
-      // Stopping the unit from inside it kills this process before the start.
-      // A transient unit runs the same install from outside, stop first, so it
-      // still serialises with a remote update the launcher may be starting.
-      yield* runStep("handing the install to a transient unit", "systemd-run", [
-        "--user",
-        "--collect",
-        "--quiet",
-        // Transient properties reach systemd literally, unlike unit-file specifiers.
-        `--property=StandardOutput=append:${logPath}`,
-        `--property=StandardError=append:${logPath}`,
-        `--setenv=${SERVICE_UNIT_ENV}=`,
-        runtimePaths.entryPath,
-        "service",
-        "install",
-        "--base-dir",
-        // systemd expands $VAR in arguments (not in the executable path).
-        input.baseDir.replaceAll("$", () => "$$"),
-        ...(options?.allowDowngrade === true ? ["--allow-downgrade"] : []),
-      ]);
-      return { ...plan, handedOff: true };
-    }
-    // Task Scheduler restarts the task itself, so the files are written as for a deferred
-    // restart while this launcher keeps running, then the restart is handed to the manager.
-    const handOff = installed && start && runningInsideService && manager.kind === "schtasks";
-    if (installed && start && !handOff) {
-      yield* runSteps(manager.stop);
+    if (manager.kind === "schtasks") {
+      // Pre-Windows-service builds pass `--version` yet accept only bare `__service-launcher`;
+      // verify flag support before stopping a working service or repointing its scheduled task.
+      yield* runner
+        .run({
+          command: pinnedRuntimeCommand(runtimePaths).command,
+          args: [...pinnedRuntimeCommand(runtimePaths).args, "__service-launcher", "--help"],
+          timeout: Duration.seconds(30),
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new BootServiceCommandError({
+                step: "verifying Windows service launcher support",
+                cause,
+              }),
+          ),
+          Effect.filterOrFail(
+            (result) =>
+              result.code === 0 &&
+              result.stdout.includes("--base-dir") &&
+              result.stdout.includes("--log-file") &&
+              result.stdout.includes("--service-unit"),
+            (result) =>
+              new BootServiceCommandError({
+                step: "verifying Windows service launcher support",
+                exitCode: Number(result.code),
+                stdoutLength: result.stdout.length,
+                stderrLength: result.stderr.length,
+              }),
+          ),
+          Effect.tapError(logFailure),
+        );
     }
 
-    // State first, then unit. The launcher acquires only one at a time, and a
-    // failure to lock the unit must never prevent its durable update commit.
-    yield* withSelectionLock(
-      statePath,
-      withSelectionLock(
-        unitPath,
-        Effect.gen(function* () {
-          const currentlyInstalled = yield* fs.exists(unitPath);
-          const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
-          if (Option.isSome(previousStateText)) {
-            const installedVersion = serviceStateActiveVersion(previousStateText.value);
-            if (serviceStateHasPendingUpdate(previousStateText.value)) {
-              const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
+    return yield* withWindowsAccountLock(
+      manager,
+      Effect.gen(function* () {
+        const existingSnapshot = yield* readInstalledUnitSnapshot();
+        yield* guardWindowsSnapshot(existingSnapshot);
+        const installed =
+          Option.isSome(existingSnapshot.localUnit) ||
+          Option.isSome(existingSnapshot.effectiveUnit);
+        // Stop outside the selection lock: the launcher may be waiting to acquire it.
+        const start = options?.start !== false;
+        if (installed && start && runningInsideService && manager.kind === "systemd") {
+          // Stopping the unit from inside it kills this process before the start.
+          // A transient unit runs the same install from outside, stop first, so it
+          // still serialises with a remote update the launcher may be starting.
+          yield* runStep("handing the install to a transient unit", "systemd-run", [
+            "--user",
+            "--collect",
+            "--quiet",
+            // Transient properties reach systemd literally, unlike unit-file specifiers.
+            `--property=StandardOutput=append:${logPath}`,
+            `--property=StandardError=append:${logPath}`,
+            `--setenv=${SERVICE_UNIT_ENV}=`,
+            runtimePaths.entryPath,
+            "service",
+            "install",
+            "--base-dir",
+            // systemd expands $VAR in arguments (not in the executable path).
+            input.baseDir.replaceAll("$", () => "$$"),
+            ...(options?.allowDowngrade === true ? ["--allow-downgrade"] : []),
+          ]);
+          return { ...plan, handedOff: true };
+        }
+        // Task Scheduler restarts the task itself, so the files are written as for a deferred
+        // restart while this launcher keeps running, then the restart is handed to the manager.
+        const handOff = installed && start && runningInsideService && manager.kind === "schtasks";
+        const schtasksProblems =
+          installed && !handOff && manager.kind === "schtasks"
+            ? yield* readSchtasksProblems(
+                existingSnapshot.effectiveUnit,
+                existingSnapshot.queriedTask,
+              )
+            : undefined;
+        let canRestoreWindows = false;
+
+        yield* Effect.gen(function* () {
+          if (installed && start && !handOff) {
+            if (schtasksProblems !== undefined) {
+              yield* runSteps(manager.prepareStop);
+              canRestoreWindows = true;
+              yield* runSteps(manager.finishStop);
+            } else {
+              yield* runSteps(manager.stop);
+            }
+          }
+          let stagedLauncherId: string | undefined;
+          if (manager.kind === "schtasks") {
+            const staged = yield* Effect.tryPromise({
+              try: (signal) =>
+                stageServiceLauncherInstall({
+                  controlDir: resolveControlDir(input.baseDir),
+                  baseDir: input.baseDir,
+                  version: input.cliVersion,
+                  signal,
+                  acl: host.acl,
+                  ...(options?.allowDowngrade === undefined
+                    ? {}
+                    : { allowDowngrade: options.allowDowngrade }),
+                }),
+              catch: (cause) => new BootServiceInstallError({ cause }),
+            });
+            if (staged.status === "update-pending") {
+              const psQuote = (word: string) => `'${word.replaceAll("'", "''")}'`;
               return yield* new BootServiceUpdatePendingError(
-                !currentlyInstalled && installedVersion !== undefined
+                !installed && staged.installedVersion !== undefined
                   ? {
-                      recoveryCommand: `T3CODE_HOME=${quote(input.baseDir)} ${quote(pinnedRuntimePaths(path, input.baseDir, installedVersion, platform).entryPath)} __service-launcher`,
+                      recoveryCommand: `& ${psQuote(pinnedRuntimePaths(path, input.baseDir, staged.installedVersion, platform).entryPath)} __service-launcher --base-dir ${psQuote(input.baseDir)}`,
                     }
                   : {},
               );
             }
-            // Read the final version after stopping the launcher; a remote update may finish after the status check.
-            if (
-              installedVersion !== undefined &&
-              options?.allowDowngrade !== true &&
-              compareExactServiceVersions(input.cliVersion, installedVersion) < 0
-            ) {
+            if (staged.status === "downgrade-refused") {
               return yield* new BootServiceDowngradeRefusedError({
-                installedVersion,
+                installedVersion: staged.installedVersion,
                 targetVersion: input.cliVersion,
               });
             }
+            stagedLauncherId = staged.launcherId;
+            // State first, then unit. The launcher acquires only one at a time, and a
+            // failure to lock the unit must never prevent its durable update commit.
+            yield* withSelectionLock(
+              statePath,
+              withSelectionLock(
+                unitPath,
+                Effect.gen(function* () {
+                  if (!start || handOff) {
+                    const written = yield* fs.readFileString(statePath).pipe(Effect.option);
+                    if (
+                      Option.isSome(written) &&
+                      (serviceStateHasPendingUpdate(written.value) ||
+                        serviceStateActiveVersion(written.value) !== input.cliVersion)
+                    ) {
+                      return yield* new BootServiceUpdatePendingError();
+                    }
+                  }
+                  yield* fs
+                    .makeDirectory(path.dirname(unitPath), { recursive: true })
+                    .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+                  if (taskNamePath !== "") {
+                    yield* writeDurably(taskNamePath, `${windowsSession.taskName}\n`);
+                  }
+                  yield* writeDurably(unitPath, manager.render(plan));
+                }),
+              ),
+            );
+          } else {
+            // State first, then unit. The launcher acquires only one at a time, and a
+            // failure to lock the unit must never prevent its durable update commit.
+            yield* withSelectionLock(
+              statePath,
+              withSelectionLock(
+                unitPath,
+                Effect.gen(function* () {
+                  const currentlyInstalled = yield* fs.exists(unitPath);
+                  const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
+                  if (Option.isSome(previousStateText)) {
+                    const installedVersion = serviceStateActiveVersion(previousStateText.value);
+                    if (serviceStateHasPendingUpdate(previousStateText.value)) {
+                      const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
+                      return yield* new BootServiceUpdatePendingError(
+                        !currentlyInstalled && installedVersion !== undefined
+                          ? {
+                              recoveryCommand: `T3CODE_HOME=${quote(input.baseDir)} ${quote(pinnedRuntimePaths(path, input.baseDir, installedVersion, platform).entryPath)} __service-launcher`,
+                            }
+                          : {},
+                      );
+                    }
+                    // Read the final version after stopping the launcher; a remote update may finish after the status check.
+                    if (
+                      installedVersion !== undefined &&
+                      options?.allowDowngrade !== true &&
+                      compareExactServiceVersions(input.cliVersion, installedVersion) < 0
+                    ) {
+                      return yield* new BootServiceDowngradeRefusedError({
+                        installedVersion,
+                        targetVersion: input.cliVersion,
+                      });
+                    }
+                  }
+                  yield* fs
+                    .makeDirectory(path.dirname(unitPath), { recursive: true })
+                    .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+                  // Files can match the new version even when activation fails; keep that install retryable.
+                  yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, {
+                    mode: 0o600,
+                  });
+                  yield* writeDurably(
+                    statePath,
+                    // @effect-diagnostics-next-line globalJsonInEffect:off - fixed launcher-owned document.
+                    `${JSON.stringify(
+                      {
+                        protocol: SERVICE_LAUNCHER_PROTOCOL,
+                        activeVersion: input.cliVersion,
+                      } satisfies ServiceState,
+                      null,
+                      2,
+                    )}\n`,
+                  );
+                  if (!start && (currentlyInstalled || Option.isSome(previousStateText))) {
+                    const written = yield* fs.readFileString(statePath);
+                    if (serviceStateActiveVersion(written) !== input.cliVersion) {
+                      return yield* new BootServiceUpdatePendingError();
+                    }
+                  }
+                  yield* writeDurably(unitPath, manager.render(plan));
+                }),
+              ),
+            );
           }
-          yield* fs
-            .makeDirectory(path.dirname(unitPath), { recursive: true })
-            .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-          // Files can match the new version even when activation fails; keep that install retryable.
-          yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
-          yield* writeDurably(
-            statePath,
-            // @effect-diagnostics-next-line globalJsonInEffect:off - fixed launcher-owned document.
-            `${JSON.stringify(
-              {
-                protocol: SERVICE_LAUNCHER_PROTOCOL,
-                activeVersion: input.cliVersion,
-              } satisfies ServiceState,
-              null,
-              2,
-            )}\n`,
-          );
-          if ((!start || handOff) && (currentlyInstalled || Option.isSome(previousStateText))) {
-            const written = yield* fs.readFileString(statePath);
-            if (serviceStateActiveVersion(written) !== input.cliVersion) {
-              return yield* new BootServiceUpdatePendingError();
-            }
-          }
-          yield* writeDurably(unitPath, manager.render(plan));
-        }),
-      ),
-    ).pipe(
-      Effect.andThen(
-        Effect.gen(function* () {
+
           if (handOff) {
             yield* runSteps(manager.handoff ?? []);
+            yield* signalPreviousWindowsLauncher(stagedLauncherId);
           } else if (start) {
             yield* runSteps(manager.activate);
             yield* withSelectionLock(
@@ -1205,130 +1823,501 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
                 }
               }),
             );
+          } else if (manager.kind === "schtasks") {
+            // Task Scheduler keeps its own copy of the task action; register `<Enabled>false</Enabled>`
+            // directly when the task must stay disabled so the minute trigger never fires in between.
+            if (!installed || schtasksProblems?.includes("service-disabled") === true) {
+              yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const latestUnit = Option.getOrElse(
+                    yield* fs.readFileString(unitPath).pipe(Effect.option),
+                    () => manager.render(plan),
+                  );
+                  const disabledXml = /<Enabled>\s*false\s*<\/Enabled>/i.test(latestUnit)
+                    ? latestUnit
+                    : latestUnit.replace(
+                        /<\/Settings>/i,
+                        "    <Enabled>false</Enabled>\n  </Settings>",
+                      );
+                  const disabledXmlPath = yield* fs
+                    .makeTempFileScoped({
+                      directory: path.dirname(unitPath),
+                      prefix: ".service-task-",
+                    })
+                    .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+                  yield* fs
+                    .writeFileString(disabledXmlPath, disabledXml, { mode: 0o600 })
+                    .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+                  yield* runStep("registering the scheduled task", schtasksCommand, [
+                    "/Create",
+                    "/XML",
+                    disabledXmlPath,
+                    "/TN",
+                    windowsSession.taskName,
+                    "/F",
+                  ]);
+                }),
+              );
+            } else {
+              yield* runStep("registering the scheduled task", schtasksCommand, [
+                "/Create",
+                "/XML",
+                unitPath,
+                "/TN",
+                windowsSession.taskName,
+                "/F",
+              ]);
+            }
           }
-        }),
-      ),
-      Effect.mapError((cause) =>
-        cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
-      ),
-      Effect.tapError(() =>
-        installed && start && !handOff
-          ? runSteps(manager.restart).pipe(Effect.ignore)
-          : Effect.void,
-      ),
+        }).pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
+          ),
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) &&
+            installed &&
+            start &&
+            !handOff &&
+            (schtasksProblems === undefined || canRestoreWindows)
+              ? runSteps(
+                  schtasksProblems === undefined
+                    ? manager.restart
+                    : schtasksRestoreSteps(manager, schtasksProblems, { mayHaveEnabled: true }),
+                ).pipe(Effect.ignore)
+              : Effect.void,
+          ),
+        );
+        return handOff ? { ...plan, handedOff: true } : plan;
+      }),
+      (cause) => new BootServiceInstallError({ cause }),
     );
-    return handOff ? { ...plan, handedOff: true } : plan;
   });
 
   const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
     const manager = yield* requireManager;
-    const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
-    if (Option.isNone(unit)) return "skipped" as const;
-    const installedBaseDir = bootServiceBaseDirOf(unit.value);
-    if (
-      installedBaseDir === undefined ||
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
-    ) {
-      return "skipped" as const;
-    }
-    // Writes no state, and the launcher lets an update transition in flight
-    // finish before the queued stop tears it down.
-    if (runningInsideService && manager.handoff !== undefined) {
-      yield* runSteps(manager.handoff);
-      return "queued" as const;
-    }
-    yield* runSteps(manager.stop);
-    yield* runSteps(manager.activate).pipe(
-      Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
+    return yield* withWindowsAccountLock(
+      manager,
+      Effect.gen(function* () {
+        const snapshot = yield* readInstalledUnitSnapshot();
+        if (manager.kind === "schtasks" && snapshot.queriedTask.state === "failed") {
+          return yield* new BootServiceCommandError({ step: "inspecting the scheduled task" });
+        }
+        if (Option.isNone(snapshot.effectiveUnit)) return "skipped" as const;
+        const installedBaseDir = bootServiceBaseDirOf(snapshot.effectiveUnit.value);
+        if (installedBaseDir === undefined || !sameBaseDir(installedBaseDir, input.baseDir)) {
+          return "skipped" as const;
+        }
+        const localUnitMatchesEffective =
+          Option.isSome(snapshot.localUnit) &&
+          (() => {
+            const localBaseDir = bootServiceBaseDirOf(snapshot.localUnit.value);
+            const localProgram = bootServiceProgramOf(snapshot.localUnit.value);
+            if (
+              localBaseDir === undefined ||
+              localProgram === undefined ||
+              !sameBaseDir(localBaseDir, input.baseDir)
+            ) {
+              return false;
+            }
+            if (
+              snapshot.registeredTaskXml !== undefined &&
+              windowsTaskHasActions(snapshot.registeredTaskXml)
+            ) {
+              return localProgram === bootServiceProgramOf(snapshot.registeredTaskXml);
+            }
+            return true;
+          })();
+        const directWindowsTaskSteps = manager.kind === "schtasks" && !localUnitMatchesEffective;
+        // Writes no state, and the launcher lets an update transition in flight
+        // finish before the queued stop tears it down.
+        if (runningInsideService && manager.handoff !== undefined) {
+          const previousLauncherId =
+            manager.kind === "schtasks"
+              ? yield* Effect.tryPromise({
+                  try: (signal) =>
+                    queryServiceLauncherId(resolveControlDir(input.baseDir), {
+                      signal,
+                      acl: host.acl,
+                    }),
+                  catch: (cause) =>
+                    new BootServiceCommandError({
+                      step: "inspecting the installed service",
+                      cause,
+                    }),
+                }).pipe(Effect.orElseSucceed(() => undefined))
+              : undefined;
+          const handoffSteps: ReadonlyArray<BootServiceStep> = directWindowsTaskSteps
+            ? [
+                {
+                  step: "enabling the scheduled task",
+                  command: schtasksCommand,
+                  args: ["/Change", "/TN", windowsSession.taskName, "/ENABLE"],
+                },
+                {
+                  step: "ending the scheduled task",
+                  command: schtasksCommand,
+                  args: ["/End", "/TN", windowsSession.taskName],
+                  optional: true,
+                },
+                {
+                  step: "restarting the service",
+                  command: schtasksCommand,
+                  args: ["/Run", "/TN", windowsSession.taskName],
+                },
+              ]
+            : manager.handoff;
+          yield* runSteps(handoffSteps);
+          yield* signalPreviousWindowsLauncher(previousLauncherId);
+          return "queued" as const;
+        }
+        if (manager.kind === "schtasks") {
+          const schtasksProblems = yield* readSchtasksProblems(
+            snapshot.effectiveUnit,
+            snapshot.queriedTask,
+          );
+          const activateSteps: ReadonlyArray<BootServiceStep> = directWindowsTaskSteps
+            ? [
+                {
+                  step: "enabling the scheduled task",
+                  command: schtasksCommand,
+                  args: ["/Change", "/TN", windowsSession.taskName, "/ENABLE"],
+                },
+                {
+                  step: "starting the service",
+                  command: schtasksCommand,
+                  args: ["/Run", "/TN", windowsSession.taskName],
+                },
+              ]
+            : manager.activate;
+          yield* runSteps(manager.prepareStop);
+          yield* Effect.gen(function* () {
+            yield* runSteps(manager.finishStop);
+            yield* runSteps(activateSteps);
+          }).pipe(
+            Effect.onExit((exit) =>
+              Exit.isFailure(exit)
+                ? runSteps(
+                    schtasksRestoreSteps(manager, schtasksProblems, { mayHaveEnabled: true }),
+                  ).pipe(Effect.ignore)
+                : Effect.void,
+            ),
+          );
+        } else {
+          yield* runSteps(manager.stop);
+          yield* runSteps(manager.activate).pipe(
+            Effect.onExit((exit) =>
+              Exit.isFailure(exit) ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
+            ),
+          );
+        }
+        yield* fs
+          .remove(restartPendingPath, { force: true })
+          .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+        return "restarted" as const;
+      }),
+      (cause) => new BootServiceInstallError({ cause }),
     );
-    yield* fs.remove(restartPendingPath, { force: true });
-    return "restarted" as const;
-  }).pipe(
-    Effect.mapError((cause) =>
-      cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
-    ),
-    Effect.withSpan("cloud.boot_service.restart"),
-  );
+  }).pipe(Effect.withSpan("cloud.boot_service.restart"));
 
   const withStopped = Effect.fn("cloud.boot_service.with_stopped")(function* <A, E, R>(
     operation: Effect.Effect<A, E, R>,
   ): Effect.fn.Return<A, E | BootServiceError, R> {
     if (detectedManager === undefined) return yield* operation;
     const manager = detectedManager;
-    const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
-    if (Option.isNone(unit)) return yield* operation;
-    const installedBaseDir = bootServiceBaseDirOf(unit.value);
-    if (
-      installedBaseDir === undefined ||
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
-    ) {
-      return yield* operation;
-    }
-    // `is-active` misses crash-looping systemd units; launchd can be loaded without a pid.
-    // Always stop; restore only if previously active, enabled, or loaded,
-    // so disabled crash loops stay stopped.
-    const restore =
-      manager.kind === "systemd"
-        ? yield* Effect.map(
-            Effect.all(
-              [
-                probe("systemctl", ["--user", "is-enabled", BOOT_SERVICE_UNIT_FILE]),
-                probe("systemctl", ["--user", "is-active", BOOT_SERVICE_UNIT_FILE]),
-              ],
-              { concurrency: "unbounded" },
-            ),
-            ([enabled, active]) => succeeded(active) || succeeded(enabled),
-          )
-        : manager.kind === "schtasks"
-          ? !(yield* readSchtasksProblems(unit)).includes("service-disabled")
-          : succeeded(
-              yield* probe("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`]),
-            );
-    return yield* Effect.acquireUseRelease(
-      // Require every stop before repair when restoring, so the server releases the database.
-      // Otherwise stops are best-effort; launchd rejects bootout of an unloaded job.
-      // A failed stop may still stop the service, so restoration runs either way.
-      runSteps(manager.stop.map((step) => ({ ...step, optional: !restore }))).pipe(Effect.exit),
-      (stopped): Effect.Effect<A, E | BootServiceError, R> =>
-        Exit.isSuccess(stopped) ? operation : Effect.failCause(stopped.cause),
-      (_, exit) => {
-        if (!restore) return Effect.void;
-        // Start only: `activate` would also enable a unit the user disabled.
-        // When the operation itself failed, its error is the one worth reporting.
-        const start = runSteps(manager.restart);
-        return Exit.isFailure(exit) ? Effect.ignore(start) : start;
-      },
+    return yield* withWindowsAccountLock(
+      manager,
+      Effect.gen(function* () {
+        const snapshot = yield* readInstalledUnitSnapshot();
+        if (manager.kind === "schtasks" && snapshot.queriedTask.state === "failed") {
+          return yield* new BootServiceCommandError({ step: "inspecting the scheduled task" });
+        }
+        if (Option.isNone(snapshot.effectiveUnit)) return yield* operation;
+        const installedBaseDir = bootServiceBaseDirOf(snapshot.effectiveUnit.value);
+        if (installedBaseDir === undefined || !sameBaseDir(installedBaseDir, input.baseDir)) {
+          return yield* operation;
+        }
+        if (runningInsideService) {
+          return yield* new BootServiceRunningInsideServiceError();
+        }
+        // `is-active` misses crash-looping systemd units; launchd can be loaded without a pid.
+        // Always stop; restore only if previously active, enabled, or loaded,
+        // so disabled crash loops stay stopped.
+        const schtasksProblems =
+          manager.kind === "schtasks"
+            ? yield* readSchtasksProblems(snapshot.effectiveUnit, snapshot.queriedTask)
+            : undefined;
+        const restoreSteps =
+          schtasksProblems === undefined
+            ? manager.restart
+            : schtasksRestoreSteps(manager, schtasksProblems);
+        const restore =
+          manager.kind === "systemd"
+            ? yield* Effect.map(
+                Effect.all(
+                  [
+                    probe("systemctl", ["--user", "is-enabled", BOOT_SERVICE_UNIT_FILE]),
+                    probe("systemctl", ["--user", "is-active", BOOT_SERVICE_UNIT_FILE]),
+                  ],
+                  { concurrency: "unbounded" },
+                ),
+                ([enabled, active]) => succeeded(active) || succeeded(enabled),
+              )
+            : schtasksProblems !== undefined
+              ? restoreSteps.length > 0
+              : succeeded(
+                  yield* probe("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`]),
+                );
+        return yield* Effect.acquireUseRelease(
+          // Require every stop before repair when restoring, so the server releases the database.
+          // Otherwise stops are best-effort; launchd rejects bootout of an unloaded job.
+          // A failed stop may still stop the service, so restoration runs either way.
+          runSteps(manager.stop.map((step) => ({ ...step, optional: !restore }))).pipe(Effect.exit),
+          (stopped): Effect.Effect<A, E | BootServiceError, R> =>
+            Exit.isSuccess(stopped) ? operation : Effect.failCause(stopped.cause),
+          (_, exit) => {
+            if (!restore) return Effect.void;
+            // Start only: `activate` would also enable a unit the user disabled.
+            // When the operation itself failed, its error is the one worth reporting.
+            const start = runSteps(restoreSteps);
+            return Exit.isFailure(exit) ? Effect.ignore(start) : start;
+          },
+        );
+      }),
+      (cause) => new BootServiceInstallError({ cause }),
     );
   });
 
+  const signalCurrentWindowsLauncherForUninstall = (controlDir: string) =>
+    Effect.tryPromise({
+      try: async (signal) => {
+        const signaled = await signalServiceLauncherStop(controlDir, undefined, {
+          signal,
+          acl: host.acl,
+          uninstall: true,
+        });
+        if (signaled) return;
+        const remaining = await probeServiceLauncher(controlDir, {
+          signal,
+          acl: host.acl,
+        });
+        if (remaining !== "stopped") {
+          throw new Error("Could not signal the running service launcher to stop.");
+        }
+      },
+      catch: (cause) =>
+        new BootServiceCommandError({ step: "stopping the installed service", cause }),
+    });
+
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;
-    if (
-      !(yield* fs
-        .exists(unitPath)
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))))
-    )
-      return false;
-    yield* runSteps(manager.deactivate);
-    yield* fs
-      .remove(unitPath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    yield* runSteps(manager.finalize);
-    return true;
+    return yield* withWindowsAccountLock(
+      manager,
+      Effect.gen(function* () {
+        if (manager.kind !== "schtasks") {
+          const unitInfo = yield* statOptionalPath(unitPath);
+          if (Option.isNone(unitInfo) || unitInfo.value.type === "Directory") {
+            if (Option.isNone(unitInfo)) {
+              yield* Effect.tryPromise({
+                try: (signal) =>
+                  recoverServiceLauncherUninstall({
+                    baseDir: input.baseDir,
+                    signal,
+                  }),
+                catch: (cause) => new BootServiceInstallError({ cause }),
+              });
+            }
+            return false;
+          }
+          const readableUnit = yield* fs.readFileString(unitPath).pipe(Effect.option);
+          const otherBaseDir = Option.isSome(readableUnit)
+            ? otherBaseDirOf(readableUnit.value)
+            : undefined;
+          if (otherBaseDir !== undefined) {
+            return yield* new BootServiceOtherBaseDirError({
+              installedBaseDir: otherBaseDir,
+              baseDir: input.baseDir,
+            });
+          }
+          yield* runSteps(manager.deactivate);
+          yield* Effect.tryPromise({
+            try: (signal) =>
+              recoverServiceLauncherUninstall({
+                baseDir: input.baseDir,
+                signal,
+              }),
+            catch: (cause) => new BootServiceInstallError({ cause }),
+          });
+          yield* withSelectionLock(
+            unitPath,
+            fs
+              .remove(unitPath, { force: true })
+              .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))),
+          );
+          yield* runSteps(manager.finalize);
+          return true;
+        }
+
+        const [localUnitInfo, queriedTask] = yield* Effect.all(
+          [statOptionalPath(unitPath), queryRegisteredWindowsTask()],
+          { concurrency: "unbounded" },
+        );
+        const localUnit =
+          Option.isSome(localUnitInfo) && localUnitInfo.value.type !== "Directory"
+            ? yield* fs.readFileString(unitPath).pipe(Effect.option)
+            : Option.none<string>();
+        const registeredTaskXml = queriedTask.state === "present" ? queriedTask.xml : undefined;
+        const effectiveUnit = selectEffectiveWindowsUnit(localUnit, registeredTaskXml);
+        yield* guardWindowsSnapshot({ queriedTask, effectiveUnit });
+
+        const hasTaskOrMirror =
+          queriedTask.state === "present" ||
+          (Option.isSome(localUnitInfo) && localUnitInfo.value.type !== "Directory");
+        const controlDir = resolveControlDir(input.baseDir);
+        const removePersistedTaskName =
+          taskNamePath === ""
+            ? Effect.void
+            : fs
+                .remove(taskNamePath, { force: true })
+                .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+
+        if (!hasTaskOrMirror) {
+          const launcherState = yield* Effect.tryPromise({
+            try: (signal) =>
+              probeServiceLauncher(controlDir, {
+                signal,
+                acl: host.acl,
+              }),
+            catch: (cause) =>
+              new BootServiceCommandError({ step: "stopping the installed service", cause }),
+          });
+          if (launcherState === "stopped") {
+            yield* Effect.tryPromise({
+              try: (signal) =>
+                recoverServiceLauncherUninstall({
+                  baseDir: input.baseDir,
+                  controlDir,
+                  signal,
+                  acl: host.acl,
+                }),
+              catch: (cause) => new BootServiceInstallError({ cause }),
+            });
+            yield* removePersistedTaskName;
+            return false;
+          }
+          if (runningInsideService) {
+            if (launcherState === "unhealthy") {
+              return yield* new BootServiceCommandError({
+                step: "stopping the installed service",
+              });
+            }
+            yield* signalCurrentWindowsLauncherForUninstall(controlDir);
+          } else {
+            yield* stopWindowsLauncher();
+            yield* Effect.tryPromise({
+              try: (signal) =>
+                recoverServiceLauncherUninstall({
+                  baseDir: input.baseDir,
+                  controlDir,
+                  signal,
+                  acl: host.acl,
+                }),
+              catch: (cause) => new BootServiceInstallError({ cause }),
+            });
+          }
+          yield* removePersistedTaskName;
+          return true;
+        }
+
+        if (runningInsideService) {
+          const launcherState = yield* Effect.tryPromise({
+            try: (signal) =>
+              probeServiceLauncher(controlDir, {
+                signal,
+                acl: host.acl,
+              }),
+            catch: (cause) =>
+              new BootServiceCommandError({ step: "stopping the installed service", cause }),
+          });
+          if (launcherState === "unhealthy") {
+            return yield* new BootServiceCommandError({
+              step: "stopping the installed service",
+            });
+          }
+          // Remove the local mirror under its selection lease before `/Delete` so an in-flight
+          // `#repointServiceUnit` finishes first and any later one sees ENOENT before signaling stop.
+          yield* runSteps([{ step: "disabling the scheduled task", run: disableWindowsTask() }]);
+          yield* withSelectionLock(
+            unitPath,
+            fs
+              .remove(unitPath, { force: true })
+              .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))),
+          );
+          yield* runSteps([{ step: "removing the scheduled task", run: deleteWindowsTask() }]);
+          if (launcherState === "running") {
+            yield* signalCurrentWindowsLauncherForUninstall(controlDir);
+          } else {
+            yield* Effect.tryPromise({
+              try: (signal) =>
+                recoverServiceLauncherUninstall({
+                  baseDir: input.baseDir,
+                  controlDir,
+                  signal,
+                  acl: host.acl,
+                }),
+              catch: (cause) => new BootServiceInstallError({ cause }),
+            });
+          }
+          yield* removePersistedTaskName;
+          return true;
+        }
+
+        yield* runSteps(manager.deactivate);
+        yield* Effect.tryPromise({
+          try: (signal) =>
+            recoverServiceLauncherUninstall({
+              baseDir: input.baseDir,
+              controlDir,
+              signal,
+              acl: host.acl,
+            }),
+          catch: (cause) => new BootServiceInstallError({ cause }),
+        });
+        yield* withSelectionLock(
+          unitPath,
+          fs
+            .remove(unitPath, { force: true })
+            .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))),
+        );
+        yield* removePersistedTaskName;
+        yield* runSteps(manager.finalize);
+        return true;
+      }),
+      (cause) => new BootServiceInstallError({ cause }),
+    );
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
 
   const status: BootService["Service"]["status"] = Effect.gen(function* () {
     if (detectedManager === undefined) {
       return { supported: false, installed: false, current: false, unitPath, logPath };
     }
-    if (!(yield* fs.exists(unitPath))) {
+    const snapshot = yield* readInstalledUnitSnapshot();
+    if (
+      detectedManager.kind === "schtasks" &&
+      snapshot.queriedTask.state === "failed" &&
+      Option.isNone(snapshot.effectiveUnit)
+    ) {
+      return yield* new BootServiceCommandError({ step: "inspecting the scheduled task" });
+    }
+    if (Option.isNone(snapshot.effectiveUnit)) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const [unit, runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
-      fs.readFileString(unitPath),
-      fs.exists(runtimePaths.entryPath),
-      fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
-      fs.readFileString(statePath).pipe(Effect.option),
+    const unit = snapshot.effectiveUnit.value;
+    const [runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
+      fs
+        .exists(runtimePaths.entryPath)
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))),
+      readOptionalFileString(runtimePaths.sentinelPath),
+      readOptionalFileString(statePath),
     ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
     const installedVersion = Option.isSome(stateText)
@@ -1344,9 +2333,22 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       detectedManager.kind === "systemd"
         ? [...(yield* readSystemdProblems(true))]
         : detectedManager.kind === "schtasks"
-          ? [...(yield* readSchtasksProblems(Option.some(unit)))]
+          ? [...(yield* readSchtasksProblems(Option.some(unit), snapshot.queriedTask))]
           : [];
-    if (yield* fs.exists(restartPendingPath)) problems.push("restart-pending");
+    if (
+      yield* fs
+        .exists(restartPendingPath)
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })))
+    ) {
+      problems.push("restart-pending");
+    }
+    const registeredWindowsTaskCurrent =
+      detectedManager.kind !== "schtasks" ||
+      snapshot.registeredTaskXml === undefined ||
+      !windowsTaskHasActions(snapshot.registeredTaskXml) ||
+      (installedBaseDir !== undefined &&
+        sameBaseDir(installedBaseDir, input.baseDir) &&
+        bootServiceProgramOf(snapshot.registeredTaskXml) === runtimePaths.entryPath);
     return {
       supported: true,
       installed: true,
@@ -1356,7 +2358,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       problems,
       current:
         problems.length === 0 &&
-        normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
+        Option.isSome(snapshot.localUnit) &&
+        normalizeUnit(snapshot.localUnit.value) === normalizeUnit(detectedManager.render(plan)) &&
+        registeredWindowsTaskCurrent &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&
@@ -1365,10 +2369,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       unitPath,
       logPath,
     };
-  }).pipe(
-    Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-    Effect.withSpan("cloud.boot_service.status"),
-  );
+  }).pipe(Effect.withSpan("cloud.boot_service.status"));
 
   return BootService.of({ install, restart, withStopped, uninstall, status });
 });

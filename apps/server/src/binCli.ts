@@ -5,7 +5,8 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Argument, Command } from "effect/cli";
+import * as Option from "effect/Option";
+import { Argument, Command, Flag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
 import * as NetService from "@t3tools/shared/Net";
@@ -97,11 +98,24 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       updateCommand,
       installCommand,
       uninstallCommand,
-      // bin.ts runs the bare service invocation; this keeps flags and help working like other commands.
-      Command.make("__service-launcher").pipe(
+      // bin.ts runs the service invocation directly; this keeps global flags and help working.
+      Command.make("__service-launcher", {
+        baseDir: Flag.String("base-dir").pipe(Flag.optional),
+        logFile: Flag.String("log-file").pipe(Flag.optional),
+        serviceUnit: Flag.String("service-unit").pipe(Flag.optional),
+      }).pipe(
         Command.unlisted,
         // The launcher owns shutdown until its child exits; `runMain` would interrupt that shutdown.
-        Command.withHandler(() => Effect.sync(() => void runServiceLauncherCli())),
+        Command.withHandler((flags) =>
+          Effect.sync(
+            () =>
+              void runServiceLauncherCli({
+                baseDir: Option.getOrUndefined(flags.baseDir),
+                logFile: Option.getOrUndefined(flags.logFile),
+                serviceUnit: Option.getOrUndefined(flags.serviceUnit),
+              }),
+          ),
+        ),
       ),
       claudeHistoryCommand,
       speechWorkerCommand,

@@ -12,13 +12,15 @@ import {
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 
 class FakeLauncherProcess {
-  readonly connected: boolean;
+  connected: boolean;
+  readonly ipc: boolean;
   readonly env: Record<string, string | undefined>;
   readonly sent: ServiceLauncherChildMessage[] = [];
   readonly #listeners = new Map<string, Set<(...args: ReadonlyArray<unknown>) => void>>();
 
-  constructor(context: unknown, connected = true) {
+  constructor(context: unknown, connected = true, ipc = connected) {
     this.connected = connected;
+    this.ipc = ipc;
     this.env = { [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) };
   }
 
@@ -40,6 +42,11 @@ class FakeLauncherProcess {
 
   emit(message: ServiceLauncherParentMessage) {
     for (const listener of this.#listeners.get("message") ?? []) listener(message);
+  }
+
+  disconnect() {
+    this.connected = false;
+    for (const listener of this.#listeners.get("disconnect") ?? []) listener();
   }
 }
 
@@ -120,12 +127,13 @@ it.effect("preserves a launcher rejection as a distinct error", () =>
   }),
 );
 
-it.effect("stops the server when the launcher asks over IPC", () =>
+it.effect("stops the server when the launcher asks over IPC or disconnects", () =>
   Effect.gen(function* () {
-    const host = new FakeLauncherProcess({
+    const context = {
       protocol: SERVICE_LAUNCHER_PROTOCOL,
       childVersion: "1.0.0",
-    });
+    };
+    const host = new FakeLauncherProcess(context);
     const stopped = yield* Effect.forkChild(
       ServiceLauncherClient.awaitServiceLauncherStop({ currentVersion: "1.0.0" }).pipe(
         Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, host),
@@ -133,9 +141,62 @@ it.effect("stops the server when the launcher asks over IPC", () =>
       ),
       { startImmediately: true },
     );
-    yield* Effect.yieldNow;
     host.emit({ type: "stop" });
     yield* Fiber.join(stopped);
+
+    const crashedHost = new FakeLauncherProcess(context);
+    const crashed = yield* Effect.forkChild(
+      ServiceLauncherClient.awaitServiceLauncherStop({ currentVersion: "1.0.0" }).pipe(
+        Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, crashedHost),
+        Effect.provideService(HostProcess.Environment, crashedHost.env),
+      ),
+      { startImmediately: true },
+    );
+    crashedHost.disconnect();
+    yield* Fiber.join(crashed);
+
+    const preDisconnectedHost = new FakeLauncherProcess(context, false, true);
+    yield* ServiceLauncherClient.awaitServiceLauncherStop({ currentVersion: "1.0.0" }).pipe(
+      Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, preDisconnectedHost),
+      Effect.provideService(HostProcess.Environment, preDisconnectedHost.env),
+    );
+
+    // Mirrors the default `ServiceLauncherHostProcess` reference: resolved while `process.connected`
+    // is true, then IPC disconnects before `awaitServiceLauncherStop` or `requestUpdate` subscribes.
+    let liveConnected = true;
+    const getterBackedHost: (typeof ServiceLauncherClient.ServiceLauncherHostProcess)["Service"] = {
+      get connected() {
+        return liveConnected;
+      },
+      ipc: true,
+      send: (_message: ServiceLauncherChildMessage, callback?: (error: Error | null) => void) => {
+        callback?.(null);
+        return false;
+      },
+      on: () => undefined,
+      off: () => undefined,
+    };
+    const client = yield* ServiceLauncherClient.make({ currentVersion: "1.0.0" }).pipe(
+      Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, getterBackedHost),
+      Effect.provideService(HostProcess.Environment, {
+        [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context),
+      }),
+    );
+    liveConnected = false;
+    yield* ServiceLauncherClient.awaitServiceLauncherStop({ currentVersion: "1.0.0" }).pipe(
+      Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, getterBackedHost),
+      Effect.provideService(HostProcess.Environment, {
+        [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context),
+      }),
+    );
+    expect(
+      yield* client
+        .requestUpdate({ targetVersion: "1.1.0", dbPath: "/tmp/state.sqlite" })
+        .pipe(Effect.flip),
+    ).toMatchObject({
+      _tag: "ServiceLauncherClientError",
+      operation: "disconnect",
+    });
   }),
 );
 

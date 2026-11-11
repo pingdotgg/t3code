@@ -420,7 +420,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // Service names are per user, so another home's unit belongs to a different install.
   const servesThisHome =
     status.installedBaseDir !== undefined &&
-    path.resolve(status.installedBaseDir) === path.resolve(input.baseDir);
+    BootService.sameBootServiceBaseDir(path, platform, status.installedBaseDir, input.baseDir);
   const serviceInstalled = status.supported && status.installed && servesThisHome;
   const foreground = yield* findForegroundServer({
     serverRuntimeStatePath: input.serverRuntimeStatePath,
