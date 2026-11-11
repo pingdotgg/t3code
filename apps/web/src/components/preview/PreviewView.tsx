@@ -991,7 +991,10 @@ export function PreviewView({
               </div>
             ) : null}
             <div
-              className="absolute inset-x-0 bottom-0"
+              className={cn(
+                "absolute inset-x-0 bottom-0",
+                (showEmptyState || isUnreachable) && "invisible",
+              )}
               style={{ top: viewport._tag !== "fill" ? BROWSER_DEVICE_TOOLBAR_HEIGHT : 0 }}
             >
               <ServerBrowserSurface
@@ -1012,10 +1015,7 @@ export function PreviewView({
                 }
                 onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "panel")}
                 // Stays connected under the empty state so a URL picked there reaches the page.
-                className={cn(
-                  "absolute inset-0 h-full w-full",
-                  (showEmptyState || isUnreachable) && "invisible",
-                )}
+                className="absolute inset-0 h-full w-full"
               />
             </div>
           </>
