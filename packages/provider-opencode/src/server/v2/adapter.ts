@@ -2540,6 +2540,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       inboxId: string,
       payload: {
         readonly text: string;
+        readonly description?: string | undefined;
         readonly metadata?: Readonly<Record<string, unknown>> | undefined;
       },
     ) {
@@ -2549,27 +2550,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const childId = stringField(payload.metadata, "childID");
       if (stringField(payload.metadata, "source") !== "subagent" || childId === undefined) return;
       strays.delete(childId);
-      const open = [...state.calls.values()].filter(
-        (candidate) => candidate.child?.sessionId === childId,
+      const runs = [...state.calls.values()].filter(
+        (candidate) => candidate.child?.sessionId === childId && candidate.joined === undefined,
       );
-      // Reports carry no run id and are not ordered against the child's next start: skip calls whose
-      // run has not started (prompt still pending), and the running group while an older run is open.
-      // A lone call settles regardless: a new child's start can precede its call attaching.
-      const started =
-        open.length === 1
-          ? open
-          : open.filter(
-              (candidate) =>
-                candidate.joined !== undefined ||
-                candidate.child?.subagent?.call !== candidate ||
-                candidate.child.subagent.prompt === undefined,
-            );
-      const current = started.at(-1);
-      const older = started.filter(
-        (candidate) => (candidate.joined ?? candidate) !== (current?.joined ?? current),
-      );
-      const ended = busy.has(childId) && older.length > 0 ? older : started;
-      const call = ended.at(-1)?.joined ?? ended.at(-1);
+      // OpenCode labels each run's report with the description of the call that started the run.
+      const call = runs.find((candidate) => candidate.title === payload.description) ?? runs[0];
+      // Runs are serial, so open calls before the reported one ran earlier and lost their reports.
+      const lost = runs.slice(0, call === undefined ? 0 : runs.indexOf(call));
+      const groupOf = (root: SubagentCall) =>
+        [...state.calls.values()].filter(
+          (candidate) => candidate === root || candidate.joined === root,
+        );
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
         inboxId,
@@ -2589,10 +2580,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           : outcome === "cancelled"
             ? "cancelled"
             : "completed";
-      for (const each of ended) {
-        // Older calls belong to earlier runs that ended before this one; their reports were lost.
-        if ((each.joined ?? each) !== call) yield* settleCall(each, "completed");
-        else yield* settleCall(each, status, subagentOutput(payload.text));
+      for (const each of lost.flatMap(groupOf)) yield* settleCall(each, "completed");
+      if (call === undefined) return;
+      for (const each of groupOf(call)) {
+        yield* settleCall(each, status, subagentOutput(payload.text));
       }
     });
 
