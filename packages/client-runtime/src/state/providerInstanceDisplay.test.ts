@@ -1,10 +1,11 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
+  resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "./providerInstanceDisplay.ts";
 
@@ -24,6 +25,19 @@ describe("providerInstanceInitials", () => {
   it("keeps an emoji whole instead of splitting its surrogate pair", () => {
     expect(providerInstanceInitials("😀 Work")).toBe("😀W");
     expect(providerInstanceInitials("😀")).toBe("😀");
+  });
+});
+
+describe("resolveProviderInstanceDisplayName", () => {
+  // regression: #34507 an explicit name equal to the driver label was replaced by the instance id
+  it("keeps an explicit name that matches the driver label on a non-default instance", () => {
+    expect(
+      resolveProviderInstanceDisplayName({
+        driver: codex,
+        instanceId: ProviderInstanceId.make("codex_pool"),
+        displayName: "Codex",
+      }),
+    ).toBe("Codex");
   });
 });
 
