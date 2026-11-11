@@ -3147,6 +3147,12 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: { ...inherited, model: "GPT" },
           },
           {
+            name: "parent named the same model by alias",
+            parent: { ...inherited, model: "gpt" },
+            target: { model: inherited.model },
+            expected: inherited,
+          },
+          {
             name: "change model",
             target: { model: "other-model" },
             expected: { instanceId: codexInstanceId, model: "other-model" },
@@ -3190,7 +3196,10 @@ describe("OrchestratorMcpService provider resolution", () => {
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
-                    ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                    ? parentProjection(
+                        commands.length > 0 ? [task] : [],
+                        "parent" in testCase ? testCase.parent : inherited,
+                      )
                     : childProjection,
                 ),
               dispatch: (command) =>

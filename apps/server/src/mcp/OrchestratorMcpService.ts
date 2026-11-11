@@ -350,22 +350,22 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
   };
 }
 
-/** Yields the model a slug or alias names; a provider that lists no models accepts any slug. */
-export const requireAdvertisedModel = (provider: ServerProvider, model: string) => {
-  const advertised = provider.models.find(
-    (candidate) =>
-      candidate.slug === model ||
-      candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
+const advertisedModel = (provider: ServerProvider, model: string) =>
+  provider.models.find((candidate) => candidate.slug === model) ??
+  provider.models.find((candidate) =>
+    candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
   );
-  return provider.models.length > 0 && advertised === undefined
+
+/** A provider that lists no models accepts any slug. */
+export const requireAdvertisedModel = (provider: ServerProvider, model: string) =>
+  provider.models.length > 0 && advertisedModel(provider, model) === undefined
     ? Effect.fail(
         failure(
           "model_unavailable",
           `Model ${model} is not advertised by provider ${provider.instanceId}.`,
         ),
       )
-    : Effect.succeed(advertised);
-};
+    : Effect.void;
 
 function providerConstraints(
   provider: ServerProvider | undefined,
@@ -1408,13 +1408,9 @@ const make = Effect.gen(function* () {
         `Provider ${instanceId} has no model available for inheritance.`,
       );
     }
-    const slug =
-      requestedModel === undefined
-        ? model
-        : ((yield* requireAdvertisedModel(provider, requestedModel))?.slug ?? model);
-
-    const descriptors = provider.models.find((candidate) => candidate.slug === slug)?.capabilities
-      ?.optionDescriptors;
+    if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, requestedModel);
+    const advertised = advertisedModel(provider, model);
+    const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
     if (requestedOptions !== undefined) {
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
@@ -1428,7 +1424,8 @@ const make = Effect.gen(function* () {
 
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId &&
-      (model === inheritedSelection.model || slug === inheritedSelection.model);
+      (advertised?.slug ?? model) ===
+        (advertisedModel(provider, inheritedSelection.model)?.slug ?? inheritedSelection.model);
     let options = inheritsOptions
       ? knownOptions(
           withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
