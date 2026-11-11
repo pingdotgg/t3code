@@ -22,7 +22,7 @@ export class ThreadTaskTransport extends Context.Service<
       environmentId: EnvironmentId,
       request: ThreadTaskRemoteRequest,
     ) => Effect.Effect<unknown, string>;
-    /** Environments a connected app currently reaches. */
+    /** Environments a connected app currently reaches, as far as the network allows. */
     readonly peers: () => ReadonlyArray<EnvironmentId>;
     /** Emits when a path to other environments may have opened. */
     readonly connected: Stream.Stream<void>;
@@ -42,7 +42,7 @@ export const layerFromBroker = Layer.effect(
           .pipe(Effect.mapError((error) => error.message)),
       ),
       peers: () =>
-        Object.keys(broker.grants())
+        Object.keys(broker.view().grants)
           .filter((id) => id !== descriptor.environmentId)
           .map((id) => EnvironmentId.make(id)),
       connected: broker.hostConnected,

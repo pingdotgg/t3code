@@ -623,7 +623,7 @@ export function McpGatewaySettings() {
       <SettingsRow
         id="mcp-gateway-environment-grants"
         title="Environment grants"
-        description="One access control per machine: off by default, or on with the baseline capabilities. Fine-grained tweaks live in each machine's menu. Changes apply when you save."
+        description="One access control per machine, off by default; tweak it in each machine's menu and save. Agents on a machine below full access in your device network can only read elsewhere."
         status={
           grantsDirty
             ? "Unsaved changes"

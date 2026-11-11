@@ -40,9 +40,12 @@ const OPERATION_NEEDS: Readonly<Record<string, Needs>> = {
 /**
  * The scopes each port call needs, matching what its gateway tools check. A relayed call runs
  * only on an app whose own grant meets them, so no app's grant widens a call another app serves.
+ * Every port method but the listing is here, so a new one fails typecheck until it is placed.
  */
 const METHOD_NEEDS: {
-  readonly [M in keyof GatewayRuntimePort]-?: (args: ReadonlyArray<unknown>) => Needs;
+  readonly [M in Exclude<keyof GatewayRuntimePort, "listEnvironments">]-?: (
+    args: ReadonlyArray<unknown>,
+  ) => Needs;
 } = {
   openThread: () => READ,
   openAgents: () => READ,
@@ -72,7 +75,6 @@ const METHOD_NEEDS: {
   deleteProfile: () => WRITE,
   replicateProfiles: () => WRITE,
   syncAgentLibrary: () => WRITE,
-  listEnvironments: () => [],
   getEnvironmentStatus: () => READ,
   getPresence: () => READ,
   listProfiles: () => READ,
@@ -100,13 +102,18 @@ const METHOD_NEEDS: {
   },
 };
 
-/** What a relayed port call needs on each environment it touches; empty when it names none. */
+/**
+ * What a relayed port call needs on each environment it touches. Only the listing needs nothing:
+ * each app filters it by its own grants. Undefined, so refused, for an unknown method or any other
+ * call that names no environment to check.
+ */
 export function gatewayPortCallScopes(
   method: keyof GatewayRuntimePort,
   args: ReadonlyArray<unknown>,
-): ReadonlyArray<GatewayScopeRequirement> {
+): ReadonlyArray<GatewayScopeRequirement> | undefined {
+  if (method === "listEnvironments") return [];
+  if (!Object.hasOwn(METHOD_NEEDS, method)) return undefined;
   const needs = METHOD_NEEDS[method];
-  if (needs === undefined) return [];
   if (method === "handoffThread") {
     const input = (args[0] ?? {}) as {
       readonly environmentId?: unknown;
@@ -114,7 +121,7 @@ export function gatewayPortCallScopes(
       readonly files?: ReadonlyArray<unknown>;
     };
     if (typeof input.environmentId !== "string" || typeof input.sourceEnvironmentId !== "string") {
-      return [];
+      return undefined;
     }
     return [
       { environmentId: input.environmentId, anyOf: needs(args) },
@@ -125,7 +132,10 @@ export function gatewayPortCallScopes(
     ];
   }
   const anyOf = needs(args);
-  return gatewayPortEnvironmentIds(args).map((environmentId) => ({ environmentId, anyOf }));
+  const environmentIds = gatewayPortEnvironmentIds(args);
+  return environmentIds.length === 0
+    ? undefined
+    : environmentIds.map((environmentId) => ({ environmentId, anyOf }));
 }
 
 /** The first requirement `grants` does not meet, or undefined when it meets them all. */

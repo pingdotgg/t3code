@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ThreadShell,
   ProjectId,
   ProviderInstanceId,
+  type TailnetDeviceAccess,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -190,7 +191,11 @@ const makeMacBook = (
   };
 };
 
-const makeLayer = (macbook: ReturnType<typeof makeMacBook>, record: TestRecord) => {
+const makeLayer = (
+  macbook: ReturnType<typeof makeMacBook>,
+  record: TestRecord,
+  self?: TailnetDeviceAccess,
+) => {
   const localPort = {
     listEnvironments: async () => [
       {
@@ -228,7 +233,7 @@ const makeLayer = (macbook: ReturnType<typeof makeMacBook>, record: TestRecord) 
         );
       return broker;
     }),
-  ).pipe(Layer.provide(layerDependencies()));
+  ).pipe(Layer.provide(layerDependencies({ environmentId: devBox, ...(self && { self }) })));
   return Layer.mergeAll(
     broker,
     Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -470,6 +475,27 @@ it.effect("an unknown environment is refused before anything launches", () => {
     expect(macbook.called("createThread")).toEqual([]);
   }).pipe(Effect.provide(makeLayer(macbook, record)));
 });
+
+it.effect(
+  "a launch the network does not let this machine make says so, not blaming the app",
+  () => {
+    const macbook = makeMacBook();
+    const record = newRecord();
+    return Effect.gen(function* () {
+      const output = yield* launch({
+        environmentId: macBook,
+        projectId: "project:macbook",
+        title: "Configure Accessibility",
+        message: "Turn on the six permissions.",
+      });
+      expect(output.isFailure).toBe(true);
+      const message = (output.result as { message: string }).message;
+      expect(message).toContain("read-only");
+      expect(message).not.toContain("T3 app grants");
+      expect(macbook.called("createThread")).toEqual([]);
+    }).pipe(Effect.provide(makeLayer(macbook, record, "read-only")));
+  },
+);
 
 it.effect("a remote launch refuses what it cannot honor there instead of dropping it", () => {
   const macbook = makeMacBook();

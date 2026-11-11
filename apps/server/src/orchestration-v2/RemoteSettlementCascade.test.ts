@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   type GatewayScope,
+  type TailnetDeviceAccess,
   type OrchestrationV2AppThread,
   ThreadId,
 } from "@t3tools/contracts";
@@ -65,7 +66,11 @@ const macBookThreads = [
 
 type Call = { readonly method: string; readonly args: ReadonlyArray<unknown> };
 
-const makeLayer = (calls: Array<Call>, scopes: ReadonlyArray<GatewayScope>) =>
+const makeLayer = (
+  calls: Array<Call>,
+  scopes: ReadonlyArray<GatewayScope>,
+  self?: TailnetDeviceAccess,
+) =>
   Layer.mergeAll(
     Layer.effect(
       McpGatewayBroker,
@@ -88,7 +93,7 @@ const makeLayer = (calls: Array<Call>, scopes: ReadonlyArray<GatewayScope>) =>
         );
         return broker;
       }),
-    ).pipe(Layer.provide(layerDependencies())),
+    ).pipe(Layer.provide(layerDependencies({ environmentId: devBox, ...(self && { self }) }))),
     Layer.mock(ServerEnvironment.ServerEnvironment)({
       getDescriptor: Effect.succeed({ environmentId: devBox } as never),
     }),
@@ -138,4 +143,14 @@ it.effect("an app without lifecycle access is not asked to settle anything", () 
     ]);
     expect(calls).toEqual([]);
   }).pipe(Effect.provide(makeLayer(calls, ["read"])));
+});
+
+it.effect("a machine the network lets only read asks no app to settle anything", () => {
+  const calls: Array<Call> = [];
+  return Effect.gen(function* () {
+    yield* cascadeToOtherEnvironments([
+      { threadId: ThreadId.make("card"), action: "settle", settledAt },
+    ]);
+    expect(calls).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(calls, ["read", "lifecycle"], "read-only")));
 });

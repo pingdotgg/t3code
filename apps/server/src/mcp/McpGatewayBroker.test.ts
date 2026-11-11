@@ -14,7 +14,11 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Membership from "../peer/Membership.ts";
 import { make } from "./McpGatewayBroker.ts";
-import { CODE_PAIRED_SUBJECT, layerDependencies } from "./McpGatewayBroker.testkit.ts";
+import {
+  CODE_PAIRED_SUBJECT,
+  DESKTOP_APP_SUBJECT,
+  layerDependencies,
+} from "./McpGatewayBroker.testkit.ts";
 
 type Broker = Effect.Success<typeof make>;
 
@@ -52,11 +56,15 @@ it.effect("runs calls on the newest app that reaches every environment in them",
       yield* serve(broker, "laptop", { remote: ["read"] }, (method) => ({
         result: `laptop:${method}`,
       }));
-      yield* serve(broker, "desktop", { remote: ["read", "send"], other: ["read"] }, (method) => ({
-        result: `desktop:${method}`,
-      }));
+      yield* serve(
+        broker,
+        "desktop",
+        { remote: ["read", "send"], other: ["read"] },
+        (method) => ({ result: `desktop:${method}` }),
+        DESKTOP_APP_SUBJECT,
+      );
       expect(broker.available()).toBe(true);
-      expect(broker.grants()).toEqual({ remote: ["read", "send"], other: ["read"] });
+      expect((yield* broker.access).grants).toEqual({ remote: ["read", "send"], other: ["read"] });
       expect(yield* broker.forward("listProjects", ["remote"], ["remote"])).toBe(
         "desktop:listProjects",
       );
@@ -74,9 +82,13 @@ it.effect("routes each call only to an app holding the scopes it needs", () =>
       yield* serve(broker, "desktop", { remote: ["read", "send"] }, (method) => ({
         result: `desktop:${method}`,
       }));
-      yield* serve(broker, "phone", { remote: ["read"] }, (method) => ({
-        result: `phone:${method}`,
-      }));
+      yield* serve(
+        broker,
+        "phone",
+        { remote: ["read"] },
+        (method) => ({ result: `phone:${method}` }),
+        DESKTOP_APP_SUBJECT,
+      );
       expect(yield* broker.forward("listProjects", ["remote"], ["remote"])).toBe(
         "phone:listProjects",
       );
@@ -97,9 +109,13 @@ it.effect("never lets one app's grant widen the call another app serves", () =>
       yield* serve(broker, "desktop", { remote: ["read", "create", "send"] }, (method) => ({
         result: `desktop:${method}`,
       }));
-      yield* serve(broker, "phone", { remote: ["read", "artifact"] }, (method) => ({
-        result: `phone:${method}`,
-      }));
+      yield* serve(
+        broker,
+        "phone",
+        { remote: ["read", "artifact"] },
+        (method) => ({ result: `phone:${method}` }),
+        DESKTOP_APP_SUBJECT,
+      );
       // Together the two apps hold every scope a handoff needs, but neither holds them all.
       const handoff = { sourceEnvironmentId: "remote", environmentId: "remote" };
       expect(
@@ -124,12 +140,16 @@ it.effect(
         yield* serve(broker, "studio", { studio: ["read"] }, () => ({
           result: [summary("studio", "connected")],
         }));
-        yield* serve(broker, "laptop", { laptop: ["read"], studio: ["read"] }, () => ({
-          result: [summary("laptop", "connected"), summary("studio", "connecting")],
-        }));
+        yield* serve(
+          broker,
+          "laptop",
+          { laptop: ["read"], studio: ["read"] },
+          () => ({ result: [summary("laptop", "connected"), summary("studio", "connecting")] }),
+          DESKTOP_APP_SUBJECT,
+        );
         // An app that stopped answering must not hold up the others' environments.
         yield* broker
-          .connect("asleep", { asleep: ["read"], laptop: ["read"] }, CODE_PAIRED_SUBJECT)
+          .connect("asleep", { asleep: ["read"], laptop: ["read"] }, DESKTOP_APP_SUBJECT)
           .pipe(Stream.runDrain, Effect.forkScoped({ startImmediately: true }));
         const listing = yield* broker
           .forward("listEnvironments", [], [])
@@ -363,4 +383,133 @@ it.effect("relays nothing while linked environments is off", () =>
       );
     }),
   ).pipe(Effect.provide(layerDependencies({ linksOff: true }))),
+);
+
+it.effect(
+  "relays to a network member through this machine's own desktop app, within its access",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* make;
+        const membership = yield* Membership.Membership;
+        const putMember = (environmentId: EnvironmentId, access: "full-access" | "read-only") =>
+          membership.put({ environmentId, label: environmentId, nodeId: null, access });
+        yield* putMember(here, "full-access");
+        yield* putMember(remote, "full-access");
+        // Any other session paired by code still cannot reach a member.
+        yield* serve(broker, "browser", { remote: ["read", "create"] }, (method) => ({
+          result: `browser:${method}`,
+        }));
+        expect(
+          yield* failureMessage(broker.forward("listProjects", ["remote"], ["remote"])),
+        ).not.toBe("ok");
+        yield* serve(
+          broker,
+          "desktop",
+          { remote: ["read", "create", "send"] },
+          (method) => ({ result: `desktop:${method}` }),
+          DESKTOP_APP_SUBJECT,
+        );
+        expect(yield* broker.forward("createThread", [createThread], ["remote"])).toBe(
+          "desktop:createThread",
+        );
+        // This server's own task calls take the same route under the same cap.
+        const assign = { action: "remoteAssign", input: {} } as const;
+        const snapshot = { action: "projectSnapshot", input: {} } as const;
+        expect(yield* broker.call("threadTask", [remote, assign])).toBe("desktop:threadTask");
+        yield* putMember(here, "read-only");
+        expect(
+          yield* failureMessage(broker.forward("createThread", [createThread], ["remote"])),
+        ).toContain("read-only");
+        expect(yield* failureMessage(broker.call("threadTask", [remote, assign]))).toContain(
+          "read-only",
+        );
+        expect(yield* broker.call("threadTask", [remote, snapshot])).toBe("desktop:threadTask");
+        expect(yield* broker.forward("listProjects", ["remote"], ["remote"])).toBe(
+          "desktop:listProjects",
+        );
+      }),
+    ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("never lets a session paired by code take an environment another session relays", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      yield* serve(broker, "laptop", { elsewhere: ["read"] }, (method) => ({
+        result: `laptop:${method}`,
+      }));
+      yield* serve(broker, "intruder", { elsewhere: ["read", "create"] }, (method) => ({
+        result: `intruder:${method}`,
+      }));
+      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
+        "laptop:listProjects",
+      );
+      const elsewhere = { ...createThread, environmentId: "elsewhere" };
+      expect(
+        yield* failureMessage(broker.forward("createThread", [elsewhere], ["elsewhere"])),
+      ).not.toBe("ok");
+      // The same session connecting again keeps what it relays.
+      yield* serve(broker, "laptop", { elsewhere: ["read"] }, (method) => ({
+        result: `laptop-again:${method}`,
+      }));
+      expect(yield* broker.forward("listProjects", ["elsewhere"], ["elsewhere"])).toBe(
+        "laptop-again:listProjects",
+      );
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect("refuses a call that names no environment its scopes can be checked on", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      yield* serve(
+        broker,
+        "desktop",
+        { remote: ["read", "create", "send", "artifact", "admin", "lifecycle"] },
+        (method) => ({ result: method }),
+        DESKTOP_APP_SUBJECT,
+      );
+      const refused = [
+        broker.forward("handoffThread", [{ environmentId: "remote" }], ["remote"]),
+        broker.forward("createThread", [{ projectId: "project" }], []),
+        broker.forward("unknownMethod" as never, ["remote"], ["remote"]),
+      ];
+      for (const call of refused) expect(yield* failureMessage(call)).not.toBe("ok");
+    }),
+  ).pipe(Effect.provide(layerDependencies())),
+);
+
+it.effect(
+  "shows agents only what the roster lets this machine reach, and why the rest is not",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* make;
+        const membership = yield* Membership.Membership;
+        yield* membership.put({
+          environmentId: here,
+          label: "here",
+          nodeId: null,
+          access: "read-only",
+        });
+        yield* membership.put({
+          environmentId: remote,
+          label: "remote",
+          nodeId: null,
+          access: "full-access",
+        });
+        yield* serve(
+          broker,
+          "browser",
+          { remote: ["read"], elsewhere: ["read", "create"] },
+          () => ({}),
+        );
+        const access = yield* broker.access;
+        expect(access.grants).toEqual({ elsewhere: ["read"] });
+        expect(access.refusals.remote).toContain("network");
+        expect(broker.view()).toEqual(access);
+      }),
+    ).pipe(Effect.provide(layerDependencies())),
 );

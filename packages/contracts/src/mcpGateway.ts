@@ -82,6 +82,13 @@ export const McpGatewayRelayEvent = Schema.Struct({
   invocationId: Schema.String,
   method: Schema.String,
   args: Schema.Array(Schema.Unknown),
+  /**
+   * The calling chat's modes. The app answering the call applies them against its own reads of
+   * the target, since the relaying server's view of a remote thread is only what an app told it.
+   */
+  modeCeiling: Schema.optionalKey(
+    Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+  ),
 });
 export type McpGatewayRelayEvent = typeof McpGatewayRelayEvent.Type;
 

@@ -1,8 +1,18 @@
 import { expect, it } from "@effect/vitest";
-import type { GatewayRuntimePort } from "@t3tools/client-runtime/gateway";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  answerGatewayPortCall,
+  type GatewayRuntimePort,
+  withinModes,
+} from "@t3tools/client-runtime/gateway";
+import {
+  EnvironmentId,
+  McpGatewayRelayEvent,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 import { SERVER_SUPERSEDED_TOOLS } from "@t3tools/mcp-gateway/catalog";
@@ -58,6 +68,7 @@ const client = McpSchema.McpServerClient.of({
 });
 
 const remoteId = "environment-remote";
+const decodeRelayEvent = Schema.decodeEffect(McpGatewayRelayEvent);
 
 const makeLayer = (
   listedFor: Array<string>,
@@ -65,6 +76,8 @@ const makeLayer = (
   scheduledOn: Array<string> = [],
   callerModes?: Parameters<typeof McpToolAccessTestkit.liveThreadShell>[1],
   overrides: Partial<GatewayRuntimePort> = {},
+  /** Answers each relayed call in place of the fixed answers below. */
+  relay?: (event: McpGatewayRelayEvent) => Promise<unknown>,
 ) => {
   const port = {
     scheduledTask: async (environmentId: string) => {
@@ -141,11 +154,16 @@ const makeLayer = (
         .pipe(
           Stream.runForEach((event) => {
             relayed.push({ method: event.method, args: event.args });
-            return broker.respond("desktop", {
-              connectionId: event.connectionId,
-              invocationId: event.invocationId,
-              result: answers[event.method],
-            });
+            const ids = { connectionId: event.connectionId, invocationId: event.invocationId };
+            if (relay === undefined) {
+              return broker.respond("desktop", { ...ids, result: answers[event.method] });
+            }
+            return Effect.promise(() =>
+              relay(event).then(
+                (result) => ({ result }),
+                (error: Error) => ({ error: error.message }),
+              ),
+            ).pipe(Effect.flatMap((outcome) => broker.respond("desktop", { ...ids, ...outcome })));
           }),
           Effect.forkScoped({ startImmediately: true }),
         );
@@ -323,8 +341,8 @@ const wideWork = (calls: Array<string>) => {
       const request = args[1] as { readonly action?: string } | undefined;
       const operation = (args[0] as { readonly operation?: string } | undefined)?.operation;
       calls.push(
-        method === "scheduledTask"
-          ? `scheduledTask:${request?.action}`
+        method === "scheduledTask" || method === "todo" || method === "threadTask"
+          ? `${method}:${request?.action}`
           : operation === undefined
             ? method
             : `executeOperation:${operation}`,
@@ -405,6 +423,14 @@ const wideWork = (calls: Array<string>) => {
     deleteProfile: record("deleteProfile"),
     updateSkill: record("updateSkill"),
     deleteSkill: record("deleteSkill"),
+    createSkill: record("createSkill"),
+    settleThread: record("settleThread"),
+    unsettleThread: record("unsettleThread"),
+    setThreadParent: record("setThreadParent"),
+    todo: record("todo"),
+    threadTask: record("threadTask"),
+    focusDevice: record("focusDevice"),
+    openThread: record("openThread"),
   } as unknown as Partial<GatewayRuntimePort>;
 };
 
@@ -506,6 +532,29 @@ const MUTATING_TOOLS: ReadonlyArray<readonly [string, Record<string, unknown>, s
   ["t3_delete_agent", { profileId: "wide" }, "deleteProfile"],
   ["t3_update_skill", { skillId: "skill-wide", patch: { content: "Go wide." } }, "updateSkill"],
   ["t3_delete_skill", { skillId: "skill-wide" }, "deleteSkill"],
+  [
+    "t3_create_skill",
+    { name: "Wide", description: "Goes wide.", content: "Go wide." },
+    "createSkill",
+  ],
+  ["t3_delete_scheduled_task", { taskId: "task-wide" }, "scheduledTask:delete"],
+  ["t3_settle_thread", { threadId: "thread-wide", confirmed: true }, "settleThread"],
+  ["t3_unsettle_thread", { threadId: "thread-wide" }, "unsettleThread"],
+  ["t3_set_thread_parent", { threadId: "thread-wide", parentThreadId: null }, "setThreadParent"],
+  ["t3_add_todo", { projectId: "project-1", text: "Go wide." }, "todo:add"],
+  ["t3_update_todo", { todoId: "todo-1", text: "Go wider." }, "todo:update"],
+  ["t3_remove_todo", { todoId: "todo-1" }, "todo:remove"],
+  ["t3_settle_todo", { todoId: "todo-1" }, "todo:settle"],
+  ["t3_unsettle_todo", { todoId: "todo-1" }, "todo:unsettle"],
+  ["t3_task_assign", { threadId: "thread-wide", summary: "Go wide." }, "threadTask:assign"],
+  [
+    "t3_task_update",
+    { threadId: "thread-wide", expectedRevision: 1, summary: "Went wide." },
+    "threadTask:update",
+  ],
+  ["t3_settle_after_turn", { threadId: "thread-wide" }, "threadTask:settleAfterTurn"],
+  ["t3_focus_device", { device: "phone", threadId: "thread-wide" }, "focusDevice"],
+  ["t3_open_thread", { threadId: "thread-wide" }, "openThread"],
 ];
 
 it.effect("keeps every mutating tool within the calling chat's modes", () =>
@@ -587,4 +636,113 @@ it.effect("keeps a chat from running a scheduled task on another machine above i
       1,
     );
   }),
+);
+
+it.effect("keeps a narrower chat from copying broader agents to another machine", () =>
+  Effect.gen(function* () {
+    const replicatedFor = (modes: Parameters<typeof McpToolAccessTestkit.liveThreadShell>[1]) => {
+      const relayed: Array<{ method: string; args: unknown }> = [];
+      return callTool("t3_create_agent", {
+        name: "Planner",
+        providerLabel: "Codex",
+        modelLabel: "gpt-5",
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+      }).pipe(
+        Effect.provide(makeLayer([], relayed, [], modes, wideWork([]))),
+        Effect.map(() => relayed.filter((call) => call.method === "replicateProfiles")),
+      );
+    };
+    // Sharing copies every agent here, the full-access "wide" one included.
+    expect(yield* replicatedFor({ runtimeMode: "full-access", interactionMode: "plan" })).toEqual(
+      [],
+    );
+    expect(
+      yield* replicatedFor({ runtimeMode: "full-access", interactionMode: "default" }),
+    ).toHaveLength(1);
+  }),
+);
+
+it.effect("clamps a relayed call where it runs, whatever the relaying server was told", () =>
+  Effect.gen(function* () {
+    // The relaying server checked a thread a lying app reported as plan; the app answering
+    // the call reads the target itself and finds it full-access.
+    const event = yield* decodeRelayEvent({
+      type: "invoke",
+      connectionId: "connection-1",
+      invocationId: "invocation-1",
+      method: "sendMessage",
+      args: [
+        {
+          environmentId: remoteId,
+          threadId: "thread-wide",
+          text: "Go wide.",
+          messageId: "message-1",
+          requestId: "request-1",
+        },
+      ],
+      modeCeiling: { runtimeMode: "approval-required", interactionMode: "plan" },
+    });
+    const sent: Array<string> = [];
+    const appPort = {
+      ...wideWork(sent),
+      sendMessage: async () => {
+        sent.push("sendMessage");
+        return { status: "accepted", threadId: "thread-wide", requestId: "request-1" };
+      },
+    } as unknown as GatewayRuntimePort;
+    const destination = withinModes(appPort, event.modeCeiling);
+    const answered = yield* Effect.promise(() =>
+      (destination.sendMessage as (...args: ReadonlyArray<unknown>) => Promise<unknown>)(
+        ...event.args,
+      ).then(
+        () => "sent",
+        (error: Error) => error.message,
+      ),
+    );
+    expect(answered).toContain("broader than this chat's");
+    expect(sent).toEqual([]);
+  }),
+);
+
+it.effect(
+  "a relayed call is refused where it runs, even when the relaying app lies to this server",
+  () =>
+    Effect.gen(function* () {
+      const reached: Array<string> = [];
+      const truth = wideWork(reached) as unknown as GatewayRuntimePort;
+      const relay = (event: McpGatewayRelayEvent) =>
+        // The app tells this server the thread is as narrow as the chat, so the clamp here passes;
+        // every other call runs through the real answering path against the thread as it is.
+        event.method === "getThread"
+          ? truth
+              .getThread(String(event.args[0]), String(event.args[1]))
+              .then((thread) => ({ ...thread, runtimeMode: "approval-required" }))
+          : answerGatewayPortCall(
+              truth,
+              { [remoteId]: ["read", "create", "send"] },
+              event.method,
+              event.args,
+              event.modeCeiling,
+            );
+      const result = yield* callTool("t3_answer_question", {
+        environmentId: remoteId,
+        threadId: "thread-wide",
+        answers: [{ text: "Yes" }],
+        idempotencyKey: "answer-relayed",
+      }).pipe(
+        Effect.provide(
+          makeLayer(
+            [],
+            [],
+            [],
+            { runtimeMode: "approval-required", interactionMode: "default" },
+            {},
+            relay,
+          ),
+        ),
+      );
+      expect(reached).not.toContain("respondToUserInput");
+      expect(JSON.stringify(result.structuredContent)).toContain("broader than this chat's");
+    }),
 );

@@ -1122,7 +1122,7 @@ it.effect.each([
           Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
           Layer.mock(ServerBrowser.ServerBrowser)({}),
           Layer.mock(McpGatewayBroker.McpGatewayBroker)({
-            grants: () => ({}),
+            view: () => ({ grants: {}, refusals: {} }),
             available: () => false,
           }),
           Layer.mock(ClientFocusBroker.ClientFocusBroker)({}),
@@ -1365,7 +1365,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
         Layer.mock(ServerBrowser.ServerBrowser)({}),
         Layer.mock(McpGatewayBroker.McpGatewayBroker)({
-          grants: () => ({}),
+          view: () => ({ grants: {}, refusals: {} }),
           available: () => false,
         }),
         Layer.mock(ClientFocusBroker.ClientFocusBroker)({}),
