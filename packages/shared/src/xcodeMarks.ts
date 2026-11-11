@@ -7,8 +7,34 @@ export interface XcodeMark {
   readonly separator: boolean;
 }
 
-const COMMENT_MARK = /^\s*(?:\/\/+|\/\*+)\s*(MARK|TODO|FIXME)\s*:\s*(.*?)\s*(?:\*\/\s*)?$/i;
-const PRAGMA_MARK = /^\s*#\s*pragma\s+mark\s*(.*)$/i;
+const COMMENT_MARK = /^\s*(?:\/\/+|\/\*+)\s*(MARK|TODO|FIXME)\s*:\s*(.*?)\s*(?:\*\/\s*)?$/;
+const PRAGMA_MARK = /^\s*#\s*pragma\s+mark\s*(.*)$/;
+
+const XCODE_MARK_EXTENSIONS = new Set([
+  "c",
+  "cc",
+  "cpp",
+  "cxx",
+  "h",
+  "hh",
+  "hpp",
+  "hxx",
+  "inl",
+  "ipp",
+  "m",
+  "metal",
+  "mm",
+  "swift",
+  "tpp",
+]);
+
+/** True when `path` is a Swift / ObjC / C-family source file Xcode would mark. */
+export function pathSupportsXcodeMarks(path: string): boolean {
+  const base = path.replace(/^.*[/\\]/, "").toLowerCase();
+  const dot = base.lastIndexOf(".");
+  if (dot < 0) return false;
+  return XCODE_MARK_EXTENSIONS.has(base.slice(dot + 1));
+}
 
 function parseMarkBody(kind: XcodeMarkKind, body: string): Omit<XcodeMark, "line"> {
   const trimmed = body.trim();

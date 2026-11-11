@@ -22,7 +22,11 @@ import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
-import { parseXcodeMarks, xcodeMarkMenuLabel } from "@t3tools/shared/xcodeMarks";
+import {
+  parseXcodeMarks,
+  pathSupportsXcodeMarks,
+  xcodeMarkMenuLabel,
+} from "@t3tools/shared/xcodeMarks";
 import { DelimitedFilePreview } from "./DelimitedFilePreview";
 import { AudioFilePreview } from "./AudioFilePreview";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -1044,7 +1048,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
 
   const headerSubtitle = fileHeaderSubtitle(projectName, relativePath);
   const markItems =
-    fileData?.contents && resolvedActiveMode === "source"
+    fileData?.contents && resolvedActiveMode === "source" && pathSupportsXcodeMarks(relativePath)
       ? parseXcodeMarks(prepareSourceFileDocument(fileData.contents).contents).flatMap((mark) => {
           const title = xcodeMarkMenuLabel(mark);
           if (title === null) return [];

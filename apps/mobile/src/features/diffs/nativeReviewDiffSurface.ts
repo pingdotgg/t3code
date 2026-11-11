@@ -128,6 +128,8 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   /** Android ignores this and measures the widest row. */
   readonly contentWidth: number;
   readonly initialRowIndex?: number;
+  /** Bumps to re-apply `initialRowIndex` without clearing content. */
+  readonly initialRowScrollKey?: string;
   readonly initialFileId?: string;
   readonly scrollEnabled?: boolean;
   readonly bounces?: boolean;

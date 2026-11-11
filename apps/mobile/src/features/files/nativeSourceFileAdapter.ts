@@ -1,3 +1,4 @@
+import type { XcodeMark } from "@t3tools/shared/xcodeMarks";
 import type {
   NativeReviewDiffRow,
   NativeReviewDiffStyle,
@@ -53,21 +54,60 @@ export function buildNativeSourceRows(
   }));
 }
 
+function xcodeMarkTokenColor(kind: XcodeMark["kind"], scheme: "light" | "dark"): string {
+  switch (kind) {
+    case "todo":
+      return scheme === "dark" ? "#E8B84A" : "#B45309";
+    case "fixme":
+      return scheme === "dark" ? "#F07178" : "#BE123C";
+    default:
+      return scheme === "dark" ? "#A3B1BF" : "#5A6470";
+  }
+}
+
 export function buildNativeSourceTokens(
   tokenLines: HighlightedLines | null,
+  options?: {
+    readonly marksByLine?: ReadonlyMap<number, XcodeMark>;
+    readonly colorScheme?: "light" | "dark";
+    readonly lines?: ReadonlyArray<string>;
+  },
 ): Readonly<Record<string, ReadonlyArray<NativeReviewDiffToken>>> {
+  const marksByLine = options?.marksByLine;
+  const colorScheme = options?.colorScheme ?? "dark";
+  const lines = options?.lines;
+
   if (tokenLines === null) {
-    return {};
+    if (!marksByLine || marksByLine.size === 0 || !lines) {
+      return {};
+    }
+    return Object.fromEntries(
+      [...marksByLine.entries()].map(([index, mark]) => [
+        nativeSourceRowId(index),
+        [
+          {
+            content: expandTabs(lines[index] ?? ""),
+            color: xcodeMarkTokenColor(mark.kind, colorScheme),
+            fontStyle: 2,
+          },
+        ],
+      ]),
+    );
   }
 
   return Object.fromEntries(
-    tokenLines.map((tokens, index) => [
-      nativeSourceRowId(index),
-      tokens.map((token) => ({
-        content: expandTabs(token.content),
-        color: token.color,
-        fontStyle: token.fontStyle,
-      })),
-    ]),
+    tokenLines.map((tokens, index) => {
+      const mark = marksByLine?.get(index);
+      const markColor = mark ? xcodeMarkTokenColor(mark.kind, colorScheme) : null;
+      return [
+        nativeSourceRowId(index),
+        tokens.map((token) => ({
+          content: expandTabs(token.content),
+          color: markColor ?? token.color,
+          // Bit 2 is bold in the native review-diff token style flags.
+          fontStyle: markColor != null ? (token.fontStyle ?? 0) | 2 : token.fontStyle,
+        })),
+      ];
+    }),
   );
 }

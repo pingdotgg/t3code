@@ -333,6 +333,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   private var tokensResetKey = ""
   private var contentResetKey = ""
   private var initialRowIndex: Int?
+  private var initialRowScrollKey = ""
   private var initialFileId: String?
   private var hasAppliedInitialRowIndex = false
   private var lastVisibleFileId: String?
@@ -870,6 +871,15 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     }
 
     self.initialRowIndex = nextIndex
+    hasAppliedInitialRowIndex = false
+    applyInitialRowIndexIfNeeded()
+  }
+
+  func setInitialRowScrollKey(_ initialRowScrollKey: String) {
+    guard initialRowScrollKey != self.initialRowScrollKey else {
+      return
+    }
+    self.initialRowScrollKey = initialRowScrollKey
     hasAppliedInitialRowIndex = false
     applyInitialRowIndexIfNeeded()
   }

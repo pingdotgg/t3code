@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseXcodeMarks, xcodeMarkMenuLabel } from "./xcodeMarks.ts";
+import { parseXcodeMarks, pathSupportsXcodeMarks, xcodeMarkMenuLabel } from "./xcodeMarks.ts";
 
 describe("parseXcodeMarks", () => {
   it("parses MARK, TODO, FIXME, and #pragma mark with optional separators", () => {
@@ -33,6 +33,12 @@ describe("parseXcodeMarks", () => {
     ]);
   });
 
+  it("ignores lowercase labels Xcode would not recognise", () => {
+    expect(
+      parseXcodeMarks(["// todo: later", "// Mark: Section", "#pragma MARK Legacy"].join("\n")),
+    ).toEqual([]);
+  });
+
   it("keeps CR LF line numbers stable", () => {
     expect(parseXcodeMarks("a\r\n// MARK: Mid\r\nb")).toEqual([
       { line: 2, kind: "mark", title: "Mid", separator: false },
@@ -43,6 +49,17 @@ describe("parseXcodeMarks", () => {
     expect(parseXcodeMarks("a\r// MARK: Mid\rb")).toEqual([
       { line: 2, kind: "mark", title: "Mid", separator: false },
     ]);
+  });
+});
+
+describe("pathSupportsXcodeMarks", () => {
+  it("accepts Swift, ObjC, and C-family paths only", () => {
+    expect(pathSupportsXcodeMarks("Foo.swift")).toBe(true);
+    expect(pathSupportsXcodeMarks("/src/ViewController.m")).toBe(true);
+    expect(pathSupportsXcodeMarks("lib\\\\core.HPP")).toBe(true);
+    expect(pathSupportsXcodeMarks("app.ts")).toBe(false);
+    expect(pathSupportsXcodeMarks("main.go")).toBe(false);
+    expect(pathSupportsXcodeMarks("README")).toBe(false);
   });
 });
 

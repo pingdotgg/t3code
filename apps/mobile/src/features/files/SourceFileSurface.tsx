@@ -1,5 +1,5 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
-import { parseXcodeMarks } from "@t3tools/shared/xcodeMarks";
+import { parseXcodeMarks, pathSupportsXcodeMarks } from "@t3tools/shared/xcodeMarks";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentType } from "react";
@@ -192,7 +192,9 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
       ? Math.min(Math.floor(props.initialLine) - 1, Math.max(0, lines.length - 1))
       : null;
   const marksByLine = new Map(
-    parseXcodeMarks(normalizedContents).map((mark) => [mark.line - 1, mark] as const),
+    (pathSupportsXcodeMarks(props.path) ? parseXcodeMarks(normalizedContents) : []).map(
+      (mark) => [mark.line - 1, mark] as const,
+    ),
   );
   const highlightAtom = sourceHighlightAtom({
     path: props.path,
@@ -251,9 +253,16 @@ function NativeSourceFileSurface(
   const { themeAppearance, themeId } = useAppearancePreferences();
   const appTheme = useUniwindTheme();
   const { width: viewportWidth } = useWindowDimensions();
-  const { rowsJson, status, targetIndex, tokens } = useSourceFileModel(props);
+  const { lines, marksByLine, rowsJson, status, targetIndex, theme, tokens } =
+    useSourceFileModel(props);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(onRefresh);
-  const tokensJson = JSON.stringify(buildNativeSourceTokens(tokens));
+  const tokensJson = JSON.stringify(
+    buildNativeSourceTokens(tokens, {
+      marksByLine,
+      colorScheme: theme,
+      lines,
+    }),
+  );
   const selectedRowIdsJson = JSON.stringify(
     targetIndex === null ? [] : [nativeSourceRowId(targetIndex)],
   );
@@ -262,7 +271,7 @@ function NativeSourceFileSurface(
   const contentWidth = codeWordBreak
     ? Math.max(240, viewportWidth - codeSurface.gutterWidth - 24)
     : NATIVE_SOURCE_CONTENT_WIDTH;
-  const contentResetKey =
+  const initialRowScrollKey =
     props.jumpRequestId && props.jumpRequestId > 0
       ? `${props.path}:${props.jumpRequestId}`
       : props.path;
@@ -275,11 +284,12 @@ function NativeSourceFileSurface(
         testID="source-native-code-view"
         style={{ flex: 1 }}
         appearanceScheme={themeAppearance}
-        contentResetKey={contentResetKey}
+        contentResetKey={props.path}
         contentWidth={contentWidth}
         contentInsetTop={props.embedded ? 0 : (props.headerInsetTop ?? safeArea.top)}
         contentInsetBottom={props.embedded ? 0 : safeArea.bottom + 8}
         initialRowIndex={targetIndex ?? -1}
+        initialRowScrollKey={initialRowScrollKey}
         rowHeight={nativeSourceStyle.rowHeight ?? codeSurface.rowHeight}
         rowsJson={rowsJson}
         selectedRowIdsJson={selectedRowIdsJson}

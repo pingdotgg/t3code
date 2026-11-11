@@ -92,7 +92,7 @@ export default function ReadOnlySourcePreview(props: {
   const resolvedTheme = useRenderedAppearance();
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
   const wordWrap = props.wordWrap ?? defaultWordWrap;
-  const marks = collectXcodeMarks(props.text);
+  const marks = collectXcodeMarks(props.text, props.name);
   const showMarksMenu = props.marksMenu === true && marks.length > 0;
   const [reveal, setReveal] = useState<{ line: number; requestId: number } | null>(null);
   const handledRevealRequestIdRef = useRef<number | null>(null);

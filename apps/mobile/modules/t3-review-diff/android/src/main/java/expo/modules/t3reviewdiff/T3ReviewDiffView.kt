@@ -40,6 +40,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private var collapsedCommentIds: Set<String> = emptySet()
   private var initialRowIndex = 0
   private var pendingInitialScroll = false
+  private var initialRowScrollKey = ""
   private var initialFileId: String? = null
   private var pendingScrollFileId: String? = null
   private var lastVisibleFileId: String? = null
@@ -165,6 +166,14 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   fun setInitialRowIndex(value: Double) {
     initialRowIndex = value.toInt()
     pendingInitialScroll = value.isFinite() && value >= 0
+    canvasView.setViewportEventsPaused(true)
+    applyPendingInitialScroll()
+  }
+
+  fun setInitialRowScrollKey(value: String) {
+    if (initialRowScrollKey == value) return
+    initialRowScrollKey = value
+    pendingInitialScroll = initialRowIndex >= 0
     canvasView.setViewportEventsPaused(true)
     applyPendingInitialScroll()
   }

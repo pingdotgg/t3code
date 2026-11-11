@@ -442,6 +442,7 @@ function useFileLineReveal(
   // Virtualized post-renders reuse the same contents string; avoid re-parsing marks each frame.
   const marksCacheRef = useRef<{
     contents: string;
+    path: string;
     marks: ReturnType<typeof collectXcodeMarks>;
   } | null>(null);
 
@@ -477,11 +478,12 @@ function useFileLineReveal(
     const marks =
       contents === undefined
         ? []
-        : marksCacheRef.current?.contents === contents
+        : marksCacheRef.current?.contents === contents &&
+            marksCacheRef.current.path === relativePath
           ? marksCacheRef.current.marks
           : (() => {
-              const next = collectXcodeMarks(contents);
-              marksCacheRef.current = { contents, marks: next };
+              const next = collectXcodeMarks(contents, relativePath);
+              marksCacheRef.current = { contents, path: relativePath, marks: next };
               return next;
             })();
     updateXcodeMarkDecorations(fileContainer, marks);
@@ -1219,7 +1221,7 @@ export default function FilePreviewPanel({
   );
   const sourceMarks =
     previewPath !== null && file.data !== null && !isMedia && !isDocument
-      ? collectXcodeMarks(file.data.contents)
+      ? collectXcodeMarks(file.data.contents, previewPath)
       : [];
   const jumpToMark = (line: number) => {
     if (relativePath === null) return;

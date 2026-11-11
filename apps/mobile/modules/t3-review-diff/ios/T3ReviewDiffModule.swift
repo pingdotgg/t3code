@@ -61,6 +61,10 @@ public class T3ReviewDiffModule: Module {
         view.setInitialRowIndex(initialRowIndex)
       }
 
+      Prop("initialRowScrollKey") { (view: T3ReviewDiffView, initialRowScrollKey: String) in
+        view.setInitialRowScrollKey(initialRowScrollKey)
+      }
+
       Prop("initialFileId") { (view: T3ReviewDiffView, fileId: String) in
         view.setInitialFileId(fileId)
       }

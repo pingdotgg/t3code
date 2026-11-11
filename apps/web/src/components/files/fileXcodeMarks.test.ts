@@ -14,4 +14,11 @@ describe("collectXcodeMarks", () => {
       { line: 1, kind: "mark", title: "Lifecycle", separator: true },
     ]);
   });
+
+  it("skips non C-family paths", () => {
+    expect(collectXcodeMarks("// MARK: - Lifecycle\n", "app.ts")).toEqual([]);
+    expect(collectXcodeMarks("// MARK: - Lifecycle\n", "Foo.swift")).toEqual([
+      { line: 1, kind: "mark", title: "Lifecycle", separator: true },
+    ]);
+  });
 });

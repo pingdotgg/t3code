@@ -1,4 +1,8 @@
-import { parseXcodeMarks, type XcodeMark } from "@t3tools/shared/xcodeMarks";
+import {
+  parseXcodeMarks,
+  pathSupportsXcodeMarks,
+  type XcodeMark,
+} from "@t3tools/shared/xcodeMarks";
 
 const XCODE_MARK_ATTRIBUTE = "data-xcode-mark";
 const XCODE_MARK_SEPARATOR_ATTRIBUTE = "data-xcode-mark-separator";
@@ -69,8 +73,9 @@ export const XCODE_MARK_UNSAFE_CSS = `
   }
 `;
 
-export function collectXcodeMarks(source: string | null | undefined): XcodeMark[] {
+export function collectXcodeMarks(source: string | null | undefined, path?: string): XcodeMark[] {
   if (!source) return [];
+  if (path !== undefined && !pathSupportsXcodeMarks(path)) return [];
   return parseXcodeMarks(source);
 }
 
