@@ -7,7 +7,8 @@ const CLOSING_WINDOW_MS = 72 * 60 * 60 * 1000;
 // A first run meets the whole backlog; cap it so one run cannot post hundreds of comments.
 const MAX_WARNINGS_PER_RUN = 100;
 const MAX_CLOSES_PER_RUN = 50;
-// The Actions token gets 1,000 GraphQL points an hour; each lookup costs one.
+// The Actions token gets 1,000 GraphQL points an hour. Listing every open PR, three times at
+// worst, takes about 220 of them; each lookup after that costs one.
 const MAX_LOOKUPS_PER_RUN = 300;
 const MERGEABLE_ATTEMPTS = 3;
 const MERGEABLE_RETRY_MS = 30_000;
@@ -50,8 +51,8 @@ const PR_DETAIL_QUERY = `
         timelineItems(itemTypes: [LABELED_EVENT], last: 100) {
           nodes { ... on LabeledEvent { createdAt label { name } } }
         }
-        comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { author { login } } }
-        reviews(first: 100) { pageInfo { hasNextPage endCursor } nodes { author { login } } }
+        comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { createdAt author { login } } }
+        reviews(first: 100) { pageInfo { hasNextPage endCursor } nodes { submittedAt author { login } } }
         recentComments: comments(last: 30) { nodes { createdAt author { login } } }
         commits(last: 1) { nodes { commit { committedDate } } }
       }
@@ -62,8 +63,8 @@ const PR_ACTIVITY_QUERY = `
   query ($owner: String!, $repo: String!, $number: Int!, $comments: String, $reviews: String) {
     repository(owner: $owner, name: $repo) {
       pullRequest(number: $number) {
-        comments(first: 100, after: $comments) { pageInfo { hasNextPage endCursor } nodes { author { login } } }
-        reviews(first: 100, after: $reviews) { pageInfo { hasNextPage endCursor } nodes { author { login } } }
+        comments(first: 100, after: $comments) { pageInfo { hasNextPage endCursor } nodes { createdAt author { login } } }
+        reviews(first: 100, after: $reviews) { pageInfo { hasNextPage endCursor } nodes { submittedAt author { login } } }
       }
     }
   }`;
@@ -71,7 +72,13 @@ const PR_ACTIVITY_QUERY = `
 const AUTHOR_OPEN_PRS_QUERY = `
   query ($q: String!, $owner: String!, $repo: String!, $number: Int!) {
     repository(owner: $owner, name: $repo) {
-      pullRequest(number: $number) { state labels(first: 100) { nodes { name } } }
+      pullRequest(number: $number) {
+        state
+        labels(first: 100) { nodes { name } }
+        timelineItems(itemTypes: [REOPENED_EVENT], last: 1) {
+          nodes { ... on ReopenedEvent { actor { login } } }
+        }
+      }
     }
     search(query: $q, type: ISSUE, first: 50) {
       nodes { ... on PullRequest { number } }
@@ -117,24 +124,27 @@ function sweepStep(pr) {
 }
 
 // CONTRIBUTING.md leaves a PR to maintainers once an exempt login has commented or reviewed.
-function maintainerOn(activity, exemptions) {
+// `after` narrows that to activity later than a triage notice: the notice itself is posted from a
+// maintainer account, and counting it would exempt every PR triage ever asks to close.
+function maintainerOn(activity, exemptions, after = 0) {
   for (const node of [...activity.comments.nodes, ...activity.reviews.nodes]) {
     const login = node.author?.login;
-    if (login && exemptions.has(login.toLowerCase())) return login;
+    const at = Date.parse(node.createdAt ?? node.submittedAt ?? "");
+    if (login && exemptions.has(login.toLowerCase()) && !(at <= after)) return login;
   }
   return undefined;
 }
 
 // Reads every page, so a long thread can neither hide a maintainer nor pass for one.
 // Each further page spends a lookup; with none left the answer is OUT_OF_LOOKUPS, never "nobody".
-async function findMaintainer(github, repo, number, detail, exemptions, spend) {
-  // A finished connection answers its last cursor with an empty page and no cursor; keep the last
-  // real one, or the next request would start that connection over from its first page.
+async function findMaintainer(github, repo, number, detail, exemptions, spend, after) {
   const author = detail.author?.login;
   if (author && exemptions.has(author.toLowerCase())) return author;
+  // A finished connection answers its last cursor with an empty page and no cursor; keep the last
+  // real one, or the next request would start that connection over from its first page.
   const cursors = { comments: null, reviews: null };
   for (let activity = detail; ;) {
-    const login = maintainerOn(activity, exemptions);
+    const login = maintainerOn(activity, exemptions, after);
     if (login) return login;
     const { comments, reviews } = activity;
     if (!comments.pageInfo.hasNextPage && !reviews.pageInfo.hasNextPage) return undefined;
@@ -260,7 +270,16 @@ async function sweep({ github, context, core, dryRun }) {
     }
 
     const spend = () => lookups < MAX_LOOKUPS_PER_RUN && (lookups += 1) > 0;
-    const maintainer = await findMaintainer(github, repo, number, detail, exemptions, spend);
+    const noticeAt = step === "closing-window" ? labeledAt(detail, CLOSING_LABEL) : undefined;
+    const maintainer = await findMaintainer(
+      github,
+      repo,
+      number,
+      detail,
+      exemptions,
+      spend,
+      noticeAt,
+    );
     if (maintainer === OUT_OF_LOOKUPS) continue;
     if (maintainer) {
       const reason = `maintainer involved (${maintainer})`;
@@ -353,8 +372,6 @@ async function enforceOpenLimit({ github, context, core, dryRun }) {
   if (TRUSTED_VOUCH_STATUSES.has(status)) return;
   const exemptions = parseExemptions(fs.readFileSync(EXEMPTIONS_PATH, "utf8"));
   if (exemptions.has(author.toLowerCase())) return;
-  // Someone else reopening a PR is a maintainer overriding the limit.
-  if (context.payload.action === "reopened" && context.payload.sender.login !== author) return;
 
   const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open author:${author} sort:created-asc`;
   const { search, repository } = await github.graphql(AUTHOR_OPEN_PRS_QUERY, {
@@ -367,6 +384,10 @@ async function enforceOpenLimit({ github, context, core, dryRun }) {
   const current = repository.pullRequest;
   if (current.state !== "OPEN") return;
   if (current.labels.nodes.some((label) => label.name === KEEP_OPEN_LABEL)) return;
+  // Someone else reopening a PR is a maintainer overriding the limit. Read it from the PR, not the
+  // event: an "opened" job can still be waiting when the override happens.
+  const reopenedBy = current.timelineItems.nodes[0]?.actor?.login;
+  if (reopenedBy && reopenedBy !== author) return;
   // A new PR counts only the older ones, so two opened together cannot close each other.
   const reopened = context.payload.action === "reopened";
   const others = search.nodes.filter(
@@ -410,7 +431,7 @@ async function clearAnswered({ github, context, core }) {
   const present = new Set(detail.labels.nodes.map((label) => label.name));
   for (const name of comment ? [CLOSING_LABEL] : [REBASE_LABEL, CLOSING_LABEL]) {
     const since = labeledAt(detail, name);
-    if (!present.has(name) || since === undefined || since > actedAt) continue;
+    if (!present.has(name) || since === undefined || since >= actedAt) continue;
     await removeLabel(github, context, number, name);
     core.info(`PR #${number}: removed ${name}.`);
   }

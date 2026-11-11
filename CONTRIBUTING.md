@@ -174,7 +174,8 @@ eligibility or review approval.
 
 A policy-based closure starts with a notice. Triage posts the explanation and applies
 `triage:closing`, and the PR closes 72 hours later. A reply or a push from the author within that time
-removes the label and sends the PR back to triage, which reassesses it with the new evidence.
+removes the label and sends the PR back to triage, which reassesses it with the new evidence. A
+comment or review from a maintainer after the notice also stops the close.
 
 PRs that violate these requirements can be closed before deeper review. Multiple independent fixes
 require splitting. Missing approval requires maintainer discussion or issue triage, as applicable.
