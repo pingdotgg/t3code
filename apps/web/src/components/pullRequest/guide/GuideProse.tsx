@@ -25,12 +25,13 @@ export function GuideProse({
   return (
     // The agent writes the guide about the checkout, so its relative links name workspace files.
     <PullRequestMarkdownContext
-      value={markdownContext === null ? null : { ...markdownContext, resolveUrl: null }}
+      value={markdownContext === null ? null : { ...markdownContext, rehypePlugins: [] }}
     >
       <PullRequestMarkdown
         text={text}
         cwd={context.cwd}
         environmentId={context.environmentId}
+        lineBreaks={false}
         className={cn("space-y-0 [&_.chat-markdown]:text-inherit", className)}
       />
     </PullRequestMarkdownContext>

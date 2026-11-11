@@ -1,0 +1,20 @@
+---
+// Prerendered page with an `astro:assets` image, served through the
+// passthrough image endpoint.
+import { Image } from "astro:assets";
+import swatch from "../assets/swatch.png";
+
+export const prerender = true;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prerendered Image — Astro Fixture</title>
+  </head>
+  <body>
+    <h1>Prerendered Image</h1>
+    <Image id="swatch" src={swatch} alt="swatch" />
+  </body>
+</html>
