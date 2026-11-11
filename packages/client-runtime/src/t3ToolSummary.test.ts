@@ -65,12 +65,15 @@ describe("summarizeT3ToolCalls", () => {
     expect(summarizeT3ToolCalls("merge-pr", [merge(false, "merged")]).label).toBe(
       "Merged 1 pull request",
     );
+    expect(summarizeT3ToolCalls("merge-pr", [merge(false, "open")]).label).toBe(
+      "Queued 1 pull request to merge",
+    );
     expect(summarizeT3ToolCalls("merge-pr", [merge(true, "open")]).label).toBe(
-      "Turned on auto-merge for 1 pull request",
+      "Queued 1 pull request to merge",
     );
     expect(
       summarizeT3ToolCalls("merge-pr", [merge(true, "merged"), merge(true, "open")]).label,
-    ).toBe("Merged 1 pull request, auto-merge on 1");
+    ).toBe("Merged 1 pull request, queued 1");
   });
 
   it("excludes failed and unfinished sends even if the provider reports completed", () => {
