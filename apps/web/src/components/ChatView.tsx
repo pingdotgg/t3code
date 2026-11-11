@@ -2499,6 +2499,17 @@ export default function ChatView(props: ChatViewProps) {
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0;
   const compactDisabled = compactThreadUnavailable;
+  const compactUnavailableReason = !compactThreadUnavailable
+    ? null
+    : isWorking
+      ? "Compact when the agent finishes"
+      : pendingApprovals.length > 0 || pendingUserInputs.length > 0
+        ? "Answer the pending request first"
+        : !manualCompactionProviderAvailable
+          ? "This provider cannot compact on request"
+          : !activeThreadHasCompactableConversation
+            ? "Nothing to compact yet"
+            : "Compacting is unavailable right now";
   const resumeCompactionTokens =
     activeContextWindow &&
     resolveIdleCompaction(
@@ -3015,7 +3026,7 @@ export default function ChatView(props: ChatViewProps) {
       : (timelineMessages.findLast(
           (message) => message.role === "user" && message.runId === failedRunId,
         ) ?? null);
-  const { onSend, onRetryFailedRun, retryingFailedRunId } = useComposerSend({
+  const { onSend, withdrawQueuedSend, onRetryFailedRun, retryingFailedRunId } = useComposerSend({
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -3092,6 +3103,7 @@ export default function ChatView(props: ChatViewProps) {
     persistThreadSettingsForNextTurn,
     linkCheckoutPullRequest,
   });
+  const withdrawQueuedSendStable = useStableCallback(withdrawQueuedSend);
 
   const onRetryFailedRunStable = useStableCallback(onRetryFailedRun);
   const canRetryFailedRun =
@@ -3103,6 +3115,7 @@ export default function ChatView(props: ChatViewProps) {
   const trayStatusItems = useChatBannerLane({
     environmentId,
     activeProviderStatus,
+    selectedModel: composerSelectedModelSelection?.model ?? activeThread?.modelSelection.model,
     providerStatuses,
     usageLimitSources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
     canSwitchProvider: lockedProvider === null || supportsProviderSwitchingViaHandoff,
@@ -3201,6 +3214,7 @@ export default function ChatView(props: ChatViewProps) {
           })}
           onEditQueuedRun={queuedRunEdit.beginEdit}
           onCancelEdit={queuedRunEdit.cancelEdit}
+          onRemovePending={withdrawQueuedSendStable}
           timestampFormat={timestampFormat}
           onOpenThread={onOpenRelatedThreadStable}
         />
@@ -4050,7 +4064,7 @@ export default function ChatView(props: ChatViewProps) {
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
                   onCompactContext={onComposerCompactContextStable}
-                  compactDisabled={compactDisabled}
+                  compactUnavailableReason={compactUnavailableReason}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
