@@ -84,10 +84,7 @@ function findBoundaryMatchIndex(
   return bestIndex;
 }
 
-/**
- * **Expects pre-normalized inputs**: both `value` and `query` must already be
- * trimmed and lowercased (e.g. via {@link normalizeSearchQuery}).
- */
+/** value and query must already be trimmed and lowercased. */
 export function scoreQueryMatch(input: {
   value: string;
   query: string;

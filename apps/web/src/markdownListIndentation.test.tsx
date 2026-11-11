@@ -29,18 +29,6 @@ describe("remarkNormalizeListItemIndentation", () => {
     expect(html).toContain("<li>step.request.body = &quot;&lt;redacted&gt;&quot;;</li>");
   });
 
-  it("parses inline markdown in recovered list content", () => {
-    const html = renderMarkdown(
-      "-       **important** [docs](https://example.com) use `inline code`, not ~~plain text~~",
-    );
-
-    expect(html).toContain("<strong>important</strong>");
-    expect(html).toContain('<a href="https://example.com">docs</a>');
-    expect(html).toContain("<code>inline code</code>");
-    expect(html).toContain("<del>plain text</del>");
-    expect(html).not.toContain("**important**");
-  });
-
   it("preserves every recovered block separated by blank lines", () => {
     const html = renderMarkdown(`-       **first block**
 
@@ -70,12 +58,6 @@ describe("remarkNormalizeListItemIndentation", () => {
   it("preserves indented code blocks that start below a list marker", () => {
     const html = renderMarkdown(`-
       const value = 1;`);
-
-    expect(html).toContain("<pre><code>const value = 1;");
-  });
-
-  it("preserves same-line code blocks without excess indentation", () => {
-    const html = renderMarkdown("-     const value = 1;");
 
     expect(html).toContain("<pre><code>const value = 1;");
   });

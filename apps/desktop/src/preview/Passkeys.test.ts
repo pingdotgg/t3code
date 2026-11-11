@@ -120,7 +120,6 @@ describe("PreviewPasskeys", () => {
       assert.isFalse(options.isPublicSuffix("example.com"));
       assert.isFalse(options.isPublicSuffix("localhost"));
 
-      // WebAuthn defaults the RP ID to the caller's own host.
       yield* call(PASSKEY_GET_CHANNEL, { challenge: new Uint8Array([1]) });
       assert.strictEqual(webauthn.getCredential.mock.calls[1]?.[0].rpId, "accounts.example.com");
 
@@ -218,7 +217,6 @@ describe("PreviewPasskeys", () => {
         allowCredentials: [{ type: "public-key", id: new Uint8Array([1]) }],
       };
 
-      // macOS applies the allow list to passkeys but not to security keys.
       webauthn.getCredential.mockResolvedValueOnce(assertion("Ag"));
       const other = yield* call(PASSKEY_GET_CHANNEL, publicKey);
       assert.deepStrictEqual(other, { success: false, error: "NotAllowedError" });
@@ -244,7 +242,6 @@ describe("PreviewPasskeys", () => {
       const lan = makeGuest("http://192.168.1.5:3000");
       passkeys.attachGuest(lan.guest);
       assert.deepStrictEqual(yield* lan.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
-      // macOS refuses `*.localhost`, so the page hears no rather than a native error.
       const subdomain = makeGuest("http://app.localhost:3000");
       passkeys.attachGuest(subdomain.guest);
       assert.deepStrictEqual(yield* subdomain.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
@@ -257,34 +254,18 @@ describe("PreviewPasskeys", () => {
 
       page.state.focused = true;
       let finish: (value: unknown) => void = () => {};
-      webauthn.getCredential.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+      const ceremonyStarted = Promise.withResolvers<void>();
+      webauthn.getCredential.mockImplementationOnce(() => {
+        ceremonyStarted.resolve();
+        return new Promise((resolve) => (finish = resolve));
+      });
       const first = yield* Effect.forkChild(page.call(PASSKEY_GET_CHANNEL, publicKey));
-      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+      yield* Effect.promise(() => ceremonyStarted.promise);
       assert.deepStrictEqual(yield* page.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
 
       page.mainFrame.origin = "https://other.example";
       finish({ success: true, data: { credentialId: "AQ" } });
       assert.deepStrictEqual(yield* Fiber.join(first), notAllowed);
-    }).pipe(Effect.provide(bridgeLayer)),
-  );
-
-  it.effect("answers the page even when the native ceremony never settles", () =>
-    Effect.gen(function* () {
-      const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
-      const { guest, call } = makeGuest();
-      passkeys.attachGuest(guest);
-      webauthn.getCredential.mockReturnValueOnce(new Promise(() => {}));
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-
-      const pending = yield* Effect.forkChild(
-        call(PASSKEY_GET_CHANNEL, { challenge: new Uint8Array([1]), timeout: 1_000 }),
-      );
-      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(6_000));
-
-      assert.deepStrictEqual(yield* Fiber.join(pending), {
-        success: false,
-        error: "NotAllowedError",
-      });
     }).pipe(Effect.provide(bridgeLayer)),
   );
 

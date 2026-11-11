@@ -2,8 +2,10 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
+
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import type * as Electron from "electron";
 
@@ -19,7 +21,8 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 function layerElectronApp(
   appListeners: Map<string, (...args: readonly unknown[]) => void>,
   quit: Effect.Effect<void> = Effect.void,
-  overrides: Partial<ElectronApp.ElectronApp["Service"]> = {},
+  exit: (code: number) => Effect.Effect<void> = () => Effect.void,
+  relaunch: (options: Electron.RelaunchOptions) => Effect.Effect<void> = () => Effect.void,
 ) {
   const registerListener = (eventName: string, listener: (...args: readonly unknown[]) => void) =>
     Effect.acquireRelease(
@@ -36,11 +39,12 @@ function layerElectronApp(
     metadata: Effect.die("unexpected metadata read"),
     name: Effect.succeed("T3 Code"),
     systemLocale: Effect.succeed("en-US"),
+    preferredSystemLanguages: Effect.succeed(["en-US"]),
     whenReady: Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),
     quit,
-    exit: () => Effect.void,
-    relaunch: () => Effect.void,
+    exit,
+    relaunch,
     setPath: () => Effect.void,
     setName: () => Effect.void,
     setAboutPanelOptions: () => Effect.void,
@@ -54,7 +58,6 @@ function layerElectronApp(
     onBeforeQuitForUpdate: (listener) => registerListener("before-quit-for-update", listener),
     on: (eventName, listener) =>
       registerListener(eventName, listener as unknown as (...args: readonly unknown[]) => void),
-    ...overrides,
   } satisfies ElectronApp.ElectronApp["Service"]);
 }
 
@@ -106,63 +109,6 @@ function layerDesktopWindow(
 }
 
 describe("DesktopLifecycle", () => {
-  it.effect("exits after completed shutdown when scheduling relaunch fails", () =>
-    Effect.gen(function* () {
-      const exited = yield* Deferred.make<void>();
-      const events: string[] = [];
-      const logger = Logger.make(({ logLevel }) => {
-        if (logLevel === "Error") events.push("log-error");
-      });
-      let options: Electron.RelaunchOptions | undefined;
-      const layer = DesktopLifecycle.layer.pipe(
-        Layer.provideMerge(
-          layerElectronApp(new Map(), Effect.void, {
-            relaunch: (value) =>
-              Effect.sync(() => {
-                options = value;
-                events.push("relaunch");
-              }).pipe(Effect.andThen(Effect.die("spawn failed"))),
-            exit: (code) =>
-              Effect.sync(() => {
-                assert.equal(code, 0);
-                events.push("exit");
-              }).pipe(Effect.andThen(Deferred.succeed(exited, undefined)), Effect.asVoid),
-          }),
-        ),
-        Layer.provideMerge(
-          layerDesktopWindow({
-            flushMainWindowBounds: Effect.sync(() => {
-              events.push("flush");
-            }),
-          }),
-        ),
-        Layer.provideMerge(
-          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
-            isDevelopment: false,
-          } as DesktopEnvironment.DesktopEnvironment["Service"]),
-        ),
-        Layer.provideMerge(DesktopShutdown.layer),
-        Layer.provideMerge(DesktopState.layer),
-        Layer.provideMerge(layerElectronTheme),
-      );
-      yield* Effect.gen(function* () {
-        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-        const shutdown = yield* DesktopShutdown.DesktopShutdown;
-        yield* lifecycle.relaunch("serverExposureMode=network-accessible");
-        yield* shutdown.awaitRequest;
-        assert.deepEqual(events, ["flush"]);
-        yield* shutdown.markComplete;
-        yield* Deferred.await(exited);
-        assert.deepEqual(options, {
-          args: process.argv.slice(1),
-        });
-        assert.deepEqual(events, ["flush", "relaunch", "log-error", "exit"]);
-      }).pipe(
-        Effect.provide(Layer.mergeAll(layer, Logger.layer([logger], { mergeWithExisting: false }))),
-      );
-    }),
-  );
-
   it.effect.each(["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>)(
     "lets the updater's quit event proceed on %s",
     (platform) => {
@@ -276,6 +222,141 @@ describe("DesktopLifecycle", () => {
 
           assert.deepEqual(eventsBeforeCleanup, ["flush", "destroy", "request"]);
           assert.deepEqual(events, ["flush", "destroy", "request", "quit"]);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("relaunches without the app link that launched it", () =>
+    Effect.gen(function* () {
+      const relaunched = yield* Deferred.make<Electron.RelaunchOptions>();
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "linux",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          layerElectronApp(
+            new Map(),
+            Effect.void,
+            () => Effect.void,
+            (options) => Deferred.succeed(relaunched, options).pipe(Effect.asVoid),
+          ),
+        ),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(layerEnvironment),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      const options = yield* Effect.gen(function* () {
+        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+        yield* (yield* DesktopShutdown.DesktopShutdown).markComplete;
+        yield* lifecycle.relaunch("network access changed");
+        return yield* Deferred.await(relaunched);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(HostProcess.Arguments, [
+          "/opt/T3 Code/t3code",
+          "--no-sandbox",
+          "T3CODE://pair?token=spent",
+          "t3code://new?prompt=hello",
+        ]),
+      );
+
+      assert.deepEqual(options, { args: ["--no-sandbox"] });
+    }),
+  );
+
+  it.effect("exits after shutdown even when scheduling the relaunch fails", () =>
+    Effect.gen(function* () {
+      const exited = yield* Deferred.make<number>();
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "linux",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          layerElectronApp(
+            new Map(),
+            Effect.void,
+            (code) => Deferred.succeed(exited, code).pipe(Effect.asVoid),
+            () => Effect.die("spawn failed"),
+          ),
+        ),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(layerEnvironment),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      const code = yield* Effect.gen(function* () {
+        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+        yield* (yield* DesktopShutdown.DesktopShutdown).markComplete;
+        yield* lifecycle.relaunch("network access changed");
+        return yield* Deferred.await(exited);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(HostProcess.Arguments, ["/opt/T3 Code/t3code"]),
+      );
+
+      assert.equal(code, 0);
+    }),
+  );
+
+  it.effect("exits on a repeated quit only once shutdown has stalled", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const exitCodes: number[] = [];
+      const exit = (code: number) =>
+        Effect.sync(() => {
+          exitCodes.push(code);
+        });
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "darwin",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(layerElectronApp(appListeners, Effect.void, exit)),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(layerEnvironment),
+        // Nothing marks this shutdown complete, so it stays pending.
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.register;
+
+          let prevented = 0;
+          const event = {
+            preventDefault: () => {
+              prevented += 1;
+            },
+          } as Electron.Event;
+          appListeners.get("before-quit")?.(event);
+          appListeners.get("before-quit")?.(event);
+          yield* TestClock.adjust("9999 millis");
+          appListeners.get("before-quit")?.(event);
+          assert.deepEqual(
+            exitCodes,
+            [],
+            "a repeat before the threshold must not cut shutdown short",
+          );
+
+          yield* TestClock.adjust("1 millis");
+          appListeners.get("before-quit")?.(event);
+
+          assert.deepEqual(exitCodes, [0]);
+          assert.equal(prevented, 4);
         }),
       ).pipe(Effect.provide(layer));
     }),
