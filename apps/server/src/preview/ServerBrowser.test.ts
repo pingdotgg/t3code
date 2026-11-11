@@ -112,8 +112,11 @@ function makeSession(
         // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
         return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
       }
-      // Snapshots shrink their screenshot in the page; the header stands in for the result.
-      if (method === "Runtime.callFunctionOn") return { result: { value: PNG_HEADER } };
+      // Screenshots shrink in the page; their input stands in for the result.
+      if (method === "Runtime.callFunctionOn") {
+        const args = (input as { arguments?: Array<{ value?: unknown }> }).arguments;
+        return { result: { value: args?.[0]?.value ?? PNG_HEADER } };
+      }
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
       if (method === "Page.createIsolatedWorld") {
         return {
@@ -926,6 +929,18 @@ it.live("a viewer's still fits the size it asked for", () =>
             format?: string;
             clip?: { width: number; height: number; scale: number };
           };
+          const args = (input as { arguments?: Array<{ value: unknown }> } | undefined)?.arguments;
+          if (method === "Runtime.callFunctionOn" && args?.[1]?.value === "image/jpeg") {
+            // The page's canvas fits the still within the bounds it was given.
+            const size = jpegSize(Buffer.from(args[0]!.value as string, "base64"))!;
+            const [maxWidth, maxHeight] = [args[3]!.value as number, args[4]!.value as number];
+            const scale = Math.min(1, maxWidth / size.width, maxHeight / size.height);
+            const fitted = jpegOfSize(
+              Math.round(size.width * scale),
+              Math.round(size.height * scale),
+            );
+            return { result: { value: fitted.toString("base64") } };
+          }
           if (method !== "Page.captureScreenshot" || options.format !== "jpeg") {
             return send(method, input);
           }

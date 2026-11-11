@@ -2630,7 +2630,11 @@ const make = Effect.gen(function* () {
     pushFileChooser(tab);
     const pushStill = async () => {
       const data = await withCaptureLock(tab, () =>
-        ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+        ServerBrowserPage.captureViewportWithin(session, {
+          quality,
+          maxWidth: input.maxWidth,
+          maxHeight: input.maxHeight,
+        }),
       ).catch(() => null);
       if (data) viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
     };
