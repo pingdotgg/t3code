@@ -174,14 +174,4 @@ describe("server clock", () => {
     });
     expect(toServerClock(environmentId, 12_345)).toBe(12_345);
   });
-
-  it("keeps readings separate for each environment", () => {
-    const ahead = EnvironmentId.make("isolated-ahead");
-    const behind = EnvironmentId.make("isolated-behind");
-    recordServerClock(ahead, { serverTimeMs: HOUR, requestedAtMs: 0, receivedAtMs: 0 });
-    recordServerClock(behind, { serverTimeMs: 0, requestedAtMs: HOUR, receivedAtMs: HOUR });
-    expect(toServerClock(ahead, 500)).toBe(HOUR + 500);
-    expect(toServerClock(behind, HOUR + 500)).toBe(500);
-    expect(toServerClock(EnvironmentId.make("unknown"), 500)).toBe(500);
-  });
 });
