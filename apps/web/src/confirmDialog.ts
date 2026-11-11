@@ -6,6 +6,7 @@ type ConfirmDialogRequest = {
   readonly variant: ConfirmDialogVariant;
   readonly title?: string | undefined;
   readonly confirmLabel?: string | undefined;
+  readonly initialFocus: ConfirmDialogOptions["initialFocus"];
 };
 
 export type ConfirmDialogState =
@@ -23,6 +24,7 @@ function requestOf(confirmation: ConfirmDialogRequest): ConfirmDialogRequest {
     variant: confirmation.variant,
     title: confirmation.title,
     confirmLabel: confirmation.confirmLabel,
+    initialFocus: confirmation.initialFocus,
   };
 }
 
@@ -76,6 +78,7 @@ export function requestConfirmDialog(
     const pending = {
       message,
       variant: options?.variant ?? "default",
+      initialFocus: options?.initialFocus,
       title: options?.title,
       confirmLabel: options?.confirmLabel,
       resolve,

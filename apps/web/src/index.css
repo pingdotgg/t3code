@@ -1053,6 +1053,24 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--surface-fill) border-box;
   box-shadow: var(--surface-shadow);
 }
+
+:root:is(:not([data-surface-style]), [data-surface-style="gradient-rim"])
+  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well:not(
+    [data-surface-preview] *
+  ),
+[data-surface-preview="gradient-rim"]
+  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well {
+  --well-fill: var(--raised-fill);
+  --well-rim: var(--raised-rim);
+  --well-shadow: var(--raised-shadow);
+
+  &:is(:hover, [data-pressed]):not([data-popup-open]) {
+    --well-fill: var(--raised-hover-fill);
+    --well-rim: var(--raised-hover-rim);
+    --well-shadow: var(--raised-hover-shadow);
+  }
+}
+
 :where([data-slot="checkbox"], [data-slot="radio"])[data-unchecked]:not([aria-invalid="true"]) {
   --surface-rim: linear-gradient(var(--muted-foreground), var(--muted-foreground));
 }
@@ -3446,6 +3464,13 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --ss-none: linear-gradient(transparent, transparent);
   --ss-hover: color-mix(in srgb, var(--appearance-contrast-target) 6%, transparent);
   --ss-hover-layer: linear-gradient(var(--ss-hover), var(--ss-hover)) padding-box;
+  --ss-aqua-hue: 0;
+}
+
+/* The jelly stops lean about 16 degrees blue-ward so the default ring lands on the pen's blue.
+   A theme's own accent is turned back by that much, so the jelly keeps the accent's hue. */
+:root[data-theme-id]:not([data-theme-id=""]) {
+  --ss-aqua-hue: 16;
 }
 
 /* Style previews (Settings > Appearance > Style) paint one style inside
@@ -3964,7 +3989,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root[data-surface-style="aqua-blue"] > body,
 [data-surface-preview="aqua-blue"] {
   --ss-background: var(--background);
-  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.55) c h) !important;
+  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.55) c calc(h + var(--ss-aqua-hue))) !important;
   --lit-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--ss-aqua-ring) calc(l + 0.01) calc(c * 0.562) calc(h - 20.792)) 0%,
@@ -4028,7 +4053,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root.dark [data-surface-preview="aqua-blue"],
 :root.black-chrome[data-surface-style="aqua-blue"] [data-chrome-scope] {
   --ss-background: oklch(from var(--background) max(l, 0.195734) c h);
-  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.55) c h) !important;
+  --ss-aqua-ring: oklch(from var(--ring) min(l, 0.55) c calc(h + var(--ss-aqua-hue))) !important;
   --lit-fill: linear-gradient(
     180deg in srgb,
     oklch(from var(--ss-aqua-ring) calc(l + 0.01) calc(c * 0.562) calc(h - 20.792)) 0%,

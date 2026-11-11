@@ -409,9 +409,10 @@ export default function ProjectScriptsControl({
           )}
         </>
       ) : isPanel ? (
-        <div className="flex items-center" role="group" aria-label="Project scripts">
+        <div className="flex min-w-0 items-center" role="group" aria-label="Project scripts">
           {primaryScript ? (
             <ThreadDetailsControl
+              className="flex-1"
               aria-label={`Run ${primaryScript.name}`}
               disabled={!onRunScript}
               onClick={() => onRunScript?.(primaryScript)}
@@ -425,7 +426,7 @@ export default function ProjectScriptsControl({
               <span className="min-w-0 flex-1 truncate">{primaryScript.name}</span>
             </ThreadDetailsControl>
           ) : (
-            <ThreadDetailsControl onClick={openAddDialog}>
+            <ThreadDetailsControl className="flex-1" onClick={openAddDialog}>
               <SquareTerminalIcon />
               <MenuItemLabel>Add project action…</MenuItemLabel>
             </ThreadDetailsControl>

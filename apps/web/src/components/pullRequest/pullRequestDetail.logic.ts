@@ -30,6 +30,7 @@ import {
   type PullRequestMergeMethod,
   type PullRequestRef,
   type RepositoryIdentity,
+  type PullRequestConversationThread,
   type PullRequestReviewThread,
   type PullRequestState,
   type PullRequestUpdateMethod,
@@ -555,12 +556,12 @@ export type PullRequestConversationItem =
       readonly createdAt: string;
       readonly root: PullRequestComment;
       readonly replies: ReadonlyArray<PullRequestComment>;
-      readonly thread: PullRequestReviewThread;
+      readonly thread: PullRequestConversationThread;
     } & PullRequestReplyAvailability);
 
 export function pullRequestConversationItems(
   comments: ReadonlyArray<PullRequestComment>,
-  reviewThreads: ReadonlyArray<PullRequestReviewThread>,
+  reviewThreads: ReadonlyArray<PullRequestConversationThread>,
 ): ReadonlyArray<PullRequestConversationItem> {
   const byId = new Map(comments.map((comment) => [comment.id, comment]));
   const claimed = new Set<string>();
@@ -621,7 +622,7 @@ export function pullRequestConversationItemComments(
 
 export function isPullRequestCommentFinished(
   comment: PullRequestComment,
-  thread?: PullRequestReviewThread,
+  thread?: PullRequestConversationThread,
 ): boolean {
   return (
     thread?.isResolved === true || pullRequestReviewOutcome(comment.reviewState) === "dismissed"
