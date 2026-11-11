@@ -310,7 +310,7 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  it.effect("falls back to glab's own host when the signed-in host lacks the project", () =>
+  it.effect("falls back to glab's own host when the signed-in host lookup fails", () =>
     Effect.gen(function* () {
       mockGlab(["gitlab.selfhosted.test"]);
       const answer = mockedRun.getMockImplementation()!;
@@ -322,8 +322,8 @@ layer("GitLabCli.layer", (it) => {
                 command: "glab",
                 cwd: "/server",
                 exitCode: 1,
-                detail: "GET 404 project not found",
-                failureKind: "not-found",
+                detail: "GET 429 too many requests",
+                failureKind: "rate-limited",
               }),
             )
           : answer(input),
