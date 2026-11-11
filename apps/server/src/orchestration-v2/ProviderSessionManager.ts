@@ -281,10 +281,14 @@ function sessionKey(providerSessionId: ProviderSessionId): string {
   return String(providerSessionId);
 }
 
-function sessionScopedRuntimeRequestThreadId(
+function sessionScopedArtifactThreadId(
   event: ProviderAdapter.ProviderAdapterV2Event,
 ): ThreadId | undefined {
   switch (event.type) {
+    case "provider_thread.updated":
+      return event.sessionScoped === true
+        ? (event.providerThread.appThreadId ?? undefined)
+        : undefined;
     case "runtime_request.updated":
       return event.runtimeRequest.providerTurnId === null ? event.threadId : undefined;
     case "node.updated":
@@ -292,6 +296,8 @@ function sessionScopedRuntimeRequestThreadId(
         ? event.node.threadId
         : undefined;
     case "turn_item.updated":
+      if (event.turnItem.type === "command_execution")
+        return event.sessionScoped === true ? event.turnItem.threadId : undefined;
       return event.turnItem.runId === null &&
         (event.turnItem.type === "approval_request" || event.turnItem.type === "user_input_request")
         ? event.turnItem.threadId
@@ -665,12 +671,23 @@ export const layerWithOptions = (
         });
       });
 
+      // A detach removes its thread before releasing, but that thread's records still need releasing.
+      const releasedThreadIds = (input: {
+        readonly entry: LiveSessionEntry;
+        readonly detachedThreadId?: ThreadId;
+      }) => {
+        const threadIds = new Set(input.entry.attachedThreadIds);
+        if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
+        return threadIds;
+      };
+
       const writeReleasedRuntimeRequestEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedRuntimeRequestEvents",
       )(function* (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
         readonly releasedAt: DateTime.Utc;
+        readonly detachedThreadId?: ThreadId;
       }) {
         const providerSessionId = input.entry.runtime.providerSessionId;
         const now = yield* DateTime.now;
@@ -681,7 +698,7 @@ export const layerWithOptions = (
             : "Provider session was closed before this runtime request was resolved.";
 
         const events: Array<OrchestrationV2DomainEvent> = [];
-        for (const threadId of input.entry.attachedThreadIds) {
+        for (const threadId of releasedThreadIds(input)) {
           const projection = yield* projectionStore.getThreadRecords(
             threadId,
             ["runtimeRequests"],
@@ -800,10 +817,8 @@ export const layerWithOptions = (
             return [];
           }
           const providerSessionId = input.entry.runtime.providerSessionId;
-          const threadIds = new Set(input.entry.attachedThreadIds);
-          if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
           const released = [];
-          for (const threadId of threadIds) {
+          for (const threadId of releasedThreadIds(input)) {
             const projection = yield* projectionStore.getThreadRecords(threadId, [
               "providerThreads",
             ]);
@@ -892,6 +907,7 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
         readonly releasedAt: DateTime.Utc;
+        readonly detachedThreadId?: ThreadId;
         readonly replaced: boolean;
       }) =>
         Effect.all(
@@ -1068,12 +1084,14 @@ export const layerWithOptions = (
               onNone: () => Effect.void,
               onSome: (entry) =>
                 Effect.gen(function* () {
+                  const detachedThread =
+                    input.detachedThreadId === undefined
+                      ? {}
+                      : { detachedThreadId: input.detachedThreadId };
                   const releasedBackgroundTasks = yield* readReleasedBackgroundTasks({
                     entry,
                     reason: input.reason,
-                    ...(input.detachedThreadId === undefined
-                      ? {}
-                      : { detachedThreadId: input.detachedThreadId }),
+                    ...detachedThread,
                   });
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
@@ -1098,6 +1116,7 @@ export const layerWithOptions = (
                     ...(input.detail === undefined ? {} : { detail: input.detail }),
                     releasedBackgroundTasks,
                     releasedAt,
+                    ...detachedThread,
                   };
                   const recorded = yield* Effect.exit(
                     writeReleaseRecords({ ...records, replaced: false }),
@@ -2261,17 +2280,21 @@ export const layerWithOptions = (
                       });
                     });
                   }
-                  // Some providers can block before a run subscriber exists
-                  // (project trust, login, or session-switch hooks). Persist
-                  // their runless request artifacts directly so the normal T3
-                  // request UI can answer them and unblock session setup.
-                  const threadId = sessionScopedRuntimeRequestThreadId(event);
+                  // Requests and recovered background commands can arrive before a run subscribes.
+                  const threadId = sessionScopedArtifactThreadId(event);
                   if (threadId !== undefined) {
                     yield* Effect.gen(function* () {
                       const current = (yield* Ref.get(sessions)).get(
                         sessionKey(entry.runtime.providerSessionId),
                       );
-                      if (current?.runtime !== entry.runtime) return;
+                      if (
+                        current?.runtime !== entry.runtime ||
+                        ((event.type === "provider_thread.updated" ||
+                          (event.type === "turn_item.updated" &&
+                            event.turnItem.type === "command_execution")) &&
+                          !current.attachedThreadIds.has(threadId))
+                      )
+                        return;
                       yield* providerEventIngestor
                         .ingestNormalized({
                           providerSessionId: entry.runtime.providerSessionId,
@@ -2290,6 +2313,7 @@ export const layerWithOptions = (
                           ),
                         );
                     }).pipe(entry.requestEventPermit.withPermits(1));
+                    yield* releaseLiveOutput;
                     return;
                   }
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
