@@ -64,30 +64,33 @@ const checkedDispatcher = async (
   lookup: typeof NodeDnsPromises.lookup = NodeDnsPromises.lookup,
 ) => {
   const addresses = await lookup(hostname, { all: true, verbatim: true });
-  if (!addresses.length || addresses.some(({ address }) => !isPublicFaviconHost(address)))
-    throw new ReferenceBlockedError({ reason: "The URL resolves to a private network address." });
+  const blocked =
+    !addresses.length || addresses.some(({ address }) => !isPublicFaviconHost(address));
   const address = addresses[0]!;
   return {
     ips: addresses.map(({ address }) => address),
-    dispatcher: new Agent({
-      connect: {
-        lookup: ((
-          _host: string,
-          options: { readonly all?: boolean },
-          callback: (
-            error: NodeJS.ErrnoException | null,
-            address: string | ReadonlyArray<{ address: string; family: number }>,
-            family?: number,
-          ) => void,
-        ) =>
-          options?.all
-            ? callback(
-                null,
-                addresses.map(({ address: value, family }) => ({ address: value, family })),
-              )
-            : callback(null, address.address, address.family)) as never,
-      },
-    }),
+    dispatcher: blocked
+      ? undefined
+      : new Agent({
+          connect: {
+            lookup: ((
+              _host: string,
+              options: { readonly all?: boolean },
+              callback: (
+                error: NodeJS.ErrnoException | null,
+                address: string | ReadonlyArray<{ address: string; family: number }>,
+                family?: number,
+              ) => void,
+            ) =>
+              options?.all
+                ? callback(
+                    null,
+                    addresses.map(({ address: value, family }) => ({ address: value, family })),
+                  )
+                : callback(null, address.address, address.family)) as never,
+          },
+        }),
+    blocked,
   };
 };
 
@@ -257,17 +260,32 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
       try {
         url = driveRewrite(validateUrl(input.url));
         for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-          const checked = await checkedDispatcher(url.hostname, input.lookup);
+          const existingHop = hops.at(-1)?.url === url.toString() ? hops.at(-1) : undefined;
+          const checked = await checkedDispatcher(
+            url.hostname.replace(/^\[|\]$/g, ""),
+            input.lookup,
+          );
+          const hopEntry = existingHop ?? { url: url.toString(), status: null, ips: checked.ips };
+          hopEntry.ips = checked.ips;
+          if (!existingHop) hops.push(hopEntry);
+          if (checked.blocked)
+            throw new ReferenceBlockedError({
+              reason: "The URL resolves to a private network address.",
+            });
           response = await fetchImpl(url.toString(), {
             redirect: "manual",
             dispatcher: checked.dispatcher,
             signal: AbortSignal.timeout(30_000),
           } as unknown as RequestInit);
-          hops.push({ url: url.toString(), status: response.status, ips: checked.ips });
+          hopEntry.status = response.status;
           if (![301, 302, 303, 307, 308].includes(response.status)) break;
           const location = response.headers.get("location");
           if (!location || hop === MAX_REDIRECTS) throw new Error("Too many redirects.");
-          url = driveRewrite(validateUrl(new URL(location, url.toString())));
+          const target = new URL(location, url.toString());
+          const targetText = target.toString();
+          if (hops.at(-1)?.url !== targetText)
+            hops.push({ url: targetText, status: null, ips: [] });
+          url = driveRewrite(validateUrl(target));
         }
         if (!response) throw new Error("No response.");
         body = await readBody(response);

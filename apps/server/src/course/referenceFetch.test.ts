@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as NodeFSP from "node:fs/promises";
 import { encodeGrayscalePng, extractPdf, fetchCourseReference } from "./referenceFetch.ts";
 
 const lookup = (async (hostname: string) => {
@@ -65,6 +66,38 @@ describe("course reference fetch", () => {
           ),
       }).pipe(Effect.flip);
       assert.include(redirected.message, "not public");
+    }),
+  );
+
+  it.effect("audits blocked DNS and redirect targets", () =>
+    Effect.gen(function* () {
+      const stateDir = `/tmp/course-reference-audit-${process.pid}`;
+      yield* Effect.promise(() => NodeFSP.rm(stateDir, { recursive: true, force: true }));
+      yield* fetchCourseReference({
+        url: "https://example.com/solution.pdf",
+        lookup: (async () => [{ address: "127.0.0.1", family: 4 as const }]) as never,
+        audit: { stateDir },
+      }).pipe(Effect.flip);
+      yield* fetchCourseReference({
+        url: "https://example.com/solution.pdf",
+        lookup: (async (host: string) =>
+          host === "169.254.169.254"
+            ? [{ address: "169.254.169.254", family: 4 as const }]
+            : [{ address: "93.184.216.34", family: 4 as const }]) as never,
+        fetchImpl: () =>
+          Promise.resolve(
+            new Response(null, { status: 302, headers: { location: "http://169.254.169.254/" } }),
+          ),
+        audit: { stateDir },
+      }).pipe(Effect.flip);
+      const files = yield* Effect.promise(() => NodeFSP.readdir(`${stateDir}/audit`));
+      const lines = (yield* Effect.promise(() =>
+        NodeFSP.readFile(`${stateDir}/audit/${files[0]!}`, "utf8"),
+      ))
+        .trim()
+        .split("\n");
+      assert.include(lines[0]!, '"ips":["127.0.0.1"]');
+      assert.include(lines[1]!, "169.254.169.254");
     }),
   );
 
