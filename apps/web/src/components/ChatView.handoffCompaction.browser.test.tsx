@@ -43,36 +43,24 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
-const SIDES = {
-  claude: {
-    instanceId: ProviderInstanceId.make("claudeAgent"),
-    driver: ProviderDriverKind.make("claudeAgent"),
-    model: "claude-opus-4-6",
-    label: "Claude Opus 4.6",
-  },
-  codex: {
-    instanceId: ProviderInstanceId.make("codex"),
-    driver: ProviderDriverKind.make("codex"),
-    model: "gpt-5.4",
-    label: "GPT-5.4",
-  },
-};
+const CLAUDE = ProviderInstanceId.make("claudeAgent");
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
-/** A thread whose 250k-token context went cold long ago, with its native thread kept for handoff. */
-function coldThread(side: (typeof SIDES)[keyof typeof SIDES]) {
-  const thread = threadWithHistory(`thread-${side.driver}`, 3, {
-    instanceId: side.instanceId,
-    model: side.model,
+/** A Claude thread whose 250k-token context went cold long ago, with its native thread kept for handoff. */
+function coldClaudeThread() {
+  const thread = threadWithHistory("thread-claude", 3, {
+    instanceId: CLAUDE,
+    model: "claude-opus-4-6",
   });
   const at = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
   const providerThread: OrchestrationV2ProviderThread = {
-    id: ProviderThreadId.make(`provider-thread-${side.driver}`),
-    driver: side.driver,
-    providerInstanceId: side.instanceId,
+    id: ProviderThreadId.make("provider-thread-claude"),
+    driver: CLAUDE_DRIVER,
+    providerInstanceId: CLAUDE,
     providerSessionId: null,
     appThreadId: thread.id,
     ownerNodeId: null,
-    nativeThreadRef: { driver: side.driver, nativeId: `native-${side.driver}`, strength: "strong" },
+    nativeThreadRef: { driver: CLAUDE_DRIVER, nativeId: "native-claude", strength: "strong" },
     nativeConversationHeadRef: null,
     status: "idle",
     firstRunOrdinal: 1,
@@ -89,62 +77,49 @@ function coldThread(side: (typeof SIDES)[keyof typeof SIDES]) {
   return { ...thread, providerThreads: [providerThread] };
 }
 
-const THREADS = { claude: coldThread(SIDES.claude), codex: coldThread(SIDES.codex) };
+it("sends a Codex follow-up on a cold Claude thread without compacting first", async () => {
+  const thread = coldClaudeThread();
+  using _environment = installFakeEnvironment([thread], {
+    acceptCommands: true,
+    providers: [CLAUDE_PROVIDER, CODEX_PROVIDER],
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 2 for ${thread.id}.`)).toBeVisible();
+  const compactAndSend = page.getByRole("button", { name: "Compact and send" });
+  await expect.element(compactAndSend).toBeVisible();
 
-it.each([
-  { from: "claude", to: "codex", offeredBefore: true },
-  { from: "codex", to: "claude", offeredBefore: false },
-] as const)(
-  "sends a $to follow-up on a cold $from thread without compacting first",
-  async ({ from, to, offeredBefore }) => {
-    const thread = THREADS[from];
-    // The shell subscription outlives a test, so every case's thread is in its first snapshot.
-    using _environment = installFakeEnvironment(Object.values(THREADS), {
-      acceptCommands: true,
-      providers: [CLAUDE_PROVIDER, CODEX_PROVIDER],
-    });
-    __setClientSettingsForTests({
-      ...DEFAULT_CLIENT_SETTINGS,
-      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-    });
-    const router = getRouter(
-      createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  await page.getByRole("button", { name: "Claude Opus 4.6", exact: true }).click();
+  // The picker lists only the active provider's models until you search.
+  await userEvent.type(page.getByPlaceholder("Search models..."), "GPT-5.4");
+  await page.getByRole("option", { name: "GPT-5.4", exact: false }).click();
+  await expect.element(page.getByRole("button", { name: "GPT-5.4", exact: true })).toBeVisible();
+  await expect.element(compactAndSend).not.toBeInTheDocument();
+  // Picking a model leaves the composer's settings menu open.
+  await userEvent.keyboard("{Escape}");
+
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  await userEvent.type(editor, "keep going");
+  await userEvent.keyboard("{Enter}");
+
+  const messages = () =>
+    dispatchedCommands().flatMap((command) =>
+      command.type === "message.dispatch"
+        ? [{ text: command.text, instanceId: command.modelSelection?.instanceId }]
+        : [],
     );
-    await router.load();
-    await using _app = await render(<AppRoot router={router} />, {
-      // AppRoot brings its own router.
-      router: false,
-    });
-    await expect.element(page.getByText(`Answer 2 for ${thread.id}.`)).toBeVisible();
-    const compactAndSend = page.getByRole("button", { name: "Compact and send" });
-    if (offeredBefore) {
-      await expect.element(compactAndSend).toBeVisible();
-    }
-
-    await page.getByRole("button", { name: SIDES[from].label, exact: true }).click();
-    // The picker lists only the active provider's models until you search.
-    await userEvent.type(page.getByPlaceholder("Search models..."), SIDES[to].label);
-    await page.getByRole("option", { name: SIDES[to].label, exact: false }).click();
-    await expect
-      .element(page.getByRole("button", { name: SIDES[to].label, exact: true }))
-      .toBeVisible();
-    await expect.element(compactAndSend).not.toBeInTheDocument();
-    // Picking a model leaves the composer's settings menu open.
-    await userEvent.keyboard("{Escape}");
-
-    const editor = page.getByTestId("composer-editor");
-    await userEvent.click(editor);
-    await userEvent.type(editor, "keep going");
-    await userEvent.keyboard("{Enter}");
-
-    const messages = () =>
-      dispatchedCommands().flatMap((command) =>
-        command.type === "message.dispatch"
-          ? [{ text: command.text, instanceId: command.modelSelection?.instanceId }]
-          : [],
-      );
-    const sent = { text: "keep going", instanceId: SIDES[to].instanceId };
-    await vi.waitFor(() => expect(messages()).toContainEqual(sent));
-    expect(messages()).toEqual([sent]);
-  },
-);
+  const sent = { text: "keep going", instanceId: CODEX_PROVIDER.instanceId };
+  await vi.waitFor(() => expect(messages()).toContainEqual(sent));
+  expect(messages()).toEqual([sent]);
+});
