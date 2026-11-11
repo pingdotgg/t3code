@@ -189,6 +189,21 @@ function isRunTimingLive(status: TimingRun["status"]): boolean {
   );
 }
 
+/** True when `nowMs` can still extend a run or item end; gate live clocks on this. */
+export function threadTimingNeedsLiveClock(input: {
+  readonly runs: ReadonlyArray<Pick<TimingRun, "status">>;
+  readonly turnItems: ReadonlyArray<Pick<TimingTurnItem, "status">>;
+}): boolean {
+  for (const run of input.runs) {
+    if (run.status === "rolled_back") continue;
+    if (isRunTimingLive(run.status)) return true;
+  }
+  for (const item of input.turnItems) {
+    if (isOrchestrationV2WorkActive(item.status)) return true;
+  }
+  return false;
+}
+
 function runEndMs(run: TimingRun, runItems: ReadonlyArray<TimingTurnItem>, nowMs: number): number {
   const completed = toEpochMs(run.completedAt);
   if (completed !== null) return completed;

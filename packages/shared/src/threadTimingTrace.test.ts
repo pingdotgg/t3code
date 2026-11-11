@@ -13,6 +13,7 @@ import {
   clampTimingViewWindow,
   deriveThreadTimingTrace,
   layoutThreadFlameChart,
+  threadTimingNeedsLiveClock,
   timingBarPlacement,
   timingViewZoomAt,
 } from "./threadTimingTrace.ts";
@@ -179,6 +180,70 @@ describe("deriveThreadTimingTrace", () => {
     expect(trace!.turns[0]!.endMs).toBe(NOW);
     expect(trace!.turns[0]!.spans[0]!.kind).toBe("reasoning");
     expect(trace!.turns[0]!.spans[0]!.endMs).toBe(NOW);
+  });
+});
+
+describe("threadTimingNeedsLiveClock", () => {
+  it("is false for finished turns and true for live runs or items", () => {
+    expect(
+      threadTimingNeedsLiveClock({
+        runs: [
+          run({
+            id: "r1",
+            ordinal: 1,
+            requestedAt: "2026-05-22T12:00:00.000Z",
+            completedAt: "2026-05-22T12:00:20.000Z",
+          }),
+        ],
+        turnItems: [
+          item({
+            id: "tool-1" as TurnItemId,
+            type: "command_execution",
+            runId: "r1" as RunId,
+            startedAt: utc("2026-05-22T12:00:05.000Z"),
+            completedAt: utc("2026-05-22T12:00:10.000Z"),
+          }),
+        ],
+      }),
+    ).toBe(false);
+
+    expect(
+      threadTimingNeedsLiveClock({
+        runs: [
+          run({
+            id: "r1",
+            ordinal: 1,
+            status: "running",
+            requestedAt: "2026-05-22T12:00:00.000Z",
+            completedAt: null,
+          }),
+        ],
+        turnItems: [],
+      }),
+    ).toBe(true);
+
+    expect(
+      threadTimingNeedsLiveClock({
+        runs: [
+          run({
+            id: "r1",
+            ordinal: 1,
+            requestedAt: "2026-05-22T12:00:00.000Z",
+            completedAt: "2026-05-22T12:00:20.000Z",
+          }),
+        ],
+        turnItems: [
+          item({
+            id: "wait-1" as TurnItemId,
+            type: "waiting",
+            runId: "r1" as RunId,
+            status: "waiting",
+            startedAt: utc("2026-05-22T12:00:05.000Z"),
+            completedAt: null,
+          }),
+        ],
+      }),
+    ).toBe(true);
   });
 });
 

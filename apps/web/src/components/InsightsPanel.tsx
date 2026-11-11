@@ -18,6 +18,7 @@ import {
   clampTimingViewWindow,
   deriveThreadTimingTrace,
   layoutThreadFlameChart,
+  threadTimingNeedsLiveClock,
   timingViewZoomAt,
   type CompressedTimingAxis,
   type FlameChartNode,
@@ -168,7 +169,13 @@ export function InsightsPanel({
   readonly visible: boolean;
 }) {
   const projection = useQuietThreadProjection(visible ? threadRef : null);
-  const nowMs = useNowSecond();
+  const needsLiveClock =
+    projection !== null &&
+    threadTimingNeedsLiveClock({
+      runs: projection.projection.runs,
+      turnItems: projection.projection.turnItems,
+    });
+  const nowMs = useNowSecond(visible && needsLiveClock);
   const trace =
     projection === null
       ? null
