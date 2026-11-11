@@ -148,7 +148,6 @@ it.effect("returns from the post-turn refresh without waiting for the PR lookup"
   const layer = RunFinalization.layerObserver.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,
         }),
@@ -198,7 +197,6 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
   const layer = RunFinalization.layerObserver.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,
         }),
