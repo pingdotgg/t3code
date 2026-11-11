@@ -2799,6 +2799,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isTrue(
         stored.items.some((row) => String(row.sourceItemId) === "item:inline-output-flag:app"),
       );
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET persistent_output = 0
+        WHERE thread_id = ${threadId} AND turn_item_id = 'item:inline-output-flag:app'`;
+      assert.isFalse(
+        (yield* page()).items.some(
+          (row) => String(row.sourceItemId) === "item:inline-output-flag:app",
+        ),
+      );
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET persistent_output = NULL
         WHERE thread_id = ${threadId}`;
       assert.deepEqual(yield* page(), stored);
