@@ -175,9 +175,21 @@ export const make = Effect.gen(function* () {
             )
           : undefined;
 
+      // A thread that moved worktrees has a root scope per worktree; only the first holds the thread start.
+      const rootScopes = projection.checkpointScopes.filter((scope) => scope.kind === "root_run");
+      const threadStartScopeIds = new Set(
+        projection.checkpoints
+          .filter(
+            (checkpoint) =>
+              checkpoint.status === "ready" &&
+              checkpoint.ordinalWithinScope === 0 &&
+              checkpoint.appRunOrdinal === null,
+          )
+          .map((checkpoint) => checkpoint.scopeId),
+      );
       const firstScope =
         input.fromTurnCount === 0
-          ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
+          ? (rootScopes.find((scope) => threadStartScopeIds.has(scope.id)) ?? rootScopes[0])
           : undefined;
       const fromCheckpointRef =
         input.fromTurnCount === 0
@@ -202,8 +214,25 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      // Worktrees of a repository share refs, so a removed worktree's turns read through the latest one.
+      const runOrdinals = new Map(projection.runs.map((run) => [run.id, run.ordinal]));
+      const runOrdinal = (scope: (typeof rootScopes)[number]) =>
+        (scope.runId === null ? undefined : runOrdinals.get(scope.runId)) ?? 0;
+      const latestRootScope = rootScopes.reduce<(typeof rootScopes)[number] | undefined>(
+        (latest, scope) =>
+          latest === undefined || runOrdinal(scope) > runOrdinal(latest) ? scope : latest,
+        undefined,
+      );
+      const cwd =
+        latestRootScope === undefined ||
+        latestRootScope.id === toScope.id ||
+        (yield* checkpointStore
+          .isGitRepository(toScope.cwd)
+          .pipe(Effect.orElseSucceed(() => false)))
+          ? toScope.cwd
+          : latestRootScope.cwd;
       const comparison = {
-        cwd: toScope.cwd,
+        cwd,
         fromCheckpointRef,
         toCheckpointRef: toCheckpoint.ref,
         fallbackFromToHead: false,

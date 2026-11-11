@@ -17,7 +17,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
-import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
+import { checkpointRestoreRefusal } from "./CheckpointRestoreSafety.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
@@ -34,6 +34,7 @@ it.effect.each([
   "sibling",
   "shared-provider",
   "conversation",
+  "moved",
 ] as const)("preserves overlapping workspace files, owner=%s", (owner) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -87,6 +88,7 @@ it.effect.each([
       targetAttempt: undefined,
       rolledBackAttemptIds: [],
       staleCheckpoints: [],
+      staleCheckpointScopes: [],
       checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
       scope: { id: scopeId, cwd },
       runsToRollback: [{ id: "later-run", ordinal: 1, status: "completed", rootNodeId: null }],
@@ -115,10 +117,20 @@ it.effect.each([
               }),
             getCheckpointContext: () =>
               Effect.succeed({
-                runs: [],
+                runs: [
+                  { id: "other-run-1", ordinal: 1 },
+                  { id: "other-run-2", ordinal: 2 },
+                ],
                 checkpoints: [],
-                checkpointScopes: [],
-              }),
+                // A thread that left this worktree keeps its old root scope here.
+                checkpointScopes:
+                  owner === "moved"
+                    ? [
+                        { kind: "root_run", runId: "other-run-1", cwd: nested },
+                        { kind: "root_run", runId: "other-run-2", cwd: sibling },
+                      ]
+                    : [],
+              }) as never,
             getThreadProviderContext: () =>
               Effect.succeed({
                 thread: otherThread as never,
@@ -166,7 +178,7 @@ it.effect.each([
       Effect.provide(layerTest),
     );
     const restoreFiles = owner !== "conversation";
-    const rejected = !["sibling", "shared-provider", "conversation"].includes(owner);
+    const rejected = !["sibling", "shared-provider", "conversation", "moved"].includes(owner);
     if (rejected) {
       const error = yield* service
         .execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles })
@@ -188,7 +200,7 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
     const path = yield* Path.Path;
     const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-v2-restore-removed-" });
     const worktreePath = path.join(parent, "worktree");
-    const isolated = yield* isCheckpointRestoreIsolated(
+    const refusal = yield* checkpointRestoreRefusal(
       { id: ThreadId.make("restore-removed"), worktreePath },
       { cwd: worktreePath },
       {
@@ -200,7 +212,7 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
         projects: {} as never,
       },
     );
-    assert.isTrue(isolated);
+    assert.isNull(refusal);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -231,7 +243,7 @@ it.effect.each([
           sideChat: true,
         },
       };
-      const result = yield* isCheckpointRestoreIsolated(
+      const refusal = yield* checkpointRestoreRefusal(
         { id: parentId, worktreePath },
         { cwd: worktreePath },
         {
@@ -243,12 +255,12 @@ it.effect.each([
               Effect.succeed({
                 turnItems: Array.from({ length: toolItems }, () => ({ type: "command_execution" })),
               }),
-            getCheckpointContext: () => Effect.succeed({ checkpointScopes: [] }),
+            getCheckpointContext: () => Effect.succeed({ runs: [], checkpointScopes: [] }),
             getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
           } as never,
           projects: {} as never,
         },
       );
-      assert.equal(result, isolated);
+      assert.equal(refusal === null, isolated);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

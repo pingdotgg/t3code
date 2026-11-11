@@ -1104,3 +1104,61 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
     }),
   );
 });
+
+it.effect("records no thread start for a root scope opened mid-thread in another worktree", () =>
+  Effect.gen(function* () {
+    const committed: Array<OrchestrationV2DomainEvent> = [];
+    const checkpoint = (ordinalWithinScope: number, status: "ready" | "missing") =>
+      ({
+        id: `checkpoint:${ordinalWithinScope}`,
+        scopeId,
+        ordinalWithinScope,
+        status,
+        files: [],
+      }) as never;
+    const layerCapture = CheckpointCaptureService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getCheckpointCaptureContext: () =>
+              Effect.succeed({
+                run: { id: runId, threadId, ordinal: 2, status: "waiting", checkpointId: null },
+                rootNode: { id: rootNodeId, checkpointScopeId: scopeId },
+                scope: { id: scopeId },
+                providerThread: { id: providerThreadId, driver },
+                readyCheckpointOrdinals: [],
+                sideChat: false,
+              } as never),
+          }),
+          // Only the previous turn's baseline exists in this worktree's scope.
+          Layer.mock(CheckpointService.CheckpointServiceV2)({
+            materializeBaselineCheckpoint: ({ ordinalWithinScope }) =>
+              Effect.succeed(
+                checkpoint(ordinalWithinScope, ordinalWithinScope === 0 ? "missing" : "ready"),
+              ),
+            capture: ({ ordinalWithinScope }) =>
+              Effect.succeed(checkpoint(ordinalWithinScope, "ready")),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: ({ events }) =>
+              Effect.sync(() => committed.push(...events)).pipe(
+                Effect.as({ committed: true } as never),
+              ),
+          }),
+        ),
+      ),
+    );
+
+    yield* CheckpointCaptureService.CheckpointCaptureServiceV2.use((service) =>
+      service.execute({ threadId, runId, scopeId }),
+    ).pipe(Effect.provide(layerCapture));
+
+    assert.deepEqual(
+      committed.flatMap((event) =>
+        event.type === "checkpoint.captured" ? [event.payload.ordinalWithinScope] : [],
+      ),
+      [1, 2],
+    );
+  }),
+);

@@ -113,10 +113,14 @@ export const layer: Layer.Layer<
           capturedAt: run.requestedAt,
           forceMissing: sideChat,
         });
+      // A root scope opened mid-thread in another worktree has no thread start to record, and a
+      // missing record there would shadow the first scope's ready one in revert lookups.
       const threadStartCheckpoint =
         baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
           ? null
-          : yield* materializeBaseline(0);
+          : yield* materializeBaseline(0).pipe(
+              Effect.map((checkpoint) => (checkpoint.status === "ready" ? checkpoint : null)),
+            );
       const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
         ? null
         : yield* materializeBaseline(baselineOrdinalWithinScope);

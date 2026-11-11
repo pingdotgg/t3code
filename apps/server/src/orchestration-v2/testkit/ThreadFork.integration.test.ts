@@ -19,6 +19,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { rootScopeId } from "../CheckpointService.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
   THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT,
@@ -490,10 +491,7 @@ describe("orchestration V2 thread fork", () => {
         );
         const firstRunId = ids.derive.run({ threadId: sourceThreadId, ordinal: 1 });
         const secondRunId = ids.derive.run({ threadId: sourceThreadId, ordinal: 2 });
-        const checkpointScopeId = yield* ids.allocate.checkpointScope({
-          threadId: sourceThreadId,
-          name: "root",
-        });
+        const checkpointScopeId = yield* rootScopeId(ids, sourceThreadId, cwd);
         const firstCheckpointId = yield* ids.allocate.checkpoint({
           checkpointScopeId,
           name: "1",
@@ -696,10 +694,7 @@ describe("orchestration V2 thread fork", () => {
         });
         const targetThreadId = ThreadId.make("thread-fork-native-fork-local-rollback-target");
         const targetSecondRunId = ids.derive.run({ threadId: targetThreadId, ordinal: 2 });
-        const targetCheckpointScopeId = yield* ids.allocate.checkpointScope({
-          threadId: targetThreadId,
-          name: "root",
-        });
+        const targetCheckpointScopeId = yield* rootScopeId(ids, targetThreadId, cwd);
         const targetFirstCheckpointId = yield* ids.allocate.checkpoint({
           checkpointScopeId: targetCheckpointScopeId,
           name: "1",

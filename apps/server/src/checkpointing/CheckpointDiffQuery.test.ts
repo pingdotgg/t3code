@@ -51,6 +51,7 @@ function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   readonly authoredPaths?: ReadonlySet<string>;
+  readonly isGitRepository?: (cwd: string) => boolean;
 }) {
   return CheckpointDiffQuery.layer.pipe(
     Layer.provide(
@@ -61,6 +62,7 @@ function layerFor(input: {
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
           listAuthoredPaths: () => Effect.succeed(input.authoredPaths ?? null),
+          isGitRepository: (cwd) => Effect.succeed(input.isGitRepository?.(cwd) ?? true),
         }),
       ),
     ),
@@ -102,6 +104,77 @@ it.effect("excludes ready checkpoints from rolled-back runs", () => {
         availableTurnCount: error.availableTurnCount,
       },
       { requestedTurnCount: 2, availableTurnCount: 1 },
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("diffs from the thread start after the thread moved to another worktree", () => {
+  const projection = makeProjection();
+  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed(""),
+  );
+  const layer = layerFor({
+    projection: Effect.succeed({
+      ...projection,
+      // The worktree the thread moved to sorts first and has no thread start.
+      checkpointScopes: projection.checkpointScopes.toReversed(),
+      checkpoints: [
+        {
+          scopeId: firstScopeId,
+          runId: null,
+          ordinalWithinScope: 0,
+          appRunOrdinal: null,
+          status: "ready",
+          ref: CheckpointRef.make("refs/t3/test/thread-start"),
+        },
+        ...projection.checkpoints,
+      ],
+    }),
+    diffCheckpoints,
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+    assert.strictEqual(
+      diffCheckpoints.mock.calls[0]?.[0].fromCheckpointRef,
+      yield* checkpointRefForScopeOrdinal({ scopeId: firstScopeId, ordinalWithinScope: 0 }),
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("reads a removed worktree's turn through the thread's latest worktree", () => {
+  const projection = makeProjection();
+  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed(""),
+  );
+  const layer = layerFor({
+    projection: Effect.succeed({
+      ...projection,
+      checkpointScopes: [
+        { id: firstScopeId, runId: firstRunId, kind: "root_run", cwd: "/worktrees/a" },
+        { id: secondScopeId, runId: secondRunId, kind: "root_run", cwd: "/worktrees/b" },
+      ],
+      checkpoints: [
+        {
+          scopeId: firstScopeId,
+          runId: firstRunId,
+          ordinalWithinScope: 1,
+          appRunOrdinal: 1,
+          status: "ready",
+          ref: CheckpointRef.make("refs/t3/test/first"),
+        },
+        ...projection.checkpoints,
+      ],
+    }),
+    diffCheckpoints,
+    isGitRepository: (cwd) => cwd !== "/worktrees/a",
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    yield* query.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 1 });
+    assert.deepEqual(
+      new Set(diffCheckpoints.mock.calls.map(([call]) => call.cwd)),
+      new Set(["/worktrees/b"]),
     );
   }).pipe(Effect.provide(layer));
 });

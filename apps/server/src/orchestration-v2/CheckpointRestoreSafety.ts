@@ -6,11 +6,24 @@ import type * as Path from "effect/Path";
 import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type * as ProjectStore from "./ProjectStore.ts";
 
-export const SHARED_WORKSPACE_RESTORE_MESSAGE =
+const SHARED_WORKSPACE_RESTORE_MESSAGE =
   "File restore requires an isolated worktree. This workspace may contain changes from another thread or a side chat. Rewind the conversation without restoring files instead, or delete side chats you no longer need.";
 
+const OTHER_WORKSPACE_RESTORE_MESSAGE =
+  "This turn ran in a different worktree, so its files can't be restored into this one. Rewind the conversation without restoring files instead.";
+
+export type CheckpointRestoreRefusal = "shared-workspace" | "other-workspace";
+
+const REFUSAL_MESSAGES: Record<CheckpointRestoreRefusal, string> = {
+  "shared-workspace": SHARED_WORKSPACE_RESTORE_MESSAGE,
+  "other-workspace": OTHER_WORKSPACE_RESTORE_MESSAGE,
+};
+
+export const checkpointRestoreRefusalMessage = (refusal: CheckpointRestoreRefusal) =>
+  REFUSAL_MESSAGES[refusal];
+
 // Check isolation at admission and rollback; checkpoints restore whole checkouts, which may become shared.
-export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpointRestoreIsolated")(
+export const checkpointRestoreRefusal = Effect.fn("orchestrationV2.checkpointRestoreRefusal")(
   function* (
     thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
     scope: Pick<OrchestrationV2CheckpointScope, "cwd">,
@@ -41,8 +54,7 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
           ),
         );
       const cwd = yield* resolve(scope.cwd);
-      const worktreeCwd = yield* resolve(worktreePath);
-      shared = cwd !== worktreeCwd;
+      if (cwd !== (yield* resolve(worktreePath))) return "other-workspace" as const;
       if (!shared) {
         const shell = yield* projections.getShellSnapshot();
         const checkedPaths = new Set<string>();
@@ -64,10 +76,26 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
             if (turnItems.length === 0) continue;
           }
           const other = yield* projections.getCheckpointContext(otherThread.id);
+          // A thread keeps a root scope per workspace it used; only its newest is where it works now.
+          const runOrdinals = new Map(other.runs.map((run) => [run.id, run.ordinal]));
+          const scopeRunOrdinal = (candidate: (typeof other.checkpointScopes)[number]) =>
+            (candidate.runId === null ? undefined : runOrdinals.get(candidate.runId)) ?? 0;
+          const latestRootRunOrdinal = Math.max(
+            -1,
+            ...other.checkpointScopes
+              .filter((candidate) => candidate.kind === "root_run")
+              .map(scopeRunOrdinal),
+          );
           const providerContext = yield* projections.getThreadProviderContext(otherThread.id);
           const paths = [
             otherThread.worktreePath,
-            ...other.checkpointScopes.map((candidate) => candidate.cwd),
+            ...other.checkpointScopes
+              .filter(
+                (candidate) =>
+                  candidate.kind !== "root_run" ||
+                  scopeRunOrdinal(candidate) === latestRootRunOrdinal,
+              )
+              .map((candidate) => candidate.cwd),
             // Errored sessions can still stream. Shared sessions retain another thread's opening cwd;
             // turn worktrees and project roots are already covered here.
             ...providerContext.providerSessions
@@ -80,7 +108,7 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
           ].filter((value): value is string => value !== null);
           if (otherThread.worktreePath === null) {
             const project = yield* projects.get(otherThread.projectId, { includeDeleted: true });
-            if (Option.isNone(project)) return false;
+            if (Option.isNone(project)) return "shared-workspace" as const;
             paths.push(project.value.workspaceRoot);
           }
           for (const candidate of paths) {
@@ -101,6 +129,6 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
         }
       }
     }
-    return !shared;
+    return shared ? ("shared-workspace" as const) : null;
   },
 );
