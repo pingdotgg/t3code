@@ -6,6 +6,7 @@ import { threadDetailBodyFingerprint } from "./thread-detail-body-fingerprint";
 function fingerprintWithResume(
   onResumeQueue: ThreadDetailScreenProps["onResumeQueue"],
 ): readonly unknown[] {
+  // Partial fixture: this case only asserts Resume nullness remounts the body.
   return threadDetailBodyFingerprint({
     onResumeQueue,
     canStopThread: true,
@@ -27,7 +28,7 @@ function fingerprintWithResume(
       pendingBackgroundTasks: [],
       lineage: { parentThreadId: null },
     },
-  } as ThreadDetailScreenProps);
+  } as unknown as ThreadDetailScreenProps);
 }
 
 describe("threadDetailBodyFingerprint", () => {
