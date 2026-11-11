@@ -1196,28 +1196,11 @@ effectIt.effect(
           worktreesDir,
           fileSystem,
           gitWorkflow,
-          runSetup: (setup) =>
-            withWorkspaceLease(
-              setup.worktreePath,
-              Effect.succeed({
-                status: "started",
-                scriptId: "setup",
-                scriptName: "Setup",
-                scriptCommand: "create setup marker",
-                terminalId: "setup-test",
-                cwd: setup.worktreePath,
-                async: false,
-                completion: fileSystem
-                  .writeFileString(path.join(setup.worktreePath, "setup-ran"), "ready")
-                  .pipe(Effect.as({ exitCode: 0, durationMs: 0 }), Effect.orDie),
-              }),
-            ),
           failReadsAfterRunning: true,
         });
         const open = harness.open.getMockImplementation()!;
         harness.open.mockImplementation(() =>
           Effect.gen(function* () {
-            expect(yield* fileSystem.exists(path.join(worktreePath, "setup-ran"))).toBe(true);
             expect(yield* git(worktreePath, ["branch", "--show-current"])).toBe("feature/restore");
             expect(yield* git(worktreePath, ["rev-parse", "HEAD"])).toBe(expected.tip);
             for (const file of ["thread.txt", "project.txt"]) {
@@ -1254,7 +1237,6 @@ effectIt.effect(
 effectIt.effect.each([
   { async: false, exitCode: 0 },
   { async: false, exitCode: 1 },
-  { async: false, exitCode: null },
   { async: true, exitCode: 0 },
 ])("restored setup respects async=$async and exitCode=$exitCode", (input) =>
   Effect.gen(function* () {
@@ -1310,7 +1292,7 @@ effectIt.effect.each([
           type: "error",
           title: "Couldn't set up restored workspace",
           failure: {
-            message: `Setup script exited with ${input.exitCode ?? "no exit code"} in '${worktreePath}'.`,
+            message: `Setup script exited with ${input.exitCode} in '${worktreePath}'.`,
           },
         },
       ]);

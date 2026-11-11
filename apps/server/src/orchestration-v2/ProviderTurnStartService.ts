@@ -589,39 +589,39 @@ export const layer: Layer.Layer<
       }
       if (recreateResult.success !== undefined) {
         const { project, worktreePath } = recreateResult.success;
-      // Opening the setup terminal takes its own workspace lease.
-      return Effect.gen(function* () {
-        const setupResult = yield* Effect.result(
-          Effect.gen(function* () {
-            const setup = yield* setupScripts.runForThread({
-              threadId: projection.thread.id,
-              projectId: project.id,
-              projectCwd: project.workspaceRoot,
-              worktreePath,
-              project,
-              observeCompletion: {},
+        // Opening the setup terminal takes its own workspace lease.
+        return Effect.gen(function* () {
+          const setupResult = yield* Effect.result(
+            Effect.gen(function* () {
+              const setup = yield* setupScripts.runForThread({
+                threadId: projection.thread.id,
+                projectId: project.id,
+                projectCwd: project.workspaceRoot,
+                worktreePath,
+                project,
+                observeCompletion: {},
+              });
+              if (setup.status !== "started" || !setup.completion) return;
+              if (setup.async) {
+                yield* setup.completion.pipe(Effect.forkDetach);
+              } else {
+                const { exitCode } = yield* setup.completion;
+                if (exitCode !== 0)
+                  return yield* new WorktreeSetupScriptFailedError({ worktreePath, exitCode });
+              }
+            }),
+          );
+          if (setupResult._tag === "Failure") {
+            yield* settleStartFailure({
+              signal: "worktree-setup-failure",
+              title: "Couldn't set up restored workspace",
+              error: setupResult.failure,
+              message: setupResult.failure.message,
             });
-            if (setup.status !== "started" || !setup.completion) return;
-            if (setup.async) {
-              yield* setup.completion.pipe(Effect.forkDetach);
-            } else {
-              const { exitCode } = yield* setup.completion;
-              if (exitCode !== 0)
-                return yield* new WorktreeSetupScriptFailedError({ worktreePath, exitCode });
-            }
-          }),
-        );
-        if (setupResult._tag === "Failure") {
-          yield* settleStartFailure({
-            signal: "worktree-setup-failure",
-            title: "Couldn't set up restored workspace",
-            error: setupResult.failure,
-            message: setupResult.failure.message,
-          });
-          return;
-        }
-        yield* startWithWorkspaceLease(input);
-      });
+            return;
+          }
+          yield* startWithWorkspaceLease(input);
+        });
       }
       const selectInheritedBackgroundItems = (
         current: ProjectionStore.ProjectionRuntimeRecoveryState,
