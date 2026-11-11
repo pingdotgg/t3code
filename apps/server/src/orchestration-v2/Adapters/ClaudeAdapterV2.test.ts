@@ -3606,6 +3606,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       tool: "mcp__t3-code__quiz_card",
       reply: "Try it.",
       lesson: true,
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__quiz_card",
+      reply: "The repo review found three task families. Try it.",
+      lesson: true,
+      expected: ["reasoning", "reasoning"],
+    },
+    {
+      tool: "Bash",
+      reply: undefined,
+      lesson: true,
       expected: ["reasoning", "reasoning"],
     },
     {

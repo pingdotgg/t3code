@@ -9311,14 +9311,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   update !== null &&
                   update.messageId === message.message.id &&
                   update.followsThinking &&
-                  !isLessonTurn(context.input) &&
-                  claudeWritesUpdatesAsThinking(message.message.model) &&
-                  !cardReplyRepeats(block, update.text)
+                  claudeWritesUpdatesAsThinking(message.message.model)
                 ) {
+                  const lessonTurn = isLessonTurn(context.input);
+                  const lessonCard = lessonTurn && isLessonCardTool(block.name);
+                  if (lessonTurn && !lessonCard) continue;
+                  if (!lessonTurn && cardReplyRepeats(block, update.text)) continue;
+                  const text = lessonCard ? cardReplyCoversLead(block, update.text) : update.text;
+                  if (text === "") continue;
                   yield* emitAssistantTextArtifacts({
                     context,
                     nativeItemId: update.itemId,
-                    text: update.text,
+                    text: text ?? update.text,
                   });
                 }
                 continue;

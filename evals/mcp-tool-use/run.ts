@@ -2378,10 +2378,19 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         }
         continue;
       }
-      if (lesson || !isThinking(block) || !isThinking(response.content[index - 1])) continue;
+      if (!isThinking(block) || !isThinking(response.content[index - 1])) continue;
       const next = response.content[index + 1];
       if (!isToolUse(next)) continue;
-      if (!repeats(next, block.thinking)) texts.push(block.thinking);
+      if (lesson) {
+        if (
+          normalizeToolName(next.name) !== "quiz_card" &&
+          normalizeToolName(next.name) !== "question_card"
+        )
+          continue;
+        const remainder = leadRemainder(next, block.thinking);
+        if (remainder === undefined) texts.push(block.thinking);
+        else if (remainder !== "") texts.push(remainder);
+      } else if (!repeats(next, block.thinking)) texts.push(block.thinking);
     }
     if (lesson && response.stop_reason !== "tool_use" && sample.heldLessonText.length > 0) {
       const joined = sample.heldLessonText.join("\n");
