@@ -36,7 +36,6 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
-  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
@@ -189,7 +188,6 @@ const EMPTY_DRAFT: DraftState = {
   signatureEnabled: false,
   ...WEBHOOK_SIGNATURE_DEFAULTS,
   signatureSecret: "",
-  maxDeliveryAgeMinutes: "",
   replayKey: "",
   coalesceKey: "",
   coalesceWindowSeconds: "",
@@ -1881,27 +1879,6 @@ function ScheduledTaskEditorForm({
                     "Each request runs the prompt. Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."
                   }
                 </p>
-                <Field
-                  label="Skip requests older than"
-                  hint="minutes, optional"
-                  htmlFor="scheduled-task-max-age"
-                >
-                  <Input
-                    id="scheduled-task-max-age"
-                    type="number"
-                    nativeInput
-                    min={1}
-                    max={MAX_WEBHOOK_DELIVERY_AGE_MINUTES}
-                    placeholder="Run every request"
-                    value={draft.maxDeliveryAgeMinutes}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        maxDeliveryAgeMinutes: event.target.value,
-                      }))
-                    }
-                  />
-                </Field>
                 <WebhookFiltersField
                   filters={draft.filters}
                   onChange={(filters) => setDraft((current) => ({ ...current, filters }))}

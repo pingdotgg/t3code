@@ -94,7 +94,6 @@ describe("webhook route", () => {
       [{ _tag: "blocked_by_policy" }, 403, "blocked_by_policy"],
       [{ _tag: "rate_limited", outcome: "rate_limited" }, 429, "rate_limited"],
       [{ _tag: "rate_limited", outcome: "queue_full" }, 429, "queue_full"],
-      [{ _tag: "expired" }, 410, "expired"],
     ];
     for (const [result, status, outcome] of cases) {
       const { handler, dispose } = handlerFor(() => Effect.succeed(result));

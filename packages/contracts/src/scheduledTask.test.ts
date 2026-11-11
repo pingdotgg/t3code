@@ -23,6 +23,12 @@ describe("ScheduledTaskSchedule", () => {
     });
   });
 
+  it("reads a stored webhook schedule with the retired max delivery age and drops it", () => {
+    expect(decodeSchedule({ type: "webhook", signature: null, maxDeliveryAgeMinutes: 90 })).toEqual(
+      { type: "webhook", signature: null },
+    );
+  });
+
   it("accepts a one-time run only with an offset", () => {
     for (const runAt of ["2026-11-03T09:00Z", "2026-11-03T09:00:00.000-08:00"]) {
       expect(decodeUpsertSchedule({ type: "once", runAt })).toEqual({ type: "once", runAt });

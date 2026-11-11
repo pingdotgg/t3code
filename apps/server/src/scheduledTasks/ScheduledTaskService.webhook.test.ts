@@ -377,7 +377,6 @@ it.effect("checks the configured signature and keeps the secret write-only", () 
       assert.deepEqual(task.schedule, {
         type: "webhook",
         signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" },
-        maxDeliveryAgeMinutes: null,
       });
       assert.isTrue(task.webhook?.hasSecret);
 
@@ -748,6 +747,23 @@ it.effect("a signature without any secret is refused", () =>
         )
         .pipe(Effect.flip);
       assert.include(failure.message, "needs a signing secret");
+    }),
+  ),
+);
+
+it.effect("refuses a max delivery age but saves the null that older clients send", () =>
+  withService(({ service }) =>
+    Effect.gen(function* () {
+      const failure = yield* service
+        .upsert(
+          yield* webhookTaskInput({ schedule: { type: "webhook", maxDeliveryAgeMinutes: 90 } }),
+        )
+        .pipe(Effect.flip);
+      assert.include(failure.message, "no longer supported");
+      const { task } = yield* service.upsert(
+        yield* webhookTaskInput({ schedule: { type: "webhook", maxDeliveryAgeMinutes: null } }),
+      );
+      assert.deepEqual(task.schedule, { type: "webhook", signature: null });
     }),
   ),
 );
@@ -1735,7 +1751,7 @@ it.effect.each([false, true])(
   },
 );
 
-it.effect("checks filters after the signature and max age, and runs only matching deliveries", () =>
+it.effect("checks filters after the signature, and runs only matching deliveries", () =>
   withService(({ service, launches }) =>
     Effect.gen(function* () {
       const { task } = yield* service.upsert(

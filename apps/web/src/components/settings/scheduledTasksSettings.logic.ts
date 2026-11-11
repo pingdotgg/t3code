@@ -1,7 +1,6 @@
 import { isListedThreadLineage, isWebhookDedupeTemplate } from "@t3tools/contracts";
 import {
   EnvironmentId,
-  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
@@ -17,7 +16,6 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
-  parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
   webhookFilterDrafts,
   webhookFilterDraftsChanged,
@@ -111,7 +109,6 @@ export interface DraftState {
   readonly signaturePrefix: string;
   /** Write-only: empty keeps the secret already stored on the server. */
   readonly signatureSecret: string;
-  readonly maxDeliveryAgeMinutes: string;
   readonly replayKey: string;
   readonly coalesceKey: string;
   readonly coalesceWindowSeconds: string;
@@ -145,13 +142,6 @@ export function scheduleDraftErrors(draft: DraftState) {
     return [];
   }
   if (draft.scheduleMode !== "webhook") return [];
-  if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
-    return [
-      {
-        title: "Invalid age limit",
-        description: `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
-      },
-    ];
   const errors: Array<{ title: string; description: string }> = [];
   for (const [label, value] of [
     ["Duplicate request key", draft.replayKey],
@@ -212,13 +202,11 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     };
   }
   if (draft.scheduleMode === "webhook") {
-    const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     const replayKey = draft.replayKey.trim();
     const coalesceKey = draft.coalesceKey.trim();
     const coalesceWindowSeconds = draft.coalesceWindowSeconds.trim()
       ? Number(draft.coalesceWindowSeconds)
       : undefined;
-    if (maxDeliveryAgeMinutes === undefined) return null;
     const parsedFilters = parseWebhookFilterDrafts(draft.filters);
     if (!("filters" in parsedFilters)) return null;
     const secret = draft.signatureSecret.trim();
@@ -232,7 +220,6 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
             ...(secret ? { secret } : {}),
           }
         : null,
-      maxDeliveryAgeMinutes,
       ...(replayKey || coalesceKey || coalesceWindowSeconds !== undefined
         ? {
             dedupe: {
@@ -313,10 +300,6 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     coalesceWindowSeconds:
       schedule.type === "webhook" && schedule.dedupe?.coalesceWindowSeconds !== undefined
         ? String(schedule.dedupe.coalesceWindowSeconds)
-        : "",
-    maxDeliveryAgeMinutes:
-      schedule.type === "webhook" && schedule.maxDeliveryAgeMinutes != null
-        ? String(schedule.maxDeliveryAgeMinutes)
         : "",
     filters,
     savedFilters: filters,

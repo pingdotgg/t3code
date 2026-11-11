@@ -15,7 +15,6 @@ import type {
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
 import {
-  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
   scheduledTaskThreadMode,
@@ -32,7 +31,6 @@ import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
-  parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
   removeWebhookFilterDraft,
   WEBHOOK_FILTER_OPS,
@@ -718,16 +716,6 @@ function TaskForm({
         ? { ...draft.schedule, signature: liveTask.schedule.signature }
         : draft.schedule,
     );
-    if (
-      draft.schedule.mode === "webhook" &&
-      parseMaxDeliveryAge(draft.schedule.maxDeliveryAgeMinutes) === undefined
-    ) {
-      Dialog.alert(
-        "Invalid age limit",
-        `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
-      );
-      return;
-    }
     if (draft.schedule.mode === "once" && !offersOnce) {
       Dialog.alert(
         "Once is not available here",
@@ -1203,17 +1191,6 @@ function TaskForm({
                 }
                 signatureConfigured={draft.schedule.signature !== null}
                 disabled={!canOperate || saving || environmentUnavailable}
-              />
-              <FormField
-                label="Skip requests older than (minutes)"
-                value={draft.schedule.maxDeliveryAgeMinutes}
-                placeholder="Run every request"
-                keyboardType="number-pad"
-                disabled={saving}
-                borderTop
-                onChange={(maxDeliveryAgeMinutes) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, maxDeliveryAgeMinutes } })
-                }
               />
               <WebhookFilterRows
                 filters={draft.schedule.filters}

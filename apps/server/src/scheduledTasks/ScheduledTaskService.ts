@@ -146,7 +146,6 @@ export type WebhookDeliveryOutcome =
   | "rate_limited"
   | "disabled"
   | "rejected_signature"
-  | "expired"
   | "invalid_idempotency_key"
   | "filtered"
   | "not_found"
@@ -167,7 +166,6 @@ export type WebhookTriggerResult =
       readonly _tag: "rate_limited";
       readonly outcome: "rate_limited" | "queue_full";
     }
-  | { readonly _tag: "expired" }
   | { readonly _tag: "invalid_idempotency_key" };
 
 /** Printable ASCII without spaces, 1 to 200 characters, after trimming. */
@@ -1391,6 +1389,12 @@ export const layer = Layer.effect(
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input) {
+      if (input.schedule.type === "webhook" && input.schedule.maxDeliveryAgeMinutes != null) {
+        return yield* taskError(
+          "Max delivery age is no longer supported: webhook tasks run every request they receive. Clear it to save.",
+          input.id === undefined ? {} : { taskId: input.id },
+        );
+      }
       // A webhook task the policy blocks can still be edited while it is off.
       if (input.enabled && input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
         return yield* taskError(
@@ -1473,7 +1477,6 @@ export const layer = Layer.effect(
                       encoding: input.schedule.signature.encoding,
                       prefix: input.schedule.signature.prefix,
                     },
-              maxDeliveryAgeMinutes: input.schedule.maxDeliveryAgeMinutes ?? null,
               ...(input.schedule.dedupe === undefined
                 ? existingTask?.schedule.type === "webhook" &&
                   existingTask.schedule.dedupe !== undefined

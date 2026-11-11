@@ -110,8 +110,6 @@ export const layer = HttpApiBuilder.group(
           return json(403, { error: "blocked_by_policy" }, "blocked_by_policy");
         case "rate_limited":
           return json(429, { error: result.outcome }, result.outcome);
-        case "expired":
-          return json(410, { error: "delivery_too_old" }, "expired");
         case "invalid_idempotency_key":
           return json(400, { error: "invalid_idempotency_key" }, "invalid_idempotency_key");
         case "error":
