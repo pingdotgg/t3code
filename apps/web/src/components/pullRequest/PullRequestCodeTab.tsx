@@ -34,8 +34,6 @@ import {
   MessageSquareIcon,
   MessageSquareOffIcon,
   TriangleAlertIcon,
-  ChevronsDownUpIcon,
-  ChevronsUpDownIcon,
 } from "lucide-react";
 
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
