@@ -1019,6 +1019,24 @@ it.effect("reads the branch's PR only once the agent has opened it", () =>
     assert.isTrue((yield* call("a", "pull_request_read", {})).is_error);
     yield* call("b", "pull_request_create", { title: "Feature", body: "Body" });
     assert.isNotTrue((yield* call("c", "pull_request_read", {})).is_error);
+
+    // A case that mocks the create still opens the PR it names.
+    const url = "https://github.com/acme/app/pull/124";
+    const mocks = { pull_request_create: { number: 124, url, created: true } };
+    const mockedSample = makeSample(
+      { ...childCase, setup: { ...childCase.setup, world, mocks } },
+      base,
+    );
+    mockedSample.tools.push(...sample.tools);
+    const mockedCall = (id: string, name: string) =>
+      answerToolCall(mockedSample, config, {
+        type: "tool_use",
+        id,
+        name: `mcp__t3-code__${name}`,
+        input: name === "pull_request_create" ? { title: "Feature", body: "Body" } : {},
+      });
+    yield* mockedCall("d", "pull_request_create");
+    assert.isNotTrue((yield* mockedCall("e", "pull_request_read")).is_error);
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 

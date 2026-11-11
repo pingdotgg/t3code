@@ -1839,6 +1839,9 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
     if (name === "request_secret") savedSecretFile(sample, mock);
+    if (name === "pull_request_create" && isRecord(mock) && typeof mock.url === "string") {
+      sample.linked.add(mock.url);
+    }
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
@@ -1854,9 +1857,12 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     if (BRANCH_PULL_REQUEST_TOOLS.has(name) && input.number === undefined) {
       // Until the agent opens it, the PR a create would open does not exist.
       const own = branchPullRequest(sample);
-      if (own.created && !sample.linked.has(pullRequest(sample.repo, { number: own.number }).url)) {
-        return failed(BRANCH_HAS_NO_PR_ERROR);
-      }
+      const mocked = testCase.setup.mocks?.pull_request_create;
+      const opened = [
+        pullRequest(sample.repo, { number: own.number }).url,
+        isRecord(mocked) ? mocked.url : undefined,
+      ].some((url) => typeof url === "string" && sample.linked.has(url));
+      if (own.created && !opened) return failed(BRANCH_HAS_NO_PR_ERROR);
     }
     const value = t3Default(sample, name, input);
     if (name === "request_secret") savedSecretFile(sample, value);
