@@ -15,8 +15,10 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import type { ComposerAgentItem } from "@t3tools/client-runtime/composerThreadItems";
 import {
   BlocksIcon,
+  BotIcon,
   FolderIcon,
   MessagesSquareIcon,
   PackageIcon,
@@ -91,6 +93,7 @@ export type ComposerCommandItem =
       label: string;
       description: string;
     }
+  | ComposerAgentItem
   | {
       id: string;
       type: "model";
@@ -234,6 +237,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           aria-hidden="true"
           className="size-4 shrink-0 text-secondary-label"
         />
+      ) : null}
+      {props.item.type === "agent" ? (
+        <BotIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
       {props.item.type === "model" ? (
         <ProviderInstanceIcon

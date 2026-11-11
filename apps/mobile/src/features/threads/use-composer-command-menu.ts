@@ -7,7 +7,9 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
+  type ComposerAgentCandidate,
   type ComposerEnvironmentCandidate,
+  matchComposerAgentItems,
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
@@ -15,9 +17,11 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
+const EMPTY_AGENTS: ReadonlyArray<ComposerAgentCandidate> = [];
 const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import {
+  agentContextRecord,
   formatComposerContextReference,
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
@@ -246,6 +250,8 @@ export function useComposerCommandMenu({
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
   environments = EMPTY_ENVIRONMENTS,
+  agents = EMPTY_AGENTS,
+  machineLabel,
   linkedEnvironments = NO_LINKED_ENVIRONMENTS,
   currentThreadId = null,
   projectCwd,
@@ -268,6 +274,9 @@ export function useComposerCommandMenu({
   readonly environmentId: EnvironmentId | null;
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   readonly environments?: ReadonlyArray<ComposerEnvironmentCandidate>;
+  /** The user's T3 agents; picking one makes a chip carrying its profileId. */
+  readonly agents?: ReadonlyArray<ComposerAgentCandidate>;
+  readonly machineLabel?: (environmentId: string) => string | undefined;
   /** The machines `environmentId` links to, by name, whose threads the picker also offers. */
   readonly linkedEnvironments?: ReadonlyMap<EnvironmentId, string>;
   readonly currentThreadId?: ThreadId | null;
@@ -511,6 +520,14 @@ export function useComposerCommandMenu({
       const environmentItems = environmentId
         ? matchComposerEnvironmentItems({ environments, environmentId, query: trigger.query })
         : [];
+      const agentItems = environmentId
+        ? matchComposerAgentItems({
+            agents,
+            environmentId,
+            query: trigger.query,
+            ...(machineLabel ? { machineLabel } : {}),
+          })
+        : [];
       const modelItems =
         modelOptions && modelProviders
           ? buildComposerModelItems(modelOptions, trigger.query, modelProviders)
@@ -518,6 +535,7 @@ export function useComposerCommandMenu({
       return [
         ...threadItems,
         ...environmentItems,
+        ...agentItems,
         ...modelItems,
         ...pathSearch.entries.map((entry) => {
           const parts = entry.path.split("/");
@@ -538,9 +556,12 @@ export function useComposerCommandMenu({
 
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
-    if (item.type === "environment") {
-      if (!ownerKey || trigger.kind !== "path") return;
-      const record = environmentComposerContext(item.environmentId, item.label);
+    if (item.type === "environment" || item.type === "agent") {
+      if (!ownerKey || !environmentId || trigger.kind !== "path") return;
+      const record =
+        item.type === "agent"
+          ? agentContextRecord(item.agent, environmentId)
+          : environmentComposerContext(item.environmentId, item.label);
       const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
       const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
       if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {

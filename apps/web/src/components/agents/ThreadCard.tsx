@@ -51,6 +51,7 @@ import { useEnvironment, useEnvironmentProviders } from "../../state/environment
 import { AgentChatPreview } from "./AgentChatPreview";
 import { isInsideComposerFloatingLayer } from "../chat/composerEventScope";
 import {
+  agentAccentColor,
   agentThreadStatus,
   agentThreadStatusLabel,
   arrangeAgentChildRuns,
@@ -102,7 +103,7 @@ function AgentChildRunLink({
       data-current={isCurrent}
       style={
         {
-          "--agent-color": agent.profile?.color ?? "var(--muted-foreground)",
+          "--agent-color": agentAccentColor(agent.profile, profiles),
           paddingInlineStart: `${6 + depth * 12}px`,
         } as CSSProperties
       }
@@ -113,7 +114,7 @@ function AgentChildRunLink({
         void onContextMenu(run, { x: event.clientX, y: event.clientY }, siblings);
       }}
     >
-      <AgentIcon icon={agent.profile?.icon} />
+      <AgentIcon icon={agent.profile?.icon} iconId={agent.profile?.iconId} />
       {run.pinnedAt != null && run.settledAt === null && (
         <PinIcon aria-label="Pinned" className="agent-thread-child-pin" size={10} />
       )}
@@ -467,7 +468,7 @@ export const ThreadCard = memo(function ThreadCard({
       className="agent-thread-container"
       data-current={isCurrent}
       data-has-card-actions={showSettleAction || undefined}
-      style={{ "--agent-color": profile?.color ?? "var(--muted-foreground)" } as CSSProperties}
+      style={{ "--agent-color": agentAccentColor(profile, profiles) } as CSSProperties}
     >
       <PreviewCard
         open={showPreview}
@@ -532,7 +533,7 @@ export const ThreadCard = memo(function ThreadCard({
             <div className="agent-thread-identity">
               {thread.profileSnapshot && (
                 <span>
-                  <AgentIcon icon={profile?.icon} />
+                  <AgentIcon icon={profile?.icon} iconId={profile?.iconId} />
                   <span>
                     {profile?.name ?? thread.profileSnapshot.profileName ?? "Removed agent"}
                   </span>

@@ -1,4 +1,10 @@
-import { AgentSkill, MAX_SKILL_LIBRARY_BYTES, skillResourceBytes } from "./agentSkills.ts";
+import {
+  AgentSkill,
+  agentSkillDigestOf,
+  isAgentSkillStub,
+  MAX_SKILL_LIBRARY_BYTES,
+  skillResourceBytes,
+} from "./agentSkills.ts";
 export { AgentSkill } from "./agentSkills.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
@@ -2234,6 +2240,34 @@ export const ClientSettingsPatch = Schema.Struct({
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
 
+/** Agent names are unique ignoring case, so "Doug" and "doug" never both route. */
+export const agentNameKey = (name: string) => name.trim().normalize("NFC").toLowerCase();
+
+/** Equal keys mean the same skill version; a stub and its full skill share one. */
+export const agentSkillTieKey = (skill: AgentSkill) =>
+  JSON.stringify([
+    skill.name,
+    skill.description,
+    skill.revision,
+    skill.createdAt,
+    agentSkillDigestOf(skill),
+  ]);
+
+/** Same-timestamp skills compare by body digest, so a stub and its full skill agree; the body wins. */
+function skillWins(candidate: AgentSkill, previous: AgentSkill | undefined) {
+  if (!previous || candidate.updatedAt > previous.updatedAt) return true;
+  if (candidate.updatedAt < previous.updatedAt) return false;
+  const a = agentSkillTieKey(candidate);
+  const b = agentSkillTieKey(previous);
+  return a > b || (a === b && isAgentSkillStub(previous) && !isAgentSkillStub(candidate));
+}
+
+/** Older servers strip fields they predate; an echo without them must not win a tie. */
+const newerProfileFields = (profile: McpGatewayProfile) =>
+  Number(profile.skillIds !== undefined) +
+  Number(profile.iconId !== undefined) +
+  Number(profile.tags !== undefined);
+
 /** Reconcile portable agents by identity; deletion wins an equal timestamp. */
 export function mergeAgentLibraries(
   libraries: ReadonlyArray<{
@@ -2250,14 +2284,7 @@ export function mergeAgentLibraries(
       if (at > (skillDeleted[id] ?? "")) skillDeleted[id] = at;
     }
     for (const skill of library.agentSkills ?? []) {
-      const previous = skills.get(skill.skillId);
-      if (
-        !previous ||
-        skill.updatedAt > previous.updatedAt ||
-        (skill.updatedAt === previous.updatedAt && JSON.stringify(skill) > JSON.stringify(previous))
-      ) {
-        skills.set(skill.skillId, skill);
-      }
+      if (skillWins(skill, skills.get(skill.skillId))) skills.set(skill.skillId, skill);
     }
   }
   const deleted: Record<string, string> = {};
@@ -2272,27 +2299,34 @@ export function mergeAgentLibraries(
         !previous ||
         candidate.updatedAt > previous.updatedAt ||
         (candidate.updatedAt === previous.updatedAt &&
-          ((candidate.skillIds !== undefined && previous.skillIds === undefined) ||
-            ((candidate.skillIds === undefined) === (previous.skillIds === undefined) &&
+          (newerProfileFields(candidate) > newerProfileFields(previous) ||
+            (newerProfileFields(candidate) === newerProfileFields(previous) &&
               JSON.stringify(candidate) > JSON.stringify(previous))))
       )
         profiles.set(candidate.profileId, candidate);
     }
   }
-  const names = new Set<string>();
-  const result = [...profiles.values()]
+  const live = [...profiles.values()]
     .filter((p) => p.updatedAt > (deleted[p.profileId] ?? ""))
-    .sort(
-      (a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.profileId.localeCompare(b.profileId),
-    )
-    .filter((p) => {
-      if (names.has(p.name)) return false;
-      names.add(p.name);
-      return true;
-    })
     .sort(
       (a, b) => a.createdAt.localeCompare(b.createdAt) || a.profileId.localeCompare(b.profileId),
     );
+  // The earliest-created agent keeps a clashing name; later ones get a stable numbered suffix.
+  const taken = new Set<string>();
+  const losers = new Set<McpGatewayProfile>();
+  for (const profile of live) {
+    const key = agentNameKey(profile.name);
+    if (taken.has(key)) losers.add(profile);
+    else taken.add(key);
+  }
+  const result = live.map((profile) => {
+    if (!losers.has(profile)) return profile;
+    let suffix = 2;
+    while (taken.has(agentNameKey(`${profile.name} (${suffix})`))) suffix++;
+    const name = `${profile.name} (${suffix})`;
+    taken.add(agentNameKey(name));
+    return { ...profile, name };
+  });
   return {
     agentSkills: [...skills.values()]
       .filter((skill) => skill.updatedAt > (skillDeleted[skill.skillId] ?? ""))
@@ -2306,17 +2340,20 @@ export function mergeAgentLibraries(
     ),
   };
 }
+export type AgentLibrary = ReturnType<typeof mergeAgentLibraries>;
 
 /** Older servers cannot retain skill content or assignments; compare only their supported fields. */
 export function agentLibraryForSync(
-  library: ReturnType<typeof mergeAgentLibraries>,
+  library: AgentLibrary,
   supportsSkills: boolean,
+  supportsProfileTags = supportsSkills,
 ) {
-  if (supportsSkills) return library;
+  const profiles = supportsProfileTags
+    ? library.mcpGatewayProfiles
+    : library.mcpGatewayProfiles.map(({ iconId: _iconId, tags: _tags, ...profile }) => profile);
+  if (supportsSkills) return { ...library, mcpGatewayProfiles: profiles };
   return {
-    mcpGatewayProfiles: library.mcpGatewayProfiles.map(
-      ({ skillIds: _skillIds, ...profile }) => profile,
-    ),
+    mcpGatewayProfiles: profiles.map(({ skillIds: _skillIds, ...profile }) => profile),
     mcpGatewayProfileDeletedAt: library.mcpGatewayProfileDeletedAt,
   };
 }

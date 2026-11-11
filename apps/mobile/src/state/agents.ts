@@ -1,11 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   agentColorFor,
-  agentIconKey,
   selectScheduledWakeThreadKeys,
-  type AgentIconKey,
   type AgentScheduledWake,
 } from "@t3tools/client-runtime/state/agents";
+import { resolveAgentIconId, type AgentIconId } from "@t3tools/client-runtime/state/agentIdentity";
 import {
   mergeAgentLibraries,
   type McpGatewayProfile,
@@ -48,7 +47,7 @@ export function useScheduledWakeThreadKeys(): ReadonlySet<string> {
 export interface AgentAppearance {
   readonly profileId: string;
   readonly name: string;
-  readonly icon: AgentIconKey;
+  readonly icon: AgentIconId;
   /** Null for an agent that no longer exists in any connected library. */
   readonly color: string | null;
 }
@@ -60,7 +59,7 @@ export function agentAppearance(
   return {
     profileId: profile.profileId,
     name: profile.name,
-    icon: agentIconKey(profile.icon),
+    icon: resolveAgentIconId(profile),
     color: agentColorFor(profile, profiles),
   };
 }

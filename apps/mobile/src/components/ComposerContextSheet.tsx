@@ -4,6 +4,7 @@ import { useOpenPullRequest } from "../native/useOpenPullRequest";
 import { SourceFileSurface } from "../features/files/SourceFileSurface";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import type {
+  AgentContextRecord,
   ComposerContextRecord,
   ElementContextSource,
   EnvironmentId,
@@ -11,6 +12,8 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { agentReferenceState } from "@t3tools/shared/composerContextReferences";
+import { useAgentProfiles } from "../state/agents";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, ScrollView, View } from "react-native";
@@ -30,6 +33,25 @@ import { AppText as Text } from "./ui/AppText";
 import { Sheet } from "./ui/Sheet";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { getMobileTerminalTheme } from "../features/terminal/terminalTheme";
+
+function AgentContextFields(props: {
+  record: AgentContextRecord;
+  environmentId: EnvironmentId | undefined;
+}) {
+  const state = agentReferenceState(props.record, useAgentProfiles(), props.environmentId);
+  const status = {
+    available: "T3 agent. Mentioning it runs nothing; ask in your message to delegate to it.",
+    missing: "This agent was deleted or isn't on this machine.",
+    "read-only": "Read-only agent: it can't run work.",
+    elsewhere: "This agent runs only on other machines.",
+  }[state.status];
+  return (
+    <View className="gap-3">
+      <ContextField label="Agent" value={state.name} />
+      <ContextField label="Status" value={status} />
+    </View>
+  );
+}
 
 function ContextField(props: { label: string; value: string | null | undefined; code?: boolean }) {
   if (!props.value) return null;
@@ -326,6 +348,9 @@ export function ComposerContextSheet(props: {
             ) : null}
             {record.kind === "environment" ? (
               <ContextField label="Machine" value={record.label} />
+            ) : null}
+            {record.kind === "agent" && "profileId" in record ? (
+              <AgentContextFields record={record} environmentId={props.environmentId} />
             ) : null}
             {record.kind === "skill" ? (
               <View className="gap-3">

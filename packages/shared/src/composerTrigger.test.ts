@@ -41,6 +41,27 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it.each([
+    "ask doug@acme.dev",
+    "run `@doug",
+    "run `npm i @doug",
+    "```\n@doug",
+    "```ts\nconst a = 1;\n@doug",
+    "intro\n~~~\n@doug",
+  ])("keeps @ in an email or code in %j literal, out of the mention menu", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
+  it.each(["ask `code` @doug", "```\nx\n```\n@doug", "a ` b\n@doug"])(
+    "opens the mention menu for @ after code has closed in %j",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length)).toMatchObject({
+        kind: "path",
+        query: "doug",
+      });
+    },
+  );
+
   it.each(["Use/review", "https://example.com/review", "Use /review "])(
     "does not trigger for %j",
     (text) => expect(detectComposerTrigger(text, text.length)).toBeNull(),

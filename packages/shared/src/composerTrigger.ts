@@ -68,6 +68,19 @@ export function isCurrencyAmountQuery(query: string): boolean {
   return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/.test(query);
 }
 
+// A fence or code span, closed or still open at the end of the text.
+const MARKDOWN_CODE = /(?:^|\n) {0,3}(`{3,}|~{3,})[\s\S]*?(\n {0,3}\1|$)|(`+)[^\n]*?(\3|$)/g;
+
+function isInsideMarkdownCode(text: string, index: number): boolean {
+  const before = text.slice(0, index);
+  if (!before.includes("`") && !before.includes("~~~")) return false;
+  for (const match of before.matchAll(MARKDOWN_CODE)) {
+    if (match.index + match[0].length === before.length && (match[2] === "" || match[4] === ""))
+      return true;
+  }
+  return false;
+}
+
 export function detectComposerTrigger(
   text: string,
   cursorInput: number,
@@ -146,7 +159,8 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  if (!token.startsWith("@")) {
+  // Mentions are for prose: `@` in code stays literal.
+  if (!token.startsWith("@") || isInsideMarkdownCode(text, tokenStart)) {
     return null;
   }
 

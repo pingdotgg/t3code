@@ -11,7 +11,12 @@ import type { CSSProperties } from "react";
 import { CHILD_STATUS_COLORS } from "../ChildStatusCounts";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentIcon } from "./AgentIcon";
-import { agentThreadStatusLabel, runAgentName, type AgentThreadStatus } from "./agents.logic";
+import {
+  agentAccentColor,
+  agentThreadStatusLabel,
+  runAgentName,
+  type AgentThreadStatus,
+} from "./agents.logic";
 
 export interface AgentChildAvatarEntry {
   readonly thread: EnvironmentThreadShell;
@@ -84,7 +89,7 @@ export function AgentChildAvatarStack({
                   aria-label={label}
                   style={
                     {
-                      "--agent-color": agent.profile?.color ?? "var(--muted-foreground)",
+                      "--agent-color": agentAccentColor(agent.profile, profiles),
                       "--agent-state-color": CHILD_STATUS_COLORS[bucket],
                     } as CSSProperties
                   }
@@ -94,7 +99,7 @@ export function AgentChildAvatarStack({
               {thread.profileSnapshot === undefined ? (
                 <span aria-hidden="true">{agent.name.slice(0, 1).toUpperCase()}</span>
               ) : (
-                <AgentIcon icon={agent.profile?.icon} />
+                <AgentIcon icon={agent.profile?.icon} iconId={agent.profile?.iconId} />
               )}
             </TooltipTrigger>
             <TooltipPopup side="top">{label}</TooltipPopup>

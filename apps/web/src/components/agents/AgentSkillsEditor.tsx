@@ -1,7 +1,8 @@
 import { useState } from "react";
-import type { AgentSkill } from "@t3tools/contracts";
+import { isAgentSkillStub, type AgentSkill } from "@t3tools/contracts";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
 import { randomUUID } from "../../lib/utils";
+import { useAgentLibrary } from "../../hooks/useAgentLibrary";
 
 export function AgentSkillsEditor({
   skills,
@@ -17,19 +18,30 @@ export function AgentSkillsEditor({
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const select = (skill: AgentSkill | null) => {
+  const { loadSkills } = useAgentLibrary();
+  const fill = (skill: AgentSkill | null) => {
     setSelected(skill);
     setName(skill?.name ?? "");
     setDescription(skill?.description ?? "");
     setContent(skill?.content ?? "");
     setError("");
   };
+  const select = async (skill: AgentSkill | null) => {
+    if (!skill || !isAgentSkillStub(skill)) return fill(skill);
+    fill(null);
+    setLoading(true);
+    const [full] = await loadSkills([skill.skillId]).catch(() => []);
+    setLoading(false);
+    if (full) fill(full);
+    else setError("Could not load this skill. Connect the machine that holds it and try again.");
+  };
   const save = async (next: ReadonlyArray<AgentSkill>) => {
     setSaving(true);
     setError("");
     try {
-      if (await onSave(next)) select(null);
+      if (await onSave(next)) fill(null);
       else setError("Could not save skills. Check your connection and try again.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save skills.");
@@ -92,10 +104,12 @@ export function AgentSkillsEditor({
               <label>
                 Skill
                 <select
-                  disabled={saving}
+                  disabled={saving || loading}
                   value={selected?.skillId ?? ""}
                   onChange={(event) =>
-                    select(skills.find((skill) => skill.skillId === event.target.value) ?? null)
+                    void select(
+                      skills.find((skill) => skill.skillId === event.target.value) ?? null,
+                    )
                   }
                 >
                   <option value="">New skill</option>
@@ -153,7 +167,7 @@ export function AgentSkillsEditor({
                 )}
                 <button
                   className="agent-primary"
-                  disabled={saving || !name.trim() || !content.trim()}
+                  disabled={saving || loading || !name.trim() || !content.trim()}
                 >
                   {saving ? "Saving…" : "Save skill"}
                 </button>

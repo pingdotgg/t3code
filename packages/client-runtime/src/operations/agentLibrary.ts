@@ -1,4 +1,18 @@
-import { agentLibraryForSync, mergeAgentLibraries, WS_METHODS } from "@t3tools/contracts";
+import {
+  agentSkillHasResources,
+  agentSkillTieKey,
+  isAgentSkillStub,
+  mergeAgentLibraries,
+  withoutAgentSkillTransportFields,
+  WS_METHODS,
+  type AgentLibrary,
+  type AgentLibraryOperation,
+  type AgentSkill,
+  type EnvironmentId,
+  type ExecutionEnvironmentCapabilities,
+  type McpGatewayProfile,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -8,13 +22,345 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { EnvironmentRpcUnavailableError, request } from "../rpc/client.ts";
 
+type AgentLibraryInput = Parameters<typeof mergeAgentLibraries>[0][number];
+
+export type AgentLibraryCapabilities = Pick<
+  ExecutionEnvironmentCapabilities,
+  | "agentLibrarySync"
+  | "agentSkillsSync"
+  | "agentSkillResources"
+  | "agentSkillBodiesOnDemand"
+  | "agentLibraryMutations"
+>;
+
+export interface AgentLibrarySource {
+  readonly environmentId: EnvironmentId;
+  readonly library: AgentLibraryInput;
+  readonly capabilities: AgentLibraryCapabilities | undefined;
+  /** Connected now: it can take a patch and serve skill bodies. Cached libraries only contribute. */
+  readonly live: boolean;
+}
+
+export interface AgentLibraryPatch {
+  readonly mcpGatewayProfiles: ReadonlyArray<McpGatewayProfile>;
+  readonly mcpGatewayProfileDeletedAt: Readonly<Record<string, string>>;
+  readonly agentSkills?: ReadonlyArray<AgentSkill>;
+  readonly agentSkillDeletedAt?: Readonly<Record<string, string>>;
+}
+
+export interface AgentLibrarySyncPlan {
+  readonly library: AgentLibrary;
+  /** Only targets missing something; skills in a patch may still be stubs until filled. */
+  readonly targets: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly patch: AgentLibraryPatch;
+  }>;
+  /** Where to fetch the bodies of stub skills the patches carry. */
+  readonly fetches: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly skillIds: ReadonlyArray<string>;
+  }>;
+}
+
+const syncs = (source: AgentLibrarySource) => source.capabilities?.agentLibrarySync === true;
+
+/** A live environment serving this exact skill version, preferring a stable choice across runs. */
+function skillHolder(sources: ReadonlyArray<AgentLibrarySource>, skill: AgentSkill) {
+  const key = agentSkillTieKey(skill);
+  return sources
+    .filter(
+      (source) =>
+        source.live &&
+        source.capabilities?.agentSkillBodiesOnDemand === true &&
+        source.library.agentSkills?.some(
+          (held) => held.skillId === skill.skillId && agentSkillTieKey(held) === key,
+        ),
+    )
+    .map((source) => source.environmentId)
+    .sort()[0];
+}
+
+/** Library sources from client environment state; only connected ones can be written. */
+export function agentLibrarySources(
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly connection: { readonly phase: string };
+    readonly serverConfig?: {
+      readonly settings: AgentLibraryInput;
+      readonly environment: { readonly capabilities: AgentLibraryCapabilities };
+    } | null;
+  }>,
+): ReadonlyArray<AgentLibrarySource> {
+  return environments.flatMap((environment) =>
+    environment.serverConfig
+      ? [
+          {
+            environmentId: environment.environmentId,
+            library: environment.serverConfig.settings,
+            capabilities: environment.serverConfig.environment.capabilities,
+            live: environment.connection.phase === "connected",
+          },
+        ]
+      : [],
+  );
+}
+
+/**
+ * Full skills for `skillIds` in `library`, fetching stub bodies from a connected environment that
+ * holds that version. Skills no reachable environment can serve are left out.
+ */
+export async function loadAgentSkills(
+  sources: ReadonlyArray<AgentLibrarySource>,
+  library: Pick<AgentLibrary, "agentSkills">,
+  skillIds: ReadonlyArray<string>,
+  fetchSkills: AgentLibrarySyncIo["fetchSkills"],
+): Promise<ReadonlyArray<AgentSkill>> {
+  const wanted = library.agentSkills.filter((skill) => skillIds.includes(skill.skillId));
+  const groups = new Map<EnvironmentId, string[]>();
+  for (const skill of wanted) {
+    if (!isAgentSkillStub(skill)) continue;
+    const holder =
+      skillHolder(sources, skill) ??
+      sources.find(
+        (source) =>
+          source.live &&
+          source.capabilities?.agentSkillBodiesOnDemand === true &&
+          source.library.agentSkills?.some((held) => held.skillId === skill.skillId),
+      )?.environmentId;
+    if (holder !== undefined) groups.set(holder, [...(groups.get(holder) ?? []), skill.skillId]);
+  }
+  const fetched = (
+    await Promise.all(
+      [...groups].map(([environmentId, ids]) =>
+        fetchSkills(environmentId, ids).catch((): ReadonlyArray<AgentSkill> => []),
+      ),
+    )
+  ).flat();
+  return wanted.flatMap((skill) => {
+    if (!isAgentSkillStub(skill)) return [skill];
+    const full = fetched.find(
+      (candidate) => candidate.skillId === skill.skillId && !isAgentSkillStub(candidate),
+    );
+    return full ? [withoutAgentSkillTransportFields(full)] : [];
+  });
+}
+
+/** The fields a target keeps; anything else it strips and would read as a perpetual difference. */
+function profileForTarget(profile: McpGatewayProfile, capabilities: AgentLibraryCapabilities) {
+  const { skillIds, iconId, tags, ...rest } = profile;
+  return {
+    ...rest,
+    ...(capabilities.agentSkillsSync === true && skillIds !== undefined ? { skillIds } : {}),
+    ...(capabilities.agentLibraryMutations === true && iconId !== undefined ? { iconId } : {}),
+    ...(capabilities.agentLibraryMutations === true && tags !== undefined ? { tags } : {}),
+  };
+}
+
+const newerDeletions = (
+  merged: Readonly<Record<string, string>>,
+  target: Readonly<Record<string, string>> | undefined,
+) => Object.fromEntries(Object.entries(merged).filter(([id, at]) => at > (target?.[id] ?? "")));
+
+/**
+ * Per-target patches carrying only what each target lacks or holds older. A stub winner is
+ * fetched in full from a live environment holding that exact version, or left for a later pass.
+ */
+export function planAgentLibrarySync(
+  sources: ReadonlyArray<AgentLibrarySource>,
+  options: { readonly targets?: ReadonlyArray<string> } = {},
+): AgentLibrarySyncPlan {
+  const syncing = sources.filter(syncs);
+  const library = mergeAgentLibraries(syncing.map((source) => source.library));
+  const holders = new Map<string, EnvironmentId>();
+  const targets = syncing.flatMap((target) => {
+    if (!target.live || target.capabilities === undefined) return [];
+    if (options.targets && !options.targets.includes(target.environmentId)) return [];
+    const capabilities = target.capabilities;
+    const own = target.library;
+    const mcpGatewayProfiles = library.mcpGatewayProfiles.filter((profile) => {
+      const held = own.mcpGatewayProfiles.find((item) => item.profileId === profile.profileId);
+      return (
+        held === undefined ||
+        JSON.stringify(profileForTarget(held, capabilities)) !==
+          JSON.stringify(profileForTarget(profile, capabilities))
+      );
+    });
+    const mcpGatewayProfileDeletedAt = newerDeletions(
+      library.mcpGatewayProfileDeletedAt,
+      own.mcpGatewayProfileDeletedAt,
+    );
+    const skillsSupported = capabilities.agentSkillsSync === true;
+    const agentSkills = skillsSupported
+      ? library.agentSkills.filter((skill) => {
+          if (agentSkillHasResources(skill) && capabilities.agentSkillResources !== true)
+            return false;
+          const held = own.agentSkills?.find((item) => item.skillId === skill.skillId);
+          if (held && agentSkillTieKey(held) === agentSkillTieKey(skill)) return false;
+          if (!isAgentSkillStub(skill)) return true;
+          const holder = skillHolder(syncing, skill);
+          if (holder === undefined) return false;
+          holders.set(skill.skillId, holder);
+          return true;
+        })
+      : [];
+    const agentSkillDeletedAt = skillsSupported
+      ? newerDeletions(library.agentSkillDeletedAt, own.agentSkillDeletedAt)
+      : {};
+    if (
+      mcpGatewayProfiles.length === 0 &&
+      Object.keys(mcpGatewayProfileDeletedAt).length === 0 &&
+      agentSkills.length === 0 &&
+      Object.keys(agentSkillDeletedAt).length === 0
+    )
+      return [];
+    const patch: AgentLibraryPatch = {
+      mcpGatewayProfiles: mcpGatewayProfiles.map((profile) =>
+        profileForTarget(profile, capabilities),
+      ),
+      mcpGatewayProfileDeletedAt,
+      ...(skillsSupported ? { agentSkills, agentSkillDeletedAt } : {}),
+    };
+    return [{ environmentId: target.environmentId, patch }];
+  });
+  const fetches = new Map<EnvironmentId, string[]>();
+  for (const [skillId, environmentId] of holders)
+    fetches.set(environmentId, [...(fetches.get(environmentId) ?? []), skillId]);
+  return {
+    library,
+    targets,
+    fetches: [...fetches].map(([environmentId, skillIds]) => ({ environmentId, skillIds })),
+  };
+}
+
+/** Replaces stubs with the fetched version they name; a stub without its body is left out. */
+export function withAgentSkillBodies(
+  patch: AgentLibraryPatch,
+  fetched: ReadonlyArray<AgentSkill>,
+): AgentLibraryPatch {
+  if (!patch.agentSkills?.some(isAgentSkillStub)) return patch;
+  return {
+    ...patch,
+    agentSkills: patch.agentSkills.flatMap((skill) => {
+      if (!isAgentSkillStub(skill)) return [skill];
+      const key = agentSkillTieKey(skill);
+      const full = fetched.find(
+        (candidate) =>
+          candidate.skillId === skill.skillId &&
+          !isAgentSkillStub(candidate) &&
+          agentSkillTieKey(candidate) === key,
+      );
+      return full ? [withoutAgentSkillTransportFields(full)] : [];
+    }),
+  };
+}
+
+export interface AgentLibrarySyncIo {
+  readonly fetchSkills: (
+    environmentId: EnvironmentId,
+    skillIds: ReadonlyArray<string>,
+  ) => Promise<ReadonlyArray<AgentSkill>>;
+  /** Resolves whether the target accepted the patch. */
+  readonly replicate: (environmentId: EnvironmentId, patch: AgentLibraryPatch) => Promise<boolean>;
+}
+
+/** Runs a plan from React clients; a failed fetch only defers those skills to the next pass. */
+export async function runAgentLibrarySync(
+  plan: AgentLibrarySyncPlan,
+  io: AgentLibrarySyncIo,
+): Promise<boolean> {
+  const fetched = (
+    await Promise.all(
+      plan.fetches.map(({ environmentId, skillIds }) =>
+        io.fetchSkills(environmentId, skillIds).catch(() => []),
+      ),
+    )
+  ).flat();
+  const results = await Promise.all(
+    plan.targets.map(({ environmentId, patch }) =>
+      io.replicate(environmentId, withAgentSkillBodies(patch, fetched)),
+    ),
+  );
+  return results.every(Boolean);
+}
+
+const withoutServerOwned = <T extends { revision: number; createdAt: string; updatedAt: string }>({
+  revision: _revision,
+  createdAt: _createdAt,
+  updatedAt: _updatedAt,
+  ...content
+}: T) => content;
+
+/**
+ * Turns a whole-library settings patch into per-item operations against the library the caller
+ * saw, so a concurrent edit to another item survives. Other settings stay in `rest`.
+ */
+export function agentLibraryOperationsFromPatch(
+  snapshot: {
+    readonly agentSkills: ReadonlyArray<AgentSkill>;
+    readonly mcpGatewayProfiles: ReadonlyArray<McpGatewayProfile>;
+  },
+  patch: ServerSettingsPatch,
+): {
+  readonly operations: ReadonlyArray<AgentLibraryOperation>;
+  readonly rest: ServerSettingsPatch;
+} {
+  const {
+    mcpGatewayProfiles,
+    agentSkills,
+    mcpGatewayProfileDeletedAt: _profileDeletedAt,
+    agentSkillDeletedAt: _skillDeletedAt,
+    ...rest
+  } = patch;
+  const skillUpserts: AgentLibraryOperation[] = [];
+  const skillDeletes: AgentLibraryOperation[] = [];
+  const profileOperations: AgentLibraryOperation[] = [];
+  if (agentSkills !== undefined) {
+    for (const skill of agentSkills) {
+      const seen = snapshot.agentSkills.find((item) => item.skillId === skill.skillId);
+      if (seen && Equal.equals(withoutServerOwned(seen), withoutServerOwned(skill))) continue;
+      skillUpserts.push({ type: "skill.upsert", skill, baseRevision: seen?.revision ?? null });
+    }
+    for (const seen of snapshot.agentSkills) {
+      if (!agentSkills.some((skill) => skill.skillId === seen.skillId))
+        skillDeletes.push({
+          type: "skill.delete",
+          skillId: seen.skillId,
+          baseRevision: seen.revision,
+        });
+    }
+  }
+  if (mcpGatewayProfiles !== undefined) {
+    for (const profile of mcpGatewayProfiles) {
+      const seen = snapshot.mcpGatewayProfiles.find((item) => item.profileId === profile.profileId);
+      if (seen && Equal.equals(withoutServerOwned(seen), withoutServerOwned(profile))) continue;
+      profileOperations.push({
+        type: "profile.upsert",
+        profile,
+        baseRevision: seen?.revision ?? null,
+      });
+    }
+    for (const seen of snapshot.mcpGatewayProfiles) {
+      if (!mcpGatewayProfiles.some((profile) => profile.profileId === seen.profileId))
+        profileOperations.push({
+          type: "profile.delete",
+          profileId: seen.profileId,
+          baseRevision: seen.revision,
+        });
+    }
+  }
+  // New skills exist before agents reference them; deletions unassign after agent edits land.
+  return { operations: [...skillUpserts, ...profileOperations, ...skillDeletes], rest };
+}
+
 const readLiveLibrary = Effect.fn("readLiveLibrary")(function* () {
   const supervisor = yield* EnvironmentSupervisor;
   const session = yield* SubscriptionRef.get(supervisor.session);
   if (Option.isNone(session)) return Option.none();
   const config = yield* session.value.initialConfig;
   if (!config.environment.capabilities.agentLibrarySync) return Option.none();
-  const { settings } = yield* request(WS_METHODS.serverGetConfig, {});
+  const { settings } = yield* request(WS_METHODS.serverGetConfig, {
+    agentSkillBodiesOnDemand: true,
+  });
   return Option.some({ ...config, settings });
 });
 
@@ -33,30 +379,48 @@ export const syncAgentLibraryBeforeUse = Effect.fn("syncAgentLibraryBeforeUse")(
     if (Option.isNone(targetOption)) return;
     const target = targetOption.value;
     const cache = yield* Effect.serviceOption(EnvironmentCacheStore);
-    const cached = (id: typeof environmentId) =>
+    const cached = (id: EnvironmentId) =>
       Option.isSome(cache)
-        ? cache.value.loadServerConfig(id).pipe(Effect.orElseSucceed(() => Option.none()))
+        ? cache.value.loadServerConfig(id).pipe(
+            Effect.map(Option.map((config) => ({ config, live: false }))),
+            Effect.orElseSucceed(() => Option.none()),
+          )
         : Effect.succeedNone;
     const peers = yield* Effect.forEach(
       [...entries.keys()].filter((id) => id !== environmentId),
       Effect.fnUntraced(function* (id) {
         const state = yield* registry.value.state(id);
-        return state.phase === "connected"
-          ? yield* registry.value.run(id, readLiveLibrary()).pipe(Effect.catch(() => cached(id)))
-          : yield* cached(id);
+        const peer =
+          state.phase === "connected"
+            ? yield* registry.value.run(id, readLiveLibrary()).pipe(
+                Effect.map(Option.map((config) => ({ config, live: true }))),
+                Effect.catch(() => cached(id)),
+              )
+            : yield* cached(id);
+        return Option.map(peer, ({ config, live }) => ({
+          environmentId: id,
+          library: config.settings,
+          capabilities: config.environment.capabilities,
+          live,
+        }));
       }),
       { concurrency: 4 },
     );
-    const library = mergeAgentLibraries([
-      target.settings,
-      ...peers.flatMap((peer) =>
-        Option.isSome(peer) && peer.value.environment.capabilities.agentLibrarySync
-          ? [peer.value.settings]
-          : [],
-      ),
-    ]);
+    const plan = planAgentLibrarySync(
+      [
+        {
+          environmentId,
+          library: target.settings,
+          capabilities: target.environment.capabilities,
+          live: true,
+        },
+        ...peers.flatMap((peer) => (Option.isSome(peer) ? [peer.value] : [])),
+      ],
+      { targets: [environmentId] },
+    );
+    const library = plan.library;
     if (
-      library.agentSkills.some((skill) => skill.resources?.length) &&
+      library.agentSkills.some(agentSkillHasResources) &&
       target.environment.capabilities.agentSkillResources !== true
     ) {
       return yield* new EnvironmentRpcUnavailableError({
@@ -64,9 +428,8 @@ export const syncAgentLibraryBeforeUse = Effect.fn("syncAgentLibraryBeforeUse")(
         message: "Update T3 on this machine to synchronize skill resources.",
       });
     }
-    const supportsSkills = target.environment.capabilities.agentSkillsSync === true;
     if (
-      !supportsSkills &&
+      target.environment.capabilities.agentSkillsSync !== true &&
       profileId &&
       library.mcpGatewayProfiles.some(
         (profile) => profile.profileId === profileId && profile.skillIds?.length,
@@ -77,14 +440,21 @@ export const syncAgentLibraryBeforeUse = Effect.fn("syncAgentLibraryBeforeUse")(
         message: "Update T3 on this machine to use shared agent skills.",
       });
     }
-    const patch = agentLibraryForSync(library, supportsSkills);
-    if (
-      !Equal.equals(
-        patch,
-        agentLibraryForSync(mergeAgentLibraries([target.settings]), supportsSkills),
-      )
-    ) {
-      yield* request(WS_METHODS.serverUpdateSettings, { patch, replicateProfiles: true });
+    const pending = plan.targets[0];
+    if (pending) {
+      const fetched = yield* Effect.forEach(
+        plan.fetches,
+        ({ environmentId: source, skillIds }) =>
+          registry.value.run(source, request(WS_METHODS.serverGetAgentSkills, { skillIds })).pipe(
+            Effect.map((result) => result.agentSkills),
+            Effect.orElseSucceed((): ReadonlyArray<AgentSkill> => []),
+          ),
+        { concurrency: 4 },
+      );
+      yield* request(WS_METHODS.serverUpdateSettings, {
+        patch: withAgentSkillBodies(pending.patch, fetched.flat()),
+        replicateProfiles: true,
+      });
     }
     return library;
   }).pipe(

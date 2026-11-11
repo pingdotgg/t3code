@@ -14,6 +14,10 @@ import {
   EnvironmentId,
   WS_METHODS,
   mergeAgentLibraries,
+  agentSkillDigest,
+  toAgentSkillStub,
+  type AgentSkill,
+  type McpGatewayProfile,
   type ServerConfig,
   type ServerSettings,
 } from "@t3tools/contracts";
@@ -25,7 +29,13 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { AVAILABLE_CONNECTION_STATE, PrimaryConnectionTarget } from "../connection/model.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { syncAgentLibraryBeforeUse } from "./agentLibrary.ts";
+import {
+  agentLibraryOperationsFromPatch,
+  planAgentLibrarySync,
+  syncAgentLibraryBeforeUse,
+  withAgentSkillBodies,
+  type AgentLibrarySource,
+} from "./agentLibrary.ts";
 
 it.effect(
   "awaits the newest remote prompt and skill revision and does not resurrect deletions",
@@ -216,3 +226,102 @@ it.effect(
       expect(writes).toBe(2);
     }),
 );
+
+it("plans per-target patches with only missing or older items and fetches stub bodies from a holder", () => {
+  const agent: McpGatewayProfile = {
+    profileId: "randy",
+    name: "Randy",
+    skillIds: ["review"],
+    iconId: "rocket",
+    revision: 2,
+    runtimeMode: "auto",
+    interactionMode: "default",
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-02",
+  };
+  const oldSkill: AgentSkill = {
+    skillId: "review",
+    name: "Review",
+    description: "Review code",
+    content: "Old rules",
+    revision: 1,
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+  };
+  const newSkill = { ...oldSkill, content: "New rules", revision: 2, updatedAt: "2026-01-02" };
+  const offlineSkill = { ...oldSkill, skillId: "offline", updatedAt: "2026-01-03" };
+  const stub = (skill: AgentSkill) => toAgentSkillStub(skill, agentSkillDigest(skill));
+  const current = {
+    agentLibrarySync: true,
+    agentSkillsSync: true,
+    agentSkillResources: true,
+    agentSkillBodiesOnDemand: true,
+    agentLibraryMutations: true,
+  };
+  const source = (
+    id: string,
+    library: AgentLibrarySource["library"],
+    capabilities: AgentLibrarySource["capabilities"] = current,
+    live = true,
+  ): AgentLibrarySource => ({ environmentId: EnvironmentId.make(id), library, capabilities, live });
+  const plan = planAgentLibrarySync([
+    source("holder", { mcpGatewayProfiles: [agent], agentSkills: [stub(newSkill)] }),
+    source("stale", { mcpGatewayProfiles: [agent], agentSkills: [stub(oldSkill)] }),
+    source("legacy", { mcpGatewayProfiles: [] }, { agentLibrarySync: true }),
+    source("cached", { mcpGatewayProfiles: [], agentSkills: [stub(offlineSkill)] }, current, false),
+  ]);
+  // Only the cached machine holds `offline`, and nobody live can serve its body yet.
+  expect(plan.targets.map((target) => target.environmentId)).toEqual(["stale", "legacy"]);
+  const [stale, legacy] = plan.targets;
+  expect(stale?.patch.mcpGatewayProfiles).toEqual([]);
+  expect(stale?.patch.agentSkills).toEqual([stub(newSkill)]);
+  const { skillIds: _skillIds, iconId: _iconId, ...legacyAgent } = agent;
+  expect(legacy?.patch).toEqual({
+    mcpGatewayProfiles: [legacyAgent],
+    mcpGatewayProfileDeletedAt: {},
+  });
+  expect(plan.fetches).toEqual([{ environmentId: "holder", skillIds: ["review"] }]);
+  expect(withAgentSkillBodies(stale!.patch, [newSkill]).agentSkills).toEqual([newSkill]);
+  // A body that changed since the plan names another version and waits for the next pass.
+  expect(
+    withAgentSkillBodies(stale!.patch, [{ ...newSkill, content: "Newer" }]).agentSkills,
+  ).toEqual([]);
+});
+
+it("turns a whole-library patch into per-item operations against the snapshot the caller saw", () => {
+  const agent = (id: string, revision: number, name = id): McpGatewayProfile => ({
+    profileId: id,
+    name,
+    revision,
+    runtimeMode: "auto",
+    interactionMode: "default",
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+  });
+  const skill: AgentSkill = {
+    skillId: "review",
+    name: "Review",
+    description: "",
+    content: "Rules",
+    revision: 3,
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+  };
+  const snapshot = {
+    mcpGatewayProfiles: [agent("a", 2), agent("b", 5), agent("c", 1)],
+    agentSkills: [toAgentSkillStub(skill, agentSkillDigest(skill))],
+  };
+  const created = agent("d", 1);
+  const { operations, rest } = agentLibraryOperationsFromPatch(snapshot, {
+    mcpGatewayProfiles: [agent("a", 2), agent("b", 5, "Bea"), created],
+    agentSkills: [],
+    newWorktreesStartFromOrigin: true,
+  });
+  expect(operations).toEqual([
+    { type: "profile.upsert", profile: agent("b", 5, "Bea"), baseRevision: 5 },
+    { type: "profile.upsert", profile: created, baseRevision: null },
+    { type: "profile.delete", profileId: "c", baseRevision: 1 },
+    { type: "skill.delete", skillId: "review", baseRevision: 3 },
+  ]);
+  expect(rest).toEqual({ newWorktreesStartFromOrigin: true });
+});

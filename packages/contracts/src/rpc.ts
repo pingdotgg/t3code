@@ -195,6 +195,13 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
+import {
+  AgentLibraryConflictError,
+  AgentLibraryMutationInput,
+  AgentLibraryMutationResult,
+  GetAgentSkillsInput,
+  GetAgentSkillsResult,
+} from "./agentLibrary.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
@@ -594,6 +601,8 @@ export const WS_METHODS = {
   tailnetDevicesUpdateSettings: "tailnetDevices.updateSettings",
   tailnetDevicesOpenDevice: "tailnetDevices.openDevice",
   serverUpdateSettings: "server.updateSettings",
+  serverGetAgentSkills: "server.getAgentSkills",
+  serverMutateAgentLibrary: "server.mutateAgentLibrary",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
   serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
@@ -742,7 +751,10 @@ const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
 });
 
 const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
-  payload: Schema.Struct({}),
+  payload: Schema.Struct({
+    /** As on `subscribeServerConfig`. */
+    agentSkillBodiesOnDemand: Schema.optional(Schema.Boolean),
+  }),
   success: ServerConfig,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
 });
@@ -975,6 +987,22 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGetAgentSkillsRpc = Rpc.make(WS_METHODS.serverGetAgentSkills, {
+  payload: GetAgentSkillsInput,
+  success: GetAgentSkillsResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsServerMutateAgentLibraryRpc = Rpc.make(WS_METHODS.serverMutateAgentLibrary, {
+  payload: AgentLibraryMutationInput,
+  success: AgentLibraryMutationResult,
+  error: Schema.Union([
+    AgentLibraryConflictError,
+    ServerSettingsError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -2137,6 +2165,8 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
     workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
     /** With on-demand snapshots, also omit machine slash commands and skills a cwd snapshot replaces. */
     providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
+    /** Send shared skills as stubs without bodies; the client fetches them through `server.getAgentSkills`. */
+    agentSkillBodiesOnDemand: Schema.optional(Schema.Boolean),
   }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
@@ -2372,6 +2402,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetDatabaseStorageRpc,
   WsServerReclaimDatabaseSpaceRpc,
   WsServerUpdateSettingsRpc,
+  WsServerGetAgentSkillsRpc,
+  WsServerMutateAgentLibraryRpc,
   WsPeerLinksListRpc,
   WsTailnetDevicesListRpc,
   WsTailnetDevicesSetAccessRpc,

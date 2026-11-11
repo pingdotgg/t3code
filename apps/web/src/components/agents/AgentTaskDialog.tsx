@@ -145,7 +145,7 @@ export function AgentTaskDialog({
                     disabled={item.runtimeMode === "read-only"}
                     onChange={() => setProfileId(item.profileId)}
                   />
-                  <AgentIcon icon={item.icon} />
+                  <AgentIcon icon={item.icon} iconId={item.iconId} />
                   <span className="agent-choice-body">
                     <span className="agent-choice-name">{item.name}</span>
                     {item.description && (

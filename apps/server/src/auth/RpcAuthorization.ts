@@ -68,6 +68,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.mcpGatewayRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
+  // The same skills subscribeServerConfig streams to readers, with their bodies.
+  [WS_METHODS.serverGetAgentSkills]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetNpmRelease]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateProvider]: AuthProvidersManageScope,

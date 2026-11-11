@@ -1,8 +1,10 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  agentSkillDigest,
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
+  toAgentSkillStub,
   type ManagedPolicyDocument,
   ModelSelection,
   ProjectId,
@@ -549,6 +551,198 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.equal(error.operation, "normalize");
       assert.match(String(error.cause), /Duplicate MCP gateway profile name: Andy/);
       assert.deepEqual((yield* serverSettings.getSettings).mcpGatewayProfiles, []);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("rejects a new or renamed agent whose name clashes ignoring case", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const doug = {
+        profileId: "doug",
+        name: "Doug",
+        revision: 1,
+        runtimeMode: "auto" as const,
+        interactionMode: "default" as const,
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-01",
+      };
+      const saved = yield* settings.updateSettings({ mcpGatewayProfiles: [doug] });
+      const error = yield* settings
+        .updateSettings({
+          mcpGatewayProfiles: [
+            ...saved.mcpGatewayProfiles,
+            { ...doug, profileId: "other", name: "doug" },
+          ],
+        })
+        .pipe(Effect.flip);
+      assert.match(String(error.cause), /An agent named "doug" already exists/);
+      const conflict = yield* settings
+        .mutateAgentLibrary([
+          {
+            type: "profile.upsert",
+            profile: { ...doug, profileId: "other", name: "DOUG" },
+            baseRevision: null,
+          },
+        ])
+        .pipe(Effect.flip);
+      assert.deepInclude(conflict, {
+        _tag: "AgentLibraryConflictError",
+        reason: "name",
+        itemId: "other",
+      });
+      assert.match(conflict.message, /names ignore case/);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("sends opted-in clients skill stubs and never persists one", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const skill = {
+        skillId: "review",
+        name: "Review",
+        description: "Review code",
+        content: "Rules",
+        resources: [{ path: "scripts/check.sh", contentBase64: "b2s=", executable: true }],
+        revision: 2,
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-02",
+      };
+      const stored = yield* settings.updateSettings({ agentSkills: [skill] }, true);
+      const [stub] = ServerSettingsModule.redactServerSettingsForClient(stored, {
+        secretReferences: true,
+        agentSkillBodiesOnDemand: true,
+      }).agentSkills;
+      assert.deepEqual(stub, toAgentSkillStub(skill, agentSkillDigest(skill)));
+      assert.deepEqual(
+        ServerSettingsModule.redactServerSettingsForClient(stored, { secretReferences: true })
+          .agentSkills,
+        [skill],
+      );
+      assert.deepEqual(ServerSettingsModule.selectAgentSkills(stored, ["review", "gone"]), [skill]);
+
+      const renamed = yield* settings.updateSettings({
+        agentSkills: [{ ...stub!, name: "Audit" }],
+      });
+      assert.deepInclude(renamed.agentSkills[0], { name: "Audit", content: "Rules", revision: 3 });
+      assert.deepEqual(renamed.agentSkills[0]?.resources, skill.resources);
+      assert.notProperty(renamed.agentSkills[0], "contentOmitted");
+
+      const audit = renamed.agentSkills[0]!;
+      const later = { ...audit, description: "Audit code", updatedAt: "2099-01-01" };
+      const replicated = yield* settings.updateSettings(
+        {
+          agentSkills: [
+            toAgentSkillStub(later, agentSkillDigest(audit)),
+            toAgentSkillStub({ ...later, skillId: "unknown" }, agentSkillDigest(audit)),
+            toAgentSkillStub({ ...later, revision: 9, updatedAt: "2099-02-01" }, "other-body"),
+          ],
+        },
+        true,
+      );
+      assert.deepEqual(replicated.agentSkills, [later]);
+
+      const fs = yield* FileSystem.FileSystem;
+      const { settingsPath } = yield* ServerConfig.ServerConfig;
+      const saved = yield* decodeSavedSettings(yield* fs.readFileString(settingsPath));
+      assert.deepEqual(saved.agentSkills, [later]);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("keeps the stored agent when a whole-library patch echoes an older revision", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const agent = {
+        profileId: "randy",
+        name: "Randy",
+        revision: 3,
+        runtimeMode: "auto" as const,
+        interactionMode: "default" as const,
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-03",
+      };
+      const stored = yield* settings.updateSettings({ mcpGatewayProfiles: [agent] }, true);
+      const echoed = yield* settings.updateSettings({
+        mcpGatewayProfiles: [{ ...agent, name: "Stale", revision: 2 }],
+      });
+      assert.deepEqual(echoed.mcpGatewayProfiles, stored.mcpGatewayProfiles);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("applies per-item edits against base revisions and unassigns deleted skills", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const skill = {
+        skillId: "review",
+        name: "Review",
+        description: "",
+        content: "Rules",
+        revision: 1,
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-01",
+      };
+      const agent = (profileId: string, skillIds?: ReadonlyArray<string>) => ({
+        profileId,
+        name: profileId,
+        revision: 1,
+        runtimeMode: "auto" as const,
+        interactionMode: "default" as const,
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-01",
+        ...(skillIds ? { skillIds } : {}),
+      });
+      yield* settings.updateSettings(
+        {
+          agentSkills: [skill],
+          mcpGatewayProfiles: [agent("randy", ["review"]), agent("bea"), agent("cal", ["review"])],
+        },
+        true,
+      );
+
+      const stale = yield* settings
+        .mutateAgentLibrary([
+          { type: "profile.upsert", profile: { ...agent("bea"), name: "Bea" }, baseRevision: 1 },
+          {
+            type: "profile.upsert",
+            profile: { ...agent("randy"), name: "Randy" },
+            baseRevision: 0,
+          },
+        ])
+        .pipe(Effect.flip);
+      assert.deepInclude(stale, {
+        _tag: "AgentLibraryConflictError",
+        itemKind: "agent",
+        itemId: "randy",
+        reason: "revision",
+        expectedRevision: 0,
+        actualRevision: 1,
+      });
+      assert.equal(
+        (yield* settings.getSettings).mcpGatewayProfiles.find((p) => p.profileId === "bea")?.name,
+        "bea",
+      );
+
+      const result = yield* settings.mutateAgentLibrary([
+        { type: "profile.upsert", profile: { ...agent("bea"), name: "Bea" }, baseRevision: 1 },
+        { type: "skill.delete", skillId: "review", baseRevision: 1 },
+      ]);
+      assert.deepEqual(
+        result.mcpGatewayProfiles.map((p) => [p.profileId, p.name, p.revision, p.skillIds]),
+        [
+          ["bea", "Bea", 2, undefined],
+          ["cal", "cal", 2, []],
+          ["randy", "randy", 2, []],
+        ],
+      );
+      assert.deepEqual(result.agentSkills, []);
+      assert.isString(result.agentSkillDeletedAt.review);
+      const after = yield* settings.getSettings;
+      assert.deepEqual(after.agentSkills, []);
+      assert.deepEqual(after.mcpGatewayProfiles, result.mcpGatewayProfiles);
+
+      const gone = yield* settings
+        .mutateAgentLibrary([{ type: "skill.delete", skillId: "review", baseRevision: 1 }])
+        .pipe(Effect.flip);
+      assert.deepInclude(gone, { reason: "missing", itemKind: "skill", itemId: "review" });
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

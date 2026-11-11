@@ -1205,6 +1205,16 @@ export function createServerEnvironmentAtoms<R, E>(
 
   return {
     configValueAtom,
+    getAgentSkills: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:get-agent-skills",
+      tag: WS_METHODS.serverGetAgentSkills,
+    }),
+    mutateAgentLibrary: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:mutate-agent-library",
+      tag: WS_METHODS.serverMutateAgentLibrary,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     runStorageCleanup: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:run-storage-cleanup",
       tag: WS_METHODS.serverRunStorageCleanup,

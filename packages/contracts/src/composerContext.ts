@@ -25,6 +25,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "skill",
   "thread",
   "environment",
+  "agent",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -224,6 +225,20 @@ export const EnvironmentContextRecord = Schema.Struct({
 });
 export type EnvironmentContextRecord = typeof EnvironmentContextRecord.Type;
 
+/**
+ * One of the user's T3 agents, picked from the `@` menu. `profileId` is the identity; `name` is a
+ * snapshot for when the agent is renamed or deleted. `environmentId` names a machine the agent
+ * is limited to when that is not the composer's own.
+ */
+export const AgentContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("agent"),
+  profileId: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  environmentId: Schema.optionalKey(EnvironmentId),
+});
+export type AgentContextRecord = typeof AgentContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /** Excludes known discriminators so malformed known records fail their own schema. */
@@ -255,6 +270,7 @@ export const KnownComposerContextRecord = Schema.Union([
   SkillContextRecord,
   ThreadContextRecord,
   EnvironmentContextRecord,
+  AgentContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 
