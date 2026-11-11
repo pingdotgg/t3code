@@ -15,6 +15,7 @@ import {
   AuthOrchestrationReadScope,
   MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
+  parseMcpApprovalCode,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
@@ -205,7 +206,8 @@ export class McpOAuth extends Context.Service<
       readonly urls: McpOAuthUrls;
       readonly request: AuthMcpAuthorizationRequest;
     }) => Effect.Effect<AuthorizationRequest, McpOAuthPageError | McpOAuthRedirectError>;
-    readonly approvingBrowserSession: (
+    /** A browser cookie session, or a T3 Connect session from the hosted app, that may approve. */
+    readonly approvingSession: (
       request: HttpServerRequest.HttpServerRequest,
       authorization: AuthorizationRequest,
     ) => Effect.Effect<
@@ -305,11 +307,11 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(false);
 
-  const csrfToken = (sessionId: string, authorization: AuthorizationRequest) =>
+  const csrfToken = (holder: string, authorization: AuthorizationRequest) =>
     sign(
       "mcp-csrf",
       JSON.stringify([
-        sessionId,
+        holder,
         authorization.client.clientId,
         authorization.redirectUri,
         authorization.codeChallenge,
@@ -405,18 +407,19 @@ const make = Effect.gen(function* () {
     } satisfies AuthorizationRequest;
   });
 
-  const approvingBrowserSession: McpOAuth["Service"]["approvingBrowserSession"] = (
-    request,
-    authorization,
-  ) =>
-    environmentAuth.authenticateBrowserSession(request).pipe(
+  const approvingSession: McpOAuth["Service"]["approvingSession"] = (request, authorization) =>
+    environmentAuth.authenticateHttpRequest(request).pipe(
       Effect.flatMap((session) =>
         // Approving manages access, and a session may only hand out scopes it holds.
         session.scopes.includes(AuthAccessWriteScope) &&
         session.scopes.includes(AuthOrchestrationReadScope)
-          ? csrfToken(session.sessionId, authorization).pipe(
-              Effect.map((token) => ({ csrfToken: token, scopes: session.scopes })),
-            )
+          ? // The hosted app may get a fresh credential per call, all bound to one browser key.
+            csrfToken(
+              session.proofKeyThumbprint === undefined
+                ? session.sessionId
+                : `dpop:${session.proofKeyThumbprint}`,
+              authorization,
+            ).pipe(Effect.map((token) => ({ csrfToken: token, scopes: session.scopes })))
           : Effect.undefined,
       ),
       Effect.orElseSucceed(() => undefined),
@@ -447,8 +450,15 @@ const make = Effect.gen(function* () {
 
   const approve: McpOAuth["Service"]["approve"] = Effect.fn("McpOAuth.approve")(function* (input) {
     const { decision } = input;
+    let access = decision.access;
     if (decision._tag === "pairing-code") {
-      yield* environmentAuth.consumeMcpApprovalCode(decision.code, decision.access).pipe(
+      // An approval code is for one app's sign-in, never for linking another environment.
+      if (input.authorization.client.peerLink && parseMcpApprovalCode(decision.code)) {
+        return yield* new McpOAuthPageError({
+          description: "Linking needs a plain pairing code, not an app approval code.",
+        });
+      }
+      access = yield* environmentAuth.consumeMcpApprovalCode(decision.code, decision.access).pipe(
         Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
           Effect.logError("MCP approval code check failed.", { cause }).pipe(
             Effect.andThen(
@@ -462,7 +472,7 @@ const make = Effect.gen(function* () {
         ),
       );
     } else {
-      const session = yield* approvingBrowserSession(input.request, input.authorization);
+      const session = yield* approvingSession(input.request, input.authorization);
       if (
         session === undefined ||
         !timingSafeEqualBase64Url(decision.csrfToken, session.csrfToken) ||
@@ -473,10 +483,10 @@ const make = Effect.gen(function* () {
         });
       }
     }
-    const code = yield* mintCode(input.authorization, decision.access);
+    const code = yield* mintCode(input.authorization, access);
     yield* Effect.logInfo("Approved an MCP client sign-in.", {
       client: input.authorization.client.name,
-      access: decision.access,
+      access,
       method: decision._tag,
     });
     return redirectWith(input.authorization.redirectUri, {
@@ -566,7 +576,7 @@ const make = Effect.gen(function* () {
         : { organization: managedPolicy.organization, maxRuntimeMode },
     register,
     validateAuthorization,
-    approvingBrowserSession,
+    approvingSession,
     approve,
     deny,
     exchangeCode,
