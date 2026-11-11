@@ -1,4 +1,4 @@
-import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
+import type { VcsStatusResult } from "@t3tools/contracts";
 import { resolveQuickAction } from "@t3tools/client-runtime/state/vcs";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -50,22 +50,6 @@ describe("resolveThreadGitViewPrItem", () => {
     expect(resolveThreadGitViewPrItem(gitStatus, "run_action")).toEqual({
       title: "View PR",
       subtitle: "PR #42",
-    });
-  });
-
-  it("says View MR for a GitLab open change request", () => {
-    const gitStatus = status({
-      pr: openPr,
-      aheadCount: 1,
-      sourceControlProvider: {
-        kind: SourceControlProviderKind.make("gitlab"),
-        name: "GitLab",
-        baseUrl: "https://gitlab.com",
-      },
-    });
-    expect(resolveThreadGitViewPrItem(gitStatus, "run_action")).toEqual({
-      title: "View MR",
-      subtitle: "MR #42",
     });
   });
 

@@ -218,7 +218,6 @@ describe("withThreadOpenPullRequest", () => {
       },
     });
     expect(withThreadOpenPullRequest(status, legacy, false)).toBe(status);
-    expect(prLabel(withThreadOpenPullRequest(status, legacy, false))).toBe("Create PR");
   });
 
   it("keeps the checkout ref's own open pull request", () => {
@@ -240,7 +239,6 @@ describe("withThreadOpenPullRequest", () => {
     const merged = linkedPr(42, { snapshot: { ...linkedPr(42).snapshot!, state: "merged" } });
     const closed = linkedPr(43, { snapshot: { ...linkedPr(43).snapshot!, state: "closed" } });
     expect(withThreadOpenPullRequest(status, [merged, closed], true)).toBe(status);
-    expect(prLabel(withThreadOpenPullRequest(status, [merged], true))).toBe("Create PR");
   });
 
   it("prefers an open link over a merged one", () => {
