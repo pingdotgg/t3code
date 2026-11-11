@@ -16,7 +16,11 @@ import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
-import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
+import {
+  absoluteFilePathMatches,
+  isWindowsDrivePathHref,
+  normalizeMarkdownLinkDestination,
+} from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 export { remarkEnableOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
@@ -67,14 +71,16 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   });
 }
 
+// Whole tags, attributes, and comments, so closing-anchor text inside them never counts as a tag.
+const RAW_HTML_TAG_PATTERN = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
+
 function rehypePreserveBareAnchorPlaceholders() {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
     let rawTextTag: string | undefined;
     const visit = (node: MarkdownImageHastNode) => {
       if (node.type === "raw" && typeof node.value === "string") {
-        // Scan whole tags, attributes, and comments so embedded closing-anchor text cannot match a placeholder.
-        const tags = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
+        const tags = new RegExp(RAW_HTML_TAG_PATTERN);
         let offset = 0;
         while (rawTextTag !== "plaintext") {
           // Raw text ends at its closing tag even inside comment-looking text.
@@ -231,6 +237,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
   remarkKeepAutolinkSuffixes,
+  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkKeepOrderedListNumbers,
@@ -244,6 +251,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
   remarkKeepAutolinkSuffixes,
+  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkKeepOrderedListNumbers,
@@ -445,6 +453,40 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
   };
 }
 
+function remarkLinkAbsoluteFilePaths(): Transformer<Root> {
+  return (tree) => {
+    // Raw `<a>` tags are sibling html nodes, so text inside one is not under a link node.
+    let rawAnchorDepth = 0;
+    const visit = (node: Root | RootContent) => {
+      if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
+      node.children = node.children.flatMap((child): typeof node.children => {
+        if (child.type === "html") {
+          for (const [tag] of child.value.matchAll(RAW_HTML_TAG_PATTERN)) {
+            if (/^<a[\s/>]/i.test(tag)) rawAnchorDepth += 1;
+            else if (/^<\/a[\s>]/i.test(tag)) rawAnchorDepth = Math.max(0, rawAnchorDepth - 1);
+          }
+        }
+        if (child.type !== "text" || rawAnchorDepth > 0) {
+          visit(child);
+          return [child];
+        }
+        const parts: PhrasingContent[] = [];
+        let offset = 0;
+        for (const { index, path } of absoluteFilePathMatches(child.value)) {
+          if (index > offset) parts.push({ type: "text", value: child.value.slice(offset, index) });
+          parts.push({ type: "link", url: path, children: [{ type: "text", value: path }] });
+          offset = index + path.length;
+        }
+        if (offset === 0) return [child];
+        if (offset < child.value.length)
+          parts.push({ type: "text", value: child.value.slice(offset) });
+        return parts;
+      });
+    };
+    visit(tree);
+  };
+}
+
 function remarkPreserveCodeMeta() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode) => {
@@ -493,6 +535,84 @@ function remarkNormalizeLinksAndTagInlineCode() {
 
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
+}
+
+export function remarkAssistantInsights(this: Processor) {
+  return (tree: Root, file: { value: unknown }) => {
+    const source = String(file.value);
+    if (!source.includes("★ Insight")) return;
+    const protectedRanges: { start: number; end: number; code: boolean }[] = [];
+    const inspect = (node: RootContent | PhrasingContent) => {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined) {
+        const code =
+          node.type === "code" ||
+          node.type === "html" ||
+          (node.type === "inlineCode" && node.position?.start.line !== node.position?.end.line);
+        if (code || node.type === "list" || node.type === "blockquote")
+          protectedRanges.push({ start, end, code });
+      }
+      if ("children" in node) node.children.forEach(inspect);
+    };
+    tree.children.forEach(inspect);
+    const starts = new Set<number>();
+    const offsets: { original: number; rewritten: number; prefix: number }[] = [];
+    let indent: string | undefined;
+    let original = 0;
+    let rewritten = 0;
+    const lines = source.split(/(?<=\n)|(?<=\r)(?!\n)/u).map((line, index) => {
+      const value = line.replace(/[\r\n]+$/u, "");
+      const blocked = protectedRanges.some(
+        (range) =>
+          original >= range.start && original < range.end && (indent === undefined || range.code),
+      );
+      const opening =
+        indent === undefined && !blocked
+          ? /^( {0,3})(`?)★ Insight[ \t]+─{3,}\2[ \t]*$/u.exec(value)
+          : null;
+      const closing =
+        indent !== undefined && !blocked ? /^( {0,3})(`?)─{3,}\2[ \t]*$/u.exec(value) : null;
+      let prefix = 0;
+      let output = line;
+      if (opening) {
+        indent = opening[1] ?? "";
+        starts.add(index + 1);
+        output = ">" + line.slice(value.length);
+      } else if (closing && closing[1] === indent) {
+        indent = undefined;
+        output = line.slice(value.length);
+      } else if (indent !== undefined) {
+        prefix = 2;
+        output = "> " + line;
+      }
+      offsets.push({ original, rewritten, prefix });
+      original += line.length;
+      rewritten += output.length;
+      return output;
+    });
+    if (starts.size === 0) return;
+    const parsed = this.parse(lines.join("")) as Root;
+    const restorePosition = (node: RootContent | PhrasingContent) => {
+      if (node.position) {
+        for (const point of [node.position.start, node.position.end]) {
+          const offset = offsets[point.line - 1];
+          if (!offset) continue;
+          point.column = Math.max(1, point.column - offset.prefix);
+          if (point.offset !== undefined)
+            point.offset += offset.original - offset.rewritten - offset.prefix;
+        }
+      }
+      if ("children" in node) node.children.forEach(restorePosition);
+    };
+    for (const node of parsed.children) {
+      if (node.type === "blockquote" && starts.has(node.position?.start.line ?? 0)) {
+        node.data = { ...node.data, hProperties: { dataAlert: "insight" } };
+      }
+      restorePosition(node);
+    }
+    tree.children = parsed.children;
+  };
 }
 
 const imageSourceProcessor = unified()
