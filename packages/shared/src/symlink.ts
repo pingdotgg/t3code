@@ -23,9 +23,10 @@ export const resolveSymlinkTarget = Effect.fn("symlink.resolveSymlinkTarget")(fu
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   let current = path.resolve(filePath);
-  for (let hop = 0; hop < MAX_SYMLINK_HOPS; hop++) {
+  // The terminal file needs a probe after the last permitted link is followed.
+  for (let hop = 0; hop <= MAX_SYMLINK_HOPS; hop++) {
     const link = yield* fs.readLink(current).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchIf(isNotASymlink, () => Effect.succeedNone),
     );
     if (Option.isNone(link)) {

@@ -1,4 +1,4 @@
-export interface WorkspaceFileDragEvent {
+interface WorkspaceFileDragEvent {
   readonly dataTransfer: {
     readonly types: ReadonlyArray<string>;
     readonly files: Iterable<File>;
@@ -16,7 +16,7 @@ export interface WorkspaceFileDragEvent {
   preventDefault(): void;
 }
 
-export interface WorkspaceFileDropHost {
+interface WorkspaceFileDropHost {
   setDragActive(active: boolean): void;
   addFiles(files: File[]): void;
   addFolders(folders: File[]): void;

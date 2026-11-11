@@ -12,6 +12,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "alchemy": "catalog:",
@@ -24,6 +25,7 @@
   "workspaces": {
     "packages": ["frontend", "backend"],
     "catalog": {
+      "@alchemy.run/cloudflare": "file:../packages/cloudflare",
       "@effect/platform-bun": "4.0.0-rc.112",
       "@effect/platform-node": "4.0.0-rc.112",
       "@types/bun": "latest",

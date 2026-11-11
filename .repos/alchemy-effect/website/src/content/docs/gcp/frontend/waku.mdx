@@ -1,0 +1,95 @@
+---
+title: Waku
+description: Deploy a Waku (React Server Components) app to Cloud Run with GCP.Website.Waku.
+sidebar:
+  order: 18
+---
+
+import PackageManagers from "../../../../components/PackageManagers.astro";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`GCP.Website.Waku` deploys a [Waku](https://waku.gg) app to Cloud Run.
+The React Server Components server runs in the container. Static pages
+are served without their extension (`/about`).
+
+## Install
+
+The build integration ships separately. It only runs at deploy time,
+so a dev dependency is enough:
+
+<PackageManagers dev={devDeps} />
+
+Docker has to be running when you deploy. The image is built on your
+machine.
+
+## Deploy the site
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+
+export const Website = GCP.Website.Waku("Website");
+
+export default Alchemy.Stack(
+  "MySite",
+  { providers: GCP.providers(), state: GCP.state() },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Run `alchemy deploy`. `site.url` is the Cloud Run service URL.
+
+## Pass environment variables
+
+```diff lang="typescript"
+// alchemy.run.ts
+-export const Website = GCP.Website.Waku("Website");
++export const Website = GCP.Website.Waku("Website", {
++  env: {
++    GREETING: "Hello from Cloud Run!",
++  },
++});
+```
+
+Server code reads the value from `process.env.GREETING`.
+
+## Configure Waku
+
+Your `waku.config.*` loads as-is. The `waku` prop overrides `srcDir`,
+`distDir`, or `basePath` for a deploy:
+
+```typescript
+export const Website = GCP.Website.Waku("Website", {
+  waku: { basePath: "/app/" },
+});
+```
+
+## Tune Cloud Run
+
+```typescript
+export const Website = GCP.Website.Waku("Website", {
+  scaling: { minInstanceCount: 1 },
+  resources: { limits: { cpu: "1", memory: "1Gi" } },
+});
+```
+
+One warm instance means no cold start for the first visitor. See
+[Websites](/gcp/frontend/websites#tune-cloud-run) for the other
+settings.
+
+## Local development
+
+`alchemy dev` runs the framework's dev server with hot reload and
+creates nothing in the cloud. Wrap the site in `Alchemy.remote()` to
+deploy it for real during dev.
+
+## Where next
+
+- [Websites](/gcp/frontend/websites) — the settings every site shares.
+- [Website reference](/providers/gcp/website#waku) — every prop.

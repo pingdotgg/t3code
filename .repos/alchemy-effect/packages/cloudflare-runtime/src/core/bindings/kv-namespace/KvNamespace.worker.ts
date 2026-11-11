@@ -31,6 +31,7 @@ import {
   BINDING_KV_OBJECT,
   HEADER_KV_CONTROL_OP,
   HEADER_KV_NAMESPACE,
+  HEADER_KV_MODE,
 } from "./KvNamespaceOptions.shared.ts";
 
 interface Env {
@@ -41,10 +42,11 @@ interface Env {
 
 export default {
   async fetch(request, env, ctx) {
-    const { namespaceId } = (ctx as { props: KvServiceProps }).props;
+    const { namespaceId, mode } = (ctx as { props: KvServiceProps }).props;
     const stub = env[BINDING_KV_OBJECT].getByName(namespaceId);
     const headers = new Headers(request.headers);
     headers.set(HEADER_KV_NAMESPACE, encodeURIComponent(namespaceId));
+    headers.set(HEADER_KV_MODE, mode ?? "classic");
     return stub.fetch(new Request(request, { headers }));
   },
 } satisfies ExportedHandler<Env>;
@@ -103,10 +105,7 @@ function validateKey(key: string): void {
     throw new HttpError(400, "Key names must not be empty");
   }
   if (key === "." || key === "..") {
-    throw new HttpError(
-      400,
-      `Illegal key name "${key}". Please use a different name.`,
-    );
+    throw new HttpError(400, `Illegal key name "${key}". Please use a different name.`);
   }
   validateKeyLength(key);
 }
@@ -121,18 +120,12 @@ function validateKeyLength(key: string): void {
   }
 }
 
-function validateGetOptions(
-  key: string,
-  options?: { cacheTtl?: number },
-): void {
+function validateGetOptions(key: string, options?: { cacheTtl?: number }): void {
   validateKey(key);
   // Validate cacheTtl, but ignore it as there's only one "edge location":
   // the user's computer
   const cacheTtl = options?.cacheTtl;
-  if (
-    cacheTtl !== undefined &&
-    (isNaN(cacheTtl) || cacheTtl < KVLimits.MIN_CACHE_TTL_SECONDS)
-  ) {
+  if (cacheTtl !== undefined && (isNaN(cacheTtl) || cacheTtl < KVLimits.MIN_CACHE_TTL_SECONDS)) {
     throw new HttpError(
       400,
       `Invalid ${KVParams.CACHE_TTL} of ${cacheTtl}. Cache TTL must be at least ${KVLimits.MIN_CACHE_TTL_SECONDS}.`,
@@ -204,17 +197,13 @@ function validatePutOptions(
 
 function decodeListOptions(url: URL) {
   const limitParam = url.searchParams.get(KVParams.LIST_LIMIT);
-  const limit =
-    limitParam === null ? KVLimits.MAX_LIST_KEYS : parseInt(limitParam);
+  const limit = limitParam === null ? KVLimits.MAX_LIST_KEYS : parseInt(limitParam);
   const prefix = url.searchParams.get(KVParams.LIST_PREFIX) ?? undefined;
   const cursor = url.searchParams.get(KVParams.LIST_CURSOR) ?? undefined;
   return { limit, prefix, cursor };
 }
 
-function validateListOptions(options: {
-  limit: number;
-  prefix?: string;
-}): void {
+function validateListOptions(options: { limit: number; prefix?: string }): void {
   // Validate key limit
   const limit = options.limit;
   if (limit !== undefined) {
@@ -242,10 +231,7 @@ function validateListOptions(options: {
 // -----------------------------------------------------------------------------
 
 function createMaxValueSizeError(length: number, maxValueSize: number) {
-  return new HttpError(
-    413,
-    `Value length of ${length} exceeds limit of ${maxValueSize}.`,
-  );
+  return new HttpError(413, `Value length of ${length} exceeds limit of ${maxValueSize}.`);
 }
 
 class MaxLengthStream extends TransformStream<Uint8Array, Uint8Array> {
@@ -255,9 +241,7 @@ class MaxLengthStream extends TransformStream<Uint8Array, Uint8Array> {
   constructor(maxLength: number) {
     const abortController = new AbortController();
     let resolveLength!: (length: number) => void;
-    const lengthPromise = new Promise<number>(
-      (resolve) => (resolveLength = resolve),
-    );
+    const lengthPromise = new Promise<number>((resolve) => (resolveLength = resolve));
 
     let length = 0;
     super({
@@ -310,11 +294,7 @@ async function processKeyValue(
   let val = null;
   const size = decodedValue.length;
   try {
-    val = !obj?.value
-      ? null
-      : type === "json"
-        ? JSON.parse(decodedValue)
-        : decodedValue;
+    val = !obj?.value ? null : type === "json" ? JSON.parse(decodedValue) : decodedValue;
   } catch {
     throw new HttpError(
       400,
@@ -343,6 +323,7 @@ export class KVNamespaceObject implements DurableObject {
   beingTested = false;
 
   #name?: string;
+  #instant = false;
   #blob?: BlobStore;
   #storage?: KeyValueStorage;
 
@@ -361,19 +342,12 @@ export class KVNamespaceObject implements DurableObject {
   }
 
   get blob(): BlobStore {
-    return (this.#blob ??= new BlobStore(
-      this.env[BINDING_KV_BLOBS],
-      this.name,
-    ));
+    return (this.#blob ??= new BlobStore(this.env[BINDING_KV_BLOBS], this.name));
   }
 
   get storage(): KeyValueStorage {
     // `KeyValueStorage` can only be constructed once `this.blob` is initialised
-    return (this.#storage ??= new KeyValueStorage(
-      this.state.storage,
-      this.blob,
-      this.timers,
-    ));
+    return (this.#storage ??= new KeyValueStorage(this.state.storage, this.blob, this.timers));
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -383,6 +357,7 @@ export class KVNamespaceObject implements DurableObject {
     const encodedName = req.headers.get(HEADER_KV_NAMESPACE);
     assert(encodedName !== null, `Expected ${HEADER_KV_NAMESPACE} header`);
     this.#name = decodeURIComponent(encodedName);
+    this.#instant = req.headers.get(HEADER_KV_MODE) === "instant";
 
     // Allow control of object internals via a reserved header. Used by tests
     // to update fake time and access internal storage.
@@ -432,10 +407,7 @@ export class KVNamespaceObject implements DurableObject {
       // Enable/disable fake timers, advance time, or wait for tasks
       const func: unknown = this.timers[name as keyof Timers];
       assert(typeof func === "function", `Unknown control op: ${name}`);
-      const result = await (func as (...args: Array<unknown>) => unknown).apply(
-        this.timers,
-        args,
-      );
+      const result = await (func as (...args: Array<unknown>) => unknown).apply(this.timers, args);
       return Response.json(result ?? null);
     }
   }
@@ -463,14 +435,20 @@ export class KVNamespaceObject implements DurableObject {
     }
   }
 
+  #validateInstantKeySize(key: string): void {
+    if (this.#instant && utf8ByteLength(key) > 300) {
+      throw new HttpError(400, "KV Instant keys must be at most 300 bytes");
+    }
+  }
+
   async #get(rawKey: string, url: URL): Promise<Response> {
     // Decode URL parameters
     const key = decodeKey(rawKey, url.searchParams);
     const cacheTtlParam = url.searchParams.get(KVParams.CACHE_TTL);
-    const cacheTtl =
-      cacheTtlParam === null ? undefined : parseInt(cacheTtlParam);
+    const cacheTtl = cacheTtlParam === null ? undefined : parseInt(cacheTtlParam);
 
     // Get value from storage
+    this.#validateInstantKeySize(key);
     validateGetOptions(key, { cacheTtl });
     const entry = await this.storage.get(key);
     if (entry === null) throw new HttpError(404, "Not Found");
@@ -478,10 +456,7 @@ export class KVNamespaceObject implements DurableObject {
     // Return value in runtime-friendly format
     const headers = new Headers();
     if (entry.expiration !== undefined) {
-      headers.set(
-        KVHeaders.EXPIRATION,
-        millisToSeconds(entry.expiration).toString(),
-      );
+      headers.set(KVHeaders.EXPIRATION, millisToSeconds(entry.expiration).toString());
     }
     if (entry.metadata !== undefined) {
       headers.set(KVHeaders.METADATA, JSON.stringify(entry.metadata));
@@ -513,6 +488,7 @@ export class KVNamespaceObject implements DurableObject {
     const obj: Record<string, unknown> = {};
     let totalBytes = 0;
     for (const key of keys) {
+      this.#validateInstantKeySize(key);
       validateGetOptions(key, { cacheTtl: parsedBody.cacheTtl });
       const entry = await this.storage.get(key);
       const [value, size] = await processKeyValue(
@@ -542,6 +518,10 @@ export class KVNamespaceObject implements DurableObject {
     const rawExpiration = url.searchParams.get(KVParams.EXPIRATION);
     const rawExpirationTtl = url.searchParams.get(KVParams.EXPIRATION_TTL);
     const rawMetadata = req.headers.get(KVHeaders.METADATA);
+    if (this.#instant && rawMetadata !== null) {
+      throw new HttpError(400, "KV Instant does not support metadata");
+    }
+    this.#validateInstantKeySize(key);
 
     // Validate key, expiration and metadata
     const now = millisToSeconds(this.timers.now());
@@ -593,12 +573,7 @@ export class KVNamespaceObject implements DurableObject {
         signal: maxLengthStream?.signal,
       });
     } catch (e) {
-      if (
-        typeof e === "object" &&
-        e !== null &&
-        "name" in e &&
-        e.name === "AbortError"
-      ) {
+      if (typeof e === "object" && e !== null && "name" in e && e.name === "AbortError") {
         // `storage.put()` will only throw an abort error once the stream has
         // been written to the blob store (it gets cleaned up afterwards), so
         // we have the correct value length here.
@@ -616,6 +591,7 @@ export class KVNamespaceObject implements DurableObject {
   async #delete(rawKey: string, url: URL): Promise<Response> {
     // Decode URL parameters
     const key = decodeKey(rawKey, url.searchParams);
+    this.#validateInstantKeySize(key);
     validateKey(key);
 
     // Delete key from storage
@@ -627,6 +603,12 @@ export class KVNamespaceObject implements DurableObject {
     // Decode URL parameters
     const options = decodeListOptions(url);
     validateListOptions(options);
+    if (this.#instant) {
+      // workerd may supply its default page size even when list() has no
+      // options. Ignore it and return every matching key in a single response.
+      options.limit = Number.MAX_SAFE_INTEGER - 1;
+      options.cursor = undefined;
+    }
 
     // List keys from storage
     const res = this.storage.list(options);
