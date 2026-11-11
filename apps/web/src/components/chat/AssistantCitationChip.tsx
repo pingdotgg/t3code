@@ -80,7 +80,7 @@ export function AssistantCitationEmbed({
         data-thread-find-ignore
         aria-label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
         // The message's markdown styles colour and underline links; a quote is neither.
-        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-sm text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
+        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-body text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
       >
         <span className="line-clamp-2" dir={textDirection(citation.text)}>
           {wholeResponse ? (
