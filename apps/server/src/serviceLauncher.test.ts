@@ -476,6 +476,8 @@ if (context.update?.status === "pending") {
         const databasePath = path.join(root, "userdata", "state.sqlite");
         const observationsPath = path.join(root, "observations.json");
         yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+        // SQLite keeps -wal beside the symlink's target, so the backup must restore it there.
+        yield* fs.symlink("actual.sqlite", databasePath);
         const seed = new NodeSqlite.DatabaseSync(databasePath);
         seed.exec(`
         PRAGMA journal_mode = ${journalMode};
@@ -495,8 +497,9 @@ if (context.update?.status === "pending") {
   writeFileSync(paths.observationsPath + ".trial", JSON.stringify(
     readdirSync(paths.root + "/runtime/db-backup/" + context.update.id).sort(),
   ));
-  writeFileSync(context.update.dbPath, "database after migration");
-  writeFileSync(context.update.dbPath + "-wal", "trial wal");
+  const trial = new DatabaseSync(context.update.dbPath);
+  trial.exec("PRAGMA journal_mode = " + paths.journalMode + "; INSERT INTO events (payload) VALUES ('trial');");
+  trial.close();
   process.exit(1);
 } else if (context.update === undefined) {
   const db = new DatabaseSync(paths.databasePath);
