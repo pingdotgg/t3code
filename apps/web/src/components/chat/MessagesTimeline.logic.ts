@@ -995,12 +995,21 @@ function steerReplyEntryIds(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<
     } else if (
       entry.kind === "message" &&
       entry.message.role === "assistant" &&
-      entry.attempt?.status !== "superseded"
+      entry.attempt?.status !== "superseded" &&
+      steerReplyPhase(entry)
     ) {
       lastReply = entry.id;
     }
   }
   return ids;
+}
+
+// Commentary and partial output before a steer stay folded; only replies stay visible.
+function steerReplyPhase(entry: Extract<TimelineEntry, { kind: "message" }>): boolean {
+  const item = entry.projectedItem?.item;
+  return (
+    item?.type !== "assistant_message" || item.phase === undefined || item.phase === "final_answer"
+  );
 }
 
 function timelineEntryEnd(entry: TimelineEntry): string {
