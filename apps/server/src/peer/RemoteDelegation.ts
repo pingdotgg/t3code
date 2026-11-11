@@ -224,6 +224,8 @@ const make = Effect.gen(function* () {
         .filter(ThreadManagement.isActiveRun)
         .toSorted((left, right) => right.ordinal - left.ordinal)[0];
       if (
+        parent.thread.archivedAt !== null ||
+        parent.thread.deletedAt !== null ||
         parentRun === undefined ||
         parentRun.id !== input.parentRunId ||
         parentRun.rootNodeId === null ||

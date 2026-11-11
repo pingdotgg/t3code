@@ -1581,6 +1581,8 @@ const make = Effect.gen(function* () {
               const item = records.turnItems.find((candidate) => candidate.id === turnItemId);
               const run = records.runs.find((candidate) => candidate.id === parentRun.id);
               const open =
+                records.thread.archivedAt === null &&
+                records.thread.deletedAt === null &&
                 run !== undefined &&
                 ThreadManagementService.isActiveRun(run) &&
                 !records.turnItems.some(

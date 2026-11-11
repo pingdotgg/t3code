@@ -1241,29 +1241,56 @@ it.effect("a task named only by environment inherits the parent's model, within 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("refuses worktree isolation for a task there before launching anything", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
-      yield* linkTo(a.links, b, "auto");
-      yield* seedParent(a);
+it.effect.each(["worktree isolation", "an archived parent"] as const)(
+  "refuses %s before launching anything",
+  (reason) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "auto");
+        yield* seedParent(a);
 
-      const result = yield* a.call("delegate_task", {
-        task: "Run the suite on the box.",
-        target: { environmentId: box.environmentId },
-        isolation: "worktree",
-      });
-      expect(result.isError).toBe(true);
-      expect(JSON.stringify(result.content)).toContain("isolation");
-      expect(yield* Ref.get(thread.launched)).toBeNull();
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        if (reason === "an archived parent") {
+          yield* a.orchestrator.dispatch({
+            type: "thread.archive",
+            threadId: parentThreadId,
+            commandId: CommandId.make("archive-before-forward"),
+          });
+          const parent = yield* a.projections.getThreadRecords(parentThreadId, ["runs"]);
+          expect(parent.thread.archivedAt).not.toBeNull();
+          expect(parent.runs.find((run) => run.id === parentRunId)?.status).toBe("running");
+          const result = yield* a.remote
+            .delegate(
+              yield* McpInvocationContext.requireThreadScope(parentScope, "delegate_task"),
+              {
+                task: "Run the suite on the box.",
+                target: { environmentId: box.environmentId },
+                modelSelection,
+                parentRunId,
+                mode: "async",
+              },
+            )
+            .pipe(Effect.result);
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) expect(result.failure.code).toBe("parent_not_active");
+        } else {
+          const result = yield* a.call("delegate_task", {
+            task: "Run the suite on the box.",
+            target: { environmentId: box.environmentId },
+            isolation: "worktree",
+          });
+          expect(result.isError).toBe(true);
+          expect(JSON.stringify(result.content)).toContain("isolation");
+        }
+        expect(yield* Ref.get(thread.launched)).toBeNull();
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("follows an open task again after the laptop restarts", () =>

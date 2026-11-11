@@ -1237,6 +1237,9 @@ describe("OrchestratorMcpService provider resolution", () => {
         id: parentThreadId,
         projectId,
         title: "MCP parent",
+        archivedAt: null,
+        deletedAt: null,
+        updatedAt: DateTime.makeUnsafe("2026-11-11T00:00:00.000Z"),
         createdBy: "user",
         creationSource: "web",
         modelSelection,
@@ -3218,6 +3221,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       readonly parentRunEndsOnAsk?: boolean;
       /** Stop is requested for the parent's run, which stays active, once its card is answered. */
       readonly parentStopsOnAsk?: boolean;
+      readonly parentClosesOnAsk?: "archived" | "deleted";
       /** The first card's write commits, then waits for this before it returns. */
       readonly holdCardWrite?: {
         readonly committed: Deferred.Deferred<void>;
@@ -3247,6 +3251,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const subscribed = yield* Queue.unbounded<void>();
         const cardEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
         let parentRunEnded = false;
+        let parentClosed = false;
         const stopRequests: Array<unknown> = [];
         let parentModes = {};
         const task = {
@@ -3281,6 +3286,12 @@ describe("OrchestratorMcpService provider resolution", () => {
             thread: {
               ...projection.thread,
               ...parentModes,
+              ...(parentClosed && input.parentClosesOnAsk === "archived"
+                ? { archivedAt: projection.thread.updatedAt }
+                : {}),
+              ...(parentClosed && input.parentClosesOnAsk === "deleted"
+                ? { deletedAt: projection.thread.updatedAt }
+                : {}),
               modelSelection: input.threadSelection ?? selection,
             },
             runs: projection.runs.map((run) =>
@@ -3336,6 +3347,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                         : { environmentId: command.environmentId }),
                       approvalStatus: input.decide(command),
                     });
+                    parentClosed = input.parentClosesOnAsk !== undefined;
                     if (input.holdCardWrite !== undefined) {
                       yield* Deferred.succeed(input.holdCardWrite.committed, undefined);
                       yield* Deferred.await(input.holdCardWrite.release);
@@ -3583,6 +3595,14 @@ describe("OrchestratorMcpService provider resolution", () => {
             parentStopsOnAsk: true,
             target: { environmentId: remoteEnvironmentId },
           },
+          ...(["archived", "deleted"] as const).flatMap((parentClosesOnAsk) => [
+            { decide: (): "approved" => "approved", parentClosesOnAsk },
+            {
+              decide: (): "approved" => "approved",
+              parentClosesOnAsk,
+              target: { environmentId: remoteEnvironmentId },
+            },
+          ]),
         ]) {
           const { service, delegations, approvals, remoteDelegations } = yield* harness(setup);
           const failure = yield* delegate(
