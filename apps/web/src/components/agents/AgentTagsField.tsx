@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   AGENT_MAX_TAG_LENGTH,
   AGENT_MAX_TAGS,
-  AGENT_ROLE_SUGGESTIONS,
+  agentTagOptions,
   normalizeAgentTags,
 } from "@t3tools/client-runtime/state/agentIdentity";
 
@@ -28,7 +28,7 @@ export function AgentTagsField({
         Role <span className="text-muted-foreground">· optional, pick any</span>
       </legend>
       <div className="agent-tag-options" role="group" aria-label="Roles">
-        {normalizeAgentTags([...AGENT_ROLE_SUGGESTIONS, ...tags]).map((tag) => {
+        {agentTagOptions(tags).map((tag) => {
           const pressed = selected.has(tag.toLocaleLowerCase());
           return (
             <button

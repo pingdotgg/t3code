@@ -800,6 +800,7 @@ export function createGatewayRuntimePort(
                 ...(deletedAt ? { mcpGatewayProfileDeletedAt: deletedAt } : {}),
               },
               replicateProfiles: true,
+              agentSkillBodiesOnDemand: true,
             }),
           );
         }),

@@ -72,8 +72,14 @@ export function AgentPresetPicker({
   const exportAgents = () => {
     setError("");
     const selected = new Set(profiles.flatMap((profile) => profile.skillIds ?? []));
+    // Skills that did not load stay as stubs, so the export names them instead of dropping them.
     Promise.all([loadAgentPresets(), loadSkills([...selected])])
-      .then(([bundle, full]) => bundle.downloadAgentPresetArchive(profiles, full))
+      .then(([bundle, full]) =>
+        bundle.downloadAgentPresetArchive(profiles, [
+          ...full,
+          ...skills.filter((skill) => !full.some((item) => item.skillId === skill.skillId)),
+        ]),
+      )
       .catch((cause: unknown) => setError(message(cause, "Could not export agents.")));
   };
   // Same-named library skills that differ get an explicit choice; identical ones are reused.

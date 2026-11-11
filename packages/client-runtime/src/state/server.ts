@@ -1199,6 +1199,12 @@ export function createServerEnvironmentAtoms<R, E>(
   const updateSettings = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:server:update-settings",
     tag: WS_METHODS.serverUpdateSettings,
+    // Skill bodies stream as stubs anyway; callers that forward the saved library opt out.
+    execute: (input) =>
+      requestGuarded(WS_METHODS.serverUpdateSettings, {
+        agentSkillBodiesOnDemand: true,
+        ...input,
+      }),
     scheduler: configScheduler,
     concurrency: configConcurrency,
   });

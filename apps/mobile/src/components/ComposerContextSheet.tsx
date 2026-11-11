@@ -12,8 +12,8 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { agentReferenceState } from "@t3tools/shared/composerContextReferences";
-import { useAgentProfiles } from "../state/agents";
+import { agentChipState } from "@t3tools/client-runtime/state/agentIdentity";
+import { useEnvironmentAgents } from "../state/agents";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, ScrollView, View } from "react-native";
@@ -38,8 +38,14 @@ function AgentContextFields(props: {
   record: AgentContextRecord;
   environmentId: EnvironmentId | undefined;
 }) {
-  const state = agentReferenceState(props.record, useAgentProfiles(), props.environmentId);
+  const state = agentChipState(
+    props.record,
+    useEnvironmentAgents(props.environmentId),
+    props.environmentId,
+  );
   const status = {
+    unknown: "T3 agent. Mentioning it runs nothing; ask in your message to delegate to it.",
+    unsupported: "Update T3 Code on this machine to mention agents.",
     available: "T3 agent. Mentioning it runs nothing; ask in your message to delegate to it.",
     missing: "This agent was deleted or isn't on this machine.",
     "read-only": "Read-only agent: it can't run work.",

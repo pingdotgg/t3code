@@ -2839,7 +2839,12 @@ export const layerWsRpc = (
           tailnetDevices.openDevice(input.environmentId),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
-          Effect.fnUntraced(function* ({ patch, providerInstanceMutation, replicateProfiles }) {
+          Effect.fnUntraced(function* ({
+            patch,
+            providerInstanceMutation,
+            replicateProfiles,
+            agentSkillBodiesOnDemand,
+          }) {
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -2849,7 +2854,10 @@ export const layerWsRpc = (
             const settings = yield* providerInstanceMutation === undefined
               ? serverSettings.updateSettings(nextPatch, replicateProfiles)
               : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
-            return ServerSettings.redactServerSettingsForClient(settings, settingsClient);
+            return ServerSettings.redactServerSettingsForClient(settings, {
+              ...settingsClient,
+              agentSkillBodiesOnDemand: agentSkillBodiesOnDemand === true,
+            });
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>

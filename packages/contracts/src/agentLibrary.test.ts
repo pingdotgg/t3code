@@ -1,12 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { AgentSkill, agentSkillDigest, toAgentSkillStub } from "./agentSkills.ts";
-import {
-  agentLibraryForSync,
-  agentSkillTieKey,
-  mergeAgentLibraries,
-  type McpGatewayProfile,
-} from "./settings.ts";
+import { agentSkillTieKey, mergeAgentLibraries, type McpGatewayProfile } from "./settings.ts";
 const decodeSkill = Schema.decodeUnknownSync(AgentSkill);
 const profile = (id: string, updatedAt: string, name = id): McpGatewayProfile => ({
   profileId: id,
@@ -83,8 +78,8 @@ it("propagates reusable skill edits and deletions without changing agent assignm
 it("keeps assignments when an older server echoes the same revision without skill support", () => {
   const assigned = { ...profile("randy", "2026-01-01"), skillIds: ["review"] };
   const library = mergeAgentLibraries([{ mcpGatewayProfiles: [assigned] }]);
-  const legacy = agentLibraryForSync(library, false);
-  expect(legacy.mcpGatewayProfiles[0]).not.toHaveProperty("skillIds");
+  const { skillIds: _skillIds, ...stripped } = library.mcpGatewayProfiles[0]!;
+  const legacy = { mcpGatewayProfiles: [stripped] };
   expect(mergeAgentLibraries([legacy, library]).mcpGatewayProfiles[0]?.skillIds).toEqual([
     "review",
   ]);

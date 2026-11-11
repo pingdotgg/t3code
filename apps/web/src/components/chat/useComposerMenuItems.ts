@@ -30,7 +30,8 @@ import {
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
-import { useAgentProfiles } from "~/state/agentProfiles";
+import { mentionableAgentProfiles } from "@t3tools/client-runtime/state/agentIdentity";
+import { useEnvironmentAgents } from "~/state/agentProfiles";
 import { useVisibleThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
@@ -131,7 +132,8 @@ export function useComposerMenuItems({
     ...identity,
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
   }));
-  const agentProfiles = useAgentProfiles();
+  // Only agents this environment's server resolves, and none where it would drop the record.
+  const agentProfiles = mentionableAgentProfiles(useEnvironmentAgents(environmentId));
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,

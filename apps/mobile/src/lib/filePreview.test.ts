@@ -168,7 +168,11 @@ vi.mock("../state/projects", () => ({
     fileMetadata: (input: unknown) => input,
   },
 }));
-vi.mock("../state/server", () => ({ serverEnvironment: {} }));
+vi.mock("../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const noConfig = Atom.make(null);
+  return { serverEnvironment: { configValueAtom: () => noConfig } };
+});
 vi.mock("../state/session", () => ({
   readEnvironmentScope: () => true,
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://example.com" } }),

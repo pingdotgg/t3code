@@ -631,7 +631,11 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         });
         return false;
       }
-      const saved = await persistServerSettings({ environmentId, input: { patch: serverPatch } });
+      // Forwarded to other machines below, so it needs skill bodies rather than stubs.
+      const saved = await persistServerSettings({
+        environmentId,
+        input: { patch: serverPatch, agentSkillBodiesOnDemand: false },
+      });
       if (saved._tag !== "Success") {
         options?.onFailed?.();
         return false;

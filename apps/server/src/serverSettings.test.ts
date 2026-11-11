@@ -613,6 +613,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         agentSkillBodiesOnDemand: true,
       }).agentSkills;
       assert.deepEqual(stub, toAgentSkillStub(skill, agentSkillDigest(skill)));
+      // An external edit can change a body without a new revision or timestamp.
+      const edited = { ...skill, content: "Edited by hand" };
+      assert.deepEqual(
+        ServerSettingsModule.redactServerSettingsForClient(
+          { ...stored, agentSkills: [edited] },
+          { secretReferences: true, agentSkillBodiesOnDemand: true },
+        ).agentSkills,
+        [toAgentSkillStub(edited, agentSkillDigest(edited))],
+      );
       assert.deepEqual(
         ServerSettingsModule.redactServerSettingsForClient(stored, { secretReferences: true })
           .agentSkills,
@@ -648,7 +657,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("keeps the stored agent when a whole-library patch echoes an older revision", () =>
+  it.effect("keeps stored agent fields an older revision or an older client's patch lacks", () =>
     Effect.gen(function* () {
       const settings = yield* ServerSettingsModule.ServerSettingsService;
       const agent = {
@@ -665,6 +674,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         mcpGatewayProfiles: [{ ...agent, name: "Stale", revision: 2 }],
       });
       assert.deepEqual(echoed.mcpGatewayProfiles, stored.mcpGatewayProfiles);
+
+      // A client that predates icons and tags strips them from the whole array it sends back.
+      const tagged = {
+        ...agent,
+        profileId: "tess",
+        name: "Tess",
+        icon: "sparkles" as const,
+        iconId: "rocket",
+        tags: ["Dev"],
+      };
+      yield* settings.updateSettings({ mcpGatewayProfiles: [agent, tagged] }, true);
+      const { iconId: _iconId, tags: _tags, ...stripped } = tagged;
+      const legacy = yield* settings.updateSettings({
+        mcpGatewayProfiles: [agent, stripped, { ...stripped, profileId: "new", name: "New" }],
+      });
+      assert.deepEqual(legacy.mcpGatewayProfiles.slice(0, 2), [agent, tagged]);
+      const renamed = yield* settings.updateSettings({
+        mcpGatewayProfiles: [agent, { ...stripped, name: "Tessa" }],
+      });
+      assert.deepInclude(renamed.mcpGatewayProfiles[1], {
+        name: "Tessa",
+        iconId: "rocket",
+        tags: ["Dev"],
+        revision: 4,
+      });
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
@@ -738,6 +772,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       const after = yield* settings.getSettings;
       assert.deepEqual(after.agentSkills, []);
       assert.deepEqual(after.mcpGatewayProfiles, result.mcpGatewayProfiles);
+
+      // Per-item edits carry the whole agent, so leaving out icon and tags clears them.
+      const iconed = yield* settings.mutateAgentLibrary([
+        {
+          type: "profile.upsert",
+          profile: { ...agent("bea"), name: "Bea", iconId: "rocket", tags: ["Dev"] },
+          baseRevision: 2,
+        },
+      ]);
+      // Older builds only read the legacy literal, so an iconId alone gains its nearest one.
+      assert.equal(iconed.mcpGatewayProfiles[0]?.icon, "sparkles");
+      const cleared = yield* settings.mutateAgentLibrary([
+        { type: "profile.upsert", profile: { ...agent("bea"), name: "Bea" }, baseRevision: 3 },
+      ]);
+      assert.notProperty(cleared.mcpGatewayProfiles[0], "iconId");
+      assert.notProperty(cleared.mcpGatewayProfiles[0], "tags");
 
       const gone = yield* settings
         .mutateAgentLibrary([{ type: "skill.delete", skillId: "review", baseRevision: 1 }])

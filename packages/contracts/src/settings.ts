@@ -2341,19 +2341,3 @@ export function mergeAgentLibraries(
   };
 }
 export type AgentLibrary = ReturnType<typeof mergeAgentLibraries>;
-
-/** Older servers cannot retain skill content or assignments; compare only their supported fields. */
-export function agentLibraryForSync(
-  library: AgentLibrary,
-  supportsSkills: boolean,
-  supportsProfileTags = supportsSkills,
-) {
-  const profiles = supportsProfileTags
-    ? library.mcpGatewayProfiles
-    : library.mcpGatewayProfiles.map(({ iconId: _iconId, tags: _tags, ...profile }) => profile);
-  if (supportsSkills) return { ...library, mcpGatewayProfiles: profiles };
-  return {
-    mcpGatewayProfiles: profiles.map(({ skillIds: _skillIds, ...profile }) => profile),
-    mcpGatewayProfileDeletedAt: library.mcpGatewayProfileDeletedAt,
-  };
-}

@@ -68,17 +68,65 @@ export function isCurrencyAmountQuery(query: string): boolean {
   return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/.test(query);
 }
 
-// A fence or code span, closed or still open at the end of the text.
-const MARKDOWN_CODE = /(?:^|\n) {0,3}(`{3,}|~{3,})[\s\S]*?(\n {0,3}\1|$)|(`+)[^\n]*?(\3|$)/g;
+interface Fence {
+  readonly marker: string;
+  readonly length: number;
+}
 
+/**
+ * A fence a line opens. Chat drafts often end a sentence with ``` and put the code below,
+ * so a trailing unpaired backtick fence counts as an opener too.
+ */
+function fenceOpenedBy(line: string): Fence | null {
+  const opener = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(line);
+  if (opener && !(opener[1]!.startsWith("`") && opener[2]!.includes("`"))) {
+    return { marker: opener[1]![0]!, length: opener[1]!.length };
+  }
+  const trailing = /(`{3,})[ \t]*$/.exec(line);
+  if (!trailing) return null;
+  const runs = line.match(/`+/g) ?? [];
+  return runs.filter((run) => run.length === trailing[1]!.length).length === 1
+    ? { marker: "`", length: trailing[1]!.length }
+    : null;
+}
+
+function closesFence(line: string, fence: Fence): boolean {
+  const closer = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(line)?.[1];
+  return closer !== undefined && closer[0] === fence.marker && closer.length >= fence.length;
+}
+
+/**
+ * Whether `paragraph` ends inside a code span. A span may cross a newline once closed, but
+ * an unclosed one only counts on the line being typed.
+ */
+function endsInsideCodeSpan(paragraph: string): boolean {
+  const runs = [...paragraph.matchAll(/`+/g)];
+  for (let index = 0; index < runs.length; index += 1) {
+    const open = runs[index]!;
+    const close = runs.findIndex((run, at) => at > index && run[0].length === open[0].length);
+    if (close < 0) return !paragraph.slice(open.index).includes("\n");
+    index = close;
+  }
+  return false;
+}
+
+/** Fences are tracked line by line, then code spans within the current paragraph only. */
 function isInsideMarkdownCode(text: string, index: number): boolean {
   const before = text.slice(0, index);
   if (!before.includes("`") && !before.includes("~~~")) return false;
-  for (const match of before.matchAll(MARKDOWN_CODE)) {
-    if (match.index + match[0].length === before.length && (match[2] === "" || match[4] === ""))
-      return true;
+  const lines = before.split("\n");
+  const current = lines.pop() ?? "";
+  let fence: Fence | null = null;
+  let paragraph: string[] = [];
+  for (const line of lines) {
+    if (fence) {
+      if (closesFence(line, fence)) fence = null;
+      continue;
+    }
+    fence = fenceOpenedBy(line);
+    paragraph = fence || line.trim() === "" ? [] : [...paragraph, line];
   }
-  return false;
+  return fence !== null || endsInsideCodeSpan([...paragraph, current].join("\n"));
 }
 
 export function detectComposerTrigger(

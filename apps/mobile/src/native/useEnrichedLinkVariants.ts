@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { Image } from "react-native";
 import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
-import type { ComposerAgentProfile } from "@t3tools/shared/composerContextReferences";
+import type { EnvironmentAgents } from "@t3tools/client-runtime/state/agentIdentity";
 import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
@@ -39,7 +39,7 @@ function chipCustomization(
 export function enrichedContextLinkCustomization(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
-  agents?: ReadonlyArray<ComposerAgentProfile>,
+  agents?: EnvironmentAgents,
 ) {
   return chipCustomization(enrichedContextLinkPresentation(href, records, agents));
 }

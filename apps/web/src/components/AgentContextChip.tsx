@@ -1,24 +1,25 @@
 import type { AgentContextRecord, EnvironmentId } from "@t3tools/contracts";
-import { agentReferenceState } from "@t3tools/shared/composerContextReferences";
+import { agentChipState } from "@t3tools/client-runtime/state/agentIdentity";
 import { BotIcon } from "lucide-react";
 
-import { useAgentProfiles } from "~/state/agentProfiles";
+import { useEnvironmentAgents } from "~/state/agentProfiles";
 import { useEnvironmentIdentities } from "~/state/environments";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 /**
  * Inline chip for a mentioned agent, in the composer and in sent messages. Resolves by
- * profileId, so a renamed agent shows its current name and a deleted one its snapshot.
+ * profileId against the environment's own library, as its server does, so a renamed agent
+ * shows its current name and a deleted one its snapshot.
  */
 export function AgentContextChip(props: {
   record: Pick<AgentContextRecord, "profileId" | "name">;
   environmentId?: EnvironmentId | null | undefined;
   copyMarkdown?: string;
 }) {
-  const profiles = useAgentProfiles();
+  const agents = useEnvironmentAgents(props.environmentId);
   const identities = useEnvironmentIdentities();
-  const state = agentReferenceState(props.record, profiles, props.environmentId ?? undefined);
+  const state = agentChipState(props.record, agents, props.environmentId);
   const machines =
     state.status === "elsewhere"
       ? state.environmentIds
@@ -26,6 +27,8 @@ export function AgentContextChip(props: {
           .join(", ")
       : "";
   const detail = {
+    unknown: "T3 agent",
+    unsupported: "Update T3 Code on this machine to mention agents",
     available: "T3 agent",
     missing: "This agent was deleted or isn't on this machine",
     "read-only": "Read-only agent: it can't run work",
@@ -37,7 +40,9 @@ export function AgentContextChip(props: {
         render={
           <ContextChip
             kind="agent"
-            {...(state.status === "missing" ? { state: "unresolved" as const } : {})}
+            {...(state.status === "missing" || state.status === "unsupported"
+              ? { state: "unresolved" as const }
+              : {})}
             tabIndex={0}
             aria-label={`Agent, ${state.name}`}
             data-markdown-copy={props.copyMarkdown}

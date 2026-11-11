@@ -113,7 +113,7 @@ export function AgentEditor({
   );
   const [pickedIcon, setPickedIcon] = useState<AgentIconId | null>(null);
   const iconId = pickedIcon ?? resolveAgentIconId(profile ?? preset);
-  const [tags, setTags] = useState<ReadonlyArray<string>>(profile?.tags ?? []);
+  const [tags, setTags] = useState<ReadonlyArray<string>>(profile?.tags ?? preset?.tags ?? []);
   const [advancedOpen, setAdvancedOpen] = useState(
     () => profile !== null && agentHasAdvancedSettings(profile, profiles),
   );
@@ -188,8 +188,13 @@ export function AgentEditor({
             className="agent-form"
             onSubmit={async (event) => {
               event.preventDefault();
+              const nameKey = name.trim().toLocaleLowerCase();
               if (
-                profiles.some((p) => p.profileId !== profile?.profileId && p.name === name.trim())
+                profiles.some(
+                  (p) =>
+                    p.profileId !== profile?.profileId &&
+                    p.name.trim().toLocaleLowerCase() === nameKey,
+                )
               ) {
                 setError("An agent with this name already exists.");
                 return;

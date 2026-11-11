@@ -1709,7 +1709,7 @@
 .agent-tile[data-popup-open] {
   background: color-mix(in srgb, var(--accent) 60%, transparent);
 }
-.agent-tile[aria-pressed="true"] {
+.agent-tile[aria-current="true"] {
   background: var(--accent);
   box-shadow: inset 0 0 0 1px var(--ring);
 }

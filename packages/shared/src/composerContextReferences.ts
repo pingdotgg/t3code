@@ -124,6 +124,7 @@ export function agentContextRecord(
 }
 
 export type AgentReferenceState =
+  | { readonly status: "unknown"; readonly name: string }
   | { readonly status: "available"; readonly name: string }
   | { readonly status: "missing"; readonly name: string }
   | { readonly status: "read-only"; readonly name: string }
@@ -135,13 +136,15 @@ export type AgentReferenceState =
 
 /**
  * What an agent chip means now: resolved by profileId, so it shows the current name, or the
- * snapshot once the agent is gone. `environmentId` is where the message runs, when known.
+ * snapshot once the agent is gone. `profiles` is undefined until a library has loaded, and
+ * `environmentId` is where the message runs, when known.
  */
 export function agentReferenceState(
   record: Pick<AgentContextRecord, "profileId" | "name">,
-  profiles: ReadonlyArray<ComposerAgentProfile>,
+  profiles: ReadonlyArray<ComposerAgentProfile> | undefined,
   environmentId?: EnvironmentId,
 ): AgentReferenceState {
+  if (profiles === undefined) return { status: "unknown", name: record.name };
   const profile = profiles.find((candidate) => candidate.profileId === record.profileId);
   if (profile === undefined) return { status: "missing", name: record.name };
   if (profile.runtimeMode === "read-only") return { status: "read-only", name: profile.name };
@@ -348,9 +351,10 @@ function formatAgentProviderPayload(
   agents: ReadonlyArray<ComposerAgentProfile> | undefined,
 ): string {
   const state = agents === undefined ? undefined : agentReferenceState(record, agents);
-  const name = state?.name ?? record.name;
+  const name = sanitizeComposerContextLabel(state?.name ?? record.name, "agent");
+  const mentionedAs = sanitizeComposerContextLabel(record.name, "agent");
   const lines = [`name: ${name}`];
-  if (name !== record.name) lines.push(`mentioned as: ${record.name}`);
+  if (name !== mentionedAs) lines.push(`mentioned as: ${mentionedAs}`);
   lines.push(`profileId: ${record.profileId}`);
   if (record.environmentId) lines.push(`environmentId: ${record.environmentId}`);
   const limitedTo = agents?.find(

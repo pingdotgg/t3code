@@ -1,3 +1,5 @@
+import * as Cause from "effect/Cause";
+import * as Predicate from "effect/Predicate";
 import { useEffect, useRef } from "react";
 import {
   agentSkillHasResources,
@@ -11,6 +13,7 @@ import {
   agentLibraryOperationsFromPatch,
   agentLibrarySources,
   loadAgentSkills,
+  missingAgentSkills,
   planAgentLibrarySync,
   runAgentLibrarySync,
   type AgentLibrarySyncIo,
@@ -68,16 +71,38 @@ export function useAgentLibrary() {
       capabilities?.agentSkillResources !== true
     )
       throw new Error("Update T3 on this machine to edit skills with resources.");
-    const synced = await runAgentLibrarySync(
-      planAgentLibrarySync(sources, { targets: [target.environmentId] }),
-      io,
+    const plan = planAgentLibrarySync(sources, { targets: [target.environmentId] });
+    const available = new Set(
+      [
+        ...(target.serverConfig?.settings.agentSkills ?? []),
+        ...(plan.targets[0]?.patch.agentSkills ?? []),
+        ...(patch.agentSkills ?? []),
+      ].map((skill) => skill.skillId),
     );
-    if (!synced) return false;
+    const missing = new Set(
+      (patch.mcpGatewayProfiles ?? []).flatMap((profile) => {
+        const seen = library.mcpGatewayProfiles.find(
+          (item) => item.profileId === profile.profileId,
+        );
+        return seen === profile ? [] : missingAgentSkills(library, profile, available);
+      }),
+    );
+    if (missing.size > 0)
+      throw new Error(
+        `Connect the machine that holds ${[...missing].map((name) => `"${name}"`).join(", ")}, then save again.`,
+      );
+    if (!(await runAgentLibrarySync(plan, io))) return false;
     if (capabilities?.agentLibraryMutations === true) {
       const { operations, rest } = agentLibraryOperationsFromPatch(library, patch);
       if (operations.length > 0) {
         const result = await mutate({ environmentId: target.environmentId, input: { operations } });
-        if (result._tag !== "Success") return false;
+        if (result._tag !== "Success") {
+          // Name and revision conflicts carry a message the editor shows; other failures stay generic.
+          const failure = Cause.squash(result.cause);
+          if (Predicate.isTagged(failure, "AgentLibraryConflictError") && failure instanceof Error)
+            throw failure;
+          return false;
+        }
       }
       return Object.keys(rest).length === 0 || persistSettings(rest);
     }

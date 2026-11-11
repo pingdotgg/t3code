@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { parse as parseYaml } from "yaml";
+import { legacyAgentIcon } from "../agentIcons.ts";
 
 const PresetSlug = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/));
 
@@ -22,6 +23,8 @@ export const AgentPresetManifest = Schema.Struct({
   description: Schema.String.check(Schema.isMaxLength(280)),
   color: Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/)),
   icon: McpGatewayProfile.fields.icon,
+  iconId: McpGatewayProfile.fields.iconId,
+  tags: McpGatewayProfile.fields.tags,
   model: Schema.Struct({
     /** A provider driver such as `codex` or `claudeAgent`, or a provider display name. */
     provider: TrimmedNonEmptyString,
@@ -240,7 +243,8 @@ export function addPresetSkills(
         content: skill.content,
         // Explicit, so a server keeping the stored files for an omitted field drops the old ones.
         resources: skill.resources,
-        revision: current.revision + 1,
+        // The base revision this edit is made against; the server bumps it on save.
+        revision: current.revision,
         updatedAt: options.now,
       };
       return current.skillId;
@@ -288,10 +292,24 @@ export function exportAgentPresets(
   const skillFolders = new Map<string, string>();
   const takenFolders = new Set<string>();
   const decoder = new TextDecoder("utf-8", { fatal: true });
+  const missing = new Map<string, string[]>();
+  for (const profile of profiles) {
+    for (const skillId of profile.skillIds ?? []) {
+      const skill = library.find((candidate) => candidate.skillId === skillId);
+      if (skill && !isAgentSkillStub(skill)) continue;
+      const label = skill ? JSON.stringify(skill.name) : skillId;
+      missing.set(label, [...(missing.get(label) ?? []), profile.name]);
+    }
+  }
+  if (missing.size > 0) {
+    const list = [...missing].map(([label, agents]) => `${label} (${agents.join(", ")})`);
+    throw new Error(
+      `Could not load skills: ${list.join(", ")}. Connect the machine that holds them, or remove them from these agents, then export again.`,
+    );
+  }
   const skillFolder = (skill: AgentSkill) => {
     const known = skillFolders.get(skill.skillId);
     if (known) return known;
-    if (isAgentSkillStub(skill)) throw new Error(`Load skill "${skill.name}" before exporting it.`);
     const folder = unique(takenFolders, slug(skill.name, /[^A-Za-z0-9._-]+/g, "skill"));
     skillFolders.set(skill.skillId, folder);
     files[`skills/${folder}/SKILL.md`] = `${skill.content.trim()}\n`;
@@ -312,17 +330,19 @@ export function exportAgentPresets(
     const provider = profile.providerLabel ?? profile.modelSelection?.instanceId;
     const model = profile.modelLabel ?? profile.modelSelection?.model;
     if (!provider || !model) throw new Error(`Agent "${profile.name}" has no model to export.`);
-    const skills = (profile.skillIds ?? []).flatMap((skillId) => {
-      const skill = library.find((candidate) => candidate.skillId === skillId);
-      return skill ? [skillFolder(skill)] : [];
-    });
+    const skills = (profile.skillIds ?? []).map((skillId) =>
+      skillFolder(library.find((candidate) => candidate.skillId === skillId)!),
+    );
     files[`presets/${id}/preset.json`] = `${JSON.stringify(
       {
         id,
         name: profile.name,
         description: profile.description ?? "",
         color: profile.color ?? "#8b8b8b",
-        ...(profile.icon && { icon: profile.icon }),
+        ...(profile.iconId
+          ? { icon: profile.icon ?? legacyAgentIcon(profile.iconId), iconId: profile.iconId }
+          : profile.icon && { icon: profile.icon }),
+        ...(profile.tags?.length ? { tags: profile.tags } : {}),
         model: {
           provider,
           model,

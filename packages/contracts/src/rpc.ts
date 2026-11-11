@@ -984,6 +984,8 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
     patch: ServerSettingsPatch,
     replicateProfiles: Schema.optional(Schema.Boolean),
     providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+    /** Returns skill stubs, as `server.getConfig` does; older servers ignore it and send bodies. */
+    agentSkillBodiesOnDemand: Schema.optional(Schema.Boolean),
   }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),

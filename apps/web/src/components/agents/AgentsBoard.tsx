@@ -186,7 +186,6 @@ export function AgentsBoard() {
   const orderedProfiles = profiles.toSorted(
     (a, b) => (ranks.get(a.profileId) ?? order.length) - (ranks.get(b.profileId) ?? order.length),
   );
-  const orderIndex = new Map(orderedProfiles.map((profile, index) => [profile.profileId, index]));
   const [groupByRole, setGroupByRole] = useLocalStorage(
     "t3code:agents:group-by-role",
     false,
@@ -195,11 +194,14 @@ export function AgentsBoard() {
   const railGroups = groupByRole
     ? groupAgentsByRole(orderedProfiles)
     : [{ tag: null, label: "Agents", profiles: orderedProfiles }];
-  const moveAgent = (index: number, direction: -1 | 1) => {
+  /** Swaps two agents in the saved order, so a move within a role group follows what is shown. */
+  const swapAgents = (first: string, second: string | undefined) => {
+    if (second === undefined) return;
     const ids = orderedProfiles.map((profile) => profile.profileId);
-    const target = index + direction;
-    if (target < 0 || target >= ids.length) return;
-    [ids[index], ids[target]] = [ids[target]!, ids[index]!];
+    const a = ids.indexOf(first);
+    const b = ids.indexOf(second);
+    if (a < 0 || b < 0) return;
+    [ids[a], ids[b]] = [second, first];
     setOrder(ids);
   };
   const { environments } = useEnvironments();
@@ -264,7 +266,7 @@ export function AgentsBoard() {
     <button
       type="button"
       className="agent-tile"
-      aria-pressed={filter === null}
+      aria-current={filter === null ? "true" : undefined}
       aria-label={`All agents, ${activeCount(allThreads)} active`}
       onClick={() => {
         setFilter(null);
@@ -403,8 +405,9 @@ export function AgentsBoard() {
               {groupByRole && <h3>{group.label}</h3>}
               <div className="agent-rail">
                 {!groupByRole && allTile}
-                {group.profiles.map((profile) => {
-                  const index = orderIndex.get(profile.profileId) ?? 0;
+                {group.profiles.map((profile, index) => {
+                  const previous = group.profiles[index - 1]?.profileId;
+                  const next = group.profiles[index + 1]?.profileId;
                   return (
                     <AgentRailTile
                       key={profile.profileId}
@@ -422,16 +425,16 @@ export function AgentsBoard() {
                         scheduleDisabled: scheduledSupported
                           ? !available || profile.runtimeMode === "read-only"
                           : null,
-                        moveUpDisabled: index === 0,
-                        moveDownDisabled: index === orderedProfiles.length - 1,
+                        moveUpDisabled: previous === undefined,
+                        moveDownDisabled: next === undefined,
                         onEdit: () => setEditor({ step: "edit", profile }),
                         onSchedule: () =>
                           navigate({
                             to: "/agents/scheduled",
                             search: { agent: profile.profileId },
                           }),
-                        onMoveUp: () => moveAgent(index, -1),
-                        onMoveDown: () => moveAgent(index, 1),
+                        onMoveUp: () => swapAgents(profile.profileId, previous),
+                        onMoveDown: () => swapAgents(profile.profileId, next),
                         onDelete: () => {
                           setDeleting(profile);
                           setDeleteError("");
@@ -623,13 +626,21 @@ export function AgentsBoard() {
                     disabled={busy}
                     onClick={async () => {
                       setBusy(true);
-                      const deleted = await updateSettings({
-                        mcpGatewayProfiles: profiles.filter(
-                          (p) => p.profileId !== deleting.profileId,
-                        ),
-                      }).finally(() => setBusy(false));
-                      if (deleted) setDeleting(null);
-                      else setDeleteError("Could not delete the agent. Try again.");
+                      try {
+                        const deleted = await updateSettings({
+                          mcpGatewayProfiles: profiles.filter(
+                            (p) => p.profileId !== deleting.profileId,
+                          ),
+                        });
+                        if (deleted) setDeleting(null);
+                        else setDeleteError("Could not delete the agent. Try again.");
+                      } catch (cause) {
+                        setDeleteError(
+                          cause instanceof Error ? cause.message : "Could not delete the agent.",
+                        );
+                      } finally {
+                        setBusy(false);
+                      }
                     }}
                   >
                     {busy ? "Deleting…" : "Delete agent"}

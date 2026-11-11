@@ -1,3 +1,4 @@
+import { legacyAgentIcon } from "@t3tools/shared/agentIcons";
 import {
   agentNameKey,
   agentSkillDigest,
@@ -152,15 +153,33 @@ const normalizeServerSettings = (
     ),
   );
 
-// Keyed by skill id; a skill's body only changes with its revision and timestamp.
-const skillDigestCache = new Map<string, { readonly stamp: string; readonly digest: string }>();
+// Every settings reload decodes fresh objects, so entries are checked by body: comparing strings
+// is far cheaper than rehashing them, and a body can change without a new revision.
+const skillDigestCache = new Map<string, { readonly skill: AgentSkill; readonly digest: string }>();
+const sameSkillBody = (a: AgentSkill, b: AgentSkill) =>
+  a === b ||
+  (a.content === b.content &&
+    (a.resources?.length ?? 0) === (b.resources?.length ?? 0) &&
+    (a.resources ?? []).every((file, index) => {
+      const other = b.resources![index]!;
+      return (
+        file.path === other.path &&
+        file.contentBase64 === other.contentBase64 &&
+        file.executable === other.executable
+      );
+    }));
 function cachedSkillDigest(skill: AgentSkill) {
-  const stamp = `${skill.revision}\u0000${skill.updatedAt}`;
   const cached = skillDigestCache.get(skill.skillId);
-  if (cached?.stamp === stamp) return cached.digest;
+  if (cached !== undefined && sameSkillBody(cached.skill, skill)) return cached.digest;
   const digest = agentSkillDigest(skill);
-  skillDigestCache.set(skill.skillId, { stamp, digest });
+  skillDigestCache.set(skill.skillId, { skill, digest });
   return digest;
+}
+function skillStubsForClient(skills: ReadonlyArray<AgentSkill>) {
+  const live = new Set(skills.map((skill) => skill.skillId));
+  for (const skillId of skillDigestCache.keys())
+    if (!live.has(skillId)) skillDigestCache.delete(skillId);
+  return skills.map((skill) => toAgentSkillStub(skill, cachedSkillDigest(skill)));
 }
 
 export function redactServerSettingsForClient(
@@ -171,9 +190,7 @@ export function redactServerSettingsForClient(
   return client.agentSkillBodiesOnDemand === true
     ? {
         ...shaped,
-        agentSkills: shaped.agentSkills.map((skill) =>
-          toAgentSkillStub(skill, cachedSkillDigest(skill)),
-        ),
+        agentSkills: skillStubsForClient(shaped.agentSkills),
       }
     : shaped;
 }
@@ -661,6 +678,14 @@ const withoutServerOwnedFields = <
   ...content
 }: T) => content;
 
+// Older builds render only the legacy literal, so every writer of an iconId also gets its nearest one.
+const withLegacyAgentIcon = <T extends Pick<McpGatewayProfile, "icon" | "iconId">>(
+  profile: T,
+): T =>
+  profile.iconId !== undefined && profile.icon === undefined
+    ? { ...profile, icon: legacyAgentIcon(profile.iconId) }
+    : profile;
+
 function withServerOwnedMcpGatewayProfiles(
   current: ServerSettings,
   patch: ServerSettingsPatch,
@@ -741,13 +766,22 @@ function withServerOwnedMcpGatewayProfiles(
       const existing = current.mcpGatewayProfiles.find(
         (profile) => profile.profileId === candidate.profileId,
       );
+      // Clients that predate icons and tags strip them; clearing them takes a per-item edit.
+      const content = withLegacyAgentIcon({
+        ...withoutServerOwnedFields(candidate),
+        ...(candidate.iconId === undefined && existing?.iconId !== undefined
+          ? { iconId: existing.iconId }
+          : {}),
+        ...(candidate.tags === undefined && existing?.tags !== undefined
+          ? { tags: existing.tags }
+          : {}),
+      });
       if (existing !== undefined) {
         if (candidate.revision < existing.revision) return existing;
-        if (Equal.equals(withoutServerOwnedFields(candidate), withoutServerOwnedFields(existing)))
-          return existing;
+        if (Equal.equals(content, withoutServerOwnedFields(existing))) return existing;
       }
       return {
-        ...withoutServerOwnedFields(candidate),
+        ...content,
         revision: (existing?.revision ?? 0) + 1,
         createdAt: existing?.createdAt ?? now,
         updatedAt: mutationTime,
@@ -915,7 +949,7 @@ function applyAgentLibraryOperations(
               reason: "name",
             }),
           );
-        const content = withoutServerOwnedFields(operation.profile);
+        const content = withLegacyAgentIcon(withoutServerOwnedFields(operation.profile));
         profileIds.add(id);
         if (existing && Equal.equals(content, withoutServerOwnedFields(existing))) break;
         profiles.set(id, bump<McpGatewayProfile>(existing, content));

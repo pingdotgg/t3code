@@ -28,8 +28,8 @@ export interface AgentRailTileActions {
 }
 
 /**
- * One agent in the rail: icon over name. Click filters; the details card opens on
- * hover, on keyboard focus (Tab moves into its actions, Escape closes), and on tap.
+ * One agent in the rail: icon over name. Click or Enter filters; the details card opens on
+ * hover, on tap, and on ArrowDown, which focuses its actions. Tab moves tile to tile.
  */
 export function AgentRailTile({
   profile,
@@ -49,9 +49,8 @@ export function AgentRailTile({
   actions: AgentRailTileActions;
 }) {
   const [open, setOpen] = useState(false);
+  const [openedByKey, setOpenedByKey] = useState(false);
   const lastPointer = useRef("mouse");
-  // Escape returns focus to the tile; that focus must not reopen the card.
-  const skipFocusOpen = useRef(false);
   const tags = normalizeAgentTags(profile.tags ?? []);
   const model =
     profile.providerLabel && profile.modelLabel
@@ -68,8 +67,8 @@ export function AgentRailTile({
   return (
     <Popover
       open={open}
-      onOpenChange={(next, details) => {
-        if (!next && details.reason === "escape-key") skipFocusOpen.current = true;
+      onOpenChange={(next) => {
+        if (next) setOpenedByKey(false);
         setOpen(next);
       }}
     >
@@ -81,7 +80,8 @@ export function AgentRailTile({
           <button
             type="button"
             className="agent-tile"
-            aria-pressed={selected}
+            aria-current={selected ? "true" : undefined}
+            aria-keyshortcuts="ArrowDown"
             aria-label={`${profile.name}${activeCount ? `, ${activeCount} active` : ""}`}
             style={{ "--agent-color": color } as CSSProperties}
           />
@@ -89,21 +89,15 @@ export function AgentRailTile({
         onPointerDown={(event) => {
           lastPointer.current = event.pointerType;
         }}
-        onKeyDown={() => {
+        onKeyDown={(event) => {
           lastPointer.current = "keyboard";
-        }}
-        onFocus={(event) => {
-          if (skipFocusOpen.current) {
-            skipFocusOpen.current = false;
-            return;
-          }
-          if (event.currentTarget.matches(":focus-visible")) setOpen(true);
-        }}
-        onBlur={() => {
-          skipFocusOpen.current = false;
+          if (event.key !== "ArrowDown") return;
+          event.preventDefault();
+          setOpenedByKey(true);
+          setOpen(true);
         }}
         onClick={(event) => {
-          // The tile filters; the card opens on hover or focus, and on touch the tap opens it instead.
+          // The tile filters; the card opens on hover or ArrowDown, and on touch the tap opens it instead.
           (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
           if (lastPointer.current === "touch") setOpen((current) => !current);
           else onSelect();
@@ -122,7 +116,7 @@ export function AgentRailTile({
         align="start"
         width="sm"
         padding="compact"
-        initialFocus={false}
+        initialFocus={openedByKey}
         aria-label={`${profile.name} details`}
       >
         <div className="agent-card" style={{ "--agent-color": color } as CSSProperties}>

@@ -181,7 +181,7 @@ describe("addPresetSkills", () => {
     expect(result.agentSkills.slice(0, 2)).toEqual(library);
   });
 
-  it("updates the chosen skill in place, keeping its id so agents keep pointing at it", () => {
+  it("updates the chosen skill in place at its own revision, keeping its id so agents keep pointing at it", () => {
     const library = [
       librarySkill({ skillId: "older", name: "review-checklist", content: "# Old", resources: [] }),
       librarySkill({ skillId: "other", name: "other", content: "# Other" }),
@@ -198,7 +198,8 @@ describe("addPresetSkills", () => {
         description: presetSkill.description,
         content: presetSkill.content,
         resources: presetSkill.resources,
-        revision: 4,
+        // The base revision the edit was made against; the server bumps it.
+        revision: 3,
         updatedAt: options.now,
       },
       library[1],
@@ -310,6 +311,8 @@ describe("exportAgentPresets", () => {
     description: "Reviews diffs",
     color: "#2f80ed",
     icon: "shield",
+    iconId: "bug",
+    tags: ["Dev", "security"],
     systemPrompt: "Review carefully.",
     skillIds: ["s1", "s2"],
     providerLabel: "Codex",
@@ -339,6 +342,8 @@ describe("exportAgentPresets", () => {
       name: "My Reviewer",
       description: "Reviews diffs",
       icon: "shield",
+      iconId: "bug",
+      tags: ["Dev", "security"],
       model: { provider: "Codex", model: "gpt-5.5", reasoningEffort: "high" },
       runtimeMode: "read-only",
       systemPrompt: "Review carefully.",
@@ -349,6 +354,22 @@ describe("exportAgentPresets", () => {
     ]);
     const added = addPresetSkills(library, preset!.skills, { now: "now", makeId: () => "x" });
     expect(added).toEqual({ agentSkills: library, skillIds: ["s1", "s2"] });
+  });
+
+  it("writes the legacy icon beside an iconId saved without one", () => {
+    const { icon: _icon, ...withoutIcon } = profile;
+    const [preset] = decodeAgentPresets(exportAgentPresets([withoutIcon], library));
+    expect(preset).toMatchObject({ icon: "shield", iconId: "bug" });
+  });
+
+  it("refuses to drop an assigned skill it could not load, naming it and its agents", () => {
+    const stub = toAgentSkillStub(library[1]!, "digest");
+    expect(() =>
+      exportAgentPresets(
+        [profile, { ...profile, profileId: "p2", name: "Other", skillIds: ["gone"] }],
+        [library[0]!, stub],
+      ),
+    ).toThrow('Could not load skills: "Plain notes" (My Reviewer), gone (Other).');
   });
 
   it("refuses a skill file that is not UTF-8 text", () => {

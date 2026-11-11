@@ -1,17 +1,27 @@
 import { useAtomValue } from "@effect/atom-react";
-import { mergeAgentLibraries, type McpGatewayProfile } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import {
+  createAgentProfilesAtom,
+  createEnvironmentAgentsAtom,
+  type EnvironmentAgents,
+} from "@t3tools/client-runtime/state/agentIdentity";
+import type { EnvironmentId, McpGatewayProfile } from "@t3tools/contracts";
 
-import { environmentServerConfigsAtom } from "./server";
+import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 
 /** Every known environment's agents, merged into one library as the Agents board does. */
-const agentProfilesAtom = Atom.make(
-  (get) =>
-    mergeAgentLibraries(
-      [...get(environmentServerConfigsAtom).values()].map((config) => config.settings),
-    ).mcpGatewayProfiles,
-).pipe(Atom.keepAlive);
+const agentProfilesAtom = createAgentProfilesAtom(() => environmentServerConfigsAtom);
 
 export function useAgentProfiles(): ReadonlyArray<McpGatewayProfile> {
   return useAtomValue(agentProfilesAtom);
+}
+
+const environmentAgentsAtom = createEnvironmentAgentsAtom((environmentId) =>
+  serverEnvironment.configValueAtom(environmentId),
+);
+
+/** The agents `@` mentions can name and resolve on one environment: its own library only. */
+export function useEnvironmentAgents(
+  environmentId: EnvironmentId | null | undefined,
+): EnvironmentAgents {
+  return useAtomValue(environmentAgentsAtom(environmentId ?? null));
 }
