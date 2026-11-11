@@ -28,7 +28,6 @@ import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
-  getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import {
   useFocusEffect,
@@ -494,12 +493,10 @@ function ThreadSettingsSessionProvider(
     pendingModel ? option.key === pendingModel.key : isApplied(option);
 
   const displayedDescriptors = pendingModel
-    ? pendingModel.capabilities
-      ? getProviderOptionDescriptors({
-          caps: pendingModel.capabilities,
-          selections: pendingModel.selection.options,
-        })
-      : []
+    ? resolveProviderOptionDescriptors({
+        capabilities: pendingModel.capabilities,
+        selections: pendingModel.selection.options,
+      })
     : props.optionDescriptors;
   const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
   const displayedModel =

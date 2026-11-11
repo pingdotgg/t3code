@@ -18,6 +18,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
 import * as OpenCode2AdapterV2 from "./v2/adapter.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -41,6 +42,7 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import {
   makeOpenCodeRuntimeProbe,
   probeOpenCodeRuntime,
+  probeOpenCodeBinary,
   type ProbedOpenCode,
 } from "./versionProbe.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
@@ -71,6 +73,18 @@ const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
 
+// A loopback server runs on this environment, but can outlive its CLI installation.
+// Its reported version may therefore differ from the installed executable after an update.
+export function isLocalOpenCodeServerUrl(serverUrl: string): boolean {
+  const url = URL.parse(serverUrl.trim());
+  if (url?.protocol !== "http:" && url?.protocol !== "https:") return false;
+  return (
+    url.hostname === "localhost" ||
+    url.hostname === "[::1]" ||
+    /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(url.hostname)
+  );
+}
+
 function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
@@ -79,15 +93,32 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   );
 }
 
+function openCodeNativeHome(commandPath: string): string | null {
+  const slashed = commandPath.replaceAll("\\", "/");
+  const match = /\/\.opencode\/bin\/opencode(?:\.exe)?$/i.exec(slashed);
+  if (!match) return null;
+  return match.index === 0 ? "/" : slashed.slice(0, match.index);
+}
+
 /** Update only within the installed package generation; 2.x converts the shared database in place. */
 export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"]) =>
   makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: generation === "v2" ? "@opencode/cli" : "opencode-ai",
     nativeUpdate: {
-      args: ["upgrade"],
+      // `isOpenCodeNativeCommandPath` is the curl installer's own binary. Name the
+      // method so OpenCode does not have to infer it from `process.execPath`, which
+      // fails when the binary is launched through a wrapper or shim.
+      args: ["upgrade", "--method", "curl"],
       isCommandPath: isOpenCodeNativeCommandPath,
       requiresCommandPath: true,
+      // The curl installer writes to `$HOME/.opencode/bin`, so point HOME at the install it replaces.
+      env: (context) => {
+        const home =
+          openCodeNativeHome(context.realCommandPath) ??
+          openCodeNativeHome(context.resolvedCommandPath);
+        return home ? { HOME: home } : {};
+      },
     },
     // mise's `opencode` follows releases into 2.x, so it would upgrade 1.x across that line.
     mise: { tool: "opencode", upgrade: generation === "v2" },
@@ -120,7 +151,20 @@ function selectOpenCodeRuntimeAdapter(input: {
   return {
     instanceId: input.v1.instanceId,
     driver: DRIVER_KIND,
-    getCapabilities: () => Effect.flatMap(hot, (adapter) => adapter.getCapabilities()),
+    getCapabilities: Effect.fn("OpenCodeDriver.getCapabilities")(function* () {
+      const probed = Option.getOrUndefined(yield* input.probe.lastSuccess);
+      const adapter = yield* pick(Effect.succeed(probed));
+      const capabilities = yield* adapter.getCapabilities();
+      return {
+        ...capabilities,
+        turns: {
+          ...capabilities.turns,
+          supportsNativeGoals:
+            capabilities.turns.supportsNativeGoals ??
+            (probed?.generation === "v2" && compareSemverVersions(probed.version, "2.2.5") >= 0),
+        },
+      };
+    }),
     planSelectionTransition: (transition) =>
       Effect.flatMap(hot, (adapter) => adapter.planSelectionTransition(transition)),
     openSession: (session) =>
@@ -269,7 +313,17 @@ export const OpenCodeDriver: ProviderDriver<
         Effect.provideService(Path.Path, pathService),
       );
     const cachedMaintenance = yield* makeCachedProviderMaintenanceResolution(
-      maintenanceFor(runtimeProbe.get),
+      maintenanceFor(
+        isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
+          ? probeOpenCodeBinary(
+              effectiveConfig.binaryPath,
+              providerProbeEnvironment(processEnv),
+            ).pipe(
+              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+              Effect.catch(() => runtimeProbe.get),
+            )
+          : runtimeProbe.get,
+      ),
     );
     const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
       !effectiveConfig.enabled
@@ -325,7 +379,9 @@ export const OpenCodeDriver: ProviderDriver<
     const listOpenCode2Workspace = (cwd: string) =>
       openCode2Server.withConnection(({ client, events }) =>
         Effect.gen(function* () {
-          const location = { directory: cwd };
+          // OpenCode names a location by its resolved path (no trailing slash or `..`).
+          const directory = pathService.resolve(cwd);
+          const location = { directory };
           const scanned = yield* Deferred.make<void>();
           const pending = new Set(["command.updated", "skill.updated"]);
           const stream = yield* events.pipe(Effect.option);
@@ -333,7 +389,7 @@ export const OpenCodeDriver: ProviderDriver<
             yield* stream.value.pipe(
               Stream.runForEach((event) =>
                 "location" in event &&
-                event.location?.directory === cwd &&
+                event.location?.directory === directory &&
                 pending.delete(event.type) &&
                 pending.size === 0
                   ? Deferred.succeed(scanned, undefined)
@@ -352,6 +408,14 @@ export const OpenCodeDriver: ProviderDriver<
               { concurrency: "unbounded" },
             ),
             Deferred.await(scanned),
+            // Without events no scan can be awaited, so trust the first read as before.
+            stream._tag === "None"
+              ? Effect.succeed(true)
+              : client.debug.location.list().pipe(
+                  Effect.map((loaded) => loaded.some((entry) => entry.directory === directory)),
+                  Effect.timeout("2 seconds"),
+                  Effect.orElseSucceed(() => true),
+                ),
           );
         }).pipe(Effect.scoped),
       );
@@ -383,6 +447,19 @@ export const OpenCodeDriver: ProviderDriver<
     );
     const checkProvider = Effect.all(
       {
+        // A configured loopback server reports its running version. Probe the local
+        // CLI separately so a completed npm update is not mistaken for a failure
+        // while that independently managed server still runs the previous binary.
+        installedVersion:
+          effectiveConfig.enabled && isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
+            ? probeOpenCodeBinary(
+                effectiveConfig.binaryPath,
+                providerProbeEnvironment(processEnv),
+              ).pipe(
+                Effect.map((probed) => probed.version),
+                Effect.orElseSucceed(() => undefined),
+              )
+            : Effect.void,
         provider: checkOpenCodeProviderStatus(
           effectiveConfig,
           host.paths.cwd,
@@ -396,7 +473,11 @@ export const OpenCodeDriver: ProviderDriver<
       },
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
+      Effect.map(({ provider, usageLimits, installedVersion }) => ({
+        ...provider,
+        usageLimits,
+        ...(installedVersion === undefined ? {} : { installedVersion }),
+      })),
       Effect.map(stampIdentity),
       Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
