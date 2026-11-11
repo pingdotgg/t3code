@@ -42,7 +42,11 @@ function FilterMenu({
       <ComboboxPopup maxHeight="available">
         <ComboboxSearchInput aria-label="Search projects" placeholder="Search projects" />
         <ComboboxList>
-          {(item: string) => <ComboboxItem value={item}>{item}</ComboboxItem>}
+          {(item: string) => (
+            <ComboboxItem key={item} value={item}>
+              {item}
+            </ComboboxItem>
+          )}
         </ComboboxList>
         <SidebarEnvironmentFilter
           environments={availableEnvironments}
@@ -74,10 +78,12 @@ describe("sidebar environment filter menu", () => {
     await expect.element(page.getByRole("checkbox", { name: "Studio" })).not.toBeChecked();
     await screen.rerender(<FilterMenu availableEnvironments={[environments[0]!]} />);
     await expect.element(page.getByRole("checkbox", { name: "All environments" })).toBeChecked();
+    await page.getByRole("checkbox", { name: "All environments" }).click();
     await screen.rerender(<FilterMenu />);
     await expect.element(page.getByRole("checkbox", { name: "Travel" })).not.toBeChecked();
     await expect.element(page.getByRole("checkbox", { name: "Studio" })).not.toBeChecked();
-    await page.getByRole("checkbox", { name: "All environments" }).click();
+    page.getByRole("checkbox", { name: "All environments" }).element().focus();
+    await userEvent.keyboard(" ");
     await expect.element(page.getByRole("checkbox", { name: "Travel" })).toBeChecked();
     await page.getByRole("option", { name: "Notes" }).click();
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();

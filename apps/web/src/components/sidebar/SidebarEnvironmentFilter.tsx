@@ -61,7 +61,10 @@ export function SidebarEnvironmentFilter(props: {
                 props.onChange(
                   checked
                     ? new Set()
-                    : new Set(props.environments.map((environment) => environment.environmentId)),
+                    : new Set([
+                        ...props.excludedEnvironmentIds,
+                        ...props.environments.map((environment) => environment.environmentId),
+                      ]),
                 )
               }
             />

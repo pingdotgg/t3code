@@ -1,9 +1,11 @@
 import { Debouncer } from "@tanstack/react-pacer";
-import type { PullRequestMergeMethod } from "@t3tools/contracts";
+import { EnvironmentId, type PullRequestMergeMethod } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
+const isEnvironmentId = Schema.is(EnvironmentId);
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
 const LEGACY_PERSISTED_STATE_KEYS = [
   "t3code:renderer-state:v8",
@@ -157,7 +159,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     sidebarProjectScopeKeys: sanitizeStringArray(
       parsed.sidebarProjectScopeKeys ?? [parsed.sidebarProjectScopeKey],
     ),
-    sidebarExcludedEnvironmentIds: sanitizeStringArray(parsed.sidebarExcludedEnvironmentIds),
+    sidebarExcludedEnvironmentIds: sanitizeStringArray(parsed.sidebarExcludedEnvironmentIds).filter(
+      isEnvironmentId,
+    ),
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
@@ -462,7 +466,9 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setSidebarProjectScopeKeys: (projectKeys) =>
     set((state) => setSidebarProjectScopeKeys(state, projectKeys)),
   setSidebarExcludedEnvironmentIds: (environmentIds) =>
-    set({ sidebarExcludedEnvironmentIds: sanitizeStringArray(environmentIds) }),
+    set({
+      sidebarExcludedEnvironmentIds: sanitizeStringArray(environmentIds).filter(isEnvironmentId),
+    }),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),

@@ -22,21 +22,22 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   const draftId = DraftId.make("draft-preview");
   const threadId = ThreadId.make("draft-preview-thread");
   const onRender = vi.fn();
-  await using screen = await render(
+  const draftBlock = (excludedIds: ReadonlySet<EnvironmentId> = new Set()) => (
     <Profiler id="draft-block" onRender={onRender}>
       <ul>
         <SidebarDraftBlock
           projectByKey={new Map()}
           projectDisplayNameByKey={new Map()}
           scopedProjectKeys={null}
-          excludedEnvironmentIds={new Set()}
+          excludedEnvironmentIds={excludedIds}
           routeDraftId={null}
           onNavigateToDraft={vi.fn()}
           onDraftContextMenu={vi.fn()}
         />
       </ul>
-    </Profiler>,
+    </Profiler>
   );
+  await using screen = await render(draftBlock());
   const row = screen.getByTestId("sidebar-draft-row");
   await expect.element(row).not.toBeInTheDocument();
 
@@ -44,6 +45,10 @@ it("keeps draft previews current through edits, promotion and removal", async ()
     initial.setProjectDraftThreadId(projectRef, draftId, { threadId });
     initial.setPrompt(draftId, "First draft preview");
   });
+  await expect.element(row).toHaveAccessibleName("First draft preview, Unsent draft");
+  await screen.rerender(draftBlock(new Set([environmentId])));
+  await expect.element(row).not.toBeInTheDocument();
+  await screen.rerender(draftBlock());
   await expect.element(row).toHaveAccessibleName("First draft preview, Unsent draft");
 
   const rendersBeforeOtherComposer = onRender.mock.calls.length;

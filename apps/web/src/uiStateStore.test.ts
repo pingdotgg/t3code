@@ -106,6 +106,8 @@ describe("parsePersistedState", () => {
       sidebarExcludedEnvironmentIds: [
         "studio",
         "",
+        " ",
+        "\t\n",
         "offline-host",
         "studio",
         1 as unknown as string,
