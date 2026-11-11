@@ -5,11 +5,11 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useMemo } from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { FitSheet } from "../../../components/ui/FitSheet";
-import { AppText as Text } from "../../../components/ui/AppText";
+import { SheetIntro } from "../../../components/ui/SheetIntro";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useThreadSelection } from "../../../state/use-thread-selection";
@@ -114,23 +114,14 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
     <FitSheet
       header={<SheetHeader title="Confirm action" onClose={() => navigation.goBack()} />}
       showsVerticalScrollIndicator={false}
-      contentContainerClassName="android:gap-2 android:p-2"
     >
-      <View className="android:gap-2 android:rounded-[20px] android:bg-card android:p-3 ios:items-center ios:gap-1 ios:px-5 ios:pb-3 ios:pt-4">
-        {Platform.OS !== "android" ? (
-          <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
-            Confirm
-          </Text>
-        ) : null}
-        <Text className="android:text-xl android:font-t3-medium ios:text-center ios:text-3xl ios:font-t3-bold">
-          {copy?.title ?? "Run action on default branch?"}
-        </Text>
-        <Text className="text-foreground-secondary leading-normal android:text-base ios:text-center ios:text-sm ios:font-medium">
-          {copy?.description ?? "Choose how to continue."}
-        </Text>
-      </View>
+      <SheetIntro
+        eyebrow="Confirm"
+        title={copy?.title ?? "Run action on default branch?"}
+        description={copy?.description ?? "Choose how to continue."}
+      />
 
-      <View className="android:gap-2 ios:gap-3 ios:px-5 ios:pt-2">
+      <View className="gap-3">
         <SheetActionButton
           icon="arrow.right.circle"
           label={copy?.continueLabel ?? "Continue"}

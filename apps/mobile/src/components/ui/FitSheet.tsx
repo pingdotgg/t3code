@@ -12,6 +12,7 @@ export function FitSheet({
   footer,
   avoidsKeyboard,
   children,
+  contentContainerClassName = "gap-4 px-5 pt-2",
   contentContainerStyle,
   ...scrollProps
 }: FitSheetProps) {
@@ -23,6 +24,7 @@ export function FitSheet({
         <ScrollView
           {...scrollProps}
           nestedScrollEnabled
+          contentContainerClassName={contentContainerClassName}
           contentInsetAdjustmentBehavior="automatic"
           className="flex-1"
           contentContainerStyle={[
