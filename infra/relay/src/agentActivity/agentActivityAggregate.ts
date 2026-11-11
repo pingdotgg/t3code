@@ -8,6 +8,7 @@ import {
   isExpiredAgentActivityState,
   isTerminalPhase,
   MAX_ACTIVITY_ROWS,
+  RETAINED_AGENT_ACTIVITY_ROW_TTL_MS,
   sanitizeAgentActivityAggregateState,
 } from "./agentActivityPayloads.ts";
 
@@ -62,7 +63,12 @@ function isRecentTerminalState(state: RelayAgentActivityState, nowMs: number): b
   if (Number.isNaN(updatedAtMs)) {
     return false;
   }
-  return state.retained === true || nowMs - updatedAtMs <= TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS;
+  return (
+    nowMs - updatedAtMs <=
+    (state.retained === true
+      ? RETAINED_AGENT_ACTIVITY_ROW_TTL_MS
+      : TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS)
+  );
 }
 
 export function makeAggregateState(input: {

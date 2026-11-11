@@ -24,7 +24,8 @@ export function androidActivityData(
     rows.filter((row) => activityPhasePriority(row.phase) === 0).length;
   const workingCount = aggregate?.workingCount ?? Math.max(0, activeCount - attentionCount);
   const unreadCount = aggregate?.unreadCount ?? 0;
-  const active = (aggregate?.pendingCount ?? activeCount) > 0;
+  // Native dismissal resets on an inactive-to-active edge, so unread results must not hold `active`.
+  const active = activeCount > 0;
   const failed = rows.some((row) => row.phase === "failed");
   const clean = (value: string) => value.replace(/\s+/g, " ").trim();
   const lines = rows.map((row) =>
@@ -47,26 +48,20 @@ export function androidActivityData(
         .join(" · ")
     : failed
       ? "Agent work failed"
-      : "All caught up";
-  const pendingResult = lifecycleStates?.some(
-    (state) =>
-      state.retained === true &&
-      (state.phase === "woke" ||
-        (state.unread !== false && (state.phase === "completed" || state.phase === "failed"))),
+      : unreadCount
+        ? `${unreadCount} done`
+        : "All caught up";
+  // Released Android builds cancel the card on a past or zero expiry, and terminal identity includes it.
+  const expiresAt = Math.max(
+    0,
+    ...(lifecycleStates ?? rows).map((row) =>
+      row.phase === "completed" || row.phase === "failed"
+        ? row.unread === false
+          ? 0
+          : Date.parse(row.updatedAt) + TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS
+        : agentActivityExpiresAt(row),
+    ),
   );
-  const expiresAt =
-    aggregate?.pendingCount === 0 || pendingResult
-      ? 0
-      : Math.max(
-          0,
-          ...(lifecycleStates ?? rows).map((row) =>
-            row.phase === "completed" || row.phase === "failed"
-              ? "retained" in row && row.retained === true
-                ? 0
-                : Date.parse(row.updatedAt) + TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS
-              : agentActivityExpiresAt(row),
-          ),
-        );
   return {
     active: String(active),
     activity_chip: active

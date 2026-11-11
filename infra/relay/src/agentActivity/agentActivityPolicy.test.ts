@@ -104,12 +104,18 @@ describe("shared agent activity policy", () => {
     expect(shouldAlertForActivity({ ...state, phase: "woke", preferences, nowMs: 0 })).toBe(false);
     const woke = { ...state, phase: "woke" as const, retained: true };
     expect(
-      makeAggregateState({
-        activeStates: [woke],
-        terminalState: null,
-        nowMs: 2 * 24 * 60 * 60_000,
-      }),
+      makeAggregateState({ activeStates: [woke], terminalState: null, nowMs: 60 * 60_000 }),
     ).toMatchObject({ workingCount: 0, attentionCount: 1, pendingCount: 1 });
+    // A missed tombstone cannot pin a retained row forever.
+    for (const retained of [woke, { ...state, phase: "completed" as const, retained: true }]) {
+      expect(
+        makeAggregateState({
+          activeStates: [retained],
+          terminalState: null,
+          nowMs: 2 * 24 * 60 * 60_000,
+        }),
+      ).toBeNull();
+    }
     const done = { ...state, phase: "completed" as const, unread: false };
     expect(shouldAlertForActivity({ ...done, preferences, nowMs: 0 })).toBe(false);
     expect(

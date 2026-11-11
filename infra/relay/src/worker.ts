@@ -487,6 +487,7 @@ export const layer = Api.make(
                 Effect.flatMap(([activityRows, now]) =>
                   activityRows.pruneTerminal({
                     updatedBefore: DateTime.formatIso(DateTime.subtract(now, { minutes: 30 })),
+                    retainedBefore: DateTime.formatIso(DateTime.subtract(now, { hours: 25 })),
                   }),
                 ),
               ),

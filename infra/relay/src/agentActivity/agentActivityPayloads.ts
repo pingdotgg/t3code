@@ -15,6 +15,8 @@ export function isTerminalPhase(state: RelayAgentActivityState): boolean {
 // Dead environments never publish terminal states; expire their rows so activeCount cannot remain inflated.
 const RUNNING_AGENT_ACTIVITY_ROW_TTL_MS = 2 * 60 * 60 * 1_000;
 const WAITING_AGENT_ACTIVITY_ROW_TTL_MS = 24 * 60 * 60 * 1_000;
+// Unread results stay until read, but a missed tombstone must not pin them forever.
+export const RETAINED_AGENT_ACTIVITY_ROW_TTL_MS = WAITING_AGENT_ACTIVITY_ROW_TTL_MS;
 
 export function agentActivityExpiresAt(
   state: Pick<RelayAgentActivityState, "phase" | "updatedAt">,
@@ -37,7 +39,6 @@ export function isExpiredAgentActivityState(
   state: RelayAgentActivityState,
   nowMs: number,
 ): boolean {
-  if (state.phase === "woke" && state.retained === true) return false;
   const expiresAt = agentActivityExpiresAt(state);
   return !Number.isFinite(expiresAt) || nowMs > expiresAt;
 }

@@ -331,7 +331,7 @@ const make = Effect.gen(function* () {
         }
       }
       const displayedAggregate = preferences.value.liveActivitiesEnabled ? aggregate : null;
-      const active = (displayedAggregate?.pendingCount ?? displayedAggregate?.activeCount ?? 0) > 0;
+      const active = (displayedAggregate?.activeCount ?? 0) > 0;
       if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
       const data: Record<string, string> = {
         t3_kind: "agent_activity",

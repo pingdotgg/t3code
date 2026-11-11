@@ -343,16 +343,17 @@ describe("Android delivery routing", () => {
   );
 
   it.effect.each(["completed", "woke"] as const)(
-    "retains a pending %s row without an automatic Android expiry",
+    "keeps a pending %s row on the card for released Android builds",
     (phase) => {
       const h = harness();
       h.current.state = { ...state, phase, unread: phase === "completed", retained: true };
       return Effect.gen(function* () {
         const delivery = yield* FcmDeliveries.FcmDeliveries;
         yield* delivery.process({ ...h.job, state: h.current.state });
+        // An unread result must not hold `active`, or native dismissal never sees a new run.
         expect(h.sent[0]?.data).toMatchObject({
-          active: "true",
-          activity_expires_at: "0",
+          active: String(phase === "woke"),
+          activity_expires_at: String(phase === "woke" ? 24 * 60 * 60_000 : 15 * 60_000),
           activity_working_count: "0",
           activity_attention_count: phase === "woke" ? "1" : "0",
         });
