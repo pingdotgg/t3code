@@ -686,7 +686,7 @@ export const imageToolContent = (encodedResult: unknown, includeImage = true) =>
   const { screenshot: _screenshot, ...rest } = result;
   const metadata = {
     ...rest,
-    images: images.map(({ data: _data, ...image }) => image),
+    images: images.map(({ data: _data, type: _type, ...image }) => image),
     ...(screenshot === undefined
       ? {}
       : {
