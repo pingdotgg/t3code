@@ -1545,16 +1545,37 @@ describe("crossing the upgrade without trusting a claim", () => {
     }),
   );
 
-  it.live("a pre-upgrade link whose session expired does not rebind the member", () =>
-    Effect.gen(function* () {
-      const { a, b, studioNode } = yield* upgradedPair;
-      yield* a.sql`UPDATE auth_sessions SET expires_at = '2000-01-01T00:00:00.000Z'`;
-      yield* b.sql`UPDATE peer_environment_links SET expires_at = '2000-01-01T00:00:00.000Z'`;
+  // The studio asks the laptop. Each side alone must hold: the laptop's session it issued, and
+  // the studio's link at the address whois proved when it was made.
+  const broken = {
+    // Expiry is the token's signed claim; a pruned row is what the laptop holds after it.
+    "the laptop no longer holds the session it issued": (a: Device) =>
+      a.sql`DELETE FROM auth_sessions`,
+    "the laptop revoked the session it issued": (a: Device) =>
+      a.sql`UPDATE auth_sessions SET revoked_at = '2026-01-01T00:00:00.000Z'`,
+    "the studio's link expired": (_a: Device, b: Device) =>
+      b.sql`UPDATE peer_environment_links SET expires_at = '2000-01-01T00:00:00.000Z'`,
+    "the laptop no longer answers at the studio's stored address": (_a: Device, b: Device) =>
+      b.sql`UPDATE peer_environment_links SET urls_json = '["http://127.0.0.1:9"]'`,
+    "the studio no longer answers at the laptop's stored address": (a: Device) =>
+      a.sql`UPDATE peer_environment_links SET urls_json = '["http://127.0.0.1:9"]'`,
+  };
+  it.live.each(Object.entries(broken))(
+    "does not rebind across the upgrade when %s",
+    ([, breakIt]) =>
+      Effect.gen(function* () {
+        const { a, b, studioNode } = yield* upgradedPair;
+        yield* breakIt(a, b);
 
-      yield* b.devices.linkIfMine({ url: a.url }).pipe(Effect.ignore);
+        yield* b.devices.linkIfMine({ url: a.url }).pipe(Effect.ignore);
 
-      expect(yield* studioNode).toEqual(Option.some(null));
-    }),
+        expect(yield* studioNode).toEqual(Option.some(null));
+        expect(
+          yield* b.membership
+            .member(laptop.environmentId)
+            .pipe(Effect.map(Option.map((member) => member.nodeId))),
+        ).toEqual(Option.some(null));
+      }),
   );
 });
 

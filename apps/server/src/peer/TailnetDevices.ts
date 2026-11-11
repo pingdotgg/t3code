@@ -609,9 +609,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * An unbound member's handshake-made link, whose addresses whois proved when it was made.
-   * Continuity proves the member only there, never at scanned or hinted addresses. A pairing-code
-   * link names its own environment id, so it never counts.
+   * An unbound member's handshake-made link; continuity proves the member only at its stored
+   * addresses. A literal tailnet IP is one node; a MagicDNS name is whichever owner node holds it
+   * now, the same trust the link already gave every call. Pairing-code links never count.
    */
   const historicalTailnetLink = Effect.fn("TailnetDevices.historicalTailnetLink")(function* (
     environmentId: EnvironmentId,
@@ -913,9 +913,9 @@ const make = Effect.gen(function* () {
         Effect.map(Option.isSome),
         Effect.orElseSucceed(() => false),
       );
-      // Continuity needs this machine's own handshake-made link to the requester, and a session
-      // it issued naming it. The proof then runs only at that link's addresses: the claimed ones
-      // and the session's self-declared id prove nothing on their own.
+      // Continuity needs this machine's own handshake-made link to the requester and a live
+      // session it issued naming it (possession only: pre-upgrade sessions carry no origin, so a
+      // code-paired id passes this). Identity is proved only at that link's stored addresses.
       const historical =
         httpRequest === undefined
           ? Option.none<PeerLink>()
