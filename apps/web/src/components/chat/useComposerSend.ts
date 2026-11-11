@@ -981,7 +981,10 @@ export function useComposerSend(input: ComposerSendInput) {
           sameIds(attachmentIds, attachmentIdsAtSend) ||
           (annotationImageId !== undefined &&
             sameIds(attachmentIds, attachmentIdsBeforeAnnotation));
-        return !promptUnchanged || !attachmentsUnchanged;
+        // The reply is not in the prompt, so cancelling or changing it is checked on its own.
+        const liveReply =
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
+        return !promptUnchanged || !attachmentsUnchanged || liveReply !== replyTo;
       };
       const draftBeforeDecline = useComposerDraftStore
         .getState()
