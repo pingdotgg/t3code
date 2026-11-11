@@ -144,7 +144,7 @@ export function ThreadLineageWorkflowRow({
   const label = group.workflow.workflowName ?? group.workflow.title;
   const phases = group.phases.filter((phase) => phase.members.length > 0);
   return (
-    <li className="group" data-workflow-expanded={expanded ? "" : undefined}>
+    <li className="group">
       <div className={cn("relative", THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS)}>
         {header}
         {onStop ? (
