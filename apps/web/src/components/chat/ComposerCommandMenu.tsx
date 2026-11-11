@@ -140,7 +140,12 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   useLayoutEffect(() => {
     if (activeIndex < 0) return;
     // Element.scrollIntoView would also scroll the clipped menu surface and the page around it.
-    void listRef.current?.scrollIndexIntoView({ index: activeIndex, animated: false });
+    void listRef.current?.scrollIndexIntoView({
+      index: activeIndex,
+      animated: false,
+      // Keeps the row clear of the scroll fades.
+      viewportMargin: { start: 24, end: 24 },
+    });
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- a filter can keep the index while the list stays scrolled.
   }, [activeIndex, props.items]);
 
@@ -194,13 +199,18 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               onScroll={updateScrollFade}
               onReady={() => setListReady(true)}
               // LegendList sizes its first window from this element before its rows give it height, so
-              // reserve the rows' minimum height (1.75rem each, plus p-2) until it has placed them.
+              // reserve the rows' minimum height (1.75rem each, plus padding) until it has placed them.
               // Afterwards the list sizes to its rows, and a short window can shrink it.
-              style={
-                listReady ? {} : { minHeight: `min(${props.items.length * 1.75 + 1}rem, 18rem)` }
-              }
+              // Legend counts style padding (not class padding) in its scroll math.
+              style={{
+                paddingTop: 8,
+                paddingBottom: 8,
+                ...(listReady
+                  ? {}
+                  : { minHeight: `min(${props.items.length * 1.75 + 1}rem, 18rem)` }),
+              }}
               className={cn(
-                "max-h-72 min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain p-2 [&::-webkit-scrollbar-track]:my-4",
+                "max-h-72 min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain px-2 [&::-webkit-scrollbar-track]:my-4",
                 getVirtualizedScrollFadeClassName(scrollFade),
               )}
             />

@@ -86,6 +86,13 @@ it("brings a highlighted row far down a long list into the visible window", asyn
   await expect.element(option).toHaveAttribute("aria-setsize", "300");
   const surface = screen.container.querySelector<HTMLElement>("[data-composer-command-drawer]");
   expect(surface?.scrollTop, "outer menu surface scroll offset").toBe(0);
+  const scroller = option.element().closest<HTMLElement>(".overscroll-y-contain")!;
+  // The bottom 24px sit under the scroll fade.
+  await vi.waitFor(() =>
+    expect(option.element().getBoundingClientRect().bottom, "row bottom").toBeLessThanOrEqual(
+      scroller.getBoundingClientRect().bottom - 24,
+    ),
+  );
 });
 
 async function scrollListToEnd() {
