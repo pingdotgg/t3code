@@ -338,7 +338,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         if (!grantId || !current.version) return "noCredit" as const;
         const version = current.version;
         return yield* resetCreditCoordinator.redeem(
-          configDir,
+          credentialsDir,
           (requestId) =>
             ClaudeResetCredits.consumeClaudeResetCredit({
               configDir: credentialsDir,
