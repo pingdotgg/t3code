@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - Host-side device automation uses Node subprocess and filesystem APIs directly.
 
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -223,8 +224,15 @@ async function main() {
       ],
       {
         cwd: NodePath.join(REPO_ROOT, "apps/mobile"),
-        env: { ...NodeProcess.env, APP_VARIANT: "development", CI: "1" },
-        stdio: ["ignore", "ignore", "inherit"],
+        // Lazily fetched chunks (dynamic import()) sometimes arrive broken on the pool's Android
+        // emulators and throw SyntaxErrors; release builds have no lazy chunks either.
+        env: { ...NodeProcess.env, APP_VARIANT: "development", CI: "1", EXPO_NO_METRO_LAZY: "1" },
+        // The app's console output arrives through Metro; keep it with the run.
+        stdio: [
+          "ignore",
+          NodeFS.openSync(NodePath.join(outputDirectory, "metro.log"), "w"),
+          "inherit",
+        ],
         // Its own group, so stopping it also stops the expo child that owns the port.
         detached: true,
       },

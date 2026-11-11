@@ -1,6 +1,13 @@
 import type { EnvironmentId, PullRequestContextMetadata } from "@t3tools/contracts";
 import { CircleDashedIcon, FilmIcon, ImageIcon } from "lucide-react";
-import { useEffect, useState, type ComponentProps, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { documentChipKindForFileName } from "~/pierre-icons";
 
@@ -60,6 +67,8 @@ export function ContextChipPopover(props: {
   label: string;
   copyMarkdown?: string | undefined;
   accessibleLabel: string;
+  /** Overrides the kind's accent color. */
+  accent?: string | undefined;
   children: ReactNode;
 }) {
   return (
@@ -68,6 +77,11 @@ export function ContextChipPopover(props: {
         render={
           <ContextChip
             kind={props.kind}
+            style={
+              props.accent
+                ? ({ "--context-chip-accent": props.accent } as CSSProperties)
+                : undefined
+            }
             render={<button type="button" />}
             aria-label={`${props.accessibleLabel}. Show details`}
             data-markdown-copy={props.copyMarkdown}
@@ -167,7 +181,9 @@ export function ImageChipButton({
         <ImageIcon />
       )}
       <ContextChipLabel className="flex items-baseline gap-[0.33em]">
-        <span className="max-w-72 truncate">{middleTruncateAttachmentName(name)}</span>
+        <span className="min-w-0 max-w-72 overflow-x-clip text-ellipsis whitespace-nowrap">
+          {middleTruncateAttachmentName(name)}
+        </span>
         <span className="shrink-0 text-3xs text-current">{size}</span>
         {suffix ? <span className="text-3xs text-current">{suffix}</span> : null}
       </ContextChipLabel>
@@ -314,7 +330,9 @@ function FileChipContent(props: {
         <PierreEntryIcon pathValue={props.name} kind="file" theme={props.theme} />
       )}
       <ContextChipLabel className="flex items-baseline gap-[0.33em]">
-        <span className="max-w-72 truncate">{middleTruncateAttachmentName(props.name)}</span>
+        <span className="min-w-0 max-w-72 overflow-x-clip text-ellipsis whitespace-nowrap">
+          {middleTruncateAttachmentName(props.name)}
+        </span>
         <span className="shrink-0 text-3xs text-current">{props.size}</span>
         {props.suffix ? <span className="text-3xs text-current">{props.suffix}</span> : null}
       </ContextChipLabel>

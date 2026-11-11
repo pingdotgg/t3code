@@ -9,6 +9,7 @@ import type { EnvironmentPresentation } from "./connection/presentation.ts";
 import type { RelayDiscoveredEnvironment } from "./relay/discovery.ts";
 import {
   linkableMachines,
+  linkedEnvironmentNames,
   linkRequestAnswerInput,
   linkRequestDisplay,
   linkRequestFailureMessage,
@@ -311,6 +312,32 @@ describe("linkableMachines", () => {
       urls: ["https://environment-mini.t3.example"],
     });
     expect(listed[2]).toMatchObject({ machine: "server", linked: true });
+  });
+});
+
+describe("linkedEnvironmentNames", () => {
+  it("names the unexpired links as this client does, else as the link does", () => {
+    const vps = EnvironmentId.make("environment-vps");
+    const mini = EnvironmentId.make("environment-mini");
+    const unsaved = EnvironmentId.make("environment-unsaved");
+    expect(
+      linkedEnvironmentNames({
+        links: [
+          { environmentId: vps, label: "vps-01", status: "unreachable" },
+          { environmentId: mini, label: "mini", status: "expired" },
+          { environmentId: unsaved, label: "Office box", status: "reachable" },
+        ],
+        environments: [
+          { environmentId: vps, label: "Hetzner VPS" },
+          { environmentId: mini, label: "Mac mini" },
+        ],
+      }),
+    ).toEqual(
+      new Map([
+        [vps, "Hetzner VPS"],
+        [unsaved, "Office box"],
+      ]),
+    );
   });
 });
 
