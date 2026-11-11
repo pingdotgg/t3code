@@ -35,8 +35,10 @@ function literalUnderscores(text: string): Set<number> {
     const kept = Array.from({ length: word[0].length }, () => false);
     for (const piece of parseInlineMarkdownPieces(word[0], new Set()))
       kept.fill(true, piece.start, piece.end);
+    // A run ending the word stays a delimiter: it closes an outer span or, unable to open, stays text.
+    const trailing = /_+(?=\W*$)/.exec(word[0])?.index ?? word[0].length;
     kept.forEach((isKept, offset) => {
-      if (!isKept && word[0][offset] === "_") literal.add(word.index + offset);
+      if (!isKept && offset < trailing && word[0][offset] === "_") literal.add(word.index + offset);
     });
   }
   return literal;

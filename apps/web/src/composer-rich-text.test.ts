@@ -60,6 +60,7 @@ describe("composer rich text markdown", () => {
       "src/__test__.tsx",
       "edit __init__.py, then",
       "see __init__.py:42",
+      "open src/_a.ts_ and example.com/_handle_",
     ]) {
       expect(parseInlineMarkdown(text)).toEqual([{ text, marks: [] }]);
     }
@@ -76,6 +77,7 @@ describe("composer rich text markdown", () => {
       ["_read/write access_ now", "read/write access", "italic", " now"],
       ["__read/write access__ now", "read/write access", "bold", " now"],
       ["_see src/a.ts_(optional)", "see src/a.ts", "italic", "(optional)"],
+      ["_see src/_a.ts_ now", "see src/_a.ts", "italic", " now"],
     ] as const) {
       expect(parseInlineMarkdown(text)).toEqual([
         { text: styled, marks: [mark] },
