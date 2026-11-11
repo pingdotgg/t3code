@@ -9000,7 +9000,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           failedBefore: now,
           resetBefore: DateTime.makeUnsafe(resetAt),
         });
-        // So does a reset of a limit this thread does not wait on.
+        // So does a reset of a limit this thread does not wait on, or one read before a later
+        // recovery choice.
         yield* orchestrator
           .dispatch({
             type: "thread.limit-recovery.reset",
@@ -9008,6 +9009,17 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             threadId,
             runId: run.id,
             resetAt: DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(resetAt), { hours: 1 })),
+            requestId: armCommand.commandId,
+          })
+          .pipe(Effect.flip);
+        yield* orchestrator
+          .dispatch({
+            type: "thread.limit-recovery.reset",
+            commandId: CommandId.make(`recovery:stale-choice:${scenario}`),
+            threadId,
+            runId: run.id,
+            resetAt,
+            requestId: CommandId.make(`recovery:earlier-choice:${scenario}`),
           })
           .pipe(Effect.flip);
         assert.deepEqual(

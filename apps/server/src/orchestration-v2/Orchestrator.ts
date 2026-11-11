@@ -4791,6 +4791,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         recovery?.runId !== command.runId ||
         recovery.resetAt !== command.resetAt ||
+        recovery.requestId !== command.requestId ||
         recovery.resetEarly === true ||
         !(recovery.autoResume || recovery.snooze) ||
         Date.parse(recovery.resetAt) <= DateTime.toEpochMillis(now) ||
@@ -14719,13 +14720,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const reset = DateTime.toEpochMillis(input.failedBefore);
       yield* Effect.forEach(
         waiting,
-        ({ threadId, limitRecovery: { runId, resetAt } }) =>
+        ({ threadId, limitRecovery: { runId, resetAt, requestId } }) =>
           dispatchWithReceipt({
             type: "thread.limit-recovery.reset",
             commandId: CommandId.make(`limit-reset:${threadId}:${runId}:${reset}`),
             threadId,
             runId,
             resetAt,
+            ...(requestId === undefined ? {} : { requestId }),
           }).pipe(
             // A thread that moved on since the read is refused and keeps its own schedule.
             Effect.catchCause((cause) =>

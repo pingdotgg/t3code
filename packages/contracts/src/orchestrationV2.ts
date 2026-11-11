@@ -3450,6 +3450,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     resetAt: IsoDateTime,
+    /** The recovery choice the reset was read from; a later choice refuses it. */
+    requestId: Schema.optional(CommandId),
   }),
   /** Moves a thread to a project rooted at the folder it already works in, so its cwd never changes. */
   Schema.Struct({
