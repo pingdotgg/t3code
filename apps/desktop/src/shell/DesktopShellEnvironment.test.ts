@@ -163,31 +163,35 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
-  it.effect("does not wait for discovery and reports unprepared when the cache is missing", () =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      yield* runShellEnvironment({
-        env: { SHELL: "/test-shell", PATH: "/usr/bin" },
-        platform: "darwin",
-        handler: () => "",
-        processSpawner: ChildProcessSpawner.make(() =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.as(makeProcess(envOutput({ PATH: "/fresh/bin" }))),
+  it.effect(
+    "reports unprepared on a cache miss without waiting, then prepared after discovery",
+    () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const preparedAfterDiscovery = yield* runShellEnvironment({
+          env: { SHELL: "/test-shell", PATH: "/usr/bin" },
+          platform: "darwin",
+          handler: () => "",
+          processSpawner: ChildProcessSpawner.make(() =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(makeProcess(envOutput({ PATH: "/fresh/bin" }))),
+            ),
           ),
-        ),
-        use: (service) =>
-          Effect.gen(function* () {
-            const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
-            yield* Deferred.await(started);
-            assert.isDefined(startup.pollUnsafe());
-            assert.isFalse(yield* Fiber.join(startup));
-            yield* Deferred.succeed(release, undefined);
-            return yield* service.awaitDiscovery;
-          }),
-      });
-    }),
+          use: (service) =>
+            Effect.gen(function* () {
+              const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
+              yield* Deferred.await(started);
+              assert.isDefined(startup.pollUnsafe());
+              assert.isFalse(yield* Fiber.join(startup));
+              yield* Deferred.succeed(release, undefined);
+              assert.isTrue(yield* service.awaitDiscovery);
+              return yield* service.installIntoProcess;
+            }),
+        });
+        assert.isTrue(preparedAfterDiscovery);
+      }),
   );
 
   it.effect(

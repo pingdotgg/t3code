@@ -9,6 +9,7 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as Path from "effect/Path";
@@ -77,7 +78,7 @@ export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErr
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   {
-    // True only when a matching cached environment was applied; false leaves server hydration on.
+    // True once a matching cache or finished discovery prepared PATH; false keeps server hydration.
     readonly installIntoProcess: Effect.Effect<boolean>;
     readonly awaitDiscovery: Effect.Effect<boolean>;
     /** Whether the user's own login shell, not a fallback, gave the PATH a new terminal gets. */
@@ -644,7 +645,7 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("desktop.shellEnvironment.refresh"),
     Effect.onExit((exit) => Deferred.done(discovered, exit)),
   );
-  const installIntoProcess = yield* Effect.cached(
+  const applyCache = yield* Effect.cached(
     Effect.gen(function* () {
       const cache = yield* fileSystem
         .readFileString(cachePath)
@@ -691,6 +692,20 @@ export const make = Effect.gen(function* () {
         Stream.fromSubscription(subscription),
       );
     }),
+  );
+  const installIntoProcess = applyCache.pipe(
+    Effect.flatMap((cacheApplied) =>
+      cacheApplied
+        ? Effect.succeed(true)
+        : Deferred.poll(discovered).pipe(
+            Effect.flatMap(Effect.transposeOption),
+            Effect.exit,
+            Effect.map(
+              (exit) =>
+                Exit.isSuccess(exit) && Option.exists(exit.value, ({ prepared }) => prepared),
+            ),
+          ),
+    ),
   );
   return DesktopShellEnvironment.of({
     installIntoProcess,
