@@ -7,6 +7,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -59,48 +60,54 @@ const captureSpawner = (spawned: Array<{ command: string; args: ReadonlyArray<st
   );
 
 describe("openRemoteTerminal", () => {
-  it.effect("opens Terminal.app via osascript with an ssh -t login shell", () =>
+  it.effect("opens Terminal.app via a .command file with an ssh -t login shell", () =>
     Effect.gen(function* () {
       const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      const fileSystem = yield* FileSystem.FileSystem;
       const opened = yield* openRemoteTerminal({
         host: "sol",
         username: "theo",
         absolutePath: "/work/project",
-      }).pipe(
-        Effect.provide(Layer.merge(NodeServices.layer, captureSpawner(spawned))),
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(HostProcess.Environment, {}),
-      );
+      }).pipe(Effect.provide(captureSpawner(spawned)));
       assert.isTrue(opened);
       assert.equal(spawned.length, 1);
-      assert.equal(spawned[0]?.command, "osascript");
-      const script = spawned[0]?.args.join(" ") ?? "";
-      assert.match(script, /tell application "Terminal" to do script/);
+      assert.equal(spawned[0]?.command, "open");
+      assert.equal(spawned[0]?.args[0], "-a");
+      assert.equal(spawned[0]?.args[1], "Terminal");
+      const scriptPath = spawned[0]?.args[2] ?? "";
+      assert.match(scriptPath, /\.command$/);
+      const script = yield* fileSystem.readFileString(scriptPath);
       // Each argv is shell-quoted: 'ssh' '-t' '--' 'theo@sol' 'exec /bin/sh -c ...'
-      assert.match(script, /'ssh' '-t' '--' 'theo@sol'/);
+      assert.match(script, /^#!\/bin\/sh\nexec 'ssh' '-t' '--' 'theo@sol'/);
       assert.match(script, /exec \/bin\/sh -c/);
       assert.match(script, /\/work\/project/);
       assert.match(script, /\$\{SHELL:-\/bin\/sh\}/);
-    }),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Environment, {}),
+    ),
   );
 
   it.effect("passes -p before -- when the profile sets a non-default SSH port", () =>
     Effect.gen(function* () {
       const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      const fileSystem = yield* FileSystem.FileSystem;
       const opened = yield* openRemoteTerminal({
         host: "sol",
         username: "theo",
         port: 2222,
         absolutePath: "/work/project",
-      }).pipe(
-        Effect.provide(Layer.merge(NodeServices.layer, captureSpawner(spawned))),
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(HostProcess.Environment, {}),
-      );
+      }).pipe(Effect.provide(captureSpawner(spawned)));
       assert.isTrue(opened);
-      const script = spawned[0]?.args.join(" ") ?? "";
+      const scriptPath = spawned[0]?.args[2] ?? "";
+      const script = yield* fileSystem.readFileString(scriptPath);
       assert.match(script, /'ssh' '-t' '-p' '2222' '--' 'theo@sol'/);
-    }),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Environment, {}),
+    ),
   );
 
   it.effect("falls back to PowerShell Start-Process when Windows Terminal is missing", () =>

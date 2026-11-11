@@ -8,6 +8,7 @@ import { resolveSshCommand } from "@t3tools/ssh/command";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Result from "effect/Result";
 import * as Base64 from "effect/encoding/Base64";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -50,9 +51,6 @@ const POWERSHELL_ARGUMENTS_PREFIX = [
 ] as const;
 
 const quoteSh = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
-
-const escapeAppleScriptString = (value: string): string =>
-  value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 
 /** wt.exe treats `;` as a command separator even inside quoted argv. */
 const escapeWindowsTerminalArg = (value: string): string => value.replaceAll(";", "\\;");
@@ -148,13 +146,17 @@ const launchDarwin = Effect.fn("desktop.openRemoteTerminal.launchDarwin")(functi
   sshCommand: string,
   sshArgs: ReadonlyArray<string>,
 ) {
+  // Avoid Apple Events (`osascript` / `do script`): notarized builds lack
+  // automation entitlements, and spawn-unref cannot see osascript failures.
+  // Terminal.app runs executable `.command` files the same way as local Open in Terminal.
+  const fileSystem = yield* FileSystem.FileSystem;
   const shellLine = [sshCommand, ...sshArgs].map(quoteSh).join(" ");
-  yield* launchAndUnref("osascript", [
-    "-e",
-    `tell application "Terminal" to do script "${escapeAppleScriptString(shellLine)}"`,
-    "-e",
-    'tell application "Terminal" to activate',
-  ]);
+  const scriptPath = yield* fileSystem.makeTempFile({
+    prefix: "t3-remote-terminal-",
+    suffix: ".command",
+  });
+  yield* fileSystem.writeFileString(scriptPath, `#!/bin/sh\nexec ${shellLine}\n`, { mode: 0o755 });
+  yield* launchAndUnref("open", ["-a", "Terminal", scriptPath]);
 });
 
 const launchWindows = Effect.fn("desktop.openRemoteTerminal.launchWindows")(function* (
