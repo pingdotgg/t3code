@@ -442,7 +442,8 @@ export function isWindowsDrivePathHref(href: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
 }
 
-// Bare prose paths need a filesystem root or a position, so `/api/users.json` stays a route.
+// Bare prose paths need a filesystem root or a position, so `/api/users.json` stays a route,
+// and a file-shaped last segment.
 export function absoluteFilePathMatches(text: string): Array<{ index: number; path: string }> {
   const paths: Array<{ index: number; path: string }> = [];
   for (const match of text.matchAll(/(^|[\s(["'])(\/[^\s<>"'`]+)/g)) {
@@ -469,6 +470,14 @@ export function absoluteFilePathMatches(text: string): Array<{ index: number; pa
     if (
       !POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix)) &&
       !POSITION_SUFFIX_PATTERN.test(path)
+    )
+      continue;
+    // Prose ends a path at whitespace, so `/Users/me/Library/Application Support/...` must not link.
+    const basename = path.slice(path.lastIndexOf("/") + 1);
+    if (
+      !POSITION_SUFFIX_PATTERN.test(path) &&
+      !FILE_EXTENSION_PATTERN.test(basename) &&
+      !EXTENSIONLESS_FILE_NAMES.has(basename)
     )
       continue;
     if (!parseMarkdownFileLink(path)) continue;

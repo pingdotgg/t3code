@@ -71,14 +71,16 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   });
 }
 
+// Whole tags, attributes, and comments, so closing-anchor text inside them never counts as a tag.
+const RAW_HTML_TAG_PATTERN = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
+
 function rehypePreserveBareAnchorPlaceholders() {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
     let rawTextTag: string | undefined;
     const visit = (node: MarkdownImageHastNode) => {
       if (node.type === "raw" && typeof node.value === "string") {
-        // Scan whole tags, attributes, and comments so embedded closing-anchor text cannot match a placeholder.
-        const tags = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
+        const tags = new RegExp(RAW_HTML_TAG_PATTERN);
         let offset = 0;
         while (rawTextTag !== "plaintext") {
           // Raw text ends at its closing tag even inside comment-looking text.
@@ -459,12 +461,10 @@ function remarkLinkAbsoluteFilePaths(): Transformer<Root> {
       if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
       node.children = node.children.flatMap((child): typeof node.children => {
         if (child.type === "html") {
-          rawAnchorDepth = Math.max(
-            0,
-            rawAnchorDepth +
-              (child.value.match(/<a[\s>]/gi)?.length ?? 0) -
-              (child.value.match(/<\/a\s*>/gi)?.length ?? 0),
-          );
+          for (const [tag] of child.value.matchAll(RAW_HTML_TAG_PATTERN)) {
+            if (/^<a[\s/>]/i.test(tag)) rawAnchorDepth += 1;
+            else if (/^<\/a[\s>]/i.test(tag)) rawAnchorDepth = Math.max(0, rawAnchorDepth - 1);
+          }
         }
         if (child.type !== "text" || rawAnchorDepth > 0) {
           visit(child);

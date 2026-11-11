@@ -404,8 +404,8 @@ it("links complete absolute paths in prose and skips shortened ones", () => {
   };
   expect(links(`Saved to ${path} and /tmp/other.txt.`)).toEqual([path, "/tmp/other.txt"]);
   expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
-  expect(links("See /tmp/report(1). and /tmp/app/[id]/page.tsx.")).toEqual([
-    "/tmp/report(1)",
+  expect(links("See /tmp/report(1).txt. and /tmp/app/[id]/page.tsx.")).toEqual([
+    "/tmp/report(1).txt",
     "/tmp/app/[id]/page.tsx",
   ]);
   expect(links("(see /tmp/claude-1000/...). and /tmp/claude-1000/….")).toEqual([]);
@@ -413,7 +413,12 @@ it("links complete absolute paths in prose and skips shortened ones", () => {
     "/tmp/x.md:3",
   ]);
   expect(
-    links('<a href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**'),
+    links(
+      '<a title="</a>" href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**',
+    ),
+  ).toEqual([]);
+  expect(
+    links("Config lives in /Users/me/Library/Application Support/T3 Code/settings.json now."),
   ).toEqual([]);
   expect(links(`/chat/settings and https://example.com${path}`)).toEqual([
     `https://example.com${path}`,
