@@ -124,23 +124,14 @@ describe("workspace root navigation", () => {
     state = workspaceTabsReducer(state, { type: "search", tab: "settings" });
     state = workspaceTabsReducer(state, { type: "query", query: "theme", tab: "settings" });
     expect(state.tabs.settings).toMatchObject({ query: "theme", searchMode: "active" });
-    expect(settingsSearchQuery(state.tabs.settings)).toBe("theme");
     state = workspaceTabsReducer(state, { type: "expand", tab: "settings" });
     expect(settingsSearchQuery(state.tabs.settings)).toBe("theme");
     state = workspaceTabsReducer(state, { type: "cancel", tab: "settings" });
     expect(state.tabs.settings).toMatchObject({ query: "", searchMode: "resting" });
-    expect(settingsSearchQuery(state.tabs.settings)).toBe("");
     expect(state.tabs.threads.query).toBe("diff");
-  });
-
-  it("Settings list search ignores a query while the bar is closed", () => {
-    const resting = workspaceTabsReducer(initialWorkspaceTabsState(), {
-      type: "query",
-      query: "theme",
-      tab: "settings",
-    });
-    expect(resting.tabs.settings.searchMode).toBe("resting");
-    expect(settingsSearchQuery(resting.tabs.settings)).toBe("");
+    // A late native text event after the bar closed must not filter the list.
+    state = workspaceTabsReducer(state, { type: "query", query: "theme", tab: "settings" });
+    expect(settingsSearchQuery(state.tabs.settings)).toBe("");
   });
 
   it("a late native blur cannot reopen a cancelled search", () => {

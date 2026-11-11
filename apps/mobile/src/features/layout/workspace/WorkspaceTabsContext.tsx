@@ -84,10 +84,10 @@ export function WorkspaceTabsProvider(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ends settings search when Settings closes
   useEffect(() => {
     if (settingsOpen) return;
-    registry.set(
-      model.stored,
-      workspaceTabsReducer(registry.get(model.resolved), { type: "cancel", tab: "settings" }),
-    );
+    const current = registry.get(model.resolved);
+    const settings = current.tabs.settings;
+    if (settings.searchMode === "resting" && settings.query === "") return;
+    registry.set(model.stored, workspaceTabsReducer(current, { type: "cancel", tab: "settings" }));
   }, [settingsOpen, registry, model]);
   const context = {
     state,
