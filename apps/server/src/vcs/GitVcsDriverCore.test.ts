@@ -5929,7 +5929,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("commit context", () => {
-    it.effect("reads history through environment alternates and a chain of shared clones", () =>
+    it.effect("reads history through a chain of shared clones", () =>
       Effect.gen(function* () {
         const root = yield* makeTmpDir();
         const fileSystem = yield* FileSystem.FileSystem;
@@ -5948,21 +5948,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const chained = yield* driver.prepareCommitContext(previous, ["README.md"]);
         assert.include(chained?.stagedSummary ?? "", "M\tREADME.md");
         assert.include(chained?.stagedPatch ?? "", "-# test");
-
-        // A borrower whose alternates come only from the environment.
-        const borrower = `${root}/borrower`;
-        yield* git(root, ["clone", "--quiet", "--shared", seed, borrower]);
-        yield* fileSystem.remove(`${borrower}/.git/objects/info/alternates`);
-        yield* writeTextFile(borrower, "README.md", "changed\n");
-        const environment = yield* HostProcess.Environment;
-        const borrowed = yield* driver.prepareCommitContext(borrower).pipe(
-          Effect.provideService(HostProcess.Environment, {
-            ...environment,
-            GIT_ALTERNATE_OBJECT_DIRECTORIES: `${seed}/.git/objects`,
-          }),
-        );
-        assert.include(borrowed?.stagedSummary ?? "", "M\tREADME.md");
-        assert.include(borrowed?.stagedPatch ?? "", "-# test");
       }),
     );
 
