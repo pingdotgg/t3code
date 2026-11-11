@@ -1573,6 +1573,16 @@ const searchTools = (base: Base, query: string, max: number) => {
   return found.toSorted((a, b) => hits(b).length - hits(a).length).slice(0, max);
 };
 
+/** Tools that act on the branch's PR when no number is passed. */
+const BRANCH_PULL_REQUEST_TOOLS = new Set([
+  "pull_request_read",
+  "pull_request_update",
+  "pull_request_respond",
+  "pull_request_merge",
+]);
+const BRANCH_HAS_NO_PR_ERROR =
+  "This thread's branch has no known PR. Pass number, or open one with pull_request_create.";
+
 const SUBAGENT_WATCH_ERROR =
   "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
 
@@ -1830,6 +1840,13 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
       return failed(SUBAGENT_WATCH_ERROR);
+    }
+    if (BRANCH_PULL_REQUEST_TOOLS.has(name) && input.number === undefined) {
+      // Until the agent opens it, the PR a create would open does not exist.
+      const own = branchPullRequest(sample);
+      if (own.created && !sample.linked.has(pullRequest(sample.repo, { number: own.number }).url)) {
+        return failed(BRANCH_HAS_NO_PR_ERROR);
+      }
     }
     const value = t3Default(sample, name, input);
     if (name === "request_secret") savedSecretFile(sample, value);

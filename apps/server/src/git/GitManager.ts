@@ -2523,6 +2523,15 @@ export const make = Effect.gen(function* () {
   const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
     "GitManager.createPullRequest",
   )(function* (input) {
+    // A PR opened from the remote branch would leave out commits not pushed yet.
+    const { aheadCount } = yield* gitCore.statusDetails(input.cwd);
+    if (aheadCount > 0) {
+      return yield* new GitManagerError({
+        operation: "createPullRequest",
+        cwd: input.cwd,
+        detail: `The branch has ${aheadCount} unpushed commit${aheadCount === 1 ? "" : "s"}. Push before opening the PR.`,
+      });
+    }
     return yield* openPrFromBranch(
       input.cwd,
       null,

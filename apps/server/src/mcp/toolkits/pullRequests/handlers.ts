@@ -738,15 +738,22 @@ const make = Effect.gen(function* () {
         }
         const target = yield* resolveTarget({ url: created.url }, project);
         yield* linkToThread(thread, target);
-        if (input.draft === true && created.status === "created") {
+        const ref = {
+          projectId: project.id,
+          host: target.host,
+          repository: target.repository,
+          number: target.number,
+        };
+        // A retry after a failed draft finds the PR it opened, so it checks the draft state.
+        const needsDraft =
+          input.draft === true &&
+          (created.status === "created" ||
+            !(yield* pullRequests
+              .summary({ ...ref, allowStale: false })
+              .pipe(Effect.mapError(forgeFailure))).isDraft);
+        if (needsDraft) {
           yield* pullRequests
-            .runAction({
-              projectId: project.id,
-              host: target.host,
-              repository: target.repository,
-              number: target.number,
-              action: "draft",
-            })
+            .runAction({ ...ref, action: "draft" })
             .pipe(Effect.mapError(forgeFailure));
         }
         return {
@@ -808,7 +815,17 @@ const make = Effect.gen(function* () {
         if (reviewThreadId !== undefined && input.resolved !== undefined) {
           yield* pullRequests
             .setThreadResolution({ ...ref, threadId: reviewThreadId, resolved: input.resolved })
-            .pipe(Effect.mapError(forgeFailure));
+            .pipe(
+              Effect.mapError((error) =>
+                input.body === undefined
+                  ? forgeFailure(error)
+                  : new PullRequestForgeError({
+                      // A retry with the body would post the reply twice.
+                      detail: `The reply was posted, but setting resolved failed: ${error.message} Retry without body.`,
+                      cause: error,
+                    }),
+              ),
+            );
         }
         return {
           ...identityOf(target),

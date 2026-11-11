@@ -487,22 +487,20 @@ export function summarizeT3ToolCalls(
       label = phrase("Responded", "respond", `on pull requests ${times}`);
       break;
     case "merge-pr": {
-      // Auto-merge leaves the PR open until its checks pass.
-      const queued = selected.filter(
-        (call) => call.input?.auto === true && call.output?.state !== "merged",
+      // Auto-merge and merge queues leave the PR open until it lands.
+      const queued = selected.filter((call) =>
+        call.output?.state === undefined
+          ? call.input?.auto === true
+          : call.output.state !== "merged",
       ).length;
       const merged = selected.length - queued;
       label =
         merged === 0
-          ? phrase(
-              "Turned on auto-merge for",
-              "turn on auto-merge for",
-              quantity(queued, "pull request"),
-            )
+          ? phrase("Queued", "queue", `${quantity(queued, "pull request")} to merge`)
           : phrase(
               "Merged",
               "merge",
-              `${quantity(merged, "pull request")}${queued > 0 ? `, auto-merge on ${queued}` : ""}`,
+              `${quantity(merged, "pull request")}${queued > 0 ? `, queued ${queued}` : ""}`,
             );
       break;
     }

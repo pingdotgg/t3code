@@ -4139,6 +4139,31 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  it.effect("createPullRequest refuses a branch with commits it has not pushed", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/unpushed"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/unpushed"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "late.txt"), "late\n");
+      yield* runGit(repoDir, ["add", "late.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Late commit"]);
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: { prListSequence: [[], []] },
+      });
+
+      const error = yield* Effect.flip(
+        manager.createPullRequest({ cwd: repoDir, title: "Feature", body: "Body" }),
+      );
+
+      expect(error.message).toContain("1 unpushed commit");
+      expect(created(providerCalls)).toEqual([]);
+    }),
+  );
+
   it.effect("generates PR content from the created worktree's selected remote base", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

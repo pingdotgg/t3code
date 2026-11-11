@@ -852,6 +852,35 @@ describe("source control tools", () => {
         expect(yield* Ref.get(harness.commands)).toMatchObject([
           { type: "thread.pull-request.link", number: 43, source: "created" },
         ]);
+
+        // A retry after a failed draft finds the open PR and still drafts it.
+        const retried = yield* makeHarness({
+          thread: { ...makeThread([]), worktreePath: "/workspace/worktree" },
+          git: {
+            createPullRequest: (input) =>
+              Effect.succeed({
+                status: "opened_existing" as const,
+                url: "https://github.com/t3tools/t3code/pull/43",
+                number: 43,
+                baseBranch: "main",
+                headBranch: "tools",
+                title: input.title,
+              }),
+          },
+          pullRequests: {
+            summary: () => Effect.succeed({ state: "open", isDraft: false } as never),
+            runAction: (input) => Effect.sync(() => void actions.push(input)),
+          },
+        });
+        yield* retried.call("pull_request_create", {
+          title: "Add tools",
+          body: "Adds tools.",
+          draft: true,
+        });
+        expect(actions).toMatchObject([
+          { number: 43, action: "draft" },
+          { number: 43, action: "draft" },
+        ]);
       }),
   );
 
@@ -863,7 +892,14 @@ describe("source control tools", () => {
         pullRequests: {
           replyToThread: (input) => Effect.sync(() => calls.push(`reply ${input.threadId}`)),
           setThreadResolution: (input) =>
-            Effect.sync(() => calls.push(`resolve ${input.threadId} ${input.resolved}`)),
+            input.threadId === "locked-thread"
+              ? Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "setThreadResolution",
+                    detail: "Locked.",
+                  }),
+                )
+              : Effect.sync(() => void calls.push(`resolve ${input.threadId} ${input.resolved}`)),
         },
       });
       const result = yield* harness.call("pull_request_respond", {
@@ -873,6 +909,14 @@ describe("source control tools", () => {
       });
       expect(result).toMatchObject({ replied: true, resolved: true });
       expect(calls).toEqual(["reply open-thread", "resolve open-thread true"]);
+      const partial = yield* harness
+        .call("pull_request_respond", {
+          reviewThreadId: "locked-thread",
+          body: "Fixed.",
+          resolved: true,
+        })
+        .pipe(Effect.flip);
+      expect(partial.message).toContain("The reply was posted");
       const error = yield* harness
         .call("pull_request_respond", { body: "Done", resolved: true })
         .pipe(Effect.flip);

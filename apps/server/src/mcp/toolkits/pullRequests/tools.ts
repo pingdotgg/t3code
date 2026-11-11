@@ -687,7 +687,9 @@ const MergePullRequestTool = Tool.make("pull_request_merge", {
     expectedHeadSha: TrimmedNonEmptyString,
     method: Schema.optional(PullRequestMergeMethod),
     auto: Schema.optional(
-      Schema.Boolean.annotate({ description: "Merge once required checks pass." }),
+      Schema.Boolean.annotate({
+        description: "Merge once required checks pass, with any commits pushed by then.",
+      }),
     ),
   }),
   success: MergePullRequestResult,

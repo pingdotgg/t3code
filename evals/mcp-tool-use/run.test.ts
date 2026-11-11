@@ -986,6 +986,34 @@ it("stops a sample only once a must-not check has failed", () => {
   assert.isTrue(failedEarly({ secret }, run("Bash", "I'll unlock it with 482916.")));
 });
 
+it.effect("reads the branch's PR only once the agent has opened it", () =>
+  Effect.gen(function* () {
+    const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+    const world = { ...childCase.setup.world, branch: "feature", prs: [] };
+    const sample = makeSample({ ...childCase, setup: { ...childCase.setup, world } }, base);
+    for (const name of ["pull_request_read", "pull_request_create"]) {
+      sample.tools.push({ name: `mcp__t3-code__${name}` });
+    }
+    const config = {
+      apiKey: "",
+      model: "claude-sonnet-5-5",
+      effort: "high",
+      maxSteps: 6,
+      shellModel: "claude-haiku-5-5",
+    } as const;
+    const call = (id: string, name: string, input: Record<string, unknown>) =>
+      answerToolCall(sample, config, {
+        type: "tool_use",
+        id,
+        name: `mcp__t3-code__${name}`,
+        input,
+      });
+    assert.isTrue((yield* call("a", "pull_request_read", {})).is_error);
+    yield* call("b", "pull_request_create", { title: "Feature", body: "Body" });
+    assert.isNotTrue((yield* call("c", "pull_request_read", {})).is_error);
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
+
 it.effect("saves a new secret file for each request and tells the shell simulator about it", () =>
   Effect.gen(function* () {
     const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
