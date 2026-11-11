@@ -264,6 +264,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
     }),
   );
 
+  it.effect("shows Google's onboarding hold and its verification link after authenticate", () =>
+    Effect.gen(function* () {
+      const verificationUrl =
+        "https://accounts.google.com/v3/signin/continue?plt=test-plt&continue=https://developers.google.com/gemini-code-assist/auth/auth_success_gemini&sarp=1&scc=1&flowName=GlifWebSignIn&authuser";
+      for (const [errorMessage, expected] of [
+        [
+          "Onboarding failed: User is ineligible for free-tier. Reason: Your current account is not eligible for Antigravity. To use Antigravity you must be 18 years old or older. If you think you are receiving this message in error, please ensure you have verified your age and try to log in again..",
+          "https://myaccount.google.com/age-verification",
+        ],
+        [
+          `Onboarding failed: User is ineligible for free-tier. Reason: Your current account is not eligible for Antigravity. Verify your account to continue.\n\nAlternatively, try signing in with another personal Google account.. Verification URL: ${verificationUrl}`,
+          verificationUrl,
+        ],
+      ] as const) {
+        const harness = yield* makeHarness();
+        const state = yield* harness.auth.controller.start(owner);
+        yield* phase(harness.auth, "waiting");
+        yield* harness.auth.controller.complete(owner, { flowId: state.flowId!, callbackUrl });
+        yield* Deferred.fail(
+          harness.authenticated,
+          new AcpErrors.AcpRequestError({ code: -32603, errorMessage, method: "authenticate" }),
+        );
+        const failed = yield* phase(harness.auth, "failed");
+        assert.include(JSON.stringify(failed), expected);
+        yield* Deferred.await(harness.closed);
+      }
+    }),
+  );
+
   it.effect("tells the user when the agent cannot reach Google", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ interactive: false });
