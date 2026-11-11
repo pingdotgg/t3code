@@ -293,6 +293,96 @@ it("pages promoted open threads together with the remaining conversations", asyn
     .not.toBeInTheDocument();
 });
 
+it.each(["review", "issue-comment", "resolved-reply"] as const)(
+  "reveals a linked %s in the summary conversation",
+  async (kind) => {
+    setup();
+    const url = `${detail.url}#${kind === "review" ? "pullrequestreview-123" : kind === "issue-comment" ? "issuecomment-123" : "discussion_r123"}`;
+    const linkedDetail: PullRequestDetailView = {
+      ...detail,
+      comments:
+        kind === "resolved-reply"
+          ? []
+          : [
+              {
+                id: "linked",
+                kind,
+                author: detail.author,
+                body: "Linked reply",
+                createdAt: "2026-10-01T00:00:00Z",
+                url,
+                path: null,
+                reviewState: kind === "review" ? "CHANGES_REQUESTED" : null,
+              },
+            ],
+      reviewThreads:
+        kind !== "resolved-reply"
+          ? []
+          : [
+              {
+                id: "thread",
+                path: "src/test.ts",
+                line: 5,
+                side: "right",
+                isResolved: true,
+                isOutdated: false,
+                comments: [
+                  {
+                    id: "root",
+                    author: detail.author,
+                    body: "Root comment",
+                    createdAt: "2026-10-01T00:00:00Z",
+                    url: `${detail.url}#discussion_r122`,
+                  },
+                  {
+                    id: "reply",
+                    author: detail.author,
+                    body: "Linked reply",
+                    createdAt: "2026-10-01T00:01:00Z",
+                    url,
+                  },
+                ],
+              },
+            ],
+    };
+    const settled = vi.fn();
+    await using screen = await renderUi(
+      <div style={{ height: 600 }}>
+        <PullRequestSummaryTab
+          scrollerRef={() => {}}
+          detail={linkedDetail}
+          environmentId={EnvironmentId.make("environment")}
+          reference={detail}
+          threadRef={null}
+          activityPending={false}
+          activityError={null}
+          onRefresh={() => {}}
+          revealUrl={url}
+          onRevealSettled={settled}
+        />
+      </div>,
+    );
+    await expect.element(screen.getByText("Linked reply", { exact: true })).toBeVisible();
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+    await screen.rerender(
+      <div style={{ height: 600 }}>
+        <PullRequestSummaryTab
+          scrollerRef={() => {}}
+          detail={linkedDetail}
+          environmentId={EnvironmentId.make("environment")}
+          reference={detail}
+          threadRef={null}
+          activityPending={false}
+          activityError={null}
+          onRefresh={() => {}}
+          onRevealSettled={settled}
+        />
+      </div>,
+    );
+    await expect.element(screen.getByText("Linked reply", { exact: true })).toBeVisible();
+  },
+);
+
 it("adds promoted review conversations to chat without requiring review permissions", async () => {
   setup();
   localStorage.removeItem("t3code:pull-request-comment-filter:v1");

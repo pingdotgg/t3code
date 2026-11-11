@@ -1334,6 +1334,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 <span
                   className={cn(
                     "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
+                    props.settlementSupported && variantAction === "settle" && "min-w-16",
                     props.sweepAction !== null && "hidden",
                     jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
                   )}
@@ -1437,6 +1438,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                         }
                       >
                         <CheckIcon className="size-3" />
+                        Settle
                       </TooltipTrigger>
                       <TooltipPopup side="top">Settle thread</TooltipPopup>
                     </Tooltip>
@@ -1517,7 +1519,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               ) : (
                 <span
                   className={cn(
-                    "group/sidebar-status-slot relative ml-auto flex h-5 min-w-15 shrink-0 items-stretch justify-end text-meta font-normal",
+                    "group/sidebar-status-slot relative ml-auto grid h-5 min-w-15 shrink-0 grid-flow-col auto-cols-max items-stretch justify-end text-meta font-normal",
                     props.sweepAction !== null && "hidden",
                     jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
                   )}
@@ -1527,7 +1529,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       isWokeStatus
                         ? "pointer-events-auto"
                         : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:opacity-0",
-                      "flex items-center self-center justify-self-end tabular-nums text-dim-foreground",
+                      "col-start-1 row-start-1 flex items-center self-center justify-self-end tabular-nums text-dim-foreground",
                       snoozeMenuOpen && "pointer-events-none opacity-0",
                     )}
                   >
@@ -1557,7 +1559,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       className={cn(
                         // Mouse clicks leave Settle focused; focus-within would pin controls over
                         // the status label after the pointer leaves. Use focus-visible instead.
-                        "pointer-events-none absolute inset-y-0 right-0 flex items-stretch opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                        "pointer-events-none row-start-1 flex items-stretch justify-self-end opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                        isWokeStatus ? "col-start-2" : "col-start-1",
                         snoozeMenuOpen && "pointer-events-auto opacity-100",
                       )}
                     >
@@ -1613,11 +1616,12 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                                 aria-label="Settle thread"
                                 onClick={handleSettleClick}
                                 onPointerDown={handleActionPointerDown}
-                                className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-badge bg-transparent text-muted-foreground outline-none transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                                className="-me-1.5 inline-flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-badge bg-transparent px-1.5 text-muted-foreground outline-none transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                               />
                             }
                           >
                             <CheckIcon className="size-3.5" />
+                            Settle
                           </TooltipTrigger>
                           <TooltipPopup>Settle thread</TooltipPopup>
                         </Tooltip>

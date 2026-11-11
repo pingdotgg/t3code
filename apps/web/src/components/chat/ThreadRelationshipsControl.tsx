@@ -209,7 +209,12 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
           </span>
         ) : null}
       </MenuTrigger>
-      <MenuPopup side="right" align="start" className="w-75">
+      <MenuPopup
+        side="right"
+        align="start"
+        collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "end" }}
+        className="w-75"
+      >
         <div className="thread-details-stack">{rows}</div>
       </MenuPopup>
     </Menu>
@@ -443,7 +448,7 @@ function DelegatedFromRow(props: {
             </span>
           </span>
           {label ? (
-            <span className="shrink-0 whitespace-nowrap text-caption text-muted-foreground">
+            <span className="max-w-1/2 shrink-0 truncate whitespace-nowrap text-caption text-muted-foreground">
               on {label}
             </span>
           ) : null}
@@ -454,7 +459,7 @@ function DelegatedFromRow(props: {
             hint={
               environment === null
                 ? `Delegated from ${label ?? "a linked environment"}. Connect to it to open the parent thread.`
-                : "Open parent agent"
+                : `Open parent agent on ${environment.label}`
             }
           />
         </TooltipPopup>
@@ -1189,7 +1194,7 @@ export function ThreadRelationshipsPanel(props: {
           data-thread-relationships-panel
         >
           {hasRelatives ? (
-            <>
+            <div className="flex flex-col has-[>ul:first-child]:pt-1 has-[>ul:last-child]:pb-1">
               {delegatedFrom === undefined ? null : (
                 <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
                   <DelegatedFromRow
@@ -1222,7 +1227,7 @@ export function ThreadRelationshipsPanel(props: {
                   threads
                 </div>
               ) : null}
-            </>
+            </div>
           ) : null}
         </ThreadDetailsSection>
       ) : null}
