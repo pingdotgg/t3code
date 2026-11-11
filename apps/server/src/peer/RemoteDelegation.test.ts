@@ -1170,21 +1170,24 @@ it.effect("a task named only by environment inherits the parent's model, within 
       const a = yield* makeLaptop(database, offers);
       // The parent runs with full access; the link allows less.
       yield* linkTo(a.links, b, "auto-accept-edits");
-      const reasoning = { id: "reasoningEffort", value: "high" };
-      yield* seedParent(a, {
+      // An explicit Standard must survive, or a Daybreak default there would replace it.
+      const parentModelSelection = {
         ...modelSelection,
-        options: [reasoning, { id: "cyberAccessProgram", value: "daybreakBlue" }],
-      });
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "cyberAccessProgram", value: "standard" },
+        ],
+      };
+      yield* seedParent(a, parentModelSelection);
 
       const result = yield* a.call("delegate_task", {
         task: "Run the suite on the box.",
         target: { environmentId: box.environmentId },
       });
       expect(result.isError, JSON.stringify(result.content)).toBe(false);
-      // The parent's model and options, but not its cyber access program, which
-      // stays on this machine; and the link's modes rather than the parent's.
+      // The parent's model and options, and the link's modes rather than the parent's.
       expect(yield* Ref.get(thread.launchedWith)).toEqual({
-        modelSelection: { ...modelSelection, options: [reasoning] },
+        modelSelection: parentModelSelection,
         runtimeMode: "auto-accept-edits",
         interactionMode: "default",
       });
