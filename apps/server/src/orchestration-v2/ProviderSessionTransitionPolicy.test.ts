@@ -1,7 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { decideProviderSessionTransition } from "./ProviderSessionTransitionPolicy.ts";
 
 const driver = ProviderDriverKind.make("codex");
@@ -13,7 +12,6 @@ const base = {
   runtimeMode: "full-access" as const,
   interactionMode: "default" as const,
   workspace: "/repo",
-  capabilities: CodexProviderCapabilitiesV2,
 };
 
 it("reuses compatible sessions and treats interaction mode as turn-scoped", () => {
@@ -43,17 +41,9 @@ it("uses the adapter's selection transition classification", () => {
     decideProviderSessionTransition({
       current: {
         ...base,
-        capabilities: {
-          ...base.capabilities,
-          sessions: { ...base.capabilities.sessions, supportsModelSwitchInSession: false },
-        },
       },
       target: {
         ...base,
-        capabilities: {
-          ...base.capabilities,
-          sessions: { ...base.capabilities.sessions, supportsModelSwitchInSession: false },
-        },
         modelSelection: { ...base.modelSelection, model: "gpt-5.2-codex" },
         available: true,
       },

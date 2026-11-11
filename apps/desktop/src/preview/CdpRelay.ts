@@ -1,23 +1,20 @@
-/**
- * Electron allows one debugger client per webContents, so the relay shares the
- * attach the preview manager already holds.
- */
+// Electron allows one debugger per webContents; share the manager's attachment.
 
 export interface CdpRelayTarget {
   readonly send: (
     method: string,
     params: Record<string, unknown>,
     sessionId: string | undefined,
+    /** The extra session that sent it, such as a viewer's; the main connection has none. */
+    owner?: string,
   ) => Promise<unknown>;
+  readonly sessionDetached?: (owner: string) => void;
   /** The page's own CDP target id; Playwright keys the main frame by it. */
   readonly targetId: () => Promise<string>;
   readonly url: () => string;
   readonly title: () => string;
   readonly userAgent: () => string;
-  /**
-   * The desktop app and the server it launched share a disk, so the server's
-   * Playwright reads the file where it asked for it.
-   */
+  /** The desktop and its server share a disk; download paths need no translation. */
   readonly setDownloadDirectory: (directory: string | null) => void;
 }
 
@@ -39,6 +36,29 @@ const isCommand = (value: unknown): value is CdpCommand =>
   typeof (value as { id?: unknown }).id === "number" &&
   typeof (value as { method?: unknown }).method === "string";
 
+// CDP values are plain JSON data, so their serialized size can be bounded before
+// JSON.stringify allocates it. A string counts at its length unless it holds a
+// character JSON may escape, which can take six code units.
+const MAX_CDP_PAYLOAD_SIZE = 64 * 1024 * 1024;
+const MAY_ESCAPE = /[^\x20\x21\x23-\x5b\x5d-\ud7ff\ue000-\uffff]/;
+const serializedSize = (text: string) =>
+  (MAY_ESCAPE.test(text) ? text.length * 6 : text.length) + 3;
+
+const fitsPayloadBudget = (message: unknown) => {
+  let remaining = MAX_CDP_PAYLOAD_SIZE;
+  const visit = (value: unknown): boolean => {
+    remaining -= typeof value === "string" ? serializedSize(value) : 26;
+    if (remaining < 0) return false;
+    if (typeof value !== "object" || value === null) return true;
+    if (Array.isArray(value)) return value.every(visit);
+    return Object.entries(value).every(([key, item]) => {
+      remaining -= serializedSize(key);
+      return visit(item);
+    });
+  };
+  return visit(message);
+};
+
 const BROWSER_CONTEXT_ID = "t3-preview";
 const ANNOUNCE = Symbol("announce");
 const PAGE_SESSION_ID = "t3-preview-page";
@@ -53,14 +73,33 @@ const ACKNOWLEDGED = new Set([
 export function createCdpRelayConnection(
   target: CdpRelayTarget,
   write: (message: string) => void,
+  close: () => void,
 ): CdpRelayConnection {
-  const send = (message: Record<string, unknown>) => write(JSON.stringify(message));
+  let closed = false;
+  const send = (message: Record<string, unknown>) => {
+    if (closed) return;
+    if (fitsPayloadBudget(message)) {
+      write(JSON.stringify(message));
+      return;
+    }
+    // An error reply fails only that command. A dropped event would leave
+    // Playwright out of step with the page, so the relay closes instead.
+    if (typeof message["id"] === "number") {
+      write(
+        JSON.stringify({
+          id: message["id"],
+          error: { code: -32000, message: "CDP payload too large" },
+          ...(message["sessionId"] === undefined ? {} : { sessionId: message["sessionId"] }),
+        }),
+      );
+      return;
+    }
+    closed = true;
+    close();
+  };
   let attached = false;
-  /**
-   * Sessions this relay invented. Extra page sessions (Playwright's
-   * `newCDPSession`) all reach the one real debugger session, so each gets the
-   * page's events; other ids are the page's own child sessions, such as iframes.
-   */
+  let downloadEventsEnabled = false;
+  /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
   let sessionSequence = 0;
   const newSession = (kind: "browser" | "page") => {
@@ -84,9 +123,15 @@ export function createCdpRelayConnection(
       case "Browser.setDownloadBehavior": {
         const directory = command.params?.["downloadPath"];
         const allowed = command.params?.["behavior"] !== "deny" && typeof directory === "string";
+        // Browser-scoped behavior targets Electron's app session; preview paths belong to will-download.
+        const result = await target.send(
+          "Page.setDownloadBehavior",
+          { behavior: command.params?.["behavior"] === "deny" ? "deny" : "default" },
+          undefined,
+        );
         target.setDownloadDirectory(allowed ? directory : null);
-        const { browserContextId: _ignored, ...params } = command.params ?? {};
-        return target.send("Browser.setDownloadBehavior", params, undefined);
+        downloadEventsEnabled = command.params?.["eventsEnabled"] === true;
+        return result;
       }
       case "Browser.getVersion":
         return {
@@ -121,8 +166,10 @@ export function createCdpRelayConnection(
       }
       case "Target.detachFromTarget": {
         const sessionId = command.params?.["sessionId"];
-        if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID)
+        if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId);
+          target.sessionDetached?.(sessionId);
+        }
         return {};
       }
       case "Target.setAutoAttach": {
@@ -143,18 +190,20 @@ export function createCdpRelayConnection(
 
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
     const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
-    // The page itself is already running, but its child frames are not:
-    // Playwright auto-attaches with waitForDebuggerOnStart, so Chromium pauses
-    // every new cross-site iframe and worker until this reaches it. Swallowing
-    // it left sign-in checks and captchas, which run in such frames, frozen.
+    const owner =
+      child === undefined && command.sessionId !== PAGE_SESSION_ID ? command.sessionId : undefined;
+    // Child frames/workers pause on auto-attach until resumed; only the main page can skip this command.
     if (command.method === "Runtime.runIfWaitingForDebugger" && child === undefined) {
       return Promise.resolve({});
     }
-    return target.send(command.method, command.params ?? {}, child);
+    // Playwright asks for this on every page; the host emulates focus only while it is in use.
+    if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
+    return target.send(command.method, command.params ?? {}, child, owner);
   };
 
   return {
     receive: (raw) => {
+      if (closed) return;
       let command: unknown;
       try {
         command = JSON.parse(raw);
@@ -167,8 +216,7 @@ export function createCdpRelayConnection(
           ? browserCommand(command)
           : pageCommand(command);
       const route = command.sessionId === undefined ? {} : { sessionId: command.sessionId };
-      // Replies leave as commands finish, as Chromium's do, so a slow command
-      // such as a screenshot never holds up the ones behind it.
+      // Reply as commands finish so slow commands cannot block later replies.
       void result.then(
         (value) => {
           const announce =
@@ -191,9 +239,10 @@ export function createCdpRelayConnection(
     },
     event: (method, params, sessionId) => {
       if (!attached) return;
+      if (method.startsWith("Page.download")) method = method.replace("Page.", "Browser.");
       // Download events are the browser's; Playwright listens on its root session.
       if (method.startsWith("Browser.download")) {
-        send({ method, params });
+        if (downloadEventsEnabled) send({ method, params });
         return;
       }
       // Electron reports the page's own events with an empty session id.
