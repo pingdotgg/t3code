@@ -67,7 +67,18 @@ const { diffAtom, pagedDiffAtom, filesViewedAtom } = await vi.hoisted(async () =
   };
 });
 
-const mocks = vi.hoisted(() => ({ paged: false, diffCommits: [] as Array<string | undefined> }));
+const noFilesViewedAtom = await vi.hoisted(async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return Atom.make(() =>
+    AsyncResult.success<PullRequestFilesViewedResult>({ files: [], truncated: false }),
+  );
+});
+
+const mocks = vi.hoisted(() => ({
+  paged: false,
+  noFilesViewed: false,
+  diffCommits: [] as Array<string | undefined>,
+}));
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -83,7 +94,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
         mocks.diffCommits.push(input.commit);
         return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
       }) as never,
-      filesViewed: (() => filesViewedAtom) as never,
+      filesViewed: (() => (mocks.noFilesViewed ? noFilesViewedAtom : filesViewedAtom)) as never,
     },
   };
 });
@@ -143,9 +154,10 @@ const detail: PullRequestDetailView = {
   },
 };
 
-function setup({ paged }: { paged: boolean }) {
+function setup({ paged, noFilesViewed = false }: { paged: boolean; noFilesViewed?: boolean }) {
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
+  mocks.noFilesViewed = noFilesViewed;
   mocks.diffCommits = [];
   localStorage.clear();
 }
@@ -261,6 +273,23 @@ it("hides viewed files but keeps one pushed to since it was viewed", async () =>
   await expect.element(screen.getByText("early-2.ts", { exact: true }).first()).toBeVisible();
   await hideViewed.click();
   await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+});
+
+it("keeps the Hide viewed files toggle while its saved filter is on and nothing is viewed", async () => {
+  setup({ paged: true, noFilesViewed: true });
+  localStorage.setItem("t3code.pullRequestHideViewedFiles", "true");
+  const viewedDetail = {
+    ...detail,
+    capabilities: { ...detail.capabilities, viewedFiles: "host" as const },
+  };
+  await using screen = await render(tab(0, null, undefined, undefined, viewedDetail), {
+    container: pagedContainer(),
+  });
+  const hideViewed = screen.getByRole("button", { name: "Hide viewed files" });
+
+  await hideViewed.click();
+
+  await expect.element(hideViewed).toHaveAttribute("aria-pressed", "false");
 });
 
 it("marks a Shift-clicked range viewed after the first file of it was hidden", async () => {
