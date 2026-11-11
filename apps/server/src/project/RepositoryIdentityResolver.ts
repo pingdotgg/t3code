@@ -78,19 +78,17 @@ function pickMarkedRemote(
   remotes: ReadonlyMap<string, string>,
   resolved: string,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
-  const marks: Array<{ readonly remoteName: string; readonly value: string }> = [];
-  for (const line of resolved.split("\n")) {
-    const separator = line.indexOf(" ");
-    const key = line.slice(0, separator);
-    const value = line.slice(separator + 1).trim();
-    if (separator === -1 || !key.startsWith("remote.") || !key.endsWith(".gh-resolved")) continue;
-    const remoteName = key.slice("remote.".length, -".gh-resolved".length);
-    if (remotes.has(remoteName) && value.length > 0) marks.push({ remoteName, value });
-  }
+  const marks = resolved.split("\n").flatMap((line) => {
+    const match = /^remote\.(.+)\.gh-resolved\s+(\S+)$/u.exec(line.trim());
+    const remoteUrl = match?.[1] === undefined ? undefined : remotes.get(match[1]);
+    return match?.[1] && match[2] && remoteUrl
+      ? [{ remoteName: match[1], remoteUrl, value: match[2] }]
+      : [];
+  });
   // gh's choice is ambiguous with several marks; GitHubSourceControlProvider ignores them too.
   const [mark, ...others] = marks;
   if (!mark || others.length > 0) return null;
-  const markedUrl = remotes.get(mark.remoteName)!;
+  const markedUrl = mark.remoteUrl;
   if (mark.value === "base") return { remoteName: mark.remoteName, remoteUrl: markedUrl };
   const host = normalizeGitRemoteUrl(markedUrl).split("/")[0];
   const markedKey = `${host}/${mark.value.toLowerCase()}`;
