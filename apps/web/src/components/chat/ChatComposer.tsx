@@ -3809,6 +3809,7 @@ export function ChatComposer(props: ChatComposerProps) {
                     !(props.sideChatAvailable === true && parseSideChatCommand(prompt) !== null)
                   }
                   canInterrupt={canInterrupt}
+                  runId={activeThread?.runtime?.activeRunId ?? null}
                   followUpBehavior={followUpBehavior}
                   canSteer={canSteer}
                   alternateShortcutLabel={shortcutLabelForCommand(
