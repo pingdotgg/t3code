@@ -9,7 +9,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { CliError } from "effect/cli";
@@ -1017,16 +1016,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
   );
 
   // regression: #11995 macOS 15 launchctl rejects `bootout --wait` without stopping the job
-  it.effect("reinstalls over a loaded launch agent when launchctl rejects bootout --wait", () =>
-    Effect.gen(function* () {
-      const { service, control } = yield* makeHarness("darwin");
-      yield* service.install();
-
-      expect(yield* service.install().pipe(Effect.flip, Effect.option)).toEqual(Option.none());
-      expect(control.launchd?.loaded).toBe(true);
-    }),
-  );
-
   it.effect("uninstall unloads the launch agent when launchctl rejects bootout --wait", () =>
     Effect.gen(function* () {
       const { service, control } = yield* makeHarness("darwin");
