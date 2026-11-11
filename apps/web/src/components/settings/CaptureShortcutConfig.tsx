@@ -11,8 +11,8 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { useState } from "react";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
-import { resolveDiffThemeName } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
+import { useDiffThemeNames } from "../../hooks/useSettings";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
@@ -37,6 +37,7 @@ export function CaptureShortcutConfig({
 }) {
   const bridge = getDesktopSnapShotBridge();
   const resolvedTheme = useRenderedAppearance();
+  const diffThemeNames = useDiffThemeNames();
   const { copyToClipboard, isCopied } = useCopyToClipboard();
   const [preview, setPreview] = useState<DesktopCaptureConfigPreview | null>(null);
   const [result, setResult] = useState<DesktopCaptureConfigApplied | null>(null);
@@ -179,7 +180,7 @@ export function CaptureShortcutConfig({
                 fileDiff={diff}
                 options={{
                   diffStyle: "unified",
-                  theme: resolveDiffThemeName(resolvedTheme),
+                  theme: diffThemeNames[resolvedTheme],
                   overflow: "wrap",
                   preferredHighlighter: PREFERRED_HIGHLIGHTER,
                 }}

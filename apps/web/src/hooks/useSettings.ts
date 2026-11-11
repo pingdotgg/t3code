@@ -60,6 +60,7 @@ import {
   useEnvironmentScope,
 } from "~/state/session";
 import { environmentIdsKey } from "~/state/environmentAtomList";
+import { resolveDiffThemeNames, type DiffThemeNames } from "~/lib/diffRendering";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
@@ -413,6 +414,10 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
     paletteThemeActive: previewSidebarArtwork !== null || activeThemeDefinition !== null,
     paletteThemeAllowsArtwork: previewSidebarArtwork ?? themeAllowsSidebarArtwork(activeTheme),
   });
+}
+
+export function useDiffThemeNames(): DiffThemeNames {
+  return useClientSettings(resolveDiffThemeNames);
 }
 
 export async function prepareModelPreferencesPatch(

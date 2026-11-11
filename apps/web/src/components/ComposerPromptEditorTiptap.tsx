@@ -111,7 +111,8 @@ import {
   markAsClipboardEdit,
 } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
-import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { resolveDiffThemeNames } from "~/lib/diffRendering";
+import { getClientSettings, subscribeClientSettings } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
@@ -855,9 +856,8 @@ function createComposerExtensions(richText: boolean) {
           }),
           composerCodeBlockHighlight({
             resolveTheme: () =>
-              resolveDiffThemeName(
-                document.documentElement.classList.contains("dark") ? "dark" : "light",
-              ),
+              resolveDiffThemeNames(getClientSettings())[resolvedThemeFromDocument()],
+            subscribeToThemeChanges: subscribeClientSettings,
           }),
           ...ComposerBlockExtensions.map((extension) =>
             extension.name === "blockquote"

@@ -9,10 +9,62 @@ export const DIFF_THEME_NAMES = {
   dark: "pierre-dark",
 } as const;
 
-export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
+export type DiffThemeName = string;
+export type DiffThemeNames = Readonly<Record<"light" | "dark", DiffThemeName>>;
 
-export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  return DIFF_THEME_NAMES[theme];
+// Highlights catalog names; each palette loads on first use.
+export const CODE_THEME_OPTIONS = {
+  dark: [
+    { id: "poimandres", label: "Poimandres" },
+    { id: "dark-plus", label: "VS Code Dark+" },
+    { id: "github-dark-default", label: "GitHub Dark" },
+    { id: "github-dark-dimmed", label: "GitHub Dark Dimmed" },
+    { id: "one-dark-pro", label: "One Dark Pro" },
+    { id: "catppuccin-mocha", label: "Catppuccin Mocha" },
+    { id: "tokyo-night", label: "Tokyo Night" },
+    { id: "dracula", label: "Dracula" },
+    { id: "nord", label: "Nord" },
+    { id: "rose-pine", label: "Rosé Pine" },
+    { id: "night-owl", label: "Night Owl" },
+    { id: "gruvbox-dark-medium", label: "Gruvbox Dark" },
+    { id: "solarized-dark", label: "Solarized Dark" },
+    { id: "monokai", label: "Monokai" },
+    { id: "vitesse-dark", label: "Vitesse Dark" },
+    { id: "ayu-dark", label: "Ayu Dark" },
+    { id: "kanagawa-wave", label: "Kanagawa" },
+    { id: "everforest-dark", label: "Everforest Dark" },
+  ],
+  light: [
+    { id: "light-plus", label: "VS Code Light+" },
+    { id: "github-light-default", label: "GitHub Light" },
+    { id: "one-light", label: "One Light" },
+    { id: "catppuccin-latte", label: "Catppuccin Latte" },
+    { id: "rose-pine-dawn", label: "Rosé Pine Dawn" },
+    { id: "night-owl-light", label: "Night Owl Light" },
+    { id: "gruvbox-light-medium", label: "Gruvbox Light" },
+    { id: "solarized-light", label: "Solarized Light" },
+    { id: "vitesse-light", label: "Vitesse Light" },
+    { id: "ayu-light", label: "Ayu Light" },
+    { id: "kanagawa-lotus", label: "Kanagawa Lotus" },
+    { id: "everforest-light", label: "Everforest Light" },
+  ],
+} as const satisfies Record<"light" | "dark", ReadonlyArray<{ id: string; label: string }>>;
+
+function offeredThemeName(appearance: "light" | "dark", preference: string): DiffThemeName {
+  return CODE_THEME_OPTIONS[appearance].some((option) => option.id === preference)
+    ? preference
+    : DIFF_THEME_NAMES[appearance];
+}
+
+// Unknown names, such as one a newer client saved, keep the default palette.
+export function resolveDiffThemeNames(settings: {
+  readonly codeThemeLight: string;
+  readonly codeThemeDark: string;
+}): DiffThemeNames {
+  return {
+    light: offeredThemeName("light", settings.codeThemeLight),
+    dark: offeredThemeName("dark", settings.codeThemeDark),
+  };
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;

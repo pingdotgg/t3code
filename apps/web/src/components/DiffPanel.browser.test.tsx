@@ -21,6 +21,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { act, render } from "../../test/render";
 import { makeThreadFixture } from "~/test-fixtures";
+import { DIFF_THEME_NAMES } from "~/lib/diffRendering";
 
 type ResultAtom<A> = Atom.Atom<AsyncResult.AsyncResult<A, Error>>;
 
@@ -70,6 +71,9 @@ vi.mock("~/hooks/useSettings", () => ({
   useClientSettings: (select: (settings: ClientSettings) => unknown) =>
     select({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: state.diffFilesCollapsed }),
   updateClientSettings: async () => {},
+  useDiffThemeNames: () => DIFF_THEME_NAMES,
+  getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
+  subscribeClientSettings: () => () => {},
 }));
 vi.mock("~/hooks/useTheme", () => ({
   useRenderedAppearance: () => "dark",
