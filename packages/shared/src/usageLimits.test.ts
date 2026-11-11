@@ -130,6 +130,7 @@ describe("new thread model fallback", () => {
     ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false],
     ["antigravity", ["3p-weekly"], "claude-opus-5-5", true],
     ["antigravity", ["gemini-weekly"], "antigravity-default", true],
+    ["codex", ["individual"], "gpt-5.5", true],
     ["opencode", ["go_weekly"], "opencode/big-pickle", false],
     ["opencode", ["go_weekly"], "opencode-go/big-pickle", true],
   ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback) => {
