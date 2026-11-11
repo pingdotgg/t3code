@@ -533,6 +533,26 @@ describe("server browser evaluate", () => {
   });
 });
 
+describe("server browser wait", () => {
+  it("ends at its timeout when a check never answers", async () => {
+    // As on a desktop tab whose Playwright utility world never answers.
+    const page = {
+      locator: () => ({ count: () => new Promise<number>(() => {}) }),
+    } as unknown as Page;
+    vi.useFakeTimers();
+    try {
+      let failure: unknown;
+      void ServerBrowserPage.waitFor(page, { selector: "button", timeoutMs: 300 }).catch(
+        (error: unknown) => (failure = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(failure).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("server browser net errors", () => {
   it.each([
     ["net::ERR_CONNECTION_REFUSED", "ERR_CONNECTION_REFUSED", -102],
