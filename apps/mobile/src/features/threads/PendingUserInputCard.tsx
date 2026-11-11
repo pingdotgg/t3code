@@ -8,7 +8,7 @@ import {
   type TextDirection,
 } from "@t3tools/shared/textDirection";
 import { useNavigation } from "@react-navigation/native";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   useAnimatedStyle,
@@ -21,8 +21,14 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
+import {
+  SelectableMarkdownText,
+  type MarkdownImageSourceResolver,
+} from "../../native/SelectableMarkdownText";
+import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
+import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
-import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import {
@@ -81,6 +87,8 @@ function QuestionText(props: {
   readonly threadId: ThreadId;
   readonly workspaceRoot: string | null;
   readonly setDirection: TextDirection | undefined;
+  readonly resolveImageSource: MarkdownImageSourceResolver;
+  readonly onImagePress: (href: string) => void;
 }) {
   const styles = useMarkdownPreviewStyles();
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
@@ -113,11 +121,28 @@ function QuestionText(props: {
         Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
       }
       onLinkPress={openLink}
+      resolveImageSource={props.resolveImageSource}
+      onImagePress={props.onImagePress}
     />
   );
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const resolveImageSource = useMarkdownImageSource({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+  });
+  const [previewImage, setPreviewImage] = useState<FilePreviewSource | null>(null);
+  const openImagePreview = (href: string) => {
+    const media = resolveMarkdownMediaPreview(href, {
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+      workspaceRoot: props.workspaceRoot,
+      imageEmbed: true,
+    });
+    if (media?.kind === "image") setPreviewImage(media.source);
+  };
   const questionCount = props.pendingUserInput.questions.length;
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
@@ -271,6 +296,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 threadId={props.threadId}
                 workspaceRoot={props.workspaceRoot}
                 setDirection={setDirection}
+                resolveImageSource={resolveImageSource}
+                onImagePress={openImagePreview}
               />
               <View className="gap-2">
                 {question.options.map((option) => {
@@ -278,44 +305,59 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
                     option.description !== option.label ? option.description : undefined;
+                  const preview = option.preview?.trim() ? option.preview : undefined;
                   return (
-                    <Pressable
-                      key={optionValue}
-                      accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
-                      accessibilityState={{ checked: selected, disabled: responseDisabled }}
-                      disabled={responseDisabled}
-                      className={cn(
-                        "min-h-12 w-full rounded-2xl border px-3.5 py-3",
-                        selected ? "border-primary bg-primary/10" : "border-border bg-input",
-                      )}
-                      onPress={() =>
-                        props.onSelectOption(
-                          props.pendingUserInput.requestId,
-                          question,
-                          optionValue,
-                        )
-                      }
-                    >
-                      <View className="min-w-0 flex-1 gap-0.5">
-                        <Text
-                          className={cn(
-                            "font-t3-bold text-sm",
-                            selected ? "text-foreground" : "text-foreground-secondary",
-                          )}
-                          style={proseDirectionStyle(option.label, setDirection)}
-                        >
-                          {option.label}
-                        </Text>
-                        {description ? (
+                    <View key={optionValue} className="gap-1.5">
+                      <Pressable
+                        accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
+                        accessibilityState={{ checked: selected, disabled: responseDisabled }}
+                        disabled={responseDisabled}
+                        className={cn(
+                          "min-h-12 w-full rounded-2xl border px-3.5 py-3",
+                          selected ? "border-primary bg-primary/10" : "border-border bg-input",
+                        )}
+                        onPress={() =>
+                          props.onSelectOption(
+                            props.pendingUserInput.requestId,
+                            question,
+                            optionValue,
+                          )
+                        }
+                      >
+                        <View className="min-w-0 flex-1 gap-0.5">
                           <Text
-                            className="font-sans text-sm leading-5 text-foreground-muted"
-                            style={proseDirectionStyle(description, setDirection)}
+                            className={cn(
+                              "font-t3-bold text-sm",
+                              selected ? "text-foreground" : "text-foreground-secondary",
+                            )}
+                            style={proseDirectionStyle(option.label, setDirection)}
                           >
-                            {description}
+                            {option.label}
                           </Text>
-                        ) : null}
-                      </View>
-                    </Pressable>
+                          {description ? (
+                            <Text
+                              className="font-sans text-sm leading-5 text-foreground-muted"
+                              style={proseDirectionStyle(description, setDirection)}
+                            >
+                              {description}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </Pressable>
+                      {preview ? (
+                        <View className="px-3.5">
+                          <QuestionText
+                            markdown={preview}
+                            environmentId={props.environmentId}
+                            threadId={props.threadId}
+                            workspaceRoot={props.workspaceRoot}
+                            setDirection={setDirection}
+                            resolveImageSource={resolveImageSource}
+                            onImagePress={openImagePreview}
+                          />
+                        </View>
+                      ) : null}
+                    </View>
                   );
                 })}
               </View>
@@ -365,6 +407,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       style={Platform.OS === "android" ? androidBoundsStyle : undefined}
     >
       {bar}
+      <FilePreviewModal source={previewImage} onRequestClose={() => setPreviewImage(null)} />
       <Animated.View
         pointerEvents={props.collapsed ? "none" : "box-none"}
         className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"

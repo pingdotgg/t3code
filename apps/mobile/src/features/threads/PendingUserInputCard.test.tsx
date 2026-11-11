@@ -39,6 +39,10 @@ vi.mock("../../components/ui/AppText", () => ({
 vi.mock("../../components/ui/ControlPill", () => ({ ControlPill: () => null }));
 vi.mock("../../components/ui/Button", () => ({ Button: () => null }));
 vi.mock("./QuestionAttachments", () => ({ QuestionAttachments: () => null }));
+vi.mock("../../components/ui/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
+vi.mock("../../native/useMarkdownImageSource", () => ({
+  useMarkdownImageSource: () => () => null,
+}));
 vi.mock("../files/FileMarkdownPreview", () => ({
   useMarkdownPreviewStyles: () => ({ nativeTextStyle: {} }),
 }));

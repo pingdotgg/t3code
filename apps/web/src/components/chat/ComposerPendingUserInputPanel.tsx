@@ -310,19 +310,34 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     ) : null}
                   </>
                 );
+                const preview = option.preview?.trim() ? option.preview : undefined;
                 return (
-                  <button
-                    key={`${activeQuestion.id}:${optionValue}`}
-                    type="button"
-                    aria-pressed={isSelected}
-                    disabled={disabled || isResponding}
-                    onClick={() => {
-                      handleOptionSelection(activeQuestion.id, optionValue);
-                    }}
-                    className={className}
-                  >
-                    {content}
-                  </button>
+                  <div key={`${activeQuestion.id}:${optionValue}`}>
+                    <button
+                      type="button"
+                      aria-pressed={isSelected}
+                      disabled={disabled || isResponding}
+                      onClick={() => {
+                        handleOptionSelection(activeQuestion.id, optionValue);
+                      }}
+                      className={className}
+                    >
+                      {content}
+                    </button>
+                    {/* Outside the button: previews hold links and expandable images, and single-select
+                        advances on click. Thumbnail-sized images keep every option in view. */}
+                    {preview ? (
+                      <ChatMarkdown
+                        text={preview}
+                        cwd={cwd}
+                        threadRef={threadRef}
+                        className={cn(
+                          "mb-2 ms-9 me-9 w-auto text-xs text-foreground/85 sm:ms-8 sm:me-8 [&_img]:max-w-[min(100%,18rem)]!",
+                          questionTextAlign,
+                        )}
+                      />
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
