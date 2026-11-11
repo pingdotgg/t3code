@@ -39,6 +39,8 @@ import {
   ProviderSetupError,
   type ServerProviderCompatibilityAdvisory,
   isDelegatedAppThread,
+  specialistMcpServerEntries,
+  type ThreadSpecialist,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -1425,11 +1427,32 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 const CODEX_T3_DIRECT_MCP_SERVER = "t3-code-direct";
 const CODEX_DIRECT_ONLY_T3_TOOL = "t3_thread_wait";
 
+function codexSpecialistMcpConfig(
+  specialist: ThreadSpecialist | undefined,
+): Readonly<Record<string, Schema.Json>> {
+  const config: Record<string, Schema.Json> = {};
+  for (const [name, server] of specialistMcpServerEntries(specialist)) {
+    config[`mcp_servers.${name}`] =
+      server.type === "http"
+        ? {
+            url: server.url,
+            ...(server.headers === undefined ? {} : { http_headers: server.headers }),
+          }
+        : {
+            command: server.command,
+            ...(server.args === undefined ? {} : { args: [...server.args] }),
+            ...(server.env === undefined ? {} : { env: server.env }),
+          };
+  }
+  return config;
+}
+
 function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly specialist?: ThreadSpecialist;
 }): {
   readonly cwd?: string;
   readonly model?: string;
@@ -1453,6 +1476,7 @@ function codexThreadRuntimeParams(input: {
       ...(input.threadId === null
         ? {}
         : { [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId }),
+      ...codexSpecialistMcpConfig(input.specialist),
       ...(t3Server === undefined
         ? {}
         : {
@@ -7440,6 +7464,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     mcpSession,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
+                    ...(threadInput.specialist === undefined
+                      ? {}
+                      : { specialist: threadInput.specialist }),
                   }),
                 ),
               ),

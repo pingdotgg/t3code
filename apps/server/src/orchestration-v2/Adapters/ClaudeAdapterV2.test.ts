@@ -619,6 +619,42 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       readOnlyToolNames,
     );
   });
+
+  it("merges specialist role MCP servers with t3-code", () => {
+    const threadId = ThreadId.make("thread-claude-role-mcp");
+    const mcpSession = mcpSessionFor(threadId);
+    const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession,
+      readOnlySandbox: false,
+      specialist: {
+        key: "vault",
+        label: "Vault",
+        skills: ["vault-user"],
+        mcpServers: {
+          vault: { type: "stdio", command: "vault-mcp", args: ["serve"] },
+          docs: {
+            type: "http",
+            url: "https://docs.example/mcp",
+            headers: { Authorization: "Bearer docs" },
+          },
+        },
+      },
+    });
+    assert.deepEqual(overrides.mcpServers, {
+      vault: { type: "stdio", command: "vault-mcp", args: ["serve"] },
+      docs: {
+        type: "http",
+        url: "https://docs.example/mcp",
+        headers: { Authorization: "Bearer docs" },
+      },
+      "t3-code": {
+        type: "http",
+        url: mcpSession.endpoint,
+        headers: { Authorization: mcpSession.authorizationHeader },
+        timeout: ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+      },
+    });
+  });
 });
 
 describe("ClaudeAdapterV2 native protocol logging", () => {

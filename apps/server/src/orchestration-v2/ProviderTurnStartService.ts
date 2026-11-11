@@ -1236,6 +1236,9 @@ export const layer: Layer.Layer<
                 : { ...providerThread, forkedFrom: null },
               // The failed fork may have left the adapter's session half-switched.
               ...(nativeForkFailed ? { forceNewNativeThread: true } : {}),
+              ...(projection.thread.specialist === undefined
+                ? {}
+                : { specialist: projection.thread.specialist }),
             }),
           );
           if (loaded === undefined) return undefined;
@@ -1321,6 +1324,9 @@ export const layer: Layer.Layer<
               runtimePolicy: resolvedRuntimePolicy,
               providerSessionId,
               existingProviderThread: providerThread,
+              ...(projection.thread.specialist === undefined
+                ? {}
+                : { specialist: projection.thread.specialist }),
             }),
           );
         }
@@ -1433,6 +1439,9 @@ export const layer: Layer.Layer<
             // Clear the native ref to force a fresh session while preserving row identity.
             existingProviderThread: { ...providerThread, nativeThreadRef: null },
             forceNewNativeThread: true,
+            ...(projection.thread.specialist === undefined
+              ? {}
+              : { specialist: projection.thread.specialist }),
           }),
         );
         if (replacement === undefined) return undefined;

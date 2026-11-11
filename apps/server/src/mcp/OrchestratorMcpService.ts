@@ -23,7 +23,8 @@ import {
   type OrchestratorMcpFindOrOpenSpecialistInput,
   type OrchestratorMcpFindOrOpenSpecialistResult,
   type OrchestratorMcpDelegateTaskInput,
-  type ThreadSpecialist,
+  resolveSpecialistBinding,
+  specialistBindingsEqual,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpDeleteScheduledTaskInput,
   type OrchestratorMcpRequestSecretInput,
@@ -3006,17 +3007,15 @@ const make = Effect.gen(function* () {
 
         if (existing !== undefined && !(isCreateRetry && existing.id === createThreadId)) {
           const prior = existing.specialist;
-          const specialist: ThreadSpecialist = {
+          const specialist = resolveSpecialistBinding({
             key: input.key,
-            label: input.label ?? prior?.label ?? input.key,
-            ...(input.instructions !== undefined
-              ? { instructions: input.instructions }
-              : prior?.instructions !== undefined
-                ? { instructions: prior.instructions }
-                : {}),
-          };
-          const needsRebind =
-            prior?.label !== specialist.label || prior?.instructions !== specialist.instructions;
+            ...(input.label === undefined ? {} : { label: input.label }),
+            ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+            ...(input.skills === undefined ? {} : { skills: input.skills }),
+            ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+            ...(prior === undefined ? {} : { prior }),
+          });
+          const needsRebind = !specialistBindingsEqual(prior, specialist);
           const prompt = input.prompt;
           if (needsRebind || prompt !== undefined || existing.archivedAt !== null) {
             const target = yield* loadTargetThread(existing.id);
@@ -3114,11 +3113,13 @@ const make = Effect.gen(function* () {
           } satisfies OrchestratorMcpFindOrOpenSpecialistResult;
         }
 
-        const specialist: ThreadSpecialist = {
+        const specialist = resolveSpecialistBinding({
           key: input.key,
-          label: input.label ?? input.key,
+          ...(input.label === undefined ? {} : { label: input.label }),
           ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
-        };
+          ...(input.skills === undefined ? {} : { skills: input.skills }),
+          ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+        });
         const { scope, parent } = yield* loadThreadCaller(callerScope, "find_or_open_specialist");
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
         const parentRun = ThreadManagementService.latestActiveRun(parent);
