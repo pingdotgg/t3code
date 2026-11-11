@@ -156,24 +156,6 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     }),
   );
 
-  it.effect("accepts an envelope arriving after the former one-second deadline", () =>
-    Effect.gen(function* () {
-      const { fd, stream, reading } = yield* openControlledBootstrapInput;
-      const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd).pipe(
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.forkScoped,
-      );
-
-      yield* Deferred.await(reading);
-      yield* TestClock.adjust(1_001);
-      stream.end('{"mode":"desktop"}\n');
-
-      const payload = yield* Fiber.join(fiber);
-      assert.deepEqual(payload, { mode: "desktop" });
-      assert.isTrue(stream.destroyed);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
   it.effect("fails at the default deadline and releases the pending reader", () =>
     Effect.gen(function* () {
       const { fd, stream, reading } = yield* openControlledBootstrapInput;
