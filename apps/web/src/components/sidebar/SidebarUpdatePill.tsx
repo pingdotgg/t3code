@@ -9,7 +9,6 @@ import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { cn } from "../../lib/utils";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { usePrimaryManagedPolicy } from "../../state/managedPolicy";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -29,7 +28,7 @@ import { installDesktopUpdate, showDesktopUpdateDownloadedToast } from "../deskt
 import { useCheckProviderUpdates } from "../ProviderUpdatesAction";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { SidebarMenuItem } from "../ui/sidebar";
+import { SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   DesktopUpdateStatusIcon,
@@ -114,7 +113,6 @@ function resolveSidebarUpdatePresentation({
   return {
     iconStatus,
     showUpdateDetails,
-    showUpdateIconState: showUpdateDetails && !showCheckIcon,
   } as const;
 }
 
@@ -244,7 +242,7 @@ function SidebarUpdateControl() {
     isChecking: state?.status === "checking" || isCheckingProviders,
     prefersReducedMotion,
   });
-  const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
+  const { iconStatus, showUpdateDetails } = resolveSidebarUpdatePresentation({
     action,
     showsEverything: runsEverything,
     run,
@@ -443,19 +441,13 @@ function SidebarUpdateControl() {
   }
 
   const updateButton = (
-    <button
+    <SidebarMenuButton
+      size="icon"
       type="button"
       aria-label={idleTooltip?.detail ? `${tooltip}: ${idleTooltip.detail}` : tooltip}
       aria-disabled={isInteractionDisabled || undefined}
-      className={cn(
-        // The footer's 28px control height, so the row keeps its center line.
-        "inline-flex size-7 items-center justify-center rounded-control text-sidebar-foreground outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
-        isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
-        // Checking and ready-to-install drop the well so the spin and the check badge read alone.
-        iconStatus !== "checking" && iconStatus !== "downloaded" && "surface-sidebar-row-selected",
-        !isInteractionDisabled && "hover:surface-ghost-hover",
-        disabled && !showUpdateIconState && "opacity-60",
-      )}
+      // Keep status tooltips reachable while checking or downloading blocks the action.
+      style={{ pointerEvents: "auto" }}
       onClick={handleAction}
       onBlur={() => {
         suppressReleaseNotesFocusOpen.current = false;
@@ -481,7 +473,7 @@ function SidebarUpdateControl() {
       }}
     >
       {statusIcon}
-    </button>
+    </SidebarMenuButton>
   );
 
   return (
