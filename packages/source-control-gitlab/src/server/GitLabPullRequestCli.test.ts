@@ -87,6 +87,10 @@ function mergeRequestJson(overrides: Record<string, unknown>): string {
   });
 }
 
+function commitJson(id: string) {
+  return { id, title: "Commit", committed_date: "2026-07-01T00:00:00Z" };
+}
+
 function sourceBranchJson(overrides: Record<string, unknown>): string {
   return JSON.stringify({
     data: {
@@ -871,6 +875,182 @@ layer("GitLabPullRequestCli.layer", (it) => {
       }),
   );
 
+  it.effect("reverts a merged merge request onto a new branch and opens a merge request", () =>
+    Effect.gen(function* () {
+      const mergeCommit = "dac72fa101758a44b0068a23666559920a74478f";
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              mergeRequestJson({
+                state: "merged",
+                merge_commit_sha: mergeCommit,
+                squash_commit_sha: "cb2d9f660ebe946e5056ae98993db5ea72b9bad1",
+              }),
+            ),
+          ),
+        )
+        .mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "revert",
+      });
+
+      expect(
+        mockedExecute.mock.calls.map(([input]) => [
+          input.args[1],
+          input.stdin && JSON.parse(input.stdin),
+        ]),
+      ).toEqual([
+        ["projects/acme%2Fweb/merge_requests/7", undefined],
+        ["projects/acme%2Fweb/repository/branches", { branch: "revert-dac72fa1", ref: "main" }],
+        [
+          `projects/acme%2Fweb/repository/commits/${mergeCommit}/revert`,
+          { branch: "revert-dac72fa1" },
+        ],
+        [
+          "projects/acme%2Fweb/merge_requests",
+          {
+            source_branch: "revert-dac72fa1",
+            target_branch: "main",
+            title: 'Revert "Merge request 7"',
+            description: "This reverts merge request !7",
+            remove_source_branch: true,
+          },
+        ],
+      ]);
+    }),
+  );
+
+  it.effect.each([
+    ["the revert conflicts", "/revert", "Failure"],
+    ["opening the merge request fails", "/merge_requests", "Failure"],
+    ["the request is interrupted", "/revert", "Interrupt"],
+  ] as const)("deletes the revert branch when %s", ([, failingPath, outcome]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(({ args, cwd }) =>
+        args[1]?.endsWith(failingPath) && args.includes("POST")
+          ? outcome === "Interrupt"
+            ? Effect.interrupt
+            : Effect.fail(
+                new GitLabCli.GitLabCliCommandError({
+                  operation: "execute",
+                  command: "glab",
+                  cwd,
+                  cause: new Error("GitLab rejected the write"),
+                }),
+              )
+          : Effect.succeed(
+              output(
+                mergeRequestJson({
+                  state: "merged",
+                  merge_commit_sha: null,
+                  squash_commit_sha: "abc12345ff",
+                }),
+              ),
+            ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const exit = yield* Effect.exit(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "revert",
+        }),
+      );
+
+      expect(exit._tag).toBe("Failure");
+      expect(mockedExecute.mock.calls.at(-1)?.[0].args.slice(1, 4)).toEqual([
+        "projects/acme%2Fweb/repository/branches/revert-abc12345",
+        "--method",
+        "DELETE",
+      ]);
+    }),
+  );
+
+  it.effect.each([
+    ["reverts the sole commit of", [commitJson("1111111122")], "revert-11111111"],
+    [
+      "refuses to revert several commits of",
+      [commitJson("1111111122"), commitJson("2222222233")],
+      "GitLabRevertUnavailableError",
+    ],
+  ] as const)("%s a fast-forward merge without squash", ([, commits, expected]) =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              mergeRequestJson({
+                state: "merged",
+                merge_commit_sha: null,
+                squash_commit_sha: null,
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify(commits))))
+        .mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const result = yield* Effect.result(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "revert",
+        }),
+      );
+
+      expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/merge_requests/7/commits?per_page=2");
+      if (expected === "GitLabRevertUnavailableError") {
+        expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: expected } });
+      } else {
+        expect(JSON.parse(callAt(2).stdin ?? "")).toEqual({ branch: expected, ref: "main" });
+      }
+    }),
+  );
+
+  it.effect("refuses to revert a merge request that is not merged before any write", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              mergeRequestJson({
+                state: "opened",
+                merge_commit_sha: null,
+                squash_commit_sha: null,
+              }),
+            ),
+          ),
+        )
+        .mockReturnValue(Effect.succeed(output(JSON.stringify([commitJson("1111111122")]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const result = yield* Effect.result(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "revert",
+        }),
+      );
+
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "GitLabRevertUnavailableError", reason: "not-merged" },
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect("sends a comment body over stdin, never in argv", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
@@ -1383,6 +1563,21 @@ layer("GitLabPullRequestCli.layer", (it) => {
           ),
         ),
       );
+      // Line 12 is added after a removed line, so GitLab's old counter there is 11, not 0.
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify([
+              {
+                old_path: "src/a.ts",
+                new_path: "src/b.ts",
+                renamed_file: true,
+                diff: "@@ -8,4 +9,4 @@\n a\n b\n-c\n+d\n+e\n f\n-g\n",
+              },
+            ]),
+          ),
+        ),
+      );
       mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
@@ -1399,12 +1594,26 @@ layer("GitLabPullRequestCli.layer", (it) => {
             position: { kind: "deleted", oldLine: 4 },
             body: "why remove?",
           },
+          {
+            path: "src/b.ts",
+            oldPath: "src/a.ts",
+            startPosition: { kind: "context", oldLine: 9, newLine: 10, side: "right" },
+            position: { kind: "added", newLine: 12 },
+            body: "this block",
+          },
+          {
+            path: "src/b.ts",
+            startPosition: { kind: "added", newLine: 12 },
+            position: { kind: "added", newLine: 12 },
+            body: "one line",
+          },
         ],
       });
 
       expect(argsOfCall(0)[1]).toContain("merge_requests/7");
-      expect(argsOfCall(1)[1]).toContain("/discussions");
-      expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({
+      expect(argsOfCall(1)[1]).toContain("merge_requests/7/diffs");
+      expect(argsOfCall(2)[1]).toContain("/discussions");
+      expect(JSON.parse(callAt(2).stdin ?? "")).toEqual({
         body: "why remove?",
         position: {
           base_sha: "base",
@@ -1416,8 +1625,18 @@ layer("GitLabPullRequestCli.layer", (it) => {
           old_line: 4,
         },
       });
-      expect(argsOfCall(2)[1]).toContain("/notes");
-      expect(argsOfCall(3)[1]).toContain("/approve");
+      // sha1("src/b.ts")
+      const fileHash = "e55a8d6c5dd26e72538fd71fb7695dd829c8dab5";
+      expect(JSON.parse(callAt(3).stdin ?? "").position).toMatchObject({
+        new_line: 12,
+        line_range: {
+          start: { line_code: `${fileHash}_9_10`, type: null, old_line: 9, new_line: 10 },
+          end: { line_code: `${fileHash}_11_12`, type: "new", new_line: 12 },
+        },
+      });
+      expect(JSON.parse(callAt(4).stdin ?? "").position).not.toHaveProperty("line_range");
+      expect(argsOfCall(5)[1]).toContain("/notes");
+      expect(argsOfCall(6)[1]).toContain("/approve");
     }),
   );
 
