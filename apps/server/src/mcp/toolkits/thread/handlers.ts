@@ -12,6 +12,7 @@ import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
 import {
   dispatchFailure,
   newCommandId,
@@ -20,6 +21,7 @@ import {
   unavailable,
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -218,6 +220,16 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           threads,
           projection: { thread },
         } = yield* readThread(input.threadId);
+        const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+        const provider = providers.find(
+          (candidate) => candidate.instanceId === modelSelection.instanceId,
+        );
+        if (provider === undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "provider_unavailable",
+            message: `Provider instance ${modelSelection.instanceId} is not registered.`,
+          });
+        yield* OrchestrationMcp.requireAdvertisedModel(provider, modelSelection.model);
         const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
         const result = yield* threads
           .dispatch({ type, threadId: thread.id, commandId: yield* newCommandId(), modelSelection })
