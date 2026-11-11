@@ -2036,9 +2036,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const mentions = [...text.matchAll(SKILL_MENTION_PATTERN)];
         if (!mentions.length) return undefined;
         // An optional catalog timeout must not close the host needed for the text fallback.
-        return yield* Effect.tryPromise(() =>
-          host.connection.request("skill/list", { sessionId: nativeSessionId }),
-        ).pipe(
+        return yield* Effect.tryPromise({
+          try: () => host.connection.request("skill/list", { sessionId: nativeSessionId }),
+          catch: (cause) => protocolError("Muse skill/list failed", cause),
+        }).pipe(
           Effect.flatMap((value) => decode(MuseSkillList, value)),
           Effect.map(({ skills }) => {
             const selectors = new Set(skills.map((skill) => skill.selector));
