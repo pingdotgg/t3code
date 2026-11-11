@@ -180,6 +180,19 @@ export class ThreadLaunchBranchConflictError extends Schema.TaggedError<ThreadLa
   }
 }
 
+export class ThreadLaunchNotRepositoryError extends Schema.TaggedError<ThreadLaunchNotRepositoryError>()(
+  "ThreadLaunchNotRepositoryError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    workspaceRoot: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Project "${this.projectTitle}" (${this.workspaceRoot}) is not a Git repository.`;
+  }
+}
+
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
@@ -195,7 +208,10 @@ export class ThreadLaunchService extends Context.Service<
         /** Skips the check when this launch was already accepted, so its retry replays. */
         readonly commandId?: CommandId;
       },
-    ) => Effect.Effect<void, ThreadLaunchBaseRefError | ThreadLaunchBranchConflictError>;
+    ) => Effect.Effect<
+      void,
+      ThreadLaunchBaseRefError | ThreadLaunchBranchConflictError | ThreadLaunchNotRepositoryError
+    >;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -280,19 +296,29 @@ const make = Effect.gen(function* () {
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
     const strategy = input.workspaceStrategy;
-    if (strategy.type !== "worktree") return;
+    // launch() turns a Scratch worktree request into a root launch.
+    if (strategy.type !== "worktree" || (yield* managedFolders.isScratchProject(input.projectId)))
+      return;
     if (input.commandId !== undefined) {
       const receipt = yield* receipts
         .getByCommandId(input.commandId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
       if (Option.isSome(receipt) && receipt.value.status === "accepted") return;
     }
-    const project = yield* projects.getById(input.projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.orElseSucceed(() => undefined),
+    const project = Option.getOrUndefined(
+      yield* projects.getById(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
     );
     if (project === undefined) return;
     const cwd = project.workspaceRoot;
+    const repositoryRoot = yield* git
+      .repositoryRoot(cwd)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (repositoryRoot === null)
+      return yield* new ThreadLaunchNotRepositoryError({
+        projectId: project.id,
+        projectTitle: project.title,
+        workspaceRoot: cwd,
+      });
     const { baseRef, branch } = strategy;
     const baseResolves =
       // `:/text` is a commit search, which cannot be asked for a commit type.
