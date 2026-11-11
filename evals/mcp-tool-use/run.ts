@@ -2346,17 +2346,11 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
           normalizeToolName(block.name) === "question_card";
         const isT3Mcp = block.name.startsWith("mcp__t3-code__");
         // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
-        const joined = held.join("\n");
-        const totalLength = held.reduce((total, text) => total + text.length, 0);
-        const hidePostCardText =
-          joined.length <= 150 ||
-          replyCoverage(joined, sample.lessonCardReplies.join("\n")) >= 0.85;
-        const showHeld =
-          held.length > 0 &&
-          (totalLength > 300 ||
-            (isT3Mcp && (!sample.lessonCardSeen || isCard)) ||
-            (sample.lessonCardSeen && !isCard && !hidePostCardText));
-        if (showHeld) {
+        // After a card, short text before a drawing tool is working talk and stays a Thought too.
+        if (
+          (isT3Mcp && (!sample.lessonCardSeen || isCard)) ||
+          held.reduce((total, text) => total + text.length, 0) > 300
+        ) {
           if (isCard) {
             texts.push(
               ...held.flatMap((text) => {
@@ -2385,9 +2379,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       const joined = sample.heldLessonText.join("\n");
       if (
         !sample.lessonCardSeen ||
-        !(
-          joined.length <= 150 || replyCoverage(joined, sample.lessonCardReplies.join("\n")) >= 0.85
-        )
+        (joined.length > 150 && replyCoverage(joined, sample.lessonCardReplies.join("\n")) < 0.85)
       )
         texts.push(...sample.heldLessonText);
       sample.heldLessonText.length = 0;

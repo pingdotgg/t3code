@@ -2126,10 +2126,6 @@ function cardReplyCoversLead(
   return isLessonStatusLine(text) ? "" : undefined;
 }
 
-function shouldHideLessonCardText(text: string, cardReplies: ReadonlyArray<string>): boolean {
-  return text.length <= 150 || replyCoverage(text, cardReplies.join("\n")) >= 0.85;
-}
-
 function isLessonStatusLine(text: string) {
   if (text.includes(":")) return false;
   const sentences = text
@@ -7985,7 +7981,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           if (context.assistant.heldText.length === 0) return;
           const joined = context.assistant.heldText.map((item) => item.text).join("\n");
-          if (!shouldHideLessonCardText(joined, context.assistant.cardReplies)) {
+          if (
+            joined.length > 150 &&
+            replyCoverage(joined, context.assistant.cardReplies.join("\n")) < 0.85
+          ) {
             yield* flushHeldAssistantText(context);
             return;
           }
@@ -8039,16 +8038,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           const held = context.assistant.heldText;
           context.assistant.heldText = [];
-          const totalLength = held.reduce((total, item) => total + item.text.length, 0);
-          if (context.assistant.cardSeen && !isLessonCardTool(block.name) && totalLength <= 300) {
-            context.assistant.heldText = held;
-            yield* emitHeldAssistantTextAsReasoning(context);
-            return;
-          }
           if (
-            resolveT3McpToolId(block.name) === null &&
-            !context.assistant.cardSeen &&
-            totalLength <= 300
+            held.reduce((total, item) => total + item.text.length, 0) <= 300 &&
+            (resolveT3McpToolId(block.name) === null ||
+              (context.assistant.cardSeen && !isLessonCardTool(block.name)))
           ) {
             for (const item of held) yield* emitHeldAssistantTextItemAsReasoning(context, item);
             return;

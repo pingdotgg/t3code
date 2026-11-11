@@ -3696,18 +3696,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each([
     {
       name: "separate frames",
-      postText: "The picture isn't right yet. I'm fixing the geometry before continuing.",
+      postText:
+        "The picture isn't right yet. The yellow angle arcs sit outside the drops, and the wax drop isn't drawn at the angle its label says. I'm fixing the geometry before rendering.",
       expected: [
         ["assistant_message", "Let's test the idea."],
-        ["reasoning", "The picture isn't right yet. I'm fixing the geometry before continuing."],
-      ],
-    },
-    {
-      name: "uncovered 151-character caption stays visible",
-      postText: "x".repeat(151),
-      expected: [
-        ["assistant_message", "Let's test the idea."],
-        ["assistant_message", "x".repeat(151)],
+        [
+          "reasoning",
+          "The picture isn't right yet. The yellow angle arcs sit outside the drops, and the wax drop isn't drawn at the angle its label says. I'm fixing the geometry before rendering.",
+        ],
       ],
     },
     {
