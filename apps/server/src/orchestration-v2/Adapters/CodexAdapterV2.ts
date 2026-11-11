@@ -85,6 +85,7 @@ import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -702,12 +703,17 @@ const decodeTurnReasoningEffort = Schema.decodeUnknownEffect(
   Schema.Union([CodexSchema.V2TurnStartParams__ReasoningEffort, Schema.Null]),
 );
 
+const CodexAdditionalContext = Schema.Record(
+  Schema.String,
+  CodexSchema.V2TurnStartParams__AdditionalContextEntry,
+);
+const encodeCodexAdditionalContextJson = Schema.encodeEffect(
+  Schema.fromJsonString(CodexAdditionalContext),
+);
 const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
-    additionalContext: Schema.optionalKey(
-      Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),
-    ),
+    additionalContext: Schema.optionalKey(CodexAdditionalContext),
   }),
 );
 type CodexTurnStartParamsWithCollaborationMode =
@@ -1768,10 +1774,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             NonNullable<CodexTurnStartParamsWithCollaborationMode["additionalContext"]>
           >(),
         );
+        const digestAdditionalContext = Effect.fn("CodexAdapterV2.digestAdditionalContext")(
+          function* (context: typeof CodexAdditionalContext.Type) {
+            return Hex.encode(
+              yield* digest.digest(
+                Digest.sha256,
+                new TextEncoder().encode(yield* encodeCodexAdditionalContextJson(context)),
+              ),
+            );
+          },
+        );
+        // Absent: fall back to persisted metadata. Undefined: Codex holds no known context.
+        const deliveredContextDigests = new Map<string, string | undefined>();
+        // Codex dedupes against its in-memory map, which a turn without additionalContext empties.
+        const contextStoreDigests = new Map<string, string>();
+        // Recorded once Codex accepts the turn, before its turn/started can lead to a terminal.
+        const pendingContextDigests = new Map<string, string | undefined>();
         // Codex drops client developer messages during compaction but only
         // resends additionalContext when it changes.
         const restoreAdditionalContext = Effect.fn("CodexAdapterV2.restoreAdditionalContext")(
           function* (threadId: string) {
+            yield* invalidateAdditionalContext(threadId);
             const context = (yield* Ref.get(additionalContextByThread)).get(threadId);
             if (!context) return;
             yield* client.request("thread/inject_items", {
@@ -1795,13 +1818,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     },
               ),
             });
+            yield* recordAdditionalContextDigest(threadId, yield* digestAdditionalContext(context));
           },
-          Effect.timeout("10 seconds"),
-          Effect.catch((cause) =>
-            Effect.logWarning("Failed to restore Codex additional context after compaction.", {
-              cause,
-            }),
-          ),
+          (effect, threadId) =>
+            effect.pipe(
+              Effect.timeout("10 seconds"),
+              Effect.catch((cause) =>
+                invalidateAdditionalContext(threadId).pipe(
+                  Effect.andThen(
+                    Effect.logWarning(
+                      "Failed to restore Codex additional context after compaction.",
+                      { cause },
+                    ),
+                  ),
+                ),
+              ),
+            ),
         );
         const initialized = yield* Ref.make(false);
         // Codex rejects a second initialize on the shared app-server.
@@ -2027,6 +2059,55 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
+        const withCurrentContextDigest = (
+          threadId: string,
+          providerThread: OrchestrationV2ProviderThread,
+        ) => {
+          if (!deliveredContextDigests.has(threadId)) return providerThread;
+          const { codexAdditionalContextDigest: _digest, ...nativeMetadata } =
+            providerThread.nativeMetadata ?? {};
+          const digest = deliveredContextDigests.get(threadId);
+          return {
+            ...providerThread,
+            nativeMetadata: {
+              ...nativeMetadata,
+              ...(digest === undefined ? {} : { codexAdditionalContextDigest: digest }),
+            },
+          };
+        };
+        const recordAdditionalContextDigest = Effect.fn(
+          "CodexAdapterV2.recordAdditionalContextDigest",
+        )(function* (threadId: string, digest: string | undefined) {
+          deliveredContextDigests.set(threadId, digest);
+          const providerThread = rootProviderThreads.get(threadId);
+          if (
+            !providerThread ||
+            providerThread.nativeMetadata?.codexAdditionalContextDigest === digest
+          )
+            return;
+          const updated = withCurrentContextDigest(threadId, providerThread);
+          rootProviderThreads.set(threadId, updated);
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver: CODEX_PROVIDER,
+            providerThread: updated,
+          });
+        });
+        const invalidateAdditionalContext = (threadId: string) =>
+          recordAdditionalContextDigest(threadId, undefined);
+        // Compare against the stored thread: an update emitted after a terminal is never stored.
+        const recordPendingContextDigest = (
+          threadId: string,
+          storedThread: OrchestrationV2ProviderThread,
+        ) =>
+          Effect.suspend(() => {
+            if (!pendingContextDigests.has(threadId)) return Effect.void;
+            const digest = pendingContextDigests.get(threadId);
+            pendingContextDigests.delete(threadId);
+            rootProviderThreads.set(threadId, storedThread);
+            return recordAdditionalContextDigest(threadId, digest);
+          });
+
         const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
         // Best effort: older Codex lacks thread/sample, and a sample fails once the user sends again.
         // Delegated threads share this session but have no one typing, so they never sample.
@@ -2125,7 +2206,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) {
           const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
           if (nativeThreadId == null) return;
-          rootProviderThreads.set(nativeThreadId, providerThread);
+          rootProviderThreads.set(
+            nativeThreadId,
+            withCurrentContextDigest(nativeThreadId, providerThread),
+          );
           yield* emitGoalUpdate(nativeThreadId);
         });
 
@@ -4741,6 +4825,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             const pendingRootTurn = (yield* Ref.get(pendingRootTurns)).get(payload.threadId);
             if (pendingRootTurn !== undefined) {
+              yield* recordPendingContextDigest(payload.threadId, pendingRootTurn.providerThread);
               yield* registerRootTurn({
                 turnInput: pendingRootTurn,
                 nativeTurnId: payload.turn.id,
@@ -7015,12 +7100,31 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               else next.delete(threadId);
               return next;
             });
+            const { additionalContext, ...paramsWithoutContext } = turnStartParams;
+            const contextDigest =
+              additionalContext === undefined
+                ? undefined
+                : yield* digestAdditionalContext(additionalContext);
+            const deliveredDigest = deliveredContextDigests.has(threadId)
+              ? deliveredContextDigests.get(threadId)
+              : turnInput.providerThread.nativeMetadata?.codexAdditionalContextDigest;
+            // Omit only when history holds the context but this app-server's map does not.
+            const omitContext =
+              contextDigest !== undefined &&
+              contextDigest === deliveredDigest &&
+              contextStoreDigests.get(threadId) !== contextDigest;
+            pendingContextDigests.set(threadId, contextDigest ?? deliveredDigest);
             // Completion can remove the old context while turn/start is in flight.
             const previousTurns = new Map([
               ...(yield* Ref.get(settledTurns)),
               ...(yield* Ref.get(activeTurns)),
             ]);
-            const started = yield* client.request("turn/start", turnStartParams);
+            const started = yield* client.request(
+              "turn/start",
+              omitContext ? paramsWithoutContext : turnStartParams,
+            );
+            if (omitContext || contextDigest === undefined) contextStoreDigests.delete(threadId);
+            else contextStoreDigests.set(threadId, contextDigest);
             const previousTurn =
               previousTurns.get(started.turn.id) ??
               (yield* Ref.get(activeTurns)).get(started.turn.id);
@@ -7036,8 +7140,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             // A turn/started notification may have registered and completed this turn already.
             if ((yield* Ref.get(pendingRootTurns)).get(threadId) !== turnInput) return;
+            yield* recordPendingContextDigest(threadId, turnInput.providerThread);
+            const providerThread = rootProviderThreads.get(threadId) ?? turnInput.providerThread;
             yield* registerRootTurn({
-              turnInput,
+              turnInput: { ...turnInput, providerThread },
               nativeTurnId: started.turn.id,
               startedAt: codexTimestamp(started.turn.startedAt),
               waitForNativeStart: started.turn.startedAt === null,
@@ -7046,14 +7152,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           (effect, turnInput) =>
             effect.pipe(
               Effect.ensuring(
-                Effect.flatMap(getNativeThreadId(turnInput.providerThread), (threadId) =>
-                  Ref.update(pendingRootTurns, (current) => {
+                Effect.flatMap(getNativeThreadId(turnInput.providerThread), (threadId) => {
+                  pendingContextDigests.delete(threadId);
+                  return Ref.update(pendingRootTurns, (current) => {
                     if (current.get(threadId) !== turnInput) return current;
                     const updated = new Map(current);
                     updated.delete(threadId);
                     return updated;
-                  }),
-                ).pipe(Effect.ignore),
+                  });
+                }).pipe(Effect.ignore),
               ),
             ),
         );
@@ -7355,6 +7462,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.andThen(resume),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
+              // An unloaded thread reloads with an empty context map.
+              contextStoreDigests.delete(response.thread.id);
               return {
                 ...threadInput.providerThread,
                 providerSessionId: input.providerSessionId,
@@ -7394,6 +7503,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* Ref.update(pendingRootTurns, (current) =>
                 new Map(current).set(threadId, turnInput),
               );
+              rootProviderThreads.set(threadId, turnInput.providerThread);
+              yield* invalidateAdditionalContext(threadId);
               // Clear on interruption; a late turn/started must not be adopted after an interrupted start.
               yield* client.request("thread/compact/start", { threadId }).pipe(
                 Effect.onError(() =>
@@ -8126,9 +8237,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.andThen(revertCodexThread(client, threadId, numTurns)),
               );
               turnTokenUsageByThread.delete(threadId);
+              deliveredContextDigests.set(response.thread.id, undefined);
+              const { codexAdditionalContextDigest: revertedDigest, ...nativeMetadata } =
+                threadInput.providerThread.nativeMetadata ?? {};
               return {
                 providerThread: {
                   ...threadInput.providerThread,
+                  ...(revertedDigest === undefined ? {} : { nativeMetadata }),
                   nativeThreadRef: {
                     driver: CODEX_PROVIDER,
                     nativeId: response.thread.id,
