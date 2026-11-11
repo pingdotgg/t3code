@@ -30,6 +30,8 @@ import {
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadInput,
   OrchestratorMcpThreadReadResult,
+  OrchestratorMcpThreadBroadcastInput,
+  OrchestratorMcpThreadBroadcastResult,
   OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitInput,
@@ -281,6 +283,19 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const ThreadBroadcastTool = Tool.make("t3_thread_broadcast", {
+  description:
+    "Send one message to every active agent in a project, or to selected `threadIds`. Distinct from point-to-point `t3_thread_send`. Default `mode:'queue'`. Optional `roomThreadId` stores one shared audit copy. Targets cannot run with broader modes than yours. In your reply, name recipients by their `link` verbatim.",
+  parameters: OrchestratorMcpThreadBroadcastInput,
+  success: OrchestratorMcpThreadBroadcastResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Broadcast to T3 threads")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
 const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
     "Wait for a thread's run to finish. No `runId`: latest. Idle: at once. On timeout, with `next` end your turn; without, call again.",
@@ -365,6 +380,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadReadTool,
   ThreadUpdateTool,
   ThreadSendTool,
+  ThreadBroadcastTool,
   ThreadWaitTool,
   ThreadInterruptTool,
   EnvironmentLinksTool,

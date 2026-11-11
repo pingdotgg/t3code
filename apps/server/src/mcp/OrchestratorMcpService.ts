@@ -46,6 +46,11 @@ import {
   type OrchestratorMcpThreadReadInput,
   type OrchestratorMcpThreadReadResult,
   type OrchestratorMcpThreadRun,
+  ORCHESTRATOR_MCP_THREAD_BROADCAST_MAX_TARGETS,
+  type OrchestratorMcpThreadBroadcastDelivery,
+  type OrchestratorMcpThreadBroadcastInput,
+  type OrchestratorMcpThreadBroadcastResult,
+  type OrchestratorMcpThreadBroadcastSkipped,
   type OrchestratorMcpThreadSendInput,
   type OrchestratorMcpThreadSendResult,
   type OrchestratorMcpThreadTimelineItem,
@@ -209,6 +214,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadSendInput,
   ) => Effect.Effect<OrchestratorMcpThreadSendResult, OrchestratorMcpFailure>;
+  readonly broadcastToThreads: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpThreadBroadcastInput,
+  ) => Effect.Effect<OrchestratorMcpThreadBroadcastResult, OrchestratorMcpFailure>;
   readonly waitForThread: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadWaitInput,
@@ -3165,6 +3174,177 @@ const make = Effect.gen(function* () {
         delivery: result.delivery,
       } satisfies OrchestratorMcpThreadSendResult;
     }),
+    broadcastToThreads: Effect.fn("OrchestratorMcpService.broadcastToThreads")(
+      function* (scope, input) {
+        const { parent, limits } = yield* loadCaller(scope, ["runs"]);
+        const projectId = yield* resolveProjectTarget(parent, input.projectId);
+        yield* assertLiveCallerForOtherProject(scope, parent, projectId);
+
+        const mode = input.mode ?? "queue";
+        const key = yield* requestKey(input.clientRequestId);
+        const callerThreadId = parent?.thread.id;
+        const skipped: OrchestratorMcpThreadBroadcastSkipped[] = [];
+        let candidateIds: ReadonlyArray<ThreadId>;
+        if (input.threadIds !== undefined) {
+          candidateIds = input.threadIds;
+        } else {
+          const projectThreads = yield* threadManagement
+            .listProjectThreads({
+              projectId,
+              includeSubagents: input.includeSubagents === true,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
+              ),
+            );
+          const active = projectThreads.filter((thread) => {
+            if (callerThreadId !== undefined && thread.id === callerThreadId) return false;
+            if (input.roomThreadId !== undefined && thread.id === input.roomThreadId) return false;
+            if (threadSettlement(thread).settled) return false;
+            const status = thread.activityRunStatus ?? thread.status;
+            return (
+              status === "queued" ||
+              status === "preparing" ||
+              status === "starting" ||
+              status === "running" ||
+              status === "waiting"
+            );
+          });
+          candidateIds = active
+            .slice(0, ORCHESTRATOR_MCP_THREAD_BROADCAST_MAX_TARGETS)
+            .map((thread) => thread.id);
+          for (const extra of active.slice(ORCHESTRATOR_MCP_THREAD_BROADCAST_MAX_TARGETS)) {
+            skipped.push({ threadId: extra.id, reason: "limit" });
+          }
+        }
+
+        const seen = new Set<ThreadId>();
+        const targets: ThreadId[] = [];
+        for (const threadId of candidateIds) {
+          if (seen.has(threadId)) continue;
+          seen.add(threadId);
+          if (callerThreadId !== undefined && threadId === callerThreadId) {
+            skipped.push({ threadId, reason: "self" });
+            continue;
+          }
+          targets.push(threadId);
+        }
+
+        const deliverOne = Effect.fn("OrchestratorMcpService.broadcastToThreads.deliver")(
+          function* (
+            threadId: ThreadId,
+            text: string,
+            operation: string,
+            index: number | undefined,
+          ) {
+            const { parent: sender, target } = yield* loadScopedThread(scope, threadId, ["runs"]);
+            yield* assertLiveCallerForOtherThread(scope, sender, target);
+            yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
+            yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
+            const messageId =
+              index === undefined
+                ? stableOperationMessageId({ scope, requestKey: key, operation })
+                : stableMessageId({
+                    scope,
+                    requestKey: `${key}:${operation}`,
+                    index,
+                  });
+            const result = yield* threadManagement
+              .sendToThread({
+                projectId: target.thread.projectId,
+                commandId: stableCommandId({
+                  scope,
+                  requestKey: key,
+                  operation,
+                  ...(index === undefined ? {} : { index }),
+                }),
+                threadId,
+                ...(sender === undefined ? {} : { senderThreadId: sender.thread.id }),
+                messageId,
+                text,
+                attachments: [],
+                mode,
+                createdBy: "agent",
+                creationSource: "mcp",
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  isThreadManagementError(error)
+                    ? threadManagementFailure(error)
+                    : failure(
+                        "orchestration_error",
+                        `Unable to send to thread ${threadId}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
+                      ),
+                ),
+              );
+            return {
+              threadId,
+              link: threadLinkFor(scope, threadId, target.thread.title),
+              messageId,
+              runId: result.run.id,
+              ...(result.run.delegatedTaskId === undefined
+                ? {}
+                : { taskId: result.run.delegatedTaskId }),
+              status: result.run.status,
+              delivery: result.delivery,
+            } satisfies OrchestratorMcpThreadBroadcastDelivery;
+          },
+        );
+
+        const deliveries: OrchestratorMcpThreadBroadcastDelivery[] = [];
+        yield* Effect.forEach(
+          targets,
+          (threadId, index) =>
+            deliverOne(threadId, input.message, "thread-broadcast", index).pipe(
+              Effect.map((delivery) => {
+                deliveries.push(delivery);
+              }),
+              Effect.catch((error: OrchestratorMcpFailure) => {
+                skipped.push({
+                  threadId,
+                  reason: error.code === "thread_not_found" ? "not_found" : "send_failed",
+                  message: error.message,
+                });
+                return Effect.void;
+              }),
+            ),
+          { concurrency: 1 },
+        );
+
+        let room: OrchestratorMcpThreadBroadcastDelivery | undefined;
+        if (input.roomThreadId !== undefined) {
+          const recipientSummary =
+            deliveries.length === 0
+              ? "Broadcast to 0 threads"
+              : `Broadcast to ${deliveries.length} thread(s): ${deliveries
+                  .map((delivery) => delivery.link ?? delivery.threadId)
+                  .join(", ")}`;
+          room = yield* deliverOne(
+            input.roomThreadId,
+            `${recipientSummary}\n\n${input.message}`,
+            "thread-broadcast-room",
+            undefined,
+          ).pipe(
+            Effect.catch((error: OrchestratorMcpFailure) => {
+              skipped.push({
+                threadId: input.roomThreadId!,
+                reason: error.code === "thread_not_found" ? "not_found" : "send_failed",
+                message: error.message,
+              });
+              return Effect.undefined;
+            }),
+          );
+        }
+
+        return {
+          projectId,
+          deliveries,
+          skipped,
+          ...(room === undefined ? {} : { room }),
+        } satisfies OrchestratorMcpThreadBroadcastResult;
+      },
+    ),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
       const { parent, target } = yield* loadScopedThread(scope, input.threadId, []);
       const result = yield* threadManagement

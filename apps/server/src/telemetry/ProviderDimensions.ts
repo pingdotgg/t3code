@@ -164,6 +164,13 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
       });
     case "t3_thread_send":
       return defined({ delivery: stringField(output, "delivery") });
+    case "t3_thread_broadcast": {
+      const deliveries = Array.isArray(output.deliveries) ? output.deliveries : [];
+      return {
+        batchSize: deliveries.length,
+        targetChosen: input.threadIds !== undefined,
+      };
+    }
     case "t3_thread_send_attachments":
       return { delivery: "auto" };
     case "schedule_task":

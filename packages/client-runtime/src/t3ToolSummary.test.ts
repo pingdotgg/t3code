@@ -52,6 +52,23 @@ describe("summarizeT3ToolCalls", () => {
     expect(summarizeT3ToolCalls("unlink-pr", [uncounted]).label).toBe("Unlinked pull requests");
   });
 
+  it("counts broadcast deliveries across recipients", () => {
+    expect(
+      summarizeT3ToolCalls("thread-broadcast", [
+        completed(
+          { message: "hello" },
+          {
+            deliveries: [{ threadId: "thread-a" }, { threadId: "thread-b" }],
+            skipped: [],
+          },
+        ),
+      ]).label,
+    ).toBe("Broadcast to 2 threads");
+    expect(summarizeT3ToolCalls("thread-broadcast", [completed({ message: "hello" })]).label).toBe(
+      "Broadcast to threads 1 time",
+    );
+  });
+
   it("excludes failed and unfinished sends even if the provider reports completed", () => {
     const calls: T3ToolSummaryCall[] = [
       completed({ threadId: "success" }, { messageId: "ok", threadId: "success" }),
