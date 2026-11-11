@@ -1705,13 +1705,15 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
+    const delivered = (waited: Option.Option<OrchestratorMcpDelegateTaskResult>) =>
+      Option.isSome(waited) && isTerminalTaskStatus(waited.value.status);
+    // The finalizer runs uninterruptibly, so a cancel right after the wait returns still upgrades.
     const waited = yield* waitForTask(scope, taskId, timeoutMs).pipe(
-      Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : upgradeWake)),
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit) && delivered(exit.value) ? Effect.void : upgradeWake,
+      ),
     );
-    if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
-      return waited.value;
-    }
-    yield* upgradeWake;
+    if (Option.isSome(waited) && delivered(waited)) return waited.value;
     return yield* readTask(scope, taskId, Option.isNone(waited), true);
   });
 
