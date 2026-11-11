@@ -164,8 +164,8 @@ export function DraftHeroHeadline({
   // Pinning from a row keeps rows in place while the picker is open.
   const pickerItems: readonly PickerItem[] = useOrderWhileOpen(
     [
-      ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
       { value: ADD_PROJECT_VALUE, label: "Add project" },
+      ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
     ],
     (item) => item.value,
     pickerOpen,
