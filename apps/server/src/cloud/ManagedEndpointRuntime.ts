@@ -207,10 +207,13 @@ function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
 const readTunnelEdgeRouteSource = Effect.callback<string | null>((resume) => {
   const socket = NodeDgram.createSocket("udp4");
   let closed = false;
+  // These run from socket listeners, where a throw would be an uncaught exception, not a defect.
   const close = () => {
     if (closed) return;
     closed = true;
-    socket.close();
+    try {
+      socket.close();
+    } catch {}
   };
   const finish = (address: string | null) => {
     close();
@@ -219,7 +222,12 @@ const readTunnelEdgeRouteSource = Effect.callback<string | null>((resume) => {
   socket.unref();
   socket.once("error", () => finish(null));
   socket.once("connect", () => {
-    if (!closed) finish(socket.address().address);
+    if (closed) return;
+    let address: string | null = null;
+    try {
+      address = socket.address().address;
+    } catch {}
+    finish(address);
   });
   socket.connect(TUNNEL_EDGE_ROUTE_PROBE_PORT, TUNNEL_EDGE_ROUTE_PROBE_ADDRESS);
   return Effect.sync(close);
