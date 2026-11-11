@@ -54,7 +54,7 @@ vi.mock(import("~/state/use-atom-command"), () => ({
         return AsyncResult.success(undefined);
       }
       state.checks.push({ environmentId, input });
-      return state.checkResult ?? AsyncResult.success(undefined);
+      return state.checkResult ?? AsyncResult.success({ providers: [] });
     }) as never,
 }));
 
