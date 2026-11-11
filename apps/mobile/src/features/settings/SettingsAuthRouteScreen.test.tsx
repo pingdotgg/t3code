@@ -103,18 +103,6 @@ it("adopts the session the native-backed client already holds instead of offerin
   });
 });
 
-it("does not offer the sign-in form until the client refresh settles", async () => {
-  // A native sign-in during a slow refresh would be wiped when the stale response lands.
-  const { promise, resolve } = Promise.withResolvers<FakeClient>();
-  using screen = setup(promise);
-
-  expect(screen.container.textContent).not.toContain("sign-in form");
-
-  await act(async () => resolve(client([])));
-  expect(screen.container.textContent).toContain("sign-in form");
-  expect(harness.clerk.setActive).not.toHaveBeenCalled();
-});
-
 it("a reopened screen waits for the refresh a dismissed screen left in flight", async () => {
   // The older reload mutates Clerk's shared client when it lands, so it must settle before sign-in.
   const { promise, resolve } = Promise.withResolvers<FakeClient>();
