@@ -1281,7 +1281,8 @@ export function composerDraftContentUnchanged(
     submitted.terminalContexts === current.terminalContexts &&
     submitted.previewAnnotations === current.previewAnnotations &&
     submitted.reviewComments === current.reviewComments &&
-    submitted.threadContexts === current.threadContexts
+    submitted.threadContexts === current.threadContexts &&
+    submitted.environmentContexts === current.environmentContexts
   );
 }
 
@@ -1345,8 +1346,8 @@ export function settleQueuedComposerSubmit(input: {
 
 /**
  * Whether a ready queued submit sends now. It is the user's earlier Enter, so it only sends
- * as the plain message they wrote: an approval or question that arrived meanwhile would turn
- * it into an answer they never saw, so it is cancelled instead.
+ * as the plain message they wrote: an edit, or an approval or question that arrived meanwhile
+ * (which would turn it into an answer they never saw), cancels it instead.
  */
 export function resolveQueuedComposerSubmit(input: {
   readonly ready: boolean;
@@ -1357,8 +1358,7 @@ export function resolveQueuedComposerSubmit(input: {
 }): "wait" | "send" | "drop" | "cancel" {
   if (input.leftThread) return "drop";
   if (!input.ready || input.sendBlocked) return "wait";
-  if (!input.draftUnchanged) return "drop";
-  return input.pendingRequest ? "cancel" : "send";
+  return input.draftUnchanged && !input.pendingRequest ? "send" : "cancel";
 }
 
 /**

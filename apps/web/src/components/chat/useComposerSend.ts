@@ -252,12 +252,6 @@ interface ComposerSendInput {
   }) => Promise<AtomCommandResult<void, unknown>>;
 }
 
-/**
- * Everything the composer's send button can start: a turn on this thread or a new one,
- * a multiple-model start, a queued or steering message, a plan follow-up or implementation
- * thread, a feedback upload, and resuming an interrupted run. Each path restores the draft
- * when it fails.
- */
 const notifyQueuedSubmitNotSent = () =>
   toastManager.add(
     stackedThreadToast({
@@ -267,6 +261,12 @@ const notifyQueuedSubmitNotSent = () =>
     }),
   );
 
+/**
+ * Everything the composer's send button can start: a turn on this thread or a new one,
+ * a multiple-model start, a queued or steering message, a plan follow-up or implementation
+ * thread, a feedback upload, and resuming an interrupted run. Each path restores the draft
+ * when it fails.
+ */
 export function useComposerSend(input: ComposerSendInput) {
   const {
     environmentId,
@@ -1429,13 +1429,9 @@ export function useComposerSend(input: ComposerSendInput) {
     return turnStartSucceeded;
   };
 
-  // Enter pressed while the previous message is still sending. The draft stays in the
-  // composer; once that send starts its turn, this one sends it, unless the user edited it,
-  // left the thread, an approval or question arrived, or the earlier send did not start a
-  // turn (an unanswered send may still have landed, so nothing here retries it). A
-  // multiple-model send never reports a started turn, so a submit behind it is cancelled.
-  // Sends read the ref, since one finishing runs in the closure it started in; the state
-  // only re-renders so the effect below can fire.
+  // Enter while the previous message is still sending keeps the draft and sends it once that
+  // send starts its turn. A send that did not start one may still land, so it is never retried.
+  // Finishing sends read the ref from their own closure; the state only re-renders the effect.
   type QueuedSubmit = QueuedComposerSubmit<ComposerDispatchMode, ComposerSubmissionIntent>;
   const queuedSubmitRef = useRef<QueuedSubmit | null>(null);
   const [queuedSubmit, setQueuedSubmitState] = useState<QueuedSubmit | null>(null);
@@ -1517,13 +1513,15 @@ export function useComposerSend(input: ComposerSendInput) {
     return started;
   };
   const onSendRef = useRef(onSend);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the queued-submit effect calls the latest onSend without re-running on every render
   useLayoutEffect(() => {
     onSendRef.current = onSend;
   });
 
   const queuedSubmitBlocked =
-    (isSendBusy && !sendQueuesBehindSetup) || isConnecting || threadDetailLoading;
+    (isSendBusy && !sendQueuesBehindSetup) || isRevertingCheckpoint || threadDetailLoading;
   const pendingRequest = pendingApprovals.length > 0 || Boolean(activePendingProgress);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fires the deferred Enter once server state (send settled, connection, pending requests) lets it; no user action marks that moment
   useEffect(() => {
     const next = queuedSubmit;
     if (next === null) return;

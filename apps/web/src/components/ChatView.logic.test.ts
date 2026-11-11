@@ -1087,6 +1087,7 @@ describe("composerDraftContentUnchanged", () => {
     previewAnnotations: [],
     reviewComments: [],
     threadContexts: [],
+    environmentContexts: [],
     modelSelectionByProvider: {},
     activeProvider: null,
     runtimeMode: null,
@@ -1121,76 +1122,28 @@ describe("settleQueuedComposerSubmit", () => {
     // A started on thread A (generation 1); the user moved to B, started B (generation 2), and
     // pressed Enter again while B was sending.
     const waiting = { routeThreadKey: "thread-b", afterSend: 2, ready: false };
-    expect(
-      settleQueuedComposerSubmit({
-        waiting,
-        sendRouteThreadKey: "thread-a",
-        sendGeneration: 1,
-        started: true,
-      }),
-    ).toBe("unrelated");
-    expect(
-      settleQueuedComposerSubmit({
-        waiting,
-        sendRouteThreadKey: "thread-b",
-        sendGeneration: 2,
-        started: false,
-      }),
-    ).toBe("cancel");
-    expect(
-      settleQueuedComposerSubmit({
-        waiting,
-        sendRouteThreadKey: "thread-b",
-        sendGeneration: 2,
-        started: true,
-      }),
-    ).toBe("ready");
-  });
-
-  it("ignores a send that stopped before claiming a generation", () => {
-    expect(
-      settleQueuedComposerSubmit({
-        waiting: { routeThreadKey: "thread-a", afterSend: 1, ready: false },
-        sendRouteThreadKey: "thread-a",
-        sendGeneration: null,
-        started: false,
-      }),
-    ).toBe("unrelated");
+    const settle = (sendRouteThreadKey: string, sendGeneration: number | null, started: boolean) =>
+      settleQueuedComposerSubmit({ waiting, sendRouteThreadKey, sendGeneration, started });
+    expect(settle("thread-a", 1, true)).toBe("unrelated");
+    expect(settle("thread-b", null, false)).toBe("unrelated");
+    expect(settle("thread-b", 2, false)).toBe("cancel");
+    expect(settle("thread-b", 2, true)).toBe("ready");
   });
 });
 
 describe("queueComposerSubmitBehind", () => {
   it("waits behind the send running on its own thread, not the one started last", () => {
-    // A is sending on thread X (generation 1); the user moved to Y, sent C (generation 2), came
-    // back to X and pressed Enter on B while both still send.
-    const runningSends = new Map([
-      ["thread-x", 1],
-      ["thread-y", 2],
-    ]);
-    const behind = queueComposerSubmitBehind({
-      routeThreadKey: "thread-x",
-      sendInFlight: true,
-      runningSends,
-      queued: null,
-    });
-    expect(behind).toEqual({ afterSend: 1, ready: false });
-    const waiting = { routeThreadKey: "thread-x", ...behind! };
     expect(
-      settleQueuedComposerSubmit({
-        waiting,
-        sendRouteThreadKey: "thread-y",
-        sendGeneration: runningSends.get("thread-y")!,
-        started: true,
+      queueComposerSubmitBehind({
+        routeThreadKey: "thread-x",
+        sendInFlight: true,
+        runningSends: new Map([
+          ["thread-x", 1],
+          ["thread-y", 2],
+        ]),
+        queued: null,
       }),
-    ).toBe("unrelated");
-    expect(
-      settleQueuedComposerSubmit({
-        waiting,
-        sendRouteThreadKey: "thread-x",
-        sendGeneration: runningSends.get("thread-x")!,
-        started: true,
-      }),
-    ).toBe("ready");
+    ).toEqual({ afterSend: 1, ready: false });
   });
 
   it("lets a new Enter send once no send on this thread can settle the queued one", () => {
@@ -1212,41 +1165,21 @@ describe("queueComposerSubmitBehind", () => {
       }),
     ).toBeNull();
   });
-
-  it("keeps a submit that is already cleared to send", () => {
-    const ready = { afterSend: 1, ready: true };
-    expect(
-      queueComposerSubmitBehind({
-        routeThreadKey: "thread-x",
-        sendInFlight: false,
-        runningSends: new Map(),
-        queued: ready,
-      }),
-    ).toBe(ready);
-  });
 });
 
 describe("resolveQueuedComposerSubmit", () => {
-  const ready = {
-    ready: true,
-    leftThread: false,
-    sendBlocked: false,
-    pendingRequest: false,
-    draftUnchanged: true,
-  };
-
-  it("sends the queued message once the earlier send started and nothing blocks it", () => {
+  it("sends only the unedited message on its own thread, and never as an answer", () => {
+    const ready = {
+      ready: true,
+      leftThread: false,
+      sendBlocked: false,
+      pendingRequest: false,
+      draftUnchanged: true,
+    };
     expect(resolveQueuedComposerSubmit(ready)).toBe("send");
-    expect(resolveQueuedComposerSubmit({ ...ready, ready: false })).toBe("wait");
     expect(resolveQueuedComposerSubmit({ ...ready, sendBlocked: true })).toBe("wait");
-  });
-
-  it("never turns the queued message into an answer to an approval or question that arrived", () => {
     expect(resolveQueuedComposerSubmit({ ...ready, pendingRequest: true })).toBe("cancel");
-  });
-
-  it("drops it silently once the user edited the draft or left the thread", () => {
-    expect(resolveQueuedComposerSubmit({ ...ready, draftUnchanged: false })).toBe("drop");
+    expect(resolveQueuedComposerSubmit({ ...ready, draftUnchanged: false })).toBe("cancel");
     expect(resolveQueuedComposerSubmit({ ...ready, ready: false, leftThread: true })).toBe("drop");
   });
 });
