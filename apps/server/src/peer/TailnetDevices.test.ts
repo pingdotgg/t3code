@@ -1544,6 +1544,18 @@ describe("crossing the upgrade without trusting a claim", () => {
       expect(yield* studioNode).toEqual(Option.some(tailnet.nodeIdOf(b.url)));
     }),
   );
+
+  it.live("a pre-upgrade link whose session expired does not rebind the member", () =>
+    Effect.gen(function* () {
+      const { a, b, studioNode } = yield* upgradedPair;
+      yield* a.sql`UPDATE auth_sessions SET expires_at = '2000-01-01T00:00:00.000Z'`;
+      yield* b.sql`UPDATE peer_environment_links SET expires_at = '2000-01-01T00:00:00.000Z'`;
+
+      yield* b.devices.linkIfMine({ url: a.url }).pipe(Effect.ignore);
+
+      expect(yield* studioNode).toEqual(Option.some(null));
+    }),
+  );
 });
 
 describe("joining a network", () => {
