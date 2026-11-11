@@ -10,7 +10,7 @@ import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { mergeUsageCopies } from "./usageAggregation.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 12 as const;
+const USAGE_SCAN_CACHE_VERSION = 13 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -18,8 +18,9 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
  * the newer one; older files are removed once it is saved.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v12.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v13.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v12.json",
   "usage-scan-cache-v11.json",
   "usage-scan-cache-v10.json",
   "usage-scan-cache-v9.json",
@@ -291,9 +292,9 @@ export function decodeScanCache(
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
     // v9 and v11 repair skipped Codex requests; clean v8+ entries stay served while unchanged.
-    // v10 adds Claude advisor calls; before v12 a repeated Claude key kept its first, possibly partial, copy.
+    // Claude history before v13 lacks per-attempt fallback usage.
     const legacy =
-      (entry.p === "claude" && version < 12) ||
+      (entry.p === "claude" && version < 13) ||
       (format.state !== undefined &&
         (version < 6 ||
           (entry.p === "codex" && (version < 8 || (version < 11 && malformedRecords > 0)))));

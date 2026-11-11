@@ -244,11 +244,11 @@ describe("scan cache round trip", () => {
     },
   );
 
-  it("re-parses a Claude transcript cached before partial copies were merged", () => {
+  it.each([11, 12])("re-parses v%s Claude transcripts for corrected attempt usage", (version) => {
     const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
-    const v11 = { ...parse(makeScanCacheWriter()(original, {})), version: 11 };
+    const legacy = { ...parse(makeScanCacheWriter()(original, {})), version };
 
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(v11)), TEST_FORMAT_MAP);
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
     expect(restored.get("/claude.jsonl")).toEqual({
       ...original.get("/claude.jsonl"),
       size: -1,

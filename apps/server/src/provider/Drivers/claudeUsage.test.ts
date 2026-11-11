@@ -216,3 +216,89 @@ describe("Claude advisor iterations", () => {
     expect(parse(unusable).map((record) => record.model)).toEqual(["claude-opus-5-5"]);
   });
 });
+
+describe("Claude fallback iterations", () => {
+  // Shaped like Claude Code's records of a server-side fallback: after a mid-stream decline the
+  // top-level usage names the requested model and merges cache writes across both attempts.
+  const fallbackTurn = (declinedOutputTokens: number) => ({
+    type: "assistant",
+    timestamp: "2026-11-02T03:04:05.000Z",
+    sessionId: "5a128faa-8253-489e-b935-6c08e8e670c0",
+    requestId: "req_fallback",
+    message: {
+      id: "msg_fallback",
+      model: declinedOutputTokens > 0 ? "claude-opus-5-5" : "claude-opus-4-8",
+      usage: {
+        input_tokens: 6,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: declinedOutputTokens > 0 ? 30000 : 10000,
+        output_tokens: 900,
+        iterations: [
+          {
+            type: "message",
+            model: "claude-opus-5-5",
+            input_tokens: 3,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 20000,
+            output_tokens: declinedOutputTokens,
+          },
+          {
+            type: "fallback_message",
+            model: "claude-opus-4-8",
+            input_tokens: 6,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 10000,
+            output_tokens: 900,
+          },
+        ],
+      },
+    },
+  });
+  const served = {
+    provider: "claude",
+    timestampMs: Date.parse("2026-11-02T03:04:05.000Z"),
+    model: "claude-opus-4-8",
+    sessionId: "5a128faa-8253-489e-b935-6c08e8e670c0",
+    totals: {
+      uncachedInputTokens: 6,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 10000,
+      outputTokens: 900,
+      reasoningTokens: 0,
+    },
+    reportedCostUsd: null,
+    speed: "standard",
+    dedupeKey: "msg_fallback:req_fallback",
+  };
+
+  it.each([
+    { declined: "before any output", declinedOutputTokens: 0, expected: [served] },
+    {
+      declined: "mid-stream",
+      declinedOutputTokens: 250,
+      expected: [
+        served,
+        {
+          ...served,
+          model: "claude-opus-5-5",
+          totals: {
+            uncachedInputTokens: 3,
+            cachedInputTokens: 0,
+            cacheCreationTokens: 20000,
+            outputTokens: 250,
+            reasoningTokens: 0,
+          },
+          dedupeKey: "msg_fallback:req_fallback:attempt:0",
+        },
+      ],
+    },
+  ])(
+    "prices the serving fallback under its own model when the request declined $declined",
+    ({ declinedOutputTokens, expected }) => {
+      const turn = fallbackTurn(declinedOutputTokens);
+
+      expect(claudeUsageFormat.parseLine(JSON.stringify(turn), undefined)).toEqual(expected);
+      expect(claudeUsageFormat.parseProjected(turn, undefined)).toEqual(expected);
+    },
+  );
+});
