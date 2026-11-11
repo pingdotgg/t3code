@@ -218,7 +218,19 @@ function codeBlockElement(
 }
 
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
-  const { renderImage, resolveImageSource, fileEmbedLabel } = props;
+  const { renderImage, resolveImageSource, fileEmbedLabel, onCite } = props;
+  const citeMenuItems = useMemo(
+    () =>
+      onCite && [
+        {
+          text: "Cite",
+          icon: "quote.bubble",
+          onPress: ({ text, selection }: { text: string; selection: { start: number } }) =>
+            onCite({ text, start: selection.start }),
+        },
+      ],
+    [onCite],
+  );
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
   const { markdown, fileHrefs } = useMemo(() => {
     if (!fileEmbedLabel) {
@@ -439,6 +451,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           onLinkLongPress={onLinkLongPress}
           linkContextMenuItems={linkContextMenuItems}
           linkPillContent={linkPillContent}
+          contextMenuItems={citeMenuItems}
         />
       </View>
     );

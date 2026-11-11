@@ -39,6 +39,7 @@ const CONTEXT_CHIP_PRESENTATIONS = {
     icon: "git-pull-request-arrow",
   },
   skill: { accent: "#b261be", icon: "skill" },
+  citation: { icon: "quote" },
   thread: {
     accent: "#009c96",
     icon: "messages-square",

@@ -61,6 +61,7 @@ import {
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
+import { citeAssistantText } from "./citeAssistantText";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
@@ -1135,6 +1136,9 @@ function ArtifactTemplateCard(props: {
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
+  /** Set for assistant replies, which offer Cite on selected text. */
+  readonly citeThreadId?: ThreadId | undefined;
+  readonly citeMessageId?: MessageId | undefined;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -1149,6 +1153,15 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     linkCustomization: (href) =>
       withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
   };
+  const { environmentId, citeThreadId: threadId, citeMessageId: messageId } = props;
+  const onCite = useMemo(
+    () =>
+      threadId && messageId
+        ? (selection: { readonly text: string; readonly start: number }) =>
+            citeAssistantText({ environmentId, threadId, messageId }, selection)
+        : undefined,
+    [environmentId, threadId, messageId],
+  );
 
   return (
     <AssistantMarkdownBlocks
@@ -1159,6 +1172,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
       renderImage={props.renderImage}
       skills={props.skills}
       models={models}
+      onCite={onCite}
     />
   );
 });
@@ -1172,6 +1186,9 @@ function AssistantMarkdownBlocks(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
   readonly models: ReturnType<typeof useModelMentions>;
+  readonly onCite:
+    | ((selection: { readonly text: string; readonly start: number }) => void)
+    | undefined;
 }) {
   const blocks = useMemo(
     () =>
@@ -1215,6 +1232,7 @@ function AssistantMarkdownBlocks(props: {
           textStyle={props.markdownStyles.nativeTextStyle}
           {...props.linkHandlers}
           renderImage={props.renderImage}
+          onCite={props.onCite}
         />
       );
     });
@@ -2236,6 +2254,8 @@ function renderFeedEntry(
             <AssistantMarkdownContent
               markdown={renderedText}
               environmentId={props.environmentId}
+              citeThreadId={isUser ? undefined : props.threadId}
+              citeMessageId={isUser ? undefined : message.id}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
               onUseArtifactTemplate={props.onUseArtifactTemplate}

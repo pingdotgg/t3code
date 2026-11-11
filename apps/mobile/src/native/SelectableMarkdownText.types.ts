@@ -94,6 +94,8 @@ export interface SelectableMarkdownTextProps {
     readonly checked: boolean;
     readonly text: string;
   }) => void;
+  /** Adds Cite to the text selection menu. `start` is an offset into this block's rendered text. */
+  readonly onCite?: (selection: { readonly text: string; readonly start: number }) => void;
   readonly marginTop?: number;
   readonly marginBottom?: number;
   readonly writingDirection?: "ltr" | "rtl";

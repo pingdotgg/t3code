@@ -1,8 +1,12 @@
 import {
   ComposerContextId,
+  EnvironmentId,
+  MessageId,
+  ThreadId,
   type OrchestrationMessageContext,
   type ServerProviderSkill,
 } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -155,6 +159,29 @@ describe("mobile composer context", () => {
     expect(restore(source)?.records).toEqual(initial.records);
     expect(restore("deleted")?.records ?? []).toEqual([]);
     expect(createComposerContextHistory()(source)?.records).toEqual([]);
+  });
+  it("chips a cited assistant quote as one token, hiding mentions inside its link", () => {
+    const quote = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      text: "Run $deploy with model:codex/gpt-6.1 ",
+      start: 0,
+      end: 37,
+      prefix: "",
+      suffix: "",
+      comment: "Why this one?",
+    });
+    const text = `See ${quote} please`;
+    expect(
+      composerContextEditorTokens(
+        text,
+        collectComposerInlineTokens(text),
+        new Set(["deploy"]),
+        collectComposerModelTokens(text, new Set(["model:codex/gpt-6.1"])),
+      ).map((token) => [token.type, token.value, token.start, token.end]),
+    ).toEqual([["citation", "Why this one?", 4, 4 + quote.length]]);
   });
   it("chips a model reference only once it is complete and names a known model", () => {
     const known = new Set(["model:codex/gpt-6.1"]);
