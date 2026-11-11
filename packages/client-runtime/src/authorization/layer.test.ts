@@ -2,6 +2,7 @@ import {
   AuthStandardClientScopes,
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
+  type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { type RelayEnvironmentConnectResponse } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
@@ -317,6 +318,66 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("reuses a matching descriptor a check just read, once, while fresh, over HTTPS", () =>
+    Effect.gen(function* () {
+      const descriptor = {
+        ...DESCRIPTOR,
+        orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+      } as ExecutionEnvironmentDescriptor;
+      const harness = yield* makeHarness({
+        responses: [
+          websocketTicket("reused"),
+          ...Array.from({ length: 5 }, () => [
+            Response.json(descriptor),
+            websocketTicket("fresh"),
+          ]).flat(),
+        ],
+      });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorizeAt = (httpBaseUrl: string) =>
+          remote.authorizeBearer({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            httpBaseUrl,
+            wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+            bearerToken: "bearer-token",
+            connectionMethod: "direct",
+          });
+        const authorize = authorizeAt(ENDPOINT.httpBaseUrl);
+        const remember = (value: Option.Option<ExecutionEnvironmentDescriptor>) =>
+          remote.rememberCheckedDescriptor(ENDPOINT.httpBaseUrl, value);
+
+        yield* remember(Option.some(descriptor));
+        yield* authorize;
+        // Used once.
+        yield* authorize;
+        // Stale.
+        yield* remember(Option.some(descriptor));
+        yield* TestClock.adjust("6 seconds");
+        yield* authorize;
+        // A mismatch reads again, so a host back on the right environment is not blocked.
+        yield* remember(Option.some({ ...descriptor, environmentId: "other" as never }));
+        yield* authorize;
+        // A failed check drops an older match.
+        yield* remember(Option.some(descriptor));
+        yield* remember(Option.none());
+        yield* authorize;
+        // After a network change, a plain LAN address can belong to another machine.
+        yield* remote.rememberCheckedDescriptor("http://192.168.1.2:3773", Option.some(descriptor));
+        yield* authorizeAt("http://192.168.1.2:3773");
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(harness.fetch.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+        "/api/auth/websocket-ticket/rpc",
+        ...Array.from({ length: 5 }, () => [
+          "/.well-known/t3/environment",
+          "/api/auth/websocket-ticket/rpc",
+        ]).flat(),
+      ]);
+    }),
+  );
+
   it.effect("blocks a warm direct bearer prepare when the environment changes identity", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -600,6 +661,59 @@ describe("RemoteEnvironmentAuthorization", () => {
           });
         }
       }),
+  );
+
+  it.effect("renews a live socket's token in the minute before each expiry", () =>
+    Effect.gen(function* () {
+      const puts = yield* Queue.unbounded<void>();
+      const relayBlips = yield* Ref.make(1);
+      const harness = yield* makeHarness({
+        beforeBootstrap: Ref.getAndUpdate(relayBlips, (count) => count - 1).pipe(
+          Effect.flatMap((count) =>
+            count > 0
+              ? Effect.fail(
+                  new ManagedRelay.ManagedRelayRequestTimeoutError({
+                    activity: "Relay environment connection",
+                    timeoutMs: 30_000,
+                    traceId: null,
+                  }),
+                )
+              : Effect.void,
+          ),
+        ),
+        initialToken: persistedToken({ expiresAtEpochMs: 3_600_000 }),
+        responses: [
+          Response.json(DESCRIPTOR),
+          accessToken("renewed-1"),
+          Response.json(DESCRIPTOR),
+          accessToken("renewed-2"),
+        ],
+        beforePut: Queue.offer(puts, undefined).pipe(Effect.asVoid),
+      });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        yield* remote
+          .renewDpopBeforeExpiry({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            expiresAtEpochMs: 3_600_000,
+          })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust(3_540_000 - 1);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+        // The first try hits a relay blip, and the retry 5 s later succeeds.
+        yield* TestClock.adjust(1);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+        yield* TestClock.adjust(5_000);
+        yield* Queue.take(puts);
+        // Renewed at 0:59:05, so the next renewal is at 1:58:05.
+        yield* TestClock.adjust(7_085_000 - 3_545_000 - 1);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+        yield* TestClock.adjust(1);
+        yield* Queue.take(puts);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(3);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+    }),
   );
 
   it.effect("evicts an auth-invalid cached token and obtains a fresh bootstrap", () =>

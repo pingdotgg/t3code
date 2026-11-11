@@ -19,6 +19,38 @@ type DelayLogger = {
 
 type Waiter = (ms: number, opts?: { signal?: AbortSignal }) => Promise<void>;
 
+/**
+ * Signal-aware wrapper around the global `scheduler.wait`.
+ *
+ * Passing `{ signal }` lets workerd cancel the native timer. Without that,
+ * completed waits stay in the isolate's 10,000-timer quota until their original
+ * deadline (issue #15788). An aborted signal resolves the returned promise
+ * rather than rejecting, matching callers that treat abort as "stop waiting".
+ */
+export function schedulerWait(
+	durationMs: number,
+	opts?: { signal?: AbortSignal }
+): Promise<void> {
+	const signal = opts?.signal;
+	if (signal?.aborted) {
+		return Promise.resolve();
+	}
+	const safeDuration = Math.max(0, durationMs);
+	const wait =
+		signal === undefined
+			? scheduler.wait(safeDuration)
+			: scheduler.wait(safeDuration, { signal });
+	return wait.then(
+		() => undefined,
+		(error: unknown) => {
+			if (signal?.aborted) {
+				return;
+			}
+			throw error;
+		}
+	);
+}
+
 type AbortRaceResult<T> = { aborted: true } | { aborted: false; value: T };
 
 export async function raceAgainstAbort<T>(
