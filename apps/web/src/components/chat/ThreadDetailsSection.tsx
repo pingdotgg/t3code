@@ -15,7 +15,6 @@ export function ThreadDetailsSection({
   summary,
   action,
   variant = "card",
-  spacing = "default",
   ...props
 }: Omit<ComponentProps<"section">, "className" | "style" | "title" | "aria-labelledby"> & {
   title: string;
@@ -23,7 +22,6 @@ export function ThreadDetailsSection({
   summary?: ReactNode;
   action?: ReactNode;
   variant?: "card" | "workspace" | "usage";
-  spacing?: "default" | "relaxed";
 }) {
   const contentId = useId();
   const [isCollapsed, setCollapsed] = useLocalStorage(
@@ -68,11 +66,7 @@ export function ThreadDetailsSection({
     >
       {card ? (
         <div
-          className={cn(
-            "flex items-center gap-1 ps-3",
-            action ? "pe-0" : "pe-1",
-            spacing === "relaxed" ? "h-7.5 pb-1" : "h-6.5 pb-1",
-          )}
+          className={cn("flex h-7 items-center gap-1 ps-3", action ? "pe-0" : "pe-1")}
           draggable
           onDragStart={(event) => {
             event.dataTransfer.setData("application/x-t3-details-card", title);
