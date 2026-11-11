@@ -33,6 +33,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as McpOAuth from "../auth/McpOAuth.ts";
@@ -307,6 +308,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(ServerSettings.ServerSettingsService)({}),
         Layer.mock(DocumentText.DocumentText)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" }),
         NodeCrypto.layer,
       ),
