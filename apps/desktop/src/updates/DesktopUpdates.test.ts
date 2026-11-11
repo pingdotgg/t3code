@@ -83,16 +83,22 @@ describe("DesktopUpdates", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const updates = yield* DesktopUpdates.DesktopUpdates;
+            const desktopState = yield* DesktopState.DesktopState;
             yield* updates.configure;
-            return yield* updates.getState;
+            return {
+              state: yield* updates.getState,
+              canInstallUpdates: yield* Ref.get(desktopState.canInstallUpdates),
+            };
           }),
         ).pipe(Effect.provide(makeHarness({ platform: "linux", packageType }).layer));
 
       const deb = yield* linuxState("deb\n");
-      assert.equal(deb.status, "idle");
+      assert.equal(deb.state.status, "idle");
+      assert.isTrue(deb.canInstallUpdates);
 
       const unmarked = yield* linuxState(undefined);
-      assert.equal(unmarked.status, "disabled");
+      assert.equal(unmarked.state.status, "disabled");
+      assert.isFalse(unmarked.canInstallUpdates);
     }),
   );
 
