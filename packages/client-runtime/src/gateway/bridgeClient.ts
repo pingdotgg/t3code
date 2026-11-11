@@ -1,5 +1,8 @@
+import { ThreadTaskError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import type {
   GatewayProfile,
@@ -85,6 +88,20 @@ async function proof(token: string, value: string): Promise<string> {
     await globalThis.crypto.subtle.sign("HMAC", key, encoder.encode(value)),
   );
   return Array.from(signature, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+const encodeTaskError = Schema.encodeUnknownOption(Schema.Struct(ThreadTaskError.fields));
+
+/** A task error the port failed with, in wire form, so the gateway can still report its code. */
+function wireTaskError(error: unknown): unknown {
+  for (let current = error, depth = 0; depth < 4; depth++) {
+    if (typeof current !== "object" || current === null) return undefined;
+    if ((current as { _tag?: unknown })._tag === "ThreadTaskError") {
+      return Option.getOrUndefined(encodeTaskError(current));
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 export function connectGatewayBridge(input: {
@@ -315,6 +332,7 @@ export function connectGatewayBridge(input: {
             JSON.stringify({
               id: requestId,
               error: error instanceof Error ? error.message : String(error),
+              taskError: wireTaskError(error),
             }),
           );
           if (!configured) {
