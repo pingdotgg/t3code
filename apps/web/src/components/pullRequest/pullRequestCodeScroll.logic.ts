@@ -17,13 +17,6 @@ export class PullRequestCodeScrollRestoration {
     this.pending = false;
   }
 
-  restart(scrollTop: number, loadedPageCount: number) {
-    return new PullRequestCodeScrollRestoration({
-      scrollTop: this.pending ? this.saved.scrollTop : scrollTop,
-      loadedPageCount: Math.max(this.pending ? this.saved.loadedPageCount : 0, loadedPageCount),
-    });
-  }
-
   restore(
     surface: ScrollSurface | undefined,
     loadedPageCount: number,

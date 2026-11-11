@@ -255,6 +255,44 @@ it("keeps an unfinished inline comment when the panel unmounts and returns", asy
     .toHaveValue("Half a thought");
 });
 
+it("keeps selected lines on a file whose page has not loaded again yet", async () => {
+  setup({ paged: true });
+  const parsed = getRenderablePatch(
+    [
+      "diff --git a/late.test.ts b/late.test.ts",
+      "index 1111111..2222222 100644",
+      "--- a/late.test.ts",
+      "+++ b/late.test.ts",
+      "@@ -1,6 +1,6 @@",
+      "-before()",
+      "+after()",
+      " one()",
+      " two()",
+      " three()",
+      " four()",
+      " five()",
+      "",
+    ].join("\n"),
+    "selection",
+    { compactPartialHunkOffsets: true },
+  );
+  if (parsed?.kind !== "files") throw new Error("fixture must parse as files");
+  const file = parsed.files[0]!;
+  const selectedLines = {
+    id: buildFileDiffIdentityKey(file),
+    contentVersion: buildFileDiffContentVersion(file),
+    range: { start: 2, end: 3, side: "additions" as const },
+  };
+  usePullRequestReviewStore
+    .getState()
+    .updateCodeView("code-view", (current) => ({ ...current, selectedLines }));
+  await using screen = await render(tab(0), { container: pagedContainer() });
+  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+  expect(usePullRequestReviewStore.getState().codeViews["code-view"]?.selectedLines).toEqual(
+    selectedLines,
+  );
+});
+
 it("pages forward to a file asked for that is not loaded yet, then scrolls to it", async () => {
   setup({ paged: true });
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });

@@ -135,22 +135,6 @@ describe("pull request scroll restoration", () => {
     expect(surface.scrollTop).toBe(1900);
   });
 
-  it("keeps a pending target when refresh arrives before its saved pages", () => {
-    const initial = new PullRequestCodeScrollRestoration({ scrollTop: 1800, loadedPageCount: 3 });
-    const surface = { scrollTop: 0, scrollHeight: 600, clientHeight: 400 };
-    expect(initial.restore(surface, 1, true)).toBe("load-more");
-    const refreshed = initial.restart(surface.scrollTop, 1);
-    expect(refreshed.restore(surface, 1, true)).toBe("load-more");
-    surface.scrollHeight = 3000;
-    expect(refreshed.restore(surface, 3, false)).toBe("restored");
-    expect(surface.scrollTop).toBe(1800);
-    surface.scrollTop = 2000;
-    const later = refreshed.restart(surface.scrollTop, 3);
-    surface.scrollTop = 0;
-    expect(later.restore(surface, 3, false)).toBe("restored");
-    expect(surface.scrollTop).toBe(2000);
-  });
-
   it.each(["pointerdown", "mousedown", "keydown", "wheel"])(
     "keeps the user's position when %s interrupts restoration",
     (eventType) => {

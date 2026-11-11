@@ -582,17 +582,10 @@ function PullRequestCodeTab({
     },
   );
   const appliedRefreshToken = useRef(refreshToken);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token revalidates every loaded diff page and the viewed files
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
-    const saved = readPullRequestCodeView(codeViewKey);
-    setScrollRestoration(
-      scrollRestoration.restart(
-        viewer?.getInstance()?.getScrollTop() ?? saved.scrollTop,
-        Math.max(loadedSlices.length, saved.loadedPageCount),
-      ),
-    );
     // The loaded pages stay mounted while each is read again from the first.
     refreshPullRequestDiffPages(loadedSlices, (pageCursor) => {
       registry.refresh(
@@ -610,18 +603,7 @@ function PullRequestCodeTab({
     setAppliedPage(null);
     setSliceState((previous) => ({ ...previous, cursor: null }));
     refreshFilesViewed();
-  }, [
-    refreshToken,
-    scrollRestoration,
-    refreshFilesViewed,
-    codeViewKey,
-    viewer,
-    loadedSlices,
-    registry,
-    environmentId,
-    reference,
-    commit,
-  ]);
+  }, [refreshToken, refreshFilesViewed, loadedSlices, registry, environmentId, reference, commit]);
   const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a background refresh token refetches the first diff page and viewed files while keeping slices
   useEffect(() => {
@@ -701,6 +683,15 @@ function PullRequestCodeTab({
       ? savedDraft
       : null;
   const changeSelectedLines = (selection: { id: string; range: SelectedLineRange } | null) => {
+    // The viewer reports no selection while the selected file is not rendered, such as when a
+    // refreshed page drops the later pages; that is not the reader clearing it.
+    if (
+      selection === null &&
+      savedSelectedLines !== null &&
+      !files.some((candidate) => buildFileDiffIdentityKey(candidate) === savedSelectedLines.id)
+    ) {
+      return;
+    }
     const file =
       selection === null
         ? undefined
