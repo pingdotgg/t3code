@@ -1845,7 +1845,7 @@ it.effect("an agent's launch never starts work above the modes it asks for", () 
     if (failed._tag !== "ThreadLaunchError") {
       assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
     }
-    assert.equal(failed.operation, "validate-intent");
+    assert.equal(failed.operation, "dispatch-message");
     const projection = yield* threads.getThreadProjection(created.threadId);
     assert.equal(projection.runs.length, 0);
     assert.equal(projection.messages.length, 0);
@@ -2152,6 +2152,36 @@ it.effect("schedules an accepted preparing message exactly once across concurren
   }),
 );
 
+// The MCP handler binds the arguments it was sent; direct callers bind nothing.
+const asMcpLaunch = (launch: ThreadLaunch.ThreadLaunchInput) => {
+  const { commandId, threadId: _, ...intent } = launch;
+  return Effect.provideService(ThreadLaunch.LaunchRequest, { commandId, intent });
+};
+
+it.effect(
+  "a direct launch retry with a regenerated worktree branch replays the accepted thread",
+  () => {
+    const harness = makeHarness({ hasCommit: () => Effect.succeed(true) });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const input = launchInput({
+        command: "command:launch:regenerated-branch",
+        thread: "thread:launch:regenerated-branch",
+        message: "Start",
+        workspace: { type: "worktree", baseRef: "main", branch: "t3/1234abcd" },
+      });
+      yield* launches.launch(input);
+      // Shipped mobile builds draw a new branch name on every delivery attempt.
+      const retry = yield* launches.launch({
+        ...input,
+        workspaceStrategy: { type: "worktree", baseRef: "main", branch: "t3/5678efab" },
+      });
+      assert.equal(retry.threadId, input.threadId);
+      assert.isTrue(retry.resumed);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
 it.effect.each([
   { scenario: "crash after create before initial message", crash: true },
   { scenario: "accepted launch without an initial message", crash: false },
@@ -2187,11 +2217,11 @@ it.effect.each([
       });
       if (crash) {
         // Interrupt only after the real create transaction (including any launch metadata) commits.
-        const first = yield* launches.launch(input).pipe(Effect.forkScoped);
+        const first = yield* launches.launch(input).pipe(asMcpLaunch(input), Effect.forkScoped);
         yield* Deferred.await(created);
         yield* Fiber.interrupt(first);
       } else {
-        yield* launches.launch(input);
+        yield* launches.launch(input).pipe(asMcpLaunch(input));
       }
       const accepted = yield* threads.getThreadProjection(input.threadId);
       assert.isFalse(accepted.messages.some((message) => message.text === "Retry message B"));
@@ -2200,21 +2230,22 @@ it.effect.each([
         Effect.gen(function* () {
           const freshLaunches = yield* ThreadLaunch.ThreadLaunchService;
           const { threadId: _, ...retryInput } = input;
+          const retryLaunch: ThreadLaunch.ThreadLaunchInput = {
+            ...retryInput,
+            initialMessage: {
+              messageId: MessageId.make("retry-message-B"),
+              text: "Retry message B",
+              attachments: [],
+            },
+            workspaceStrategy: {
+              type: "worktree",
+              baseRef: "different-base",
+              branch: "different-branch",
+            },
+          };
           const retry = yield* freshLaunches
-            .launch({
-              ...retryInput,
-              initialMessage: {
-                messageId: MessageId.make("retry-message-B"),
-                text: "Retry message B",
-                attachments: [],
-              },
-              workspaceStrategy: {
-                type: "worktree",
-                baseRef: "different-base",
-                branch: "different-branch",
-              },
-            })
-            .pipe(Effect.exit);
+            .launch(retryLaunch)
+            .pipe(asMcpLaunch(retryLaunch), Effect.exit);
           if (Exit.isFailure(retry)) {
             assert.isTrue(Cause.hasFails(retry.cause), "conflicts must be typed failures");
             assert.isFalse(Cause.hasDies(retry.cause));

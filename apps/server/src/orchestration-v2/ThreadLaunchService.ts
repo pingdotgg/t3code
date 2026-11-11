@@ -108,16 +108,12 @@ export interface ThreadLaunchInput {
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
 }
 
-// The caller's own arguments for a keyed launch. Fields the server derives, such as
+// The MCP caller's own arguments for a keyed launch. Fields the server derives, such as
 // defaults and step-downs, can resolve differently when the same request is retried.
+// Other callers keep plain replay: shipped mobile builds regenerate a branch on retry.
 export const LaunchRequest = Context.Reference<
   { readonly commandId: CommandId; readonly intent: unknown } | undefined
 >("t3/orchestration-v2/ThreadLaunchService/LaunchRequest", { defaultValue: () => undefined });
-
-export const launchRequestFor = (input: ThreadLaunchInput) => {
-  const { commandId, threadId: _threadId, ...intent } = input;
-  return { commandId, intent };
-};
 
 const launchIntentFingerprint = Effect.fnUntraced(function* (
   input: ThreadLaunchInput,
@@ -999,15 +995,19 @@ const make = Effect.gen(function* () {
                 creationSource: input.creationSource,
               });
         const request = yield* LaunchRequest;
-        const fingerprint = yield* launchIntentFingerprint(
-          input,
-          (request?.commandId === input.commandId ? request : launchRequestFor(input)).intent,
-        ).pipe(Effect.provideService(Digest.Digest, digest));
+        const fingerprint =
+          request?.commandId === input.commandId
+            ? yield* launchIntentFingerprint(input, request.intent).pipe(
+                Effect.provideService(Digest.Digest, digest),
+              )
+            : undefined;
         const claimed = yield* claimDispatch.pipe(
-          Effect.provideService(CommandReceiptStore.LaunchIntent, {
-            commandId: input.commandId,
-            fingerprint,
-          }),
+          fingerprint === undefined
+            ? (effect) => effect
+            : Effect.provideService(CommandReceiptStore.LaunchIntent, {
+                commandId: input.commandId,
+                fingerprint,
+              }),
           Effect.mapError(
             mapError(
               input,
@@ -1051,7 +1051,11 @@ const make = Effect.gen(function* () {
         const acceptedFingerprint = Option.isSome(accepted)
           ? accepted.value.launchIntentFingerprint
           : undefined;
-        if (acceptedFingerprint !== undefined && acceptedFingerprint !== fingerprint) {
+        if (
+          fingerprint !== undefined &&
+          acceptedFingerprint !== undefined &&
+          acceptedFingerprint !== fingerprint
+        ) {
           return yield* mapError(
             input,
             "validate-intent",
@@ -1059,6 +1063,7 @@ const make = Effect.gen(function* () {
           )("Launch request identity changed.");
         }
         if (
+          fingerprint !== undefined &&
           acceptedFingerprint === undefined &&
           (Option.isNone(messageReceipt) ||
             messageReceipt.value.status !== "accepted" ||
