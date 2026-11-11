@@ -544,6 +544,11 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
         "Also wait for its delegated and background tasks and their completions to settle. `resultRun` then names the run with its final answer.",
     }),
   ),
+  afterRunId: Schema.optional(
+    RunId.annotate({
+      description: "Return the next later run of follow-up work.",
+    }),
+  ),
 });
 export type OrchestratorMcpThreadWaitInput = typeof OrchestratorMcpThreadWaitInput.Type;
 

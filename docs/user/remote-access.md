@@ -360,7 +360,9 @@ an address you trust: the code is sent there.
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
 one `target.projectId` names), and this thread wakes with its result when it
-ends, as for any delegated task. It keeps following the task across restarts.
+ends, as for any delegated task. If the thread there is continued later, say
+by a message sent to it there, this thread wakes again with that answer. It
+keeps following the task across restarts, until it is stopped or cancelled here.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason.
 

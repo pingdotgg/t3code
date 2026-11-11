@@ -700,10 +700,10 @@ describe("orchestrator MCP toolkit", () => {
           expect(
             messageReads.filter((query) => query.includes("$.notification.source.kind")),
           ).toHaveLength(1);
-          // The orchestrator's restart-continuation guard still reads its own records.
+          // The restart-continuation guard reuses the records the wait already read.
           expect(
             messageReads.filter((query) => !query.includes("$.notification.source.kind")),
-          ).toHaveLength(1);
+          ).toHaveLength(0);
           const parentlessRead = yield* invoke(
             "t3_thread_read",
             {

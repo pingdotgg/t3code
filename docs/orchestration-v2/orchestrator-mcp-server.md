@@ -461,7 +461,14 @@ idempotent retries.
 Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
 time; an idle thread returns immediately. A timeout reports the latest durable
-status and does not cancel work.
+status and does not cancel work. With `afterRunId`, it instead returns the next
+run after that one that follow-up work started, as soon as it starts: a restart
+continuation, a scheduled task's run, or a monitor notification's run is passed
+over.
+Queued runs can start out of order, so start time orders them; a run that failed
+to start counts once it ends, and one held or removed from the queue does not.
+`runId` and `untilDelegatedWorkSettled` do not apply then, and a timeout reports
+`afterRunId`'s latest restart with `timedOut: true`.
 
 ### `t3_thread_interrupt`
 

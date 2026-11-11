@@ -891,6 +891,17 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
    * one owed, so each reaches the thread there once however often it is sent.
    */
   stopCount: Schema.optional(NonNegativeInt),
+  /**
+   * Its run there ended by itself and no later task here follows the thread yet: the next
+   * run there after this one, other than its restart, becomes a new task. A stop of any task
+   * on the same thread there clears it.
+   */
+  followsAfterRunId: Schema.optional(RunId),
+  /**
+   * The finished task whose thread there started this task's later run; the task took over
+   * following that thread. Absent on the thread's original task, whose stops keep their keys.
+   */
+  followUpOf: Schema.optional(NodeId),
 });
 export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
 
@@ -1317,6 +1328,8 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   senderThreadId: Schema.optional(ThreadId),
   idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+  /** The usage-limited run this message automatically resumes. */
+  usageLimitContinuationOfRunId: Schema.optional(RunId),
   /**
    * The message is the script a provider-native workflow run executes, not prose. Clients show
    * the workflow's opening instead and keep the script behind a disclosure.
@@ -3475,20 +3488,25 @@ const OrchestrationV2InternalCommand = Schema.Union([
     type: Schema.Literal("delegated_task.remote.request"),
     commandId: CommandId,
     parentThreadId: ThreadId,
-    parentRunId: RunId,
-    parentNodeId: NodeId,
+    /** Absent when `remoteChild.followUpOf` is set: it binds to the parent's owner run at dispatch. */
+    parentRunId: Schema.optional(RunId),
+    parentNodeId: Schema.optional(NodeId),
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     driver: ProviderDriverKind,
     modelSelection: ModelSelection,
+    /**
+     * With `followUpOf`, a later run there binds as a follow-up to a finished child here does;
+     * refused once that task no longer follows its thread there.
+     */
     remoteChild: OrchestrationV2RemoteTaskChild,
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   }),
   /**
    * Completes a delegated task that ran in a linked environment, with what its
-   * thread there ended as. The parent wakes exactly as for a child here. A
-   * task that already has a result keeps it; `stoppedThere` is still recorded,
-   * and without it (a Stop or cancel here) the task owes a stop there instead.
+   * thread there ended as, waking the parent as a child here does. A task with a result keeps
+   * it, but one cancelled here takes a `stopped` report's, which may note a refused stop;
+   * `stoppedThere` is still recorded, and without it (a Stop or cancel here) a stop is owed.
    */
   Schema.Struct({
     type: Schema.Literal("delegated_task.remote.complete"),
@@ -3504,6 +3522,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
      * the stop owed for whatever follows it.
      */
     stoppedThere: Schema.optional(Schema.Literals(["ran-out", "stopped"])),
+    /** With `ran-out`: the thread's last run there, after which a later run is a new task. */
+    lastRunId: Schema.optional(RunId),
     /** The stop generation this report acknowledges; absent for the original unnumbered stop. */
     stopCount: Schema.optional(NonNegativeInt),
   }),
