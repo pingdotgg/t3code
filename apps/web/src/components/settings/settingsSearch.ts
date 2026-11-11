@@ -1068,6 +1068,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["links default browser in-app browser external open"],
   },
   {
+    id: "terminal-file-links-open-in-app",
+    title: "Open terminal file links in T3 Code",
+    to: "/settings/general",
+    searchTerms: ["terminal file path links viewer preview side panel external editor"],
+  },
+  {
     id: "browser-search-engine",
     title: "Search engine",
     to: "/settings/browser",
