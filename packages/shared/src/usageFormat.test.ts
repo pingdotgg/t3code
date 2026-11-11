@@ -2,12 +2,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { UsageSource } from "@t3tools/contracts";
 
-import {
-  formatHourShort,
-  formatUsageContractMismatch,
-  makeWindow,
-  usageSourceMessages,
-} from "./usageFormat.ts";
+import { formatHourShort, makeWindow, usageSourceMessages } from "./usageFormat.ts";
 
 function malformedSource(count: number, overrides: Partial<UsageSource> = {}): UsageSource {
   return {
@@ -129,15 +124,6 @@ describe("usage source messages", () => {
       ]),
     ).toEqual([]);
     expect(usageSourceMessages([])).toEqual([]);
-  });
-});
-
-describe("formatUsageContractMismatch", () => {
-  it("explains that an older server excludes only Codex usage", () => {
-    const mismatch = { direction: "serverBehind", provider: "codex" } as const;
-    expect(formatUsageContractMismatch("Mac", mismatch)).toBe(
-      "Mac runs an older server version; its Codex usage is excluded from totals.",
-    );
   });
 });
 
