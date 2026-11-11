@@ -4,12 +4,15 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { NativeClientError, prebuildAndroid } from "./mobile-native-client.ts";
+import {
+  buildRunTitle,
+  NativeClientError,
+  prebuildAndroid,
+  remoteBuildState,
+} from "./mobile-native-client.ts";
 
 const caches = [".gradle/history", "app/.cxx/object"];
 
-// A generated Android project with Gradle and native outputs, and a stand-in for
-// `expo prebuild --clean`, which deletes the directory and writes fresh sources.
 const fixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -61,5 +64,66 @@ it.layer(NodeServices.layer)("prebuildAndroid", (it) => {
       assert.strictEqual(error, failure);
       yield* assertCachesRestored;
     }),
+  );
+});
+
+it("finds a Blacksmith build by its run title and reads its state", () => {
+  const fingerprint = "a".repeat(40);
+  const title = buildRunTitle("android", "x86_64", fingerprint);
+  assert.strictEqual(title, `Dev client android x86_64 ${fingerprint}`);
+  assert.strictEqual(buildRunTitle("ios", null, fingerprint), `Dev client ios ${fingerprint}`);
+  const run = (
+    createdAt: string,
+    status: string,
+    conclusion: string | null,
+    displayTitle = title,
+  ) => ({
+    displayTitle,
+    status,
+    conclusion,
+    createdAt,
+  });
+  const since = Date.parse("2026-11-09T12:00:00Z");
+  assert.strictEqual(remoteBuildState([], title, since), "none");
+  // Another client's run, and a run from before this wait, say nothing about this build.
+  assert.strictEqual(
+    remoteBuildState(
+      [
+        run(
+          "2026-11-09T12:05:00Z",
+          "in_progress",
+          null,
+          buildRunTitle("android", "arm64-v8a", fingerprint),
+        ),
+        run("2026-11-09T11:00:00Z", "completed", "failure"),
+      ],
+      title,
+      since,
+    ),
+    "none",
+  );
+  assert.strictEqual(
+    remoteBuildState([run("2026-11-09T12:01:00Z", "queued", null)], title, since),
+    "running",
+  );
+  assert.strictEqual(
+    remoteBuildState([run("2026-11-09T12:01:00Z", "completed", "success")], title, since),
+    "succeeded",
+  );
+  // The newest run decides: a retry that is running outranks the failure before it.
+  assert.strictEqual(
+    remoteBuildState(
+      [
+        run("2026-11-09T12:01:00Z", "completed", "failure"),
+        run("2026-11-09T12:09:00Z", "in_progress", null),
+      ],
+      title,
+      since,
+    ),
+    "running",
+  );
+  assert.strictEqual(
+    remoteBuildState([run("2026-11-09T12:01:00Z", "completed", "cancelled")], title, since),
+    "failed",
   );
 });
