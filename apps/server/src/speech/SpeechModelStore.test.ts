@@ -12,6 +12,8 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import * as ServerConfig from "../config.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 
@@ -167,4 +169,54 @@ it.effect("cleans only download partials on cancellation or restart", () =>
       "model.gguf.notes.part",
     ]);
   }).pipe(Effect.provide(dependencies)),
+);
+
+it.effect("links a verified model file from another folder and never deletes it", () =>
+  Effect.gen(function* () {
+    const h = yield* harness;
+    const path = yield* Path.Path;
+    const elsewhere = yield* h.fs.makeTempDirectoryScoped({ prefix: "speech-other-app-" });
+    const nested = path.join(elsewhere, "hub", "snapshots");
+    yield* h.fs.makeDirectory(nested, { recursive: true });
+    const impostor = path.join(elsewhere, "same-size.gguf");
+    const existing = path.join(nested, "renamed-by-the-other-app.gguf");
+    yield* h.fs.writeFile(impostor, new Uint8Array(bytes.length));
+    yield* h.fs.writeFile(existing, bytes);
+
+    expect(yield* h.store.link([h.model], impostor)).toEqual([]);
+    expect(yield* h.store.linkedFrom(h.model)).toBeUndefined();
+
+    expect(yield* h.store.link([h.model], elsewhere)).toEqual([h.model.id]);
+    expect(yield* h.store.linkedFrom(h.model)).toBe(existing);
+    expect(yield* h.store.installedPath(h.model)).toBe(h.stale);
+    expect(h.requests).toHaveLength(0);
+    // Pointing at T3 Code's own folder must not turn the link into a link to itself.
+    expect(yield* h.store.link([h.model], h.directory)).toEqual([]);
+    expect(yield* h.store.installedPath(h.model)).toBe(h.stale);
+
+    yield* h.store.remove(h.model);
+    expect(yield* h.store.isReady(h.model)).toBe(false);
+    expect([...(yield* h.fs.readFile(existing))]).toEqual([...bytes]);
+  }).pipe(Effect.scoped, Effect.provide(dependencies)),
+);
+
+it.effect("installs from a Hugging Face cache copy instead of downloading", () =>
+  Effect.gen(function* () {
+    const h = yield* harness;
+    const path = yield* Path.Path;
+    const home = yield* h.fs.makeTempDirectoryScoped({ prefix: "speech-home-" });
+    const snapshot = path.join(
+      home,
+      ".cache/huggingface/hub/models--fixture--speech-model/snapshots",
+      h.model.revision,
+    );
+    yield* h.fs.makeDirectory(snapshot, { recursive: true });
+    const cached = path.join(snapshot, h.model.filename);
+    yield* h.fs.writeFile(cached, bytes);
+    const store = yield* h.openStore.pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+
+    expect(yield* store.download(h.model)).toBe(h.stale);
+    expect(yield* store.linkedFrom(h.model)).toBe(cached);
+    expect(h.requests).toHaveLength(0);
+  }).pipe(Effect.scoped, Effect.provide(dependencies)),
 );

@@ -2013,6 +2013,10 @@ code {
   list-style-type: lower-roman;
 }
 
+.chat-markdown.user-message-markdown ol {
+  list-style-type: decimal;
+}
+
 .chat-markdown li + li {
   margin-top: 0.25rem;
 }

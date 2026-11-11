@@ -239,7 +239,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           isCollapsed ? "Show the question and its options" : "Hide the question and its options"
         }
         data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-        className="px-4 pt-1.5"
+        className="px-4 py-1.5"
       >
         <ComposerBanner.Content>
           <span
@@ -296,7 +296,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               text={activeQuestion.question}
               cwd={cwd}
               threadRef={threadRef}
-              className={cn("pt-2 text-foreground/85", questionTextAlign)}
+              className={cn("pt-0.5 text-foreground/85", questionTextAlign)}
             />
             {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}
             <div className="-ms-2 mt-1.5 sm:-ms-1.5">
