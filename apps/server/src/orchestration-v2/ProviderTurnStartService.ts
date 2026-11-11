@@ -642,8 +642,8 @@ export const layer: Layer.Layer<
           .exists(worktreePath)
           .pipe(Effect.orElseSucceed(() => true));
         const managed = yield* isManagedWorktreePath(worktreePath);
-        // A `git worktree remove` that skips a junctioned `node_modules` leaves
-        // a folder with no checkout. Only that leftover is cleared, never user files.
+        // A `git worktree remove` that skips a junctioned `node_modules` leaves a folder with no
+        // checkout. Only those leftover directories are cleared, never user files.
         const leftover =
           exists &&
           managed &&
@@ -651,7 +651,16 @@ export const layer: Layer.Layer<
             .exists(path.join(worktreePath, ".git"))
             .pipe(Effect.orElseSucceed(() => true))) &&
           (yield* fileSystem.readDirectory(worktreePath).pipe(
-            Effect.map((entries) => entries.every((entry) => LEFTOVER_WORKTREE_ENTRIES.has(entry))),
+            Effect.flatMap((entries) =>
+              Effect.forEach(entries, (entry) =>
+                LEFTOVER_WORKTREE_ENTRIES.has(entry)
+                  ? fileSystem
+                      .stat(path.join(worktreePath, entry))
+                      .pipe(Effect.map((info) => info.type === "Directory"))
+                  : Effect.succeed(false),
+              ),
+            ),
+            Effect.map((leftovers) => leftovers.every(Boolean)),
             Effect.orElseSucceed(() => false),
           ));
         if (managed && (!exists || leftover)) {

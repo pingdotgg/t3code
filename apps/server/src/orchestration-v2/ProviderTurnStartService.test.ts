@@ -1476,25 +1476,27 @@ effectIt.effect.each([["node_modules"], ["node_modules", ".next"]])(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-effectIt.effect("leaves a managed worktree folder with other files untouched", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-start-" });
-    const worktreePath = path.join(workspaceRoot, "project", "worktree");
-    yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), { recursive: true });
-    yield* fileSystem.writeFileString(path.join(worktreePath, "notes.md"), "keep me");
-    const harness = makeLocalCommandHarness({
-      text: "Continue",
-      worktreePath,
-      worktreesDir: workspaceRoot,
-      fileSystem,
-      failReadsAfterRunning: true,
-    });
-    yield* harness.start;
-    expect(harness.createWorktree).not.toHaveBeenCalled();
-    expect(yield* fileSystem.readFileString(path.join(worktreePath, "notes.md"))).toBe("keep me");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+effectIt.effect.each(["notes.md", ".next"])(
+  "leaves a managed worktree folder holding a %s file untouched",
+  (userFile) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-start-" });
+      const worktreePath = path.join(workspaceRoot, "project", "worktree");
+      yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), { recursive: true });
+      yield* fileSystem.writeFileString(path.join(worktreePath, userFile), "keep me");
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        worktreePath,
+        worktreesDir: workspaceRoot,
+        fileSystem,
+        failReadsAfterRunning: true,
+      });
+      yield* harness.start;
+      expect(harness.createWorktree).not.toHaveBeenCalled();
+      expect(yield* fileSystem.readFileString(path.join(worktreePath, userFile))).toBe("keep me");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 effectIt.effect.each(["cleanup-first", "startup-first"])(
