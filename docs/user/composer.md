@@ -406,6 +406,8 @@ switches between perspective and orthographic, and Home or numpad `.` frames the
 
 Blender files (`.blend`) open in the 3D view when Blender is installed on the machine running
 T3 Code; the file is never changed. Use **Show thumbnail** for the thumbnail saved with the file.
+Blender's Python environment needs NumPy; Ubuntu's Blender package may require installing
+`python3-numpy` separately.
 Without Blender, or for scenes over 2 million triangles, they show only that thumbnail. If the
 thumbnail is blank and Blender is not installed, open and save the file in Blender to refresh it.
 

@@ -60,7 +60,8 @@ export function modelPreviewCopy(format: ModelPreviewFormat) {
         imageLabel: "Show thumbnail",
         loading: "Opening the scene in Blender…",
         viewerMissing: "Viewing .blend files in 3D needs Blender.",
-        unavailable: "The file has no saved thumbnail, and Blender isn't installed to render one.",
+        unavailable:
+          "No saved thumbnail or render is available. Blender may be missing or unable to render this scene.",
       };
     case "gltf":
       return {
