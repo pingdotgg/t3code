@@ -302,7 +302,11 @@ export class TailnetDevices extends Context.Service<
     ) => Effect.Effect<TailnetDeviceClientCredential, TailnetDevicesError>;
     /** Runs the handshake again for a member's link, as when its token stops working. */
     readonly refresh: (environmentId: EnvironmentId) => Effect.Effect<void>;
-    readonly handleRequest: (request: TailnetLinkRequest) => Effect.Effect<TailnetLinkResult>;
+    /** `httpRequest` carries a session issued before an upgrade, which may bind an unbound member. */
+    readonly handleRequest: (
+      request: TailnetLinkRequest,
+      httpRequest?: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<TailnetLinkResult>;
     readonly handleJoin: (request: TailnetJoinRequest) => Effect.Effect<TailnetLinkResult>;
     readonly handleConfirm: (confirm: TailnetChallengeConfirm) => Effect.Effect<TailnetGrantResult>;
     readonly handleGrant: (grant: TailnetGrant) => Effect.Effect<TailnetGrantResult>;
@@ -605,6 +609,18 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * A roster member no proof has bound yet, as after an upgrade. Such a member may still be
+   * proven from any of the owner's nodes by a side that holds the session the other side issued
+   * it before the upgrade: the token ties the proof to the machine that was linked, so the first
+   * node to answer cannot take its place. The proof then binds it.
+   */
+  const isUnboundMember = (environmentId: EnvironmentId) =>
+    membership.member(environmentId).pipe(
+      Effect.map((found) => Option.isSome(found) && found.value.nodeId === null),
+      Effect.orElseSucceed(() => false),
+    );
+
+  /**
    * The first of `urls` that Tailscale proves is one of the owner's nodes and answers as
    * `environmentId`, from the node `binding` names when it names one. Otherwise the most telling
    * reason none did.
@@ -714,7 +730,14 @@ const make = Effect.gen(function* () {
         message: `${device.label} is revoked. Restore it to link it again.`,
       });
     }
-    const { device: issuer } = yield* proveTarget(device, yield* bindingOf(device.environmentId));
+    const continuity = (yield* isUnboundMember(device.environmentId))
+      ? yield* links.resolve(device.environmentId).pipe(Effect.option)
+      : Option.none<PeerLinks.ResolvedPeerLink>();
+    const { device: issuer } = yield* proveTarget(
+      device,
+      Option.isSome(continuity) ? Option.none() : yield* bindingOf(device.environmentId),
+    );
+    if (Option.isSome(continuity)) yield* membership.bindNode(device.environmentId, issuer.nodeId);
     if (!PeerLinks.linkLimitsHold(issuer.descriptor)) {
       return yield* unreachable(
         `${issuer.descriptor.label} runs a T3 Code version that cannot link automatically. Update it.`,
@@ -726,7 +749,13 @@ const make = Effect.gen(function* () {
       );
     }
     const challenge = yield* holdChallenge(device.environmentId, issuer);
-    const result = yield* clientFor(issuer.origin).pipe(
+    const requestClient = Option.isSome(continuity)
+      ? PeerLinks.peerApiClient(
+          HttpClient.mapRequest(httpClient, HttpClientRequest.bearerToken(continuity.value.token)),
+          issuer.origin,
+        )
+      : clientFor(issuer.origin);
+    const result = yield* requestClient.pipe(
       Effect.flatMap((client) =>
         client.tailnetDevices.request({
           payload: { requester: self, issuerEnvironmentId: device.environmentId, challenge },
@@ -856,7 +885,7 @@ const make = Effect.gen(function* () {
   const handleRequest: TailnetDevices["Service"]["handleRequest"] = Effect.fn(
     "TailnetDevices.handleRequest",
   )(
-    function* (request) {
+    function* (request, httpRequest?: HttpServerRequest.HttpServerRequest) {
       const requester = request.requester;
       if (!(yield* enabled)) return yield* refuse("disabled", requester);
       const self = yield* selfDescriptor;
@@ -874,9 +903,26 @@ const make = Effect.gen(function* () {
         Effect.map(Option.isSome),
         Effect.orElseSucceed(() => false),
       );
-      const proof = yield* proveCaller(requester, yield* bindingOf(requester.environmentId));
+      const continuity =
+        httpRequest !== undefined && (yield* isUnboundMember(requester.environmentId))
+          ? yield* auth.authenticateMcpClient(httpRequest).pipe(
+              Effect.map((caller) => caller.peerEnvironmentId === requester.environmentId),
+              Effect.orElseSucceed(() => false),
+            )
+          : false;
+      const proof = yield* proveCaller(
+        requester,
+        continuity ? Option.none() : yield* bindingOf(requester.environmentId),
+      );
       if (proof._tag === "refused") return yield* refuse(proof.reason, requester);
       const device = proof.device;
+      if (continuity) {
+        const bound = yield* membership.bindNode(requester.environmentId, device.nodeId).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+        if (!bound) return yield* refuse("storage", requester);
+      }
       const client = yield* clientFor(device.origin).pipe(Effect.orDie);
       // Nothing is minted until the address's owner says the challenge is its own.
       const confirmed = yield* confirmAt(device, request.challenge, self);

@@ -27,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -269,6 +270,7 @@ const serveDeviceOn = (
       devices: Context.get(context, TailnetDevices.TailnetDevices),
       links: Context.get(context, PeerLinks.PeerLinks),
       membership: Context.get(context, Membership.Membership),
+      sql: Context.get(context, SqlClient.SqlClient),
       sessions: Context.get(context, SessionStore.SessionStore),
       /** What this device lets a caller holding `token` do, as its /mcp would see it. */
       authenticate: (token: string) =>
@@ -1445,6 +1447,32 @@ describe("binding members to their nodes", () => {
       ).toEqual(Option.some(tailnet.nodeIdOf(a.url)));
       yield* impostor.devices.linkIfMine({ url: a.url });
       expect(yield* Ref.get(impostor.grants)).toBe(0);
+    }),
+  );
+});
+
+describe("crossing the upgrade", () => {
+  it.live("a member left unbound by the upgrade rebinds through the link it already holds", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* knowsMember(b, a, null);
+      yield* admit(tailnet, a, b);
+      // What migration 017 leaves: every member unbound, the old links and sessions kept.
+      yield* a.sql`UPDATE network_members SET node_id = NULL`;
+      yield* b.sql`UPDATE network_members SET node_id = NULL`;
+      const nodeOf = (device: Device, environmentId: EnvironmentId) =>
+        device.membership
+          .member(environmentId)
+          .pipe(Effect.map(Option.map((member) => member.nodeId)));
+
+      yield* b.devices.linkIfMine({ url: a.url });
+
+      expect(yield* nodeOf(a, studio.environmentId)).toEqual(Option.some(tailnet.nodeIdOf(b.url)));
+      expect(yield* nodeOf(b, laptop.environmentId)).toEqual(Option.some(tailnet.nodeIdOf(a.url)));
     }),
   );
 });
