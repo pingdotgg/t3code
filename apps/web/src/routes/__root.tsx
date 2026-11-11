@@ -1,3 +1,4 @@
+import { cn } from "~/lib/utils";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -10,7 +11,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { Check, Copy } from "lucide";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
@@ -36,11 +37,9 @@ import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcome
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
-import { cn } from "../lib/utils";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -269,7 +268,11 @@ function CopyErrorButton({ report }: { report: string }) {
 
   return (
     <Button size="sm" variant="secondary" onClick={() => copyToClipboard(report)}>
-      <MorphIcon className={cn(isCopied && "text-success")} icon={isCopied ? Check : Copy} />
+      {isCopied ? (
+        <CheckIcon className={cn(isCopied && "text-success")} />
+      ) : (
+        <CopyIcon className={cn(isCopied && "text-success")} />
+      )}
       {isCopied ? "Copied" : "Copy error"}
     </Button>
   );
