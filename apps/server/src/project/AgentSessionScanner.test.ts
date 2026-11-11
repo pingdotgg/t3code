@@ -1479,16 +1479,20 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           null,
           { custom: "launcher" },
         ];
+        const fileSystem = yield* FileSystem.FileSystem;
+        // Rollouts imported before subagents were excluded still have import records.
+        const legacyImports: Array<AgentSessionImportSource> = [];
         for (const [index, source] of sources.entries()) {
+          const filePath = path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "08",
+            "24",
+            `rollout-${index}.jsonl`,
+          );
           yield* writeTranscript({
-            filePath: path.join(
-              codexHomePath,
-              "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${index}.jsonl`,
-            ),
+            filePath,
             contents: [
               { type: "session_meta", payload: { id: `session-${index}`, cwd: workspace, source } },
               // A later cwd must not make an excluded rollout eligible again.
@@ -1502,6 +1506,21 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               .join("\n"),
             mtimeMs: nowMs - index * 60_000,
           });
+          if (index >= 100) continue;
+          const stats = yield* fileSystem.stat(filePath);
+          legacyImports.push(
+            decodeImportSource({
+              provider: "codex",
+              providerInstanceId: "codex",
+              providerSessionId: `session-${index}`,
+              filePath,
+              size: Number(stats.size),
+              mtimeMs: Option.getOrNull(Option.map(stats.mtime, (date) => date.getTime())),
+              device: Number(stats.dev),
+              inode: Option.getOrNull(Option.map(stats.ino, String)),
+              birthtimeMs: Option.getOrNull(Option.map(stats.birthtime, (date) => date.getTime())),
+            }),
+          );
         }
 
         yield* Effect.gen(function* () {
@@ -1514,7 +1533,15 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               outcome._tag === "Importable" ? outcome.thread.providerSessionId : outcome._tag,
             ),
           ).toEqual(["session-100", "session-101", "session-102", "session-103"]);
-        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+        }).pipe(
+          Effect.provide(
+            layerScannerTest({
+              claudeHomePath,
+              codexHomePath,
+              importedTranscripts: { cwd: workspace, sources: legacyImports },
+            }),
+          ),
+        );
       }),
     );
 
@@ -1716,6 +1743,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const codexHomePath = yield* makeTempDir("t3code-hidden-project-codex-");
         const imported = yield* makeTempDir("t3code-hidden-project-imported-");
         const hidden = yield* makeTempDir("t3code-hidden-project-hidden-");
+        const hiddenSessionId = "00000000-0000-4000-8000-000000000100";
         for (const index of Array.from({ length: 101 }, (_, value) => value)) {
           const sessionId = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
           yield* writeTranscript({
@@ -1737,11 +1765,16 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           const scanner = yield* AgentSessionScanner.AgentSessionScanner;
           const before = yield* scanner.scan;
           const outcomes = yield* scanner.recentThreads(imported).pipe(Stream.runCollect);
-          completed.push(
-            ...Array.from(outcomes).flatMap((outcome) =>
-              outcome._tag === "Importable" ? [outcome.source] : [],
-            ),
+          const sources = Array.from(outcomes).flatMap((outcome) =>
+            outcome._tag === "Importable" ? [outcome.source] : [],
           );
+          // A record whose file identity no longer matches must not lend its cwd.
+          const newest = sources[0]!;
+          completed.push(...sources, {
+            ...newest,
+            providerSessionId: hiddenSessionId,
+            filePath: path.join(claudeHomePath, "projects", "p", `${hiddenSessionId}.jsonl`),
+          });
           return { before, after: yield* scanner.scan };
         }).pipe(
           Effect.provide(

@@ -1383,14 +1383,17 @@ export const make = Effect.gen(function* () {
 
     for (const transcript of transcripts) {
       // Unchanged imported transcripts keep their import cwd, so they never spend the read budget.
+      // Codex is excluded: its first record carries the cwd and the subagent marker, and
+      // rollouts imported before subagents were skipped must still be excluded by it.
       const cwd =
-        importedByFile
-          .get(`${transcript.providerInstanceId}\0${transcript.filePath}`)
-          ?.find(
-            (imported) =>
-              imported.source.provider === source &&
-              sameTranscriptIdentity(imported.source, transcript.identity),
-          )?.cwd ?? (yield* readCwd(source, transcript, budget));
+        (source === "codex"
+          ? undefined
+          : importedByFile.get(`${transcript.providerInstanceId}\0${transcript.filePath}`)
+        )?.find(
+          (imported) =>
+            imported.source.provider === source &&
+            sameTranscriptIdentity(imported.source, transcript.identity),
+        )?.cwd ?? (yield* readCwd(source, transcript, budget));
       if (cwd === null || cwd === false) continue;
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
