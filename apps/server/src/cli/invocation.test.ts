@@ -19,8 +19,9 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
     readonly path?: string;
     readonly env?: Record<string, string>;
     readonly executable?: boolean;
+    readonly args?: ReadonlyArray<string>;
   }) =>
-    resolveRootCliCommand("browser setup").pipe(
+    resolveRootCliCommand("browser setup", input.args).pipe(
       Effect.provideService(HostProcess.ExecutablePath, input.node),
       Effect.provideService(HostProcess.Arguments, [input.node, input.entry]),
       Effect.provideService(HostProcess.IsExecutable, input.executable ?? false),
@@ -39,11 +40,9 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
   it.effect("keeps a user-installed Node reachable when the command runs under sudo", () =>
     Effect.gen(function* () {
       const npx = "/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs";
-      // sudo's secure_path already has a system Node.
       expect(yield* rootCommand({ node: "/usr/bin/node", entry: npx })).toBe(
         "sudo npx t3 browser setup",
       );
-      // nvm, fnm, and tarball installs are dropped by sudo's PATH reset.
       expect(
         yield* rootCommand({ node: "/home/theo/.nvm/versions/node/v24/bin/node", entry: npx }),
       ).toBe('sudo env "PATH=$PATH" npx t3 browser setup');
@@ -54,6 +53,23 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
           path: yield* pathWithT3,
         }),
       ).toBe('sudo env "PATH=$PATH" t3 browser setup');
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps the arguments, so root runs setup on the same T3 home", () =>
+    Effect.gen(function* () {
+      const args = ["--base-dir", "/srv/t3 home"];
+      expect(
+        yield* rootCommand({
+          node: "/home/theo/.local/node/bin/node",
+          entry: "/home/theo/.local/lib/node_modules/t3/dist/bin.mjs",
+          path: yield* pathWithT3,
+          args,
+        }),
+      ).toBe(`sudo env "PATH=$PATH" t3 browser setup --base-dir '/srv/t3 home'`);
+      expect(
+        yield* rootCommand({ node: "/opt/t3/t3", entry: "/opt/t3/t3", executable: true, args }),
+      ).toBe("sudo /opt/t3/t3 browser setup --base-dir '/srv/t3 home'");
     }).pipe(Effect.scoped),
   );
 
@@ -73,7 +89,15 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
 
       expect(yield* rootCommand(desktop)).toBe(`sudo '${shim}' browser setup`);
 
+      // An unrelated `t3` on PATH, such as an older npm global, is another install's CLI.
       expect(yield* rootCommand({ ...desktop, path: yield* pathWithT3 })).toBe(
+        `sudo '${shim}' browser setup`,
+      );
+
+      // The link the app installs onto PATH leads to its own launcher, so plain `t3` is right.
+      const linked = yield* fs.makeTempDirectoryScoped();
+      yield* fs.symlink(shim, path.join(linked, "t3"));
+      expect(yield* rootCommand({ ...desktop, path: linked })).toBe(
         'sudo env "PATH=$PATH" t3 browser setup',
       );
 
@@ -111,16 +135,12 @@ it.layer(NodeServices.layer)("host CLI commands", (it) => {
           Effect.provideService(HostProcess.Platform, platform),
           Effect.provideService(HostProcess.Environment, { PATH: "", ...env }),
         );
-      // The desktop shim is called through `&`, and each argument is quoted
-      // the PowerShell way: no POSIX single quotes anywhere.
       expect((yield* hostCommand("win32", { T3CODE_CLI_PATH: shim })).command).toBe(
         `& "${shim}" doctor "--base-dir" "C:\\Users\\Jane Doe\\.t3"`,
       );
-      // Without a launcher, plain `t3` with PowerShell-quoted arguments.
       expect((yield* hostCommand("win32", {})).command).toBe(
         't3 doctor "--base-dir" "C:\\Users\\Jane Doe\\.t3"',
       );
-      // Typographic quotes also delimit PowerShell strings; doubling keeps them.
       expect(
         (yield* resolveHostCliCommand("doctor", ["--base-dir", "C:\\T3\\\u201CArchive\u201D"]).pipe(
           Effect.provideService(HostProcess.Platform, "win32"),
@@ -130,8 +150,6 @@ it.layer(NodeServices.layer)("host CLI commands", (it) => {
           Effect.provideService(HostProcess.IsExecutable, false),
         )).command,
       ).toBe('t3 doctor "--base-dir" "C:\\T3\\\u201C\u201CArchive\u201D\u201D"');
-      // POSIX hosts keep single quotes for the same input. The shim prefix is
-      // a host path, so only the arguments are asserted.
       expect((yield* hostCommand("linux", { T3CODE_CLI_PATH: shim })).command).toMatch(
         / doctor --base-dir 'C:\\Users\\Jane Doe\\\.t3'$/,
       );
@@ -229,8 +247,6 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HostProcess.Environment, { T3CODE_NPM_LAUNCHER_PATH: launcher }),
       );
-      // A launcher for another version is some other `t3` the server spawned
-      // (the variable is inherited), not the install this executable runs from.
       for (const [version, expected] of [
         ["0.0.1", null],
         [packageJson.version, { kind: "npm-global", prefix }],

@@ -1,0 +1,157 @@
+---
+title: Firestore
+description: Create a Firestore database and read and write documents from Cloud Run with typed Read, Write, and ReadWrite bindings.
+---
+
+Firestore is a document database with no instance to size and no
+network to attach. Declare a database, bind it to your service, and
+read and write documents as plain JavaScript objects.
+
+## Create a database
+
+```typescript
+// src/resources.ts
+import * as GCP from "@alchemy.run/gcp";
+
+export const Links = GCP.Firestore.Database("Links", {
+  type: "FIRESTORE_NATIVE",
+});
+```
+
+Each Stack gets its own named database in Native mode, so it never
+touches the project's `(default)` database.
+
+## Bind it to a service
+
+Ask for the access you need: `ReadDatabase`, `WriteDatabase`, or
+`ReadWriteDatabase`:
+
+```typescript
+// src/Api.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Links } from "./resources.ts";
+
+export default class Api extends GCP.Function<Api>()(
+  "Api",
+  { main: import.meta.url, invokerIamDisabled: true },
+  Effect.gen(function* () {
+    const db = yield* GCP.Firestore.ReadWriteDatabase(Links);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const doc = yield* db.get("links/home");
+        return yield* HttpServerResponse.json(doc?.fields ?? {});
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.Firestore.ReadWriteDatabaseHttp)),
+) {}
+```
+
+`ReadWriteDatabase` grants `roles/datastore.user`, limited to this one
+database. The service can't touch any other database in the project.
+
+## Read a document
+
+`get` takes a path and returns `undefined` when the document is
+missing:
+
+```typescript
+const doc = yield* db.get("links/aB3xY7z");
+const url = doc?.fields.url;
+```
+
+Fields come back as JavaScript values: integers as `number`,
+timestamps as `Date`.
+
+## Write a document
+
+`set` creates or replaces a document:
+
+```typescript
+yield* db.set("links/aB3xY7z", {
+  url: "https://alchemy.run",
+  clicks: 0,
+  createdAt: new Date(),
+});
+```
+
+## Update some fields
+
+`update` changes only the keys you pass and leaves the rest alone:
+
+```typescript
+yield* db.update("links/aB3xY7z", { clicks: 1 });
+```
+
+## Create only if missing
+
+`create` fails with `DocumentAlreadyExists` instead of overwriting:
+
+```typescript
+const created = yield* db.create(`links/${code}`, { url }).pipe(
+  Effect.as(true),
+  Effect.catchTag("GCP.Firestore.DocumentAlreadyExists", () =>
+    Effect.succeed(false),
+  ),
+);
+```
+
+## List a collection
+
+```typescript
+const { documents, nextPageToken } = yield* db.list("links", {
+  pageSize: 50,
+});
+```
+
+## Query
+
+`query` runs a Firestore structured query. Filter values use
+Firestore's value shape:
+
+```typescript
+const admins = yield* db.query({
+  from: [{ collectionId: "users" }],
+  where: {
+    fieldFilter: {
+      field: { fieldPath: "role" },
+      op: "EQUAL",
+      value: { stringValue: "admin" },
+    },
+  },
+});
+```
+
+## Delete
+
+```typescript
+yield* db.delete("links/aB3xY7z");
+```
+
+Deleting a missing document succeeds.
+
+## The first requests after a deploy
+
+The grant is a conditional project IAM binding, and those take a few
+minutes to reach Firestore. A brand-new service can see `Forbidden`
+until then. Retry the first call in tests.
+
+## React to changes
+
+Run code whenever a document is created with
+[Eventarc](/gcp/messaging/eventarc).
+
+## Example
+
+[`examples/gcp-cloud-run-api`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-cloud-run-api)
+is a link shortener over Firestore, with its API key in Secret
+Manager.
+
+## Where next
+
+- [How bindings grant IAM](/gcp/security/iam) — how the database-only
+  grant works.
+- [Firestore reference](/providers/gcp/firestore#database) — every
+  prop and attribute.
