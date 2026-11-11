@@ -474,6 +474,8 @@ export interface ThreadManagementServiceShape {
     readonly commandId: CommandId;
     readonly placement: "before" | "after";
     readonly targetThreadId: ThreadId;
+    /** A caller fenced to one link may write only threads that link started. */
+    readonly linkSessionId?: string | undefined;
   }) => Effect.Effect<
     { readonly sequence: number },
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
@@ -1198,28 +1200,34 @@ const make = Effect.gen(function* () {
       keysById: new Map(threads.map((thread) => [thread.id, thread.activeOrderKey])),
       movedId: input.threadId,
     });
-    // A reseed writes several threads with no shared transaction, so a limited
-    // caller is refused before the first write rather than partway through.
-    // Dispatch still re-checks each thread under its own lock.
+    // A reseed writes several threads with no shared transaction, so a fenced
+    // or limited caller is refused before the first write rather than partway
+    // through. Dispatch still re-checks modes under each thread's own lock.
     const limit = yield* DispatchModeLimit;
-    if (limit !== undefined) {
-      const shells = new Map(active.map((thread) => [thread.id, thread]));
-      for (const assignment of assignments) {
-        const thread = shells.get(ThreadId.make(assignment.id))!;
-        const exceeded = exceededDispatchModeLimit(limit, thread);
-        if (exceeded === undefined) continue;
-        const refusal = {
-          threadId: thread.id,
-          mode: exceeded,
-          runtimeMode: thread.runtimeMode,
-          interactionMode: thread.interactionMode,
-        };
-        if (limit.refused !== undefined) yield* Ref.set(limit.refused, refusal);
-        return yield* new Orchestrator.OrchestratorThreadAboveModeLimitError({
-          commandId: input.commandId,
-          ...refusal,
-        });
+    const shells = new Map(active.map((thread) => [thread.id, thread]));
+    for (const assignment of assignments) {
+      const thread = shells.get(ThreadId.make(assignment.id))!;
+      if (
+        input.linkSessionId !== undefined &&
+        thread.linkOrigin?.sessionId !== input.linkSessionId
+      ) {
+        return yield* reject(
+          `Reordering here would also move thread ${thread.id}, which this link did not start.`,
+        );
       }
+      const exceeded = limit === undefined ? undefined : exceededDispatchModeLimit(limit, thread);
+      if (limit === undefined || exceeded === undefined) continue;
+      const refusal = {
+        threadId: thread.id,
+        mode: exceeded,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+      };
+      if (limit.refused !== undefined) yield* Ref.set(limit.refused, refusal);
+      return yield* new Orchestrator.OrchestratorThreadAboveModeLimitError({
+        commandId: input.commandId,
+        ...refusal,
+      });
     }
     // The reseed matched every existing key, so there is nothing to write.
     let sequence =

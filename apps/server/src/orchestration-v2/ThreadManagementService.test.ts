@@ -797,6 +797,7 @@ describe("reorderActiveThread", () => {
       threadId: string;
       placement: "before" | "after";
       targetThreadId: string;
+      linkSessionId?: string;
     }) =>
       ThreadManagementService.ThreadManagementService.pipe(
         Effect.flatMap((service) =>
@@ -805,6 +806,7 @@ describe("reorderActiveThread", () => {
             commandId: CommandId.make("command:reorder"),
             placement: input.placement,
             targetThreadId: ThreadId.make(input.targetThreadId),
+            linkSessionId: input.linkSessionId,
           }),
         ),
         Effect.provide(layerTest),
@@ -891,6 +893,27 @@ describe("reorderActiveThread", () => {
       expect(error).toBeInstanceOf(Orchestrator.OrchestratorThreadAboveModeLimitError);
       expect(service.dispatched).toEqual([]);
       expect(service.order()).toEqual(["a", "b", "c"]);
+    }),
+  );
+
+  it.effect("refuses a fenced caller's reseed that would rewrite a thread outside its link", () =>
+    Effect.gen(function* () {
+      const linkOrigin = { sessionId: "link", label: "Laptop", access: "auto" as const };
+      const service = reorderService([
+        shell("user", "2026-03-01T00:00:00Z"),
+        shell("a", "2026-02-01T00:00:00Z", { linkOrigin }),
+        shell("b", "2026-01-01T00:00:00Z", { linkOrigin }),
+      ]);
+      const error = yield* Effect.flip(
+        service.run({
+          threadId: "a",
+          placement: "after",
+          targetThreadId: "b",
+          linkSessionId: "link",
+        }),
+      );
+      expect(error).toBeInstanceOf(Orchestrator.OrchestratorDispatchError);
+      expect(service.dispatched).toEqual([]);
     }),
   );
 
