@@ -70,7 +70,7 @@ import * as OrchestratorMcpService from "../OrchestratorMcpService.ts";
 import * as AnimationHandlers from "./animation/handlers.ts";
 import { AnimationToolkit } from "./animation/tools.ts";
 import * as CourseHandlers from "./course/handlers.ts";
-import { CourseToolkit } from "./course/tools.ts";
+import { CourseReferenceToolkit, CourseToolkit } from "./course/tools.ts";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
@@ -1348,6 +1348,22 @@ it.effect("course_prepare starts a standalone prep thread and sends nothing to t
     }
     const prepCaller = ThreadId.make("recorded-prep-thread");
     yield* service.recordPrepThread(course.id, prepCaller);
+    const lessonFetch = yield* callAs("course_reference_fetch", {
+      courseId: course.id,
+      url: "http://127.0.0.1/solution.pdf",
+    });
+    expect(lessonFetch.isError).toBe(true);
+    expect(JSON.stringify(lessonFetch.content)).toContain(
+      "available only to this course's prep thread",
+    );
+    const prepFetch = yield* callAsThread(prepCaller, "course_reference_fetch", {
+      courseId: course.id,
+      url: "http://127.0.0.1/solution.pdf",
+    });
+    expect(prepFetch.isError).toBe(true);
+    expect(JSON.stringify(prepFetch.content)).not.toContain(
+      "available only to this course's prep thread",
+    );
     expect(
       (yield* callAsThread(prepCaller, "course_read", { courseId: course.id })).isError,
     ).not.toBe(true);
@@ -1360,7 +1376,10 @@ it.effect("course_prepare starts a standalone prep thread and sends nothing to t
     expect(JSON.stringify(outside.content)).toContain("must be attached");
   }).pipe(
     Effect.provide(
-      McpHttpServer.toolkitRegistration(CourseToolkit, CourseHandlers.layer).pipe(
+      Layer.mergeAll(
+        McpHttpServer.toolkitRegistration(CourseToolkit, CourseHandlers.layer),
+        McpHttpServer.toolkitRegistration(CourseReferenceToolkit, CourseHandlers.referenceLayer),
+      ).pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         // Every other orchestrator method dies, so a message into the lesson would fail the test.
         Layer.provide(

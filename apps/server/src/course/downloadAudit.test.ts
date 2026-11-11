@@ -32,6 +32,18 @@ describe("course download audit", () => {
       assert.include(lines[0].url, "token=REDACTED");
       assert.include(lines[0].url, "pwd=REDACTED");
       assert.notInclude(lines[0].url, "#token");
+      await auditDownload(
+        { stateDir: dir, threadId: "thread-1", courseId: null },
+        { url: "https://user:pw@example.com/a", status: 200 },
+      );
+      const withUserinfo = JSON.parse(
+        (await NodeFSP.readFile(NodePath.join(dir, "audit", files[0]!)))
+          .toString()
+          .trim()
+          .split("\n")[2]!,
+      );
+      assert.notInclude(withUserinfo.url, "user");
+      assert.notInclude(withUserinfo.url, "pw");
       assert.strictEqual(
         lines[0].sha256,
         "2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df",

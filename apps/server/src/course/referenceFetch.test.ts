@@ -2,7 +2,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeFSP from "node:fs/promises";
-import { encodeGrayscalePng, extractPdf, fetchCourseReference } from "./referenceFetch.ts";
+import {
+  checkedDispatcher,
+  encodeGrayscalePng,
+  extractPdf,
+  fetchCourseReference,
+} from "./referenceFetch.ts";
 
 const lookup = (async (hostname: string) => {
   const blocked: Record<string, string> = {
@@ -28,6 +33,24 @@ describe("course reference fetch", () => {
         },
       });
       assert.include(requested, "/uc?export=download&id=abc123");
+    }),
+  );
+
+  it.effect("pins the dispatcher to the address checked by DNS", () =>
+    Effect.promise(async () => {
+      let calls = 0;
+      const checked = await checkedDispatcher("example.com", async () => {
+        calls += 1;
+        return [{ address: calls === 1 ? "93.184.216.34" : "127.0.0.1", family: 4 as const }];
+      });
+      let connected = "";
+      checked.connectLookup!("example.com", {}, (error, address) => {
+        if (error) throw error;
+        connected = typeof address === "string" ? address : address[0]!.address;
+      });
+      assert.strictEqual(connected, "93.184.216.34");
+      assert.strictEqual(calls, 1);
+      await checked.dispatcher?.close();
     }),
   );
 
@@ -171,5 +194,27 @@ describe("course reference fetch", () => {
     const result = await extractPdf(Buffer.from(pdf), [1]);
     assert.strictEqual(result.images.length, 0);
     assert.isAbove(result.skippedImages ?? 0, 8);
+  });
+
+  it("caps extracted PDF text across requested pages", async () => {
+    const text = Array.from({ length: 2_000 }, () => "(AAAAAAAAAA) Tj 0 0 Td").join(" ");
+    const stream = (object: number, value: string) =>
+      `${object} 0 obj << /Length ${value.length} >> stream\n${value}\nendstream endobj\n`;
+    const pdf =
+      "%PDF-1.4\n" +
+      "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n" +
+      "2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj\n" +
+      "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /Font << /F1 7 0 R >> >> /Contents 5 0 R >> endobj\n" +
+      "4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >> endobj\n" +
+      stream(5, `BT /F1 12 Tf ${text} ET`) +
+      stream(6, `BT /F1 12 Tf ${text} ET`) +
+      "7 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n" +
+      "trailer << /Root 1 0 R /Size 8 >>\n%%EOF";
+    const result = await extractPdf(Buffer.from(pdf), [1, 2]);
+    assert.isAbove(result.pages[0]?.text.length ?? 0, 0);
+    assert.strictEqual(
+      result.pages.reduce((sum, page) => sum + page.text.length, 0),
+      20_000,
+    );
   });
 });
