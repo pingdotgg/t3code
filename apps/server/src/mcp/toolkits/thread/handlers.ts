@@ -12,6 +12,7 @@ import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { fencingLinkOrigin } from "../../linkOrigin.ts";
 import {
   dispatchFailure,
   newCommandId,
@@ -334,11 +335,27 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
-      const { threads, projection, caller } = yield* readThread(input.threadId);
+      const { threads, projection, caller, scope } = yield* readThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       if (input.action === "settle") {
         return yield* threads
           .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })
+          .pipe(Effect.mapError(dispatchFailure));
+      }
+      if (input.action === "reorder") {
+        if (input.beforeThreadId === undefined) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "reorder requires beforeThreadId.",
+          });
+        }
+        return yield* threads
+          .reorderActiveThread({
+            ...common,
+            placement: "before",
+            targetThreadId: input.beforeThreadId,
+            linkSessionId: fencingLinkOrigin({ scope, caller })?.sessionId,
+          })
           .pipe(Effect.mapError(dispatchFailure));
       }
       let command: OrchestrationV2Command;

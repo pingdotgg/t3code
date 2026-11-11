@@ -1,15 +1,17 @@
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
   MessageId,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ProviderThread,
   ProviderThreadId,
   ProviderDriverKind,
   ProviderSessionId,
   type OrchestrationV2StoredEvent,
+  type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
@@ -25,6 +27,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import { sortActiveThreadsByOrderKey } from "@t3tools/shared/threadOrder";
 import * as TestClock from "effect/testing/TestClock";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -32,6 +35,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -702,6 +706,248 @@ it.effect.each([
     expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
   }),
 );
+
+describe("reorderActiveThread", () => {
+  const shell = (
+    id: string,
+    createdAt: string,
+    overrides: Partial<OrchestrationV2ThreadShell> = {},
+  ) =>
+    ({
+      id: ThreadId.make(id),
+      createdAt: DateTime.makeUnsafe(createdAt),
+      unsettledAt: null,
+      deletedAt: null,
+      archivedAt: null,
+      pinnedAt: null,
+      settledOverride: null,
+      lineage: { relationshipToParent: null },
+      activeOrderKey: null,
+      runtimeMode: "auto",
+      interactionMode: "default",
+      ...overrides,
+    }) as unknown as OrchestrationV2ThreadShell;
+
+  // Stands in for the orchestrator: applies each key to the snapshot and
+  // replays a command id already handled for the same thread, as receipts do.
+  const reorderService = (threads: Array<OrchestrationV2ThreadShell>) => {
+    const dispatched: Array<
+      Extract<OrchestrationV2ServerCommand, { readonly type: "thread.active.reorder" }>
+    > = [];
+    const receipts = new Map<string, { threadId: ThreadId; sequence: number }>();
+    const refuse = new Set<string>();
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getShellSnapshot: () =>
+            Effect.sync(() => ({
+              schemaVersion: 1,
+              snapshotSequence: 0,
+              threads: [...threads],
+              archivedThreads: [],
+            })),
+          dispatch: (command) =>
+            Effect.gen(function* () {
+              if (command.type !== "thread.active.reorder") return yield* Effect.die("unexpected");
+              const receipt = receipts.get(command.commandId);
+              if (receipt !== undefined) {
+                if (receipt.threadId !== command.threadId) {
+                  return yield* new Orchestrator.OrchestratorCommandIdConflictError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    receiptThreadId: receipt.threadId,
+                    commandThreadId: command.threadId,
+                  });
+                }
+                return { sequence: receipt.sequence, storedEvents: [] };
+              }
+              if (refuse.has(command.threadId)) {
+                return yield* new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "refused",
+                });
+              }
+              dispatched.push(command);
+              const index = threads.findIndex((thread) => thread.id === command.threadId);
+              threads[index] = { ...threads[index]!, activeOrderKey: command.orderKey };
+              receipts.set(command.commandId, {
+                threadId: command.threadId,
+                sequence: dispatched.length,
+              });
+              return { sequence: dispatched.length, storedEvents: [] };
+            }),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const order = () =>
+      sortActiveThreadsByOrderKey(
+        threads
+          .filter((thread) => thread.pinnedAt == null && thread.settledOverride !== "settled")
+          .map((thread) => ({
+            id: thread.id,
+            createdAt: DateTime.formatIso(thread.createdAt),
+            activeOrderKey: thread.activeOrderKey,
+          })),
+      ).map((thread) => thread.id);
+    const run = (input: {
+      threadId: string;
+      placement: "before" | "after";
+      targetThreadId: string;
+      linkSessionId?: string;
+    }) =>
+      ThreadManagementService.ThreadManagementService.pipe(
+        Effect.flatMap((service) =>
+          service.reorderActiveThread({
+            threadId: ThreadId.make(input.threadId),
+            commandId: CommandId.make("command:reorder"),
+            placement: input.placement,
+            targetThreadId: ThreadId.make(input.targetThreadId),
+            linkSessionId: input.linkSessionId,
+          }),
+        ),
+        Effect.provide(layerTest),
+      );
+    const keyOf = (id: string) => threads.find((thread) => thread.id === id)?.activeOrderKey;
+    return { run, order, dispatched, refuse, keyOf };
+  };
+
+  const reorder = (
+    threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+    input: { threadId: string; placement: "before" | "after"; targetThreadId: string },
+  ) =>
+    Effect.gen(function* () {
+      const service = reorderService([...threads]);
+      const result = yield* service.run(input);
+      return { result, dispatched: service.dispatched, order: service.order() };
+    });
+
+  it.effect("places a thread directly before a keyed neighbor with one write", () =>
+    Effect.gen(function* () {
+      const { dispatched, order } = yield* reorder(
+        [
+          shell("a", "2026-01-01T00:00:00Z", { activeOrderKey: "c" }),
+          shell("b", "2026-01-01T00:00:00Z", { activeOrderKey: "m" }),
+          shell("c", "2026-01-01T00:00:00Z", { activeOrderKey: "t" }),
+        ],
+        { threadId: "c", placement: "before", targetThreadId: "b" },
+      );
+      expect(order).toEqual(["a", "c", "b"]);
+      expect(dispatched).toHaveLength(1);
+    }),
+  );
+
+  it.effect("seeds keyless threads so a thread can move above them", () =>
+    Effect.gen(function* () {
+      const { order } = yield* reorder(
+        [
+          shell("new", "2026-03-01T00:00:00Z"),
+          shell("old", "2026-02-01T00:00:00Z"),
+          shell("a", "2026-01-01T00:00:00Z", { activeOrderKey: "m" }),
+          shell("pinned", "2026-01-01T00:00:00Z", {
+            pinnedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+          }),
+        ],
+        { threadId: "a", placement: "after", targetThreadId: "new" },
+      );
+      expect(order).toEqual(["new", "a", "old"]);
+    }),
+  );
+
+  it.effect("refuses threads outside the active section", () =>
+    Effect.gen(function* () {
+      const threads = [
+        shell("a", "2026-01-01T00:00:00Z"),
+        shell("settled", "2026-01-01T00:00:00Z", { settledOverride: "settled" }),
+      ];
+      const moved = yield* Effect.flip(
+        reorder(threads, { threadId: "settled", placement: "before", targetThreadId: "a" }),
+      );
+      const target = yield* Effect.flip(
+        reorder(threads, { threadId: "a", placement: "before", targetThreadId: "settled" }),
+      );
+      expect(moved).toBeInstanceOf(Orchestrator.OrchestratorDispatchError);
+      expect(target).toBeInstanceOf(Orchestrator.OrchestratorDispatchError);
+    }),
+  );
+  const keyless = () => [
+    shell("a", "2026-03-01T00:00:00Z"),
+    shell("b", "2026-02-01T00:00:00Z"),
+    shell("c", "2026-01-01T00:00:00Z", { runtimeMode: "full-access" }),
+  ];
+
+  it.effect("refuses a reseed touching a thread above the caller's modes before any write", () =>
+    Effect.gen(function* () {
+      const service = reorderService(keyless());
+      const error = yield* Effect.flip(
+        service.run({ threadId: "a", placement: "after", targetThreadId: "b" }).pipe(
+          Effect.provideService(DispatchModeLimit, {
+            runtimeMode: "auto",
+            interactionMode: "default",
+          }),
+        ),
+      );
+      expect(error).toBeInstanceOf(Orchestrator.OrchestratorThreadAboveModeLimitError);
+      expect(service.dispatched).toEqual([]);
+      expect(service.order()).toEqual(["a", "b", "c"]);
+    }),
+  );
+
+  it.effect("refuses a fenced caller's reseed that would rewrite a thread outside its link", () =>
+    Effect.gen(function* () {
+      const linkOrigin = { sessionId: "link", label: "Laptop", access: "auto" as const };
+      const service = reorderService([
+        shell("user", "2026-03-01T00:00:00Z"),
+        shell("a", "2026-02-01T00:00:00Z", { linkOrigin }),
+        shell("b", "2026-01-01T00:00:00Z", { linkOrigin }),
+      ]);
+      const error = yield* Effect.flip(
+        service.run({
+          threadId: "a",
+          placement: "after",
+          targetThreadId: "b",
+          linkSessionId: "link",
+        }),
+      );
+      expect(error).toBeInstanceOf(Orchestrator.OrchestratorDispatchError);
+      expect(service.dispatched).toEqual([]);
+    }),
+  );
+
+  it.effect("retrying the same command after a partial reseed does not conflict", () =>
+    Effect.gen(function* () {
+      const service = reorderService(keyless());
+      service.refuse.add("c");
+      yield* Effect.flip(service.run({ threadId: "a", placement: "after", targetThreadId: "b" }));
+      expect(service.dispatched.map((command) => command.threadId)).toEqual(["b", "a"]);
+      service.refuse.clear();
+      // Keyless c now sorts above the keyed pair, so the retry replans a single
+      // write for a under a new key instead of conflicting with its receipt.
+      yield* service.run({ threadId: "a", placement: "after", targetThreadId: "b" });
+      expect(service.order()).toEqual(["c", "b", "a"]);
+      expect(service.dispatched.map((command) => command.threadId)).toEqual(["b", "a", "a"]);
+    }),
+  );
+
+  it.effect("retrying after the moved thread's write failed still places it", () =>
+    Effect.gen(function* () {
+      const service = reorderService(keyless());
+      service.refuse.add("a");
+      yield* Effect.flip(service.run({ threadId: "a", placement: "before", targetThreadId: "c" }));
+      expect(service.dispatched.map((command) => command.threadId)).toEqual(["b"]);
+      service.refuse.clear();
+      // The retry plans different keys; b's receipt must not replay its old one.
+      yield* service.run({ threadId: "a", placement: "before", targetThreadId: "c" });
+      const order = service.order();
+      expect(order.indexOf(ThreadId.make("c"))).toBe(order.indexOf(ThreadId.make("a")) + 1);
+      const keys = service.order().map((id) => service.keyOf(id));
+      expect(new Set(keys).size).toBe(keys.length);
+    }),
+  );
+});
 
 it.effect.each([
   {

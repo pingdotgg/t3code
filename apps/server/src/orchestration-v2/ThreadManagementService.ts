@@ -43,6 +43,7 @@ import {
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
+import { planPinnedReorder, sortActiveThreadsByOrderKey } from "@t3tools/shared/threadOrder";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -460,6 +461,23 @@ export interface ThreadManagementServiceShape {
     readonly byOwnAgent: boolean;
   }) => Effect.Effect<
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
+    Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+  >;
+  /**
+   * Places an active thread directly before or after another active thread of
+   * this environment. Clients plan this from their own list; agents name a
+   * neighbor because order keys are not readable. A neighbor without a key may
+   * reseed the section, writing several threads.
+   */
+  readonly reorderActiveThread: (input: {
+    readonly threadId: ThreadId;
+    readonly commandId: CommandId;
+    readonly placement: "before" | "after";
+    readonly targetThreadId: ThreadId;
+    /** A caller fenced to one link may write only threads that link started. */
+    readonly linkSessionId?: string | undefined;
+  }) => Effect.Effect<
+    { readonly sequence: number },
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   readonly interruptThread: (
@@ -1149,6 +1167,99 @@ const make = Effect.gen(function* () {
     return { sequence: result.sequence };
   });
 
+  const reorderActiveThread: ThreadManagementServiceShape["reorderActiveThread"] = Effect.fn(
+    "ThreadManagementService.reorderActiveThread",
+  )(function* (input) {
+    const reject = (cause: string) =>
+      new Orchestrator.OrchestratorDispatchError({
+        commandId: input.commandId,
+        commandType: "thread.active.reorder",
+        cause,
+      });
+    const { threads } = yield* orchestrator.getShellSnapshot({ location: "active" });
+    // Pinned, settled, and subagent threads have no slot in the active section.
+    // Snoozed threads keep theirs while hidden, so they stay in the order.
+    const active = threads.filter(
+      (thread) =>
+        thread.deletedAt === null &&
+        thread.archivedAt === null &&
+        thread.pinnedAt == null &&
+        thread.settledOverride !== "settled" &&
+        thread.lineage.relationshipToParent !== "subagent",
+    );
+    const orderedIds = sortActiveThreadsByOrderKey(
+      active.map((thread) => ({
+        id: thread.id,
+        createdAt: DateTime.formatIso(thread.createdAt),
+        unsettledAt: thread.unsettledAt == null ? null : DateTime.formatIso(thread.unsettledAt),
+        activeOrderKey: thread.activeOrderKey,
+      })),
+    ).map((thread) => thread.id);
+    if (!orderedIds.includes(input.threadId)) {
+      return yield* reject(`Thread ${input.threadId} is not active and cannot be reordered.`);
+    }
+    if (input.targetThreadId === input.threadId) {
+      return yield* reject("A thread cannot be placed relative to itself.");
+    }
+    const nextIds = orderedIds.filter((id) => id !== input.threadId);
+    const target = nextIds.indexOf(input.targetThreadId);
+    if (target === -1) {
+      return yield* reject(`Thread ${input.targetThreadId} is not an active thread.`);
+    }
+    nextIds.splice(target + (input.placement === "after" ? 1 : 0), 0, input.threadId);
+    const assignments = planPinnedReorder({
+      orderedIds: nextIds,
+      keysById: new Map(threads.map((thread) => [thread.id, thread.activeOrderKey])),
+      movedId: input.threadId,
+    });
+    // A reseed writes several threads with no shared transaction, so a fenced
+    // or limited caller is refused before the first write rather than partway
+    // through. Dispatch still re-checks modes under each thread's own lock.
+    const limit = yield* DispatchModeLimit;
+    const shells = new Map(active.map((thread) => [thread.id, thread]));
+    for (const assignment of assignments) {
+      const thread = shells.get(ThreadId.make(assignment.id))!;
+      if (
+        input.linkSessionId !== undefined &&
+        thread.linkOrigin?.sessionId !== input.linkSessionId
+      ) {
+        return yield* reject(
+          `Reordering here would also move thread ${thread.id}, which this link did not start.`,
+        );
+      }
+      const exceeded = limit === undefined ? undefined : exceededDispatchModeLimit(limit, thread);
+      if (limit === undefined || exceeded === undefined) continue;
+      const refusal = {
+        threadId: thread.id,
+        mode: exceeded,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+      };
+      if (limit.refused !== undefined) yield* Ref.set(limit.refused, refusal);
+      return yield* new Orchestrator.OrchestratorThreadAboveModeLimitError({
+        commandId: input.commandId,
+        ...refusal,
+      });
+    }
+    // The reseed matched every existing key, so there is nothing to write.
+    let sequence =
+      assignments.length === 0 ? yield* orchestrator.getThreadEventSequence(input.threadId) : 0;
+    for (const assignment of assignments) {
+      const threadId = ThreadId.make(assignment.id);
+      const result = yield* dispatch({
+        type: "thread.active.reorder",
+        // Bound to the thread and its key: a retry after a partial reseed
+        // replans from the landed keys, and a receipt must replay only the
+        // write it recorded, never stand in for a different key.
+        commandId: CommandId.make(`${input.commandId}:${threadId}:${assignment.orderKey}`),
+        threadId,
+        orderKey: assignment.orderKey,
+      });
+      sequence = result.sequence;
+    }
+    return { sequence };
+  });
+
   const interruptThread: ThreadManagementServiceShape["interruptThread"] = Effect.fn(
     "ThreadManagementService.interruptThread",
   )(function* (input) {
@@ -1633,6 +1744,7 @@ const make = Effect.gen(function* () {
     waitForThread,
     settleAfterRun,
     settleThread,
+    reorderActiveThread,
     interruptThread,
     stopDelegatedTasks,
     stopWorkflow,

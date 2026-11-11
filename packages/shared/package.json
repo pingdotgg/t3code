@@ -147,6 +147,10 @@
       "types": "./src/favicon.ts",
       "import": "./src/favicon.ts"
     },
+    "./threadOrder": {
+      "types": "./src/threadOrder.ts",
+      "import": "./src/threadOrder.ts"
+    },
     "./Struct": {
       "types": "./src/Struct.ts",
       "import": "./src/Struct.ts"
