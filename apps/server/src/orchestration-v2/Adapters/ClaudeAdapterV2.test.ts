@@ -801,23 +801,22 @@ describe("ClaudeAdapterV2 session permissions", () => {
     assert.equal(result.decisionClassification, "user_reject");
     assert.equal(result.message, "User declined tool execution.");
     assert.equal(result.interrupt, undefined);
-  });
 
-  it("tells Claude that decline feedback is the user's message, not a tool error", () => {
-    const feedback = "Use the dry-run flag first.";
-    const result = ClaudeAdapterV2.permissionResultFromDecision({
+    // regression: #27854 bare feedback read to Claude as a tool error, not the user's words
+    const withFeedback = ClaudeAdapterV2.permissionResultFromDecision({
       toolName: "Bash",
       decision: "decline",
-      toolInput: { command: "make deploy" },
-      toolUseID: "declined-with-feedback",
-      feedback,
+      toolInput: { command: "make" },
+      toolUseID: "denied-build",
+      feedback: "  Use the dry-run flag first. ",
     });
-    assert.equal(result.behavior, "deny");
-    if (result.behavior !== "deny") return;
-    assert.include(result.message, feedback);
-    assert.notEqual(result.message, feedback, "feedback was forwarded as a bare tool error");
-    assert.match(result.message, /user/i);
-    assert.match(result.message, /declin|reject/i);
+    assert.equal(withFeedback.behavior, "deny");
+    if (withFeedback.behavior !== "deny") return;
+    assert.equal(withFeedback.decisionClassification, "user_reject");
+    assert.equal(
+      withFeedback.message,
+      "The user declined this tool call and said:\nUse the dry-run flag first.",
+    );
   });
 
   it("forces suggested permission updates to session scope", () => {
