@@ -498,7 +498,7 @@ const startWriterWorker = Effect.fnUntraced(function* (options: SqliteClientConf
     Effect.logWarning("SQLite writer worker unavailable; writes run on the main thread", {
       reason,
     });
-  const created = yield* Effect.try(
+  const created = Result.try(
     () =>
       new NodeWorkerThreads.Worker(connectionWorkerSource, {
         eval: true,
@@ -510,9 +510,9 @@ const startWriterWorker = Effect.fnUntraced(function* (options: SqliteClientConf
           prepareCacheSize: 200,
         },
       }),
-  ).pipe(Effect.result);
+  );
   if (Result.isFailure(created)) {
-    yield* warn(String(created.failure.cause));
+    yield* warn(String(created.failure));
     return undefined;
   }
   const worker = created.success;
