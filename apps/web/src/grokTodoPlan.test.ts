@@ -55,6 +55,19 @@ describe("Grok todo_write", () => {
     ]);
   });
 
+  it("shows requested steps only while the update has not failed or stopped", () => {
+    const input = {
+      variant: "TodoWrite",
+      todos: [{ id: "1", content: "Reinstall the CLI", status: "completed" }],
+    };
+    expect(grokTodoStepsFromTool({ status: "running", input })).toEqual([
+      { id: "1", text: "Reinstall the CLI", status: "completed" },
+    ]);
+    for (const status of ["failed", "cancelled", "interrupted"]) {
+      expect(grokTodoStepsFromTool({ status, input, output: "Todo update failed" })).toEqual([]);
+    }
+  });
+
   it("parses a JSON string result", () => {
     expect(
       grokTodoStepsFromTool({

@@ -4,6 +4,8 @@ export interface GrokTodoStep {
   readonly status: "pending" | "running" | "completed" | "cancelled";
 }
 
+const UNAPPLIED_STATUSES = new Set(["failed", "cancelled", "interrupted"]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -58,9 +60,11 @@ function stepsFromTodos(todos: unknown): ReadonlyArray<GrokTodoStep> {
 }
 
 export function grokTodoStepsFromTool(item: {
+  readonly status?: string;
   readonly input?: unknown;
   readonly output?: unknown;
 }): ReadonlyArray<GrokTodoStep> {
   const fromOutput = stepsFromTodos(todosOf(item.output));
-  return fromOutput.length > 0 ? fromOutput : stepsFromTodos(todosOf(item.input));
+  if (fromOutput.length > 0 || UNAPPLIED_STATUSES.has(item.status ?? "")) return fromOutput;
+  return stepsFromTodos(todosOf(item.input));
 }
