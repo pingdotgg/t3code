@@ -285,25 +285,35 @@ export function markdownWithHtml(markdown: string): string {
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
 const INLINE_CODE_SPAN = /(?<!`)`+([^`\r\n]+)`+/g;
 
-export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdown, fileLink, false);
+/**
+ * File links are rewritten only when some inline-code span of the document looks like a path.
+ * That is a decision about the whole document, so a caller converting it in pieces passes it on.
+ */
+export function markdownMayLinkFiles(markdown: string, fileLink: RegExp): boolean {
+  for (const [, code] of markdown.matchAll(INLINE_CODE_SPAN)) {
+    if (fileLink.test(code!.trim())) return true;
+  }
+  return false;
+}
+
+export function markdownWithInlineFileLinks(
+  markdown: string,
+  fileLink: RegExp,
+  linkFiles?: boolean,
+): string {
+  return transformNativeMarkdown(markdown, fileLink, false, linkFiles);
 }
 
 function transformNativeMarkdown(
   markdown: string,
   fileLink: RegExp | undefined,
   tableBreaks: boolean,
+  linkFilesOverride?: boolean,
 ): string {
   const breakTables = tableBreaks && mayHaveTableUnderText(markdown);
-  let linkFiles = false;
-  if (fileLink) {
-    for (const [, code] of markdown.matchAll(INLINE_CODE_SPAN)) {
-      if (fileLink.test(code!.trim())) {
-        linkFiles = true;
-        break;
-      }
-    }
-  }
+  const linkFiles = fileLink
+    ? (linkFilesOverride ?? markdownMayLinkFiles(markdown, fileLink))
+    : false;
   if (!linkFiles && !breakTables) return markdown;
   const edits: MarkdownEdit[] = [];
   const fileEdits: MarkdownEdit[] = [];
@@ -439,7 +449,16 @@ export function parseMarkdownDocument(markdown: string): Root {
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
+  return markdownRenderParsed(markdownForNativeParsing(markdown), fileLink);
+}
+
+/** What `markdownForNativeRendering` does after `markdownForNativeParsing`. */
+export function markdownRenderParsed(
+  parsed: string,
+  fileLink: RegExp,
+  linkFiles?: boolean,
+): string {
+  return transformNativeMarkdown(parsed, fileLink, true, linkFiles);
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */
