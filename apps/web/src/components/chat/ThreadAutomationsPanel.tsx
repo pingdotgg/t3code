@@ -193,7 +193,11 @@ export function ThreadAutomationsPanel(props: {
                 onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
               />
             </div>
-            <MenuPopup side="right" align="start">
+            <MenuPopup
+              side="right"
+              align="start"
+              collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "end" }}
+            >
               <MenuItem
                 onClick={() =>
                   void navigate({

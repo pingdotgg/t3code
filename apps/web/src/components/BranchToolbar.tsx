@@ -820,6 +820,9 @@ const RunContextSelector = memo(function RunContextSelector({
       <MenuPopup
         align="start"
         side={isPanel ? "right" : "top"}
+        collisionAvoidance={
+          isPanel ? { side: "flip", align: "shift", fallbackAxisSide: "end" } : undefined
+        }
         className={
           isPanel
             ? "w-(--anchor-width)"
