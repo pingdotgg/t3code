@@ -33,7 +33,7 @@ export function runServicePreflight(input: {
           ? [
               `On the server machine, install this exact CLI in PowerShell: \`$env:T3CODE_VERSION="${version}"; irm https://t3.codes/install.ps1 | iex\`.`,
               `Check that \`t3 --version\` prints ${version} and that \`where.exe t3\` lists no older t3 first.`,
-              `Windows has no \`t3 service install\`, so change whatever runs \`t3 __service-launcher\` to start it from \`%USERPROFILE%\\.local\\bin\\t3.cmd\` (the installer's default path) and restart it. Remote updates do not move a Windows launcher, so repeat this whenever a release changes the launcher protocol.`,
+              `Windows has no \`t3 service install\`, so change whatever runs \`t3 __service-launcher\` to start it from \`%USERPROFILE%\\.local\\bin\\t3.cmd\` (the installer's default path) and restart it. Later remote updates repoint that t3.cmd, so a launcher started through it moves forward on its next restart.`,
               "Updating the desktop app does not update this CLI.",
             ]
           : [

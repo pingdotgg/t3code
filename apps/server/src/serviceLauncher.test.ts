@@ -395,6 +395,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     render = renderBootServiceUnit,
     missingUnit = false,
     legacyInstall = false,
+    windowsShim = false,
   ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -407,6 +408,16 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       yield* fs.writeFileString(databasePath, "before trial");
       const unit = yield* fakeServiceUnit(fs, path, root, "1.0.0", render);
       if (missingUnit) yield* fs.remove(unit.path);
+      const shimPath = path.join(root, "bin", "t3.cmd");
+      if (windowsShim) {
+        yield* fs.makeDirectory(path.dirname(shimPath), { recursive: true });
+        const target = path.join(root, "runtime", "versions", "1.0.0", "t3.exe");
+        yield* fs.writeFileString(shimPath, `@echo off\r\n"${target}" %*`);
+        yield* fs.makeDirectory(path.join(root, "runtime"), { recursive: true });
+        yield* fs.writeFileString(path.join(root, "runtime", "launchers"), `${shimPath}\r\n`);
+      }
+      // Windows has no service unit; the launcher runs through the installer's shim.
+      const launcherOptions = windowsShim ? {} : { serviceUnit: unit };
       const childSource = `
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -462,7 +473,7 @@ if (context.update?.status === "pending") {
       const launcher = new Launcher(
         root,
         yield* Effect.promise(() => readServiceState(statePath)),
-        { serviceUnit: unit },
+        launcherOptions,
       );
       const failure = yield* Effect.promise(() =>
         launcher.run().then(
@@ -480,13 +491,13 @@ if (context.update?.status === "pending") {
           const fresh = new Launcher(
             root,
             yield* Effect.promise(() => readServiceState(statePath)),
-            { serviceUnit: unit },
+            launcherOptions,
           );
           const running = fresh.run();
           yield* Effect.promise(() => fresh.stop("SIGTERM"));
           yield* Effect.promise(() => running);
         });
-      return { fs, root, unit, recover };
+      return { fs, root, unit, shimPath, recover };
     });
 
   it.effect.each([
@@ -514,6 +525,15 @@ if (context.update?.status === "pending") {
         assert.equal(unit.loadedContents, expected);
         assert.equal(unit.reloads, 1);
       }),
+  );
+
+  it.effect("repoints the installer's t3.cmd on commit when there is no service unit", () =>
+    Effect.gen(function* () {
+      const { fs, root, shimPath } = yield* commitUpdate(renderBootServiceUnit, false, false, true);
+      const path = yield* Path.Path;
+      const target = path.join(root, "runtime", "versions", "1.1.0", "t3.exe");
+      assert.equal(yield* fs.readFileString(shimPath), `@echo off\r\n"${target}" %*`);
+    }),
   );
 
   it.effect(
