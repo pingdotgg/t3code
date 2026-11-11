@@ -74,6 +74,7 @@ import {
   SHELL_SETTLED_THREADS,
   shellFleetEvents,
   STALE_TODO_LAST_FINISHED_CHECKPOINT_ID,
+  STALE_TODO_LIVE_RUN_ID,
   STALE_TODO_SUBAGENTS_PER_RUN,
   STALE_TODO_THREAD_ID,
   staleTodoListThreadBatches,
@@ -443,7 +444,10 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             STALE_TODO_LAST_FINISHED_CHECKPOINT_ID,
           );
           // The caps below also pass when the running turn loses its own tasks.
-          assert.isAtLeast(staleTodo.subagents.length, STALE_TODO_SUBAGENTS_PER_RUN);
+          assert.lengthOf(
+            staleTodo.subagents.filter((subagent) => subagent.runId === STALE_TODO_LIVE_RUN_ID),
+            STALE_TODO_SUBAGENTS_PER_RUN,
+          );
           const staleTodoColdOpen = {
             http: staleTodoHttp,
             rows: staleTodo.visibleTurnItems.length,

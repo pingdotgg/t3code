@@ -452,6 +452,9 @@ const staleTodoCheckpointId = (index: number) =>
 export const STALE_TODO_LAST_FINISHED_CHECKPOINT_ID = staleTodoCheckpointId(
   STALE_TODO_SETTLED_RUNS - 1,
 );
+const staleTodoRunId = (index: number) =>
+  RunId.make(`run:thread:${STALE_TODO_THREAD_ID}:ordinal:${index + 1}`);
+export const STALE_TODO_LIVE_RUN_ID = staleTodoRunId(STALE_TODO_SETTLED_RUNS);
 
 /**
  * A long thread: many finished runs, then one run still at work with more rows than a window
@@ -477,7 +480,7 @@ export function staleTodoListThreadBatches(
 
   const turn = (index: number, live: boolean): OrchestrationV2DomainEvent[] => {
     const now = DateTime.makeUnsafe(Date.UTC(2026, 5, 4, 0, index));
-    const runId = RunId.make(`run:thread:${threadId}:ordinal:${index + 1}`);
+    const runId = staleTodoRunId(index);
     const runKey = encodeURIComponent(runId);
     const rootNodeId = NodeId.make(`node:run:${runKey}:root`);
     const todoNodeId = NodeId.make(`node:run:${runKey}:todo-list`);
