@@ -682,6 +682,8 @@ export function PullRequestSummaryTab({
     reportFailure: false,
   });
   const [threadReplyPending, setThreadReplyPending] = useState(false);
+  // Resolving, reopening, or filtering remounts a reply form; a mutable map keeps keystrokes from re-rendering the tab.
+  const [replyDrafts] = useState(() => new Map<string, string>());
   const canReplyToThreads = detail.capabilities.review.reply && detail.viewerPermissions.comment;
   const sendThreadReply = async (threadId: string, body: string) => {
     if (threadReplyPending) return false;
@@ -695,20 +697,24 @@ export function PullRequestSummaryTab({
     onRefresh();
     return true;
   };
-  const threadReplyForm = (thread: PullRequestConversationThread, className?: string) =>
-    canReplyToThreads ? (
+  const threadReplyForm = (thread: PullRequestConversationThread, className?: string) => {
+    // Host thread ids can collide across pull requests.
+    const replyKey = `${detail.url}:${thread.id}`;
+    return canReplyToThreads ? (
       <PullRequestThreadReplyForm
-        // Host thread ids can collide across pull requests.
-        key={`${detail.url}:${thread.id}`}
+        key={replyKey}
         environmentId={environmentId}
         reference={reference}
         threadId={thread.id}
         completionScope={completionScope}
         pending={threadReplyPending}
         {...(className === undefined ? {} : { className })}
+        initialReply={replyDrafts.get(replyKey) ?? ""}
+        onReplyChange={(reply) => replyDrafts.set(replyKey, reply)}
         onReply={(body) => sendThreadReply(thread.id, body)}
       />
     ) : null;
+  };
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,

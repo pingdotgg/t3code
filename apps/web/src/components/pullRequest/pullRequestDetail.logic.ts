@@ -531,14 +531,21 @@ export function visibleBody(body: string): string | null {
 
 /** Quotes `selection` when the reader picked part of the comment, else the whole body. */
 export function pullRequestQuoteReply(comment: PullRequestComment, selection?: string): string {
+  // Selected text is what the reader saw, so it is escaped to render literally. Blockquotes
+  // drop leading spaces, so its indentation becomes non-breaking spaces.
+  const selected = selection
+    ?.replace(/^\s*\n|\s+$/gu, "")
+    .replace(/[\\`*_[\]{}()#+.!|~<>&-]/gu, "\\$&")
+    .replace(/^[ \t]+/gmu, (indent) => indent.replace(/\t/gu, "    ").replace(/ /gu, "\u00a0"));
   const body =
-    selection?.trim().replace(/[\\`*_[\]{}()#+.!|~<>-]/gu, "\\$&") ||
-    comment.body.replace(
-      /(```[\s\S]*?```|`[^`\n]*`)|<!--[\s\S]*?-->/gu,
-      (_, code?: string) => code ?? "",
-    );
+    selected ||
+    comment.body
+      .replace(
+        /(\\[\s\S]|```[\s\S]*?```|`[^`\n]*`)|<!--[\s\S]*?-->/gu,
+        (_, kept?: string) => kept ?? "",
+      )
+      .trim();
   const quote = body
-    .trim()
     .split(/\r?\n/u)
     .map((line) => (line.trim().length === 0 ? ">" : `> ${line}`))
     .join("\n");
