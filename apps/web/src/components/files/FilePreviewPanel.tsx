@@ -1167,9 +1167,13 @@ export default function FilePreviewPanel({
   const focusEditorFromContent = () => {
     const editor = fileEditorRef.current;
     if (!editor || document.activeElement !== contentFocusRef.current) return;
-    const atRevealLine = revealLine !== null && !editor.getViewState().selections?.length;
+    // Without a caret the editor focuses with no selection, so no caret shows and typing
+    // lands on whatever the browser selection held.
+    const hasCaret = Boolean(editor.getViewState().selections?.length);
     editor.focus(
-      atRevealLine ? { preventScroll: true, lineNumber: revealLine } : { preventScroll: true },
+      hasCaret
+        ? { preventScroll: true }
+        : { preventScroll: true, lineNumber: revealLine ?? "first-visible" },
     );
   };
   const handleEditorChange = (editor: FileEditor | null) => {

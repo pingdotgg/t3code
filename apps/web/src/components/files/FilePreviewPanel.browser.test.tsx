@@ -188,6 +188,8 @@ describe("source file focus", () => {
     };
     await screen.rerender(panel());
     await vi.waitFor(editorHasFocus);
+    await userEvent.keyboard("x");
+    await vi.waitFor(() => expect(deepActiveElement()?.textContent).toContain("xconst server"));
 
     (deepActiveElement() as HTMLElement).blur();
     expect(focus.focus("panel", false)).toBe(true);
