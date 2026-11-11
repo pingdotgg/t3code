@@ -151,8 +151,7 @@ const classifyError = (cause: unknown, message: string, operation: string) => {
     if (!Predicate.hasProperty(cause, "errno")) {
       Object.assign(cause, { errno: cause.errcode });
     }
-    const detail = cause instanceof Error && cause.message ? `${cause.message}, ` : "";
-    message = `${message} (${detail}SQLite code ${cause.errcode})`;
+    message = `${message} (SQLite code ${cause.errcode})`;
   }
   return classifySqliteError(cause, { message, operation });
 };

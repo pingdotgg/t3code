@@ -132,6 +132,7 @@ layer("NodeSqliteClient", (it) => {
       assert.equal(missing.reason._tag, "ConstraintError");
       // Extended code 1299 is SQLITE_CONSTRAINT_NOTNULL.
       assert.include(missing.message, "SQLite code 1299");
+      assert.notInclude(missing.message, "NOT NULL constraint failed");
     }),
   );
 });
