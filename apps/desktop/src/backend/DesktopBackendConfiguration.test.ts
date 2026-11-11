@@ -961,8 +961,12 @@ describe("DesktopBackendConfiguration", () => {
         DesktopBackendConfiguration.DesktopBackendConfiguration,
       );
       // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Same reason: this is the synchronous resolution the IPC handler performs.
-      const label = Effect.runSync(configuration.resolvePrimaryLabel);
-      assert.equal(typeof label, "string");
+      const label = Effect.runSync(
+        configuration.resolvePrimaryLabel.pipe(
+          Effect.provideService(HostProcess.Hostname, "DESKTOP-PC"),
+        ),
+      );
+      assert.equal(label, "DESKTOP-PC");
     } finally {
       await runtime.dispose();
     }
