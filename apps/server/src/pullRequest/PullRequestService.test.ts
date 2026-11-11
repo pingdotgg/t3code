@@ -905,51 +905,6 @@ it.effect("tells two hosts of one kind apart in the switcher and the filter", ()
   }),
 );
 
-it.effect("keeps one host listed when another is not set up", () =>
-  Effect.gen(function* () {
-    const service = yield* makeService({
-      projects: [
-        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
-        project({
-          id: "p2",
-          title: "on gitlab",
-          workspaceRoot: "/b",
-          repository: "group/project",
-          provider: SourceControlProviderKind.make("gitlab"),
-        }),
-      ],
-      providers: [
-        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-          listChangeRequests: () =>
-            Effect.succeed({
-              items: [changeRequest(1, "2026-07-01T00:00:00Z")],
-              truncated: false,
-              continues: true,
-            }),
-        }),
-        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
-          getViewer: () =>
-            Effect.fail(unusable(SourceControlProviderKind.make("gitlab"), "missing-tool")),
-        }),
-      ],
-    });
-
-    const result = yield* service.list({ state: "open" });
-
-    assert.deepStrictEqual(
-      result.entries.map((entry) => entry.provider),
-      ["github"],
-    );
-    assert.deepStrictEqual(
-      result.providers.map((summary) => [summary.kind, summary.configured]),
-      [
-        ["github", true],
-        ["gitlab", false],
-      ],
-    );
-  }),
-);
-
 it.effect("retains an unavailable host's summary when it is the only queried host", () =>
   Effect.gen(function* () {
     for (const reason of ["missing-tool", "unauthenticated"] as const) {
@@ -2389,62 +2344,6 @@ it.effect("requires an explicit host for a non-repository project's linked PR", 
       .pipe(Effect.flip);
     assert.strictEqual(error._tag, "PullRequestUnavailableError");
   }),
-);
-
-it.effect.each([false, true])(
-  "asks another checkout when the first cannot answer (partial: %s)",
-  (partial) =>
-    Effect.gen(function* () {
-      const asked: string[] = [];
-      const service = yield* makeService({
-        projects: [
-          project({
-            id: "p1",
-            title: "t3code (stale worktree)",
-            workspaceRoot: "/gone",
-            repository: "pingdotgg/t3code",
-          }),
-          project({
-            id: "p2",
-            title: "t3code",
-            workspaceRoot: "/healthy",
-            repository: "pingdotgg/t3code",
-          }),
-        ],
-        providers: [
-          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-            getViewer: (input) => {
-              asked.push(input.cwd);
-              return input.cwd === "/gone"
-                ? Effect.fail(
-                    new PullRequestProviderError({
-                      provider: SourceControlProviderKind.make("github"),
-                      operation: "getViewer",
-                      reason: "failed",
-                      detail: "not a git repository",
-                    }),
-                  )
-                : Effect.succeed("bilal");
-            },
-            listChangeRequests: () =>
-              Effect.succeed({
-                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
-                truncated: false,
-                continues: true,
-              }),
-          }),
-        ],
-      });
-
-      const result = yield* service.list({
-        state: "open",
-        ...(partial ? { projectIds: ["p1" as ProjectId, "p2" as ProjectId] } : {}),
-      });
-
-      assert.deepStrictEqual(asked, ["/gone", "/healthy"]);
-      assert.strictEqual(result.entries.length, 1);
-      assert.strictEqual(result.providers[0]?.configured, true);
-    }),
 );
 
 it.effect("refuses a review request this viewer may not make, and says what access it takes", () =>

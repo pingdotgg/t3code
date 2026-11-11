@@ -35,28 +35,24 @@ it("observes both typed list failures without changing their status or replaying
     truncated: false,
     nextCursors: {},
   };
-  const clock = vi.spyOn(Date, "now").mockReturnValue(100);
-  try {
-    for (const error of [
-      new PullRequestUnavailableError({ reason: "cli-unauthenticated", listResult }),
-      new PullRequestOperationError({ operation: "list", detail: "HTTP 403", listResult }),
-    ]) {
-      clock.mockReturnValue(100);
-      const failure = AsyncResult.failure<PullRequestListResult, unknown>(Cause.fail(error));
-      expect(observeFailedPullRequestList(failure)).toEqual({ value: listResult, observedAt: 100 });
-      clock.mockReturnValue(200);
-      expect(observeFailedPullRequestList(failure)?.observedAt).toBe(100);
-      expect(failure._tag).toBe("Failure");
-      expect(observeFailedPullRequestList({ ...failure, waiting: true })).toBeUndefined();
-    }
-    expect(
-      observeFailedPullRequestList(
-        AsyncResult.failure(Cause.fail(new PullRequestUnavailableError({ reason: "cli-missing" }))),
-      ),
-    ).toBeUndefined();
-  } finally {
-    clock.mockRestore();
+  using clock = vi.spyOn(Date, "now").mockReturnValue(100);
+  for (const error of [
+    new PullRequestUnavailableError({ reason: "cli-unauthenticated", listResult }),
+    new PullRequestOperationError({ operation: "list", detail: "HTTP 403", listResult }),
+  ]) {
+    clock.mockReturnValue(100);
+    const failure = AsyncResult.failure<PullRequestListResult, unknown>(Cause.fail(error));
+    expect(observeFailedPullRequestList(failure)).toEqual({ value: listResult, observedAt: 100 });
+    clock.mockReturnValue(200);
+    expect(observeFailedPullRequestList(failure)?.observedAt).toBe(100);
+    expect(failure._tag).toBe("Failure");
+    expect(observeFailedPullRequestList({ ...failure, waiting: true })).toBeUndefined();
   }
+  expect(
+    observeFailedPullRequestList(
+      AsyncResult.failure(Cause.fail(new PullRequestUnavailableError({ reason: "cli-missing" }))),
+    ),
+  ).toBeUndefined();
 });
 
 function summary(overrides: Partial<PullRequestSummary> = {}): PullRequestSummary {

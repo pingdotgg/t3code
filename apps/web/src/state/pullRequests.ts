@@ -7,6 +7,8 @@ import {
 } from "@t3tools/client-runtime/state/pull-requests";
 import {
   PullRequestListResult,
+  PullRequestOperationError,
+  PullRequestUnavailableError,
   type EnvironmentId,
   type ProjectId,
   type PullRequestChecksState,
@@ -18,15 +20,14 @@ import {
   type PullRequestSummary,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { PullRequestOperationError, PullRequestUnavailableError } from "@t3tools/contracts";
 import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -551,12 +552,7 @@ export function observeFailedPullRequestList(
   return { value: error.listResult, observedAt };
 }
 
-/**
- * React cannot subscribe to a list of atoms whose length changes, so the fan-out happens inside
- * one derived atom keyed by the targets — the same shape the cross-environment thread search uses.
- * An environment that fails contributes nothing rather than blanking the page: the pull request
- * list is a union, and one unreachable machine should not hide the others' rows.
- */
+// Use one derived atom for variable fan-out; unreachable environments must not hide other rows.
 function createMergedEnvironmentQuery<Input, A>(
   label: string,
   atomFor: (

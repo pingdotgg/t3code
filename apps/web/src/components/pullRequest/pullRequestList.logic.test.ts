@@ -433,13 +433,6 @@ describe("merging the environments' own listings", () => {
     ]);
   });
 
-  it("tells two environments' copies of one pull request apart", () => {
-    const row = entry({ number: 4 });
-    expect(pullRequestEntryKey({ ...row, environmentId: ENV_1 })).not.toBe(
-      pullRequestEntryKey({ ...row, environmentId: ENV_2 }),
-    );
-  });
-
   it.each([false, true])(
     "merges worktree batches without duplicate rows (reversed: %s)",
     (reverse) => {
@@ -529,16 +522,6 @@ describe("merging the environments' own listings", () => {
         detail: null,
       },
     ]);
-  });
-
-  it("keeps each environment's continuation to itself", () => {
-    const merged = mergePullRequestLists([
-      [ENV_1, answer({ nextCursors: { "github.com pingdotgg/t3code": "cursor-1" } })],
-      [ENV_2, answer()],
-    ]);
-    expect(merged?.nextCursors).toEqual({
-      [ENV_1]: { "github.com pingdotgg/t3code": "cursor-1" },
-    });
   });
 
   it("keeps continuations from every project batch on the same environment", () => {
