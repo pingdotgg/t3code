@@ -175,7 +175,7 @@ function* gitConfigLines(configText: string) {
   let quoted = false;
   for (const line of configText.split(/\r?\n/)) {
     let continued = false;
-    if (line.endsWith("\\")) {
+    if (line.endsWith("\\") || pending.length > 0) {
       for (const [token] of line.matchAll(/\\[\s\S]?|["#;]/g)) {
         if (token === '"') quoted = !quoted;
         else if (!quoted && (token === "#" || token === ";")) break;
@@ -186,11 +186,11 @@ function* gitConfigLines(configText: string) {
       pending += line.slice(0, -1);
       continue;
     }
-    yield pending + line;
+    if (!quoted) yield pending + line;
     pending = "";
     quoted = false;
   }
-  if (pending.length > 0) yield pending;
+  if (pending.length > 0 && !quoted) yield pending;
 }
 
 function parseGitConfigValue(raw: string): string {
@@ -213,6 +213,21 @@ function parseGitConfigValue(raw: string): string {
   return out.trim();
 }
 
+function isTrueGitConfigValue(value: string): boolean {
+  if (value === "true" || value === "yes" || value === "on") return true;
+  const numeric = /^([+-]?)(0x[0-9a-f]+|0[0-7]*|[1-9][0-9]*)([kmg]?)$/.exec(value);
+  if (numeric === null) return false;
+  const digits = numeric[2]!;
+  const magnitude = digits.startsWith("0x")
+    ? Number.parseInt(digits.slice(2), 16)
+    : Number.parseInt(digits, digits.startsWith("0") ? 8 : 10);
+  const scale =
+    numeric[3] === "k" ? 1024 : numeric[3] === "m" ? 1024 ** 2 : numeric[3] === "g" ? 1024 ** 3 : 1;
+  const number = magnitude * scale * (numeric[1] === "-" ? -1 : 1);
+  // Git's boolean parser accepts integers only within its signed 32-bit range.
+  return number !== 0 && number >= -2147483648 && number <= 2147483647;
+}
+
 export function isBareGitConfig(configText: string): boolean {
   let inCore = false;
   let bare = false;
@@ -228,7 +243,7 @@ export function isBareGitConfig(configText: string): boolean {
     const match = /^bare\s*(?:=(.*)|[#;].*)?$/i.exec(line);
     if (match === null) continue;
     const value = match[1] === undefined ? "true" : parseGitConfigValue(match[1]).toLowerCase();
-    bare = value === "true" || value === "yes" || value === "on" || value === "1";
+    bare = isTrueGitConfigValue(value);
   }
   return bare;
 }
@@ -265,26 +280,6 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
   return originUrl ?? firstRemoteUrl;
 }
 
-function deriveLocalBranchNameCandidatesFromRemoteRef(
-  branchName: string,
-  remoteName?: string,
-): ReadonlyArray<string> {
-  const candidates = new Set<string>();
-  const firstSlashCandidate = deriveLocalBranchNameFromRemoteRef(branchName);
-  if (firstSlashCandidate.length > 0) {
-    candidates.add(firstSlashCandidate);
-  }
-
-  if (remoteName) {
-    const remotePrefix = `${remoteName}/`;
-    if (branchName.startsWith(remotePrefix) && branchName.length > remotePrefix.length) {
-      candidates.add(branchName.slice(remotePrefix.length));
-    }
-  }
-
-  return [...candidates];
-}
-
 // Replace only Git-rejected whitespace; nonbreaking spaces are valid ref characters.
 export function sanitizeNewRefName(rawName: string): string {
   return rawName.trim().replace(/[ \t\n\r\f\v]+/g, "-");
@@ -300,19 +295,12 @@ export function dedupeRemoteBranchesWithLocalMatches(
   );
 
   return refs.filter((refName) => {
-    if (!refName.isRemote) {
+    if (!refName.isRemote || refName.remoteName !== "origin") {
       return true;
     }
 
-    if (refName.remoteName !== "origin") {
-      return true;
-    }
-
-    const localBranchCandidates = deriveLocalBranchNameCandidatesFromRemoteRef(
-      refName.name,
-      refName.remoteName,
-    );
-    return !localBranchCandidates.some((candidate) => localBranchNames.has(candidate));
+    const localBranchName = deriveLocalBranchNameFromRemoteRef(refName.name);
+    return localBranchName.length === 0 || !localBranchNames.has(localBranchName);
   });
 }
 
