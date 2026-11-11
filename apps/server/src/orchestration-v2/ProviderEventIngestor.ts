@@ -494,24 +494,32 @@ export const layer: Layer.Layer<
               ];
             }
             case "thread_model_selection.updated": {
-              const { modelSelection } = input.event;
+              const { instanceId, changes } = input.event;
               const thread = yield* projections.getThread(input.event.threadId).pipe(
                 Effect.catchTags({
                   ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
                 }),
               );
-              if (
-                thread === null ||
-                thread.modelSelection.instanceId !== modelSelection.instanceId ||
-                modelSelectionsEqual(thread.modelSelection, modelSelection)
-              )
+              const current = thread?.modelSelection;
+              if (thread === null || current?.instanceId !== instanceId || !current.options) {
                 return [];
+              }
+              let changed = false;
+              const options = current.options.map((option) => {
+                const change = changes.find(
+                  (candidate) => candidate.id === option.id && candidate.from === option.value,
+                );
+                if (change === undefined) return option;
+                changed = true;
+                return { ...option, value: change.to };
+              });
+              if (!changed) return [];
               const now = yield* DateTime.now;
               return [
                 yield* makeDomainEvent(input, {
                   type: "thread.model-selection-updated",
                   threadId: thread.id,
-                  payload: { ...thread, modelSelection, updatedAt: now },
+                  payload: { ...thread, modelSelection: { ...current, options }, updatedAt: now },
                   occurredAt: now,
                 }),
               ];

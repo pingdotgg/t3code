@@ -2144,48 +2144,58 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
-  it.effect(
-    "moves a thread to the selection its agent reported, once and only for its instance",
-    () =>
-      Effect.gen(function* () {
-        const now = yield* DateTime.now;
-        const eventSink = yield* EventSink.EventSinkV2;
-        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const rootEvent = yield* threadCreatedEvent(now);
-        yield* eventSink.write({ events: [rootEvent] });
-        const providerSessionId = yield* idAllocator.allocate.providerSession({
+  it.effect("applies an agent's mode change without undoing newer thread settings", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+      // Saved mid-turn: a newer model and effort the reporting turn never saw.
+      const saved = {
+        ...modelSelection,
+        model: "gpt-6.1-sol",
+        options: [
+          { id: "effort", value: "high" },
+          { id: "mode", value: "plan" },
+        ],
+      };
+      yield* eventSink.write({
+        events: [{ ...rootEvent, payload: { ...rootEvent.payload, modelSelection: saved } }],
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+      });
+      const ingest = (instanceId: ProviderInstanceId, from: string) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
           providerInstanceId: modelSelection.instanceId,
           threadId: rootEvent.threadId,
-        });
-        const ingest = (reported: ModelSelection) =>
-          ingestor.ingestNormalized({
-            providerSessionId,
-            providerInstanceId: modelSelection.instanceId,
+          event: {
+            type: "thread_model_selection.updated",
+            driver: CODEX_DRIVER,
             threadId: rootEvent.threadId,
-            event: {
-              type: "thread_model_selection.updated",
-              driver: CODEX_DRIVER,
-              threadId: rootEvent.threadId,
-              modelSelection: reported,
-            },
-          });
-        const reported = { ...modelSelection, options: [{ id: "mode", value: "default" }] };
-        assert.deepEqual(
-          (yield* ingest(reported)).map((stored) => stored.event.type),
-          ["thread.model-selection-updated"],
-        );
-        assert.deepEqual(
-          (yield* projectionStore.getThread(rootEvent.threadId)).modelSelection,
-          reported,
-        );
-        assert.deepEqual(yield* ingest(reported), []);
-        assert.deepEqual(
-          yield* ingest({ ...reported, instanceId: ProviderInstanceId.make("other-instance") }),
-          [],
-        );
-      }),
+            instanceId,
+            changes: [{ id: "mode", from, to: "default" }],
+          },
+        });
+      assert.deepEqual(
+        (yield* ingest(modelSelection.instanceId, "plan")).map((stored) => stored.event.type),
+        ["thread.model-selection-updated"],
+      );
+      assert.deepEqual((yield* projectionStore.getThread(rootEvent.threadId)).modelSelection, {
+        ...saved,
+        options: [
+          { id: "effort", value: "high" },
+          { id: "mode", value: "default" },
+        ],
+      });
+      assert.deepEqual(yield* ingest(modelSelection.instanceId, "plan"), []);
+      assert.deepEqual(yield* ingest(ProviderInstanceId.make("other-instance"), "default"), []);
+    }),
   );
 
   it.effect(

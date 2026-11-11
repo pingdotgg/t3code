@@ -2572,13 +2572,19 @@ describe("AcpAdapterV2", () => {
           Stream.runForEach((event) =>
             Effect.sync(() => {
               if (event.type === "thread_model_selection.updated") {
-                reported.push({ threadId: event.threadId, modelSelection: event.modelSelection });
+                reported.push({
+                  threadId: event.threadId,
+                  instanceId: event.instanceId,
+                  changes: event.changes,
+                });
               }
             }),
           ),
         );
       }
-      assert.deepStrictEqual(reported, [{ threadId, modelSelection: ask }]);
+      assert.deepStrictEqual(reported, [
+        { threadId, instanceId, changes: [{ id: "mode", from: "architect", to: "ask" }] },
+      ]);
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );

@@ -7629,7 +7629,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (selection === null || selection.options === undefined) return;
           const configured = yield* Ref.get(configuredModes);
           const live = yield* readModes;
-          let changed = false;
+          const changes: Array<{ id: string; from: string; to: string }> = [];
           const options = selection.options.map((option) => {
             const value = live.get(option.id);
             if (
@@ -7640,18 +7640,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ) {
               return option;
             }
-            changed = true;
+            changes.push({ id: option.id, from: option.value, to: value });
             return { ...option, value };
           });
-          if (!changed) return;
-          const reported = { ...selection, options };
-          yield* Ref.set(activeSelection, reported);
+          if (changes.length === 0) return;
+          yield* Ref.set(activeSelection, { ...selection, options });
           yield* Ref.set(configuredModes, live);
           yield* emitProviderEvent({
             type: "thread_model_selection.updated",
             driver,
             threadId,
-            modelSelection: reported,
+            instanceId: selection.instanceId,
+            changes,
           });
         });
 
