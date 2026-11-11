@@ -49,15 +49,18 @@ const checkedDispatcher = async (
   if (!addresses.length || addresses.some(({ address }) => isPrivateNetworkHost(address)))
     throw new Error("The URL resolves to a private network address.");
   const address = addresses[0]!;
-  return new Agent({
-    connect: {
-      lookup: ((
-        _host: string,
-        _options: unknown,
-        callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void,
-      ) => callback(null, address.address, address.family)) as never,
-    },
-  });
+  return {
+    ips: addresses.map(({ address }) => address),
+    dispatcher: new Agent({
+      connect: {
+        lookup: ((
+          _host: string,
+          _options: unknown,
+          callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void,
+        ) => callback(null, address.address, address.family)) as never,
+      },
+    }),
+  };
 };
 
 const readBody = async (response: Response) => {
@@ -209,13 +212,13 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
       let response: Response | undefined;
       const hops: { url: string; status: number | null; ips: string[] }[] = [];
       for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-        const dispatcher = await checkedDispatcher(url.hostname, input.lookup);
+        const checked = await checkedDispatcher(url.hostname, input.lookup);
         response = await fetchImpl(url.toString(), {
           redirect: "manual",
-          dispatcher,
+          dispatcher: checked.dispatcher,
           signal: AbortSignal.timeout(30_000),
         } as unknown as RequestInit);
-        hops.push({ url: url.toString(), status: response.status, ips: [] });
+        hops.push({ url: url.toString(), status: response.status, ips: checked.ips });
         if (![301, 302, 303, 307, 308].includes(response.status)) break;
         const location = response.headers.get("location");
         if (!location || hop === MAX_REDIRECTS) throw new Error("Too many redirects.");
@@ -264,7 +267,13 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
       return { url: url.toString(), ...(title ? { title } : {}), text, links };
     },
     catch: (cause) => {
-      if (input.audit) void auditDownload(input.audit, { url: input.url, error: String(cause) });
+      if (input.audit)
+        void auditDownload(input.audit, {
+          url: input.url,
+          ...(String(cause).match(/public|private|userinfo/i)
+            ? { blocked: String(cause) }
+            : { error: String(cause) }),
+        });
       return new CourseReferenceFetchError({ message: String(cause) });
     },
   });
