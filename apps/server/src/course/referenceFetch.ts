@@ -6,9 +6,13 @@ import * as NodeSea from "node:sea";
 import * as NodeChildProcess from "node:child_process";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Agent, fetch as undiciFetch } from "undici";
+import * as NodeModule from "node:module";
+import type * as Undici from "undici";
 import { isPublicFaviconHost } from "@t3tools/shared/hostClassification";
 import { auditDownload, type DownloadAuditContext } from "./downloadAudit.ts";
+
+// undici is external to the CLI bundle; Node single-executables can load it from disk only with require.
+const undici = () => NodeModule.createRequire(import.meta.url)("undici") as typeof Undici;
 export { encodeGrayscalePng } from "./course-pdf-worker.ts";
 
 export class CourseReferenceFetchError extends Schema.TaggedError<CourseReferenceFetchError>()(
@@ -92,7 +96,7 @@ export const checkedDispatcher = async (
     connectLookup: pinnedLookup,
     dispatcher: blocked
       ? undefined
-      : new Agent({
+      : new (undici().Agent)({
           connect: { lookup: pinnedLookup as never },
         }),
     blocked,
@@ -223,7 +227,8 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
 > {
   return yield* Effect.tryPromise({
     try: async () => {
-      const fetchImpl: typeof fetch = input.fetchImpl ?? (undiciFetch as unknown as typeof fetch);
+      const fetchImpl: typeof fetch =
+        input.fetchImpl ?? (undici().fetch as unknown as typeof fetch);
       let url = new URL("http://invalid.local/");
       let response: Response | undefined;
       const hops: { url: string; status: number | null; ips: string[] }[] = [];
