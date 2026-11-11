@@ -23,6 +23,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NetService from "@t3tools/shared/Net";
 
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
@@ -451,6 +452,30 @@ function resolveRuntimeState(input: {
   };
 }
 
+// A network-accessible backend binds every interface, so a new Wi-Fi network
+// or DHCP lease changes only the address worth advertising, not the binding.
+const withCurrentAdvertisedHost = (
+  state: RuntimeState,
+  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+  advertisedHostOverride: Option.Option<string>,
+): RuntimeState => {
+  if (state.mode !== "network-accessible") {
+    return state;
+  }
+  const override = Option.getOrUndefined(advertisedHostOverride);
+  const exposure = resolveDesktopServerExposure({
+    mode: state.mode,
+    port: state.port,
+    networkInterfaces,
+    ...(override ? { advertisedHostOverride: override } : {}),
+  });
+  return {
+    ...state,
+    endpointUrl: Option.fromNullishOr(exposure.endpointUrl),
+    advertisedHost: Option.fromNullishOr(exposure.advertisedHost),
+  };
+};
+
 const tailscaleIpv4AddressKey = (
   networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
 ): string =>
@@ -500,7 +525,29 @@ export const make = Effect.gen(function* () {
 
   const readNetworkInterfaces = networkInterfaces.read;
 
-  const getState = Ref.get(stateRef).pipe(Effect.map(toContractState));
+  // The server refuses to bind wider than the policy's clients allow, so network access or Serve
+  // saved before the policy would keep the backend from starting. The backend runs without them;
+  // the saved choice stays for when the policy allows it.
+  const remoteAllowed = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
+    Effect.map((found) => found?.document.limits?.clients?.includes("remote") ?? true),
+    Effect.orElseSucceed(() => false),
+  );
+  const withinPolicy = (settings: DesktopAppSettings.DesktopSettings) =>
+    remoteAllowed
+      ? settings
+      : { ...settings, serverExposureMode: "local-only" as const, tailscaleServeEnabled: false };
+
+  const readCurrentState = (currentNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces) =>
+    Ref.get(stateRef).pipe(
+      Effect.map((state) =>
+        withCurrentAdvertisedHost(state, currentNetworkInterfaces, config.desktopLanHostOverride),
+      ),
+    );
+
+  const getState = readNetworkInterfaces.pipe(
+    Effect.flatMap(readCurrentState),
+    Effect.map(toContractState),
+  );
   const backendConfig = Ref.get(stateRef).pipe(Effect.map(toBackendConfig));
 
   const configureFromSettings = Effect.fn("desktop.serverExposure.configureFromSettings")(
@@ -509,8 +556,8 @@ export const make = Effect.gen(function* () {
       const settings = yield* desktopSettings.get;
       const currentNetworkInterfaces = yield* readNetworkInterfaces;
       const resolved = resolveRuntimeState({
-        requestedMode: settings.serverExposureMode,
-        settings,
+        requestedMode: withinPolicy(settings).serverExposureMode,
+        settings: withinPolicy(settings),
         port,
         networkInterfaces: currentNetworkInterfaces,
         advertisedHostOverride: config.desktopLanHostOverride,
@@ -532,8 +579,8 @@ export const make = Effect.gen(function* () {
     };
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
     const resolved = resolveRuntimeState({
-      requestedMode: mode,
-      settings: nextSettings,
+      requestedMode: withinPolicy(nextSettings).serverExposureMode,
+      settings: withinPolicy(nextSettings),
       port: previous.port,
       networkInterfaces: currentNetworkInterfaces,
       advertisedHostOverride: config.desktopLanHostOverride,
@@ -584,7 +631,7 @@ export const make = Effect.gen(function* () {
 
       const nextState = yield* Ref.updateAndGet(stateRef, (current) => ({
         ...current,
-        tailscaleServeEnabled: result.settings.tailscaleServeEnabled,
+        tailscaleServeEnabled: withinPolicy(result.settings).tailscaleServeEnabled,
         tailscaleServePort: result.settings.tailscaleServePort,
       }));
 
@@ -597,8 +644,8 @@ export const make = Effect.gen(function* () {
   );
 
   const getAdvertisedEndpoints = Effect.gen(function* () {
-    const state = yield* Ref.get(stateRef);
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
+    const state = yield* readCurrentState(currentNetworkInterfaces);
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
       exposure: toResolvedExposure(state),

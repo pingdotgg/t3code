@@ -1,11 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import {
-  Line,
-  sleep,
-  TermChrome,
-  useInViewLoop,
-  useSpinner,
-} from "./_terminal";
+import { Line, sleep, TermChrome, useInViewLoop, useSpinner } from "./_terminal";
 
 /**
  * Faithful emulation of the real `alchemy dev` TUI
@@ -20,25 +14,19 @@ import {
  *   does when the stack output is ready.
  */
 
-// Palette lifted verbatim from packages/alchemy/src/Util/Theme.ts — the
-// terminal body is always dark, so the raw hex values are correct here.
+// Palette lifted verbatim from packages/alchemy/src/Util/Theme.ts, for a
+// dark terminal. Marketing pages override the variables in light mode.
 const C = {
-  brand: "#e28a5b",
-  success: "#9acb69",
-  warning: "#efb85a",
-  info: "#b6c77a",
-  muted: "#8f887c",
-  accentBright: "#c5df8c",
-  emphasis: "#f5f0e6",
+  brand: "var(--alc-tui-brand, #e28a5b)",
+  success: "var(--alc-tui-success, #9acb69)",
+  warning: "var(--alc-tui-warning, #efb85a)",
+  info: "var(--alc-tui-info, #b6c77a)",
+  muted: "var(--alc-tui-muted, #8f887c)",
+  accentBright: "var(--alc-tui-accent-bright, #c5df8c)",
+  emphasis: "var(--alc-tui-emphasis, #f5f0e6)",
 };
 
-type Status =
-  | "pending"
-  | "creating"
-  | "created"
-  | "updating"
-  | "updated"
-  | "no change";
+type Status = "pending" | "creating" | "created" | "updating" | "updated" | "no change";
 
 interface RowState {
   id: string;
@@ -76,18 +64,13 @@ const BOOT: TuiState = {
 
 let _key = 0;
 
-export default function DevTuiTerminal({
-  title = "~/my-app",
-}: {
-  title?: string;
-}) {
+export default function DevTuiTerminal({ title = "~/my-app" }: { title?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<TuiState>(BOOT);
   const spinner = useSpinner(true);
 
   useInViewLoop(ref, async (signal) => {
-    const set = (patch: Partial<TuiState>) =>
-      setState((s) => ({ ...s, ...patch }));
+    const set = (patch: Partial<TuiState>) => setState((s) => ({ ...s, ...patch }));
     const log = (node: ReactNode) =>
       setState((s) => ({
         ...s,
@@ -157,9 +140,7 @@ export default function DevTuiTerminal({
       log(
         <>
           <span style={{ color: C.warning }}>↻ </span>
-          <span style={{ color: C.muted }}>
-            alchemy.run.ts changed — reloading stack
-          </span>
+          <span style={{ color: C.muted }}>alchemy.run.ts changed — reloading stack</span>
         </>,
       );
       await sleep(600);
@@ -193,12 +174,7 @@ export default function DevTuiTerminal({
 
   return (
     <div ref={ref}>
-      <TermChrome
-        title={title}
-        badge="DEV"
-        badgeColor="var(--alc-accent-bright)"
-        maxLines={12}
-      >
+      <TermChrome title={title} badge="DEV" badgeColor="var(--alc-accent-bright)" maxLines={12}>
         {state.logs.map((l, i) => (
           <Line key={i}>{l}</Line>
         ))}
@@ -228,16 +204,12 @@ export default function DevTuiTerminal({
                 </Line>
                 <Line>
                   <span style={{ color: C.muted }}>{"  "}web: </span>
-                  <span style={{ color: C.accentBright }}>
-                    'http://localhost:5173'
-                  </span>
+                  <span style={{ color: C.accentBright }}>'http://localhost:5173'</span>
                   <span style={{ color: C.muted }}>,</span>
                 </Line>
                 <Line>
                   <span style={{ color: C.muted }}>{"  "}api: </span>
-                  <span style={{ color: C.accentBright }}>
-                    'http://localhost:1337'
-                  </span>
+                  <span style={{ color: C.accentBright }}>'http://localhost:1337'</span>
                 </Line>
                 <Line>
                   <span style={{ color: C.muted }}>{"}"}</span>
@@ -247,20 +219,12 @@ export default function DevTuiTerminal({
               state.rows.map((r) => (
                 <Line key={r.id}>
                   <span style={{ color: statusColor(r.status) }}>
-                    {inProgress(r.status)
-                      ? spinner
-                      : r.status === "pending"
-                        ? "·"
-                        : "✓"}
+                    {inProgress(r.status) ? spinner : r.status === "pending" ? "·" : "✓"}
                   </span>{" "}
                   <b style={{ color: C.emphasis }}>{r.id}</b>
                   <span style={{ color: C.muted }}> ({r.type}) </span>
-                  <span style={{ color: statusColor(r.status) }}>
-                    {r.status}
-                  </span>
-                  {r.elapsed && (
-                    <span style={{ color: C.muted }}> ({r.elapsed})</span>
-                  )}
+                  <span style={{ color: statusColor(r.status) }}>{r.status}</span>
+                  {r.elapsed && <span style={{ color: C.muted }}> ({r.elapsed})</span>}
                 </Line>
               ))
             )}
@@ -313,14 +277,7 @@ function Key({ k, label }: { k: string; label: string }) {
 function summarize(rows: RowState[]): { label: string; color: string }[] {
   const counts = new Map<Status, number>();
   for (const r of rows) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
-  const order: Status[] = [
-    "creating",
-    "updating",
-    "pending",
-    "created",
-    "updated",
-    "no change",
-  ];
+  const order: Status[] = ["creating", "updating", "pending", "created", "updated", "no change"];
   return order
     .filter((s) => counts.has(s))
     .map((s) => ({
