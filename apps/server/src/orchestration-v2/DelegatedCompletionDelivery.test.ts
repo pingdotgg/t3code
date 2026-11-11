@@ -2498,6 +2498,87 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
+    it.effect("consult messages to a finished child do not create owned follow-up tasks", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:consult-followup-parent");
+        const projectId = ProjectId.make("project:consult-followup");
+        const parentRunId = RunId.make("run:consult-followup-parent");
+        const rootNodeId = NodeId.make("node:consult-followup-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:consult-followup-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "consult-followup-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        let firstWake = yield* requests.take;
+        while (firstWake.threadId !== parentThreadId) firstWake = yield* requests.take;
+        yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make("command:consult-followup-ack"),
+          parentThreadId,
+          taskId: child.taskId,
+          observedByRunId: parentRunId,
+        });
+        const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
+          (run) => run.id === parentRunId,
+        )!;
+        yield* eventSink.write({
+          commandId: reconcileCommandId("consult-followup-parent-finished"),
+          events: [
+            {
+              id: EventId.make("event:consult-followup-parent-finished"),
+              type: "run.updated",
+              threadId: parentThreadId,
+              runId: parentRunId,
+              occurredAt: now,
+              payload: { ...parentRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        const consultMessageId = MessageId.make("message:consult-followup");
+        const before = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.length;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          consult: true,
+          commandId: CommandId.make("command:consult-followup"),
+          threadId: child.childThreadId,
+          senderThreadId: parentThreadId,
+          messageId: consultMessageId,
+          text: "Quick question: which client should the UI use?",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
+        const consultRun = childProjection.runs.find(
+          (row) => row.userMessageId === consultMessageId,
+        )!;
+        assert.isUndefined(consultRun.delegatedTaskId);
+        const after = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.length;
+        assert.equal(after, before);
+      }),
+    );
+
     // The child's follow-up run sends `t3_thread_send` to its own thread before it ends.
     const startSelfQueuedFollowup = (name: string) =>
       Effect.gen(function* () {

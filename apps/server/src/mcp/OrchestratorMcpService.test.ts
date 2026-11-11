@@ -3611,6 +3611,159 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("asks a peer thread for a reply without creating an owned task", () =>
+    Effect.gen(function* () {
+      const callerThreadId = ThreadId.make("thread:mcp-ask-caller");
+      const peerThreadId = ThreadId.make("thread:mcp-ask-peer");
+      const callerRunId = RunId.make("run:mcp-ask-caller");
+      const runId = RunId.make("run:mcp-ask-peer");
+      const messageId = MessageId.make("message:mcp-ask");
+      const projectId = ProjectId.make("project:mcp-ask");
+      const sent = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const peerShell = {
+        ...liveThreadShell(peerThreadId),
+        title: "Peer specialist",
+        projectId,
+      };
+      const callerShell = {
+        ...liveThreadShell(callerThreadId, { activeRunId: callerRunId }),
+        projectId,
+      };
+      const callerProjection = {
+        thread: {
+          id: callerThreadId,
+          title: callerShell.title,
+          projectId,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          archivedAt: null,
+        },
+        runs: [
+          {
+            id: callerRunId,
+            status: "running",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            ordinal: 1,
+          },
+        ],
+      };
+      const peerProjection = {
+        thread: {
+          id: peerThreadId,
+          title: peerShell.title,
+          projectId,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          archivedAt: null,
+        },
+        runs: [],
+      };
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              threadId === callerThreadId
+                ? callerShell
+                : threadId === peerThreadId
+                  ? peerShell
+                  : null,
+            ),
+          getProjectThreadRecords: () => Effect.succeed(peerProjection as never),
+          sendToThread: (input) =>
+            Ref.update(sent, (rows) => [...rows, input]).pipe(
+              Effect.as({
+                run: { id: runId, status: "running", delegatedTaskId: undefined },
+                delivery: "started",
+                message: { id: messageId },
+                turnItem: null,
+                dispatch: {} as never,
+                projection: {} as never,
+              } as never),
+            ),
+          waitForThread: () =>
+            Effect.succeed({
+              threadId: peerThreadId,
+              run: {
+                id: runId,
+                status: "completed",
+                restartCancelledBackgroundWork: [],
+              } as never,
+              timedOut: false,
+            }),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === callerThreadId
+                ? (callerProjection as never)
+                : ({
+                    messages: [
+                      {
+                        id: MessageId.make("message:mcp-ask-reply"),
+                        runId,
+                        role: "assistant",
+                        text: "Use the shared client.",
+                        updatedAt: DateTime.makeUnsafe("2026-11-11T00:00:00Z"),
+                        createdAt: DateTime.makeUnsafe("2026-11-11T00:00:00Z"),
+                      },
+                    ],
+                    turnItems: [
+                      {
+                        id: "item:mcp-ask-reply",
+                        runId,
+                        type: "assistant_message",
+                        ordinal: 1,
+                        text: "Use the shared client.",
+                        messageId: MessageId.make("message:mcp-ask-reply"),
+                      },
+                    ],
+                    providerTurns: [],
+                  } as never),
+            ),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-ask"),
+        requestNamespace: "provider-session:mcp-ask",
+        thread: {
+          threadId: callerThreadId,
+          providerSessionId: "provider-session:mcp-ask",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      const result = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.askThread(scope, {
+          threadId: peerThreadId,
+          message: "How should the UI connect?",
+        });
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+
+      assert.equal(result.reply, "Use the shared client.");
+      assert.equal(result.timedOut, false);
+      assert.equal(result.status, "completed");
+      assert.equal(result.runId, runId);
+      assert.notProperty(result, "taskId");
+      const [send] = yield* Ref.get(sent);
+      assert.equal((send as { mode: string }).mode, "queue");
+      assert.equal((send as { consult: boolean }).consult, true);
+      assert.equal((send as { senderThreadId: ThreadId }).senderThreadId, callerThreadId);
+    }),
+  );
+
   describe("resolveRuntimeMode", () => {
     const muse = {
       modelSelection: { instanceId: ProviderInstanceId.make("muse"), model: "muse-model" },

@@ -518,6 +518,12 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
         "Start a new provider session without the thread's earlier context, like /clear. Never steers.",
     }),
   ),
+  consult: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Message without owned follow-up work. A send to a finished child then stays a message and does not create a fresh taskId.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
@@ -532,6 +538,29 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
 });
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
+
+export const OrchestratorMcpThreadAskInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+  threadId: ThreadId,
+  message: OrchestratorMcpPrompt.annotate({
+    description: "Question for an existing thread. Does not create a child task or owned work.",
+  }),
+  timeoutMs: Schema.optional(Schema.Finite),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpThreadAskInput = typeof OrchestratorMcpThreadAskInput.Type;
+
+export const OrchestratorMcpThreadAskResult = Schema.Struct({
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  messageId: MessageId,
+  runId: RunId,
+  status: OrchestratorMcpThreadStatus,
+  delivery: Schema.Literals(["started", "queued"]),
+  reply: Schema.NullOr(Schema.String),
+  timedOut: Schema.Boolean,
+});
+export type OrchestratorMcpThreadAskResult = typeof OrchestratorMcpThreadAskResult.Type;
 
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,

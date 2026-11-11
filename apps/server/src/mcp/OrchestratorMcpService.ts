@@ -46,6 +46,8 @@ import {
   type OrchestratorMcpThreadReadInput,
   type OrchestratorMcpThreadReadResult,
   type OrchestratorMcpThreadRun,
+  type OrchestratorMcpThreadAskInput,
+  type OrchestratorMcpThreadAskResult,
   type OrchestratorMcpThreadSendInput,
   type OrchestratorMcpThreadSendResult,
   type OrchestratorMcpThreadTimelineItem,
@@ -209,6 +211,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadSendInput,
   ) => Effect.Effect<OrchestratorMcpThreadSendResult, OrchestratorMcpFailure>;
+  readonly askThread: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpThreadAskInput,
+  ) => Effect.Effect<OrchestratorMcpThreadAskResult, OrchestratorMcpFailure>;
   readonly waitForThread: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadWaitInput,
@@ -3142,6 +3148,7 @@ const make = Effect.gen(function* () {
           attachments: [],
           mode,
           ...(input.freshContext ? { freshContext: true } : {}),
+          ...(input.consult === true ? { consult: true } : {}),
           createdBy: "agent",
           creationSource: "mcp",
         })
@@ -3164,6 +3171,97 @@ const make = Effect.gen(function* () {
         status: result.run.status,
         delivery: result.delivery,
       } satisfies OrchestratorMcpThreadSendResult;
+    }),
+    askThread: Effect.fn("OrchestratorMcpService.askThread")(function* (scope, input) {
+      const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
+      yield* assertLiveCallerForOtherThread(scope, parent, target);
+      yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
+      yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
+
+      const key = yield* requestKey(input.clientRequestId);
+      const messageId = stableOperationMessageId({
+        scope,
+        requestKey: key,
+        operation: "thread-ask",
+      });
+      // Queue a dedicated turn so a busy specialist answers without a mid-turn steer.
+      const sent = yield* threadManagement
+        .sendToThread({
+          projectId: target.thread.projectId,
+          commandId: stableCommandId({
+            scope,
+            requestKey: key,
+            operation: "thread-ask",
+          }),
+          threadId: input.threadId,
+          ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
+          messageId,
+          text: input.message,
+          attachments: [],
+          mode: "queue",
+          consult: true,
+          createdBy: "agent",
+          creationSource: "mcp",
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            isThreadManagementError(error)
+              ? threadManagementFailure(error)
+              : failure(
+                  "orchestration_error",
+                  `Unable to ask thread ${input.threadId}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
+                ),
+          ),
+        );
+      const delivery = sent.delivery === "queued" ? ("queued" as const) : ("started" as const);
+      const waited = yield* threadManagement
+        .waitForThread({
+          projectId: target.thread.projectId,
+          threadId: input.threadId,
+          runId: sent.run.id,
+          timeoutMs: Math.min(
+            MAX_WAIT_TIMEOUT_MS,
+            Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
+          ),
+        })
+        .pipe(Effect.mapError(threadManagementFailure));
+      const status = waited.run === null ? "idle" : runOutcome(waited.run);
+      const link = threadLinkFor(scope, input.threadId, target.thread.title);
+      const settled =
+        waited.run !== null &&
+        !waited.timedOut &&
+        ThreadManagementService.isTerminalRunStatus(waited.run.status);
+      if (!settled || waited.run === null) {
+        return {
+          threadId: input.threadId,
+          link,
+          messageId,
+          runId: sent.run.id,
+          status,
+          delivery,
+          reply: null,
+          timedOut: waited.timedOut,
+        } satisfies OrchestratorMcpThreadAskResult;
+      }
+      const resultRecords = yield* threadManagement
+        .getThreadRecords(input.threadId, ["messages", "turnItems", "providerTurns"], {
+          messageRoles: ["assistant"],
+          messageRunIds: [waited.run.id],
+          turnItemRunIds: [waited.run.id],
+          turnItemTypes: ["assistant_message", "error"],
+        })
+        .pipe(Effect.mapError(threadManagementFailure));
+      const replyText = subagentResultForRun(resultRecords, waited.run).text.trim();
+      return {
+        threadId: input.threadId,
+        link,
+        messageId,
+        runId: waited.run.id,
+        status,
+        delivery,
+        reply: replyText.length > 0 ? replyText : null,
+        timedOut: false,
+      } satisfies OrchestratorMcpThreadAskResult;
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
       const { parent, target } = yield* loadScopedThread(scope, input.threadId, []);

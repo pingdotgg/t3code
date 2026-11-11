@@ -30,6 +30,8 @@ import {
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadInput,
   OrchestratorMcpThreadReadResult,
+  OrchestratorMcpThreadAskInput,
+  OrchestratorMcpThreadAskResult,
   OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitInput,
@@ -270,7 +272,7 @@ const ThreadUpdateTool = Tool.make("t3_thread_update", {
 
 const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
-    "Send a message to any thread. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle thread, steers a running turn, or queues. `queue`: new turn. `steer`: mid-turn update. `restart`: interrupt and restart. A send to a finished child thread starts a fresh task and returns its `taskId`. In your reply, name it as its `link` verbatim.",
+    "Send a message to any thread. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle thread, steers a running turn, or queues. `queue`: new turn. `steer`: mid-turn update. `restart`: interrupt and restart. A send to a finished child thread starts a fresh task and returns its `taskId`, unless `consult:true` (message only). Prefer `t3_thread_ask` when you need a reply without owned work. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpThreadSendInput,
   success: OrchestratorMcpThreadSendResult,
   failure: OrchestratorMcpFailure,
@@ -278,6 +280,19 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
   dependencies,
 })
   .annotate(Tool.Title, "Send to a T3 thread")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
+const ThreadAskTool = Tool.make("t3_thread_ask", {
+  description:
+    "Ask an existing thread a question and wait for its reply. No child task, no owned work. Queues a dedicated turn (`consult`). Prefer this over `delegate_task` for a simple answer from a specialist thread. On timeout, call again with the same `clientRequestId`, or `t3_thread_interrupt` to stop. In your reply, name it as its `link` verbatim.",
+  parameters: OrchestratorMcpThreadAskInput,
+  success: OrchestratorMcpThreadAskResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Ask a T3 thread")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
@@ -365,6 +380,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadReadTool,
   ThreadUpdateTool,
   ThreadSendTool,
+  ThreadAskTool,
   ThreadWaitTool,
   ThreadInterruptTool,
   EnvironmentLinksTool,
