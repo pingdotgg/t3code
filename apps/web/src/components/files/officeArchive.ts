@@ -329,8 +329,7 @@ function boundedWorksheet(
       if (row < 1 || position.line !== row)
         throw new Error("This workbook contains inconsistent cell rows.");
       if (row > OFFICE_PREVIEW_MAX_ROWS || column > OFFICE_PREVIEW_MAX_COLUMNS) {
-        // An empty element is a styled blank, which shows nothing.
-        if (!tag.isSelfClosing) truncated = true;
+        truncated = true;
         return;
       }
       maxRow = Math.max(maxRow, row);

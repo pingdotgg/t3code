@@ -1719,7 +1719,6 @@ it.each(["repeated binary", "XML relationship alias", "duplicate relationship ID
   },
 );
 
-// XFD300 is a styled blank past the column limit, which loses nothing.
 it.each(["XFD200", "XFD300", "XFD1048576", "AX500", "AZ9999999"])(
   "bounds spreadsheet cells at %s before padding",
   async (ref) => {
@@ -1766,7 +1765,7 @@ it.each(["XFD200", "XFD300", "XFD1048576", "AX500", "AZ9999999"])(
         );
         expect(sheet.querySelector('c[r="A1"] v')?.textContent).toBe("7");
         expect(sheet.querySelectorAll("row").length).toBeLessThanOrEqual(500);
-        expect(result.truncated).toBe(ref === "XFD200");
+        expect(result.truncated).toBe(ref === "XFD200" || ref === "XFD300");
         if (ref === "AX500") expect(sheet.querySelector('c[r="AX500"] v')?.textContent).toBe("9");
         else expect(sheet.querySelector('c[r="' + ref + '"]')).toBeNull();
       }
