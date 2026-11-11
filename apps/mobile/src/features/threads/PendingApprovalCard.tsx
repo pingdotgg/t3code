@@ -9,8 +9,12 @@ import {
   fullAccessOverrideExplanation,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
-import Animated, { useAnimatedStyle, type DerivedValue } from "react-native-reanimated";
+import { Pressable, View } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  type DerivedValue,
+} from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
@@ -32,6 +36,8 @@ const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "decline", label: "Decline" },
 ];
 
+const BODY_MIN_HEIGHT = 64;
+
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const options: ReadonlyArray<ProviderApprovalOption> =
     props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
@@ -40,18 +46,36 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   const [explanationOpen, setExplanationOpen] = useState(false);
   const { maxHeight } = props;
-  const maxHeightStyle = useAnimatedStyle(() => ({ maxHeight: maxHeight?.value }));
+  const cardHeight = useSharedValue(0);
+  const bodyHeight = useSharedValue(0);
+  // The body takes what the pinned rows leave. Below BODY_MIN_HEIGHT the caller's capped
+  // ScrollView scrolls the whole card instead, so the buttons stay reachable.
+  const bodyHeightStyle = useAnimatedStyle(() =>
+    maxHeight === undefined
+      ? {}
+      : {
+          maxHeight: Math.max(
+            BODY_MIN_HEIGHT,
+            maxHeight.value - (cardHeight.value - bodyHeight.value),
+          ),
+        },
+  );
   return (
-    <Animated.View
-      className="overflow-hidden gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
-      style={maxHeightStyle}
+    <View
+      className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
+      onLayout={(event) => {
+        cardHeight.set(event.nativeEvent.layout.height);
+      }}
     >
-      <ScrollView
+      <Animated.ScrollView
         bounces={false}
-        className="min-h-0 shrink"
         contentContainerClassName="gap-2.5"
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
+        onLayout={(event) => {
+          bodyHeight.set(event.nativeEvent.layout.height);
+        }}
+        style={bodyHeightStyle}
       >
         <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
           Approval needed
@@ -85,7 +109,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
             ) : null}
           </Pressable>
         ) : null}
-      </ScrollView>
+      </Animated.ScrollView>
       {!canRespond ? (
         <Text className="font-sans text-sm leading-5 text-foreground-muted">
           The provider process for this request is no longer available. Interrupt or restart the run
@@ -118,6 +142,6 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           This connection cannot respond to approvals.
         </Text>
       ) : null}
-    </Animated.View>
+    </View>
   );
 }

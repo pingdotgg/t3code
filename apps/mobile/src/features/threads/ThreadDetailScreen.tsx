@@ -1071,6 +1071,10 @@ function ThreadDetailBody(
       composerOverlapHeight,
     }),
   );
+  const approvalHeightStyle = useAnimatedStyle(() => ({
+    maxHeight: pendingApprovalMaxHeight.value,
+    flexGrow: 0,
+  }));
   // The usage panel stacks with the composer and any approval card, so it gets
   // whatever room they leave below the header. Measured only while it is open
   // so typing in the composer does not re-render the screen.
@@ -1747,14 +1751,20 @@ function ThreadDetailBody(
                         exiting={FadeOut.duration(140)}
                       >
                         {props.activePendingApproval ? (
-                          <PendingApprovalCard
+                          <Animated.ScrollView
                             key={props.activePendingApproval.requestId}
-                            canOperateThread={props.canOperateThread}
-                            approval={props.activePendingApproval}
-                            maxHeight={pendingApprovalMaxHeight}
-                            respondingApprovalId={props.respondingApprovalId}
-                            onRespond={props.onRespondToApproval}
-                          />
+                            style={approvalHeightStyle}
+                            keyboardShouldPersistTaps="handled"
+                            nestedScrollEnabled
+                          >
+                            <PendingApprovalCard
+                              canOperateThread={props.canOperateThread}
+                              approval={props.activePendingApproval}
+                              maxHeight={pendingApprovalMaxHeight}
+                              respondingApprovalId={props.respondingApprovalId}
+                              onRespond={props.onRespondToApproval}
+                            />
+                          </Animated.ScrollView>
                         ) : null}
                         {props.activePendingUserInput ? (
                           <PendingUserInputCard
