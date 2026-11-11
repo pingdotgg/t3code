@@ -30,7 +30,7 @@ index 0f90eedca20655ccd30b8f28e433b2094341fbdf..c2ef86927d6e3ab0e8584330fa0ac3fd
      /** Total number of items (files + dirs) that matched */
      totalMatched: number;
 diff --git a/dist/finder.d.ts b/dist/finder.d.ts
-index 452102d720cc19b0560cfc9e2f1a320687047c92..312046cb4195000ef91f41ffd07cf127e79be232 100644
+index 452102d720cc19b0560cfc9e2f1a320687047c92..092162277e7a906f65a559d874fbe19571e62133 100644
 --- a/dist/finder.d.ts
 +++ b/dist/finder.d.ts
 @@ -242,6 +242,11 @@ export declare class FileFinder implements FileFinderApi {
@@ -45,8 +45,20 @@ index 452102d720cc19b0560cfc9e2f1a320687047c92..312046cb4195000ef91f41ffd07cf127
      /**
       * Check if a scan is currently in progress.
       */
+@@ -254,6 +259,11 @@ export declare class FileFinder implements FileFinderApi {
+      * Get the current scan progress.
+      */
+     getScanProgress(): Result<ScanProgress>;
++    /**
++     * Read scan progress on a native thread. Concurrent callers share one call.
++     * Patched in T3 Code.
++     */
++    getScanProgressAsync(): Promise<Result<ScanProgress>>;
+     /**
+      * Wait for the initial file scan to complete.
+      * Non-blocking: polls `isScanning` and yields to the event loop between checks.
 diff --git a/dist/index.js b/dist/index.js
-index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..cf3dac957335027ba9cb33621fb8ef1041da261c 100644
+index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..9643e1614ff128bd0cef71368b531314dfdee678 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -1,7 +1,7 @@
@@ -348,16 +360,17 @@ index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..cf3dac957335027ba9cb33621fb8ef10
  function ffiWaitForScan(handle, timeoutMs) {
    return callBoolResult(
      "fff_wait_for_scan",
-@@ -1429,6 +1510,8 @@ var FileFinder = class _FileFinder {
+@@ -1429,6 +1510,9 @@ var FileFinder = class _FileFinder {
    handle;
    /** Native ids of this instance's active watch subscriptions. */
    watchers = /* @__PURE__ */ new Set();
 +  pendingScan = null;
++  pendingScanProgress = null;
 +  pendingNativeCalls = /* @__PURE__ */ new Set();
    constructor(handle) {
      this.handle = handle;
    }
-@@ -1485,6 +1568,16 @@ var FileFinder = class _FileFinder {
+@@ -1485,6 +1569,16 @@ var FileFinder = class _FileFinder {
    destroy() {
      if (this.handle !== null) {
        const handle = this.handle;
@@ -374,7 +387,7 @@ index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..cf3dac957335027ba9cb33621fb8ef10
        ffiDestroy(handle);
        this.handle = null;
        ffiWatchCleanupAfterDestroy(handle, this.watchers);
-@@ -1757,6 +1850,28 @@ var FileFinder = class _FileFinder {
+@@ -1757,6 +1851,42 @@ var FileFinder = class _FileFinder {
      if (!guard.ok) return guard;
      return ffiScanFiles(guard.value);
    }
@@ -392,6 +405,20 @@ index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..cf3dac957335027ba9cb33621fb8ef10
 +    this.pendingScan = scan;
 +    return scan;
 +  }
++  /**
++   * Read scan progress without blocking the JS thread. Patched in T3 Code: concurrent readers
++   * share one call, because each call holds a libuv pool thread while it waits on the picker lock.
++   */
++  getScanProgressAsync() {
++    const guard = this.ensureAlive();
++    if (!guard.ok) return Promise.resolve(guard);
++    if (this.pendingScanProgress) return this.pendingScanProgress;
++    const read = this.runOnNativeThread(ffiGetScanProgressAsync(guard.value)).finally(() => {
++      if (this.pendingScanProgress === read) this.pendingScanProgress = null;
++    });
++    this.pendingScanProgress = read;
++    return read;
++  }
 +  /** Keeps the handle alive until a native-thread call settles. Patched in T3 Code. */
 +  runOnNativeThread(call) {
 +    const tracked = call.catch((cause) => err(String(cause))).finally(() => {
@@ -403,15 +430,13 @@ index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..cf3dac957335027ba9cb33621fb8ef10
    /**
     * Check if a scan is currently in progress.
     */
-@@ -1838,7 +1953,10 @@ var FileFinder = class _FileFinder {
+@@ -1838,7 +1968,8 @@ var FileFinder = class _FileFinder {
      if (!guard.ok) return guard;
      const deadline = Date.now() + timeoutMs;
      while (true) {
 -      const progress = this.getScanProgress();
 +      // Patched in T3 Code: the progress read takes the picker lock, so it runs on a native thread.
-+      const alive = this.ensureAlive();
-+      if (!alive.ok) return alive;
-+      const progress = await this.runOnNativeThread(ffiGetScanProgressAsync(alive.value));
++      const progress = await this.getScanProgressAsync();
        if (!progress.ok) return progress;
        if (!progress.value.isScanning && progress.value.isWarmupComplete) {
          return { ok: true, value: true };

@@ -792,6 +792,50 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect({ finders, rescans }).toEqual({ finders: 1, rescans: 1 });
       }),
     );
+
+    it.effect("shares one native progress read between concurrent refreshes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-refresh-pool-" });
+        yield* writeTextFile(cwd, "src/notes.ts", "const needle = 1;\n");
+        // Each read holds a libuv pool thread while it waits on fff's picker lock.
+        const readsInFlight = new Set<Promise<unknown>>();
+        let maxReadsInFlight = 0;
+        const createFinder = FileFinder.create.bind(FileFinder);
+        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+          const created = createFinder(options);
+          if (created.ok) {
+            const finder = created.value;
+            const getScanProgressAsync = finder.getScanProgressAsync.bind(finder);
+            finder.getScanProgressAsync = () => {
+              const read = getScanProgressAsync();
+              if (!readsInFlight.has(read)) {
+                readsInFlight.add(read);
+                maxReadsInFlight = Math.max(maxReadsInFlight, readsInFlight.size);
+                void read.finally(() => readsInFlight.delete(read));
+              }
+              return read;
+            };
+          }
+          return created;
+        });
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        yield* workspaceEntries.searchContents({
+          cwd,
+          query: "needle",
+          limit: 100,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
+
+        yield* Effect.all(
+          Array.from({ length: 8 }, () => workspaceEntries.refresh(cwd)),
+          { concurrency: "unbounded" },
+        );
+
+        expect(maxReadsInFlight).toBe(1);
+      }),
+    );
   });
 
   describe("browse", () => {
