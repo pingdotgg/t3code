@@ -30,8 +30,7 @@ export const formatBytes = (bytes: number): string => {
 export const shortOid = (oid: string): string => oid.slice(0, 7);
 
 /** First line of a commit message. */
-export const subject = (message: string): string =>
-  message.split("\n", 1)[0] ?? "";
+export const subject = (message: string): string => message.split("\n", 1)[0] ?? "";
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -60,5 +59,4 @@ const IMAGE_TYPES: Record<string, string> = {
 export const imageMime = (path: string): string | undefined =>
   IMAGE_TYPES[path.split(".").pop()?.toLowerCase() ?? ""];
 
-export const isMarkdown = (path: string): boolean =>
-  /\.(md|markdown)$/i.test(path);
+export const isMarkdown = (path: string): boolean => /\.(md|markdown)$/i.test(path);
