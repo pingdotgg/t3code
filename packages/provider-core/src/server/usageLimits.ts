@@ -57,9 +57,7 @@ export function applyUsageLimitsUpdate(input: {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
-  // Codex sends this notification beside every token-usage tick, almost
-  // always with unchanged numbers. Decide "nothing changed" per window on
-  // the way through so the no-op case never allocates a new snapshot.
+  // Codex repeats unchanged limits on token ticks; avoid allocating snapshots for no-ops.
   let changed = false;
   for (const window of update.windows) {
     const existing = merged.get(window.id);
