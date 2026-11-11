@@ -3789,14 +3789,18 @@ export function permissionResultFromDecision(input: {
   };
 }
 
-// The SDK forwards these at runtime without typing them. Either one marks an ask that
-// no stored grant may answer: the CLI's own session rule would not answer it either.
+// The SDK forwards these at runtime without typing them. Each marks an ask that no stored
+// grant may answer: an ask rule, a safety check, or a card the user answers on.
 function askNeedsPerson(callbackOptions: Parameters<CanUseTool>[2]): boolean {
   const untyped = callbackOptions as Parameters<CanUseTool>[2] & {
     readonly requiresUserInteraction?: boolean;
     readonly decisionReasonType?: string;
   };
-  return untyped.requiresUserInteraction === true || untyped.decisionReasonType === "safetyCheck";
+  return (
+    untyped.requiresUserInteraction === true ||
+    untyped.decisionReasonType === "rule" ||
+    untyped.decisionReasonType === "safetyCheck"
+  );
 }
 
 function wholeToolAllowRules(updates: ReadonlyArray<PermissionUpdate>): Array<string> {

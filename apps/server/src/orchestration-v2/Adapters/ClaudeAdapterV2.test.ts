@@ -4702,6 +4702,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         for (const [toolUseID, askFlags] of [
           ["read-ask-rule", { matchedAskRule: { source: "userSettings", toolName } }],
+          ["read-rule-reason", { decisionReasonType: "rule" }],
           ["read-needs-person", { requiresUserInteraction: true }],
           ["read-safety-check", { decisionReasonType: "safetyCheck" }],
         ] as const) {
