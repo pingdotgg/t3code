@@ -1,20 +1,20 @@
-// @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises the Node HTTP boundary.
-import * as NodeHttp from "node:http";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { AuthOrchestrationReadScope, AuthSessionId, EnvironmentId } from "@t3tools/contracts";
+import { AuthSessionId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Runtime from "effect/Runtime";
 import * as Layer from "effect/Layer";
+import * as Runtime from "effect/Runtime";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
 
+import * as McpBridge from "../mcp/AcpMcpStdioBridge.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
@@ -24,29 +24,19 @@ import { threadCommand } from "./thread.ts";
 
 vi.mock("../auth/EnvironmentAuth.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../auth/EnvironmentAuth.ts")>();
-  const environment = await import("../environment/ServerEnvironment.ts");
   return {
     ...actual,
-    layerRuntime: Layer.merge(
-      Layer.succeed(environment.ServerEnvironmentIdentity, {
-        getEnvironmentId: Effect.succeed(EnvironmentId.make("this-host")),
-      }),
-      Layer.mock(actual.EnvironmentAuth)({
-        issueSession: (input) => {
-          assert.deepStrictEqual(input?.scopes, [AuthOrchestrationReadScope]);
-          return Effect.map(DateTime.now, (expiresAt) => ({
-            sessionId: AuthSessionId.make("test-session"),
-            token: "synthetic-token",
-            method: "bearer-access-token" as const,
-            scopes: [AuthOrchestrationReadScope],
-            subject: "test",
-            client: { deviceType: "bot" as const },
-            expiresAt,
-          }));
-        },
-        revokeSession: () => Effect.succeed(true),
-      }),
-    ),
+    layerRuntime: Layer.mock(actual.EnvironmentAuth)({
+      issueMcpClientSession: (input) => {
+        assert.equal(input.access, "read-only");
+        return Effect.map(DateTime.now, (expiresAt) => ({
+          sessionId: AuthSessionId.make("test-session"),
+          token: "synthetic-token",
+          expiresAt,
+        }));
+      },
+      revokeSession: () => Effect.succeed(true),
+    }),
   };
 });
 
@@ -56,159 +46,110 @@ const project = (id: string) => ({
   title: id,
   workspaceRoot: `/work/${id}`,
   defaultModelSelection: id === "alpha" ? { instanceId: "codex", model: "gpt-test" } : null,
-  scripts: [],
-  createdAt: timestamp,
-  updatedAt: timestamp,
-  deletedAt: null,
 });
-const thread = (id: string, projectId: string, status: string, updatedAt = timestamp) => ({
-  id,
+const thread = (threadId: string, projectId: string, status: string) => ({
+  threadId,
   projectId,
-  title: id,
+  title: threadId,
   status,
-  updatedAt,
-  createdAt: timestamp,
   createdBy: "user",
   creationSource: "web",
   providerInstanceId: "codex",
-  modelSelection: { instanceId: "codex", model: "gpt-test" },
+  model: "gpt-test",
   runtimeMode: "full-access",
   interactionMode: "default",
-  branch: null,
-  worktreePath: null,
-  lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
-  forkedFrom: null,
-  activeProviderThreadId: null,
   latestRunId: null,
-  activeRunId: null,
-  pendingRuntimeRequest: null,
-  latestVisibleMessage: null,
-  latestUserMessageAt: null,
-  hasActionableProposedPlan: false,
-  itemCount: 0,
-  visibleItemCount: 0,
-  archivedAt: null,
-  settledOverride: null,
+  linkedPullRequest: null,
+  settled: false,
   settledAt: null,
-  deletedAt: null,
+  snoozed: false,
+  snoozedUntil: null,
+  parentThreadId: null,
+  relationshipToParent: null,
+  itemCount: 0,
+  createdAt: timestamp,
+  updatedAt: timestamp,
 });
 
-it.live("lists projects and all threads through HTTP, with project and status filters", () =>
+it.effect("discovery paginates existing MCP tools and preserves current-project defaults", () =>
   Effect.gen(function* () {
-    const requests: Array<string> = [];
-    const child = {
-      ...thread("child", "alpha", "running"),
-      lineage: {
-        parentThreadId: "older",
-        relationshipToParent: "subagent",
-        rootThreadId: "older",
-      },
-    };
-    const sideChat = {
-      ...thread("side", "alpha", "running"),
-      lineage: {
-        parentThreadId: null,
-        relationshipToParent: null,
-        rootThreadId: "side",
-        sideChat: true,
-      },
-    };
-    const server = yield* Effect.acquireRelease(
-      Effect.callback<NodeHttp.Server>((resume) => {
-        const server = NodeHttp.createServer((request, response) => {
-          requests.push(`${request.method} ${request.url}`);
-          assert.equal(request.headers.authorization, "Bearer synthetic-token");
-          response.setHeader("content-type", "application/json");
-          if (request.url === "/api/projects") {
-            response.end(
-              JSON.stringify({
-                projects: [
-                  project("alpha"),
-                  project("beta"),
-                  project("empty"),
-                  { ...project("deleted"), deletedAt: timestamp },
-                ],
-                updatedAt: timestamp,
-              }),
-            );
-          } else if (request.url === "/api/orchestration/shell") {
-            assert.equal(request.headers["x-t3-orchestration-protocol"], "2");
-            response.end(
-              JSON.stringify({
-                schemaVersion: 1,
-                snapshotSequence: 0,
-                projects: [],
-                threads: [
-                  thread("older", "alpha", "completed"),
-                  {
-                    ...thread("newer", "beta", "completed", "2026-11-02T12:00:00.000Z"),
-                    activityRunStatus: "running",
-                  },
-                  child,
-                  sideChat,
-                ],
-                archivedThreads: [thread("archived", "alpha", "completed")],
-              }),
-            );
-          } else {
-            response.writeHead(404).end();
-          }
-        });
-        server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
-      }),
-      (server) =>
-        Effect.callback<void>((resume) => {
-          server.close(() => resume(Effect.void));
-          server.closeAllConnections();
-        }),
-    );
-    const address = server.address();
-    assert(address !== null && typeof address !== "string");
     const fs = yield* FileSystem.FileSystem;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-discovery-" });
     yield* persistServerRuntimeState({
       path: `${baseDir}/userdata/server-runtime.json`,
       state: yield* makePersistedServerRuntimeState({
         config: { host: "127.0.0.1", devUrl: undefined },
-        port: address.port,
+        port: 3773,
       }),
     });
+    const projects = [project("alpha"), project("beta"), project("empty")];
+    const threads = [
+      thread("beta-running", "beta", "running"),
+      thread("alpha-completed", "alpha", "completed"),
+    ];
+    const calls: Array<{ tool: string; args: Readonly<Record<string, unknown>> }> = [];
+    using session = vi.spyOn(McpBridge, "mcpToolSession").mockReturnValue(
+      Effect.succeed({
+        call: (tool, args) => {
+          calls.push({ tool, args });
+          const cursor = Number(args.cursor);
+          if (tool === "t3_project_list") {
+            return Effect.succeed({
+              structuredContent: {
+                projects: projects.slice(cursor, cursor + 1),
+                nextCursor: cursor + 1 < projects.length ? cursor + 1 : null,
+              },
+            });
+          }
+          assert.equal(tool, "t3_thread_list");
+          assert.equal(args.includeSubagents, false);
+          const statuses = args.statuses as ReadonlyArray<string> | undefined;
+          const visible = threads.filter(
+            (item) =>
+              (args.allProjects === true || item.projectId === args.projectId) &&
+              (statuses === undefined || statuses.includes(item.status)),
+          );
+          return Effect.succeed({
+            structuredContent: {
+              projectId: args.projectId ?? null,
+              currentThreadId: null,
+              threads: visible.slice(cursor, cursor + 1),
+              nextCursor: cursor + 1 < visible.length ? cursor + 1 : null,
+              total: visible.length,
+            },
+          });
+        },
+      }),
+    );
     const runProject = Command.runWith(projectCommand, { version: "0.0.0" });
     const runThread = Command.runWith(threadCommand, { version: "0.0.0" });
     const flags = ["--base-dir", baseDir, "--json"];
     yield* runProject(["list", ...flags]);
-    assert.deepStrictEqual(JSON.parse(String((yield* TestConsole.logLines).at(-1) ?? "")), [
-      {
-        id: "alpha",
-        title: "alpha",
-        workspaceRoot: "/work/alpha",
-        defaultModelSelection: { instanceId: "codex", model: "gpt-test" },
-        threadCounts: { completed: 1 },
-      },
-      {
-        id: "beta",
-        title: "beta",
-        workspaceRoot: "/work/beta",
-        defaultModelSelection: null,
-        threadCounts: { running: 1 },
-      },
-      {
-        id: "empty",
-        title: "empty",
-        workspaceRoot: "/work/empty",
-        defaultModelSelection: null,
-        threadCounts: {},
-      },
+    assert.deepStrictEqual(JSON.parse(String((yield* TestConsole.logLines).at(-1))), [
+      { ...projects[0], threadCounts: { completed: 1 } },
+      { ...projects[1], threadCounts: { running: 1 } },
+      { ...projects[2], threadCounts: {} },
     ]);
+    assert.deepStrictEqual(
+      calls.map(({ tool, args }) => [tool, args.cursor]),
+      [
+        ["t3_project_list", 0],
+        ["t3_project_list", 1],
+        ["t3_project_list", 2],
+        ["t3_thread_list", 0],
+        ["t3_thread_list", 1],
+      ],
+    );
     for (const [extra, expected] of [
-      [[], ["newer", "older"]],
-      [["--project", "alpha"], ["older"]],
-      [["--project", "/work/alpha/subdir"], ["older"]],
-      [["--status", "running"], ["newer"]],
-      [["--project", "alpha", "--status", "running"], []],
+      [[], ["alpha-completed"]],
+      [["--all-projects"], ["beta-running", "alpha-completed"]],
+      [["--project", "beta"], ["beta-running"]],
+      [["--project", "/work/alpha/nested"], ["alpha-completed"]],
+      [["--status", "running"], []],
+      [["--all-projects", "--status", "running"], ["beta-running"]],
     ] as const) {
       yield* runThread(["list", ...extra, ...flags]);
-      const rows = JSON.parse(String((yield* TestConsole.logLines).at(-1) ?? "")) as Array<{
+      const rows = JSON.parse(String((yield* TestConsole.logLines).at(-1))) as Array<{
         threadId: string;
       }>;
       assert.deepStrictEqual(
@@ -216,52 +157,63 @@ it.live("lists projects and all threads through HTTP, with project and status fi
         [...expected],
       );
     }
-    yield* runProject(["list", "--base-dir", baseDir]);
-    assert.include((yield* TestConsole.logLines).join("\n"), "codex/gpt-test");
-    yield* runThread(["list", "--base-dir", baseDir]);
-    assert.include(String((yield* TestConsole.logLines).at(-1) ?? ""), "older  alpha  completed");
-    assert.equal(requests.length, 16);
-    assert.isTrue(requests.every((request) => request.startsWith("GET /api/")));
-    const unknownProject = yield* runThread([
+    const sessionsBefore = session.mock.calls.length;
+    const conflicting = yield* runThread([
       "list",
+      "--all-projects",
       "--project",
-      "missing-project",
+      "alpha",
       ...flags,
     ]).pipe(Effect.result);
-    assert(unknownProject._tag === "Failure");
-    assert.isFalse(Runtime.getErrorReported(unknownProject.failure));
-    assert.deepStrictEqual(yield* TestConsole.errorLines, [
-      "No T3 Code project matches 'missing-project'. Pass a project id or a path inside a project.",
-    ]);
-    yield* Effect.callback<void>((resume) => {
-      server.close(() => resume(Effect.void));
-      server.closeAllConnections();
-    });
+    assert(conflicting._tag === "Failure");
+    assert.equal(session.mock.calls.length, sessionsBefore);
+    assert.equal(
+      (yield* TestConsole.errorLines).at(-1),
+      "--all-projects and --project cannot be used together.",
+    );
+    yield* runThread(["list", "--base-dir", baseDir]);
+    assert.equal(
+      (yield* TestConsole.logLines).at(-1),
+      "alpha-completed  completed    alpha-completed",
+    );
+    yield* runProject(["list", "--base-dir", baseDir]);
+    assert.include((yield* TestConsole.logLines).join("\n"), "codex/gpt-test");
+    const unknown = yield* runThread(["list", "--project", "/unknown-project", ...flags]).pipe(
+      Effect.result,
+    );
+    assert(unknown._tag === "Failure");
+    assert.isFalse(Runtime.getErrorReported(unknown.failure));
+    assert.equal(
+      (yield* TestConsole.errorLines).at(-1),
+      "No T3 Code project matches '/unknown-project'. Pass a project id or a path inside a project.",
+    );
+    session.mockReturnValue(
+      Effect.fail(new McpBridge.AcpMcpBridgeError({ message: "synthetic connection refused" })),
+    );
     for (const run of [runProject, runThread]) {
-      const errorsBefore = (yield* TestConsole.errorLines).length;
-      const unreachable = yield* run(["list", ...flags]).pipe(Effect.result);
-      assert(unreachable._tag === "Failure");
-      assert.isFalse(Runtime.getErrorReported(unreachable.failure));
-      assert.deepStrictEqual((yield* TestConsole.errorLines).slice(errorsBefore), [
-        `Could not read projects and threads from the T3 Code server using ${baseDir}. Check that the server is running, then retry.`,
-      ]);
+      const failed = yield* run(["list", ...flags]).pipe(Effect.result);
+      assert(failed._tag === "Failure");
+      assert.isFalse(Runtime.getErrorReported(failed.failure));
+      assert.include(
+        String((yield* TestConsole.errorLines).at(-1)),
+        "Could not reach the T3 Code server",
+      );
     }
-    const offlineBaseDir = `${baseDir}/offline`;
     for (const run of [runProject, runThread]) {
-      const errorsBefore = (yield* TestConsole.errorLines).length;
-      const stopped = yield* run(["list", "--base-dir", offlineBaseDir]).pipe(Effect.result);
-      assert(stopped._tag === "Failure");
-      assert.isFalse(Runtime.getErrorReported(stopped.failure));
-      assert.deepStrictEqual((yield* TestConsole.errorLines).slice(errorsBefore), [
-        `No running T3 Code server uses ${offlineBaseDir}. Start T3 Code, then retry.`,
-      ]);
+      const failed = yield* run(["list", "--base-dir", `${baseDir}/offline`]).pipe(Effect.result);
+      assert(failed._tag === "Failure");
+      assert.isFalse(Runtime.getErrorReported(failed.failure));
+      assert.equal(
+        (yield* TestConsole.errorLines).at(-1),
+        `No running T3 Code server uses ${baseDir}/offline. Start T3 Code, then retry.`,
+      );
     }
   }).pipe(
     Effect.scoped,
+    Effect.provideService(HostProcess.WorkingDirectory, "/work/alpha"),
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
-        Layer.fresh(TestConsole.layer),
         NodeCrypto.layer,
         NetService.layer,
         ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),

@@ -1,42 +1,58 @@
 import {
-  AuthOrchestrationReadScope,
-  EnvironmentHttpApi,
-  ORCHESTRATION_PROTOCOL_HEADER,
-  ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-  isListedThreadLineage,
-  type ProjectId,
+  OrchestratorMcpFailure,
+  OrchestratorMcpThreadListResult,
+  ModelSelection,
+  ProjectId,
+  type AuthMcpClientAccess,
+  type OrchestratorMcpThreadListInput,
+  type OrchestratorMcpThreadListItem,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Console from "effect/Console";
-import * as Runtime from "effect/Runtime";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import { GlobalFlag } from "effect/cli";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as HttpApiClient from "effect/http-api/HttpApiClient";
-
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
+import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import { expandHomePath } from "../os-jank.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
-import { type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { resolveCliAuthConfig } from "./config.ts";
 
-class DiscoveryServerNotRunningError extends Schema.TaggedError<DiscoveryServerNotRunningError>()(
-  "DiscoveryServerNotRunningError",
+class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServerNotRunningError>()(
+  "ThreadServerNotRunningError",
   { baseDir: Schema.String },
 ) {
   override readonly [Runtime.errorReported] = false;
-  override get message() {
+  override get message(): string {
     return `No running T3 Code server uses ${this.baseDir}. Start T3 Code, then retry.`;
+  }
+}
+
+class ThreadServerUnreachableError extends Schema.TaggedError<ThreadServerUnreachableError>()(
+  "ThreadServerUnreachableError",
+  { origin: Schema.String, cause: Schema.Defect() },
+) {
+  override readonly [Runtime.errorReported] = false;
+  override get message(): string {
+    const reason = this.cause instanceof Error ? ` ${this.cause.message}` : "";
+    return `Could not reach the T3 Code server at ${this.origin}.${reason}`;
+  }
+}
+
+class ThreadToolFailedError extends Schema.TaggedError<ThreadToolFailedError>()(
+  "ThreadToolFailedError",
+  { tool: Schema.String, detail: Schema.String },
+) {
+  override readonly [Runtime.errorReported] = false;
+  override get message(): string {
+    return this.detail;
   }
 }
 
@@ -50,29 +66,126 @@ class DiscoveryProjectNotFoundError extends Schema.TaggedError<DiscoveryProjectN
   }
 }
 
-class DiscoverySnapshotReadError extends Schema.TaggedError<DiscoverySnapshotReadError>()(
-  "DiscoverySnapshotReadError",
-  { baseDir: Schema.String, cause: Schema.Defect() },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message() {
-    return `Could not read projects and threads from the T3 Code server using ${this.baseDir}. Check that the server is running, then retry.`;
-  }
-}
-
 export const DiscoveryCliError = Schema.Union([
-  DiscoveryServerNotRunningError,
+  ThreadServerNotRunningError,
+  ThreadServerUnreachableError,
+  ThreadToolFailedError,
   DiscoveryProjectNotFoundError,
-  DiscoverySnapshotReadError,
 ]);
 const isDiscoveryCliError = Schema.is(DiscoveryCliError);
-
 export const reportDiscoveryErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.tapError((error) =>
       isDiscoveryCliError(error) ? Console.error(error.message) : Effect.void,
     ),
   );
+
+const decodeFailureText = Schema.decodeUnknownOption(Schema.fromJsonString(OrchestratorMcpFailure));
+const ToolResult = Schema.Struct({
+  isError: Schema.optional(Schema.Boolean),
+  structuredContent: Schema.optional(Schema.Unknown),
+  content: Schema.optional(
+    Schema.Array(Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) })),
+  ),
+});
+
+const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
+
+const ProjectListResult = Schema.Struct({
+  projects: Schema.Array(
+    Schema.Struct({
+      id: ProjectId,
+      title: Schema.String,
+      workspaceRoot: Schema.String,
+      defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
+        Schema.withDecodingDefault(Effect.succeed(null)),
+      ),
+    }),
+  ),
+  nextCursor: Schema.NullOr(Schema.Int),
+});
+
+const toolFailureDetail = (result: typeof ToolResult.Type) => {
+  const text = result.content?.find((part) => part.text !== undefined)?.text ?? "";
+  return Option.match(decodeFailureText(text), {
+    onNone: () => text || "The tool call failed.",
+    onSome: (failure) => failure.message,
+  });
+};
+
+const makeThreadTools = (session: McpToolSession, origin: string) => {
+  const unexpected = (tool: string) =>
+    new ThreadToolFailedError({
+      tool,
+      detail: `The server sent an unexpected ${tool} result. Update the t3 CLI to match the server.`,
+    });
+  return {
+    call: Effect.fn("cli.thread.callTool")(function* <S extends Schema.Decoder<unknown>>(
+      tool: string,
+      args: Readonly<Record<string, unknown>>,
+      schema: S,
+    ): Effect.fn.Return<S["Type"], ThreadServerUnreachableError | ThreadToolFailedError> {
+      const raw = yield* session
+        .call(tool, args)
+        .pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
+      const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
+      if (result.isError === true) {
+        return yield* new ThreadToolFailedError({ tool, detail: toolFailureDetail(result) });
+      }
+      return yield* Schema.decodeUnknownEffect(schema)(result.structuredContent).pipe(
+        Effect.mapError(() => unexpected(tool)),
+      );
+    }),
+  };
+};
+export type ThreadTools = ReturnType<typeof makeThreadTools>;
+
+/**
+ * Signs in as a short-lived MCP client of the running server, the same way an
+ * outside agent does, and revokes that session when the command ends.
+ */
+export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
+  flags: { readonly baseDir: Option.Option<string> },
+  run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
+  options?: { readonly access: AuthMcpClientAccess },
+) {
+  const logLevel = yield* GlobalFlag.LogLevel;
+  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  return yield* Effect.gen(function* () {
+    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    if (Option.isNone(runtimeState)) {
+      return yield* new ThreadServerNotRunningError({ baseDir: config.baseDir });
+    }
+    const origin = runtimeState.value.origin;
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const issued = yield* Effect.acquireRelease(
+      environmentAuth.issueMcpClientSession({
+        label: "t3 thread cli",
+        // The CLI runs as the machine's owner. New threads still start at
+        // the project's default mode, never at this ceiling by default.
+        access: options?.access ?? "full-access",
+        peerLink: false,
+        client: { deviceType: "bot" },
+      }),
+      (session) =>
+        environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
+    );
+    const session = yield* mcpToolSession({
+      endpoint: new URL("/mcp", origin).href,
+      authorization: `Bearer ${issued.token}`,
+      clientName: "t3-thread-cli",
+    }).pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
+    return yield* run(makeThreadTools(session, origin));
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      EnvironmentAuth.layerRuntime.pipe(
+        Layer.provide(ServerConfig.layer(config)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
+      ),
+    ),
+  );
+});
 
 export const resolveDiscoveryProject = Effect.fn("cli.discovery.resolveProject")(function* <
   P extends {
@@ -109,72 +222,37 @@ export const resolveDiscoveryProject = Effect.fn("cli.discovery.resolveProject")
   return containing.project;
 });
 
-const readSnapshot = Effect.fn("cli.discovery.readSnapshot")(function* (
-  origin: string,
-  token: string,
+export const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (
+  tools: ThreadTools,
 ) {
-  const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl: origin });
-  const headers = {
-    authorization: `Bearer ${token}`,
-    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-  } as const;
-  const [projects, shell] = yield* Effect.all([
-    client.projects.snapshot({ headers }),
-    client.orchestration.shellSnapshot({ headers, query: {} }),
-  ]);
-  const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
-  const environmentId = yield* identity.getEnvironmentId;
-  const nowMs = yield* Clock.currentTimeMillis;
-  // Keep settlement-service dependencies off the CLI help and startup paths.
-  const { listItemFromShell } = yield* Effect.promise(
-    () => import("../orchestration-v2/threadSummary.ts"),
-  );
-  const threads = shell.threads
-    .filter((thread) => isListedThreadLineage(thread.lineage))
-    .toSorted(
-      (left, right) =>
-        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
-        right.id.localeCompare(left.id),
-    )
-    .map((thread) =>
-      listItemFromShell(thread, formatThreadLink({ environmentId, threadId: thread.id }), nowMs),
+  const projects: Array<(typeof ProjectListResult.Type)["projects"][number]> = [];
+  let cursor: number | null = 0;
+  while (cursor !== null) {
+    const page: typeof ProjectListResult.Type = yield* tools.call(
+      "t3_project_list",
+      { cursor, limit: 100 },
+      ProjectListResult,
     );
-  return { projects: projects.projects.filter((project) => project.deletedAt === null), threads };
+    projects.push(...page.projects);
+    cursor = page.nextCursor;
+  }
+  return projects;
 });
-type DiscoverySnapshot = Effect.Success<ReturnType<typeof readSnapshot>>;
 
-export const withDiscoverySnapshot = Effect.fn("cli.discovery.withSnapshot")(function* <A, E, R>(
-  flags: CliAuthLocationFlags,
-  run: (snapshot: DiscoverySnapshot) => Effect.Effect<A, E, R>,
+export const listAllThreads = Effect.fn("cli.discovery.listAllThreads")(function* (
+  tools: ThreadTools,
+  input: Pick<OrchestratorMcpThreadListInput, "projectId" | "allProjects" | "statuses">,
 ) {
-  const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
-  return yield* Effect.gen(function* () {
-    const state = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(state))
-      return yield* new DiscoveryServerNotRunningError({ baseDir: config.baseDir });
-    const auth = yield* EnvironmentAuth.EnvironmentAuth;
-    return yield* Effect.acquireUseRelease(
-      auth.issueSession({ scopes: [AuthOrchestrationReadScope], label: "t3 discovery cli" }),
-      (session) =>
-        readSnapshot(state.value.origin, session.token).pipe(
-          Effect.timeout("10 seconds"),
-          Effect.mapError(
-            (cause) => new DiscoverySnapshotReadError({ baseDir: config.baseDir, cause }),
-          ),
-          Effect.flatMap(run),
-        ),
-      (session) => auth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
+  const threads: Array<OrchestratorMcpThreadListItem> = [];
+  let cursor: number | null = 0;
+  while (cursor !== null) {
+    const page: OrchestratorMcpThreadListResult = yield* tools.call(
+      "t3_thread_list",
+      { ...input, includeSubagents: false, limit: 100, cursor },
+      OrchestratorMcpThreadListResult,
     );
-  }).pipe(
-    Effect.provide(
-      Layer.merge(
-        FetchHttpClient.layer,
-        EnvironmentAuth.layerRuntime.pipe(
-          Layer.provide(ServerConfig.layer(config)),
-          Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
-        ),
-      ),
-    ),
-  );
+    threads.push(...page.threads);
+    cursor = page.nextCursor;
+  }
+  return threads;
 });

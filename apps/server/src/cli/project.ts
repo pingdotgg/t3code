@@ -42,7 +42,12 @@ import {
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { reportDiscoveryErrors, withDiscoverySnapshot } from "./discovery.ts";
+import {
+  reportDiscoveryErrors,
+  withThreadTools,
+  listAllProjects,
+  listAllThreads,
+} from "./discovery.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 type ProjectMutationTarget = {
@@ -602,9 +607,13 @@ const projectListCommand = Command.make("list", {
 }).pipe(
   Command.withDescription("List projects, their default models, and thread counts by status."),
   Command.withHandler((flags) =>
-    withDiscoverySnapshot(
+    withThreadTools(
       flags,
-      Effect.fn("cli.project.list")(function* (snapshot) {
+      Effect.fn("cli.project.list")(function* (tools) {
+        const snapshot = {
+          projects: yield* listAllProjects(tools),
+          threads: yield* listAllThreads(tools, { allProjects: true }),
+        };
         const countsByProject = new Map<ProjectId, Record<string, number>>();
         for (const thread of snapshot.threads) {
           const counts = countsByProject.get(thread.projectId) ?? {};
@@ -629,6 +638,7 @@ const projectListCommand = Command.make("list", {
           );
         }
       }),
+      { access: "read-only" },
     ).pipe(reportDiscoveryErrors),
   ),
 );
