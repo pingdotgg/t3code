@@ -12,11 +12,11 @@ export class CourseReferenceFetchError extends Schema.TaggedError<CourseReferenc
   { message: Schema.String },
 ) {}
 
-class ReferenceBlockedError extends Error {
-  constructor(readonly reason: string) {
-    super(reason);
-  }
-}
+class ReferenceBlockedError extends Schema.TaggedError<ReferenceBlockedError>()(
+  "ReferenceBlockedError",
+  { reason: Schema.String },
+) {}
+const isReferenceBlockedError = Schema.is(ReferenceBlockedError);
 
 export interface ReferenceImage {
   readonly type: "image";
@@ -44,12 +44,16 @@ const validateUrl = (raw: string | URL) => {
   try {
     url = typeof raw === "string" ? new URL(raw) : raw;
   } catch {
-    throw new ReferenceBlockedError("Only public http(s) URLs without userinfo are allowed.");
+    throw new ReferenceBlockedError({
+      reason: "Only public http(s) URLs without userinfo are allowed.",
+    });
   }
   if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password)
-    throw new ReferenceBlockedError("Only public http(s) URLs without userinfo are allowed.");
+    throw new ReferenceBlockedError({
+      reason: "Only public http(s) URLs without userinfo are allowed.",
+    });
   if (!isPublicFaviconHost(url.hostname))
-    throw new ReferenceBlockedError("The URL host is not public.");
+    throw new ReferenceBlockedError({ reason: "The URL host is not public." });
   return url;
 };
 
@@ -59,7 +63,7 @@ const checkedDispatcher = async (
 ) => {
   const addresses = await lookup(hostname, { all: true, verbatim: true });
   if (!addresses.length || addresses.some(({ address }) => !isPublicFaviconHost(address)))
-    throw new ReferenceBlockedError("The URL resolves to a private network address.");
+    throw new ReferenceBlockedError({ reason: "The URL resolves to a private network address." });
   const address = addresses[0]!;
   return {
     ips: addresses.map(({ address }) => address),
@@ -295,8 +299,8 @@ export const fetchCourseReference = Effect.fn("course.fetchReference")(function*
             bytes: body?.byteLength ?? 0,
             contentType: response?.headers.get("content-type") ?? null,
             ...(body === undefined ? {} : { body }),
-            ...(failure instanceof ReferenceBlockedError ? { blocked: failure.reason } : {}),
-            ...(failure !== undefined && !(failure instanceof ReferenceBlockedError)
+            ...(isReferenceBlockedError(failure) ? { blocked: failure.reason } : {}),
+            ...(failure !== undefined && !isReferenceBlockedError(failure)
               ? { error: String(failure) }
               : {}),
           });

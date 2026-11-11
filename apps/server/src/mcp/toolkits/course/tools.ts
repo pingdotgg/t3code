@@ -138,11 +138,7 @@ export const CourseReferenceFetchTool = Tool.make("course_reference_fetch", {
   }),
   success: Schema.Unknown,
   failure: OrchestratorMcpFailure,
-  dependencies: [
-    McpInvocationContext.McpInvocationContext,
-    ThreadManagementService.ThreadManagementService,
-    ServerConfig.ServerConfig,
-  ],
+  dependencies: [McpInvocationContext.McpInvocationContext, ServerConfig.ServerConfig],
 })
   .annotate(Tool.Title, "Fetch course reference")
   .annotate(Tool.Readonly, true)

@@ -668,27 +668,33 @@ interface MultiImageToolResult {
 
 export const imageToolContent = (encodedResult: unknown, includeImage = true) => {
   const result = encodedResult as ImageToolResult | MultiImageToolResult;
-  const metadata =
-    "images" in result
-      ? {
-          ...result,
-          images: result.images.map(({ data: _data, type: _type, ...image }) => image),
-        }
-      : (() => {
-          const { screenshot, ...rest } = result as ImageToolResult;
-          return {
-            ...rest,
-            screenshot: {
-              mimeType: screenshot.mimeType,
-              width: screenshot.width,
-              height: screenshot.height,
-            },
-          };
-        })();
-  const images =
-    "images" in result
-      ? result.images
-      : [{ data: result.screenshot.data, mimeType: result.screenshot.mimeType }];
+  const metadata = Array.isArray((result as { readonly images?: unknown }).images)
+    ? {
+        ...result,
+        images: (result as MultiImageToolResult).images.map(
+          ({ data: _data, type: _type, ...image }) => image,
+        ),
+      }
+    : (() => {
+        const screenshot = (result as ImageToolResult).screenshot;
+        const { screenshot: _screenshot, ...rest } = result as ImageToolResult;
+        return {
+          ...rest,
+          screenshot: {
+            mimeType: (screenshot as ImageToolResult["screenshot"]).mimeType,
+            width: (screenshot as ImageToolResult["screenshot"]).width,
+            height: (screenshot as ImageToolResult["screenshot"]).height,
+          },
+        };
+      })();
+  const images = Array.isArray((result as { readonly images?: unknown }).images)
+    ? (result as MultiImageToolResult).images
+    : [
+        {
+          data: (result as ImageToolResult).screenshot.data,
+          mimeType: (result as ImageToolResult).screenshot.mimeType,
+        },
+      ];
   return {
     metadata,
     content: [
@@ -873,6 +879,8 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
 
 const registerCourseReferenceFetch = Effect.fn("McpHttpServer.registerCourseReferenceFetch")(
   function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
     const built = yield* decodeAsAdvertised(CourseReferenceToolkit);
     yield* registerImageTool(
       CourseReferenceFetchTool,
@@ -880,7 +888,11 @@ const registerCourseReferenceFetch = Effect.fn("McpHttpServer.registerCourseRefe
         built
           .handle("course_reference_fetch", payload)
           .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
-      (effect) => effect,
+      (effect) =>
+        effect.pipe(
+          Effect.provideService(ServerConfig.ServerConfig, config),
+          Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+        ),
       "reference_fetch",
       (error) =>
         isOrchestratorMcpFailure(error) ? error.message : "Course reference fetch failed.",

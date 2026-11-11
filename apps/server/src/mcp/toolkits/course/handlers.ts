@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { Tool } from "effect/ai";
 import * as CourseService from "../../../course/CourseService.ts";
 import { CourseIngestError, ingestCourse } from "../../../course/ingest.ts";
 import { CourseReferenceFetchError, fetchCourseReference } from "../../../course/referenceFetch.ts";
@@ -54,11 +55,7 @@ const getOwnedCourse = Effect.fn("course.getOwnedCourse")(function* (
   return yield* courseOwnershipFailure();
 });
 const courseReferenceFetchHandler = McpToolAccess.readsAsCaller(
-  (input: {
-    readonly url: string;
-    readonly pages?: ReadonlyArray<number>;
-    readonly courseId?: string;
-  }) =>
+  (input: Tool.Parameters<typeof CourseReferenceToolkit.tools.course_reference_fetch>) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const { thread } = yield* McpInvocationContext.requireThreadScope(
@@ -69,7 +66,7 @@ const courseReferenceFetchHandler = McpToolAccess.readsAsCaller(
       return yield* fetchCourseReference({
         url: input.url,
         ...(input.pages === undefined ? {} : { pages: input.pages }),
-        courseId: input.courseId,
+        ...(input.courseId === undefined ? {} : { courseId: input.courseId }),
         audit: {
           stateDir: config.stateDir,
           threadId: thread.threadId,

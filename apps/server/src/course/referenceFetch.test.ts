@@ -54,7 +54,11 @@ describe("course reference fetch", () => {
         lookup: (async (host: string) =>
           host === "169.254.169.254"
             ? [{ address: "169.254.169.254", family: 4 as const }]
-            : lookup(host)) as never,
+            : (
+                lookup as (
+                  hostname: string,
+                ) => Promise<ReadonlyArray<{ address: string; family: 4 }>>
+              )(host)) as never,
         fetchImpl: () =>
           Promise.resolve(
             new Response(null, { status: 302, headers: { location: "http://169.254.169.254/" } }),
