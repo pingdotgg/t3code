@@ -105,9 +105,14 @@ describe("composerContextExternalLinks", () => {
     expect(rewritten.text).toContain("](https://www.figma.com/design/AbCdEf123)");
     expect(rewritten.text).toContain("](https://github.com/acme/app/issues/7)");
     expect(rewritten.text).not.toContain("t3-context://");
-    expect(externalLinkContextReferences(rewritten.text)).toEqual({
-      text: rewritten.text,
-      records: [],
+    const pastedMarkdown = externalLinkContextReferences(rewritten.text);
+    expect(pastedMarkdown.text).toBe(rewritten.text);
+    expect(pastedMarkdown.records.map((record) => record.kind)).toEqual(["jira", "figma", "issue"]);
+    expect(
+      externalLinkContextReferences("[bug](https://github.com/acme/app/issues/7)"),
+    ).toMatchObject({
+      text: "[bug](https://github.com/acme/app/issues/7)",
+      records: [{ kind: "issue", number: 7, url: "https://github.com/acme/app/issues/7" }],
     });
   });
 });

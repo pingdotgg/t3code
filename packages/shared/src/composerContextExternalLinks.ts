@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 
 import {
+  collectComposerContextReferences,
   formatComposerContextReference,
   sanitizeComposerContextLabel,
   toKindScopedComposerContextId,
@@ -124,7 +125,15 @@ export function externalLinkContextReferences(
   const rewritten = text
     .split(/(!?\[[^\]\n]*\]\([^\s)]*\))/gu)
     .map((part, index) => {
-      if (index % 2 === 1) return part;
+      if (index % 2 === 1) {
+        for (const reference of collectComposerContextReferences(part)) {
+          if (reference.url === undefined) continue;
+          for (const record of externalLinkContextReferences(reference.url, accept).records) {
+            records.set(record.contextId, record);
+          }
+        }
+        return part;
+      }
       let rewritten = part;
 
       rewritten = rewritten.replace(JIRA_URL, (match) => {
