@@ -72,7 +72,6 @@ describe("getComposerProviderState", () => {
         ]),
       ]),
       modelOptions: undefined,
-      planModeEnabled: true,
     });
 
     expect(state).toEqual({
@@ -91,7 +90,6 @@ describe("getComposerProviderState", () => {
         booleanDescriptor("fastMode"),
       ]),
       modelOptions: selections(["effort", "high"], ["fastMode", false]),
-      planModeEnabled: true,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(
@@ -105,7 +103,6 @@ describe("getComposerProviderState", () => {
       model: MODEL,
       models: modelWith([booleanDescriptor("thinking")]),
       modelOptions: selections(["effort", "max"], ["thinking", false]),
-      planModeEnabled: true,
     });
 
     expect(state).toEqual({
@@ -131,7 +128,7 @@ describe("getComposerProviderState", () => {
         ]),
       ]),
       modelOptions: selections(["agent", "plan"]),
-      planModeEnabled: true,
+      includePlanAgent: true,
     });
 
     expect(state.promptEffort).toBe("high");
@@ -158,7 +155,6 @@ describe("getComposerProviderState", () => {
           },
         ]),
         modelOptions: selections(["agent", "plan"]),
-        planModeEnabled: false,
       });
 
       expect(state.modelOptionsForDispatch).toEqual(
@@ -168,21 +164,21 @@ describe("getComposerProviderState", () => {
   );
 
   it.each([
-    { planModeEnabled: false, provider: PROVIDER },
-    { planModeEnabled: true, provider: PROVIDER },
-    { planModeEnabled: false, provider: ProviderDriverKind.make("acpRegistry") },
+    { includePlanAgent: false, provider: PROVIDER },
+    { includePlanAgent: true, provider: PROVIDER },
+    { includePlanAgent: false, provider: ProviderDriverKind.make("acpRegistry") },
   ])(
-    "respects plan mode $planModeEnabled for $provider with unknown model capabilities",
-    ({ planModeEnabled, provider }) => {
+    "respects includePlanAgent=$includePlanAgent for $provider with unknown model capabilities",
+    ({ includePlanAgent, provider }) => {
       const state = getComposerProviderState({
         provider,
         model: MODEL,
         models: [{ slug: MODEL, name: MODEL, isCustom: false, capabilities: null }],
         modelOptions: selections(["agent", "plan"], ["effort", "high"]),
-        planModeEnabled,
+        includePlanAgent,
       });
       expect(state.modelOptionsForDispatch).toEqual(
-        planModeEnabled || provider === "acpRegistry"
+        includePlanAgent || provider === "acpRegistry"
           ? selections(["agent", "plan"], ["effort", "high"])
           : selections(["effort", "high"]),
       );
@@ -202,7 +198,6 @@ describe("getComposerProviderState", () => {
         },
       ],
       modelOptions: selections(["variant", "max"], ["agent", "build"]),
-      planModeEnabled: false,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(
@@ -231,7 +226,6 @@ describe("getComposerProviderState", () => {
         },
       ],
       modelOptions: selections(["effort", "low"], ["unknown", "value"]),
-      planModeEnabled: false,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["effort", "low"]));
@@ -243,7 +237,6 @@ describe("getComposerProviderState", () => {
       model: MODEL,
       models: modelWith([booleanDescriptor("fastMode", true)]),
       modelOptions: undefined,
-      planModeEnabled: true,
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
@@ -314,7 +307,6 @@ describe("getComposerReasoningStep", () => {
       modelOptions: undefined,
       prompt: "Fix the bug",
       cursor: 0,
-      planModeEnabled: true,
       direction: 1,
       ...input,
     });
