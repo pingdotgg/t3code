@@ -25,7 +25,7 @@ export function usagePriceForm(model = "", price?: UsageModelPriceOverride): Usa
 /** Allow decimal/exponent edits and all deletions, including temporarily invalid values; saving validates
  * the result. */
 export function isUsagePriceEdit(previous: string, next: string): boolean {
-  if (/^\s*(?:\d*\.?\d*|(?:\d+\.?\d*|\.\d+)e[+-]?\d*)\s*$/i.test(next)) return true;
+  if (/^\s*(?:\d*[.,]?\d*|(?:\d+[.,]?\d*|[.,]\d+)e[+-]?\d*)\s*$/i.test(next)) return true;
   if (next.length >= previous.length) return false;
   let start = 0;
   while (start < next.length && next[start] === previous[start]) start++;
@@ -40,7 +40,7 @@ export function parseUsagePriceForm(
   if (model.length === 0) return null;
   const rates: Partial<Record<(typeof USAGE_PRICE_FIELDS)[number]["key"], number>> = {};
   for (const field of USAGE_PRICE_FIELDS) {
-    const raw = form[field.key].trim();
+    const raw = form[field.key].trim().replace(",", ".");
     if (raw === "") {
       if (field.optional) continue;
       return null;
