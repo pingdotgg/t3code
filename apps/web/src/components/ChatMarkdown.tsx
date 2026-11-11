@@ -1,5 +1,7 @@
 import { clientHostEnvironmentAtom } from "../state/clientHostEnvironment";
 import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import {
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
@@ -104,7 +106,12 @@ import {
   artifactTemplateFromHastProperties,
   renderCodexInlineDirectivesAsMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
-import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import {
+  renderSkillInlineMarkdownChildren,
+  SkillChipPopover,
+  skillInstructionsOpener,
+  skillPopoverDescription,
+} from "./chat/SkillInlineText";
 import { MarkdownMath } from "./chat/MarkdownMath";
 import {
   resolveMarkdownMediaPreview,
@@ -1105,6 +1112,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       updateThreadPullRequestLink,
       fileLinkChip,
       renderContextReference,
+      skills,
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
@@ -1127,6 +1135,22 @@ const CHAT_MARKDOWN_COMPONENTS = {
         renderContextReference({ ...contextReference, label })
       ) : (
         <span>{label}</span>
+      );
+    }
+    // A picked same-name skill is sent as `[$name](…/SKILL.md)`; show it as that file's chip.
+    const linkedSkill = href
+      ? collectComposerInlineTokens(`[${hastPlainTextDeep(node)}](${href}) `)[0]
+      : undefined;
+    if (linkedSkill?.type === "skill" && linkedSkill.path !== undefined) {
+      const skillPath = linkedSkill.path;
+      const skill = skills.find((candidate) => candidate.path === skillPath);
+      return (
+        <SkillChipPopover
+          label={skill ? formatProviderSkillDisplayName(skill) : linkedSkill.value}
+          description={skill ? skillPopoverDescription(skill) : null}
+          copyMarkdown={linkedSkill.source}
+          onViewInstructions={skillInstructionsOpener(threadRef, { path: skillPath })}
+        />
       );
     }
     const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";

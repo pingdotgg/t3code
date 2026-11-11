@@ -466,6 +466,38 @@ describe("ChatMarkdown skill chips", () => {
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/skills/review/SKILL.md");
   });
 
+  it("shows a picked same-name skill as that file's chip", async () => {
+    setup();
+    const threadRef = {
+      environmentId: EnvironmentId.make("workspace"),
+      threadId: ThreadId.make("thread"),
+    };
+    const review = { name: "review", enabled: true };
+    await using screen = await renderText("Run [$review](/repo/my%20skills/review/SKILL.md) now", {
+      threadRef,
+      skills: [
+        { ...review, displayName: "User review", path: "/home/me/skills/review/SKILL.md" },
+        {
+          ...review,
+          displayName: "Project review",
+          description: "Reviews the project.",
+          path: "/repo/my skills/review/SKILL.md",
+        },
+      ],
+    });
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Skill Project review. Show details" }),
+    );
+    await expect.element(page.getByText("Reviews the project.")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "View instructions" }));
+
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/repo/my skills/review/SKILL.md");
+  });
+
   it("names a mentioned model as its provider does, without a thread", async () => {
     setup();
     await using screen = await renderText("Ask (model:codex/gpt-6.1), not model:openai/gpt-4o.", {
