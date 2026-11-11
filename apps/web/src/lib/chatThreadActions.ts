@@ -6,6 +6,8 @@ import {
 } from "@t3tools/client-runtime/state/project-last-used-settings";
 import {
   DEFAULT_SERVER_SETTINGS,
+  managedRuntimeModeDenial,
+  type ManagedPolicySummary,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
@@ -64,15 +66,20 @@ export function resolveNewDraftStartFromOrigin(input: {
   return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
 }
 
-/** A runtime mode configured on the project wins over the project's last-used one. */
+/**
+ * A runtime mode configured on the project wins over the project's last-used one,
+ * which yields to the server's policy-clamped default when the policy denies it.
+ */
 export function resolveDefaultRuntimeMode(
   projectSettings: ResolvedProjectSettings,
   lastUsedRuntimeMode: RuntimeMode | null,
+  managedPolicy: ManagedPolicySummary | undefined,
 ): RuntimeMode {
-  return (
-    (projectSettings.sources.defaultRuntimeMode === "environment" ? lastUsedRuntimeMode : null) ??
-    projectSettings.settings.defaultRuntimeMode
-  );
+  const inherited =
+    projectSettings.sources.defaultRuntimeMode === "environment" ? lastUsedRuntimeMode : null;
+  return inherited !== null && managedRuntimeModeDenial(managedPolicy, inherited) === undefined
+    ? inherited
+    : projectSettings.settings.defaultRuntimeMode;
 }
 
 /**
@@ -86,6 +93,7 @@ export function resolveNewThreadDefaults(input: {
   readonly projectSettings: ResolvedProjectSettings;
   readonly lastUsed: ProjectLastUsedSettings | null;
   readonly serverSettings: ServerSettings | undefined;
+  readonly managedPolicy: ManagedPolicySummary | undefined;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly hasStickyProvider: boolean;
   readonly now: number;
@@ -97,6 +105,7 @@ export function resolveNewThreadDefaults(input: {
   const runtimeMode = resolveDefaultRuntimeMode(
     input.projectSettings,
     input.lastUsed?.runtimeMode ?? null,
+    input.managedPolicy,
   );
   const projectSelection =
     sources.defaultModelSelection === "environment" ? null : settings.defaultModelSelection;
@@ -136,6 +145,7 @@ export function retargetDraftToProject(input: {
   readonly projectRef: ScopedProjectRef;
   readonly project: LegacyProjectSettingsFields | null;
   readonly environmentSettings: ServerSettings | undefined;
+  readonly managedPolicy: ManagedPolicySummary | undefined;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly threads: ReadonlyArray<ProjectLastUsedSettingsThread>;
   readonly logicalProjectKey: string | null;
@@ -156,6 +166,7 @@ export function retargetDraftToProject(input: {
     ),
     lastUsed: resolveProjectLastUsedSettings(input.threads, input.projectRef),
     serverSettings: input.environmentSettings,
+    managedPolicy: input.managedPolicy,
     providers: input.providers,
     hasStickyProvider: store.stickyActiveProvider !== null,
     now: Date.now(),

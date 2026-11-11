@@ -147,6 +147,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         projectSettings,
         lastUsed: resolveProjectLastUsedSettings(readThreadShells(), projectRef),
         serverSettings: targetServerSettings,
+        managedPolicy: environmentServerConfigs.get(projectRef.environmentId)?.managedPolicy,
         providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
         hasStickyProvider: useComposerDraftStore.getState().stickyActiveProvider !== null,
         now: Date.now(),

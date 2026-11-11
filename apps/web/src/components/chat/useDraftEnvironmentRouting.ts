@@ -125,6 +125,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
             project.environmentId === target.environmentId && project.id === target.projectId,
         ) ?? null,
       environmentSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
+      managedPolicy: environmentById.get(target.environmentId)?.serverConfig?.managedPolicy,
       providers: providersByEnvironment.get(target.environmentId) ?? [],
       threads: readThreadShells(),
       logicalProjectKey: null,
@@ -236,6 +237,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         projectRef: scopeProjectRef(target.environmentId, project.id),
         project,
         environmentSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
+        managedPolicy: environmentById.get(target.environmentId)?.serverConfig?.managedPolicy,
         providers: providersByEnvironment.get(target.environmentId) ?? [],
         threads: readThreadShells(),
         logicalProjectKey: activeProjectIsScratch

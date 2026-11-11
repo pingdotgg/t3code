@@ -4,6 +4,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type ManagedPolicySummary,
   type ModelSelection,
   type ServerSettings,
 } from "@t3tools/contracts";
@@ -46,12 +47,14 @@ function settingsFor(overrides: Partial<ServerSettings> = {}) {
 const resolveDefaults = (
   projectSettings: ReturnType<typeof settingsFor>,
   last: typeof lastUsed | null,
+  managedPolicy?: ManagedPolicySummary,
 ) =>
   resolveNewThreadDefaults({
     projectId,
     projectSettings,
     lastUsed: last,
     serverSettings: undefined,
+    managedPolicy,
     providers: [],
     hasStickyProvider: false,
     now: 0,
@@ -63,6 +66,15 @@ describe("resolveNewThreadDefaults", () => {
       modelSelection: lastUsed.modelSelection,
       runtimeMode: "auto",
     });
+  });
+
+  it("drops a last-used runtime mode above the policy ceiling for the environment default", () => {
+    const policy = {
+      organization: "Example",
+      lockedSettings: [],
+      limits: { maxRuntimeMode: "auto-accept-edits" },
+    } as const;
+    expect(resolveDefaults(settingsFor(), lastUsed, policy).runtimeMode).toBe("approval-required");
   });
 
   it("falls back to environment defaults for a project nobody has used", () => {
@@ -134,6 +146,7 @@ describe("retargetDraftToProject", () => {
         defaultModelSelection: ENVIRONMENT_DEFAULT,
         defaultRuntimeMode: "approval-required",
       },
+      managedPolicy: undefined,
       providers: [],
       threads: [],
       logicalProjectKey: null,

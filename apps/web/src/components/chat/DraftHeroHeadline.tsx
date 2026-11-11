@@ -195,13 +195,15 @@ export function DraftHeroHeadline({
       void openProjectDraft(scopeProjectRef(project.environmentId, project.id));
       return;
     }
+    const targetServerConfig = environments.find(
+      (environment) => environment.environmentId === project.environmentId,
+    )?.serverConfig;
     retargetDraftToProject({
       draftId,
       projectRef: scopeProjectRef(project.environmentId, project.id),
       project,
-      environmentSettings: environments.find(
-        (environment) => environment.environmentId === project.environmentId,
-      )?.serverConfig?.settings,
+      environmentSettings: targetServerConfig?.settings,
+      managedPolicy: targetServerConfig?.managedPolicy,
       providers: providersByEnvironment.get(project.environmentId) ?? [],
       threads,
       logicalProjectKey,
