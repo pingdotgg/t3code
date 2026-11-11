@@ -70,7 +70,19 @@ cd scripts && pnpm exec e2e run scenarios/replay-turn-streams.e2e.ts --headed
 
 e2e starts the dev stack through [`start-app.ts`](../../scripts/scenarios/start-app.ts) on a free
 port, runs the tests, and stops it. Results land in `scripts/.e2e`: `report.json`, `summary.md`,
-and per test a `trace.md`, its screenshots, and a video. The first run downloads e2e's browser.
+and per test a `trace.md`, its screenshots, and a video. `vp run scenarios --target web` runs one
+target; flags go straight after the script name, without `--`.
+
+The first run downloads e2e's browser (about 120 MB). To fetch it ahead of time, such as in a
+machine image, run this from the repository root after `vp i`:
+
+```sh
+node scripts/node_modules/playwright-core/cli.js install --only-shell chromium ffmpeg
+```
+
+e2e opens the web app at `127.0.0.1`, and the start script tells the web dev server to bind that
+address. It does not use `localhost`, which some machines resolve to `::1` first.
+
 `e2e run --help` lists the rest: `--grep`, `--watch`, `--last-failed`, `--changed-since`.
 
 Run one at a time per checkout: a run recreates the checkout's scenario T3 home and its `.e2e`
