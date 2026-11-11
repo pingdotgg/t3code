@@ -1,6 +1,6 @@
 import { EnvironmentId, ThreadId, ScheduledTaskId, type ScheduledTask } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -52,7 +52,6 @@ async function setup() {
 
   await using stack = new AsyncDisposableStack();
   const screen = stack.use(await renderUi(null));
-  const container = screen.container;
   async function renderPanel() {
     await act(
       async () =>
@@ -60,7 +59,6 @@ async function setup() {
           <ThreadAutomationsPanel environmentId={environmentId} threadId={threadId} />,
         ),
     );
-    await userEvent.click(container.querySelector<HTMLElement>('[aria-haspopup="menu"]')!);
   }
 
   const byLabel = (label: string) =>
@@ -74,15 +72,15 @@ it.each([true, false])("runs scheduled work only with task permission (%s)", asy
   const { renderPanel } = fixture;
   state.allowed = allowed;
   await renderPanel();
-  const run = page.getByRole("menuitem", { name: "Run Daily review now" }).element();
-  expect(run.getAttribute("aria-disabled")).toBe(allowed ? null : "true");
+  const run = page.getByRole("button", { name: "Run Daily review now" }).element();
+  expect(run.hasAttribute("disabled")).toBe(!allowed);
   await act(async () => run.dispatchEvent(new MouseEvent("click", { bubbles: true })));
   expect(state.run).toHaveBeenCalledTimes(allowed ? 1 : 0);
 });
 
 it("rejects a retained toggle after task permission is revoked", async () => {
   await using fixture = await setup();
-  const { renderPanel, byLabel, screen } = fixture;
+  const { renderPanel, byLabel } = fixture;
   await renderPanel();
   const toggle = byLabel("Pause Daily review");
   state.allowed = false;
@@ -90,9 +88,6 @@ it("rejects a retained toggle after task permission is revoked", async () => {
   expect(state.toggle).not.toHaveBeenCalled();
 
   state.allowed = true;
-  if (!document.querySelector('[role="menu"]')) {
-    await userEvent.click(screen.container.querySelector<HTMLElement>('[aria-haspopup="menu"]')!);
-  }
   await act(async () => byLabel("Pause Daily review").click());
   expect(state.toggle).toHaveBeenCalledOnce();
 });

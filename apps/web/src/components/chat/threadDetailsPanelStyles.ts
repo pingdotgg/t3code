@@ -14,6 +14,8 @@ export const THREAD_DETAILS_PANEL_ICON_CLASS = "size-4 shrink-0 text-muted-foreg
 export const THREAD_DETAILS_PANEL_CHEVRON_CLASS =
   "-me-1 ms-auto size-3 shrink-0 text-dim-foreground";
 export const THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS = `${THREAD_DETAILS_PANEL_ROW_CLASS} cursor-default hover:bg-transparent hover:text-foreground`;
+export const THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS =
+  "flex min-w-0 items-center rounded-[var(--popup-item-radius,8px)] pe-1 hover:surface-selected-soft [&>[data-part=row]]:bg-transparent [&>[data-part=row]]:bg-none";
 export const THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS = "flex w-full min-w-0 items-center";
 export const THREAD_DETAILS_PANEL_ICON_ACTION_CLASS = `${THREAD_DETAILS_PANEL_ROW_CLASS} size-6 min-h-6 w-6 justify-center p-0 sm:min-h-6`;
 export const THREAD_DETAILS_PANEL_META_ACTION_CLASS = `${THREAD_DETAILS_PANEL_ROW_CLASS} h-6 min-h-6 w-auto gap-1 px-1.5 text-meta text-muted-foreground sm:min-h-6`;
