@@ -64,6 +64,48 @@ it.effect("runs calls on the newest app that reaches every environment in them",
   ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("routes each call only to an app holding the scopes it needs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      yield* serve(broker, "desktop", { remote: ["read", "send"] }, (method) => ({
+        result: `desktop:${method}`,
+      }));
+      yield* serve(broker, "phone", { remote: ["read"] }, (method) => ({
+        result: `phone:${method}`,
+      }));
+      expect(yield* broker.forward("listProjects", ["remote"], ["remote"])).toBe(
+        "phone:listProjects",
+      );
+      const send = { environmentId: "remote", threadId: "thread", text: "hi" };
+      expect(yield* broker.forward("sendMessage", [send], ["remote"])).toBe("desktop:sendMessage");
+      const control = { environmentId: "remote", threadId: "thread", action: "restart" };
+      expect(
+        yield* failureMessage(broker.forward("controlThread", [control], ["remote"])),
+      ).toContain("remote");
+    }),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("never lets one app's grant widen the call another app serves", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* make;
+      yield* serve(broker, "desktop", { remote: ["read", "create", "send"] }, (method) => ({
+        result: `desktop:${method}`,
+      }));
+      yield* serve(broker, "phone", { remote: ["read", "artifact"] }, (method) => ({
+        result: `phone:${method}`,
+      }));
+      // Together the two apps hold every scope a handoff needs, but neither holds them all.
+      const handoff = { sourceEnvironmentId: "remote", environmentId: "remote" };
+      expect(
+        yield* failureMessage(broker.forward("handoffThread", [handoff], ["remote"])),
+      ).toContain("remote");
+    }),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect(
   "lists every connected app's environments and routes around an app that stopped answering",
   () =>

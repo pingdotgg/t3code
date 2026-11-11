@@ -1,6 +1,12 @@
-import type { GatewayRuntimePort } from "@t3tools/client-runtime/gateway";
+import {
+  describeGatewayScopes,
+  gatewayPortCallScopes,
+  unmetGatewayScopes,
+  type GatewayRuntimePort,
+} from "@t3tools/client-runtime/gateway";
 import type * as Cause from "effect/Cause";
 import {
+  type GatewayScope,
   McpGatewayRelayCalls,
   McpGatewayUnavailableError,
   toMcpGatewayRelayJson,
@@ -95,9 +101,12 @@ export const make = Effect.gen(function* () {
         return Stream.fromQueue(requests);
       }),
     );
-  /** Union of every connected app's grants, per environment. */
-  const grants = (): Record<string, ReadonlyArray<string>> => {
-    const merged: Record<string, Set<string>> = {};
+  /**
+   * Each scope some connected app grants, per environment: what agents may try. A call itself
+   * runs only on an app whose own grant covers it (see invoke).
+   */
+  const grants = (): Record<string, ReadonlyArray<GatewayScope>> => {
+    const merged: Record<string, Set<GatewayScope>> = {};
     for (const host of hosts.values()) {
       for (const [environmentId, scopes] of Object.entries(host.grants)) {
         const into = (merged[environmentId] ??= new Set());
@@ -177,16 +186,23 @@ export const make = Effect.gen(function* () {
     environmentIds: ReadonlyArray<string>,
   ): Effect.fn.Return<unknown, McpGatewayUnavailableError> {
     if (method === "listEnvironments") return yield* listEnvironments;
-    // The newest app that reaches every environment in the call runs it, preferring one that answers.
-    const reaching = [...hosts.values()]
+    // The newest app whose own grant covers the call runs it, preferring one that answers; a
+    // grant another app holds never widens it.
+    const requirements = gatewayPortCallScopes(method, args);
+    const holding = [...hosts.values()]
       .toReversed()
-      .filter((candidate) => environmentIds.every((id) => candidate.grants[id] !== undefined));
-    const host = reaching.find((candidate) => !candidate.stalled) ?? reaching[0];
+      .filter((candidate) => unmetGatewayScopes(candidate.grants, requirements) === undefined);
+    const host = holding.find((candidate) => !candidate.stalled) ?? holding[0];
     if (!host) {
+      const unmet = requirements.find(({ environmentId }) =>
+        [...hosts.values()].every((candidate) => candidate.grants[environmentId] === undefined),
+      );
       return yield* unavailable(
         hosts.size === 0
           ? "No T3 app with T3 Agents enabled is connected to this environment."
-          : `No connected T3 app grants T3 Agents access to ${environmentIds.join(", ")}.`,
+          : unmet !== undefined
+            ? `No connected T3 app grants T3 Agents access to ${environmentIds.join(", ")}.`
+            : `No single connected T3 app grants the ${requirements.map(describeGatewayScopes).join("; ")} access ${method} needs on ${environmentIds.join(", ")}.`,
       );
     }
     // Omitted trailing arguments stay omitted rather than arriving as null.

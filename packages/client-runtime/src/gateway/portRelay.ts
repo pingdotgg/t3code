@@ -8,12 +8,12 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribeDynamicWithSession } from "../rpc/client.ts";
 import { GATEWAY_PORT_METHODS, type GatewayGrants } from "./bridgeClient.ts";
 import type { GatewayEnvironmentSummary, GatewayRuntimePort } from "./port.ts";
-import { gatewayPortEnvironmentIds } from "./routedPort.ts";
+import { describeGatewayScopes, gatewayPortCallScopes, unmetGatewayScopes } from "./portScopes.ts";
 
-/** Runs one relayed runtime port call if every environment it touches is granted. */
+/** Runs one relayed runtime port call if this app grants every scope it needs on each environment. */
 export async function answerGatewayPortCall(
   port: GatewayRuntimePort,
-  granted: ReadonlySet<string>,
+  grants: GatewayGrants,
   method: string,
   args: ReadonlyArray<unknown>,
 ): Promise<unknown> {
@@ -22,15 +22,21 @@ export async function answerGatewayPortCall(
   }
   if (method === "listEnvironments") {
     const environments = await port.listEnvironments();
-    return environments.filter((environment: GatewayEnvironmentSummary) =>
-      granted.has(environment.environmentId),
+    return environments.filter(
+      (environment: GatewayEnvironmentSummary) => grants[environment.environmentId] !== undefined,
     );
   }
-  const environmentIds = gatewayPortEnvironmentIds(args);
-  const denied =
-    environmentIds.length === 0 ? "this call" : environmentIds.find((id) => !granted.has(id));
-  if (denied !== undefined) {
-    throw new Error(`T3 Agents access is not granted for ${denied} on this device.`);
+  const requirements = gatewayPortCallScopes(method as keyof GatewayRuntimePort, args);
+  if (requirements.length === 0) {
+    throw new Error("T3 Agents access is not granted for this call on this device.");
+  }
+  const unmet = unmetGatewayScopes(grants, requirements);
+  if (unmet !== undefined) {
+    throw new Error(
+      grants[unmet.environmentId] === undefined
+        ? `T3 Agents access is not granted for ${unmet.environmentId} on this device.`
+        : `T3 Agents access to ${unmet.environmentId} on this device does not include ${describeGatewayScopes(unmet)}.`,
+    );
   }
   const run = port[method as keyof GatewayRuntimePort] as
     | ((...input: ReadonlyArray<unknown>) => Promise<unknown>)
@@ -43,7 +49,8 @@ export async function answerGatewayPortCall(
 /**
  * Lets agents on each granted environment act on the other granted environments through this
  * app's connections. Each server runs the tools; this app only answers runtime port calls for
- * environments the user granted, and advertises those grants so the server can apply scopes.
+ * environments and scopes the user granted, and advertises those grants so the server routes each
+ * call only to an app that grants what it needs.
  */
 export function serveGatewayPortRelays<R>(
   context: Context.Context<EnvironmentRegistry | R>,
@@ -52,8 +59,7 @@ export function serveGatewayPortRelays<R>(
   onFailure: (error: unknown) => void,
 ) {
   const abort = new AbortController();
-  const granted = new Set(Object.keys(grants));
-  for (const id of granted) {
+  for (const id of Object.keys(grants)) {
     const serve = Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry;
       const runResponse = Effect.runPromiseWith(yield* Effect.context<never>());
@@ -68,7 +74,7 @@ export function serveGatewayPortRelays<R>(
           Stream.runForEach(([session, event]) =>
             Effect.sync(() => {
               // Calls run concurrently; a slow handoff must not hold up a listing.
-              void answerGatewayPortCall(port, granted, event.method, event.args)
+              void answerGatewayPortCall(port, grants, event.method, event.args)
                 .then((result) => {
                   const json = toMcpGatewayRelayJson(result);
                   return json === undefined ? {} : { result: json };

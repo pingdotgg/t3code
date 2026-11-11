@@ -43,8 +43,6 @@ import { LocalGatewayPort } from "./LocalGatewayPort.ts";
 // Agents in a thread act with every scope on their own machine; other machines apply the
 // grants the user set on the T3 app relaying the call.
 const LOCAL_GRANTS = [...GATEWAY_SCOPE_VALUES];
-const isScope = (scope: string): scope is GatewayScope =>
-  (GATEWAY_SCOPE_VALUES as ReadonlyArray<string>).includes(scope);
 
 /**
  * The gateway tool context for this server's agents: this environment in process, every other
@@ -60,12 +58,10 @@ export const gatewayToolContext = Effect.gen(function* () {
     invoke: (method, args, environmentIds) =>
       runPromise(broker.forward(method, args, environmentIds)),
   };
-  const grants = (): Record<string, ReadonlyArray<GatewayScope>> => {
-    const relayed = Object.entries(broker?.grants() ?? {}).map(
-      ([environmentId, scopes]) => [environmentId, scopes.filter(isScope)] as const,
-    );
-    return { ...Object.fromEntries(relayed), [local.environmentId]: LOCAL_GRANTS };
-  };
+  const grants = (): Record<string, ReadonlyArray<GatewayScope>> => ({
+    ...broker?.grants(),
+    [local.environmentId]: LOCAL_GRANTS,
+  });
   const context: GatewayToolContext = {
     port: createRoutedGatewayPort(local.environmentId, local.port, () =>
       broker?.available() === true ? relay : undefined,

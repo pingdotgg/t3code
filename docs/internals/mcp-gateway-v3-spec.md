@@ -260,6 +260,8 @@ For a thread created without a profile, the provider/global chain applies. Provi
 
 MCP grants are coarse host/environment capabilities (`read`, `create`, `send`, and new explicit lifecycle/approval/artifact/review/admin scopes). The T3 server's OAuth-style environment scopes remain authoritative. Effective permission is the intersection of MCP grant, server session scope, profile permission, and thread state.
 
+A call a server relays through a connected app runs only on an app whose own grant covers that call's scopes ([portScopes](../../packages/client-runtime/src/gateway/portScopes.ts)), and that app checks them again; grants of different apps never combine. A relayed call runs there as the app's user, so the calling server refuses work above the calling chat's modes before relaying it.
+
 Never infer `full-access` from a missing approval plan. `read-only` cannot create, send, mutate lifecycle, approve, or write git. A profile may reduce capabilities granted by the host but may not elevate them. Profile and permission changes emit audit events.
 
 ## 10. Approval plans

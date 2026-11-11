@@ -62,3 +62,49 @@ it("resubscribes after its relay fails and answers void calls in a form the wire
   expect(settleThread).toHaveBeenCalledWith("remote", "thread");
   expect(responses).toEqual([{ connectionId: "connection", invocationId: "invocation" }]);
 });
+
+it("refuses a relayed call whose scope this app's grant for the environment lacks", async () => {
+  const responses: Array<unknown> = [];
+  const answered = Promise.withResolvers<void>();
+  const session = {
+    client: {
+      [WS_METHODS.mcpGatewayRespond]: (response: unknown) =>
+        Effect.sync(() => {
+          responses.push(response);
+          answered.resolve();
+        }),
+    },
+  };
+  const registry = {
+    followStream: () =>
+      Stream.make([
+        session,
+        {
+          type: "invoke",
+          connectionId: "connection",
+          invocationId: "invocation",
+          method: "sendMessage",
+          args: [{ environmentId: "remote", threadId: "thread", text: "hi" }],
+        },
+      ] as const).pipe(Stream.concat(Stream.never)),
+  } as unknown as EnvironmentRegistry["Service"];
+  const sendMessage = vi.fn(async () => ({ status: "accepted" }));
+
+  const stop = serveGatewayPortRelays(
+    Context.make(EnvironmentRegistry, registry),
+    { sendMessage } as unknown as GatewayRuntimePort,
+    { remote: ["read"] },
+    () => undefined,
+  );
+  await answered.promise;
+  stop();
+
+  expect(sendMessage).not.toHaveBeenCalled();
+  expect(responses).toEqual([
+    {
+      connectionId: "connection",
+      invocationId: "invocation",
+      error: expect.stringContaining("send"),
+    },
+  ]);
+});
