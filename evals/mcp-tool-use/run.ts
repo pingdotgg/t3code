@@ -1347,10 +1347,13 @@ export const t3Default = (
                 author: "user",
                 headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
                 baseBranch: "main",
+                // Only the branch's own PR is at the checkout's latest commit.
                 headSha:
                   typeof world?.headRefOid === "string"
                     ? world.headRefOid
-                    : (sample.testCase.setup.world?.commits?.[0]?.sha ?? null),
+                    : number === own.number
+                      ? (sample.testCase.setup.world?.commits?.[0]?.sha ?? null)
+                      : null,
                 mergeability: "mergeable",
                 behindBy: 0,
                 autoMergeEnabled: false,

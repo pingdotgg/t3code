@@ -766,8 +766,43 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
     { number: 6, headRefName: "new", title: "New" },
   ];
   const sample = makeSample(
-    { ...childCase, setup: { ...childCase.setup, world: { ...childCase.setup.world, prs } } },
+    {
+      ...childCase,
+      setup: {
+        ...childCase.setup,
+        world: {
+          ...childCase.setup.world,
+          prs,
+          branch: "new",
+          commits: [{ sha: "local-head", subject: "New" }],
+        },
+      },
+    },
     base,
+  );
+  const headOf = (number: number) =>
+    (t3Default(sample, "pull_request_read", { number }) as { summary: { headSha: unknown } })
+      .summary.headSha;
+  // The checkout's commit is the branch PR's head, not another PR's.
+  assert.equal(headOf(6), "local-head");
+  const other = makeSample(
+    {
+      ...childCase,
+      setup: {
+        ...childCase.setup,
+        world: {
+          ...childCase.setup.world,
+          prs,
+          branch: "elsewhere",
+          commits: [{ sha: "local-head", subject: "x" }],
+        },
+      },
+    },
+    base,
+  );
+  assert.isNull(
+    (t3Default(other, "pull_request_read", { number: 6 }) as { summary: { headSha: unknown } })
+      .summary.headSha,
   );
   const listed = (state?: string) =>
     (
