@@ -101,12 +101,25 @@ function nativeHost() {
 
 it.layer(layerTest)("MuseDriver usage", (it) => {
   it.effect(
-    "keeps the newest complete account report across late reports and refresh without probing for usage",
+    "reads the allowance before any turn and keeps the newest report across turns and refresh",
     () =>
       Effect.gen(function* () {
         const hosts: ReturnType<typeof nativeHost>[] = [];
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        using spawn = vi.spyOn(spawner, "spawn").mockImplementation(() =>
+        // Older than either turn report, so turn reports must win over it.
+        const allowance = {
+          allowance: {
+            asOfMs: 1791447760000,
+            source: "mint",
+            tier: "Muse Code High Usage",
+            weekly: { resetsAtMs: 1791763200000, usedPercent: 20 },
+            window: { resetsAtMs: 1791465557000, usedPercent: 30 },
+          },
+          hint: null,
+          reason: null,
+          schemaVersion: 1,
+        };
+        using _spawn = vi.spyOn(spawner, "spawn").mockImplementation((command) =>
           Effect.succeed(
             ChildProcessSpawner.makeHandle({
               pid: ChildProcessSpawner.ProcessId(1),
@@ -115,7 +128,13 @@ it.layer(layerTest)("MuseDriver usage", (it) => {
               kill: () => Effect.void,
               unref: Effect.succeed(Effect.void),
               stdin: Sink.drain,
-              stdout: Stream.encodeText(Stream.make("muse 1.0.3-R2198.1")),
+              stdout: Stream.encodeText(
+                Stream.make(
+                  command._tag === "StandardCommand" && command.args.includes("usage")
+                    ? JSON.stringify(allowance)
+                    : "muse 1.4.15-R8339.1",
+                ),
+              ),
               stderr: Stream.empty,
               all: Stream.empty,
               getInputFd: () => Sink.drain,
@@ -143,8 +162,26 @@ it.layer(layerTest)("MuseDriver usage", (it) => {
           config: { ...MuseDriver.defaultConfig(), binaryPath: process.execPath },
         });
         yield* Stream.take(instance.snapshot.streamChanges, 1).pipe(Stream.runDrain);
-        expect((yield* instance.snapshot.getSnapshot).status).toBe("ready");
-        expect((yield* instance.snapshot.getSnapshot).usageLimits).toBeUndefined();
+        const initial = yield* instance.snapshot.getSnapshot;
+        expect(initial.status).toBe("ready");
+        expect(initial.auth.label).toBe("Muse Code High Usage");
+        expect(initial.usageLimits?.windows).toEqual([
+          {
+            id: "session",
+            kind: "session",
+            label: "Session",
+            usedPercent: 30,
+            resetsAt: "2026-10-08T13:19:17.000Z",
+          },
+          {
+            id: "weekly",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 20,
+            resetsAt: "2026-10-12T00:00:00.000Z",
+            windowDurationMins: 7 * 24 * 60,
+          },
+        ]);
         const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
           interactionMode: "default",
@@ -205,9 +242,8 @@ it.layer(layerTest)("MuseDriver usage", (it) => {
         yield* publish(0, reading(1791447761610, 10, "tier-1"));
         expect((yield* instance.snapshot.getSnapshot).usageLimits).toEqual(latest.usageLimits);
         expect((yield* instance.snapshot.getSnapshot).auth.label).toBe("tier-2");
-        const callsBeforeUsageRefresh = spawn.mock.calls.length;
         yield* instance.snapshot.refreshUsage!;
-        expect(spawn.mock.calls.length).toBe(callsBeforeUsageRefresh);
+        expect((yield* instance.snapshot.getSnapshot).usageLimits).toEqual(latest.usageLimits);
         const refreshed = yield* instance.snapshot.refresh;
         expect(refreshed.usageLimits).toEqual(latest.usageLimits);
         expect(refreshed.auth.label).toBe("tier-2");

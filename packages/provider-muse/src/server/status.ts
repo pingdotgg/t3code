@@ -10,7 +10,9 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import { createMuseSdkHost, makeMuseEnvironment } from "./sdk.ts";
 import { parseMuseVersion } from "./maintenance.ts";
 import { discoverMuseModels, museModelCapabilities } from "./modelCatalog.ts";
+import { museUsageCommandToLimits } from "./usageLimits.ts";
 import {
+  AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
@@ -150,4 +152,28 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
     },
     models,
   );
+});
+
+/** Asks Meta for the allowance without a model turn; undefined on any failure or no reading. */
+export const readMuseUsageLimits = Effect.fn("readMuseUsageLimits")(function* (
+  settings: MuseSettings,
+  environment: NodeJS.ProcessEnv,
+  cwd?: string,
+) {
+  const env = providerProbeEnvironment(environment);
+  const spawnCommand = yield* resolveSpawnCommand(settings.binaryPath, ["usage", "--json"], {
+    env,
+  });
+  const result = yield* spawnAndCollect(
+    settings.binaryPath,
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      env,
+      shell: spawnCommand.shell,
+      ...(cwd ? { cwd } : {}),
+    }),
+  ).pipe(Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS), Effect.option);
+  const output = Option.flatten(result);
+  return Option.isSome(output) && output.value.code === 0
+    ? museUsageCommandToLimits(output.value.stdout)
+    : undefined;
 });

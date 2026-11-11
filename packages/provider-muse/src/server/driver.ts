@@ -19,7 +19,7 @@ import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeMuseAdapterV2 } from "./adapter.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import { checkMuseProviderStatus, makePendingMuseProvider } from "./status.ts";
+import { checkMuseProviderStatus, makePendingMuseProvider, readMuseUsageLimits } from "./status.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
@@ -108,9 +108,28 @@ export const MuseDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    // Only a running CLI reports usage; status probes cannot fetch it.
+    // Status checks and running turns both report usage; the newest reading wins.
     const latestUsage = yield* Ref.make<ProviderUsageLimitsReport | undefined>(undefined);
     const usagePermit = yield* Semaphore.make(1);
+    const recordUsage = (
+      report: ProviderUsageLimitsReport,
+      publish: (report: ProviderUsageLimitsReport) => Effect.Effect<void>,
+    ) =>
+      usagePermit.withPermits(1)(
+        Effect.gen(function* () {
+          const previous = yield* Ref.get(latestUsage);
+          if (previous && Date.parse(report.checkedAt) < Date.parse(previous.checkedAt)) return;
+          yield* Ref.set(latestUsage, report);
+          yield* publish(report);
+        }),
+      );
+    const probeUsage = Effect.fn("MuseDriver.probeUsage")(function* (
+      provider: Pick<ServerProvider, "status">,
+    ) {
+      if (provider.status !== "ready") return;
+      const report = yield* readMuseUsageLimits(effectiveConfig, processEnvironment, cwd);
+      if (report) yield* recordUsage(report, () => Effect.void);
+    });
     const withLatestUsage = (provider: ServerProvider) =>
       Ref.get(latestUsage).pipe(
         Effect.map((report): ServerProvider =>
@@ -171,6 +190,7 @@ export const MuseDriver: ProviderDriver<
       initialSnapshot: (settings) =>
         makePendingMuseProvider(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider: checkMuseProviderStatus(effectiveConfig, processEnvironment, cwd).pipe(
+        Effect.tap(probeUsage),
         Effect.map(stampIdentity),
         Effect.flatMap(withLatestUsage),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -211,13 +231,8 @@ export const MuseDriver: ProviderDriver<
       ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       continuationRequests,
       onUsageLimits: (report) =>
-        usagePermit.withPermits(1)(
-          Effect.gen(function* () {
-            const previous = yield* Ref.get(latestUsage);
-            if (previous && Date.parse(report.checkedAt) < Date.parse(previous.checkedAt)) return;
-            yield* Ref.set(latestUsage, report);
-            yield* snapshot.applyUsageLimits({ ...report, complete: true });
-          }),
+        recordUsage(report, (accepted) =>
+          snapshot.applyUsageLimits({ ...accepted, complete: true }),
         ),
     });
     const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, {
@@ -231,7 +246,7 @@ export const MuseDriver: ProviderDriver<
       displayName,
       accentColor,
       enabled,
-      snapshot: { ...snapshot, resolveMaintenance, refreshUsage: Effect.void },
+      snapshot: { ...snapshot, resolveMaintenance },
       orchestrationAdapter,
       textGeneration,
     } satisfies ProviderInstance;

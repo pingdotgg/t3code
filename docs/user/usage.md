@@ -165,8 +165,8 @@ Grok reports the remaining subscription allowance and reset time for its current
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
 
-Muse Code reports its session and weekly windows and its tier once the Muse CLI has run in a thread.
-Until then it shows no limits. Readings are not kept across a server restart.
+Muse Code reports its session and weekly windows and its tier. Meta has no reading for a new
+window until you use Muse in it, so Muse shows no limits until then.
 
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.

@@ -1,13 +1,21 @@
 import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { clampPercent } from "@t3tools/provider-core/server/usageLimits";
 import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
 
-import { LATEST_DATE_MS, type MuseSubscriptionUsage } from "./protocol.ts";
+import { LATEST_DATE_MS, MuseUsageCommandOutput, type MuseSubscriptionUsage } from "./protocol.ts";
 
 const isoMillis = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
+type MuseUsageReading = Omit<MuseSubscriptionUsage, "window"> & {
+  readonly window: Omit<MuseSubscriptionUsage["window"], "windowDurationMins"> & {
+    readonly windowDurationMins?: number;
+  };
+};
+
 /** Muse's account-wide report as Limits windows, with its tier as the plan. */
-export function museUsageToLimits(usage: MuseSubscriptionUsage): ProviderUsageLimitsReport {
+export function museUsageToLimits(usage: MuseUsageReading): ProviderUsageLimitsReport {
   const tier = usage.tier.trim();
   return {
     checkedAt: isoMillis(usage.observedAtMs),
@@ -18,7 +26,9 @@ export function museUsageToLimits(usage: MuseSubscriptionUsage): ProviderUsageLi
         label: "Session",
         usedPercent: clampPercent(usage.window.usedPercent),
         resetsAt: isoMillis(usage.window.resetsAtMs),
-        windowDurationMins: usage.window.windowDurationMins,
+        ...(usage.window.windowDurationMins !== undefined
+          ? { windowDurationMins: usage.window.windowDurationMins }
+          : {}),
       },
       {
         id: "weekly",
@@ -31,6 +41,18 @@ export function museUsageToLimits(usage: MuseSubscriptionUsage): ProviderUsageLi
     ],
     ...(tier ? { authLabel: tier } : {}),
   };
+}
+
+const decodeUsageCommandOutput = Schema.decodeUnknownOption(
+  Schema.fromJsonString(MuseUsageCommandOutput),
+);
+
+/** `muse usage --json` stdout as Limits windows; undefined when Meta has no reading yet. */
+export function museUsageCommandToLimits(stdout: string): ProviderUsageLimitsReport | undefined {
+  const allowance = Option.getOrUndefined(decodeUsageCommandOutput(stdout.trim()))?.allowance;
+  return allowance
+    ? museUsageToLimits({ ...allowance, observedAtMs: allowance.asOfMs })
+    : undefined;
 }
 
 /** Credential proxies may omit error.quota from 429 refusals; inspect text too. */

@@ -182,6 +182,21 @@ export const MuseSubscriptionUsage = Schema.Struct({
   }),
 });
 export type MuseSubscriptionUsage = typeof MuseSubscriptionUsage.Type;
+const MuseAllowanceBlock = Schema.Struct({
+  usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  resetsAtMs: DateMillis,
+});
+/** `muse usage --json`: Meta's allowance without a model turn; null before first use in a window. */
+export const MuseUsageCommandOutput = Schema.Struct({
+  allowance: Schema.NullOr(
+    Schema.Struct({
+      asOfMs: DateMillis,
+      tier: Schema.String,
+      window: MuseAllowanceBlock,
+      weekly: MuseAllowanceBlock,
+    }),
+  ),
+});
 /** `turn/retryScheduled` carries `reason`; `turn/modelRetryScheduled` carries the HTTP failure. */
 export const MuseRetryScheduled = Schema.Struct({
   turnId: NonEmptyString,

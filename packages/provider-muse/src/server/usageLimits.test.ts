@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import type { MuseSubscriptionUsage } from "./protocol.ts";
 import {
   isMuseUsageLimitFailure,
+  museUsageCommandToLimits,
   museUsageLimitResetAt,
   museUsageToLimits,
 } from "./usageLimits.ts";
@@ -84,5 +85,12 @@ describe("Muse account usage", () => {
       ],
     });
     expect(museUsageToLimits({ ...usage, tier: " " })).not.toHaveProperty("authLabel");
+  });
+
+  it("reads no limits from `muse usage` before first use in a window or from older CLIs", () => {
+    const noReading =
+      '{"allowance":null,"hint":"the server sent no usage data for this subscription","reason":"server_sent_no_usage","schemaVersion":1}';
+    expect(museUsageCommandToLimits(noReading)).toBeUndefined();
+    expect(museUsageCommandToLimits("error: unrecognized subcommand 'usage'")).toBeUndefined();
   });
 });
