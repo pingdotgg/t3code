@@ -343,6 +343,7 @@ export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROV
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
+const CLAUDE_BOOT_TIMEOUT = "5 minutes";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
@@ -619,10 +620,12 @@ export class ClaudeCodeRootRefusalError extends Schema.TaggedError<ClaudeCodeRoo
 
 class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegistrationTimeoutError>()(
   "ClaudeMcpRegistrationTimeoutError",
-  {},
+  { phase: Schema.Literals(["initialize", "setMcpServers"]) },
 ) {
   override get message(): string {
-    return "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.";
+    return this.phase === "initialize"
+      ? "Claude timed out while starting up. Retry the turn; if it keeps failing, check Claude and the server logs."
+      : "Claude timed out while registering its MCP tools. Retry the turn; if it keeps failing, check Claude and the server logs.";
   }
 }
 
@@ -1311,6 +1314,31 @@ export const layerQueryRunner: Layer.Layer<
                 restore(
                   Effect.gen(function* () {
                     if (mcpServers !== undefined) {
+                      const timedOut = (phase: ClaudeMcpRegistrationTimeoutError["phase"]) => () =>
+                        Effect.logWarning("orchestration-v2.claude-mcp-registration-timeout", {
+                          threadId: input.threadId,
+                          providerSessionId: input.providerSessionId,
+                          phase,
+                        }).pipe(
+                          Effect.andThen(
+                            Effect.fail(
+                              queryRunnerError(
+                                new ClaudeMcpRegistrationTimeoutError({ phase }),
+                                phase,
+                              ),
+                            ),
+                          ),
+                        );
+                      // The SDK leaves query() boot unbounded, and it takes about a minute on a host
+                      // with CPUs 12x oversubscribed, so it gets its own, longer deadline.
+                      yield* Effect.promise(() =>
+                        queryRuntime.initializationResult().catch(() => undefined),
+                      ).pipe(
+                        Effect.timeoutOrElse({
+                          duration: CLAUDE_BOOT_TIMEOUT,
+                          orElse: timedOut("initialize"),
+                        }),
+                      );
                       // Errors and mcp_status can echo headers; log only server names.
                       const failed = yield* Effect.tryPromise({
                         try: () => queryRuntime.setMcpServers(mcpServers),
@@ -1320,20 +1348,7 @@ export const layerQueryRunner: Layer.Layer<
                         Effect.orElseSucceed(() => Object.keys(mcpServers)),
                         Effect.timeoutOrElse({
                           duration: CLAUDE_MCP_REGISTRATION_TIMEOUT,
-                          orElse: () =>
-                            Effect.logWarning("orchestration-v2.claude-mcp-registration-timeout", {
-                              threadId: input.threadId,
-                              providerSessionId: input.providerSessionId,
-                            }).pipe(
-                              Effect.andThen(
-                                Effect.fail(
-                                  queryRunnerError(
-                                    new ClaudeMcpRegistrationTimeoutError(),
-                                    "setMcpServers",
-                                  ),
-                                ),
-                              ),
-                            ),
+                          orElse: timedOut("setMcpServers"),
                         }),
                       );
                       if (failed.length > 0) {
@@ -5569,7 +5584,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return { kind: "command", label, outcome };
           }
         });
-        const requestedContinuations = yield* Ref.make(new Set<string>());
+        const requestedContinuations = yield* Ref.make(new Map<string, symbol>());
         const absorbedWakes = yield* Ref.make(new Set<string>());
         const heldProposedPlansByToolUseId = new Map<string, string>();
         const runtimeContext = yield* Effect.context<never>();
@@ -6052,7 +6067,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (!current.has(nativeThreadId)) {
                 return current;
               }
-              const updated = new Set(current);
+              const updated = new Map(current);
               updated.delete(nativeThreadId);
               return updated;
             });
@@ -8911,12 +8926,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             return;
           }
+          const nativeThreadId = wakeInput.nativeThreadId;
+          const latch = Symbol(nativeThreadId);
           const shouldOffer = yield* Ref.modify(requestedContinuations, (current) => {
-            if (current.has(wakeInput.nativeThreadId)) {
+            if (current.has(nativeThreadId)) {
               return [false, current] as const;
             }
-            const updated = new Set(current);
-            updated.add(wakeInput.nativeThreadId);
+            const updated = new Map(current);
+            updated.set(nativeThreadId, latch);
             return [true, updated] as const;
           });
           if (!shouldOffer) {
@@ -8939,6 +8956,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             driver: CLAUDE_PROVIDER,
             detail,
             ...(notification === null ? {} : { notification }),
+            // A process reset can clear and re-latch this thread; a stale failure must not release the newer wake.
+            clearIfCurrent: () =>
+              Ref.update(requestedContinuations, (current) => {
+                if (current.get(nativeThreadId) !== latch) {
+                  return current;
+                }
+                const updated = new Map(current);
+                updated.delete(nativeThreadId);
+                return updated;
+              }),
           });
         });
 
@@ -11760,7 +11787,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* attachTurn;
                 const drained = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
                 yield* Ref.update(requestedContinuations, (current) => {
-                  const updated = new Set(current);
+                  const updated = new Map(current);
                   updated.delete(nativeThreadId);
                   return updated;
                 });

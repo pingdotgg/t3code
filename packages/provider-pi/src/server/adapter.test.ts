@@ -3384,6 +3384,41 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("records the model Pi reports on the completed provider turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          model: "model-b",
+          content: [{ type: "text", text: "done" }],
+          stopReason: "stop",
+        },
+      });
+      yield* fake.emit({ type: "agent_settled" });
+      const turn = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.equal(
+        turn.type === "provider_turn.updated" ? turn.providerTurn.model : null,
+        "anthropic/model-b",
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each(["turn window", "full tree"] as const)(
     "finishes a turn whose %s has a parentId cycle",
     (cycleIn) =>

@@ -978,6 +978,7 @@ type Wire92 = {
   readonly outputIndicatesFailure?: Wire6;
   readonly exitCode?: number | undefined;
   readonly monitor?: Wire6;
+  readonly completionWake?: "always" | undefined;
 };
 type Wire93 = {
   readonly deferredWork?: Wire70;
