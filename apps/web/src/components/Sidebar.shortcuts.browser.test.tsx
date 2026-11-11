@@ -66,6 +66,7 @@ it("leaves thread shortcuts and their hints to the preview when their rules excl
 
   const previewChrome = document.createElement("div");
   previewChrome.dataset.previewPanelMode = "browser";
+  previewChrome.style.cssText = "position: fixed; top: 0; left: 0; z-index: 10000";
   previewChrome.innerHTML = '<button type="button">Reload</button>';
   document.body.append(previewChrome);
   using _chrome = { [Symbol.dispose]: () => previewChrome.remove() };
