@@ -1,6 +1,7 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { Outlet, createFileRoute, redirect, useMatches, useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RestoreDeviceDefaultsButton } from "../components/settings/SettingsPanels";
 
 import { AppRouteModal, AppRouteModalClose } from "../components/AppRouteModal";
@@ -91,6 +92,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
 }
 
 function SettingsContentLayout({ children }: { children: ReactNode }) {
+  const isMobile = useMediaQuery("max-md");
   const contentArea = workspaceAreaProps("settings", 1, "Settings content");
   const pathname = useMatches({ select: (matches) => matches.at(-1)!.pathname });
   const { search, environment } = useSettingsScope();
@@ -106,9 +108,13 @@ function SettingsContentLayout({ children }: { children: ReactNode }) {
         <div
           {...contentArea}
           data-app-modal-pane=""
-          className="flex min-h-0 min-w-0 flex-1 flex-col"
+          className="pane-mobile-chrome flex min-h-0 min-w-0 flex-1 flex-col"
         >
-          <header className="flex h-13 shrink-0 items-center gap-3 ps-5 pe-3">
+          <header
+            data-pane-header=""
+            data-chrome-scope={isMobile ? "" : undefined}
+            className="flex h-13 shrink-0 items-center gap-3 ps-5 pe-3"
+          >
             <SettingsBreadcrumb pathname={pathname} />
             <div className="relative z-20 ms-auto flex shrink-0 items-center gap-1">
               {pathname === "/settings/general" ? (
@@ -120,7 +126,10 @@ function SettingsContentLayout({ children }: { children: ReactNode }) {
             </div>
           </header>
 
-          <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
+          <div
+            key={`${contentScopeKey}:${restoreSignal}`}
+            className="min-h-0 flex flex-1 flex-col max-md:overflow-hidden"
+          >
             <SettingsScopeBoundary pathname={pathname}>{children}</SettingsScopeBoundary>
           </div>
         </div>

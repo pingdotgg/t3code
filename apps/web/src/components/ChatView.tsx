@@ -3428,7 +3428,13 @@ export default function ChatView(props: ChatViewProps) {
         />
       )}
       {rightPanelControlsAtRoot && !embedded ? panelLayoutControls : null}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-clip" data-chat-column>
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-clip",
+          !embedded && "pane-mobile-chrome",
+        )}
+        data-chat-column
+      >
         {embedded ? null : (
           <ChatPaneHeader
             ref={threadPanelPopoverAnchorRef}
