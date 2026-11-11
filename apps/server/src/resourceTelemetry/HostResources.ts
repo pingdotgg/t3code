@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - iowait exists only in /proc/stat, which must be read at the same instant as os.cpus() and has no Effect equivalent.
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -14,16 +16,66 @@ export class HostResources extends Context.Service<
   { readonly read: Effect.Effect<HostResourcesSnapshot> }
 >()("t3/resourceTelemetry/HostResources") {}
 
-function readCpu() {
+/**
+ * Core time from a /proc/stat "cpu" line, in the milliseconds os.cpus() reports: disk wait
+ * counts as idle, and softirq and steal as work. os.cpus() leaves all three out of the total,
+ * so a core blocked on a disk or spent on interrupts reads as the wrong one of the two.
+ */
+export function parseLinuxCpu(stat: string): { idle: number; total: number } | null {
+  const end = stat.indexOf("\n");
+  // cpu user nice system idle iowait irq softirq steal guest guest_nice
+  const ticks = (end === -1 ? stat : stat.slice(0, end)).split(/\s+/).slice(1, 9).map(Number);
+  if (ticks.length !== 8 || !ticks.every(Number.isFinite)) return null;
+  const [user = 0, nice = 0, system = 0, idle = 0, ioWait = 0, irq = 0, softirq = 0, steal = 0] =
+    ticks;
+  // libuv turns these 100 Hz counters into the milliseconds os.cpus() reports.
+  const idleMs = (idle + ioWait) * 10;
+  const busyMs = (user + nice + system + irq + softirq + steal) * 10;
+  return { idle: idleMs, total: idleMs + busyMs };
+}
+
+/**
+ * A load average above the core count can mean disk wait on Linux alone:
+ * macOS counts runnable threads only, and Windows reports no load average.
+ */
+export const loadAverageCountsDiskWait = (platform: NodeJS.Platform) => platform === "linux";
+
+export interface CpuTimes {
+  readonly idle: number;
+  readonly total: number;
+  readonly count: number;
+}
+
+/** Cumulative core time, or nothing when this platform's counters cannot tell work from its absence. */
+export function readCpu(platform: NodeJS.Platform): CpuTimes | null {
   const cpus = NodeOS.cpus();
-  const cpu = cpus.reduce(
-    (sum, { times }) => ({
-      idle: sum.idle + times.idle,
-      total: sum.total + times.user + times.nice + times.sys + times.idle + times.irq,
-    }),
-    { idle: 0, total: 0 },
-  );
-  return { ...cpu, count: cpus.length };
+  if (platform === "linux") {
+    try {
+      const parsed = parseLinuxCpu(NodeFS.readFileSync("/proc/stat", "utf8"));
+      return parsed === null ? null : { ...parsed, count: cpus.length };
+    } catch {
+      return null;
+    }
+  }
+  return {
+    ...cpus.reduce(
+      (sum, { times }) => ({
+        idle: sum.idle + times.idle,
+        total: sum.total + times.user + times.nice + times.sys + times.idle + times.irq,
+      }),
+      { idle: 0, total: 0 },
+    ),
+    count: cpus.length,
+  };
+}
+
+/** Share of core time spent running work between two readings, null if they are not comparable. */
+export function cpuBusyBetween(previous: CpuTimes, next: CpuTimes): number | null {
+  const totalDelta = next.total - previous.total;
+  const idleDelta = next.idle - previous.idle;
+  return previous.count === next.count && totalDelta > 0 && idleDelta >= 0
+    ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
+    : null;
 }
 
 function darwinAvailableMemory(output: string): number | null {
@@ -43,15 +95,11 @@ const make = Effect.fn("makeHostResources")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const sample = Effect.fn("HostResources.sample")(function* () {
-    const previousCpu = readCpu();
+    const previousCpu = readCpu(platform);
     yield* Effect.sleep("200 millis");
-    const cpu = readCpu();
-    const totalDelta = cpu.total - previousCpu.total;
-    const idleDelta = cpu.idle - previousCpu.idle;
+    const cpu = readCpu(platform);
     const cpuUtilization =
-      previousCpu.count === cpu.count && totalDelta > 0 && idleDelta >= 0
-        ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
-        : null;
+      previousCpu === null || cpu === null ? null : cpuBusyBetween(previousCpu, cpu);
     const totalMemoryBytes = NodeOS.totalmem();
     // On Windows libuv returns GlobalMemoryStatusEx.ullAvailPhys, including standby memory.
     let availableMemoryBytes = NodeOS.freemem();
@@ -73,7 +121,7 @@ const make = Effect.fn("makeHostResources")(function* () {
     return {
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
-      cpuCount: cpu.count,
+      cpuCount: cpu?.count ?? NodeOS.cpus().length,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
     };
