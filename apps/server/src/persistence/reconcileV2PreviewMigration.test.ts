@@ -60,7 +60,8 @@ describe("V2 preview upgrade", () => {
         [78, "DropOrchestrationEventCorrelationIndex"],
         [79, "DelegatedRecoveryIndexes"],
         [80, "ScheduledTaskThreadMode"],
-        [81, "DelegationApprovalFormat"],
+        [81, "ProjectionMessageSearchText"],
+        [82, "DelegationApprovalFormat"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -164,7 +165,8 @@ describe("V2 preview upgrade", () => {
         [78, "DropOrchestrationEventCorrelationIndex"],
         [79, "DelegatedRecoveryIndexes"],
         [80, "ScheduledTaskThreadMode"],
-        [81, "DelegationApprovalFormat"],
+        [81, "ProjectionMessageSearchText"],
+        [82, "DelegationApprovalFormat"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
