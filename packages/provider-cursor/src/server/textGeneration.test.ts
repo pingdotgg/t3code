@@ -27,7 +27,8 @@ const cursorSdkMock = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("./sdk.ts", () => ({
+vi.mock("./sdk.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./sdk.ts")>()),
   loadCursorSdk: () => ({
     Agent: { create: cursorSdkMock.create },
     createAgentPlatform: vi.fn(),

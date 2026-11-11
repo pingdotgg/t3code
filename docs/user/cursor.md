@@ -78,6 +78,28 @@ request the sandbox and cannot start on Windows. Explicit sandbox policies remai
 including restrictive policies that the Windows SDK rejects. Explicit approval policy overrides
 control Auto-review, which is not represented as an interactive T3 Code approval flow.
 
+### Sandbox blocked on Linux
+
+On Ubuntu 23.10 and newer, AppArmor can stop Cursor's bundled `cursorsandbox` helper from creating
+user namespaces, so sandboxed Cursor turns fail with "Cursor could not start its command sandbox".
+To allow the helper, save this profile as `/etc/apparmor.d/t3-cursor-sandbox`:
+
+```text
+abi <abi/4.0>,
+include <tunables/global>
+
+profile t3-cursor-sandbox /**/@cursor/sdk-linux-*/bin/cursorsandbox flags=(unconfined) {
+  userns,
+}
+```
+
+Load it with `sudo apparmor_parser -r /etc/apparmor.d/t3-cursor-sandbox`, then restart T3 Code.
+The path covers AppImage, deb and `npx t3` installs. Because AppImage and `npx t3` run from
+directories your user can write to, any program placed at a matching path also gets user
+namespaces. With the deb package, narrow the profile to the root-owned install by replacing the path
+with `"/opt/T3 Code*/resources/node_modules/@cursor/sdk-linux-*/bin/cursorsandbox"`, quotes
+included. Alternatively, switch the thread to **Full access**, which runs without the sandbox.
+
 The existing Cursor binary path and API endpoint settings belong to the CLI/ACP integration. Cursor
 V2 execution does not launch that binary, and the SDK does not expose an API endpoint override.
 
