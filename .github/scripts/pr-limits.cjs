@@ -1,7 +1,8 @@
 const fs = require("node:fs");
 
+const DAY_MS = 24 * 60 * 60 * 1000;
 const OPEN_LIMIT = 8;
-const CONFLICT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const CONFLICT_WINDOW_MS = 7 * DAY_MS;
 const CLOSING_WINDOW_MS = 72 * 60 * 60 * 1000;
 // A first run meets the whole backlog; cap it so one run cannot post hundreds of comments.
 const MAX_WARNINGS_PER_RUN = 100;
@@ -10,6 +11,7 @@ const MAX_CLOSES_PER_RUN = 50;
 const MAX_LOOKUPS_PER_RUN = 300;
 const MERGEABLE_ATTEMPTS = 3;
 const MERGEABLE_RETRY_MS = 30_000;
+const MERGEABLE_LOOKUP_RETRY_MS = 5_000;
 
 const REBASE_LABEL = "needs-rebase";
 const CLOSING_LABEL = "triage:closing";
@@ -151,7 +153,12 @@ async function sweep({ github, context, core, dryRun }) {
     }
     if (!openPrs.some((pr) => pr.mergeable === "UNKNOWN" && readsMergeable(pr))) break;
   }
-  const candidates = openPrs.filter((pr) => sweepStep(pr) !== "skip");
+  // Start each day further down the list so the lookup cap cannot starve the same PRs every run.
+  const due = openPrs.filter((pr) => sweepStep(pr) !== "skip");
+  const start = due.length
+    ? (Math.floor(Date.now() / DAY_MS) * MAX_LOOKUPS_PER_RUN) % due.length
+    : 0;
+  const candidates = [...due.slice(start), ...due.slice(0, start)];
 
   const plan = [];
   let warnings = 0;
@@ -174,12 +181,17 @@ async function sweep({ github, context, core, dryRun }) {
       core.warning(`Stopped at ${MAX_LOOKUPS_PER_RUN} lookups; the next run continues.`);
       break;
     }
-    lookups += 1;
-    // The list can be minutes old by the time we act, so decide again on fresh state. A merge to
-    // main in between resets mergeability; it cannot resolve a conflict, so keep the listed answer.
-    const detail = (await github.graphql(PR_DETAIL_QUERY, { ...repo, number })).repository
-      .pullRequest;
-    if (detail.mergeable === "UNKNOWN") detail.mergeable = candidate.mergeable;
+    // The list can be minutes old by the time we act, so decide again on fresh state. A push or a
+    // merge to main in between resets mergeability: ask once more, and never act on the old answer.
+    const lookup = async () => {
+      lookups += 1;
+      return (await github.graphql(PR_DETAIL_QUERY, { ...repo, number })).repository.pullRequest;
+    };
+    let detail = await lookup();
+    if (detail.state === "OPEN" && detail.mergeable === "UNKNOWN" && readsMergeable(detail)) {
+      await new Promise((resolve) => setTimeout(resolve, MERGEABLE_LOOKUP_RETRY_MS));
+      detail = await lookup();
+    }
     const step = detail.state === "OPEN" ? sweepStep(detail) : "skip";
     if (step === "skip") continue;
 
@@ -260,7 +272,7 @@ async function sweep({ github, context, core, dryRun }) {
   return plan;
 }
 
-async function enforceOpenLimit({ github, context, core }) {
+async function enforceOpenLimit({ github, context, core, dryRun }) {
   const pr = context.payload.pull_request;
   const author = pr.user.login;
   const status = process.env.VOUCH_STATUS;
@@ -273,11 +285,19 @@ async function enforceOpenLimit({ github, context, core }) {
   // Someone else reopening a PR is a maintainer overriding the limit.
   if (context.payload.action === "reopened" && context.payload.sender.login !== author) return;
 
-  const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open author:${author}`;
+  const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open author:${author} sort:created-asc`;
   const { search } = await github.graphql(AUTHOR_OPEN_PRS_QUERY, { q });
-  const others = search.nodes.filter((node) => node.number && node.number !== pr.number).length;
+  // A new PR counts only the older ones, so two opened together cannot close each other.
+  const reopened = context.payload.action === "reopened";
+  const others = search.nodes.filter(
+    (node) => node.number && (reopened ? node.number !== pr.number : node.number < pr.number),
+  ).length;
   if (others < OPEN_LIMIT) {
     core.info(`PR #${pr.number}: ${author} has ${others} other open PRs.`);
+    return;
+  }
+  if (dryRun) {
+    core.notice(`Dry run. PR #${pr.number} would close: ${author} has ${others} other open PRs.`);
     return;
   }
 
