@@ -7,9 +7,7 @@ export default async function HomePage() {
   return (
     <div>
       <div data-testid="page-marker">PAGE_MARKER</div>
-      <div data-testid="env-message">
-        MESSAGE={String(env.MESSAGE ?? "unset")}
-      </div>
+      <div data-testid="env-message">MESSAGE={String(env.MESSAGE ?? "unset")}</div>
       <Counter />
       <GreetingForm />
     </div>
