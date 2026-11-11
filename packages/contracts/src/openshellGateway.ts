@@ -235,7 +235,7 @@ export interface GatewayDriverDrainResult {
 
 export interface GatewayDriverRemoveOptions {
   timeoutMs?: number;
-  /** Skip drain only with an explicit user ack; thread snapshots still export. */
+  /** Skip only the checkout bundles, and only with an explicit user ack; thread histories still export, the checkouts are lost. */
   force?: boolean;
   idempotencyKey?: string;
 }

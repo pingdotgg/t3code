@@ -40,8 +40,19 @@ const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
   .annotateMerge(EnvironmentHttpApi.annotations);
 
 /** How long a peer's descriptor may take before an address counts as unreachable. */
-const probeTimeout = (origin: string) =>
-  isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
+const probeTimeout = (origin: string) => {
+  // An unparseable origin is just an unreachable address; it gets the default.
+  const hostname = (() => {
+    try {
+      return new URL(origin).hostname;
+    } catch {
+      return null;
+    }
+  })();
+  return hostname !== null && isLocalLoopbackHost(hostname)
+    ? Duration.seconds(3)
+    : Duration.seconds(10);
+};
 
 /** The bootstrap exchange must not park a spawn on a silent verified peer. */
 const exchangeTimeout = Duration.seconds(15);
@@ -530,7 +541,7 @@ const make = Effect.gen(function* () {
     if (DateTime.isLessThanOrEqualTo(peer.session.value.expiresAt, yield* DateTime.now)) {
       return yield* new PeerEnvironmentRegistryError({
         reason: "not_paired",
-        message: `The delegation session for ${peer.label} expired. Pair it again with a fresh bootstrap credential from the peer.`,
+        message: `The delegation session for ${peer.label} expired. Re-run t3_environment_spawn with the same clientRequestId (or without one, if it was spawned without) to re-pair the existing worker.`,
       });
     }
     const stored = yield* secrets.get(row.secret_name).pipe(Effect.catch(failStorage));

@@ -965,7 +965,7 @@ export type OrchestratorMcpEnvironmentSpawnResult =
 export const OrchestratorMcpEnvironmentRemoveInput = Schema.Struct({
   targetEnvironmentId: EnvironmentId,
   drainTimeoutMs: Schema.optional(Schema.DurationFromMillis),
-  /** Skip drain only with an explicit user ack; thread snapshots still export. */
+  /** Skip only the checkout bundles, and only with an explicit user ack; thread histories still export, the checkouts are lost. */
   force: Schema.optional(Schema.Boolean),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });

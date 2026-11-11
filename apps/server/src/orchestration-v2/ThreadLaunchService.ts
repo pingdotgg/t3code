@@ -882,6 +882,17 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      // A sandbox workspace belongs to a fleet worker, which only a delegation
+      // provisions. Refuse before any id or thread mutation; an accepted
+      // launch still replays through its receipt.
+      if (input.workspaceStrategy.type === "sandbox" && Option.isNone(launchReceipt)) {
+        return yield* mapError(
+          input,
+          "create-thread",
+        )(
+          "A sandbox workspace runs in a fleet worker, so delegate the work with isolation 'openshell-auto' instead of launching it here.",
+        );
+      }
       yield* threads.assertProviderInstanceEnabled({
         projectId: input.projectId,
         commandId: input.commandId,

@@ -17,6 +17,13 @@ it("states t3_thread_read page size limits in the parameter descriptions", () =>
   }
 });
 
+it("discloses what t3_environment_remove preserves and what force loses", () => {
+  const description = OrchestratorToolkit.tools.t3_environment_remove.description;
+  expect(description).toContain("explicit user ack");
+  expect(description).toContain("lost");
+  expect(description).toContain("Refused while the drain is incomplete");
+});
+
 it("refuses a t3_thread_update whose fields do not fit its action", () => {
   const decode = Schema.decodeUnknownExit(
     OrchestratorToolkit.tools.t3_thread_update.parametersSchema,

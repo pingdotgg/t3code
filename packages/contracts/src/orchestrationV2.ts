@@ -740,6 +740,18 @@ export function orchestrationV2WorktreePending(
   worktreePath: string | null,
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "workspacePreparation">>,
 ): boolean {
+  // A sandbox run can never resolve to a local workspace, so it holds only
+  // while it is the latest run: a newer run supersedes it. A worktree holds
+  // until its path exists, whatever came after it.
+  const latest = runs.at(-1);
+  if (
+    latest !== undefined &&
+    (latest.status === "preparing" ||
+      latest.status === "failed" ||
+      latest.status === "interrupted") &&
+    latest.workspacePreparation?.type === "sandbox"
+  )
+    return true;
   return (
     worktreePath === null &&
     runs.some(

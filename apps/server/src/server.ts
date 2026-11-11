@@ -854,6 +854,22 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provideMerge(SqlitePersistence.layerConfig),
     ),
   ),
+  // Ephemeral workers self-retire: the periodic sweep shares the service
+  // instance above through layer memoization.
+  Layer.provide(
+    OpenShellFleetService.layerSweep.pipe(
+      Layer.provide(
+        OpenShellFleetService.layer.pipe(
+          Layer.provide(PeerEnvironmentRegistry.layer),
+          Layer.provide(OpenShellFleetStore.layer),
+          Layer.provide(PeerLinks.layer),
+          Layer.provide(NodeServices.layer),
+          Layer.provideMerge(RuntimeLayer.layerEventSink),
+          Layer.provideMerge(SqlitePersistence.layerConfig),
+        ),
+      ),
+    ),
+  ),
   Layer.provide(
     SpeechService.layer.pipe(
       Layer.provide(layerServerSettings),

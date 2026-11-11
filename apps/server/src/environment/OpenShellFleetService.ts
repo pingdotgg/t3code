@@ -11,6 +11,7 @@ import {
   type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Path from "effect/Path";
@@ -20,7 +21,10 @@ import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+
+import { forkParked } from "../serverActivation.ts";
 
 import {
   connectOpenShellGateway,
@@ -31,6 +35,7 @@ import {
   OpenShellGatewayDriverError,
   type GatewayDriverSpawnOptionsWithCeiling,
   type OpenShellDriverSettings,
+  type OrphanSweepResult,
   type WorkerPairingRegistrar,
   type FleetWorkerIndex,
   type FleetWorkerRow,
@@ -76,7 +81,7 @@ export class OpenShellFleetOperationFailed extends Schema.TaggedError<
   OpenShellFleetOperationFailed,
   { readonly brand: unique symbol }
 >()("OpenShellFleetOperationFailed", {
-  operation: Schema.Literals(["spawn", "remove", "list"]),
+  operation: Schema.Literals(["spawn", "remove", "list", "sweep"]),
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {}
@@ -113,6 +118,8 @@ export class OpenShellFleetService extends Context.Service<
     readonly listWorkers: (input: {
       readonly workerClass?: OpenShellWorkerClass;
     }) => Effect.Effect<ReadonlyArray<OpenShellFleetWorkerStatus>, OpenShellFleetError>;
+    /** One orphan-sweep tick: finalizes vanished rows and retires expired ephemeral workers. */
+    readonly sweepWorkers: () => Effect.Effect<OrphanSweepResult, OpenShellFleetError>;
   }
 >()("t3/environment/OpenShellFleetService") {}
 
@@ -284,14 +291,14 @@ const make = Effect.gen(function* () {
         fs,
         path,
       }),
-      git: OpenShellFleetDrainAdapters.execDrainGitPush({
+      git: OpenShellFleetDrainAdapters.execDrainGitBundle({
         exec: (sandboxName, command) =>
           Effect.tryPromise({
             try: () => client.exec(sandboxName, command),
             catch: (cause) =>
               new OpenShellFleetDrain.FleetDrainStepError({
-                step: "push",
-                message: cause instanceof Error ? cause.message : "The checkout was not pushed.",
+                step: "bundle",
+                message: cause instanceof Error ? cause.message : "The checkout was not exported.",
               }),
           }),
       }),
@@ -470,10 +477,39 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return OpenShellFleetService.of({ spawnWorker, removeWorker, listWorkers });
+  const sweepWorkers: OpenShellFleetService["Service"]["sweepWorkers"] = Effect.fn(
+    "OpenShellFleetService.sweepWorkers",
+  )(function* (): Effect.fn.Return<OrphanSweepResult, OpenShellFleetError> {
+    // The per-call gate makes an off fleet a no-op tick rather than an error, so
+    // the sweep below can keep its cadence through settings changes.
+    yield* gatewaySettings;
+    const driver = yield* driverFor("sweep");
+    return yield* callDriver("sweep", () => driver.orphanSweep());
+  });
+
+  return OpenShellFleetService.of({ spawnWorker, removeWorker, listWorkers, sweepWorkers });
 });
 
 export const layer = Layer.effect(OpenShellFleetService, make);
+
+/**
+ * Self-retiring ephemeral workers (spec section 5.6): one sweep every 5 minutes
+ * retires expired ephemeral workers drain-first and finalizes vanished rows.
+ * Refused drains keep their sandbox, so the next tick retries them.
+ */
+export const layerSweep = Layer.effectDiscard(
+  forkParked(
+    OpenShellFleetService.pipe(
+      Effect.flatMap((fleet) => fleet.sweepWorkers()),
+      Effect.catch((cause) =>
+        cause._tag === "OpenShellFleetDisabled"
+          ? Effect.void
+          : Effect.logWarning("The OpenShell fleet sweep did not complete", { cause }),
+      ),
+      Effect.repeat(Schedule.spaced(Duration.minutes(5))),
+    ),
+  ),
+);
 
 /**
  * No fleet here: tests and builds that do not run a gateway. Every verb fails
@@ -489,6 +525,9 @@ export const layerDisabled: Layer.Layer<OpenShellFleetService> = Layer.succeed(
       Effect.fail(new OpenShellFleetDisabled({ message: offHere })),
     ),
     listWorkers: Effect.fn("OpenShellFleetService.listWorkers.disabled")(() =>
+      Effect.fail(new OpenShellFleetDisabled({ message: offHere })),
+    ),
+    sweepWorkers: Effect.fn("OpenShellFleetService.sweepWorkers.disabled")(() =>
       Effect.fail(new OpenShellFleetDisabled({ message: offHere })),
     ),
   }),

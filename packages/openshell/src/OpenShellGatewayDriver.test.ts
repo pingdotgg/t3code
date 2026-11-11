@@ -54,6 +54,8 @@ interface FakeClientOptions {
   policyError?: Error;
   /** Sandboxes the gateway already holds. */
   sandboxes?: OpenShellSandboxView[];
+  /** Fails every sandbox lookup, like a transport error. */
+  getError?: Error;
 }
 
 const fakeClient = (options: FakeClientOptions = {}) => {
@@ -83,7 +85,10 @@ const fakeClient = (options: FakeClientOptions = {}) => {
       }
       return view;
     },
-    get: async (name) => sandboxes.get(name) ?? null,
+    get: async (name) => {
+      if (options.getError !== undefined) throw options.getError;
+      return sandboxes.get(name) ?? null;
+    },
     listAll: async (selector) => {
       const all = [...sandboxes.values()];
       const labels = selector?.labels ?? {};
@@ -796,6 +801,73 @@ describe("OpenShellGatewayDriver.orphanSweep", () => {
       },
     ]);
     expect(await index.get(envDraining)).not.toBeNull();
+  });
+
+  it("keeps the row when the sandbox lookup fails and the sandbox reappears", async () => {
+    const index = memoryFleetWorkerIndex();
+    const env = workerEnvId("environment-lookup");
+    await index.upsert({
+      environmentId: env,
+      state: "ready",
+      workerClass: "ephemeral",
+      sandboxName: "t3-worker-lookup",
+    });
+    const { registrar } = fakeRegistrar();
+    // Sweep 1: the lookup fails like a transport error, so absence is unknown.
+    const failing = makeDriver({
+      client: fakeClient({ getError: new Error("gateway unreachable") }).client,
+      registrar,
+      index,
+      settings: DEFAULT_SETTINGS,
+    });
+    const failed = await failing.orphanSweep();
+    expect(failed.finalized).toEqual([]);
+    expect(failed.leftInPlace.some((entry) => entry.name === "t3-worker-lookup")).toBe(true);
+    expect(await index.get(env)).not.toBeNull();
+    // Sweep 2: the sandbox is back (unlabeled here, so only get can see it) and
+    // the row survives as a live worker under another label.
+    const sandbox = sandboxView("t3-worker-lookup", {});
+    const recovered = makeDriver({
+      client: fakeClient({ sandboxes: [sandbox] }).client,
+      registrar,
+      index,
+      settings: DEFAULT_SETTINGS,
+    });
+    const second = await recovered.orphanSweep();
+    expect(second.finalized).toEqual([]);
+    expect(second.leftInPlace).toContainEqual({
+      name: "t3-worker-lookup",
+      reason: "the sandbox still exists under another label",
+    });
+    expect(await index.get(env)).not.toBeNull();
+  });
+
+  it("keeps a failed-drain row when the sandbox lookup fails", async () => {
+    const index = memoryFleetWorkerIndex();
+    const env = workerEnvId("environment-failed-drain");
+    await index.upsert({
+      environmentId: env,
+      state: "failed",
+      workerClass: "ephemeral",
+      sandboxName: "t3-worker-failed",
+    });
+    await index.setDrain(env, {
+      drainId: "drain:environment-failed-drain:1",
+      threads: { total: 1, acked: 0, failed: 1 },
+      worktrees: { total: 0, acked: 0, failed: 0 },
+      startedAt: NOW,
+      finishedAt: null,
+    });
+    const { registrar } = fakeRegistrar();
+    const driver = makeDriver({
+      client: fakeClient({ getError: new Error("gateway unreachable") }).client,
+      registrar,
+      index,
+      settings: DEFAULT_SETTINGS,
+    });
+    const result = await driver.orphanSweep();
+    expect(result.finalized).toEqual([]);
+    expect(await index.get(env)).not.toBeNull();
   });
 
   it("folds TTL enforcement into the sweep", async () => {

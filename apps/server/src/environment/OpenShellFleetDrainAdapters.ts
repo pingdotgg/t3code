@@ -25,7 +25,7 @@ import {
   FleetDrainStepError,
   type DrainAttachmentManifestEntry,
   type DrainAttachments,
-  type DrainGitPush,
+  type DrainGitBundle,
   type DrainSink,
   type DrainSinkRecord,
   type DrainSource,
@@ -316,8 +316,11 @@ export const linkDrainSource = (input: {
   };
 };
 
-/** Pushes a worker checkout and its checkpoint refs from inside the sandbox. */
-export const execDrainGitPush = (input: {
+/** Total decoded bundle bytes a checkout may export before the drain refuses it. */
+const MAX_DRAIN_BUNDLE_BYTES = 256 * 1024 * 1024;
+
+/** Exports a worker checkout and its checkpoint refs from inside the sandbox. */
+export const execDrainGitBundle = (input: {
   readonly exec: (
     sandboxName: string,
     command: ReadonlyArray<string>,
@@ -325,21 +328,37 @@ export const execDrainGitPush = (input: {
     { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
     FleetDrainStepError
   >;
-}): DrainGitPush => ({
-  push: ({ sandboxName, workspaceRoot }) =>
-    // Checkpoints under refs/t3 hold uncommitted state, so both namespaces travel.
-    // A per-worker namespace keeps stale branches from failing the push and keeps
-    // drained refs off the remote's shared branches.
-    input.exec(sandboxName, [
-      "git",
-      "-C",
-      workspaceRoot,
-      "push",
-      "origin",
-      `+refs/heads/*:refs/t3/fleet/${sandboxName}/heads/*`,
-      `+refs/t3/orchestration-v2/*:refs/t3/fleet/${sandboxName}/orchestration-v2/*`,
-    ]),
+  /** Overridden in tests; the production cap keeps one drain off the OOM path. */
+  readonly maxBytes?: number;
+}): DrainGitBundle => ({
+  bundle: Effect.fn("FleetDrainGitBundle.bundle")(
+    // A worker cannot push: its origin is the read-only shared mirror, it holds
+    // no credentials, and a branch behind origin rejects a push anyway. A
+    // bundle carries every ref (branches and the refs/t3 checkpoints holding
+    // uncommitted work) to the drain sink, base64 so exec stdout stays text.
+    ({ sandboxName, workspaceRoot }) =>
+      Effect.gen(function* () {
+        const exported = yield* input.exec(sandboxName, [
+          "sh",
+          "-c",
+          `b="\${TMPDIR:-/tmp}/t3-fleet-drain-$$.bundle"; ` +
+            `git -C ${shellQuote(workspaceRoot)} bundle create "$b" --all && base64 "$b" && rm -f "$b"`,
+        ]);
+        // A bundle beyond the cap would land as one oversized string; the drain
+        // fails closed instead and force removal stays the explicit way out.
+        const maxBytes = input.maxBytes ?? MAX_DRAIN_BUNDLE_BYTES;
+        if (Math.floor((exported.stdout.length * 3) / 4) > maxBytes)
+          return yield* new FleetDrainStepError({
+            step: "bundle",
+            message: `The checkout bundle of ${workspaceRoot} exceeds the drain size cap.`,
+          });
+        return exported;
+      }),
+  ),
 });
+
+/** Single-quotes a value for a shell command line. */
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 /** Total decoded attachment bytes drained per thread before skipping the set. */
 const MAX_DRAIN_ATTACHMENT_BYTES = 50 * 1024 * 1024;
