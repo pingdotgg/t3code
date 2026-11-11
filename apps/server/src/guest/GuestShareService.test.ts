@@ -3,16 +3,20 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
+  CheckpointScopeId,
   CommandId,
   EventId,
   GuestShareId,
   type GuestStreamEvent,
   MessageId,
+  NodeId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -280,6 +284,113 @@ it.effect("starts a stream with the runs and items already in the thread", () =>
       snapshot.item.projection.visibleTurnItems.map((row) => row.item.type),
       "user_message",
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("never sends the guest the owner's worktree path or branch", () =>
+  Effect.gen(function* () {
+    const worktreePath = "/Users/owner/code/secret-worktree";
+    const branch = "owner/secret-branch";
+    const driver = ProviderDriverKind.make("codex");
+    const { orchestrator, guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const ownerEvent = (
+      id: string,
+      event: Pick<OrchestrationV2DomainEvent, "type" | "payload">,
+    ): OrchestrationV2DomainEvent =>
+      ({
+        id: EventId.make(id),
+        threadId,
+        driver,
+        providerInstanceId: instanceId,
+        occurredAt: now,
+        ...event,
+      }) as OrchestrationV2DomainEvent;
+    const providerSession = (type: "provider-session.attached" | "provider-session.updated") =>
+      ownerEvent(`event:${type}`, {
+        type,
+        payload: {
+          id: ProviderSessionId.make("session:owner"),
+          driver,
+          providerInstanceId: instanceId,
+          // A live session, so the windowed snapshot includes it.
+          status: "running",
+          cwd: worktreePath,
+          model: null,
+          capabilities: CodexProviderCapabilitiesV2,
+          extensionStatuses: [],
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+    const runId = yield* ownerRun;
+    const checkpointScope = (id: string) =>
+      ownerEvent(`event:${id}`, {
+        type: "checkpoint-scope.created",
+        payload: {
+          id: CheckpointScopeId.make(id),
+          threadId,
+          runId,
+          nodeId: NodeId.make("node:owner"),
+          parentScopeId: null,
+          providerThreadId: null,
+          kind: "manual",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: false,
+          cwd: worktreePath,
+          createdAt: now,
+        },
+      });
+
+    // Before the guest connects, so the opening snapshot carries them.
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("owner-worktree"),
+      threadId,
+      branch,
+      worktreePath,
+    });
+    yield* eventSink.write({
+      events: [providerSession("provider-session.attached"), checkpointScope("scope:before")],
+    });
+    const events = yield* guestShares.stream(session);
+    // While the guest watches, so the live events carry them.
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("owner-rename"),
+      threadId,
+      title: "Renamed",
+    });
+    yield* eventSink.write({
+      events: [providerSession("provider-session.updated"), checkpointScope("scope:live")],
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.guest-share.close",
+      commandId: CommandId.make("close-after-owner-paths"),
+      threadId,
+    });
+
+    const received = Array.from(yield* Stream.runCollect(events));
+    const snapshot = received.find(
+      (event) => event.type === "thread" && event.item.kind === "snapshot",
+    );
+    if (snapshot?.type !== "thread" || snapshot.item.kind !== "snapshot") {
+      return assert.fail("Expected a thread snapshot.");
+    }
+    assert.equal(snapshot.item.projection.providerSessions.length, 1);
+    assert.equal(snapshot.item.projection.checkpointScopes.length, 1);
+    assert.includeMembers(
+      received.flatMap((event) =>
+        event.type === "thread" && event.item.kind === "event" ? [event.item.event.type] : [],
+      ),
+      ["thread.metadata-updated", "provider-session.updated", "checkpoint-scope.created"],
+    );
+    const wire = JSON.stringify(received);
+    assert.notInclude(wire, worktreePath);
+    assert.notInclude(wire, branch);
   }).pipe(Effect.provide(layerTest)),
 );
 

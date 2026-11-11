@@ -31,8 +31,8 @@ export type GuestShareView = typeof GuestShareView.Type;
 
 /**
  * The shared thread as the owner's client gets it: `thread` carries the same stream items the
- * owner's thread subscription sends, starting with a snapshot on every (re)connect. `view` is the
- * share itself, sent first and again when it changes.
+ * owner's thread subscription sends, minus the owner's branch and paths on disk, starting with a
+ * snapshot on every (re)connect. `view` is the share itself, sent first and again when it changes.
  */
 export const GuestStreamEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("view"), view: GuestShareView }),
