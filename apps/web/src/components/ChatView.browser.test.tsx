@@ -104,17 +104,22 @@ it("a new draft does not load its reserved thread before the server lists it", a
   expect(threadRequests).toEqual([]);
 });
 
-it("offers lesson side chats while hiding upstream side chat entry points", async () => {
+// The Welcome guide and What's new open over the app once setup is done; mark both seen.
+function skipLessonGuides(): Disposable {
   const seenAt = localStorage.getItem(WELCOME_GUIDE_SEEN_STORAGE_KEY);
   localStorage.setItem(WELCOME_GUIDE_SEEN_STORAGE_KEY, JSON.stringify("2026-01-01T00:00:00.000Z"));
   seedWhatsNewForNewInstall();
-  using _welcomeGuide = {
+  return {
     [Symbol.dispose]: () => {
       localStorage.removeItem(WHATS_NEW_SEEN_STORAGE_KEY);
       if (seenAt === null) localStorage.removeItem(WELCOME_GUIDE_SEEN_STORAGE_KEY);
       else localStorage.setItem(WELCOME_GUIDE_SEEN_STORAGE_KEY, seenAt);
     },
   };
+}
+
+it("offers lesson side chats while hiding upstream side chat entry points", async () => {
+  using _welcomeGuide = skipLessonGuides();
   const thread = threadWithHistory("lesson-side-chats", 1);
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
@@ -151,6 +156,7 @@ it("offers lesson side chats while hiding upstream side chat entry points", asyn
 });
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
+  using _welcomeGuide = skipLessonGuides();
   const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
   using _environment = installFakeEnvironment([thread]);
   __setClientSettingsForTests({
