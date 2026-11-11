@@ -197,6 +197,29 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       }),
   );
 
+  // Root ignores the missing read bit, so only a regular user sees the failure.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "saves when the umask removes owner read access",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+        const filePath = path.join(root, "settings.json");
+        yield* fs.writeFileString(filePath, "before");
+        yield* fs.chmod(filePath, 0o600);
+        yield* Effect.acquireRelease(
+          Effect.sync(() => process.umask(0o400)),
+          (previous) => Effect.sync(() => process.umask(previous)),
+        );
+
+        yield* writeFileStringAtomically({ filePath, contents: "after" });
+
+        assert.strictEqual(yield* fs.readFileString(filePath), "after");
+        assert.strictEqual((yield* fs.stat(filePath)).mode & 0o777, 0o600);
+      }),
+  );
+
   it.effect("syncs the contents before the rename and the directory after it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

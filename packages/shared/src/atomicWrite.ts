@@ -59,10 +59,10 @@ export const writeFileStringAtomically = (input: {
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      yield* fs.writeFileString(tempPath, input.contents);
-      // Open before the chmod can drop write access and close before the Windows rename.
+      // One write-only handle: a reopen fails when the umask or the chmod drops access.
       // Without the sync, a crash soon after the rename can leave the target empty.
-      yield* fs.open(tempPath, { flag: "r+" }).pipe(
+      yield* fs.open(tempPath, { flag: "w" }).pipe(
+        Effect.tap((file) => file.writeAll(new TextEncoder().encode(input.contents))),
         Effect.tap(() =>
           platform === "win32"
             ? Effect.void
