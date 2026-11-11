@@ -19,6 +19,9 @@ vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => ({ operation: null, error: null, isRunning: false }),
 }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
+vi.mock("../components/sourceControlAppAccessToast", () => ({
+  suggestAppAccessForRemote: () => Promise.resolve(),
+}));
 vi.mock("./session", () => ({
   useEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,

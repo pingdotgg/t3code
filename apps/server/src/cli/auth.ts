@@ -34,7 +34,7 @@ import {
   resolveCliAuthConfig,
 } from "./config.ts";
 
-export class AuthServerUnreachableError extends Schema.TaggedError<AuthServerUnreachableError>()(
+class AuthServerUnreachableError extends Schema.TaggedError<AuthServerUnreachableError>()(
   "AuthServerUnreachableError",
   { origin: Schema.String, cause: Schema.Defect() },
 ) {
@@ -91,7 +91,7 @@ const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function
   },
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const config = yield* resolveCliAuthConfig(flags, logLevel, options);
   const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
   return yield* Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -128,6 +128,15 @@ const subjectFlag = Flag.String("subject").pipe(
 );
 
 const baseUrlFlag = Flag.String("base-url").pipe(
+  Flag.withSchema(
+    Schema.URLFromString.pipe(
+      Schema.check(
+        Schema.makeFilter((url) => url.protocol === "http:" || url.protocol === "https:", {
+          expected: "an http:// or https:// URL",
+        }),
+      ),
+    ),
+  ),
   Flag.withDescription("Optional public base URL used to print a ready `/pair#token=...` link."),
   Flag.optional,
 );
@@ -159,7 +168,7 @@ const pairingCreateCommand = Command.make("create", {
           });
           const output = formatIssuedPairingCredential(issued, {
             json: flags.json,
-            ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value } : {}),
+            ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value.href } : {}),
           });
           yield* Console.log(output);
         }),
