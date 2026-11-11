@@ -421,13 +421,12 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       }
       const started = startResult.success;
       // Agents that persist sessions (OpenCode) would otherwise keep one empty session per probe.
-      if (started.initializeResult.agentCapabilities?.sessionCapabilities?.delete != null) {
-        yield* Effect.addFinalizer(() =>
-          runtime
-            .deleteSession(started.sessionId)
-            .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
-        );
-      }
+      // The runtime only sends session/delete when the agent advertises it.
+      yield* Effect.addFinalizer(() =>
+        runtime
+          .deleteSession(started.sessionId)
+          .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
+      );
       yield* Deferred.await(commandsAdvertised).pipe(
         Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
       );

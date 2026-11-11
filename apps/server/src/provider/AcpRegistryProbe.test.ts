@@ -432,7 +432,7 @@ describe("ACP Registry probe", () => {
         expect(requests.filter((request) => request.method === "session/delete")).toEqual([
           expect.objectContaining({ params: { sessionId: "mock-session-1" } }),
         ]);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it("distinguishes authentication failures from generic probe failures", () => {
