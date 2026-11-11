@@ -64,7 +64,7 @@ index 3d7641a9a94864415d207c678b71f8c592c90aa1..2b9ef77c3eb58cd284152ad22b2e711a
          offset: SCREEN_WIDTH * index,
          index,
 diff --git a/dist/components/ImageItem/ImageItem.android.js b/dist/components/ImageItem/ImageItem.android.js
-index 5fcaa9f9a7d893817fee89b85186ee3936118e69..3effe838fa54495d165b81cc7501e72d51fbee1b 100644
+index 5fcaa9f9a7d893817fee89b85186ee3936118e69..e166dd14349b4b95f96d648cb64f464ed564c8b8 100644
 --- a/dist/components/ImageItem/ImageItem.android.js
 +++ b/dist/components/ImageItem/ImageItem.android.js
 @@ -6,17 +6,17 @@
@@ -72,7 +72,7 @@ index 5fcaa9f9a7d893817fee89b85186ee3936118e69..3effe838fa54495d165b81cc7501e72d
   */
  import React, { useCallback, useRef, useState } from "react";
 -import { Animated, ScrollView, Dimensions, StyleSheet, } from "react-native";
-+import { Animated, ScrollView, Dimensions, } from "react-native";
++import { Animated, ScrollView, Dimensions, View, } from "react-native";
  import useImageDimensions from "../../hooks/useImageDimensions";
  import usePanResponder from "../../hooks/usePanResponder";
  import { getImageStyles, getImageTransform } from "../../utils";
@@ -102,7 +102,7 @@ index 5fcaa9f9a7d893817fee89b85186ee3936118e69..3effe838fa54495d165b81cc7501e72d
      const onLongPressHandler = useCallback(() => {
          onLongPress(imageSrc);
      }, [imageSrc, onLongPress]);
-@@ -64,7 +64,7 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
+@@ -64,21 +64,15 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
          const offsetY = (_c = (_b = (_a = nativeEvent) === null || _a === void 0 ? void 0 : _a.contentOffset) === null || _b === void 0 ? void 0 : _b.y, (_c !== null && _c !== void 0 ? _c : 0));
          scrollValueY.setValue(offsetY);
      };
@@ -111,8 +111,13 @@ index 5fcaa9f9a7d893817fee89b85186ee3936118e69..3effe838fa54495d165b81cc7501e72d
          onScroll,
          onScrollEndDrag,
      })}>
-@@ -72,13 +72,4 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
-       {(!isLoaded || !imageDimensions) && <ImageLoading />}
+-      <Animated.Image {...panHandlers} source={imageSrc} style={imageStylesWithOpacity} onLoad={onLoaded}/>
+-      {(!isLoaded || !imageDimensions) && <ImageLoading />}
++      {/* Pinch from anywhere on screen, not only on the fitted image. */}
++      <View {...panHandlers} pointerEvents={isLoaded && imageDimensions ? "auto" : "none"} style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}>
++        <Animated.Image source={imageSrc} style={imageStylesWithOpacity} onLoad={onLoaded}/>
++        {(!isLoaded || !imageDimensions) && <ImageLoading />}
++      </View>
      </ScrollView>);
  };
 -const styles = StyleSheet.create({
@@ -254,7 +259,7 @@ index cb5f0f798e5cfeedf459b7d22e92871db3092020..97ca2c9c326b1c53e6a5d90c3bb95d53
  };
  export default useImageIndexChange;
 diff --git a/dist/hooks/usePanResponder.js b/dist/hooks/usePanResponder.js
-index 99dcbc7efea4eba86a8bc2bad71dde73c8ebf1b4..3a374c0923879548ec3826a78be16f79c6e01432 100644
+index 99dcbc7efea4eba86a8bc2bad71dde73c8ebf1b4..7a7601eef4d330448d876b6460f53bd518a2c18c 100644
 --- a/dist/hooks/usePanResponder.js
 +++ b/dist/hooks/usePanResponder.js
 @@ -8,14 +8,14 @@
