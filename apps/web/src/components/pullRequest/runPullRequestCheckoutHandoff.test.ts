@@ -145,11 +145,29 @@ it.each(["worktree", "local"] as const)(
       }),
     );
 
+    const nextPrepare = deferred<PreparedResult>();
+    const prepareNext = vi.fn(() => nextPrepare.promise);
+    const nextPending =
+      mode === "worktree"
+        ? runPullRequestCheckoutHandoff({
+            terminology,
+            mode,
+            task: null,
+            clearHandoff: vi.fn(),
+            openThread: async () => opened,
+            prepare: prepareNext,
+            pointThread,
+          })
+        : null;
+    if (nextPending !== null) await vi.waitFor(() => expect(prepareNext).toHaveBeenCalled());
+
     prepare.resolve(AsyncResult.success(preparedCheckout));
     await pending;
     expect(pointThread).not.toHaveBeenCalled();
     expect(clearHandoff).toHaveBeenCalled();
-    expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(false);
+    expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(
+      mode === "worktree",
+    );
     if (mode === "local") {
       expect(state.update).toHaveBeenLastCalledWith(
         state.toastId,
@@ -160,6 +178,9 @@ it.each(["worktree", "local"] as const)(
         }),
       );
     }
+    nextPrepare.resolve(AsyncResult.success(preparedCheckout));
+    await nextPending;
+    expect(usePullRequestCheckoutState.getState().draftIds.has(opened.draftId)).toBe(false);
   },
 );
 

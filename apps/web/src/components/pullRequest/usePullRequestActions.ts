@@ -310,6 +310,7 @@ export async function runPullRequestCheckoutHandoff(input: {
   let cancelled = false;
   let settled = false;
   let pendingDraftId: DraftId | null = null;
+  const pendingOwner = Symbol();
   const toastId = toastManager.add({
     type: "loading",
     title: `Preparing the ${input.terminology.singular} checkout...`,
@@ -332,7 +333,8 @@ export async function runPullRequestCheckoutHandoff(input: {
           return;
         }
         // Unblock send immediately; finally clears again after prepare/point settle.
-        if (pendingDraftId !== null) setPullRequestCheckoutPending(pendingDraftId, false);
+        if (pendingDraftId !== null)
+          setPullRequestCheckoutPending(pendingDraftId, false, pendingOwner);
         input.clearHandoff();
         finishCheckoutHandoffToast(toastId, {
           type: "info",
@@ -365,7 +367,7 @@ export async function runPullRequestCheckoutHandoff(input: {
   }
 
   pendingDraftId = opened.draftId;
-  setPullRequestCheckoutPending(opened.draftId, true);
+  setPullRequestCheckoutPending(opened.draftId, true, pendingOwner);
   try {
     const prepared = await input.prepare(opened.threadId);
     if (cancelled && input.mode !== "local") return;
@@ -434,7 +436,7 @@ export async function runPullRequestCheckoutHandoff(input: {
         : offHeadPullRequestCheckoutToast(input.terminology),
     );
   } finally {
-    setPullRequestCheckoutPending(opened.draftId, false);
+    setPullRequestCheckoutPending(opened.draftId, false, pendingOwner);
   }
 }
 
