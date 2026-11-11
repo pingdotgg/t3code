@@ -356,6 +356,21 @@ export function buildProviderOptionSelectionsAfterChange(
   );
 }
 
+/**
+ * An ACP agent checks options against its live session, so a model's saved
+ * option that no descriptor lists, such as a model choice before that model
+ * has run, is sent as saved instead of dropped.
+ */
+export function withUndescribedSelections(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  explicit: ReadonlyArray<ProviderOptionSelection> | undefined,
+  saved: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): Array<ProviderOptionSelection> | undefined {
+  const describedIds = new Set(descriptors.map(({ id }) => id));
+  const merged = [...(saved ?? []).filter(({ id }) => !describedIds.has(id)), ...(explicit ?? [])];
+  return merged.length > 0 ? merged : undefined;
+}
+
 export function buildExplicitProviderOptionSelectionsFromDescriptors(
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,

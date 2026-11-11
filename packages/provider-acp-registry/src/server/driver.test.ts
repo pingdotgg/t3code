@@ -287,24 +287,37 @@ describe("acpRegistrySnapshotReadiness", () => {
     ]);
   });
 
-  it("describes discovered session options only on the model they belong to", () => {
-    const snapshot = probedSnapshot("opus", [wideThinking], { customModels: ["custom-model"] });
-    expect(thinkingChoices(snapshot)).toEqual({
-      opus: WIDE_LEVELS,
-      glm: [],
-      "custom-model": [],
+  it("lends the probed model's tuning options, not its model choices, to models that have not run", () => {
+    const modelChoice = {
+      id: "model",
+      label: "Model",
+      type: "select" as const,
+      selectsModel: true,
+      options: [{ id: "opus-4", label: "Opus 4" }],
+      currentValue: "opus-4",
+    };
+    const snapshot = probedSnapshot("opus", [modelChoice, wideThinking], {
+      customModels: ["custom-model"],
     });
-
-    // A session whose current model is not one the agent lists describes no model.
-    expect(thinkingChoices(probedSnapshot(null, [wideThinking]))).toEqual({ opus: [], glm: [] });
+    expect(
+      Object.fromEntries(
+        snapshot.models.map((model) => [
+          model.slug,
+          model.capabilities?.optionDescriptors?.map(({ id }) => id),
+        ]),
+      ),
+    ).toEqual({ opus: ["model", "thought_level"], glm: ["thought_level"], "custom-model": [] });
   });
 
-  it("tells models no session has described apart from models without options", () => {
+  it("keeps a model's empty observation when another model runs", () => {
     const capabilities = (provider: ServerProvider) =>
       Object.fromEntries(provider.models.map((model) => [model.slug, model.capabilities]));
     // The probe ran on Opus, which offers no options; GLM has not run yet.
     const probed = probedSnapshot("opus", []);
-    expect(capabilities(probed)).toEqual({ opus: { optionDescriptors: [] }, glm: null });
+    expect(capabilities(probed)).toEqual({
+      opus: { optionDescriptors: [] },
+      glm: { optionDescriptors: [] },
+    });
 
     // A GLM session describes GLM and leaves Opus's empty observation alone.
     const live = applyAcpRegistryLiveConfiguration(
@@ -410,7 +423,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
     expect(thinkingChoices(applyAcpRegistryModelOptions(firstProbe, probed))).toEqual({
       opus: WIDE_LEVELS,
-      glm: [],
+      glm: WIDE_LEVELS,
     });
 
     const laterProbe = probedSnapshot("glm", [narrowThinking]);

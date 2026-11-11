@@ -113,7 +113,11 @@ function withModelOptions(
   });
 }
 
-/** Unobserved models have unknown capabilities; only the current model owns session options. */
+/**
+ * Only the current model owns its session options. Other models borrow its
+ * tuning options until they run, but not its model choices, which list the
+ * current model's catalog.
+ */
 function modelsFromDiscovery(
   discovery:
     | Pick<AcpRegistryLiveConfiguration, "models" | "currentModelId" | "configOptions">
@@ -121,6 +125,15 @@ function modelsFromDiscovery(
   customModels: ReadonlyArray<string>,
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
+  const borrowedOptions = (discovery?.configOptions ?? []).filter(
+    (option) => option.type !== "select" || option.selectsModel !== true,
+  );
+  const unobservedCapabilities =
+    discovery === undefined
+      ? null
+      : borrowedOptions.length === 0
+        ? EMPTY_CAPABILITIES
+        : createModelCapabilities({ optionDescriptors: borrowedOptions });
   const builtInModels: ReadonlyArray<ServerProviderModel> =
     discovered.length === 0
       ? [
@@ -129,7 +142,7 @@ function modelsFromDiscovery(
             name: "Default",
             isCustom: false,
             isDefault: true,
-            capabilities: null,
+            capabilities: unobservedCapabilities,
           },
         ]
       : discovered.map((model) => ({
@@ -137,7 +150,7 @@ function modelsFromDiscovery(
           name: model.name,
           isCustom: false,
           ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
-          capabilities: null,
+          capabilities: unobservedCapabilities,
         }));
   const models = providerModelsFromSettings(builtInModels, customModels, EMPTY_CAPABILITIES);
   return discovery === undefined

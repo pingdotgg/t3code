@@ -144,6 +144,46 @@ describe("mobile model options", () => {
     expect(explicitOption?.selection.options).toEqual([{ id: "serviceTier", value: "priority" }]);
   });
 
+  it("keeps an ACP model's saved model choice before that model has run", () => {
+    const instanceId = ProviderInstanceId.make("acpRegistry_cline");
+    const config = {
+      providers: [
+        {
+          instanceId,
+          driver: "acpRegistry",
+          displayName: "Cline",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "cline-pass",
+              name: "ClinePass",
+              isCustom: false,
+              // Borrowed tuning options: the model choice is not described yet.
+              capabilities: {
+                optionDescriptors: [
+                  { id: "auto_approve", label: "Auto-approve tools", type: "boolean" },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const saved: ModelSelection = {
+      instanceId,
+      model: "cline-pass",
+      options: [
+        { id: "model", value: "cline-pass/muse-spark-1.3-contributor" },
+        { id: "auto_approve", value: true },
+      ],
+    };
+
+    const [option] = buildModelOptions(config, saved, undefined, null);
+    expect(option?.selection).toEqual(saved);
+  });
+
   it("limits existing threads to their provider while new tasks keep every provider", () => {
     const providers = ["codex", "claudeAgent"].map((instanceId) => ({
       instanceId,

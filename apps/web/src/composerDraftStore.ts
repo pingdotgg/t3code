@@ -1190,16 +1190,20 @@ export function deriveEffectiveComposerModelState(input: {
   const capabilities =
     selectedModels &&
     getListedModelCapabilities(selectedModels, selectedModel, input.selectedProvider);
-  // Options carried over from another model are only hints that descriptors
-  // re-resolve. Values the provider receives as saved must instead come from
-  // this model's own saved options: every option while the model's options
-  // are unknown, otherwise only options that select the model a turn runs on.
+  // Carried options are hints that descriptors re-resolve. Values sent as saved
+  // come only from this model's own saved options: all while its options are
+  // unknown, else model-selecting ones and, for ACP, ones no descriptor lists.
   const modelSelectingIds = new Set(
     capabilities?.optionDescriptors?.flatMap((descriptor) =>
       descriptor.type === "select" && descriptor.selectsModel === true ? [descriptor.id] : [],
     ),
   );
-  if (capabilities === undefined || (capabilities !== null && modelSelectingIds.size === 0)) {
+  const describedIds = new Set(capabilities?.optionDescriptors?.map(({ id }) => id));
+  const isAcp = input.selectedProvider === "acpRegistry";
+  if (
+    capabilities === undefined ||
+    (capabilities !== null && modelSelectingIds.size === 0 && !isAcp)
+  ) {
     return {
       selectedModel,
       modelOptions: withFallbackInstanceOptions({
@@ -1211,7 +1215,9 @@ export function deriveEffectiveComposerModelState(input: {
     };
   }
   const sentAsSaved = (selection: ProviderOptionSelection) =>
-    capabilities === null || modelSelectingIds.has(selection.id);
+    capabilities === null ||
+    modelSelectingIds.has(selection.id) ||
+    (isAcp && !describedIds.has(selection.id));
 
   const { [selectedOptionsKey]: carried, ...otherModelOptions } = modelOptions ?? {};
   const nextOptions = [

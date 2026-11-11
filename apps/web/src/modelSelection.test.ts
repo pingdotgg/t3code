@@ -933,7 +933,22 @@ describe("composer dispatch for Cline's later model option", () => {
           ],
         },
       },
-      { slug: "cline-pass", name: "ClinePass", isCustom: false, capabilities: null },
+      // Until it runs, ClinePass borrows Cline's options except its model choices.
+      {
+        slug: "cline-pass",
+        name: "ClinePass",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "auto_approve",
+              label: "Auto-approve tools",
+              type: "boolean",
+              currentValue: false,
+            },
+          ],
+        },
+      },
     ],
   };
   const passPick = [
@@ -1024,8 +1039,11 @@ describe("composer dispatch for Cline's later model option", () => {
     ).toEqual(saved);
   });
 
-  it("does not send another model's options to it", () => {
-    const passOnly = createModelSelection(instanceId, "cline-pass");
+  it("does not send another model's model choice to it", () => {
+    // Carried tuning options stay hints; Cline's model choice never reaches ClinePass.
+    const passOnly = createModelSelection(instanceId, "cline-pass", [
+      { id: "auto_approve", value: true },
+    ]);
     // Picking ClinePass in a Cline thread.
     expect(
       sent({
@@ -1200,7 +1218,7 @@ describe("composer dispatch for Cline's later model option", () => {
     expect(draftSent(pickedFreshId, describedPass)).toEqual(picked);
   });
 
-  it("does not send carried options after falling back from another explicitly picked provider", () => {
+  it("sends no carried model choice after falling back from another explicitly picked provider", () => {
     const codexId = ProviderInstanceId.make("codex");
     const codex: ServerProvider = {
       ...provider({ instanceId: "codex", models: ["gpt-5.5"] }),
@@ -1226,10 +1244,11 @@ describe("composer dispatch for Cline's later model option", () => {
       lockedInstanceId: null,
     });
     expect(selectedProviderEntry?.instanceId).toBe(instanceId);
-    expect(sent({ draft })).toEqual(createModelSelection(instanceId, "cline-pass"));
-    expect(sent({ draft }, describedPass)).toEqual(
-      createModelSelection(instanceId, "cline-pass", [{ id: "auto_approve", value: true }]),
-    );
+    for (const snapshot of [cline, describedPass]) {
+      expect(sent({ draft }, snapshot)).toEqual(
+        createModelSelection(instanceId, "cline-pass", [{ id: "auto_approve", value: true }]),
+      );
+    }
   });
 });
 

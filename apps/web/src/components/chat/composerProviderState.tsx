@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
+  withUndescribedSelections,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
@@ -151,14 +152,15 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   const ultrathinkActive =
     (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
     promptInjectionState === "ultrathink";
+  const explicit = buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, selections);
 
   return {
     provider,
     promptEffort,
-    modelOptionsForDispatch: buildExplicitProviderOptionSelectionsFromDescriptors(
-      descriptors,
-      selections,
-    ),
+    modelOptionsForDispatch:
+      provider === "acpRegistry"
+        ? withUndescribedSelections(descriptors, explicit, selections)
+        : explicit,
     ...(ultrathinkActive
       ? {
           composerFrameClassName: "ultrathink-frame",

@@ -1195,6 +1195,12 @@ describe("AcpRegistryAdapterV2", () => {
 
     const capabilitiesOf = (provider: ServerProvider, slug: string) =>
       provider.models.find((model) => model.slug === slug)?.capabilities;
+    // A model no session has run borrows Cline's tuning options, never its model choices.
+    const assertBorrowsTuningOnly = (provider: ServerProvider, slug: string) =>
+      assert.deepEqual(
+        capabilitiesOf(provider, slug)?.optionDescriptors?.map(({ id }) => id),
+        ["mode", "auto_approve"],
+      );
     // The composer's options for a described model with stored picks applied,
     // as the web traits picker and mobile provider options resolve them.
     const descriptorsOn = (
@@ -1410,7 +1416,7 @@ describe("AcpRegistryAdapterV2", () => {
         const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
         const instanceId = ProviderInstanceId.make("acp-registry-restart");
         const discovered = yield* discoverCline(instanceId);
-        assert.strictEqual(capabilitiesOf(discovered, "cline-pass"), null);
+        assertBorrowsTuningOnly(discovered, "cline-pass");
 
         // The script expects the provider write, then exactly the saved model.
         const open = yield* makeClineSessions(instanceId, "model.applied");
@@ -1472,9 +1478,7 @@ describe("AcpRegistryAdapterV2", () => {
             { id: "mode", value: "act" },
             { id: "auto_approve", value: true },
           ]);
-          // Nothing has described ClinePass yet: its options are unknown, not
-          // Cline's. Clients send it only options saved for ClinePass itself.
-          assert.strictEqual(capabilitiesOf(discovered, "cline-pass"), null);
+          assertBorrowsTuningOnly(discovered, "cline-pass");
 
           // The first ClinePass send writes only the provider and opens on the
           // agent's own ClinePass default. The script ends after the provider
@@ -1495,7 +1499,7 @@ describe("AcpRegistryAdapterV2", () => {
             "cline-free/mimo-v2.6-flash",
             "cline-free/muse-spark-1.3-contributor",
           ]);
-          assert.strictEqual(capabilitiesOf(live, "openai-codex"), null);
+          assertBorrowsTuningOnly(live, "openai-codex");
 
           // Each provider keeps its own explicit picks.
           const pickedOnCline = [
