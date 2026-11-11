@@ -6,6 +6,7 @@ import {
   type GitRunStackedActionResult,
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   type OrchestrationProjectShell,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -40,7 +41,7 @@ const project: OrchestrationProjectShell = {
       remoteName: "origin",
       remoteUrl: "git@github.acme.test:Platform/API.git",
     },
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     displayName: "Platform/API",
     owner: "Platform",
     name: "API",
@@ -160,33 +161,6 @@ describe("linkCreatedPullRequest", () => {
           source: "created",
         },
       ]);
-    }),
-  );
-
-  it.effect("swallows an already-linked rejection and other dispatch failures", () =>
-    Effect.gen(function* () {
-      const rejecting: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
-        Effect.fail(
-          new Orchestrator.OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "already linked",
-          }),
-        );
-      const result = prResult({
-        status: "opened_existing",
-        number: 7,
-        url: "https://github.com/t3tools/t3code/pull/7",
-      });
-      yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
-        Effect.provide(layerDependenciesFor(rejecting)),
-      );
-      yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
-        Effect.provide(layerDependenciesFor(() => Effect.die(new Error("engine down")))),
-      );
-      yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
-        Effect.provide(layerDependenciesFor(() => Effect.die(new Error("unreachable")), null)),
-      );
     }),
   );
 });

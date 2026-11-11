@@ -8,11 +8,16 @@ import {
   ProviderInstanceId,
   RunId,
   ScheduledTaskId,
+  SECRET_REQUEST_UNSAVED_NOTE,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "vite-plus/test";
 
@@ -24,6 +29,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -115,7 +122,8 @@ function makeRun(input: {
   };
 }
 
-it("readThread prefers activity-run status over a newer cancelled queued run", async () => {
+it("readThread preserves caller access errors and prefers activity-run status over a newer cancelled queued run", async () => {
+  let callerUnavailable = false;
   const projection = {
     thread: baseThread({
       threadId: parentThreadId,
@@ -128,6 +136,7 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
     ],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -141,15 +150,24 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
           getThreadRecords: (threadId) =>
-            threadId === parentThreadId
-              ? Effect.succeed(projection)
-              : Effect.die(`unexpected thread ${threadId}`),
+            callerUnavailable
+              ? Effect.fail(
+                  new Orchestrator.OrchestratorProjectionError({
+                    threadId,
+                    cause: "Caller unavailable",
+                  }),
+                )
+              : threadId === parentThreadId
+                ? Effect.succeed(projection)
+                : Effect.die(`unexpected thread ${threadId}`),
           getThreadShell: (threadId) =>
-            Effect.succeed(
-              threadId === parentThreadId
-                ? (projection.thread as unknown as OrchestrationV2ThreadShell)
-                : null,
-            ),
+            callerUnavailable
+              ? Effect.die("A failed caller read must not reach the target")
+              : Effect.succeed(
+                  threadId === parentThreadId
+                    ? (projection.thread as unknown as OrchestrationV2ThreadShell)
+                    : null,
+                ),
           getProjectThreadRecords: (input) =>
             input.threadId === parentThreadId
               ? Effect.succeed(projection)
@@ -161,6 +179,7 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
@@ -178,6 +197,110 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+
+    callerUnavailable = true;
+    const denied = yield* service
+      .readThread({ ...makeScope(), capabilities: new Set() }, { threadId: parentThreadId })
+      .pipe(Effect.flip);
+    expect(denied.code).toBe("capability_denied");
+    const missingCaller = yield* service
+      .readThread(makeScope(), { threadId: parentThreadId })
+      .pipe(Effect.flip);
+    expect(missingCaller.code).toBe("orchestration_error");
+    expect(missingCaller.message).toContain(`Unable to read thread ${parentThreadId}:`);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("readThread pages cut-off text without splitting an emoji across pages", async () => {
+  const text = "a😀bc";
+  const itemId = TurnItemId.make("turn-item-mcp-reasoning");
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    visibleTurnItems: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const row = {
+    position: 0,
+    visibility: "visible",
+    sourceThreadId: parentThreadId,
+    sourceItemId: itemId,
+    item: {
+      type: "reasoning",
+      runId: activeRunId,
+      status: "completed",
+      title: null,
+      text,
+      updatedAt: now,
+    },
+  };
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTimelinePage: () =>
+            Effect.succeed({
+              items: [row] as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: 1,
+              hasMore: false,
+            }),
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    for (const [maxCharsPerItem, expected] of [
+      [2, ["a", "😀", "bc"]],
+      [1, ["a", "😀", "b", "c"]],
+    ] as const) {
+      let textOffset = 0;
+      for (const [index, text] of expected.entries()) {
+        const result = yield* service.readThread(makeScope(), {
+          threadId: parentThreadId,
+          view: "activity",
+          itemId,
+          textOffset,
+          maxCharsPerItem,
+        });
+        textOffset += text.length;
+        expect(result.items[0]).toMatchObject({
+          text,
+          textTruncated: index < expected.length - 1,
+          nextTextOffset: index < expected.length - 1 ? textOffset : null,
+        });
+      }
+    }
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
@@ -191,6 +314,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     }),
     runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -244,6 +368,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
       }),
     ],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [
@@ -276,6 +401,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
@@ -316,6 +442,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       return parentRuns;
     },
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -352,6 +479,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
           },
         },
       ],
+      providerTurns: [],
       runtimeRequests: [],
       messages: [],
       contextTransfers: [],
@@ -403,6 +531,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () =>
             Effect.succeed({
@@ -468,7 +597,6 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .pipe(Effect.flip);
     expect(staleDelete.code).toBe("parent_not_active");
 
-    // A background item keeps only its owning instance live, even after a switch.
     const backgroundTasks = [
       {
         taskId: "background-subagent",
@@ -512,7 +640,6 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .pipe(Effect.flip);
     expect(mismatched.code).toBe("parent_not_active");
 
-    // A fresh active run wins over the earlier inactive projection and empty roster.
     parentShell = liveThreadShell(parentThreadId);
     const restarted = yield* service.sendToThread(makeScope(), {
       threadId: foreignThreadId,
@@ -537,4 +664,188 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .pipe(Effect.flip);
     expect(stopped.code).toBe("parent_not_active");
   }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("requestSecret saves a pasted value to a file without opening a card", async () => {
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [{ ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), rootNodeId: taskId }],
+    visibleTurnItems: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const dispatched: Array<unknown> = [];
+  const saved: Array<{
+    readonly requestNamespace: string;
+    readonly requestKey: string;
+    readonly value: string;
+  }> = [];
+  const file = "/home/user/.t3/userdata/secrets/files/0123456789abcdef0123456789abcdef";
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            threadId === parentThreadId
+              ? Effect.succeed(projection)
+              : Effect.die(`unexpected thread ${threadId}`),
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? (projection.thread as unknown as OrchestrationV2ThreadShell)
+                : null,
+            ),
+          dispatch: (command) => Effect.sync(() => void dispatched.push(command) as never),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({
+          savePasted: (input) =>
+            Effect.sync(() => {
+              saved.push({
+                requestNamespace: input.requestNamespace,
+                requestKey: input.requestKey,
+                value: input.value,
+              });
+              return file;
+            }),
+        }),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+  const counted = Metric.snapshot.pipe(
+    Effect.map((snapshots) => {
+      const found = snapshots.find(
+        (snapshot) =>
+          snapshot.id === "t3_secret_requests_total" &&
+          snapshot.attributes?.status === "saved_pasted",
+      );
+      return found?.type === "Counter" ? Number(found.state.count) : 0;
+    }),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const before = yield* counted;
+    const result = yield* service.requestSecret(makeScope(), {
+      label: "Pixel PIN",
+      reason: "Unlocks the test phone.",
+      value: "482916",
+      clientRequestId: "pin-1",
+    });
+    expect(result).toEqual({ status: "saved", file });
+    expect(JSON.stringify(result)).not.toContain("482916");
+    expect(saved).toEqual([
+      {
+        requestNamespace: "provider-session-mcp-orchestrator-detail",
+        requestKey: "pin-1",
+        value: "482916",
+      },
+    ]);
+    expect(dispatched).toEqual([]);
+    expect((yield* counted) - before).toBe(1);
+
+    const asRef = yield* service
+      .requestSecret(makeScope(), {
+        label: "Pixel PIN",
+        reason: "Unlocks the test phone.",
+        value: "482916",
+        delivery: "secretRef",
+      })
+      .pipe(Effect.flip);
+    expect(asRef.code).toBe("invalid_request");
+    expect(asRef.message).not.toContain("482916");
+    expect(saved).toHaveLength(1);
+    expect(dispatched).toEqual([]);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("requestSecret returns the unsaved note for a declined, cancelled or timed-out card", async () => {
+  const outcomes = ["declined", "cancelled", "pending"] as const;
+  const results = await Effect.forEach(outcomes, (outcome) => {
+    const dispatched: Array<{ readonly type: string; readonly turnItemId?: string }> = [];
+    const projection = () => {
+      const card = dispatched.find((command) => command.type === "secret_request.record");
+      return {
+        thread: baseThread({
+          threadId: parentThreadId,
+          title: "Parent",
+          instanceId: parentInstanceId,
+          model: "gpt-5.4",
+        }),
+        runs: [
+          { ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), rootNodeId: taskId },
+        ],
+        visibleTurnItems: [],
+        turnItems:
+          card === undefined
+            ? []
+            : [{ type: "secret_request", id: card.turnItemId, secretStatus: outcome }],
+        providerTurns: [],
+        runtimeRequests: [],
+        messages: [],
+        contextTransfers: [],
+        subagents: [],
+        updatedAt: now,
+      } as unknown as OrchestrationV2ThreadProjection;
+    };
+    const layer = layerOrchestratorService.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.sync(projection),
+            getThreadShell: () =>
+              Effect.sync(() => projection().thread as unknown as OrchestrationV2ThreadShell),
+            dispatch: (command) => Effect.sync(() => void dispatched.push(command) as never),
+          } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+          } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+          NodeCrypto.layer,
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const request = yield* service
+        .requestSecret(makeScope(), {
+          label: "Staging password",
+          reason: "Signs in the QA account.",
+          delivery: "file",
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("2 seconds");
+      return yield* Fiber.join(request);
+    }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer())));
+  }).pipe(Effect.runPromise);
+
+  expect(results).toEqual([
+    { status: "declined", note: SECRET_REQUEST_UNSAVED_NOTE.declined },
+    { status: "cancelled", note: SECRET_REQUEST_UNSAVED_NOTE.cancelled },
+    { status: "timed_out", note: SECRET_REQUEST_UNSAVED_NOTE.timed_out },
+  ]);
 });

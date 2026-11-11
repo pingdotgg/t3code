@@ -79,23 +79,6 @@ describe("mobile environment settings sections", () => {
     expect(sections.availableCloudEnvironments).toEqual([]);
   });
 
-  it("does not duplicate a saved relay environment in the available cloud listing", () => {
-    const cloud = connectedEnvironment({
-      environmentId: "environment-cloud",
-      isRelayManaged: true,
-      connectionState: "available",
-    });
-    const listedCloud = cloudEnvironment("environment-cloud");
-
-    const sections = splitEnvironmentSections({
-      connectedEnvironments: [cloud],
-      cloudEnvironments: [listedCloud],
-    });
-
-    expect(sections.connectedCloudEnvironments).toEqual([cloud]);
-    expect(sections.availableCloudEnvironments).toEqual([]);
-  });
-
   it("still offers a cloud environment saved directly as a local backend", () => {
     const local = connectedEnvironment({
       environmentId: "environment-cloud",

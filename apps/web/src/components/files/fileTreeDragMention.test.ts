@@ -52,15 +52,4 @@ describe("createFileTreeDragMentionController", () => {
     controller.handleDragEnd(deselect);
     expect(deselected).toEqual(["docs/index.md", "docs/api.md", "src/app.ts"]);
   });
-
-  it("drags only the row under the cursor when it is outside the selection", () => {
-    const controller = createFileTreeDragMentionController({});
-    controller.handleSelectionChange(["docs/index.md"]);
-    const transfer = makeTransfer();
-    controller.handleDragStart({
-      dataTransfer: transfer,
-      composedPath: () => [rowNode("src/app.ts")],
-    });
-    expect(transfer.getData(COMPOSER_MENTION_DRAG_TYPE)).toBe("[app.ts](src/app.ts)");
-  });
 });

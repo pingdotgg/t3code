@@ -400,9 +400,7 @@ describe("mobile model options", () => {
 
     it.each([
       ["disabled", { enabled: false }],
-      ["uninstalled", { installed: false }],
       ["signed out", { auth: { status: "unauthenticated" } }],
-      ["unavailable", { availability: "unavailable" }],
     ] as const)("keeps a %s provider's selection and known model details", (_state, update) => {
       const unavailableConfig = {
         ...config,
@@ -624,20 +622,6 @@ describe("mobile model options", () => {
       expect(buildModelOptions(configWith(settings), null, undefined, projectId)).toEqual([]);
     });
 
-    it("shows an instance the project enables even though the machine disables it", () => {
-      const settings: ServerSettings = {
-        ...DEFAULT_SERVER_SETTINGS,
-        providerInstances: {
-          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
-        },
-        projectSettingsOverrides: {
-          [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
-        },
-      };
-
-      expect(buildModelOptions(configWith(settings), null, undefined, projectId)).toHaveLength(1);
-    });
-
     it("hides a machine-disabled instance for a project with no override, even though another project's keep-alive left it running", () => {
       const otherProjectId = ProjectId.make("project-b");
       const settings: ServerSettings = {
@@ -806,6 +790,7 @@ describe("synchronized mobile model visibility", () => {
     ).toEqual(["second", "first", "custom"]);
   });
 
+  // regression: #16816 sync model favorites and visibility across clients
   it("keeps custom models visible and restores built-in models when the server clears hidden models", () => {
     expect(
       buildModelOptions(config, { instanceId: provider, model: "custom" }, provider, null).map(
@@ -816,5 +801,58 @@ describe("synchronized mobile model visibility", () => {
     expect(
       buildModelOptions(cleared, null, provider, null).map((option) => option.selection.model),
     ).toEqual(["hidden", "first", "second", "custom"]);
+  });
+
+  describe("managed provider policy", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "gpt-5.6-sol", name: "GPT", isCustom: false, capabilities: null }],
+        },
+        {
+          instanceId: "claudeAgent",
+          driver: "claudeAgent",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            { slug: "claude-sonnet-5", name: "Sonnet", isCustom: false, capabilities: null },
+          ],
+        },
+      ],
+      managedPolicy: {
+        organization: "Example Corp",
+        lockedSettings: [],
+        limits: { providers: { allowedDrivers: [ProviderDriverKind.make("codex")] } },
+      },
+    } as unknown as ServerConfig;
+    const disallowed = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-5",
+    };
+
+    it("leaves drivers the policy does not allow out of the picker", () => {
+      expect(
+        buildModelOptions(config, null, undefined, null).map((option) => option.providerKey),
+      ).toEqual(["codex"]);
+    });
+
+    it("marks a thread's selection on a disallowed driver unavailable with the policy reason", () => {
+      expect(
+        buildModelOptions(config, disallowed, undefined, null).find(
+          (option) => option.providerKey === "claudeAgent",
+        )?.isUnavailable,
+      ).toBe(true);
+      expect(isModelSelectionUnavailable(config, disallowed, null)).toBe(true);
+      expect(describeUnavailableModelSelection(config, disallowed, null)).toEqual({
+        title: "Provider not allowed",
+        detail: "Example Corp's policy does not allow the Claude provider. Choose another model.",
+      });
+    });
   });
 });

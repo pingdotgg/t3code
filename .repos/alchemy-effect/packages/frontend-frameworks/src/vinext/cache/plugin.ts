@@ -21,19 +21,12 @@ interface CacheModule {
 }
 
 /** The deploy target owns data caching; native CDN configuration is preserved. */
-export const makeVinextCachePlugin = Effect.fn(function* (
-  root: string,
-  kind: VinextCacheKind,
-) {
-  const native = yield* loadVinextModule<CacheModule>(
-    root,
-    "cache/cache-adapters-virtual.js",
-  );
+export const makeVinextCachePlugin = Effect.fn(function* (root: string, kind: VinextCacheKind) {
+  const native = yield* loadVinextModule<CacheModule>(root, "cache/cache-adapters-virtual.js");
   const { kvAdapter, redisAdapter, s3Adapter } = yield* loadProjectModule<
     typeof import("./index.ts")
   >(root, "@alchemy.run/frontend-frameworks/vinext/cache");
-  const data =
-    kind === "kv" ? kvAdapter() : kind === "s3" ? s3Adapter() : redisAdapter();
+  const data = kind === "kv" ? kvAdapter() : kind === "s3" ? s3Adapter() : redisAdapter();
   let cache: VinextCacheOptions = { data };
   const adaptersId = "\0alchemy:vinext-cache-adapters";
   const cdnId = "\0alchemy:vinext-cdn-cache-adapter";
@@ -41,9 +34,7 @@ export const makeVinextCachePlugin = Effect.fn(function* (
     name: "alchemy:vinext-cache",
     enforce: "pre",
     async configResolved(config) {
-      const configured = await native.findVinextCacheConfigInPlugins([
-        ...config.plugins,
-      ]);
+      const configured = await native.findVinextCacheConfigInPlugins([...config.plugins]);
       if (configured?.data && configured.data.adapter !== data.adapter) {
         config.logger.warn(
           "[alchemy] Website.Vinext owns the data-cache adapter; the adapter in vite.config is overridden.",

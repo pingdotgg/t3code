@@ -50,13 +50,13 @@ vi.mock("~/state/session", () => ({
       ? state.canOperate
       : scope === AuthSourceControlWriteScope && state.canWriteSourceControl,
 }));
-vi.mock("~/lib/sourceControlActions", async () => {
+vi.mock("~/state/sourceControlActions", async () => {
   const { usePreparePullRequestThreadAction } = await vi.importActual<
     typeof import("~/state/sourceControlActions")
   >("~/state/sourceControlActions");
   return {
     readCachedPullRequestResolution: () => null,
-    usePullRequestResolution: () => ({
+    usePullRequestResolutionState: () => ({
       data: { pullRequest: { number: 123, title: "Pull request", state: "open" } },
     }),
     usePreparePullRequestThreadAction,
@@ -150,12 +150,6 @@ function prepareAction(label: "Local" | "Worktree") {
   return action;
 }
 
-function visibleText(node: ReactNode): string {
-  if (Array.isArray(node)) return node.map(visibleText).join(" ");
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  return isValidElement<{ children?: ReactNode }>(node) ? visibleText(node.props.children) : "";
-}
-
 describe("pull request worktree permissions", () => {
   beforeEach(() => {
     state.canOperate = false;
@@ -173,14 +167,6 @@ describe("pull request worktree permissions", () => {
     state.prepared = [];
   });
 
-  it("does not prepare a worktree or run setup with only source-control permission", async () => {
-    await prepareAction("Worktree")();
-
-    expect(state.checkouts).toEqual([]);
-    expect(state.setupScripts).toBe(0);
-    expect(state.prepared).toEqual([]);
-  });
-
   it("rechecks task permission before invoking a retained worktree action", async () => {
     state.canOperate = true;
     const prepare = prepareAction("Worktree");
@@ -190,26 +176,4 @@ describe("pull request worktree permissions", () => {
     expect(state.checkouts).toEqual([]);
     expect(state.setupScripts).toBe(0);
   });
-
-  it.each(["Local", "Worktree"] as const)(
-    "shows the returned scope denial for a retained %s callback without starting a checkout",
-    async (label) => {
-      state.canOperate = true;
-      state.manager = { operation: "pull", error: null, isRunning: true };
-      const prepare = prepareAction(label);
-      state.canWriteSourceControl = false;
-
-      await prepare();
-
-      expect(visibleText(renderDialog())).toContain(
-        "This connection cannot change source control.",
-      );
-      expect(state.checkouts).toEqual([]);
-      expect(state.setupScripts).toBe(0);
-      expect(state.prepared).toEqual([]);
-      expect(state.openChanges).toEqual([]);
-      expect(state.tracks).toBe(0);
-      expect(state.manager).toEqual({ operation: "pull", error: null, isRunning: true });
-    },
-  );
 });

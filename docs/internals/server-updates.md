@@ -4,14 +4,30 @@ A [stable launcher](../../apps/server/src/serviceLauncher.ts) owns the runtime
 selected by systemd or launchd. It is the only runtime writer of durable service
 state. Server children request updates over inherited IPC; they never rewrite
 their service definition or select their own replacement. Local service commands
-may replace the launcher and state while the service is stopped. Foreground CLI
-processes do not self-update.
+may replace the launcher and state, optionally deferring the restart. Foreground
+CLI processes do not self-update.
+
+Both writers serialize state and unit writes through
+[file leases](../../apps/server/src/cloud/serviceSelectionLock.ts). The installer
+takes the state lease before the unit lease; the launcher never holds both, so a
+unit failure cannot block a durable commit. Manager stop/start commands run outside
+both leases, since stopping a launcher that waits on a lease would deadlock. A
+running launcher refuses further updates once a local command changes its selection.
 
 Exact-version installs keep restarts independent of npm cache eviction or a moving
 release tag. Installation and preflight happen in staging before publishing an
 immutable runtime. Preflight checks the launcher protocol because a target that
-needs new rollback guarantees cannot safely run under an older launcher. Upgrading
-that launcher requires a local service update.
+needs new rollback guarantees cannot safely run under an older launcher. A remote
+update replaces only the child, so upgrading the launcher requires a local service
+update with a restart.
+
+After a commit or rollback the launcher points the unit at the selected runtime and
+reloads the manager, so the next service start runs that version's launcher; the
+protocol check is what makes that safe. Each start after a finished update retries this, because
+a previous reload may have failed, and leaves a unit naming a newer runtime or another
+T3 home alone. Until a deferred local upgrade restarts, systemd (before daemon-reload)
+and launchd (before bootstrap) can respawn the old launcher, which the new runtime
+refuses to run under.
 
 ## Commit boundary
 
@@ -72,10 +88,11 @@ opt-out. The
 requires matching durable run, provider thread, session, and native resume identity.
 Queued runs never started, so recovery holds them and continues the run they wait
 behind. A settled run qualifies only when the restart cancels work the agent waits on
-(a monitor, subagent, or background task) and its session was live, so stale records
-from an older crash never wake it. Its continuation prompt is the note of what will not
-report back. A shell alone does not wake a settled run: most are dev servers nobody
-waits on, so that note waits for the next user message.
+(a subagent, a background task, or a shell or monitor the agent marked with
+`t3_background_wait`) and its session was live, so stale records from an older crash
+never wake it. Its continuation prompt is the note of what will not report back. An
+unmarked shell or monitor does not wake a settled run: most are dev servers and their
+watchdogs that nobody waits on, so that note waits for the next user message.
 
 Recovery retires effects tied to the lost process and records continuation intent
 in the durable outbox. That intent survives another restart before provider startup.

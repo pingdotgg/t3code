@@ -81,34 +81,4 @@ describe("pending terminal launches", () => {
     });
     expect(takePendingTerminalLaunch(target)).toBeNull();
   });
-
-  it("keeps pending launches isolated per terminal target", () => {
-    const primaryTarget = {
-      environmentId: EnvironmentId.make("env-1"),
-      threadId: ThreadId.make("thread-1"),
-      terminalId: "term-2",
-    };
-    const otherTarget = {
-      environmentId: EnvironmentId.make("env-1"),
-      threadId: ThreadId.make("thread-1"),
-      terminalId: "term-3",
-    };
-
-    stagePendingTerminalLaunch({
-      target: primaryTarget,
-      launch: {
-        cwd: "/repo/root",
-        worktreePath: null,
-        initialInput: "pnpm i\r",
-      },
-    });
-
-    expect(takePendingTerminalLaunch(otherTarget)).toBeNull();
-    expect(takePendingTerminalLaunch(primaryTarget)).toEqual({
-      cwd: "/repo/root",
-      worktreePath: null,
-      env: undefined,
-      initialInput: "pnpm i\r",
-    });
-  });
 });

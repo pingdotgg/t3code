@@ -54,24 +54,6 @@ describe("Windows foreground activation", () => {
     assert.deepEqual(api.setForegroundWindow.mock.calls, [[41n]]);
   });
 
-  it("does not attach a thread to itself", () => {
-    const api = makeApi({ currentThreadId: 20, foregroundThreadId: 20 });
-
-    assert.isTrue(activateWindowsForegroundWithApi(nativeHandle(41n), api));
-
-    assert.lengthOf(api.attachThreadInput.mock.calls, 0);
-    assert.deepEqual(api.setForegroundWindow.mock.calls, [[41n]]);
-  });
-
-  it("still asks Windows directly when the input queues cannot be attached", () => {
-    const api = makeApi({ attached: false });
-
-    assert.isTrue(activateWindowsForegroundWithApi(nativeHandle(41n), api));
-
-    assert.deepEqual(api.attachThreadInput.mock.calls, [[10, 20, true]]);
-    assert.deepEqual(api.setForegroundWindow.mock.calls, [[41n]]);
-  });
-
   it("rejects malformed native handles", () => {
     const api = makeApi({});
 

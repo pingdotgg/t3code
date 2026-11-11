@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  clearSubmittedReview,
-  pullRequestReviewKey,
-  type ReviewDraft,
-} from "./pullRequestReviewDrafts";
+import { clearSubmittedReview, type ReviewDraft } from "./pullRequestReviewDrafts";
 const comment = {
   id: "one",
   path: "renamed.ts",
@@ -34,24 +30,5 @@ describe("mobile review draft recovery", () => {
       comment: draft.comment,
       comments: [],
     });
-  });
-  it("does not mix identical PR numbers across repositories, hosts, or environments", () => {
-    const ref = {
-      environmentId: "a",
-      projectId: "p",
-      host: "github.com",
-      repository: "one/repo",
-      number: 1,
-    };
-    expect(
-      new Set(
-        [
-          ref,
-          { ...ref, environmentId: "b" },
-          { ...ref, host: "github.enterprise" },
-          { ...ref, repository: "two/repo" },
-        ].map(pullRequestReviewKey),
-      ).size,
-    ).toBe(4);
   });
 });

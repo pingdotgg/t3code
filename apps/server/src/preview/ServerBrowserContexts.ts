@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Owns Playwright resources outside the Effect runtime.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Owns Playwright resources and their idle timer outside the Effect runtime.
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
 import * as NodeFSP from "node:fs/promises";
@@ -17,8 +17,17 @@ const loadPlaywright = () =>
 interface Options {
   readonly profilesDir: string;
   readonly executable: () => Promise<string>;
+  /**
+   * A path that starts `executable`, such as one that moves Chrome out of the server's cgroup.
+   * Released after the whole launch call, since Playwright retries the same path after a glibc race.
+   */
+  readonly launcher?: (
+    executable: string,
+  ) => Promise<{ readonly path: string; readonly release: () => Promise<void> } | undefined>;
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
+  /** Closes the shared browser once it has held no context for this long. */
+  readonly idleBrowserMs?: number;
   readonly onContextClose?: (context: BrowserContext) => void;
 }
 
@@ -28,9 +37,7 @@ const UA_PLATFORMS: Partial<Record<NodeJS.Platform, string>> = {
   win32: "Windows",
 };
 
-/**
- * Sites block a user agent that disagrees with `Sec-CH-UA`, so both change together.
- */
+/** Change user agent and Sec-CH-UA together; sites block mismatches. */
 const chromeIdentity = (
   headlessUserAgent: string,
   host: { readonly platform: NodeJS.Platform; readonly arch: string; readonly release: string },
@@ -75,16 +82,18 @@ export class ServerBrowserContexts {
   private readonly clearing = new Map<string, Promise<void>>();
   private browser: Promise<Browser> | undefined;
   private closing: Promise<void> | undefined;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private pendingSharedContexts = 0;
 
   constructor(options: Options) {
     this.options = options;
   }
 
   private async launchOptions() {
-    const executablePath = await this.options.executable();
+    const executable = await this.options.executable();
     const env = this.options.env ?? process.env;
     return {
-      executablePath,
+      executable,
       env,
       args: [
         "--disable-gpu",
@@ -98,19 +107,26 @@ export class ServerBrowserContexts {
     };
   }
 
-  private async launch<A>(options: { readonly executablePath: string }, start: () => Promise<A>) {
+  private async launch<A>(executable: string, start: (executablePath: string) => Promise<A>) {
+    let release: (() => Promise<void>) | undefined;
     try {
-      return await start();
+      const launcher = await this.options.launcher?.(executable);
+      release = launcher?.release;
+      return await start(launcher?.path ?? executable);
     } catch (cause) {
-      throw (await this.options.diagnose?.(options.executablePath, cause)) ?? cause;
+      throw (await this.options.diagnose?.(executable, cause)) ?? cause;
+    } finally {
+      await release?.().catch(constVoid);
     }
   }
 
   private sharedBrowser() {
     if (!this.browser) {
-      const launched = this.launchOptions().then(async (options) => {
+      const launched = this.launchOptions().then(async ({ executable, ...options }) => {
         const { chromium } = loadPlaywright();
-        const browser = await this.launch(options, () => chromium.launch(options));
+        const browser = await this.launch(executable, (executablePath) =>
+          chromium.launch({ ...options, executablePath }),
+        );
         browser.on("disconnected", () => {
           if (this.browser === launched) this.browser = undefined;
         });
@@ -122,6 +138,37 @@ export class ServerBrowserContexts {
       });
     }
     return this.browser;
+  }
+
+  private async sharedContext(options?: Parameters<Browser["newContext"]>[0]) {
+    clearTimeout(this.idleTimer);
+    this.pendingSharedContexts++;
+    const launched = this.sharedBrowser();
+    try {
+      const context = await (await launched).newContext(options);
+      context.on("close", () => this.retireWhenIdle(launched));
+      return context;
+    } finally {
+      this.pendingSharedContexts--;
+      this.retireWhenIdle(launched);
+    }
+  }
+
+  private retireWhenIdle(launched: Promise<Browser>) {
+    const delay = this.options.idleBrowserMs;
+    if (delay === undefined || this.closing || this.pendingSharedContexts > 0) return;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => void this.retire(launched), delay);
+    this.idleTimer.unref();
+  }
+
+  private async retire(launched: Promise<Browser>) {
+    const browser = await launched.catch(() => undefined);
+    if (!browser || this.browser !== launched || this.pendingSharedContexts > 0) return;
+    if (browser.contexts().length > 0) return;
+    // Cleared first, so a request during the close launches a fresh browser.
+    this.browser = undefined;
+    await browser.close().catch(constVoid);
   }
 
   contextFor(profileId: string, isolationKey?: string): Promise<BrowserContext> {
@@ -154,15 +201,18 @@ export class ServerBrowserContexts {
   private async createContext(profileId: string, isolationKey?: string) {
     const contextOptions = { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 };
     if (isolationKey !== undefined || profileId === INCOGNITO_BROWSER_PROFILE_ID) {
-      const browser = await this.sharedBrowser();
-      return browser.newContext(contextOptions);
+      return this.sharedContext(contextOptions);
     }
     const directory = this.profileDirectory(profileId);
-    const options = await this.launchOptions();
-    const { chromium } = loadPlaywright();
     await NodeFSP.mkdir(directory, { recursive: true });
-    return this.launch(options, () =>
-      chromium.launchPersistentContext(directory, { ...options, ...contextOptions }),
+    const { executable, ...options } = await this.launchOptions();
+    const { chromium } = loadPlaywright();
+    return this.launch(executable, (executablePath) =>
+      chromium.launchPersistentContext(directory, {
+        ...options,
+        ...contextOptions,
+        executablePath,
+      }),
     );
   }
 
@@ -176,7 +226,7 @@ export class ServerBrowserContexts {
 
   async scratchPage() {
     if (this.closing) throw new Error("The preview browser is closed.");
-    const context = await (await this.sharedBrowser()).newContext();
+    const context = await this.sharedContext();
     const page = await context.newPage();
     page.once("close", () => void context.close().catch(constVoid));
     return page;
@@ -196,6 +246,8 @@ export class ServerBrowserContexts {
   async clearProfile(profileId: string) {
     if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
     const key = JSON.stringify([profileId, null]);
+    const existing = this.clearing.get(key);
+    if (existing) return existing;
     const clearing = (async () => {
       const pending = this.contexts.get(key);
       if (pending) {
@@ -219,6 +271,7 @@ export class ServerBrowserContexts {
   }
 
   private async dispose() {
+    clearTimeout(this.idleTimer);
     await Promise.allSettled(
       [...this.contexts.values()].map(async (pending) => (await pending).close()),
     );

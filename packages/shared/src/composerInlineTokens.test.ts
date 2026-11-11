@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import { collectComposerInlineTokens, composerMathRanges } from "./composerInlineTokens.ts";
+import { serializeComposerFileLink } from "./composerTrigger.ts";
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
@@ -174,6 +175,48 @@ describe("collectComposerInlineTokens", () => {
     const source = "\\[\\text{use $browser and @README.md here}\\] then $real-skill ";
     expect(collectComposerInlineTokens(source).map((token) => token.source)).toEqual([
       "$real-skill",
+    ]);
+  });
+
+  it.each([
+    "app/routes/posts.$postId.tsx",
+    "src/routes/_chat.$environmentId.$threadId.tsx",
+    "pages/posts/[id].tsx",
+    "app/blog/[...slug].tsx",
+  ])("keeps a file link whose name looks like TeX as one mention: %s", (path) => {
+    const link = serializeComposerFileLink(path);
+    expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
+      { type: "mention", value: path, source: link },
+    ]);
+  });
+
+  it.each(["app/routes/posts.$postId.tsx", "pages/posts/[id].tsx"])(
+    "preserves a confirmed TeX-like pill when its trailing delimiter is removed: %s",
+    (path) => {
+      const link = serializeComposerFileLink(path);
+      const confirmed = collectComposerInlineTokens(`fix ${link} `);
+
+      expect(confirmed).toMatchObject([{ type: "mention", value: path, source: link }]);
+      expect(
+        collectComposerInlineTokens(`fix ${link}`, { preserveTrailingFrom: confirmed }),
+      ).toEqual(confirmed);
+      expect(collectComposerInlineTokens(`fix ${link}`)).toEqual([]);
+    },
+  );
+
+  it.each([
+    "before $x + @README.md$ after",
+    "before \\(x + @README.md\\) after",
+    "\\[x + @README.md\\] after",
+    "\\[\\text{use @README.md}\\] then go ",
+  ])("keeps a mention that ends a formula inside the formula: %s", (source) => {
+    expect(collectComposerInlineTokens(source)).toEqual([]);
+  });
+
+  it("still finds a formula after a mention that starts the line", () => {
+    const link = serializeComposerFileLink("app/routes/posts.$postId.tsx");
+    expect(composerMathRanges(`${link} sets $x_i$`).map((formula) => formula.source)).toEqual([
+      "$x_i$",
     ]);
   });
 });

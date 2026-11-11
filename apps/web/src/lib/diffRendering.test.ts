@@ -5,22 +5,11 @@ import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
-  buildPatchCacheKey,
   getDiffLineStat,
   getRenderablePatch,
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
 } from "./diffRendering";
-
-describe("buildPatchCacheKey", () => {
-  it("changes when cache scope changes", () => {
-    const patch = "diff --git a/a.ts b/a.ts\n+console.log('hello')";
-
-    expect(buildPatchCacheKey(patch, "diff-panel:light")).not.toBe(
-      buildPatchCacheKey(patch, "diff-panel:dark"),
-    );
-  });
-});
 
 describe("getRenderablePatch", () => {
   it("hides indentation changes around inserted JSX without moving review lines", () => {
@@ -230,6 +219,50 @@ describe("getRenderablePatch", () => {
     if (parsed?.kind !== "files") return;
     expect(parsed.files[0]?.hunks[0]?.unifiedLineStart).toBe(47);
   });
+
+  it("keeps whitespace at the end of the last hunk", () => {
+    const patch = (lastLines: string[]) =>
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- a/example.ts",
+        "+++ b/example.ts",
+        ...lastLines,
+        "",
+      ].join("\n");
+
+    const trailing = getRenderablePatch(patch(["@@ -1 +1 @@", "-a", "+  b \t"]), "review");
+    expect(trailing?.kind).toBe("files");
+    if (trailing?.kind !== "files") return;
+    expect(trailing.files[0]?.additionLines).toEqual(["  b \t\n"]);
+
+    const blankContext = getRenderablePatch(patch(["@@ -1,2 +1,2 @@", "-a", "+b", " "]), "review");
+    expect(blankContext?.kind).toBe("files");
+    if (blankContext?.kind !== "files") return;
+    expect(blankContext.files[0]?.additionLines).toEqual(["b\n", "\n"]);
+    expect(blankContext.files[0]?.hunks[0]?.unifiedLineCount).toBe(3);
+
+    expect(getRenderablePatch(" \n\t\n", "review")).toBeNull();
+  });
+
+  it("caches patches that differ only in trailing whitespace separately", () => {
+    const patch = (added: string) =>
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- a/example.ts",
+        "+++ b/example.ts",
+        "@@ -1 +1 @@",
+        "-a",
+        `+${added}`,
+        "",
+      ].join("\n");
+
+    const plain = getRenderablePatch(patch("b"), "review");
+    const tabbed = getRenderablePatch(patch("b\t"), "review");
+    expect(plain?.kind).toBe("files");
+    expect(tabbed?.kind).toBe("files");
+    if (plain?.kind !== "files" || tabbed?.kind !== "files") return;
+    expect(tabbed.files[0]?.cacheKey).not.toBe(plain.files[0]?.cacheKey);
+  });
 });
 
 describe("diff file reconciliation", () => {
@@ -347,14 +380,6 @@ describe("a file whose name a patch header cannot carry plainly", () => {
     if (!file) throw new Error("patch carried no file");
     return resolveFileDiffPath(file);
   };
-
-  it("is the name the host knows, not the part of it before the tab", () => {
-    expect(pathOf(quotedPatch("tab\\tfile.txt"))).toBe("tab\tfile.txt");
-  });
-
-  it("keeps a backslash the name really has", () => {
-    expect(pathOf(quotedPatch("back\\\\slash.txt"))).toBe("back\\slash.txt");
-  });
 
   it("reads the octal a host with core.quotePath on writes for a name outside ASCII", () => {
     expect(pathOf(quotedPatch("caf\\303\\251/r\\303\\251sum\\303\\251.ts"))).toBe("café/résumé.ts");

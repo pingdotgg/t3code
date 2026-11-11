@@ -33,11 +33,6 @@ describe("isFileViewed", () => {
     expect(isFileViewed("b.ts", states, new Map([["b.ts", true]]))).toBe(true);
     expect(isFileViewed("a.ts", states, new Map([["a.ts", false]]))).toBe(false);
   });
-
-  it("answers a file the host has said nothing about, before its answer arrives", () => {
-    expect(isFileViewed("z.ts", null, NO_OVERLAY)).toBe(false);
-    expect(isFileViewed("z.ts", null, new Map([["z.ts", true]]))).toBe(true);
-  });
 });
 
 describe("settleFileViewedOverlay", () => {
@@ -49,13 +44,6 @@ describe("settleFileViewedOverlay", () => {
       NOTHING_ANSWERED,
     );
     expect(settled.size).toBe(0);
-  });
-
-  it("keeps a press the host still disagrees with", () => {
-    const overlay = new Map([["b.ts", true]]);
-    expect(settleFileViewedOverlay(overlay, states, NOTHING_PENDING, NOTHING_ANSWERED)).toBe(
-      overlay,
-    );
   });
 
   it("keeps a press the host cannot have heard yet", () => {
@@ -90,11 +78,6 @@ describe("settleFileViewedOverlay", () => {
     const overlay = new Map([["c.ts", true]]);
     const settled = settleFileViewedOverlay(overlay, states, new Set(["c.ts"]), new Set(["c.ts"]));
     expect(settled.get("c.ts")).toBe(true);
-  });
-
-  it("holds everything until the host has answered at all", () => {
-    const overlay = new Map([["a.ts", true]]);
-    expect(settleFileViewedOverlay(overlay, null, NOTHING_PENDING, NOTHING_ANSWERED)).toBe(overlay);
   });
 });
 

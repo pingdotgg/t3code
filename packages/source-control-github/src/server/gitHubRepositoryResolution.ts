@@ -1,8 +1,8 @@
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
-import {
-  detectSourceControlProviderFromRemoteUrl,
-  isSshRemoteUrl,
-} from "@t3tools/shared/sourceControl";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
+import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
+import { definition } from "../shared/definition.ts";
+import { isGitHubHost } from "./GitHubCredentials.ts";
 
 export interface GitHubRepositoryLocator {
   readonly host: string;
@@ -21,14 +21,7 @@ export function parseFetchRemotes(
     .map((match) => ({ name: match[1]!, url: match[2]! }));
 }
 
-/**
- * The repository `gh pr list` reads in a checkout, picked the way gh picks one without a prompt: the
- * remote `gh repo set-default` marked, else the first of upstream, github, origin (in any case), else
- * the only remote.
- *
- * Null whenever gh might weigh the remotes differently: a remote on another host or under an SSH alias,
- * more than one mark, or several remotes with none of those names.
- */
+/** gh priority: marked default, upstream/github/origin, sole remote. Null if ambiguous. */
 export function selectGitHubBaseRepository(input: {
   readonly remotes: string;
   readonly resolved: string;
@@ -37,7 +30,11 @@ export function selectGitHubBaseRepository(input: {
   const host = input.host.toLowerCase();
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
   for (const remote of parseFetchRemotes(input.remotes)) {
-    const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
+    const [normalizedHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
+    const remoteHost =
+      normalizedHost && isSshRemoteUrl(remote.url)
+        ? (apiHostForSshAlias(normalizedHost) ?? normalizedHost)
+        : normalizedHost;
     if (remoteHost !== host || !owner || !name || rest.length > 0) return null;
     repositories.set(remote.name, { owner, name });
   }
@@ -52,8 +49,7 @@ export function selectGitHubBaseRepository(input: {
     const [owner, name, ...rest] = mark[2]!.toLowerCase().split("/");
     return owner && name && rest.length === 0 ? { owner, name } : null;
   }
-  // gh sorts remotes by these names, case-insensitively, and takes the first. A tie for the
-  // top place has no defined winner.
+  // gh ranks these names case-insensitively; a top-ranked tie has no defined winner.
   const score = (remoteName: string) =>
     ["origin", "github", "upstream"].indexOf(remoteName.toLowerCase()) + 1;
   const ranked = [...repositories.entries()].toSorted(
@@ -65,10 +61,7 @@ export function selectGitHubBaseRepository(input: {
     : null;
 }
 
-/**
- * `host` is the API host it settled on, which a caller names when no repository was
- * found there. GH_REPO is the caller's to check first.
- */
+/** Check GH_REPO first; host is available even without a repository. */
 export function resolveGitHubRepository(input: {
   readonly remotes: string;
   readonly resolved: string;
@@ -80,7 +73,7 @@ export function resolveGitHubRepository(input: {
     host: gitHubApiHostForRemote(remote.url),
   }));
   const host =
-    (input.hostHint === undefined ? undefined : apiHostForHint(input.hostHint)) ??
+    (input.hostHint === undefined ? undefined : apiHostForHint(input.hostHint, fetchRemotes)) ??
     fetchRemotes.find((remote) => remote.name === "origin" && remote.host !== null)?.host ??
     fetchRemotes.find((remote) => remote.host !== null)?.host ??
     input.defaultHost;
@@ -90,12 +83,13 @@ export function resolveGitHubRepository(input: {
     host,
   });
   if (selected !== null) return { host, locator: { host, ...selected } };
-  // gh's own order without its prompt: upstream, github, origin, then the first remote, among
-  // the ones on this host (an SSH alias counts as its API host).
+  // Match gh's host-filtered priority: upstream, github, origin, then the first remote.
   const rank = (name: string) => ["upstream", "github", "origin"].indexOf(name.toLowerCase());
   const candidates = fetchRemotes
     .filter(
-      (remote) => remote.host === host || normalizeGitRemoteUrl(remote.url).split("/")[0] === host,
+      (remote) =>
+        remote.host === host ||
+        (remote.host === null && normalizeGitRemoteUrl(remote.url).split("/")[0] === host),
     )
     .toSorted((left, right) => {
       const l = rank(left.name);
@@ -113,11 +107,13 @@ export function parseGitHubRepositorySelector(
   selector: string,
   defaultHost: string,
 ): GitHubRepositoryLocator | null {
-  const trimmed = selector.trim().replace(/\.git$/i, "");
+  // Like gh, a clone URL's `.git` comes off the path, before any trailing slash, query or fragment.
+  const withoutGitSuffix = (path: string) => path.replace(/\.git\/*$/i, "");
+  const trimmed = selector.trim();
   if (/^https?:\/\//i.test(trimmed)) {
     try {
       const url = new URL(trimmed);
-      const [owner, name, ...rest] = url.pathname.split("/").filter(Boolean);
+      const [owner, name, ...rest] = withoutGitSuffix(url.pathname).split("/").filter(Boolean);
       return owner && name && rest.length === 0
         ? { host: url.host.toLowerCase(), owner, name }
         : null;
@@ -125,10 +121,11 @@ export function parseGitHubRepositorySelector(
       return null;
     }
   }
-  const parts = trimmed.split("/").filter(Boolean);
+  const parts = withoutGitSuffix(trimmed).split("/").filter(Boolean);
   if (parts.length === 2) return { host: defaultHost, owner: parts[0]!, name: parts[1]! };
-  if (parts.length === 3)
-    return { host: parts[0]!.toLowerCase(), owner: parts[1]!, name: parts[2]! };
+  const host = parts[0]?.toLowerCase();
+  if (parts.length === 3 && host !== undefined && isGitHubHost(host))
+    return { host, owner: parts[1]!, name: parts[2]! };
   return null;
 }
 
@@ -157,22 +154,36 @@ export function parsePullRequestReference(
   return { kind: "branch", headSelector: trimmed };
 }
 
-/**
- * An SSH alias (`git@github-work:owner/repo`) names no API host of its own; it is read
- * through `github.com`, which is what such an alias almost always stands for (issue
- * #6198).
- */
-export function gitHubApiHostForRemote(remoteUrl: string): string | null {
-  const provider = detectSourceControlProviderFromRemoteUrl(remoteUrl);
-  if (provider === null) return null;
-  const host = new URL(provider.baseUrl).host.toLowerCase();
-  if (isSshRemoteUrl(remoteUrl) && !host.includes(".")) {
-    return host.includes("github") ? "github.com" : null;
-  }
-  return provider.kind === "github" ? host : null;
+// An additional dot is a real DNS host, never a github.com SSH alias.
+const GITHUB_DOT_COM_SSH_ALIAS = /^github\.com-[a-z0-9_-]+$/u;
+
+function apiHostForSshAlias(host: string): string | null | undefined {
+  if (!host.includes(".")) return host.includes("github") ? "github.com" : null;
+  return GITHUB_DOT_COM_SSH_ALIAS.test(host) ? "github.com" : undefined;
 }
 
-function apiHostForHint(host: string): string {
+/** Recognized GitHub SSH aliases use github.com for API requests. */
+export function gitHubApiHostForRemote(remoteUrl: string): string | null {
+  const remote = parseGitRemoteHost(remoteUrl);
+  if (remote === null) return null;
+  const host = new URL(`https://${remote.host}`).host.toLowerCase();
+  if (isSshRemoteUrl(remoteUrl)) {
+    const aliased = apiHostForSshAlias(host);
+    if (aliased !== undefined) return aliased;
+  }
+  return definition.recognizeRemote(remote) === null ? null : host;
+}
+
+function apiHostForHint(host: string, remotes: ReadonlyArray<{ readonly url: string }>): string {
   const normalized = host.toLowerCase();
-  return !normalized.includes(".") && normalized.includes("github") ? "github.com" : normalized;
+  if (GITHUB_DOT_COM_SSH_ALIAS.test(normalized)) {
+    const matching = remotes.filter(
+      (remote) => normalizeGitRemoteUrl(remote.url).split("/")[0] === normalized,
+    );
+    // A hint carries no transport; an HTTPS remote or missing evidence must not select
+    // the github.com endpoint and credentials for a dotted host.
+    if (matching.length === 0 || matching.some((remote) => !isSshRemoteUrl(remote.url)))
+      return normalized;
+  }
+  return apiHostForSshAlias(normalized) ?? normalized;
 }

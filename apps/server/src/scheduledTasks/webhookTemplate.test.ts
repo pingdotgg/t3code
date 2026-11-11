@@ -54,7 +54,6 @@ describe("renderWebhookPrompt", () => {
       { ...githubPullRequest, bodyText: JSON.stringify({ text }) },
       "id",
     );
-    // The adapters' pattern finds only the template's own mention.
     const mentions = [...rendered.prompt.matchAll(SKILL_MENTION_PATTERN)].map((match) => match[2]);
     assert.deepEqual(mentions, ["review"]);
     // Codex and Pi read `$name` after any character, digits included.
@@ -163,6 +162,23 @@ describe("renderWebhookPrompt", () => {
       named,
       `<webhook-data-id>Bearer h-secret</webhook-data-id> <webhook-data-id>q-secret</webhook-data-id>${NOTE}`,
     );
+  });
+
+  it("renders a [] wildcard as the list of matching values", () => {
+    const rendered = renderWebhookPrompt(
+      "Labels: {{body.pull_request.labels[]}} Names: {{body.reviewers[].login}}",
+      {
+        ...githubPullRequest,
+        bodyText: JSON.stringify({
+          pull_request: { labels: ["bug", "ui"] },
+          reviewers: [{ login: "ada" }, { name: "no login" }, { login: "bob" }],
+        }),
+      },
+      "id",
+      true,
+    );
+    assert.equal(rendered.prompt, 'Labels: [\n  "bug",\n  "ui"\n] Names: [\n  "ada",\n  "bob"\n]');
+    assert.deepEqual(rendered.missing, []);
   });
 
   it("does not resolve inherited object properties", () => {

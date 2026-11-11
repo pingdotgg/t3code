@@ -77,11 +77,7 @@ export function createAssistantTextSelector(
   };
 }
 
-/**
- * All positions and context lengths use UTF-16 units in that normalized stream,
- * not markdown offsets or Unicode code points. Even matching saved offsets cannot
- * break a context tie, since those offsets may have drifted.
- */
+/** Offsets use normalized UTF-16 units. Saved offsets may drift, so they cannot break context ties. */
 export function findAssistantCitationText(
   text: string,
   selector: AssistantTextSelector,
@@ -199,8 +195,7 @@ function selectedTextBoundary(range: Range, node: Node, last: boolean): Text | n
     const text = node as Text;
     const start = node === range.startContainer ? range.startOffset : 0;
     const end = node === range.endContainer ? range.endOffset : text.length;
-    // Triple-click ranges run through unselectable rows (tool calls, timestamps,
-    // author headings) into the next response; that text is not selected.
+    // Triple-click ranges include unselected text from unselectable rows and the next response.
     return start < end && !isUnselectable(text) ? text : null;
   }
   for (

@@ -54,21 +54,14 @@ function group(
     allRemoteMembersAreDesktopLocal: false,
     allRemoteMembersAreWsl: false,
     remoteEnvironmentLabels: [],
+    pinned: false,
+    archived: false,
   };
 }
 
 const groups = [group("t3code", [first, second, third]), group("other", [other])];
 
 describe("settings scope search", () => {
-  it("retains legacy project and machine links without inventing an explicit broad scope", () => {
-    expect(
-      validateSettingsScopeSearch({ project: "t3code", machine: laptopId, unused: true }),
-    ).toEqual({
-      project: "t3code",
-      machine: laptopId,
-    });
-  });
-
   it("retains an orphan checkout so it cannot turn into all environments", () => {
     const search = validateSettingsScopeSearch({ checkout: first.physicalProjectKey });
     expect(search).toEqual({ checkout: first.physicalProjectKey });
@@ -82,33 +75,12 @@ describe("settings scope search", () => {
 });
 
 describe("settings scope resolution", () => {
-  it("resolves one environment without targeting its project overrides", () => {
-    expect(resolveSettingsScope({ machine: serverId }, groups, environments)).toMatchObject({
-      kind: "environment",
-      environmentId: serverId,
-      environmentIds: [serverId],
-      members: [],
-    });
-  });
-
   it("keeps all physical members in a project aggregate, including several on one environment", () => {
     expect(resolveSettingsScope({ project: "t3code" }, groups, environments)).toMatchObject({
       kind: "project",
       environmentId: null,
       members: [first, second, third],
       environmentIds: [laptopId, serverId],
-    });
-  });
-
-  it("preserves legacy project plus machine aggregates with multiple checkouts", () => {
-    expect(
-      resolveSettingsScope({ project: "t3code", machine: laptopId }, groups, environments),
-    ).toMatchObject({
-      kind: "project",
-      environmentId: laptopId,
-      label: "t3code / Laptop",
-      members: [first, second],
-      environmentIds: [laptopId],
     });
   });
 

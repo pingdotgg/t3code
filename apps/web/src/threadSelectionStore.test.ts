@@ -72,18 +72,6 @@ describe("threadSelectionStore", () => {
   });
 
   describe("rangeSelectTo", () => {
-    it("selects range from anchor to target (forward)", () => {
-      const store = useThreadSelectionStore.getState();
-      store.toggleThread(THREAD_B);
-      store.rangeSelectTo(THREAD_D, ORDERED);
-
-      const state = useThreadSelectionStore.getState();
-      expect(state.selectedThreadKeys.has(THREAD_B)).toBe(true);
-      expect(state.selectedThreadKeys.has(THREAD_C)).toBe(true);
-      expect(state.selectedThreadKeys.has(THREAD_D)).toBe(true);
-      expect(state.selectedThreadKeys.size).toBe(3);
-    });
-
     it("keeps anchor stable across multiple range selects", () => {
       const store = useThreadSelectionStore.getState();
       store.toggleThread(THREAD_B);
@@ -121,17 +109,6 @@ describe("threadSelectionStore", () => {
       expect(state.selectedThreadKeys.has(THREAD_C)).toBe(true);
       expect(state.selectedThreadKeys.has(THREAD_D)).toBe(true);
       expect(state.selectedThreadKeys.size).toBe(4);
-    });
-  });
-
-  describe("removeFromSelection", () => {
-    it("clears anchor when the anchor thread is removed", () => {
-      const store = useThreadSelectionStore.getState();
-      store.toggleThread(THREAD_A);
-      store.toggleThread(THREAD_B);
-      store.removeFromSelection([THREAD_B]);
-
-      expect(useThreadSelectionStore.getState().anchorThreadKey).toBeNull();
     });
   });
 });

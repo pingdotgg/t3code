@@ -2,11 +2,29 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { PreparedVoiceTranscription } from "@t3tools/client-runtime/voice-input";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { resetVoiceInputGlobalsForTests } from "../../../../../packages/client-runtime/src/voice-input/controller";
+import {
+  acquireAudioSession,
+  activateAudioSession,
+  isAudioSessionOwner,
+  releaseAudioSession,
+} from "../../lib/audioSession";
+
+const audio = vi.hoisted(() => ({
+  setMode: vi.fn(async (_mode: unknown) => {}),
+  setActive: vi.fn(async (_active: boolean) => {}),
+}));
+vi.mock("expo-audio", () => ({
+  AudioModule: {},
+  setAudioModeAsync: audio.setMode,
+  setIsAudioActiveAsync: audio.setActive,
+}));
 
 import {
   createVoiceInputTarget,
   VoiceInputSession,
+  type VoiceInputSessionDependencies,
   type VoiceInputTarget,
+  type VoiceRecordingSample,
 } from "./voiceInputSession";
 
 function createTarget(
@@ -18,7 +36,17 @@ function createTarget(
   return createVoiceInputTarget(ownerKey, readText, commit, selection, () => () => {});
 }
 
-function createSession() {
+function createSession(
+  overrides?: Partial<
+    Pick<
+      VoiceInputSessionDependencies,
+      "configureRecording" | "releaseRecording" | "sampleRecording"
+    >
+  >,
+) {
+  const releaseKeepAwake = vi.fn();
+  const keepAwake = vi.fn(() => releaseKeepAwake);
+  const publishAudioLevels = vi.fn();
   const recorder = {
     uri: "file:///voice.m4a",
     prepareToRecordAsync: vi.fn(async () => {}),
@@ -36,13 +64,87 @@ function createSession() {
     configureRecording: async () => {},
     releaseRecording: vi.fn(async () => {}),
     deleteRecording: vi.fn(),
-    onStateChange: vi.fn(),
+    sampleRecording: () => null,
+    publishAudioLevels,
+    keepAwake,
+    ...overrides,
   });
-  return { session, recorder, prepare };
+  return { session, recorder, prepare, keepAwake, releaseKeepAwake, publishAudioLevels };
 }
 
 describe("global voice input", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
+
+  it.each(["retry", "takeover"])(
+    "handles failed deactivation with %s without notifying a released owner",
+    async (action) => {
+      const pause = vi.fn();
+      const playback = acquireAudioSession("recording", pause);
+      await activateAudioSession(playback);
+      audio.setActive.mockRejectedValueOnce(new Error("Deactivation failed"));
+      await expect(releaseAudioSession(playback)).rejects.toThrow("Deactivation failed");
+      if (action === "retry") {
+        await releaseAudioSession(playback);
+        expect(audio.setActive).toHaveBeenLastCalledWith(false);
+      }
+      const recording = acquireAudioSession("recording");
+      expect(pause).not.toHaveBeenCalled();
+      await releaseAudioSession(recording);
+      vi.clearAllMocks();
+    },
+  );
+
+  it.each(["complete", "activation failure"])(
+    "protects recording from inline playback and releases its session after %s",
+    async (outcome) => {
+      const pause = vi.fn();
+      const playback = acquireAudioSession("playback", pause);
+      await activateAudioSession(playback);
+      let recording!: ReturnType<typeof acquireAudioSession>;
+      const { session, recorder } = createSession({
+        configureRecording: async () => {
+          recording = acquireAudioSession("recording");
+          try {
+            await activateAudioSession(recording);
+          } catch (error) {
+            await releaseAudioSession(recording);
+            throw error;
+          }
+        },
+        releaseRecording: () => releaseAudioSession(recording),
+      });
+      if (outcome === "activation failure") {
+        audio.setActive.mockRejectedValueOnce(new Error("Audio activation failed"));
+      }
+      await session.start(createTarget("first", () => "", vi.fn(), { start: 0, end: 0 }));
+      expect(pause).toHaveBeenCalledOnce();
+      expect(isAudioSessionOwner(playback)).toBe(false);
+      if (outcome === "complete") {
+        expect(recorder.record).toHaveBeenCalledOnce();
+        expect(session.controller.currentState.phase).toBe("recording");
+        audio.setMode.mockClear();
+        audio.setActive.mockClear();
+        await releaseAudioSession(playback);
+        const blockedPlayback = acquireAudioSession("playback");
+        expect(await activateAudioSession(blockedPlayback)).toBe(false);
+        await releaseAudioSession(blockedPlayback);
+        expect(audio.setMode).not.toHaveBeenCalled();
+        expect(audio.setActive).not.toHaveBeenCalled();
+        expect(isAudioSessionOwner(recording)).toBe(true);
+        await session.controller.stop();
+      } else {
+        expect(recorder.record).not.toHaveBeenCalled();
+        expect(session.controller.currentState.phase).toBe("error");
+      }
+      expect(audio.setActive).toHaveBeenLastCalledWith(false);
+      expect(isAudioSessionOwner(recording)).toBe(false);
+      const replay = acquireAudioSession("playback");
+      expect(await activateAudioSession(replay)).toBe(true);
+      expect(audio.setActive).toHaveBeenLastCalledWith(true);
+      await releaseAudioSession(replay);
+      vi.clearAllMocks();
+    },
+  );
 
   it.each([
     { selection: { start: 6, end: 11 }, expected: "hello spoken text", cursor: 17 },
@@ -252,5 +354,60 @@ describe("global voice input", () => {
     expect(recorder.record).toHaveBeenCalledTimes(1);
     expect(oldCommit).not.toHaveBeenCalled();
     expect(nextCommit).toHaveBeenCalledWith("second spoken text", { start: 18, end: 18 });
+  });
+
+  it("holds the screen awake and meters only while recording", async () => {
+    vi.useFakeTimers();
+    try {
+      let sample: VoiceRecordingSample = { durationMillis: 0, metering: -100 };
+      const { session, keepAwake, releaseKeepAwake, publishAudioLevels } = createSession({
+        sampleRecording: () => sample,
+      });
+      const snapshots: number[] = [];
+      session.subscribe(() => snapshots.push(session.getSnapshot().elapsedSeconds));
+
+      await session.start(createTarget("first", () => "first", vi.fn(), { start: 5, end: 5 }));
+      expect(session.getSnapshot().state.phase).toBe("recording");
+      expect(keepAwake).toHaveBeenCalledTimes(1);
+      // Silence on a silent history publishes nothing.
+      expect(publishAudioLevels).not.toHaveBeenCalled();
+
+      sample = { durationMillis: 2_400, metering: 0 };
+      vi.advanceTimersByTime(80);
+      expect(session.getSnapshot().elapsedSeconds).toBe(2);
+      expect(publishAudioLevels).toHaveBeenLastCalledWith(expect.arrayContaining([1]));
+
+      await session.controller.stop();
+      expect(releaseKeepAwake).toHaveBeenCalledTimes(1);
+      const publishedLevels = publishAudioLevels.mock.calls.length;
+      const publishedSnapshots = snapshots.length;
+      vi.advanceTimersByTime(800);
+      expect(publishAudioLevels).toHaveBeenCalledTimes(publishedLevels);
+      expect(snapshots).toHaveLength(publishedSnapshots);
+      // The finished recording's time stays readable until the next one starts.
+      expect(session.getSnapshot().elapsedSeconds).toBe(2);
+
+      sample = { durationMillis: 0, metering: -100 };
+      await session.start(createTarget("first", () => "first", vi.fn(), { start: 5, end: 5 }));
+      expect(session.getSnapshot().elapsedSeconds).toBe(0);
+      expect(publishAudioLevels).toHaveBeenLastCalledWith(expect.not.arrayContaining([1]));
+      expect(keepAwake).toHaveBeenCalledTimes(2);
+      session.dispose();
+      expect(releaseKeepAwake).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("publishes which owners are focused", () => {
+    const { session } = createSession();
+    const listener = vi.fn();
+    session.subscribe(listener);
+    session.setOwnerFocused("first", true);
+    session.setOwnerFocused("first", true);
+    expect(session.getSnapshot().focusedOwners).toEqual(new Set(["first"]));
+    expect(listener).toHaveBeenCalledTimes(1);
+    session.setOwnerFocused("first", false);
+    expect(session.getSnapshot().focusedOwners.size).toBe(0);
   });
 });

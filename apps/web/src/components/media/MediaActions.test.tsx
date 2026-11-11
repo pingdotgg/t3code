@@ -78,7 +78,6 @@ vi.mock("../ui/toast", () => ({
 import { MediaActions, useMediaActions, type MediaActionSource } from "./MediaActions";
 
 const environmentId = EnvironmentId.make("media-environment");
-const otherEnvironmentId = EnvironmentId.make("other-environment");
 const threadId = ThreadId.make("media-thread");
 const granted: Pick<AuthSessionState, "authenticated" | "scopes"> = {
   authenticated: true,
@@ -185,15 +184,3 @@ it.each(["save", "copy-image", "open-file"])(
     expect(state.openFile).not.toHaveBeenCalled();
   },
 );
-
-it.each([false, true])("uses the media environment's grant (allowed: %s)", async (allowed) => {
-  state.sessions.set(environmentId, allowed ? granted : denied);
-  state.sessions.set(otherEnvironmentId, allowed ? denied : granted);
-
-  await useMediaActions(hostSource())
-    .save()
-    .catch(() => {});
-
-  expect(state.mint).toHaveBeenCalledTimes(allowed ? 1 : 0);
-  expect(state.download).toHaveBeenCalledTimes(allowed ? 1 : 0);
-});

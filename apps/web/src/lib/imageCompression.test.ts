@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   compressImageForStash,
   compressImageToByteLimit,
-  isHeicImageFile,
+  createComposerImageThumbnail,
+  inheritComposerImageThumbnail,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
   MAX_STASH_IMAGE_DATA_URL_CHARS,
   prepareImageForAttachment,
+  readComposerImageThumbnail,
 } from "./imageCompression";
 
 import type { SnapShotSource } from "@t3tools/contracts";
@@ -94,6 +96,7 @@ function stubCanvasPipeline(
   const supportsWebp = options?.supportsWebp ?? true;
   const close = vi.fn();
   const fillRect = vi.fn();
+  const canvasSizes: Array<{ width: number; height: number }> = [];
   vi.stubGlobal(
     "createImageBitmap",
     vi.fn(async () => ({ width: 4000, height: 3000, close })),
@@ -104,7 +107,9 @@ function stubCanvasPipeline(
       constructor(
         public width: number,
         public height: number,
-      ) {}
+      ) {
+        canvasSizes.push({ width, height });
+      }
       getContext() {
         return {
           fillStyle: "",
@@ -129,7 +134,7 @@ function stubCanvasPipeline(
     vi.stubGlobal("HTMLCanvasElement", HtmlCanvas);
     vi.stubGlobal("document", { createElement: () => new HtmlCanvas(0, 0) });
   }
-  return { close, fillRect };
+  return { close, fillRect, canvasSizes };
 }
 
 afterEach(() => {
@@ -208,16 +213,6 @@ describe("compressImageForStash", () => {
     expect(close).toHaveBeenCalled();
   });
 
-  it("reports too-large for an oversized image when the browser cannot re-encode", async () => {
-    vi.stubGlobal("createImageBitmap", undefined);
-    vi.stubGlobal("OffscreenCanvas", undefined);
-
-    expect(await compressImageForStash(makeFile(4_000_000))).toEqual({
-      ok: false,
-      reason: "too-large",
-    });
-  });
-
   it("reports unreadable when the image fails to decode", async () => {
     vi.stubGlobal(
       "createImageBitmap",
@@ -240,19 +235,6 @@ describe("compressImageForStash", () => {
     });
   });
 
-  it("compressImageToByteLimit passes small files through byte-for-byte", async () => {
-    const bitmapSpy = vi.fn();
-    vi.stubGlobal("createImageBitmap", bitmapSpy);
-
-    const original = makeFile(1024);
-    const result = await compressImageToByteLimit(original, 10 * 1024 * 1024);
-
-    expect(result.ok).toBe(true);
-    expect(result.ok && result.recompressed).toBe(false);
-    expect(result.ok && result.file).toBe(original);
-    expect(bitmapSpy).not.toHaveBeenCalled();
-  });
-
   it("compressImageToByteLimit refuses sources above the decode-safety ceiling", async () => {
     const bitmapSpy = vi.fn();
     vi.stubGlobal("createImageBitmap", bitmapSpy);
@@ -267,17 +249,57 @@ describe("compressImageForStash", () => {
   });
 });
 
+describe("composer image thumbnails", () => {
+  it("gives the compressed file its source's thumbnail without decoding it again", async () => {
+    stubCanvasPipeline(() => 3);
+    const source = makeFile(3);
+    const compressed = makeFile(2, "image/webp");
+    const sourceThumbnail = await createComposerImageThumbnail(source);
+    expect(sourceThumbnail).toMatch(/^data:image\/png;base64,/);
+
+    inheritComposerImageThumbnail(source, compressed);
+
+    expect(readComposerImageThumbnail(compressed)).toBe(sourceThumbnail);
+    expect(await createComposerImageThumbnail(compressed)).toBe(sourceThumbnail);
+    expect(createImageBitmap).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("HEIC attachment preparation", () => {
-  it("recognizes HEIC and HEIF MIME types and case-insensitive file extensions", () => {
-    expect(isHeicImageFile({ name: "photo.bin", type: "image/heic" })).toBe(true);
-    expect(isHeicImageFile({ name: "photo.bin", type: "image/heif" })).toBe(true);
-    expect(isHeicImageFile({ name: "photo.heic", type: "image/heic-sequence" })).toBe(false);
-    expect(isHeicImageFile({ name: "photo.heif", type: "image/heif-sequence" })).toBe(false);
-    expect(isHeicImageFile({ name: "IMG_1234.HEIC", type: "" })).toBe(true);
-    expect(isHeicImageFile({ name: "photo.heif", type: "application/octet-stream" })).toBe(true);
-    expect(isHeicImageFile({ name: "photo.png", type: "image/png" })).toBe(false);
-    expect(isHeicImageFile({ name: "photo.heic", type: "image/png" })).toBe(false);
-    expect(isHeicImageFile({ name: "photo.heif", type: "image/jpeg" })).toBe(false);
+  it("shares the native decode and shows its thumbnail before JPEG encoding finishes", async () => {
+    const { close } = stubCanvasPipeline(() => 3);
+    let finishEncoding!: (blob: Blob) => void;
+    const jpeg = new Promise<Blob>((resolve) => {
+      finishEncoding = resolve;
+    });
+    const Canvas = globalThis.OffscreenCanvas;
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class extends Canvas {
+        override convertToBlob(options?: ImageEncodeOptions) {
+          return options?.type === "image/jpeg" ? jpeg : super.convertToBlob(options);
+        }
+      },
+    );
+    const original = makeHeicFile();
+    const preparation = prepareImageForAttachment(original, 1024);
+    const queued = prepareImageForAttachment(makeHeicFile({ name: "next.heic" }), 1024);
+    const results = Promise.all([preparation, queued]);
+    try {
+      const thumbnail = await createComposerImageThumbnail(original);
+      expect(thumbnail).toMatch(/^data:image\/png;base64,/);
+      expect(mocks.heicTo).not.toHaveBeenCalled();
+      expect(createImageBitmap).toHaveBeenCalledTimes(1);
+      expect(close).not.toHaveBeenCalled();
+    } finally {
+      finishEncoding(new Blob([new Uint8Array(4)], { type: "image/jpeg" }));
+      await results;
+    }
+    const [result, next] = await results;
+    expect(result.ok && result.file.type).toBe("image/jpeg");
+    expect(result.ok && result.file.size).toBe(4);
+    expect(next.ok).toBe(true);
+    expect(close).toHaveBeenCalledTimes(2);
   });
 
   it("converts a HEIC photo with a missing MIME type into a named JPEG", async () => {
@@ -286,16 +308,15 @@ describe("HEIC attachment preparation", () => {
       type: "",
       lastModified: 123,
     });
-    mocks.heicTo.mockResolvedValueOnce(
-      new Blob([new Uint8Array([4, 5, 6, 7])], { type: "image/jpeg" }),
-    );
+    const { close } = stubCanvasPipeline(() => 4);
+    vi.mocked(createImageBitmap).mockRejectedValue(new Error("HEIC is not supported natively"));
+    mocks.heicTo.mockResolvedValueOnce({ width: 4000, height: 3000, close });
 
     const result = await prepareImageForAttachment(original, 1024);
 
     expect(mocks.heicTo).toHaveBeenCalledWith({
       blob: original,
-      type: "image/jpeg",
-      quality: 0.92,
+      type: "bitmap",
     });
     expect(result.ok && result.file.name).toBe("IMG_1234.jpg");
     expect(result.ok && result.file.type).toBe("image/jpeg");
@@ -304,37 +325,26 @@ describe("HEIC attachment preparation", () => {
     expect(result.ok && result.recompressed).toBe(true);
   });
 
-  it("compresses JPEG intermediates above the source safety ceiling", async () => {
+  it("resizes decoded HEIC pixels before encoding the JPEG", async () => {
     const original = makeHeicFile({
       name: "large.heic",
       type: "image/heic",
     });
-    mocks.heicTo.mockResolvedValueOnce(
-      new Blob([new Uint8Array(MAX_COMPRESSIBLE_SOURCE_BYTES + 1)], {
-        type: "image/jpeg",
-      }),
-    );
-    const { close } = stubCanvasPipeline(() => 200_000);
+    const { close, canvasSizes } = stubCanvasPipeline(() => 200_000);
+    vi.mocked(createImageBitmap).mockRejectedValue(new Error("HEIC is not supported natively"));
+    mocks.heicTo.mockResolvedValueOnce({ width: 4000, height: 3000, close });
 
     const result = await prepareImageForAttachment(original, 1_000_000);
 
     expect(result.ok && result.file.name).toBe("large.jpg");
     expect(result.ok && result.file.type).toBe("image/jpeg");
     expect(result.ok && result.file.size).toBeLessThanOrEqual(1_000_000);
-    expect(close).toHaveBeenCalled();
-  });
-
-  it.each([
-    { label: "24 MP", width: 5712, height: 4284 },
-    { label: "48 MP", width: 8064, height: 6048 },
-  ])("accepts $label HEIC photos", async ({ width, height }) => {
-    const original = makeHeicFile({ width, height });
-    mocks.heicTo.mockResolvedValueOnce(new Blob(["jpeg"], { type: "image/jpeg" }));
-
-    const result = await prepareImageForAttachment(original, 1024);
-
-    expect(result.ok && result.file.type).toBe("image/jpeg");
-    expect(mocks.heicTo).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(createImageBitmap).toHaveBeenCalledTimes(1);
+    expect(canvasSizes).toEqual([
+      { width: 2000, height: 1500 },
+      { width: 256, height: 256 },
+    ]);
   });
 
   it("rejects oversized HEIC dimensions before loading the decoder", async () => {
@@ -343,18 +353,6 @@ describe("HEIC attachment preparation", () => {
     expect(await prepareImageForAttachment(original, 1024)).toEqual({
       ok: false,
       reason: "too-large",
-    });
-    expect(mocks.heicTo).not.toHaveBeenCalled();
-  });
-
-  it("rejects invalid HEIC metadata before loading the decoder", async () => {
-    const original = new File([new Uint8Array([1, 2, 3])], "broken.heic", {
-      type: "image/heic",
-    });
-
-    expect(await prepareImageForAttachment(original, 1024)).toEqual({
-      ok: false,
-      reason: "unreadable",
     });
     expect(mocks.heicTo).not.toHaveBeenCalled();
   });

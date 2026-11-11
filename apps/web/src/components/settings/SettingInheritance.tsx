@@ -37,6 +37,13 @@ const WRITING_STYLE_LABELS: Record<string, string> = {
   custom: "Custom instructions",
 };
 
+const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<string, string> = {
+  balanced: "Balanced",
+  performance: "Performance",
+  "battery-saver": "Battery saver",
+  custom: "Advanced",
+};
+
 function formatValue(key: keyof ServerSettings, value: unknown): string {
   if (value === null || value === undefined) {
     return key === "pullRequestMergeMethod"
@@ -75,17 +82,21 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   }
   if (Array.isArray(value)) return `${value.length} ${value.length === 1 ? "item" : "items"}`;
   if (typeof value === "object") {
+    if (key === "backgroundActivity" && "profile" in value && typeof value.profile === "string") {
+      return BACKGROUND_ACTIVITY_PROFILE_LABELS[value.profile] ?? value.profile;
+    }
     if ("model" in value && typeof value.model === "string") return value.model;
     if ("mode" in value && typeof value.mode === "string") {
-      return WRITING_STYLE_LABELS[value.mode] ?? value.mode;
+      if (key === "worktreeCleanup") return value.mode === "off" ? "Off" : "Custom";
+      return key === "sourceControlWritingStyle"
+        ? (WRITING_STYLE_LABELS[value.mode] ?? value.mode)
+        : value.mode;
     }
   }
   return "Custom";
 }
 
-/**
- * Same order as `resolveProjectSettings`.
- */
+/** Matches resolveProjectSettings order. */
 export function settingInheritanceLayers(
   target: ScopedSettingsTarget,
   environmentSettings: ServerSettings,
@@ -121,8 +132,7 @@ export function settingInheritanceLayers(
       set: source === "t3.json",
     });
   }
-  // For a file-backed key the built-in is what the resolver produced with
-  // nothing set, not the null the schema decodes to.
+  // File-backed defaults come from the resolver, not the schema's decoded null.
   const builtIn = fileBacked
     ? PROJECT_FILE_BACKED_SETTINGS[key].builtIn
     : DEFAULT_SERVER_SETTINGS[key];

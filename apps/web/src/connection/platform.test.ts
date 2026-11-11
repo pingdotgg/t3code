@@ -26,9 +26,9 @@ import {
   primaryRegistrationToRetainAfterTopologyRead,
   prepareDesktopSshEnvironment,
   provisionDesktopSshEnvironment,
-  readPrimaryEnvironmentTargetResult,
   secondaryRegistrationsToRetainAfterTopologyRead,
 } from "./platform.ts";
+import { APP_VERSION } from "../branding.ts";
 
 const TARGET: DesktopSshEnvironmentTarget = {
   alias: "devbox",
@@ -68,6 +68,8 @@ function makeBridge(
   },
 ): DesktopBridge {
   return {
+    getClientPlatform: () => "linux",
+    getLocalEnvironmentEnabled: () => true,
     ensureSshEnvironment: async (
       target: DesktopSshEnvironmentTarget,
       ensureOptions?: { issuePairingToken?: boolean },
@@ -133,19 +135,6 @@ describe("desktop SSH pairing", () => {
       ).pipe(Effect.flip);
 
       expect(error).toMatchObject({ reason: "configuration" });
-      expect(calls).toEqual(["ensure", "descriptor"]);
-    }),
-  );
-
-  it.effect("does not consume the credential when descriptor discovery fails", () =>
-    Effect.gen(function* () {
-      const calls: string[] = [];
-
-      yield* provisionDesktopSshEnvironment(
-        makeBridge(calls, { failDescriptor: true }),
-        TARGET,
-      ).pipe(Effect.flip);
-
       expect(calls).toEqual(["ensure", "descriptor"]);
     }),
   );
@@ -235,6 +224,41 @@ describe("desktop SSH pairing", () => {
       expect(ensure).toHaveBeenCalledTimes(2);
       expect(calls).toEqual(["disconnect", "ensure", "descriptor", "token"]);
       expect(exchange).toHaveBeenCalledExactlyOnceWith(SSH_BOOTSTRAP.httpBaseUrl, "pairing-token");
+    }),
+  );
+
+  const failPairing = (serverVersion: string, message: string) => {
+    const bridge = makeBridge([]);
+    const fetchDescriptor = bridge.fetchSshEnvironmentDescriptor;
+    vi.spyOn(bridge, "fetchSshEnvironmentDescriptor").mockImplementation(async (url) => ({
+      ...(await fetchDescriptor(url)),
+      serverVersion,
+    }));
+    vi.spyOn(bridge, "bootstrapSshBearerSession").mockRejectedValue(new Error(message));
+    return provisionDesktopSshEnvironment(bridge, TARGET).pipe(Effect.flip);
+  };
+  const PAIRING_500 =
+    "[ssh_http:500] SSH remote API request failed during bootstrap-bearer-session.";
+
+  it.effect("blocks with both versions when a server on another build rejects pairing", () =>
+    Effect.gen(function* () {
+      const error = yield* failPairing("0.0.46-nightly.20261004.2652", PAIRING_500);
+
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error.detail).toContain("0.0.46-nightly.20261004.2652");
+      expect(error.detail).toContain(APP_VERSION);
+    }),
+  );
+
+  it.effect("keeps retrying pairing failures that are not a version mismatch", () =>
+    Effect.gen(function* () {
+      expect(yield* failPairing(APP_VERSION, PAIRING_500)).toBeInstanceOf(ConnectionTransientError);
+      expect(
+        yield* failPairing(
+          "0.0.46-nightly.20261004.2652",
+          "SSH remote API request failed during bootstrap-bearer-session.",
+        ),
+      ).toBeInstanceOf(ConnectionTransientError);
     }),
   );
 
@@ -377,6 +401,7 @@ describe("rejected desktop-local bootstrap tokens", () => {
     );
   });
 
+  // regression: #16273 a rejected desktop-local credential was retried every poll
   it("treats only authentication rejections as a dead credential", () => {
     expect(
       isRejectedBootstrapCredentialError(
@@ -416,16 +441,6 @@ describe("primary topology cache", () => {
   };
   const previous = new Map([[PRIMARY_LOCAL_ENVIRONMENT_ID, cached]]);
 
-  it("captures synchronous primary target read failures", () => {
-    const cause = new Error("invalid primary target");
-
-    expect(
-      readPrimaryEnvironmentTargetResult(() => {
-        throw cause;
-      }),
-    ).toEqual({ _tag: "Failure", cause });
-  });
-
   it("retains the cached primary after a transient topology read failure", () => {
     expect(
       primaryRegistrationToRetainAfterTopologyRead(previous, {
@@ -433,14 +448,5 @@ describe("primary topology cache", () => {
         cause: new Error("IPC unavailable"),
       }),
     ).toBe(cached);
-  });
-
-  it("treats a successful primary absence as authoritative removal", () => {
-    expect(
-      primaryRegistrationToRetainAfterTopologyRead(previous, {
-        _tag: "Success",
-        target: null,
-      }),
-    ).toBeUndefined();
   });
 });

@@ -1,5 +1,3 @@
-"use client";
-
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { RadioGroup as RadioGroupPrimitive } from "@base-ui/react/radio-group";
 
@@ -25,7 +23,6 @@ function Radio({ className, ...props }: RadioPrimitive.Root.Props) {
       data-slot="radio"
       {...props}
     >
-      {/* Leave a contrasting inner gap inside the 2px focus outline. */}
       <RadioPrimitive.Indicator
         className="-inset-px absolute flex size-4.5 items-center justify-center rounded-full before:size-2 before:rounded-full before:bg-primary-foreground data-unchecked:hidden data-checked:bg-primary sm:size-4 sm:before:size-1.5 in-[[data-slot=radio]:focus-visible]:inset-shadow-[0_0_0_3px_var(--background)] in-[[data-slot=radio]:focus-visible]:outline-2 in-[[data-slot=radio]:focus-visible]:outline-solid in-[[data-slot=radio]:focus-visible]:-outline-offset-2 in-[[data-slot=radio]:focus-visible]:outline-inherit"
         data-slot="radio-indicator"

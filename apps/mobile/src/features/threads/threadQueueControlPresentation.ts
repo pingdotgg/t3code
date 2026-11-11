@@ -1,14 +1,13 @@
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 
 export const REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL = "Remove queued message";
 
 export interface ThreadQueueRowControls {
   readonly canDismiss: boolean;
   readonly canEdit: boolean;
-  readonly canMoveDown: boolean;
-  readonly canMoveUp: boolean;
-  readonly canSteer: boolean;
+  readonly canSend: boolean;
   readonly dismissAccessibilityLabel: string;
   readonly displayText: string;
   readonly isEditing: boolean;
@@ -17,10 +16,12 @@ export interface ThreadQueueRowControls {
 export function resolveThreadQueueRowControls(input: {
   readonly busy: boolean;
   readonly canPromoteToSteer: boolean;
-  readonly canReorder: boolean;
-  readonly index: number;
+  readonly canSendNow: boolean;
+  /** Something else holds the composer, such as an open question. */
+  readonly editBlocked?: boolean;
   readonly isEditing?: boolean;
-  readonly queuedCount: number;
+  /** A guest's message keeps the guest's words; the owner can cancel it, not rewrite it. */
+  readonly isGuestMessage?: boolean;
   readonly text: string;
 }): ThreadQueueRowControls {
   const mutationEnabled = !input.busy;
@@ -30,13 +31,14 @@ export function resolveThreadQueueRowControls(input: {
     canDismiss: !input.busy,
     // Re-opening the row already in the composer would reload it and throw
     // away whatever has been typed since.
-    canEdit: mutationEnabled && !isEditing,
-    canMoveDown: mutationEnabled && input.canReorder && input.index < input.queuedCount - 1,
-    canMoveUp: mutationEnabled && input.canReorder && input.index > 0,
-    canSteer: mutationEnabled && input.canPromoteToSteer && !isEditing,
+    canEdit:
+      mutationEnabled && !isEditing && input.isGuestMessage !== true && input.editBlocked !== true,
+    canSend: mutationEnabled && (input.canPromoteToSteer || input.canSendNow) && !isEditing,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
-    // Edit and Steer keep the original text so quoted citations stay linked.
-    displayText: assistantCitationsToPlainText(input.text),
+    // Editing and sending keep the original text so quoted citations stay linked.
+    displayText: isAttachmentOnlyBootstrapPrompt(input.text)
+      ? ""
+      : assistantCitationsToPlainText(input.text),
     isEditing,
   };
 }
@@ -59,28 +61,4 @@ export function buildCancelQueuedRunCommand(input: {
       threadId: input.threadId,
     },
   };
-}
-
-export function resolveQueueDragBeforeRunId(
-  rows: ReadonlyArray<{ id: RunId; y?: number; height?: number }>,
-  runId: RunId,
-  translationY: number,
-): RunId | null | undefined {
-  const sourceIndex = rows.findIndex((row) => row.id === runId);
-  const source = rows[sourceIndex];
-  if (!source || rows.some((row) => row.y === undefined || row.height === undefined)) return;
-  const center = source.y! + source.height! / 2 + translationY;
-  const remaining = rows.filter((row) => row.id !== runId);
-  return remaining.find((row) => center < row.y! + row.height! / 2)?.id ?? null;
-}
-
-export function resolveQueueDropBeforeRunId(
-  rows: ReadonlyArray<{ id: RunId; y?: number; height?: number }>,
-  runId: RunId,
-  translationY: number,
-): RunId | null | undefined {
-  const before = resolveQueueDragBeforeRunId(rows, runId, translationY);
-  if (before === undefined) return;
-  const sourceIndex = rows.findIndex((row) => row.id === runId);
-  return before === (rows[sourceIndex + 1]?.id ?? null) ? undefined : before;
 }

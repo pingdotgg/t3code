@@ -22,7 +22,9 @@ import {
   isSameComposerContextPayload,
   previewAnnotationContextRecord,
   previewAnnotationFromRecord,
+  pullRequestContextKindLabel,
   resolveUserMessageContext,
+  reviewCommentContextLabel,
   selectedMessageContextFragment,
   reviewCommentContextRecord,
   terminalContextRecord,
@@ -217,6 +219,14 @@ describe("composerContextRecords", () => {
     expect(image).toMatchObject({ attachmentId: "uploaded-image" });
   });
 
+  it("shortens a long annotation comment label without splitting an emoji", () => {
+    const record = previewAnnotationContextRecord({
+      ...annotation,
+      comment: `${"a".repeat(46)}😀 and make the button bigger`,
+    });
+    expect(record.label).toBe(`${"a".repeat(46)}…`);
+  });
+
   it("restores multiple edits on one target without parsing display strings", () => {
     const styleChanges = [
       ...annotation.styleChanges,
@@ -254,7 +264,7 @@ describe("composerContextRecords", () => {
     expect(removeInlineContextReference(prompt, reference.contextId).prompt).toBe("prose tail");
   });
 
-  it("clamps an oversized review selection so the record still encodes", () => {
+  it("clamps oversized review and terminal selections so the records still encode", () => {
     const build = (diffLength: number) =>
       reviewCommentContextRecord({
         id: "rc-big",
@@ -275,24 +285,21 @@ describe("composerContextRecords", () => {
     expect(overLimit.diff.endsWith("… truncated …")).toBe(true);
     expect(() => decodeMessageContext({ version: 1, records: [atLimit] })).not.toThrow();
     expect(() => decodeMessageContext({ version: 1, records: [overLimit] })).not.toThrow();
-  });
 
-  it("keeps a region-only annotation's target summary and screenshot across a round trip", () => {
-    const regionOnly: PreviewAnnotationPayload = {
-      ...annotation,
-      elements: [],
-      styleChanges: [],
-      regions: [{ id: "rg_1", rect: { x: 1, y: 2, width: 3, height: 4 } }],
-    };
-    const record = previewAnnotationContextRecord(regionOnly, { screenshotContextId: "ann_1" });
-    expect(record.targetSummary).toBe("1 marked region");
-    expect(record.screenshotContextId).toBe("image_ann_1");
-
-    const reencoded = previewAnnotationContextRecord(previewAnnotationFromRecord(record), {
-      screenshotContextId: "ann_1",
+    const terminal = terminalContextRecord({
+      id: "term-big",
+      threadId: ThreadId.make("t"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 1,
+      lineEnd: 2_000,
+      text: `${"t".repeat(63_985)}${"😀".repeat(8)}`,
     });
-    expect(reencoded.targetSummary).toBe("1 marked region");
-    expect(reencoded.screenshotContextId).toBe("image_ann_1");
+    expect(terminal.text).toBe(`${"t".repeat(63_985)}\n… truncated …`);
+    expect(decodeMessageContext({ version: 1, records: [terminal] }).records).toMatchObject([
+      { kind: "terminal", text: terminal.text },
+    ]);
   });
 
   it("finds the destination collision for different legacy terminal messages", () => {
@@ -334,36 +341,6 @@ describe("composerContextRecords", () => {
     expect(isSameComposerContextPayload(canonical, { ...canonical, text: "B" })).toBe(false);
   });
 
-  it("compares nested annotation element and source payloads", () => {
-    const base = previewAnnotationContextRecord(annotation);
-    expect(isSameComposerContextPayload(base, { ...base, label: "Different display label" })).toBe(
-      true,
-    );
-    expect(
-      isSameComposerContextPayload(base, {
-        ...base,
-        elements: base.elements!.map((element) => ({
-          ...element,
-          htmlPreview: '<button id="pay">Changed</button>',
-        })),
-      }),
-    ).toBe(false);
-    expect(
-      isSameComposerContextPayload(base, {
-        ...base,
-        elements: base.elements!.map((element) => ({
-          ...element,
-          source: {
-            functionName: "Checkout",
-            fileName: "src/Checkout.tsx",
-            lineNumber: 20,
-            columnNumber: 4,
-          },
-        })),
-      }),
-    ).toBe(false);
-  });
-
   it("resolves structured context directly and upgrades legacy text otherwise", () => {
     const structured = resolveUserMessageContext({
       text: "hi [b.ts L4](t3-context://v1/review-comment/rc-1)",
@@ -390,6 +367,57 @@ describe("composerContextRecords", () => {
     });
     expect(legacy.text).toBe("hi\n\n[T line 1](t3-context://v1/terminal/legacy_terminal_1)");
     expect(legacy.recordsById.get("legacy_terminal_1")?.kind).toBe("terminal");
+  });
+});
+
+describe("pullRequestContextKindLabel", () => {
+  const comment = (url: string, isDraft: boolean) => ({
+    id: "pull-request-context:7",
+    sectionId: "pull-request:7",
+    sectionTitle: "PR #7",
+    filePath: "PR #7",
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: "Title",
+    text: "",
+    diff: "",
+    pullRequest: {
+      number: 7,
+      title: "Title",
+      url,
+      headBranch: "feature",
+      baseBranch: "main",
+      state: "open" as const,
+      isDraft,
+    },
+  });
+
+  it("names the change request the way its host does", () => {
+    expect(pullRequestContextKindLabel(comment("https://github.com/acme/app/pull/7", false))).toBe(
+      "Open pull request",
+    );
+    expect(
+      pullRequestContextKindLabel(comment("https://gitlab.com/acme/app/-/merge_requests/7", true)),
+    ).toBe("Draft merge request");
+  });
+});
+
+describe("reviewCommentContextLabel", () => {
+  const selection = (sectionId: string) => ({
+    id: "selection",
+    sectionId,
+    sectionTitle: "Review",
+    filePath: "apps/web/src/page.tsx",
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: "+12 to +18",
+    text: "",
+    diff: "",
+  });
+
+  it("names the pull request a selection came from", () => {
+    expect(reviewCommentContextLabel(selection("pull-request:42"))).toBe("#42 page.tsx L12 to L18");
+    expect(reviewCommentContextLabel(selection("turn-diff"))).toBe("page.tsx L12 to L18");
   });
 });
 

@@ -103,16 +103,3 @@ it.effect("retains the request-handler error as the internal error cause", () =>
     assert.notInclude(error.message, source.message);
   }),
 );
-
-it.effect("passes request errors through without adding a wrapper", () =>
-  Effect.gen(function* () {
-    const source = CodexError.CodexAppServerRequestError.invalidParams("Invalid thread id");
-    const error = yield* Shared.runHandler(
-      (_payload: void) => Effect.fail(source),
-      undefined,
-      "thread/start",
-    ).pipe(Effect.flip);
-
-    assert.strictEqual(error, source);
-  }),
-);

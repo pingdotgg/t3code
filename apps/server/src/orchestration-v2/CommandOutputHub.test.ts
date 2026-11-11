@@ -50,7 +50,6 @@ const modelSelection = {
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const ITEM_ID = TurnItemId.make("turn-item:command");
 
-/** What a client holds after applying frames, using the same shared normalizer. */
 function applyFrame(
   state: TerminalOutputState,
   frame: OrchestrationV2CommandOutputFrame,
@@ -150,7 +149,6 @@ const writeCommandItem = (
     });
   });
 
-/** Collect frames into a queue so the test takes them one receipt at a time. */
 const subscribeFrames = (threadId: ThreadId) =>
   Effect.gen(function* () {
     const hub = yield* CommandOutputHub.CommandOutputHub;
@@ -165,8 +163,9 @@ const subscribeFrames = (threadId: ThreadId) =>
 
 const takeFrame = (frames: Queue.Queue<OrchestrationV2CommandOutputFrame | "ended">) =>
   Queue.take(frames).pipe(
-    Effect.flatMap((frame) =>
-      frame === "ended" ? Effect.die("command output stream ended early") : Effect.succeed(frame),
+    Effect.filterOrElse(
+      (frame) => !(frame === "ended"),
+      (_frame) => Effect.die("command output stream ended early"),
     ),
   );
 
@@ -181,7 +180,6 @@ layer("CommandOutputHub", (it) => {
           const hub = yield* CommandOutputHub.CommandOutputHub;
           const threadId = yield* seedThread;
           yield* writeCommandItem(threadId, { status: "running" });
-          // Output that arrived before anyone looked, ending mid-escape and mid-redraw.
           yield* hub.append({
             threadId,
             itemId: ITEM_ID,
@@ -196,7 +194,6 @@ layer("CommandOutputHub", (it) => {
           let client = applyFrame(EMPTY_TERMINAL_OUTPUT, first);
           assert.equal(client.text, "\u001b[0;32mbuilding\u001b[0m\n55%");
 
-          // Chunks that land between frames arrive together in one append.
           yield* TestClock.adjust("1 second");
           yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "1m" });
           yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "\r100%\u001b[0m\ndone\n" });
@@ -210,7 +207,6 @@ layer("CommandOutputHub", (it) => {
             ).text,
           );
 
-          // The persisted item settles the row; its output is what the client keeps.
           yield* TestClock.adjust("1 second");
           yield* writeCommandItem(threadId, {
             status: "completed",
@@ -251,7 +247,6 @@ layer("CommandOutputHub", (it) => {
         const frames = yield* subscribeFrames(threadId);
         let client = applyFrame(EMPTY_TERMINAL_OUTPUT, yield* takeFrame(frames));
         assert.equal(client.text, "abc");
-        // 64 newer commands push this one's tail out of the hub.
         for (let index = 0; index < 64; index += 1) {
           yield* hub.append({
             threadId,
@@ -353,8 +348,7 @@ layer("CommandOutputHub", (it) => {
         const frames = yield* subscribeFrames(threadId);
         yield* takeFrame(frames);
         yield* TestClock.adjust("1 second");
-        // Some providers stop a command without reporting its output. The session
-        // manager releases the live tail before the settled item is persisted.
+        // Some providers omit stopped-command output; the live tail is released before the settled item persists.
         yield* hub.finish({ threadId, itemId: ITEM_ID });
         yield* writeCommandItem(threadId, { status: "interrupted" });
         const final = yield* takeFrame(frames);

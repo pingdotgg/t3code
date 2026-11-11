@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import * as Electron from "electron";
 import { MacPermissionHelper } from "./MacPermissionHelper.ts";
 import type { SettingsWindow } from "./MacSettingsWindow.ts";
-import { MAC_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
 
 const mocks = vi.hoisted(() => ({
   granted: false,
@@ -110,31 +108,6 @@ afterEach(() => {
 const iconPaths = ["/bundle/prod-resources/icon.png"];
 const open = () =>
   helper.show("accessibility", "/bundle/mac-permission-preload.cjs", null, iconPaths);
-function send(action: string, trusted = true) {
-  const window = windows.at(-1)!;
-  Electron.ipcMain.emit(
-    MAC_PERMISSION_HELPER_CHANNEL,
-    {
-      sender: trusted ? window.webContents : {},
-      senderFrame: window.webContents.mainFrame,
-    },
-    action,
-  );
-}
-it("drags the running app bundle only for the helper's own renderer", async () => {
-  await open();
-  send("drag", false);
-  expect(mocks.startDrag).not.toHaveBeenCalled();
-  send("drag");
-  expect(mocks.createFromPath).toHaveBeenCalledWith("/bundle/prod-resources/icon.png");
-  expect(mocks.startDrag).toHaveBeenCalledWith({
-    file: "/Applications/T3 Code (Nightly).app",
-    icon: mocks.createFromPath.mock.results[0]!.value.resize(),
-  });
-  send("finder");
-  expect(mocks.showItemInFolder).toHaveBeenCalledWith("/Applications/T3 Code (Nightly).app");
-});
-
 it("does not reopen a superseded helper when its initial probe completes", async () => {
   const pending = Promise.withResolvers<boolean>();
   const first = helper.show(

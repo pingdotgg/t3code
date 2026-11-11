@@ -84,6 +84,7 @@ describe("loadOpenCode2Catalog", () => {
     }),
   );
 
+  // regression: #17424 only the provider list is optional; a model-list failure fails the read
   it.effect("fails the read when the model list fails", () =>
     Effect.gen(function* () {
       const error = yield* readCatalog({

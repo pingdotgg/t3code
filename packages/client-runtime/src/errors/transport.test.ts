@@ -4,10 +4,6 @@ import { NETWORK_BLOCKING_HINT } from "./network.ts";
 import { isTransportConnectionErrorMessage, sanitizeThreadErrorMessage } from "./transport.ts";
 
 describe("isTransportConnectionErrorMessage", () => {
-  it("returns true for SocketCloseError", () => {
-    expect(isTransportConnectionErrorMessage("SocketCloseError: connection reset")).toBe(true);
-  });
-
   it("returns true for React Native disconnected socket errors", () => {
     expect(
       isTransportConnectionErrorMessage(

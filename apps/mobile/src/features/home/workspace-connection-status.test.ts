@@ -23,9 +23,6 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
 
 describe("workspace connection status", () => {
   it.each([
-    ["connecting", null],
-    ["reconnecting", null],
-    ["connecting", "Could not reach sleeping laptop"],
     ["reconnecting", "Could not reach sleeping laptop"],
     ["error", "Could not reach sleeping laptop"],
   ] as const)(

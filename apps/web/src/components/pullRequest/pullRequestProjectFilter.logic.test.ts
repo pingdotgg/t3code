@@ -2,7 +2,7 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { findScopedProject } from "./pullRequestList.logic";
-import { pullRequestFilterProjects } from "./pullRequestProjectFilter.logic";
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 
 const cups = EnvironmentId.make("env-cups");
 const nucbox = EnvironmentId.make("env-nucbox");
@@ -73,6 +73,7 @@ describe("pull request project filter choices", () => {
     ]);
   });
 
+  // regression: #9948 project filter deduplication must not merge across hosts
   it("keeps repositories on different hosts separate", () => {
     const choices = pullRequestFilterProjects(
       [project("github"), project("enterprise", nucbox, "git.example.com/pingdotgg/t3code")],
@@ -82,6 +83,7 @@ describe("pull request project filter choices", () => {
     expect(choices.map((choice) => choice.id)).toEqual(["enterprise", "github"]);
   });
 
+  // regression: #9948 project filter deduplication must not merge unidentified repos
   it("does not merge projects whose repository identity is unknown", () => {
     const choices = pullRequestFilterProjects(
       [project("first", nucbox, null), project("second", nucbox, null)],
