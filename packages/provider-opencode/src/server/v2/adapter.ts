@@ -485,6 +485,9 @@ const formQuestions = (
       options,
       multiSelect: field.type === "multiselect",
       allowCustomAnswer: field.custom === true || options.length === 0,
+      ...(field.required === true || (field.type === "multiselect" && (field.minItems ?? 0) > 0)
+        ? { required: true }
+        : {}),
     });
   }
   return { questions };
@@ -497,8 +500,11 @@ const formAnswer = (form: NativeForm, answers: Readonly<Record<string, unknown>>
     const values = (Array.isArray(raw) ? raw : [raw]).filter(
       (value): value is string => typeof value === "string" && value.trim().length > 0,
     );
-    if (values.length > 0) {
-      answer[field.key] = field.type === "multiselect" ? values : values.join(", ");
+    // An explicit empty list answers an optional multiselect with "none".
+    if (field.type === "multiselect" && (Array.isArray(raw) || values.length > 0)) {
+      answer[field.key] = values;
+    } else if (values.length > 0) {
+      answer[field.key] = values.join(", ");
     }
   }
   return answer;

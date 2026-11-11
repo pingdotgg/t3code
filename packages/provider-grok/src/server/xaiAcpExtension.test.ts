@@ -1173,6 +1173,32 @@ describe("XAiAcpExtension", () => {
     });
   });
 
+  it("answers a multi-select question with nothing checked as an empty list", () => {
+    const response = makeXAiAskUserQuestionResponse(
+      {
+        sessionId: "session-1",
+        toolCallId: "tool-call-1",
+        mode: "default",
+        questions: [
+          {
+            question: "Which files should Grok touch?",
+            multiSelect: true,
+            options: [
+              { label: "Tests", description: "Update tests" },
+              { label: "Docs", description: "Update docs" },
+            ],
+          },
+        ],
+      },
+      { "Which files should Grok touch?": [] },
+    );
+
+    expect(response).toEqual({
+      outcome: "accepted",
+      answers: { "Which files should Grok touch?": [] },
+    });
+  });
+
   it.effect("settles a hung prompt from a root-session prompt_complete notification", () =>
     Effect.gen(function* () {
       const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();

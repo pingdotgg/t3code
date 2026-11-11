@@ -111,7 +111,7 @@ function parseField(
       const values = new Set(options.map(optionValue));
       const minItems = typeof property.minItems === "number" ? property.minItems : 0;
       const maxItems = typeof property.maxItems === "number" ? property.maxItems : Infinity;
-      // Clients require a selection, so empty-only questions cannot be answered.
+      // Empty-only questions carry no choice worth asking.
       if (maxItems === 0 || minItems > maxItems || minItems > values.size) return undefined;
       return { field: { kind: "multiChoice", values, minItems, maxItems }, options };
     }
@@ -203,7 +203,9 @@ export function parseElicitationForm(
       ...(parsed.field.kind === "text" || parsed.field.kind === "number"
         ? {}
         : { allowCustomAnswer: false }),
-      ...(parsed.field.kind === "multiChoice" ? { multiSelect: true } : {}),
+      ...(parsed.field.kind === "multiChoice"
+        ? { multiSelect: true, ...(parsed.field.minItems > 0 ? { required: true } : {}) }
+        : {}),
     });
   }
   return {
