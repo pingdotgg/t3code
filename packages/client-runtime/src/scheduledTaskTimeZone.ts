@@ -15,9 +15,8 @@ export function scheduleTimeZoneLabel(
       timeZone,
       timeZoneName: runAt ? "short" : "shortGeneric",
     })
-      .format(runAt ? DateTime.toEpochMillis(DateTime.makeUnsafe(runAt)) : undefined)
-      .split(", ")
-      .at(-1);
+      .formatToParts(runAt ? DateTime.toEpochMillis(DateTime.makeUnsafe(runAt)) : undefined)
+      .find((part) => part.type === "timeZoneName")?.value;
   } catch {
     return undefined;
   }
