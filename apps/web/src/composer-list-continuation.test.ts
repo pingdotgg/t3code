@@ -108,7 +108,7 @@ describe("composer list indentation", () => {
     expect(applyEdit(value, edit)).toBe(expected);
   });
 
-  it("leaves a top-level item alone so Shift+Tab can still switch Build/Plan", () => {
+  it("leaves a top-level item alone", () => {
     expect(listOutdentForTab("- item", 6, 6)).toBeNull();
   });
 });
