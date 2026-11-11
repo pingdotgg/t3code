@@ -340,6 +340,17 @@ describe("evaluatePullRequestWatch", () => {
       { kind: "checks-passed", count: 1, required: false },
     ]);
 
+    // A hold after a reported pass still wakes when the approved run finishes.
+    const passed = evaluatePullRequestWatch(watch(), detail({ checks: [bot] }), noRemarks);
+    const held = evaluatePullRequestWatch(passed.next, gated, noRemarks);
+    assert.deepEqual(held.changes, [{ kind: "checks-awaiting-approval", checks: [approval] }]);
+    const approved = detail({
+      checks: [bot, { ...check("CI", "success"), url: `${run(1)}/job/1` }],
+    });
+    assert.deepEqual(evaluatePullRequestWatch(held.next, approved, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: false },
+    ]);
+
     // Approved, the run's jobs carry their own names under the run's URL.
     const job = { ...check("lint", "success"), url: `${run(1)}/job/7` };
     const pending = { ...check("test", "pending"), url: `${run(1)}/job/8` };

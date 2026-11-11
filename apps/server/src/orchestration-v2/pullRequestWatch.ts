@@ -123,8 +123,8 @@ export function evaluatePullRequestWatch(
     gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
   if (checks.length > 0 && !(unread && passedNow)) {
     const gateNames = gate.map((check) => check.name);
-    // Pending reruns do not undo a pass already reported for this head; a failed gate does.
-    if (gate.some(isFailedCheck)) {
+    // Pending reruns do not undo a pass already reported for this head; a failed gate or an approval hold does.
+    if (gate.some(isFailedCheck) || awaitingApproval.length > 0) {
       passed = false;
       passedChecks = [];
     }
