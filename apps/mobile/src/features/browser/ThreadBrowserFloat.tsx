@@ -2,7 +2,7 @@ import { useIsFocused } from "@react-navigation/native";
 import type { EnvironmentId, PreviewSessionSnapshot, ThreadId } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import * as Option from "effect/Option";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
@@ -54,12 +54,12 @@ export function ThreadBrowserFloat(props: {
   const foreground = useAppForeground();
   const tab = props.tabs.find((entry) => entry.tabId === tabId) ?? null;
   const onOpen = props.onOpen;
-  const open = useCallback(() => {
+  const open = () => {
     if (tabId === null) return;
     setTabId(null);
     onOpen(tabId);
-  }, [onOpen, tabId]);
-  const close = useCallback(() => setTabId(null), []);
+  };
+  const close = () => setTabId(null);
   if (!tab || !focused) return null;
   return (
     <FloatingBrowserPlayer
