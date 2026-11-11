@@ -59,13 +59,16 @@ export function normalizeEventKey(key: string): string {
 export type ShortcutKeyboardLayoutMap = Pick<ReadonlyMap<string, string>, "get">;
 
 export function shortcutKeyFromEvent(
-  event: Pick<ShortcutEventLike, "key" | "code">,
+  event: Pick<ShortcutEventLike, "key" | "code" | "shiftKey" | "altKey">,
   keyboardLayoutMap?: ShortcutKeyboardLayoutMap,
 ): string {
   const layoutKey = normalizeEventKey(event.key);
   if (/^[a-z]$/.test(layoutKey)) return layoutKey;
   const mappedKey = event.code ? keyboardLayoutMap?.get(event.code)?.toLowerCase() : undefined;
   if (mappedKey && /^[a-z]$/.test(mappedKey)) return mappedKey;
+  // An unshifted "+" is a dedicated zoom key (German, Spanish, Nordic); Czech types it on Digit1.
+  const isZoomPlus = layoutKey === "+" && !event.shiftKey && !event.altKey;
+  if (isZoomPlus && !event.code?.startsWith("Digit")) return layoutKey;
   const physicalKey = event.code ? EVENT_CODE_SHORTCUT_KEYS[event.code] : undefined;
   return physicalKey ?? layoutKey;
 }

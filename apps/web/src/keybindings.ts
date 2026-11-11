@@ -27,7 +27,7 @@ import { getKeyboardLayoutMap } from "./keyboardLayout";
 
 export type { ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
 export function shortcutKeyFromEvent(
-  event: Pick<ShortcutEventLike, "key" | "code"> & Partial<Pick<ShortcutEventLike, "altKey">>,
+  event: Pick<ShortcutEventLike, "key" | "code" | "shiftKey" | "altKey">,
   platform = navigator.platform,
 ) {
   return sharedShortcutKeyFromEvent(
