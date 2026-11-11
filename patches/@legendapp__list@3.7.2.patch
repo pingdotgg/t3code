@@ -2,24 +2,20 @@ diff --git a/react.js b/react.js
 index 5155454..2885128 100644
 --- a/react.js
 +++ b/react.js
-@@ -3489,6 +3489,16 @@ function abortBootstrapInitialScroll(ctx) {
+@@ -3489,6 +3489,12 @@ function abortBootstrapInitialScroll(ctx) {
  
  // src/core/containerLayoutBaseline.ts
  var containerLayoutBaselines = /* @__PURE__ */ new WeakMap();
-+// Client rects include ancestor transforms (a zoomed-out overview scales the
-+// list), layout sizes do not. Item sizes are layout sizes, so undo the scale.
++// Offset sizes stay in layout pixels throughout ancestor transforms, including
++// the last frames of an overview zoom. The list rounds measured sizes too.
 +function measureLayoutRect(element) {
 +  const rect = element.getBoundingClientRect();
-+  const layoutWidth = element.offsetWidth;
-+  if (!layoutWidth || !rect.width) return rect;
-+  const scale = rect.width / layoutWidth;
-+  if (Math.abs(scale - 1) < 0.05) return rect;
-+  return { height: rect.height / scale, left: rect.left, top: rect.top, width: rect.width / scale, x: rect.x, y: rect.y };
++  return { height: element.offsetHeight, left: rect.left, top: rect.top, width: element.offsetWidth, x: rect.x, y: rect.y };
 +}
  function getContainerLayoutBaseline(element) {
    return containerLayoutBaselines.get(element);
  }
-@@ -5646,7 +5656,7 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -5646,7 +5652,7 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
        const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
@@ -28,7 +24,7 @@ index 5155454..2885128 100644
        setContainerLayoutBaseline(element, rect);
        measurements.push({
          containerId,
-@@ -6214,7 +6224,7 @@ function useOnLayoutSync({
+@@ -6214,7 +6220,7 @@ function useOnLayoutSync({
      };
      let prevRect;
      if (measureInLayoutEffect) {
@@ -37,7 +33,7 @@ index 5155454..2885128 100644
        emit(toLayout(rect), true);
        prevRect = rect;
      }
-@@ -6227,7 +6237,7 @@ function useOnLayoutSync({
+@@ -6227,7 +6233,7 @@ function useOnLayoutSync({
          left: entry.contentRect.left,
          top: entry.contentRect.top,
          width: borderBoxSize.inlineSize
@@ -46,7 +42,7 @@ index 5155454..2885128 100644
        const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
        const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
        prevRect = rectObserved;
-@@ -6296,7 +6306,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -6296,7 +6302,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
        var _a4;
        if (state.itemKey === currentItemKey) {
          const element = ref.current;
@@ -59,24 +55,20 @@ diff --git a/react.mjs b/react.mjs
 index ce08abe..2c764cb 100644
 --- a/react.mjs
 +++ b/react.mjs
-@@ -3468,6 +3468,16 @@ function abortBootstrapInitialScroll(ctx) {
+@@ -3468,6 +3468,12 @@ function abortBootstrapInitialScroll(ctx) {
  
  // src/core/containerLayoutBaseline.ts
  var containerLayoutBaselines = /* @__PURE__ */ new WeakMap();
-+// Client rects include ancestor transforms (a zoomed-out overview scales the
-+// list), layout sizes do not. Item sizes are layout sizes, so undo the scale.
++// Offset sizes stay in layout pixels throughout ancestor transforms, including
++// the last frames of an overview zoom. The list rounds measured sizes too.
 +function measureLayoutRect(element) {
 +  const rect = element.getBoundingClientRect();
-+  const layoutWidth = element.offsetWidth;
-+  if (!layoutWidth || !rect.width) return rect;
-+  const scale = rect.width / layoutWidth;
-+  if (Math.abs(scale - 1) < 0.05) return rect;
-+  return { height: rect.height / scale, left: rect.left, top: rect.top, width: rect.width / scale, x: rect.x, y: rect.y };
++  return { height: element.offsetHeight, left: rect.left, top: rect.top, width: element.offsetWidth, x: rect.x, y: rect.y };
 +}
  function getContainerLayoutBaseline(element) {
    return containerLayoutBaselines.get(element);
  }
-@@ -5625,7 +5635,7 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -5625,7 +5631,7 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
        const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
@@ -85,7 +77,7 @@ index ce08abe..2c764cb 100644
        setContainerLayoutBaseline(element, rect);
        measurements.push({
          containerId,
-@@ -6193,7 +6203,7 @@ function useOnLayoutSync({
+@@ -6193,7 +6199,7 @@ function useOnLayoutSync({
      };
      let prevRect;
      if (measureInLayoutEffect) {
@@ -94,7 +86,7 @@ index ce08abe..2c764cb 100644
        emit(toLayout(rect), true);
        prevRect = rect;
      }
-@@ -6206,7 +6216,7 @@ function useOnLayoutSync({
+@@ -6206,7 +6212,7 @@ function useOnLayoutSync({
          left: entry.contentRect.left,
          top: entry.contentRect.top,
          width: borderBoxSize.inlineSize
@@ -103,7 +95,7 @@ index ce08abe..2c764cb 100644
        const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
        const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
        prevRect = rectObserved;
-@@ -6275,7 +6285,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -6275,7 +6281,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
        var _a4;
        if (state.itemKey === currentItemKey) {
          const element = ref.current;
