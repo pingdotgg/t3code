@@ -275,6 +275,42 @@ const mobileEndorsementRows = [
     </div>
   </section>
 
+  <section id="demo" class="sec-demo" aria-labelledby="demo-title">
+    <div class="container demo-inner">
+      <div class="demo-copy">
+        <p class="eyebrow">{t.demoEyebrow}</p>
+        <div class="section-head" style="margin-bottom:0">
+          <h2 id="demo-title">{t.demoTitle}</h2>
+          <p>{t.demoBody}</p>
+        </div>
+        <p class="demo-fiction" role="note">{t.demoLabel}</p>
+      </div>
+
+      <div
+        class="demo-stage tile"
+        id="staged-demo"
+        role="region"
+        aria-label={t.demoVisualLabel}
+        data-demo-play={t.demoPlay}
+        data-demo-replay={t.demoReplay}
+        data-demo-playing={t.demoPlaying}
+        data-demo-complete={t.demoComplete}
+      >
+        <div class="demo-chrome">
+          <div class="demo-chrome-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+          <span class="demo-chrome-title">{t.demoWindowTitle}</span>
+          <span class="demo-chrome-badge">{t.demoEyebrow}</span>
+        </div>
+        <div class="demo-log" id="staged-demo-log" aria-live="polite"></div>
+        <div class="demo-controls">
+          <button type="button" class="btn btn-primary demo-btn" id="staged-demo-play">{t.demoPlay}</button>
+          <button type="button" class="btn btn-ghost demo-btn" id="staged-demo-replay">{t.demoReplay}</button>
+          <span class="demo-status" id="staged-demo-status" role="status"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="git" class="sec-git">
     <div class="container git-inner">
       <div
@@ -413,6 +449,7 @@ const mobileEndorsementRows = [
 <script>
   import { fetchLatestRelease, RELEASES_URL, type ReleaseAsset } from "../../lib/releases";
   import { startHomeMotion } from "../../lib/homeMotion";
+  import { startStagedDemo } from "../../lib/stagedDemo";
 
   type Platform = { os: "mac" | "win" | "linux" };
 
@@ -483,6 +520,33 @@ const mobileEndorsementRows = [
   const caret = document.querySelector<HTMLElement>(".caret");
   if (hero && field && caret) {
     startHomeMotion({ hero, field, tracks, caret });
+  }
+
+  const demoRoot = document.getElementById("staged-demo");
+  const demoLog = document.getElementById("staged-demo-log");
+  const demoPlay = document.getElementById("staged-demo-play");
+  const demoReplay = document.getElementById("staged-demo-replay");
+  const demoStatus = document.getElementById("staged-demo-status");
+  if (
+    demoRoot instanceof HTMLElement &&
+    demoLog instanceof HTMLElement &&
+    demoPlay instanceof HTMLButtonElement &&
+    demoReplay instanceof HTMLButtonElement &&
+    demoStatus instanceof HTMLElement
+  ) {
+    startStagedDemo({
+      root: demoRoot,
+      log: demoLog,
+      playButton: demoPlay,
+      replayButton: demoReplay,
+      status: demoStatus,
+      labels: {
+        play: demoRoot.dataset.demoPlay ?? "Play",
+        replay: demoRoot.dataset.demoReplay ?? "Replay",
+        playing: demoRoot.dataset.demoPlaying ?? "",
+        complete: demoRoot.dataset.demoComplete ?? "",
+      },
+    });
   }
 </script>
 
@@ -824,6 +888,154 @@ const mobileEndorsementRows = [
     color: var(--fg-muted);
   }
   .harness-footer-item svg { color: var(--ok); }
+
+  .demo-inner {
+    display: grid;
+    grid-template-columns: 0.95fr 1.15fr;
+    gap: 56px;
+    align-items: center;
+  }
+
+  .demo-copy .section-head h2 {
+    font-size: clamp(28px, 3.4vw, 42px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    margin: 12px 0 16px;
+  }
+
+  .demo-copy .section-head p {
+    color: var(--fg-muted);
+    font-size: 17px;
+    line-height: 1.55;
+    max-width: 34rem;
+  }
+
+  .demo-fiction {
+    margin-top: 22px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    color: var(--fg-dim);
+  }
+
+  .demo-stage {
+    display: flex;
+    flex-direction: column;
+    min-height: 420px;
+  }
+
+  .demo-chrome {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .demo-chrome-dots {
+    display: flex;
+    gap: 6px;
+  }
+
+  .demo-chrome-dots span {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: #262626;
+  }
+
+  .demo-chrome-title {
+    flex: 1;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+
+  .demo-chrome-badge {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--warn);
+    border: 1px solid color-mix(in oklab, var(--warn) 35%, transparent);
+    border-radius: 999px;
+    padding: 3px 8px;
+    white-space: nowrap;
+  }
+
+  .demo-log {
+    flex: 1;
+    min-height: 280px;
+    max-height: 360px;
+    overflow: auto;
+    padding: 18px 20px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .demo-line {
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 12px;
+    align-items: start;
+  }
+
+  .demo-who {
+    color: var(--fg-dim);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+
+  .demo-line--you .demo-who { color: var(--fg-muted); }
+  .demo-line--lead .demo-who { color: var(--accent); }
+  .demo-line--claude .demo-who { color: oklch(0.78 0.12 55); }
+  .demo-line--codex .demo-who { color: oklch(0.78 0.1 200); }
+  .demo-line--phone .demo-who { color: var(--ok); }
+  .demo-line--system .demo-who { color: var(--fg-faint); }
+
+  .demo-text {
+    color: var(--fg);
+    overflow-wrap: anywhere;
+  }
+
+  .demo-line--system .demo-text {
+    color: var(--fg-dim);
+  }
+
+  .demo-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+
+  .demo-btn {
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+
+  .demo-btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+    transform: none;
+  }
+
+  .demo-status {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
 
   .sec-endorsements {
     overflow: hidden;
@@ -1226,6 +1438,8 @@ const mobileEndorsementRows = [
     .harness:nth-child(odd) { border-right: 1px solid var(--border); }
     .harness:nth-child(even) { border-right: 0; }
     .git-inner { grid-template-columns: 1fr; gap: 40px; }
+    .demo-inner { grid-template-columns: 1fr; gap: 28px; }
+    .demo-stage { min-height: 0; }
     .open-grid { grid-template-columns: 1fr; }
   }
 

@@ -43,6 +43,18 @@ export const ko: Messages = {
       "스레드 도중 모델 전환.",
       "매주 새 에이전트 추가.",
     ],
+    demoEyebrow: "연출 데모",
+    demoTitle: "한 번의 요청. 책상과 폰의 에이전트가 함께.",
+    demoBody:
+      "리드 스레드가 Claude와 Codex에 병렬 worktree로 일을 넘기는 동안 다른 기기에서 지켜볼 수 있습니다. 기능 카드로는 그 리듬이 안 보입니다. 짧은 재생 가능한 스토리는 됩니다.",
+    demoLabel: "일러스트 스토리 · 이 페이지에서는 에이전트가 실행되지 않습니다",
+    demoPlay: "재생",
+    demoReplay: "다시 보기",
+    demoPlaying: "연출 스토리 재생 중…",
+    demoComplete: "연출 스토리 끝",
+    demoWindowTitle: "t3 · remote multi-agent",
+    demoVisualLabel:
+      "T3 Code 멀티에이전트 원격 워크플로의 연출 일러스트: 리드 에이전트가 Claude와 Codex에 위임하는 동안 폰으로 지켜봅니다.",
     gitVisualLabel:
       "T3 Code Git 워크플로 그림: diff를 검토하고, 변경 사항을 커밋 및 푸시하고, 풀 리퀘스트를 엽니다.",
     prReady: "준비됨",

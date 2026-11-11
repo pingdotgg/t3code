@@ -43,6 +43,18 @@ export const de: Messages = {
       "Modell mitten im Thread wechseln.",
       "Jede Woche neue Agents.",
     ],
+    demoEyebrow: "Inszenierte Demo",
+    demoTitle: "Eine Anfrage. Agents auf dem Schreibtisch und dem Handy.",
+    demoBody:
+      "Ein Lead-Thread kann Arbeit parallel an Claude und Codex in eigenen Worktrees geben, während du von einem anderen Gerät zusiehst. Feature-Karten zeigen diesen Rhythmus nicht. Eine kurze abspielbare Geschichte schon.",
+    demoLabel: "Illustrierte Geschichte · hier laufen keine Agents",
+    demoPlay: "Abspielen",
+    demoReplay: "Nochmal",
+    demoPlaying: "Inszenierte Geschichte läuft…",
+    demoComplete: "Ende der inszenierten Geschichte",
+    demoWindowTitle: "t3 · remote multi-agent",
+    demoVisualLabel:
+      "Inszenierte Illustration eines Multi-Agent-Remote-Workflows in T3 Code: ein Lead-Agent delegiert an Claude und Codex, während du vom Handy zusiehst.",
     gitVisualLabel:
       "Illustration des Git-Workflows in T3 Code: Diff prüfen, Änderungen committen und pushen, Pull Request öffnen.",
     prReady: "Bereit",

@@ -43,6 +43,18 @@ export const en = {
       "Switch models mid-thread.",
       "More harnesses shipping weekly.",
     ],
+    demoEyebrow: "Staged demo",
+    demoTitle: "One ask. Agents on your desk and your phone.",
+    demoBody:
+      "A lead thread can hand work to Claude and Codex in parallel worktrees while you watch from another device. Feature cards cannot show that rhythm. A short playable story can.",
+    demoLabel: "Illustrated story. No agents run on this page.",
+    demoPlay: "Play",
+    demoReplay: "Replay",
+    demoPlaying: "Playing staged story...",
+    demoComplete: "End of staged story",
+    demoWindowTitle: "t3 · remote multi-agent",
+    demoVisualLabel:
+      "Staged illustration of a T3 Code multi-agent remote workflow: a lead agent delegates to Claude and Codex while you watch from your phone.",
     gitVisualLabel:
       "Illustration of the T3 Code Git workflow: review a diff, commit and push changes, and open a pull request.",
     prReady: "Ready",

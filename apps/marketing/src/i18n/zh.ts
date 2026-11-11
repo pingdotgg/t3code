@@ -43,6 +43,18 @@ export const zh: Messages = {
       "线程进行中也能切换模型。",
       "每周都有新的智能体接入。",
     ],
+    demoEyebrow: "示意演示",
+    demoTitle: "一次请求。桌面与手机上的智能体同步。",
+    demoBody:
+      "主线程可以把工作并行交给 Claude 和 Codex 的独立 worktree，同时你在另一台设备上观看。功能卡片讲不清这种节奏。一段可播放的短故事可以。",
+    demoLabel: "图解故事 · 本页不会真正运行智能体",
+    demoPlay: "播放",
+    demoReplay: "重播",
+    demoPlaying: "正在播放示意故事…",
+    demoComplete: "示意故事结束",
+    demoWindowTitle: "t3 · remote multi-agent",
+    demoVisualLabel:
+      "T3 Code 多智能体远程工作流的示意插画：主智能体把任务交给 Claude 和 Codex，你在手机上观看。",
     gitVisualLabel: "T3 Code Git 工作流示意图：审查 diff、提交并推送更改、创建 PR。",
     prReady: "就绪",
     prCommits: "3 个提交",
