@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState } from "react";
+import { useState } from "react";
 import { observeResize } from "../../lib/observeResize";
 
 function measureComposerMultilinePrompt(body: HTMLElement): boolean | null {
@@ -15,20 +15,28 @@ function measureComposerMultilinePrompt(body: HTMLElement): boolean | null {
   range.selectNodeContents(editor);
   const bounds = range.getBoundingClientRect();
 
-  // Measure content, not the editor's minimum height. While resting, the
-  // prompt is unwrapped: compare its width with the expanded row so that
-  // moving the actions inline cannot make collapse and expansion oscillate.
+  // Measure against expanded width to prevent inline actions oscillating collapse.
   return bounds.height > lineHeight + 1 || bounds.width > expandedWidth + 1;
 }
 
-export function useComposerMultilinePrompt(body: HTMLElement | null): boolean {
+/** Whether the prompt wraps, and the ref callback that measures it on the composer body. */
+export function useComposerMultilinePrompt(): readonly [
+  boolean,
+  (body: HTMLElement | null) => (() => void) | undefined,
+] {
   const [isMultiline, setIsMultiline] = useState(false);
-
-  useLayoutEffect(() => {
+  const observeBody = (body: HTMLElement | null) => {
     if (!body) return;
+    // Measuring reads layout, so one measurement per frame runs after all of the frame's DOM
+    // writes instead of forcing a layout after each mutation.
+    let frame: number | null = null;
     const measure = () => {
-      const next = measureComposerMultilinePrompt(body);
-      if (next !== null) setIsMultiline(next);
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const next = measureComposerMultilinePrompt(body);
+        if (next !== null) setIsMultiline(next);
+      });
     };
     measure();
     const editor = body.querySelector<HTMLElement>('[data-testid="composer-editor"]');
@@ -36,10 +44,10 @@ export function useComposerMultilinePrompt(body: HTMLElement | null): boolean {
     const mutationObserver = new MutationObserver(measure);
     mutationObserver.observe(body, { childList: true, characterData: true, subtree: true });
     return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
       stopObserving();
       mutationObserver.disconnect();
     };
-  }, [body]);
-
-  return isMultiline;
+  };
+  return [isMultiline, observeBody] as const;
 }
