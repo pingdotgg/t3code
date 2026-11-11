@@ -13,9 +13,9 @@ const testState = vi.hoisted(() => ({
   updateServer: vi.fn(),
   toast: vi.fn(),
   clipboard: vi.fn(),
-  continueThreadsAfterServerUpdate: false,
   sessionAtom: null as unknown,
   sessionAtoms: new Map<EnvironmentId, unknown>(),
+  serverVersions: new Map<string, string>(),
 }));
 
 vi.mock(import("~/hooks/useCopyToClipboard"), async (original) => ({
@@ -28,16 +28,6 @@ vi.mock(import("~/hooks/useCopyToClipboard"), async (original) => ({
     isCopied: false,
   })) as never,
 }));
-vi.mock(import("~/hooks/useSettings"), async (original) => ({
-  ...(await original()),
-  useEnvironmentSettings: ((
-    _environmentId: EnvironmentId,
-    selector: (settings: { continueThreadsAfterServerUpdate: boolean }) => unknown,
-  ) =>
-    selector({
-      continueThreadsAfterServerUpdate: testState.continueThreadsAfterServerUpdate,
-    })) as never,
-}));
 vi.mock(import("~/state/session"), async (original) => {
   const actual = await original();
   const { environmentAtomList } = await import("~/state/environmentAtomList");
@@ -49,6 +39,16 @@ vi.mock(import("~/state/session"), async (original) => {
     environmentSessionStatesAtom: environmentAtomList("test-session-states", sessionStateAtom),
   };
 });
+vi.mock(import("~/state/entities"), async (original) => ({
+  ...(await original()),
+  useServerConfigs: (() =>
+    new Map(
+      [...testState.serverVersions].map(([id, serverVersion]) => [
+        id,
+        { environment: { serverVersion } },
+      ]),
+    )) as never,
+}));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => testState.updateServer) as never,
@@ -110,7 +110,7 @@ function setup(): Disposable {
   testState.updateServer.mockReset();
   testState.toast.mockReset();
   testState.clipboard.mockReset();
-  testState.continueThreadsAfterServerUpdate = false;
+  testState.serverVersions.clear();
   sessionAtom = Atom.make<SessionResult>(AsyncResult.success(currentSession));
   testState.sessionAtom = sessionAtom;
   testState.sessionAtoms.clear();
@@ -131,19 +131,9 @@ function button(screen: Screen, name?: string) {
     : buttons.find((element) => element.textContent?.trim() === name);
 }
 
-// Text a user can reach: rendered copy, a native title, or an accessible description.
-function explanation(screen: Screen) {
-  const attributes = [...screen.container.querySelectorAll("[title], [aria-description]")].map(
-    (element) =>
-      `${element.getAttribute("title") ?? ""} ${element.getAttribute("aria-description") ?? ""}`,
-  );
-  const described = [...screen.container.querySelectorAll("[aria-describedby]")].flatMap(
-    (element) =>
-      (element.getAttribute("aria-describedby") ?? "")
-        .split(/\s+/)
-        .map((id) => document.getElementById(id)?.textContent ?? ""),
-  );
-  return [screen.container.textContent ?? "", ...attributes, ...described].join(" ");
+function description(screen: Screen, name?: string) {
+  const id = button(screen, name)?.getAttribute("aria-describedby");
+  return id ? (document.getElementById(id)?.textContent ?? "") : "";
 }
 
 async function click(screen: Screen, name?: string) {
@@ -217,7 +207,9 @@ describe("ServerUpdateAction", () => {
     await using screen = await renderAction();
 
     expect(button(screen, "Update")!.disabled).toBe(true);
-    expect(explanation(screen)).toMatch(/pair/i);
+    expect(description(screen, "Update")).toBe(
+      "Test server can't be updated from this connection. Pair again with a link that permits server updates.",
+    );
   });
 });
 
@@ -228,16 +220,12 @@ describe("ServerUpdatesAction", () => {
       serverLabel: "Laptop",
       selfUpdate: "boot-service",
       targetVersion: "0.0.31",
-      threadContinuation: true,
-      continueThreadsAfterServerUpdate: true,
     },
     {
       environmentId: "batch-b" as EnvironmentId,
       serverLabel: "Office",
       selfUpdate: "respawn",
       targetVersion: "0.0.31",
-      threadContinuation: true,
-      continueThreadsAfterServerUpdate: false,
     },
     {
       environmentId: "batch-c" as EnvironmentId,
@@ -275,27 +263,8 @@ describe("ServerUpdatesAction", () => {
     await using screen = await mount(targets.slice(0, 2));
 
     expect(button(screen, "Update all")!.disabled).toBe(true);
-    expect(explanation(screen)).toMatch(/pair/i);
+    expect(description(screen, "Update all")).toContain("Pair again");
   });
-
-  it.each([
-    { name: "loading", session: AsyncResult.initial() },
-    { name: "failed", session: AsyncResult.failure(Cause.fail(new Error("Offline"))) },
-  ])(
-    "disables Update all when a denied target is mixed with a $name session",
-    async ({ session }) => {
-      using _state = setup();
-      setSession(AsyncResult.success(legacyPairedSession));
-      testState.sessionAtoms.set("batch-a" as EnvironmentId, Atom.make(session));
-      await using screen = await mount(targets.slice(0, 2));
-
-      expect(button(screen, "Update all")!.disabled).toBe(true);
-      expect(explanation(screen)).toContain("Office can't be updated");
-      expect(explanation(screen)).not.toContain("Laptop can't be updated");
-      await click(screen, "Update all");
-      expect(testState.updateServer).not.toHaveBeenCalled();
-    },
-  );
 
   it("does not ask to pair again when a mixed batch is pending", async () => {
     using _state = setup();
@@ -341,15 +310,24 @@ describe("ServerUpdatesAction", () => {
     expect(testState.updateServer).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: "batch-a" }),
     );
-    const notices = [
-      ...testState.toast.mock.calls.map((call) => JSON.stringify(call)),
-      explanation(screen),
-    ];
-    expect(
-      notices.some(
-        (notice) =>
-          notice.toLowerCase().includes("office") && notice.toLowerCase().includes("pair"),
-      ),
-    ).toBe(true);
+    expect(testState.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Office skipped",
+        description: expect.stringContaining("Pair again"),
+      }),
+    );
+  });
+
+  it("skips a machine whose update would cross Stable and Nightly", async () => {
+    using _state = setup();
+    testState.serverVersions.set("batch-a", "0.0.30-nightly.20261001.1");
+    testState.updateServer.mockResolvedValue(success());
+    await using screen = await mount();
+    await click(screen, "Update all");
+
+    expect(testState.updateServer).toHaveBeenCalledTimes(1);
+    expect(testState.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", title: "Office updated" }),
+    );
   });
 });

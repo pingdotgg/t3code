@@ -1,0 +1,86 @@
+---
+title: "Part 2: Create Tenant Databases"
+description: Let a Worker create a database for each tenant.
+sidebar:
+  order: 2
+---
+
+Open `src/Api.ts`. The Worker creates, lists, and deletes tenant databases while it runs.
+
+## Give the Worker the group
+
+```diff lang="typescript"
+Effect.gen(function* () {
++  const tenants = yield* Turso.ManageDatabases(Tenants);
+  return { fetch };
+}).pipe(Effect.provide(Turso.ManageDatabasesHttp))
+```
+
+The Worker gets a Turso API token that only works on the `Tenants` group. It can create and delete databases there, and nowhere else.
+
+## Read the template's name
+
+```diff lang="typescript"
+Effect.gen(function* () {
+  const tenants = yield* Turso.ManageDatabases(Tenants);
++  const template = yield* Template;
++  const templateName = yield* template.name;
+  return { fetch };
+})
+```
+
+`templateName` gives you the template's name inside a request.
+
+## Copy the template for a new tenant
+
+```diff lang="typescript"
+case "POST": {
++  const database = yield* tenants.create(tenant, {
++    seed: { type: "database", name: yield* templateName },
++  });
++  return yield* HttpServerResponse.json({ tenant: database });
+}
+```
+
+`POST /tenants/acme` creates the `acme` database as a copy of the template. It has the `notes` table and no notes.
+
+## List tenants
+
+```diff lang="typescript"
+if (tenant === undefined || tenant === "") {
++  const databases = yield* tenants.list();
++  const template = yield* templateName;
++  return yield* HttpServerResponse.json({
++    tenants: databases.map((d) => d.name).filter((name) => name !== template),
++  });
+}
+```
+
+`list()` returns every database in the group. Leave out the template.
+
+## Delete a tenant
+
+```diff lang="typescript"
+case "DELETE": {
++  yield* tenants.delete(tenant);
++  return yield* HttpServerResponse.json({ deleted: tenant });
+}
+```
+
+This deletes the tenant's database and all its notes.
+
+## Add the Worker to the Stack
+
+```diff lang="typescript"
+// alchemy.run.ts
+Effect.gen(function* () {
+  const template = yield* Template;
++  const api = yield* Api;
+  return {
++    url: api.url.as<string>(),
+    template: template.name,
+  };
+}),
+```
+
+In [Part 3](/turso/tutorial/part-3), you'll read and write each tenant's notes.

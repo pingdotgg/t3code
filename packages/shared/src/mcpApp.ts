@@ -39,9 +39,7 @@ export interface McpAppReference {
   readonly prefersBorder?: boolean;
 }
 
-// Only scheme-qualified origins, optionally with a leading `*.` subdomain
-// wildcard, survive. Anything else (keywords, paths, quotes, whitespace) could
-// widen or break the generated policy, so it is dropped.
+// Accept only scheme-qualified origins with optional subdomain wildcards to prevent policy widening.
 const DOMAIN_PATTERN = /^(?:https?|wss?):\/\/(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*(?::\d{1,5})?$/i;
 
 function readDomains(value: unknown): ReadonlyArray<string> | undefined {
@@ -133,11 +131,29 @@ export function mcpAppReferencesEqual(left: McpAppReference, right: McpAppRefere
   );
 }
 
-export function readMcpAppResourceUri(meta: unknown): string | undefined {
+/** Reads a tool's `_meta.ui.resourceUri`, or the deprecated flat `ui/resourceUri`. */
+export function mcpAppToolResourceUri(meta: unknown): string | undefined {
   if (!Predicate.isObject(meta)) return undefined;
-  const nested = Predicate.isObject(meta.ui) ? meta.ui.resourceUri : undefined;
-  const uri = nested ?? meta["ui/resourceUri"];
-  return typeof uri === "string" && uri.startsWith(MCP_APP_RESOURCE_SCHEME) ? uri : undefined;
+  const uri =
+    (Predicate.isObject(meta.ui) ? meta.ui.resourceUri : undefined) ?? meta["ui/resourceUri"];
+  return typeof uri === "string" &&
+    uri.length <= MAX_RESOURCE_URI_LENGTH &&
+    uri.startsWith(MCP_APP_RESOURCE_SCHEME)
+    ? uri
+    : undefined;
+}
+
+export const claudeMcpToolNamePart = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+/** Claude Code's `mcp__<server>__` prefix; it also collapses and trims `_` in `claude.ai ` connector names. */
+export function claudeMcpToolPrefix(server: string): string {
+  const part = claudeMcpToolNamePart(server);
+  return `mcp__${server.startsWith("claude.ai ") ? part.replace(/_+/g, "_").replace(/^_|_$/g, "") : part}__`;
+}
+
+/** Claude Code names MCP tools `mcp__<server>__<tool>`, replacing characters outside `[a-zA-Z0-9_-]`. */
+export function claudeMcpToolName(server: string, tool: string): string {
+  return `${claudeMcpToolPrefix(server)}${claudeMcpToolNamePart(tool)}`;
 }
 
 export function mcpAppToolCallableByApp(meta: unknown): boolean {
@@ -146,11 +162,7 @@ export function mcpAppToolCallableByApp(meta: unknown): boolean {
   return !Array.isArray(visibility) || visibility.includes("app");
 }
 
-/**
- * The Content-Security-Policy for an app document, per the spec's
- * construction: undeclared origins stay blocked, and nothing loads from the
- * host's own origin ('self' would reach T3's API).
- */
+/** Block undeclared origins, including self, which would expose T3's API. */
 export function mcpAppContentSecurityPolicy(csp: McpAppCsp | undefined): string {
   const resources = csp?.resourceDomains?.join(" ") ?? "";
   const list = (domains: ReadonlyArray<string> | undefined, fallback: string) =>
@@ -173,26 +185,19 @@ export function mcpAppContentSecurityPolicy(csp: McpAppCsp | undefined): string 
 const escapeAttribute = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
-/**
- * The asset route's `sandbox` header already makes the origin opaque; browsers
- * enforce both policies, so the document can only tighten this one, never widen
- * it.
- */
+/** The route's sandbox header keeps origins opaque; the document CSP can only tighten it. */
 export function injectMcpAppCsp(html: string, csp: McpAppCsp | undefined): string {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(
     mcpAppContentSecurityPolicy(csp),
   )}">`;
-  // After a leading doctype, so the document stays in standards mode; the
-  // parser moves the tag into the head it opens.
+  // Insert after the doctype to preserve standards mode; the parser moves it into the head.
   const doctype = /^\uFEFF?\s*<!doctype[^>]*>/i.exec(html);
   return doctype
     ? `${doctype[0]}${meta}${html.slice(doctype[0].length)}`
     : `<!doctype html>${meta}${html}`;
 }
 
-/**
- * The bridge uses an opaque origin, so authenticate messages by parent window.
- */
+/** Opaque origins require authenticating bridge messages by parent window. */
 export function injectMcpAppThemeBootstrap(html: string): string {
   const script = `<script>
 (() => {
@@ -220,14 +225,10 @@ export function injectMcpAppThemeBootstrap(html: string): string {
     : `<!doctype html>${script}${html}`;
 }
 
-/**
- * Analytics libraries often read cookies during startup. An opaque document
- * has none, but browsers throw instead of returning an empty cookie string.
- */
+/** Opaque documents throw on cookie reads; analytics startup often expects an empty string instead. */
 export function injectMcpAppCookieBootstrap(html: string): string {
   const bootstrap = `<script>(function(){try{void document.cookie;}catch(error){if(error&&error.name==="SecurityError"){Object.defineProperty(document,"cookie",{configurable:true,get:function(){return "";},set:function(){}});}}})();</script>`;
-  // Saved captures begin with the CSP inserted by injectMcpAppCsp. Keep it
-  // ahead of executable code, including this bootstrap, without rewriting it.
+  // Preserve captured CSP ahead of executable code, including this bootstrap.
   const prefix =
     /^(?:\uFEFF?\s*<!doctype[^>]*>\s*)?(?:<meta http-equiv="Content-Security-Policy" content="[^"]*">)?/i.exec(
       html,
