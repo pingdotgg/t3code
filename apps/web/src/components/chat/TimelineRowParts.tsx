@@ -3,12 +3,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
-import { TerminalIcon } from "lucide-react";
+import { TerminalIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
-import { ChevronDown, ChevronRight } from "lucide";
-import { MorphIcon } from "../MorphIcon";
 
 export const MESSAGE_HEADING_LEVEL = 3;
 
@@ -135,15 +133,23 @@ export function WorkFoldCaret({
   hidden?: boolean;
   fade?: boolean;
 }) {
-  return (
-    <MorphIcon
+  return expanded ? (
+    <ChevronDownIcon
       aria-hidden
       className={cn(
         "size-3 shrink-0 text-dim-foreground",
         fade && "transition-opacity duration-200 ease-out motion-reduce:transition-none",
         hidden && "opacity-0",
       )}
-      icon={expanded ? ChevronDown : ChevronRight}
+    />
+  ) : (
+    <ChevronRightIcon
+      aria-hidden
+      className={cn(
+        "size-3 shrink-0 text-dim-foreground",
+        fade && "transition-opacity duration-200 ease-out motion-reduce:transition-none",
+        hidden && "opacity-0",
+      )}
     />
   );
 }
